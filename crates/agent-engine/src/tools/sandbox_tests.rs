@@ -420,15 +420,41 @@ async fn test_sandbox_allows_write_to_workspace_persona_subpath() {
 }
 
 #[tokio::test]
-async fn test_sandbox_allows_write_to_workspace_memory_subpath() {
+async fn test_sandbox_allows_write_to_channel_scoped_workspace_memory_subpath() {
     let temp = TempDir::new().unwrap();
     let sandbox = Sandbox::new(temp.path().to_path_buf());
-    let memory_file = temp.path().join(".alan/memory/MEMORY.md");
+    let alan_dir = temp.path().join(".alan");
 
-    sandbox.write(&memory_file, b"# Memory\n").await.unwrap();
+    for channel in [InstallChannel::Stable, InstallChannel::Dev] {
+        let memory_file = crate::workspace_memory_dir_for_channel_from_alan_dir(&alan_dir, channel)
+            .join("MEMORY.md");
 
-    let written = tokio::fs::read_to_string(&memory_file).await.unwrap();
-    assert_eq!(written, "# Memory\n");
+        sandbox.write(&memory_file, b"# Memory\n").await.unwrap();
+
+        let written = tokio::fs::read_to_string(&memory_file).await.unwrap();
+        assert_eq!(written, "# Memory\n");
+    }
+}
+
+#[tokio::test]
+async fn test_sandbox_blocks_legacy_and_unknown_runtime_control_paths() {
+    let temp = TempDir::new().unwrap();
+    let sandbox = Sandbox::new(temp.path().to_path_buf());
+
+    for relative in [
+        ".alan/memory/MEMORY.md",
+        ".alan/runtime/canary/memory/MEMORY.md",
+        ".alan/agent/persona/USER.md",
+    ] {
+        let err = sandbox
+            .write(&temp.path().join(relative), b"must stay blocked\n")
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("protected subpath .alan"),
+            "unexpected result for {relative}: {err}"
+        );
+    }
 }
 
 #[tokio::test]
@@ -457,27 +483,29 @@ async fn test_sandbox_blocks_write_with_parent_dir_bypass_into_protected_subpath
 }
 
 #[tokio::test]
-async fn test_sandbox_exec_allows_direct_command_for_workspace_memory_subpath() {
+async fn test_sandbox_exec_allows_direct_write_to_channel_scoped_memory_subpath() {
     let temp = TempDir::new().unwrap();
     let sandbox = Sandbox::new(temp.path().to_path_buf());
-    let memory_dir = temp.path().join(".alan/memory");
+    let memory_dir = temp.path().join(".alan/runtime/stable/memory");
     tokio::fs::create_dir_all(&memory_dir).await.unwrap();
-    tokio::fs::write(memory_dir.join("MEMORY.md"), "# Memory\n")
-        .await
-        .unwrap();
 
     let result = sandbox
         .exec_with_timeout_and_capability(
-            "ls .alan/memory",
+            "echo updated > .alan/runtime/stable/memory/MEMORY.md",
             temp.path(),
             None,
-            Some(alan_agent_protocol::ToolCapability::Read),
+            Some(alan_agent_protocol::ToolCapability::Write),
         )
         .await
         .unwrap();
 
     assert_eq!(result.exit_code, 0);
-    assert!(result.stdout.contains("MEMORY.md"));
+    assert_eq!(
+        tokio::fs::read_to_string(memory_dir.join("MEMORY.md"))
+            .await
+            .unwrap(),
+        "updated\n"
+    );
 }
 
 #[tokio::test]
@@ -2350,15 +2378,16 @@ async fn test_os_backend_still_blocks_protected_subpath_redirection() {
 }
 
 #[tokio::test]
-async fn test_os_backend_wrapper_honors_memory_carve_out() {
+async fn test_os_backend_wrapper_honors_channel_scoped_memory_carve_out() {
     // The recursive wrapper inspection must honor the same carve-outs as direct
-    // commands: `.alan/memory` is agent-writable even though `.alan` is protected.
+    // commands: the active channel Memory Store is agent-writable even though
+    // `.alan` is protected.
     let temp = TempDir::new().unwrap();
     let sandbox = Sandbox::with_backend(
         temp.path().to_path_buf(),
         crate::tools::SandboxBackendKind::Seatbelt,
     );
-    let memory_dir = temp.path().join(".alan/memory");
+    let memory_dir = temp.path().join(".alan/runtime/stable/memory");
     tokio::fs::create_dir_all(&memory_dir).await.unwrap();
     tokio::fs::write(memory_dir.join("MEMORY.md"), "# Memory\n")
         .await
@@ -2368,7 +2397,7 @@ async fn test_os_backend_wrapper_honors_memory_carve_out() {
     // check), so assert it is NOT rejected for a protected-subpath reason.
     let result = sandbox
         .exec_with_timeout_and_capability(
-            "bash -lc 'echo hi > .alan/memory/NOTES.md'",
+            "bash -lc 'echo hi > .alan/runtime/stable/memory/NOTES.md'",
             temp.path(),
             None,
             Some(alan_agent_protocol::ToolCapability::Write),
@@ -2380,6 +2409,17 @@ async fn test_os_backend_wrapper_honors_memory_carve_out() {
             "memory subpath wrongly blocked: {err}"
         );
     }
+
+    let legacy_err = sandbox
+        .exec_with_timeout_and_capability(
+            "bash -lc 'echo hi > .alan/memory/NOTES.md'",
+            temp.path(),
+            None,
+            Some(alan_agent_protocol::ToolCapability::Write),
+        )
+        .await
+        .unwrap_err();
+    assert!(legacy_err.to_string().contains("protected subpath .alan"));
 }
 
 #[test]

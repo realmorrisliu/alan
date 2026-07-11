@@ -35,11 +35,11 @@ pub use agent_loop::{
 };
 pub use child_runs::{
     ChildRunRecord, ChildRunRegistryError, ChildRunStatus, ChildRunTerminationMode,
-    ChildRunTerminationRequest, global_child_run_registry,
+    ChildRunTerminationRequest,
 };
 pub use engine::{
-    AgentConfig, RuntimeController, RuntimeEventEnvelope, RuntimeHandle, RuntimeNamespaceLaunch,
-    RuntimeNamespaceSurface, RuntimeStartupMetadata, SessionDurabilityState,
+    AgentConfig, AgentMachineDurabilityState, RuntimeController, RuntimeEventEnvelope,
+    RuntimeHandle, RuntimeNamespaceLaunch, RuntimeNamespaceSurface, RuntimeStartupMetadata,
     WorkspaceRuntimeConfig, effective_core_config_for_runtime, spawn, spawn_with_llm_client,
     spawn_with_llm_client_and_tools, spawn_with_namespace_surface, spawn_with_tool_registry,
     spawn_with_tool_registry_and_namespace_surface,
@@ -80,15 +80,15 @@ pub struct RuntimeConfig {
     pub compaction_hard_trigger_ratio: f32,
     /// Governance configuration for policy loading/profile selection.
     pub governance: alan_agent_protocol::GovernanceConfig,
-    /// Loaded policy engine for this runtime/session.
+    /// Loaded policy engine for this runtime/machine.
     pub policy_engine: crate::policy::PolicyEngine,
-    /// Request-control intent carried by runtime/session launch.
+    /// Request-control intent carried by runtime/machine launch.
     pub request_control_intent: crate::RequestControlIntent,
     /// Streaming strategy (`auto`/`on`/`off`).
     pub streaming_mode: crate::config::StreamingMode,
     /// Recovery strategy when streaming is interrupted after visible output.
     pub partial_stream_recovery_mode: crate::config::PartialStreamRecoveryMode,
-    /// Whether session durability is required for startup.
+    /// Whether machine durability is required for startup.
     pub durability_required: bool,
     /// Optional host-selected ChatGPT auth storage path shared with provider auth flows.
     pub chatgpt_auth_storage_path: Option<std::path::PathBuf>,

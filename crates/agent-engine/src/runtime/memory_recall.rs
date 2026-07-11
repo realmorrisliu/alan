@@ -61,11 +61,11 @@ pub(crate) fn build_turn_recall_bundle(
     }
 
     let mut scored_candidates = Vec::new();
-    let mut fallback_recent_session_paths = Vec::new();
+    let mut fallback_recent_episodic_paths = Vec::new();
     let mut fallback_recent_daily_paths = Vec::new();
     if continuity_query || recent_query {
-        let session_paths = collect_markdown_files_recursive(
-            &memory_dir.join("sessions"),
+        let episodic_paths = collect_markdown_files_recursive(
+            &memory_dir.join("episodic"),
             &canonical_memory_root,
             MAX_CANDIDATE_SCAN_FILES,
         );
@@ -75,11 +75,11 @@ pub(crate) fn build_turn_recall_bundle(
             MAX_CANDIDATE_SCAN_FILES,
         );
         if recent_query {
-            fallback_recent_session_paths.extend(session_paths.iter().cloned());
+            fallback_recent_episodic_paths.extend(episodic_paths.iter().cloned());
             fallback_recent_daily_paths.extend(daily_paths.iter().cloned());
         }
         scored_candidates.extend(score_candidate_files(
-            session_paths,
+            episodic_paths,
             memory_dir,
             &query_tokens,
         ));
@@ -125,7 +125,7 @@ pub(crate) fn build_turn_recall_bundle(
     if recent_query && selected_candidate_paths.len() < MAX_RECALL_FILES {
         for path in interleave_recent_fallback_paths(
             &fallback_recent_daily_paths,
-            &fallback_recent_session_paths,
+            &fallback_recent_episodic_paths,
         ) {
             if selected_candidate_paths.len() >= MAX_RECALL_FILES {
                 break;
@@ -203,15 +203,15 @@ fn path_is_safe_recall_file(path: &Path, canonical_memory_root: &Path) -> bool {
 
 fn interleave_recent_fallback_paths(
     daily_paths: &[PathBuf],
-    session_paths: &[PathBuf],
+    episodic_paths: &[PathBuf],
 ) -> Vec<PathBuf> {
-    let mut interleaved = Vec::with_capacity(daily_paths.len() + session_paths.len());
-    let max_len = daily_paths.len().max(session_paths.len());
+    let mut interleaved = Vec::with_capacity(daily_paths.len() + episodic_paths.len());
+    let max_len = daily_paths.len().max(episodic_paths.len());
     for index in 0..max_len {
         if let Some(path) = daily_paths.get(index) {
             interleaved.push(path.clone());
         }
-        if let Some(path) = session_paths.get(index) {
+        if let Some(path) = episodic_paths.get(index) {
             interleaved.push(path.clone());
         }
     }
@@ -236,7 +236,7 @@ fn is_continuity_query(query: &str) -> bool {
         "continue",
         "resume",
         "last time",
-        "previous session",
+        "previous agent process",
         "earlier",
         "before",
         "where did we leave off",
@@ -439,7 +439,7 @@ mod tests {
     }
 
     #[test]
-    fn continuity_query_picks_handoff_and_session_summary() {
+    fn continuity_query_picks_handoff_and_episodic_record() {
         let temp = TempDir::new().unwrap();
         let memory_dir = temp.path().join(".alan/memory");
         crate::prompts::ensure_workspace_memory_layout_at(&memory_dir).unwrap();
@@ -448,23 +448,23 @@ mod tests {
             "# Latest Handoff\nWe were refining the recall router.\n",
         )
         .unwrap();
-        fs::create_dir_all(memory_dir.join("sessions/2026/04/15")).unwrap();
+        fs::create_dir_all(memory_dir.join("episodic/2026/04/15")).unwrap();
         fs::write(
-            memory_dir.join("sessions/2026/04/15/sess-1.md"),
-            "# Session Summary\nRecall router work in progress.\n",
+            memory_dir.join("episodic/2026/04/15/sess-1.md"),
+            "# Agent Process Activity\nRecall router work in progress.\n",
         )
         .unwrap();
 
         let bundle = build_turn_recall_bundle(
             Some(&memory_dir),
             Some(&[crate::tape::ContentPart::text(
-                "What were we doing in the previous session?",
+                "What were we doing in the previous Agent Process?",
             )]),
         )
         .expect("expected recall bundle");
 
         assert!(bundle.contains(".alan/memory/handoffs/LATEST.md"));
-        assert!(bundle.contains(".alan/memory/sessions/2026/04/15/sess-1.md"));
+        assert!(bundle.contains(".alan/memory/episodic/2026/04/15/sess-1.md"));
     }
 
     #[test]
@@ -495,7 +495,7 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let memory_dir = temp.path().join("yesterday-root/.alan/memory");
         crate::prompts::ensure_workspace_memory_layout_at(&memory_dir).unwrap();
-        fs::create_dir_all(memory_dir.join("sessions/2026/04/16")).unwrap();
+        fs::create_dir_all(memory_dir.join("episodic/2026/04/16")).unwrap();
         for index in 1..=4 {
             fs::write(
                 memory_dir.join(format!("topics/recent-match-{index}.md")),
@@ -510,8 +510,8 @@ mod tests {
         .unwrap();
         for index in 1..=4 {
             fs::write(
-                memory_dir.join(format!("sessions/2026/04/16/session-{index}.md")),
-                format!("# Session Summary\nALAN_RECENT_RECALL_{index}\n"),
+                memory_dir.join(format!("episodic/2026/04/16/process-{index}.md")),
+                format!("# Agent Process Activity\nALAN_RECENT_RECALL_{index}\n"),
             )
             .unwrap();
         }
@@ -524,7 +524,7 @@ mod tests {
 
         assert!(bundle.contains("## Runtime Recall Bundle"));
         assert!(bundle.contains(".alan/memory/daily/2026-04-16.md"));
-        assert!(bundle.contains(".alan/memory/sessions/2026/04/16/session-4.md"));
+        assert!(bundle.contains(".alan/memory/episodic/2026/04/16/process-4.md"));
         assert!(bundle.contains("ALAN_RECENT_RECALL_4"));
         assert!(!bundle.contains(".alan/memory/topics/recent-match-4.md"));
     }
@@ -532,32 +532,32 @@ mod tests {
     #[test]
     fn collect_markdown_files_recursive_prioritizes_newest_paths_under_cap() {
         let temp = TempDir::new().unwrap();
-        let sessions_dir = temp.path().join(".alan/memory/sessions");
-        fs::create_dir_all(sessions_dir.join("2026/04/15")).unwrap();
-        fs::create_dir_all(sessions_dir.join("2026/04/16")).unwrap();
+        let episodic_dir = temp.path().join(".alan/memory/episodic");
+        fs::create_dir_all(episodic_dir.join("2026/04/15")).unwrap();
+        fs::create_dir_all(episodic_dir.join("2026/04/16")).unwrap();
         fs::write(
-            sessions_dir.join("2026/04/15/session-older.md"),
-            "# Session Summary\nolder\n",
+            episodic_dir.join("2026/04/15/process-older.md"),
+            "# Agent Process Activity\nolder\n",
         )
         .unwrap();
         fs::write(
-            sessions_dir.join("2026/04/16/session-newer.md"),
-            "# Session Summary\nnewer\n",
+            episodic_dir.join("2026/04/16/process-newer.md"),
+            "# Agent Process Activity\nnewer\n",
         )
         .unwrap();
 
         let canonical_memory_root = fs::canonicalize(temp.path().join(".alan/memory")).unwrap();
-        let collected = collect_markdown_files_recursive(&sessions_dir, &canonical_memory_root, 1);
+        let collected = collect_markdown_files_recursive(&episodic_dir, &canonical_memory_root, 1);
 
         assert_eq!(
             collected,
-            vec![sessions_dir.join("2026/04/16/session-newer.md")]
+            vec![episodic_dir.join("2026/04/16/process-newer.md")]
         );
     }
 
     #[cfg(unix)]
     #[test]
-    fn continuity_query_skips_symlinked_session_directories() {
+    fn continuity_query_skips_symlinked_episodic_directories() {
         use std::os::unix::fs::symlink;
 
         let temp = TempDir::new().unwrap();
@@ -568,27 +568,27 @@ mod tests {
             "# Latest Handoff\nWe were refining the recall router.\n",
         )
         .unwrap();
-        fs::create_dir_all(memory_dir.join("sessions/2026/04")).unwrap();
+        fs::create_dir_all(memory_dir.join("episodic/2026/04")).unwrap();
 
-        let external_dir = temp.path().join("external-sessions");
+        let external_dir = temp.path().join("external-episodic");
         fs::create_dir_all(&external_dir).unwrap();
         fs::write(
-            external_dir.join("session-leak.md"),
-            "# Session Summary\nZebraRecallLeak\n",
+            external_dir.join("process-leak.md"),
+            "# Agent Process Activity\nZebraRecallLeak\n",
         )
         .unwrap();
-        symlink(&external_dir, memory_dir.join("sessions/2026/04/link-out")).unwrap();
+        symlink(&external_dir, memory_dir.join("episodic/2026/04/link-out")).unwrap();
 
         let bundle = build_turn_recall_bundle(
             Some(&memory_dir),
             Some(&[crate::tape::ContentPart::text(
-                "What were we doing in the previous session about ZebraRecallLeak?",
+                "What were we doing in the previous Agent Process about ZebraRecallLeak?",
             )]),
         )
         .expect("expected recall bundle");
 
         assert!(!bundle.contains("ZebraRecallLeak"));
-        assert!(!bundle.contains("session-leak.md"));
+        assert!(!bundle.contains("process-leak.md"));
     }
 
     #[cfg(unix)]
@@ -614,7 +614,7 @@ mod tests {
         let bundle = build_turn_recall_bundle(
             Some(&memory_dir),
             Some(&[crate::tape::ContentPart::text(
-                "What were we doing in the previous session about ZebraHandoffLeak?",
+                "What were we doing in the previous Agent Process about ZebraHandoffLeak?",
             )]),
         );
 

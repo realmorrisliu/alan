@@ -10,12 +10,11 @@ use super::turn_driver::{
 };
 use super::turn_state::TurnState;
 use super::{RuntimeConfig, RuntimeEnvironment, RuntimeLoopState};
-use crate::{llm::LlmClient, session::Session};
+use crate::{agent_machine::AgentMachine, llm::LlmClient};
 use alan_agent_protocol::{Event, InputMode, Submission};
 use alan_ap::{Fid, FileServer, InProcessTransport, OpenMode};
 use alan_llm::{GenerationRequest, GenerationResponse, LlmProvider, StreamChunk};
 use anyhow::{Context, Result};
-use sha2::{Digest, Sha256};
 use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::{
@@ -303,20 +302,10 @@ impl SubmissionEventContext {
     }
 }
 
-fn session_log_fingerprint(session_id: &str) -> String {
-    let digest = Sha256::digest(session_id.as_bytes());
-    let mut out = String::with_capacity(12);
-    for byte in digest.iter().take(6) {
-        use std::fmt::Write as _;
-        let _ = write!(&mut out, "{byte:02x}");
-    }
-    out
-}
-
-/// Effective durability state for a runtime session.
+/// Effective durability state for a runtime machine.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SessionDurabilityState {
-    /// Whether the active session has a persistent recorder attached.
+pub struct AgentMachineDurabilityState {
+    /// Whether the active machine has a persistent recorder attached.
     pub durable: bool,
     /// Whether startup required durability instead of allowing in-memory fallback.
     pub required: bool,
@@ -325,16 +314,21 @@ pub struct SessionDurabilityState {
 /// Metadata produced once runtime startup completes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeStartupMetadata {
-    pub session_id: String,
+    /// Authoritative lifecycle path of the launched Agent Process.
+    pub process_path: String,
+    /// AgentFS projection path of the launched Agent Process.
+    pub agent_path: String,
+    /// Identity of the fresh rollout produced by this process, when durable.
+    pub rollout_id: Option<String>,
     pub rollout_path: Option<PathBuf>,
-    pub durability: SessionDurabilityState,
+    pub durability: AgentMachineDurabilityState,
     pub execution_backend: String,
     pub request_controls: crate::ResolvedRequestControls,
     pub warnings: Vec<String>,
 }
 
-struct SessionStartupOutcome {
-    session: Session,
+struct AgentMachineStartupOutcome {
+    machine: AgentMachine,
     metadata: RuntimeStartupMetadata,
 }
 
@@ -358,7 +352,7 @@ async fn emit_runtime_event(
 }
 
 fn best_effort_durability_warning(err: &anyhow::Error) -> String {
-    format!("Session is running without persistent recorder; using in-memory mode: {err}")
+    format!("AgentMachine is running without persistent recorder; using in-memory mode: {err}")
 }
 
 fn current_execution_backend() -> String {
@@ -391,52 +385,57 @@ where
     )
 }
 
-async fn create_persistent_session(
-    session_id: Option<&str>,
+async fn create_persistent_machine(
+    process_path: &str,
     model: &str,
-    session_dir: Option<&std::path::PathBuf>,
+    rollouts_dir: Option<&std::path::PathBuf>,
     rollout_cwd: Option<&std::path::Path>,
     reasoning_effort: Option<alan_agent_protocol::ReasoningEffort>,
-) -> anyhow::Result<Session> {
-    Session::new_with_recorder_options(
-        session_id,
+) -> anyhow::Result<AgentMachine> {
+    AgentMachine::new_with_recorder_options(
+        process_path,
         model,
-        session_dir.map(|dir| dir.as_path()),
+        rollouts_dir.map(|dir| dir.as_path()),
         rollout_cwd,
         reasoning_effort,
     )
     .await
 }
 
-async fn initialize_session(
-    model: &str,
-    resume_rollout_path: Option<&std::path::PathBuf>,
-    session_dir: Option<&std::path::PathBuf>,
-    desired_session_id: Option<&str>,
+struct AgentMachineLaunchContext<'a> {
+    process_path: &'a str,
+    agent_path: &'a str,
+    model: &'a str,
+}
+
+async fn initialize_agent_machine(
+    launch: AgentMachineLaunchContext<'_>,
+    recovery_rollout_path: Option<&std::path::PathBuf>,
+    rollouts_dir: Option<&std::path::PathBuf>,
     durability_required: bool,
     rollout_cwd: Option<&std::path::Path>,
     request_controls: crate::ResolvedRequestControls,
-) -> anyhow::Result<SessionStartupOutcome> {
+) -> anyhow::Result<AgentMachineStartupOutcome> {
     let mut warnings = Vec::new();
     let reasoning_effort = request_controls.reasoning_effort();
 
-    let session = if let Some(path) = resume_rollout_path {
-        let load_result = Session::load_from_rollout_with_recorder_cwd(
+    let machine = if let Some(path) = recovery_rollout_path {
+        let load_result = AgentMachine::load_from_rollout_with_recorder_cwd(
             path,
-            desired_session_id,
-            model,
-            session_dir.map(|dir| dir.as_path()),
+            launch.process_path,
+            launch.model,
+            rollouts_dir.map(|dir| dir.as_path()),
             rollout_cwd,
             reasoning_effort,
         )
         .await;
 
         match load_result {
-            Ok(session) => session,
+            Ok(machine) => machine,
             Err(err) => {
                 if durability_required {
                     return Err(anyhow::anyhow!(
-                        "Strict durability required: failed to load persisted session from {}: {}",
+                        "Strict durability required: failed to load persisted machine from {}: {}",
                         path.display(),
                         err
                     ));
@@ -445,68 +444,73 @@ async fn initialize_session(
                 warn!(
                     error = %err,
                     path = %path.display(),
-                    "Failed to load session from rollout; creating fresh persistent session"
+                    "Failed to load machine from rollout; creating fresh persistent machine"
                 );
-                match create_persistent_session(
-                    desired_session_id,
-                    model,
-                    session_dir,
+                match create_persistent_machine(
+                    launch.process_path,
+                    launch.model,
+                    rollouts_dir,
                     rollout_cwd,
                     reasoning_effort,
                 )
                 .await
                 {
-                    Ok(session) => session,
+                    Ok(machine) => machine,
                     Err(create_err) => {
                         warn!(
                             error = %create_err,
-                            "Failed to create persistent session after resume fallback; using in-memory session"
+                            "Failed to create a persistent machine after rollout recovery; using an in-memory machine"
                         );
                         warnings.push(best_effort_durability_warning(&create_err));
-                        Session::new()
+                        AgentMachine::new()
                     }
                 }
             }
         }
     } else {
-        match create_persistent_session(
-            desired_session_id,
-            model,
-            session_dir,
+        match create_persistent_machine(
+            launch.process_path,
+            launch.model,
+            rollouts_dir,
             rollout_cwd,
             reasoning_effort,
         )
         .await
         {
-            Ok(session) => session,
+            Ok(machine) => machine,
             Err(err) => {
                 if durability_required {
                     return Err(anyhow::anyhow!(
-                        "Strict durability required: failed to create persistent session: {}",
+                        "Strict durability required: failed to create persistent machine: {}",
                         err
                     ));
                 }
 
-                warn!(error = %err, "Failed to create persistent session; using in-memory session");
+                warn!(error = %err, "Failed to create persistent machine; using in-memory machine");
                 warnings.push(best_effort_durability_warning(&err));
-                Session::new()
+                AgentMachine::new()
             }
         }
     };
 
-    Ok(SessionStartupOutcome {
+    Ok(AgentMachineStartupOutcome {
         metadata: RuntimeStartupMetadata {
-            session_id: session.id.clone(),
-            rollout_path: session.rollout_path().cloned(),
-            durability: SessionDurabilityState {
-                durable: session.recorder.is_some(),
+            process_path: launch.process_path.to_string(),
+            agent_path: launch.agent_path.to_string(),
+            rollout_id: machine
+                .recorder
+                .as_ref()
+                .map(|recorder| recorder.rollout_id().to_string()),
+            rollout_path: machine.rollout_path().cloned(),
+            durability: AgentMachineDurabilityState {
+                durable: machine.recorder.is_some(),
                 required: durability_required,
             },
             execution_backend: current_execution_backend(),
             request_controls,
             warnings,
         },
-        session,
+        machine,
     })
 }
 
@@ -620,7 +624,7 @@ impl AgentConfig {
         self.explicit_runtime_overrides.partial_stream_recovery_mode = true;
     }
 
-    /// Override session durability requirement for this launch across agent-root overlays.
+    /// Override machine durability requirement for this launch across agent-root overlays.
     pub fn set_durability_required_override(&mut self, durability_required: bool) {
         self.core_config.durability.required = durability_required;
         self.runtime_config.durability_required = durability_required;
@@ -693,9 +697,9 @@ impl AgentConfig {
     ///
     /// This is called when loading a workspace from disk to restore its
     /// original behavior settings (provider, model, timeouts, etc.)
-    pub fn apply_persisted_state(&mut self, persisted: &crate::manager::WorkspaceConfigState) {
+    pub fn apply_persisted_state(&mut self, persisted: &crate::WorkspaceConfigState) {
+        use crate::PersistedLlmProvider;
         use crate::config::LlmProvider;
-        use crate::manager::PersistedLlmProvider;
 
         // Restore runtime behavior settings
         // All fields are Option<T> to distinguish "not set" from "set to 0"
@@ -859,16 +863,14 @@ pub struct WorkspaceRuntimeConfig {
     pub core_config_source: crate::ConfigSourceKind,
     /// Optional named agent root to resolve on top of the default workspace agent.
     pub agent_name: Option<String>,
-    /// Session identifier to use when creating a fresh persistent runtime session.
-    pub session_id: Option<String>,
     /// Workspace identifier
     pub workspace_id: String,
     /// Workspace root directory for tool cwd/sandbox context
     pub workspace_root_dir: Option<std::path::PathBuf>,
-    /// Workspace `.alan` directory for agent overlays, memory, and sessions
+    /// Workspace `.alan` directory for agent overlays, memory, and rollouts.
     pub workspace_alan_dir: Option<std::path::PathBuf>,
-    /// Optional rollout path to resume/fork from when starting this runtime
-    pub resume_rollout_path: Option<std::path::PathBuf>,
+    /// Optional execution record used to recover Agent Machine state for a new Process.
+    pub recovery_rollout_path: Option<std::path::PathBuf>,
     /// Optional explicit child launch root layered on top of the resolved workspace/default roots.
     pub launch_root_dir: Option<std::path::PathBuf>,
     /// Optional default cwd override for the runtime tool context.
@@ -887,14 +889,13 @@ impl Default for WorkspaceRuntimeConfig {
             agent_config: AgentConfig::default(),
             core_config_source: crate::ConfigSourceKind::Default,
             agent_name: None,
-            session_id: None,
             workspace_id: format!(
                 "workspace-{}",
                 uuid::Uuid::new_v4().to_string().split('-').next().unwrap()
             ),
             workspace_root_dir: None,
             workspace_alan_dir: None,
-            resume_rollout_path: None,
+            recovery_rollout_path: None,
             launch_root_dir: None,
             default_cwd_override: None,
             agent_home_paths: None,
@@ -910,14 +911,13 @@ impl From<crate::config::Config> for WorkspaceRuntimeConfig {
             agent_config: AgentConfig::from(config),
             core_config_source: crate::ConfigSourceKind::Default,
             agent_name: None,
-            session_id: None,
             workspace_id: format!(
                 "workspace-{}",
                 uuid::Uuid::new_v4().to_string().split('-').next().unwrap()
             ),
             workspace_root_dir: None,
             workspace_alan_dir: None,
-            resume_rollout_path: None,
+            recovery_rollout_path: None,
             launch_root_dir: None,
             default_cwd_override: None,
             agent_home_paths: None,
@@ -933,14 +933,13 @@ impl From<crate::LoadedConfig> for WorkspaceRuntimeConfig {
             agent_config: AgentConfig::from(loaded.config),
             core_config_source: loaded.source,
             agent_name: None,
-            session_id: None,
             workspace_id: format!(
                 "workspace-{}",
                 uuid::Uuid::new_v4().to_string().split('-').next().unwrap()
             ),
             workspace_root_dir: None,
             workspace_alan_dir: None,
-            resume_rollout_path: None,
+            recovery_rollout_path: None,
             launch_root_dir: None,
             default_cwd_override: None,
             agent_home_paths: None,
@@ -952,7 +951,7 @@ impl From<crate::LoadedConfig> for WorkspaceRuntimeConfig {
 
 impl WorkspaceRuntimeConfig {
     /// Apply persisted configuration state (delegates to agent_config)
-    pub fn apply_persisted_state(&mut self, persisted: &crate::manager::WorkspaceConfigState) {
+    pub fn apply_persisted_state(&mut self, persisted: &crate::WorkspaceConfigState) {
         self.agent_config.apply_persisted_state(persisted);
     }
 }
@@ -988,9 +987,11 @@ impl RuntimeController {
 
         let Some(ready_rx) = self.ready_rx.take() else {
             return Ok(RuntimeStartupMetadata {
-                session_id: String::new(),
+                process_path: String::new(),
+                agent_path: String::new(),
+                rollout_id: None,
                 rollout_path: None,
-                durability: SessionDurabilityState {
+                durability: AgentMachineDurabilityState {
                     durable: true,
                     required: false,
                 },
@@ -1274,7 +1275,7 @@ pub fn effective_core_config_for_runtime(
             crate::workspace_memory_dir_for_channel_from_alan_dir(alan_dir, channel),
         );
     }
-    crate::resolve_session_request_controls(
+    crate::resolve_runtime_request_controls(
         &core_config,
         crate::provider_capabilities_for_config(&core_config),
         agent_config.runtime_config.request_control_intent,
@@ -1606,17 +1607,16 @@ fn spawn_with_prepared_runtime_environment(
             "Failed to initialize workspace memory layout; continuing without bootstrap writes"
         );
     }
-    let session_dir = resolved_agent_definition
+    let rollouts_dir = resolved_agent_definition
         .workspace_alan_dir
         .as_ref()
-        .map(|dir| crate::workspace_sessions_dir_for_channel_from_alan_dir(dir, channel));
+        .map(|dir| crate::workspace_rollouts_dir_for_channel_from_alan_dir(dir, channel));
     let rollout_cwd = config
         .default_cwd_override
         .clone()
         .or_else(|| resolved_agent_definition.workspace_root_dir.clone());
     let runtime_workspace_root_dir = resolved_agent_definition.workspace_root_dir.clone();
-    let resume_rollout_path = config.resume_rollout_path.clone();
-    let desired_session_id = config.session_id.clone();
+    let recovery_rollout_path = config.recovery_rollout_path.clone();
     let generation_capabilities = crate::provider_capabilities_for_config(&core_config);
     let host_capabilities = runtime_host_capabilities(&config, &host_tools);
     let mut prompt_cache =
@@ -1643,8 +1643,20 @@ fn spawn_with_prepared_runtime_environment(
                 return;
             }
         };
+        let (process_path, agent_path) = match &environment {
+            RuntimeEnvironment::Namespace { namespace, .. } => {
+                let process_path = match namespace.process_path() {
+                    Ok(path) => path,
+                    Err(err) => {
+                        let _ = ready_tx.send(Err(format!("{:#}", err)));
+                        return;
+                    }
+                };
+                (process_path, namespace.agent_path().to_string())
+            }
+        };
         let model = core_config.effective_model().to_string();
-        let session_request_controls = match crate::resolve_session_request_controls(
+        let machine_request_controls = match crate::resolve_runtime_request_controls(
             &core_config,
             generation_capabilities,
             runtime_config.request_control_intent,
@@ -1655,14 +1667,17 @@ fn spawn_with_prepared_runtime_environment(
                 return;
             }
         };
-        let startup = match initialize_session(
-            &model,
-            resume_rollout_path.as_ref(),
-            session_dir.as_ref(),
-            desired_session_id.as_deref(),
+        let startup = match initialize_agent_machine(
+            AgentMachineLaunchContext {
+                process_path: &process_path,
+                agent_path: &agent_path,
+                model: &model,
+            },
+            recovery_rollout_path.as_ref(),
+            rollouts_dir.as_ref(),
             runtime_config.durability_required,
             rollout_cwd.as_deref(),
-            session_request_controls,
+            machine_request_controls,
         )
         .await
         {
@@ -1672,13 +1687,13 @@ fn spawn_with_prepared_runtime_environment(
                 return;
             }
         };
-        let session = startup.session;
+        let machine = startup.machine;
 
         // Build agent loop state
         let mut state = RuntimeLoopState {
             workspace_id: config.workspace_id.clone(),
             workspace_root_dir: runtime_workspace_root_dir,
-            session,
+            machine,
             current_submission_id: None,
             environment,
             tool_catalog: host_tools.clone(),
@@ -1701,7 +1716,8 @@ fn spawn_with_prepared_runtime_environment(
         };
 
         info!(
-            session_fingerprint = %session_log_fingerprint(&state.session.id),
+            process_path = %state.process_path(),
+            agent_path = %state.agent_path(),
             "Agent runtime started"
         );
         let _ = ready_tx.send(Ok(startup.metadata));
@@ -1799,7 +1815,7 @@ fn spawn_with_prepared_runtime_environment(
                 if shutdown_requested || submissions_closed {
                     if shutdown_requested {
                         info!(
-                            session_fingerprint = %session_log_fingerprint(&state.session.id),
+                            process_path = %state.namespace_environment().agent_path(),
                             "Shutdown signal received, stopping runtime"
                         );
                     }
@@ -2075,10 +2091,10 @@ fn spawn_with_prepared_runtime_environment(
         }
 
         info!(
-            session_fingerprint = %session_log_fingerprint(&state.session.id),
+            process_path = %state.namespace_environment().agent_path(),
             "Agent runtime stopped"
         );
-        state.session.flush().await;
+        state.machine.flush().await;
     });
 
     // Spawn a task to forward events to a broadcast channel
@@ -2142,11 +2158,12 @@ mod tests {
 
     fn make_deferred_action_for_test() -> DeferredRuntimeAction {
         let temp = TempDir::new().unwrap();
-        let memory_dir = temp.path().join(".alan/memory");
+        let workspace_root = temp.path().join("workspace");
+        let workspace_alan_dir = workspace_root.join(".alan");
+        let memory_dir = workspace_alan_dir.join("runtime/stable/memory");
 
-        let mut session = Session::new();
-        session.id = "sess-deferred-queue".to_string();
-        session.add_user_message("My name is Morris.");
+        let mut machine = AgentMachine::new();
+        machine.add_user_message("My name is Morris.");
 
         let mut turn_state = TurnState::default();
         turn_state.begin_turn(0);
@@ -2159,7 +2176,7 @@ mod tests {
         let state = RuntimeLoopState {
             workspace_id: "workspace-queue-test".to_string(),
             workspace_root_dir: None,
-            session,
+            machine,
             current_submission_id: None,
             environment: namespace_environment_for_test(),
             tool_catalog: crate::tools::ToolRegistry::new(),
@@ -2607,7 +2624,9 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_runtime_shutdown_drains_deferred_memory_promotion_actions() {
         let temp = TempDir::new().unwrap();
-        let memory_dir = temp.path().join(".alan/memory");
+        let workspace_root = temp.path().join("workspace");
+        let workspace_alan_dir = workspace_root.join(".alan");
+        let memory_dir = workspace_alan_dir.join("runtime/stable/memory");
         crate::prompts::ensure_workspace_memory_layout_at(&memory_dir).unwrap();
 
         let mut core_config = crate::Config::for_openai_chat_completions_compatible(
@@ -2624,10 +2643,13 @@ mod tests {
 
         let config = WorkspaceRuntimeConfig {
             agent_config,
+            workspace_root_dir: Some(workspace_root),
+            workspace_alan_dir: Some(workspace_alan_dir),
             ..WorkspaceRuntimeConfig::default()
         };
+        let call_count = Arc::new(Mutex::new(0));
         let llm_client = LlmClient::new(ShutdownDrainMemoryPromotionProvider {
-            call_count: Arc::new(Mutex::new(0)),
+            call_count: Arc::clone(&call_count),
             deferred_delay: Duration::from_millis(100),
         });
 
@@ -2680,7 +2702,11 @@ mod tests {
             tokio::fs::read_to_string(memory_dir.join(crate::prompts::MEMORY_USER_FILENAME))
                 .await
                 .unwrap();
-        assert!(user_memory.contains("Name: Morris"));
+        assert!(
+            user_memory.contains("Name: Morris"),
+            "provider_calls={}, user_memory={user_memory:?}",
+            *call_count.lock().unwrap()
+        );
     }
 
     #[tokio::test]
@@ -2710,7 +2736,9 @@ mod tests {
         .unwrap();
         let ready = controller.wait_until_ready().await.unwrap();
 
-        assert!(!ready.session_id.is_empty());
+        assert_eq!(ready.process_path, "/proc/1");
+        assert_eq!(ready.agent_path, "/agent/1");
+        assert!(ready.rollout_id.is_some());
         controller.shutdown().await.unwrap();
     }
 
@@ -2819,7 +2847,7 @@ mod tests {
         let state = RuntimeLoopState {
             workspace_id: "outer-idle-namespace-response-test".to_string(),
             workspace_root_dir: None,
-            session: crate::Session::new(),
+            machine: crate::AgentMachine::new(),
             current_submission_id: None,
             environment: RuntimeEnvironment::namespace(namespace_environment),
             tool_catalog: crate::tools::ToolRegistry::new(),
@@ -2942,7 +2970,7 @@ mod tests {
         let rollback = tokio::time::timeout(Duration::from_secs(5), async {
             loop {
                 let envelope = event_rx.recv().await.unwrap();
-                if let Event::SessionRolledBack {
+                if let Event::MachineRolledBack {
                     turns,
                     removed_messages,
                 } = envelope.event
@@ -3114,7 +3142,7 @@ mod tests {
     fn test_apply_persisted_state_some_zero_values() {
         // Regression test: ensure Some(0) values are correctly restored
         // and not treated as "not set" (which would use defaults instead)
-        use crate::manager::WorkspaceConfigState;
+        use crate::WorkspaceConfigState;
 
         let base_config = WorkspaceRuntimeConfig::default();
         let mut restored_config = base_config.clone();
@@ -3377,7 +3405,7 @@ required = true
     #[test]
     fn test_apply_persisted_state_none_uses_base() {
         // Test that None values fall back to base config defaults
-        use crate::manager::WorkspaceConfigState;
+        use crate::WorkspaceConfigState;
 
         let base_config = WorkspaceRuntimeConfig::default();
         let mut restored_config = base_config.clone();
@@ -3434,7 +3462,7 @@ required = true
     #[test]
     fn test_apply_persisted_state_non_zero_values() {
         // Test that non-zero values are correctly restored
-        use crate::manager::WorkspaceConfigState;
+        use crate::WorkspaceConfigState;
 
         let base_config = WorkspaceRuntimeConfig::default();
         let mut restored_config = base_config.clone();
@@ -3487,7 +3515,7 @@ required = true
 
     #[test]
     fn test_apply_persisted_state_temperature_and_max_tokens() {
-        use crate::manager::WorkspaceConfigState;
+        use crate::WorkspaceConfigState;
 
         let mut config = WorkspaceRuntimeConfig::default();
         let persisted = WorkspaceConfigState {
@@ -3540,7 +3568,7 @@ required = true
 
     #[test]
     fn test_apply_persisted_state_derives_soft_threshold_from_legacy_ratio_when_invalid() {
-        use crate::manager::WorkspaceConfigState;
+        use crate::WorkspaceConfigState;
 
         let mut config = WorkspaceRuntimeConfig::default();
         let persisted = WorkspaceConfigState {
@@ -3588,7 +3616,7 @@ required = true
     #[test]
     fn test_apply_persisted_state_gemini_provider() {
         use crate::config::LlmProvider;
-        use crate::manager::{PersistedLlmProvider, WorkspaceConfigState};
+        use crate::{PersistedLlmProvider, WorkspaceConfigState};
 
         let mut config = WorkspaceRuntimeConfig::default();
         let persisted = WorkspaceConfigState {
@@ -3627,7 +3655,7 @@ required = true
     #[test]
     fn test_apply_persisted_state_openai_provider() {
         use crate::config::LlmProvider;
-        use crate::manager::{PersistedLlmProvider, WorkspaceConfigState};
+        use crate::{PersistedLlmProvider, WorkspaceConfigState};
 
         let mut config = WorkspaceRuntimeConfig::default();
         let persisted = WorkspaceConfigState {
@@ -3663,7 +3691,7 @@ required = true
     #[test]
     fn test_apply_persisted_state_openai_chat_completions_compatible_provider() {
         use crate::config::LlmProvider;
-        use crate::manager::{PersistedLlmProvider, WorkspaceConfigState};
+        use crate::{PersistedLlmProvider, WorkspaceConfigState};
 
         let mut config = WorkspaceRuntimeConfig::default();
         let persisted = WorkspaceConfigState {
@@ -3702,7 +3730,7 @@ required = true
     #[test]
     fn test_apply_persisted_state_openai_chat_completions_provider() {
         use crate::config::LlmProvider;
-        use crate::manager::{PersistedLlmProvider, WorkspaceConfigState};
+        use crate::{PersistedLlmProvider, WorkspaceConfigState};
 
         let mut config = WorkspaceRuntimeConfig::default();
         let persisted = WorkspaceConfigState {
@@ -3741,7 +3769,7 @@ required = true
     #[test]
     fn test_apply_persisted_state_anthropic_provider() {
         use crate::config::LlmProvider;
-        use crate::manager::{PersistedLlmProvider, WorkspaceConfigState};
+        use crate::{PersistedLlmProvider, WorkspaceConfigState};
 
         let mut config = WorkspaceRuntimeConfig::default();
         let persisted = WorkspaceConfigState {
@@ -3780,7 +3808,7 @@ required = true
 
     #[test]
     fn test_apply_persisted_state_refreshes_legacy_context_window_fallback() {
-        use crate::manager::{PersistedLlmProvider, WorkspaceConfigState};
+        use crate::{PersistedLlmProvider, WorkspaceConfigState};
 
         let mut config = WorkspaceRuntimeConfig::default();
         let persisted = WorkspaceConfigState {
@@ -3812,7 +3840,7 @@ required = true
     #[test]
     fn test_apply_persisted_state_keeps_explicit_context_window_override() {
         use crate::config::Config;
-        use crate::manager::{PersistedLlmProvider, WorkspaceConfigState};
+        use crate::{PersistedLlmProvider, WorkspaceConfigState};
 
         let mut config = WorkspaceRuntimeConfig::from(Config {
             llm_provider: crate::config::LlmProvider::OpenAiResponses,
@@ -3921,31 +3949,7 @@ required = true
     }
 
     #[test]
-    fn test_effective_core_config_for_runtime_stable_reads_existing_legacy_memory() {
-        let temp = TempDir::new().unwrap();
-        let workspace_root = temp.path().join("workspace");
-        let workspace_alan_dir = workspace_root.join(".alan");
-        std::fs::create_dir_all(workspace_alan_dir.join("memory")).unwrap();
-
-        let config = WorkspaceRuntimeConfig {
-            workspace_root_dir: Some(workspace_root),
-            workspace_alan_dir: Some(workspace_alan_dir.clone()),
-            agent_home_paths: Some(crate::AlanHomePaths::from_home_dir(
-                &temp.path().join("home"),
-            )),
-            ..WorkspaceRuntimeConfig::default()
-        };
-
-        let core_config = effective_core_config_for_runtime(&config).unwrap();
-
-        assert_eq!(
-            core_config.memory.workspace_dir,
-            Some(workspace_alan_dir.join("memory"))
-        );
-    }
-
-    #[test]
-    fn test_effective_core_config_for_runtime_dev_ignores_legacy_memory() {
+    fn test_effective_core_config_for_runtime_dev_memory_is_channel_scoped() {
         let temp = TempDir::new().unwrap();
         let workspace_root = temp.path().join("workspace");
         let workspace_alan_dir = workspace_root.join(".alan");
@@ -3976,7 +3980,7 @@ required = true
 
     #[test]
     fn test_apply_persisted_state_tool_policy_settings() {
-        use crate::manager::WorkspaceConfigState;
+        use crate::WorkspaceConfigState;
 
         let mut config = WorkspaceRuntimeConfig::default();
         let persisted = WorkspaceConfigState {
@@ -4044,14 +4048,6 @@ required = true
     }
 
     #[test]
-    fn test_session_log_fingerprint_is_stable_and_redacted() {
-        let fingerprint = session_log_fingerprint("session-secret-123");
-        assert_eq!(fingerprint.len(), 12);
-        assert_eq!(fingerprint, session_log_fingerprint("session-secret-123"));
-        assert_ne!(fingerprint, "session-secret-123");
-    }
-
-    #[test]
     fn test_agent_runtime_config_with_workspace_paths() {
         let temp = TempDir::new().unwrap();
         let config = WorkspaceRuntimeConfig {
@@ -4065,83 +4061,80 @@ required = true
     }
 
     #[test]
-    fn test_agent_runtime_config_resume_rollout_path() {
+    fn test_agent_runtime_config_recovery_rollout_path() {
         let temp = TempDir::new().unwrap();
         let rollout_path = temp.path().join("rollout.jsonl");
 
         let config = WorkspaceRuntimeConfig {
-            resume_rollout_path: Some(rollout_path.clone()),
+            recovery_rollout_path: Some(rollout_path.clone()),
             ..Default::default()
         };
 
-        assert_eq!(config.resume_rollout_path, Some(rollout_path));
-    }
-
-    #[test]
-    fn test_agent_runtime_config_session_id() {
-        let config = WorkspaceRuntimeConfig {
-            session_id: Some("sess-123".to_string()),
-            ..Default::default()
-        };
-
-        assert_eq!(config.session_id.as_deref(), Some("sess-123"));
+        assert_eq!(config.recovery_rollout_path, Some(rollout_path));
     }
 
     #[tokio::test]
-    async fn test_initialize_session_resume_without_session_dir_preserves_rollout_cwd() {
+    async fn test_initialize_agent_machine_from_rollout_preserves_current_process_cwd() {
         let temp = TempDir::new().unwrap();
-        let rollout_path = temp.path().join("resume-rollout.jsonl");
-        let resumed_cwd = temp.path().join("workspace/src");
-        let desired_session_id = format!("daemon-session-{}", uuid::Uuid::new_v4());
-        tokio::fs::create_dir_all(&resumed_cwd).await.unwrap();
-        tokio::fs::write(
-            &rollout_path,
-            r#"{"type":"session_meta","session_id":"legacy-runtime-id","started_at":"2026-01-29T14:30:52Z","cwd":"/tmp/original","model":"gemini-2.0-flash"}
-{"type":"message","role":"user","content":"Hello","tool_name":null,"timestamp":"2026-01-29T14:30:55Z"}
-"#,
-        )
-        .await
-        .unwrap();
+        let recovered_cwd = temp.path().join("workspace/src");
+        let recovered_rollouts = temp.path().join("recovered-rollouts");
+        tokio::fs::create_dir_all(&recovered_cwd).await.unwrap();
+        let mut source =
+            AgentMachine::new_with_recorder_in_dir("/proc/41", "gemini-2.0-flash", temp.path())
+                .await
+                .unwrap();
+        source.add_user_message("Hello");
+        source.flush().await;
+        let rollout_path = source.rollout_path().unwrap().clone();
+        drop(source);
 
-        let startup = initialize_session(
-            "gemini-2.0-flash",
+        let startup = initialize_agent_machine(
+            AgentMachineLaunchContext {
+                process_path: "/proc/42",
+                agent_path: "/agent/42",
+                model: "gemini-2.0-flash",
+            },
             Some(&rollout_path),
-            None,
-            Some(desired_session_id.as_str()),
+            Some(&recovered_rollouts),
             true,
-            Some(resumed_cwd.as_path()),
+            Some(recovered_cwd.as_path()),
             crate::ResolvedRequestControls {
                 reasoning: alan_agent_protocol::ReasoningControls {
                     effort: Some(alan_agent_protocol::ReasoningEffort::Medium),
                 },
-                source: crate::RequestControlSource::SessionOverride,
+                source: crate::RequestControlSource::AgentMachineOverride,
                 diagnostics: Vec::new(),
             },
         )
         .await
         .unwrap();
 
-        assert_eq!(
-            startup.session.id,
-            crate::rollout::session_storage_key(&desired_session_id)
-        );
+        assert_eq!(startup.metadata.process_path, "/proc/42");
+        assert_eq!(startup.metadata.agent_path, "/agent/42");
+        assert!(startup.metadata.rollout_id.is_some());
 
         let persisted_path = startup
             .metadata
             .rollout_path
             .clone()
-            .expect("resumed session should create a new rollout recorder");
+            .expect("recovered machine should create a new rollout recorder");
         let persisted_items = crate::rollout::RolloutRecorder::load_history(&persisted_path)
             .await
             .unwrap();
         let persisted_meta = persisted_items.into_iter().find_map(|item| match item {
-            crate::rollout::RolloutItem::SessionMeta(meta) => Some(meta),
+            crate::rollout::RolloutItem::AgentMachineMeta(meta) => Some(meta),
             _ => None,
         });
 
         assert_eq!(
             persisted_meta.as_ref().map(|meta| meta.cwd.as_str()),
-            Some(resumed_cwd.to_string_lossy().as_ref())
+            Some(recovered_cwd.to_string_lossy().as_ref())
+        );
+        assert_eq!(
+            persisted_meta
+                .as_ref()
+                .map(|meta| meta.process_path.as_str()),
+            Some("/proc/42")
         );
         assert_eq!(
             persisted_meta
@@ -4186,12 +4179,6 @@ required = true
         }));
         assert!(!should_drive_turn_submission(&Op::Rollback { turns: 1 }));
         assert!(!should_drive_turn_submission(&Op::Interrupt));
-        assert!(!should_drive_turn_submission(&Op::RegisterDynamicTools {
-            tools: vec![]
-        }));
-        assert!(!should_drive_turn_submission(&Op::SetClientCapabilities {
-            capabilities: alan_agent_protocol::ClientCapabilities::default(),
-        }));
         assert!(!should_drive_turn_submission(&Op::Resume {
             request_id: "req-123".to_string(),
             content: vec![alan_agent_protocol::ContentPart::structured(
@@ -4202,7 +4189,7 @@ required = true
 
     #[test]
     fn test_apply_persisted_state_governance_profile() {
-        use crate::manager::WorkspaceConfigState;
+        use crate::WorkspaceConfigState;
 
         let mut config = WorkspaceRuntimeConfig::default();
         let persisted = WorkspaceConfigState {

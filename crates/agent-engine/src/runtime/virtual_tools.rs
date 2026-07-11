@@ -27,9 +27,7 @@ use super::agent_loop::{NamespaceActionRecord, NormalizedToolCall, RuntimeLoopSt
 use super::child_agents::{
     ChildRuntimeResult, ChildRuntimeStatus, bound_workspace_root, spawn_child_runtime_cancellable,
 };
-use super::child_runs::{
-    ChildRunRegistryError, ChildRunTerminationMode, global_child_run_registry,
-};
+use super::child_runs::{ChildRunRegistryError, ChildRunTerminationMode};
 use super::delegation_capabilities::{
     DelegatedSpawnRejected, classify_delegated_task_requirements,
 };
@@ -123,7 +121,7 @@ where
                     audit: None,
                 })
                 .await;
-                state.session.record_tool_call(
+                state.machine.record_tool_call(
                     &tool_call.name,
                     tool_arguments.clone(),
                     pending_payload,
@@ -165,7 +163,7 @@ where
                     audit: None,
                 })
                 .await;
-                state.session.record_tool_call(
+                state.machine.record_tool_call(
                     &tool_call.name,
                     tool_arguments.clone(),
                     error_payload,
@@ -208,7 +206,7 @@ where
                     audit: None,
                 })
                 .await;
-                state.session.record_tool_call(
+                state.machine.record_tool_call(
                     &tool_call.name,
                     tool_arguments.clone(),
                     pending_payload,
@@ -221,7 +219,6 @@ where
                     request_id,
                     kind: alan_agent_protocol::YieldKind::StructuredInput,
                     payload: serde_json::to_value(structured_input_yield_payload(
-                        &state.session.client_capabilities,
                         request.title.clone(),
                         request.prompt.clone(),
                         request.questions.clone(),
@@ -243,7 +240,7 @@ where
                     audit: None,
                 })
                 .await;
-                state.session.record_tool_call(
+                state.machine.record_tool_call(
                     &tool_call.name,
                     tool_arguments.clone(),
                     error_payload,
@@ -271,7 +268,7 @@ where
                     state.turn_state.set_plan_snapshot_at_message_count(
                         explanation.clone(),
                         items.clone(),
-                        state.session.tape.messages().len(),
+                        state.machine.tape.messages().len(),
                     );
                     let payload = json!({
                         "status": "plan_updated",
@@ -293,14 +290,14 @@ where
                         items: items.clone(),
                     })
                     .await;
-                    state.session.record_tool_call(
+                    state.machine.record_tool_call(
                         &tool_call.name,
                         tool_arguments.clone(),
                         payload.clone(),
                         true,
                     );
                     state
-                        .session
+                        .machine
                         .add_tool_message(&tool_call.id, &tool_call.name, payload);
                     Ok(VirtualToolOutcome::Continue {
                         refresh_context: true,
@@ -320,7 +317,7 @@ where
                         audit: None,
                     })
                     .await;
-                    state.session.record_tool_call(
+                    state.machine.record_tool_call(
                         &tool_call.name,
                         tool_arguments.clone(),
                         error_payload,
@@ -338,15 +335,6 @@ where
             }
         }
         "invoke_delegated_skill" => {
-            // A host may provide a real delegated-execution bridge as a dynamic tool.
-            // In that case, do not shadow it with the runtime placeholder branch.
-            if state
-                .session
-                .dynamic_tools
-                .contains_key("invoke_delegated_skill")
-            {
-                return Ok(VirtualToolOutcome::NotVirtual);
-            }
             handle_invoke_delegated_skill(
                 state,
                 tool_call,
@@ -447,14 +435,14 @@ where
                 audit: None,
             })
             .await;
-            state.session.record_tool_call(
+            state.machine.record_tool_call(
                 &tool_call.name,
                 tool_arguments.clone(),
                 payload.clone(),
                 false,
             );
             state
-                .session
+                .machine
                 .add_tool_message(&tool_call.id, &tool_call.name, payload);
             return Ok(VirtualToolOutcome::Continue {
                 refresh_context: true,
@@ -497,7 +485,7 @@ where
             "error": reason,
             "mount_request": mount_payload,
         });
-        state.session.record_event(
+        state.machine.record_event(
             "tool_policy_decision",
             json!({
                 "tool_call_id": tool_call.id,
@@ -528,7 +516,7 @@ where
             audit: Some(audit.clone()),
         })
         .await;
-        state.session.record_tool_call_with_audit(
+        state.machine.record_tool_call_with_audit(
             &tool_call.name,
             tool_arguments.clone(),
             payload.clone(),
@@ -536,7 +524,7 @@ where
             Some(audit),
         );
         state
-            .session
+            .machine
             .add_tool_message(&tool_call.id, &tool_call.name, payload);
         return Ok(VirtualToolOutcome::Continue {
             refresh_context: false,
@@ -555,7 +543,7 @@ where
         sandbox_backend: decision_audit.sandbox_backend.clone(),
         path_mode: decision_audit.path_mode.clone(),
     };
-    state.session.record_event(
+    state.machine.record_event(
         "tool_policy_decision",
         json!({
             "tool_call_id": tool_call.id,
@@ -620,7 +608,7 @@ where
         audit: Some(escalation_audit.clone()),
     })
     .await;
-    state.session.record_tool_call_with_audit(
+    state.machine.record_tool_call_with_audit(
         &tool_call.name,
         tool_arguments.clone(),
         payload.clone(),
@@ -818,7 +806,7 @@ where
             audit: Some(audit.clone()),
         })
         .await;
-        state.session.record_tool_call_with_audit(
+        state.machine.record_tool_call_with_audit(
             &tool_call.name,
             tool_arguments.clone(),
             payload.clone(),
@@ -826,7 +814,7 @@ where
             Some(audit),
         );
         state
-            .session
+            .machine
             .add_tool_message(&tool_call.id, &tool_call.name, payload);
         return Ok(VirtualToolOutcome::Continue {
             refresh_context: true,
@@ -857,8 +845,8 @@ where
     })
     .await;
 
-    let result = global_child_run_registry().request_termination(
-        &state.session.id,
+    let result = state.child_run_registry().request_termination(
+        &state.process_path(),
         &child_run_id,
         "parent_runtime",
         mode,
@@ -882,7 +870,7 @@ where
         Err(ChildRunRegistryError::NotFound) => (
             json!({
                 "status": "not_found",
-                "error": "Child run not found for this parent session.",
+                "error": "Child run not found for this parent machine.",
                 "child_run_id": child_run_id
             }),
             false,
@@ -898,7 +886,7 @@ where
         audit: Some(audit.clone()),
     })
     .await;
-    state.session.record_tool_call_with_audit(
+    state.machine.record_tool_call_with_audit(
         &tool_call.name,
         tool_arguments.clone(),
         payload.clone(),
@@ -906,7 +894,7 @@ where
         Some(audit),
     );
     state
-        .session
+        .machine
         .add_tool_message(&tool_call.id, &tool_call.name, payload);
     Ok(VirtualToolOutcome::Continue {
         refresh_context: true,
@@ -959,7 +947,7 @@ where
         | ToolPolicyDecision::Escalate { audit, .. }
         | ToolPolicyDecision::Forbidden { audit, .. } => audit.clone(),
     };
-    state.session.record_event(
+    state.machine.record_event(
         "tool_policy_decision",
         json!({
             "tool_call_id": tool_call.id,
@@ -995,7 +983,7 @@ where
                 details,
                 options: vec!["approve".to_string(), "reject".to_string()],
             };
-            state.session.record_tool_call_with_audit(
+            state.machine.record_tool_call_with_audit(
                 &tool_call.name,
                 tool_arguments.clone(),
                 json!({"status":"escalation_required"}),
@@ -1047,7 +1035,7 @@ where
                 audit: Some(audit.clone()),
             })
             .await;
-            state.session.record_tool_call_with_audit(
+            state.machine.record_tool_call_with_audit(
                 &tool_call.name,
                 tool_arguments.clone(),
                 blocked_payload.clone(),
@@ -1055,7 +1043,7 @@ where
                 Some(audit),
             );
             state
-                .session
+                .machine
                 .add_tool_message(&tool_call.id, &tool_call.name, blocked_payload);
             Ok(TerminateChildRunPolicyOutcome::Continue {
                 refresh_context: false,
@@ -1123,14 +1111,14 @@ where
             audit: None,
         })
         .await;
-        state.session.record_tool_call(
+        state.machine.record_tool_call(
             &tool_call.name,
             tool_arguments.clone(),
             error_payload.clone(),
             false,
         );
         state
-            .session
+            .machine
             .add_tool_message(&tool_call.id, &tool_call.name, error_payload.clone());
         emit(Event::Error {
             message: "Invalid delegated skill invocation payload.".to_string(),
@@ -1156,14 +1144,14 @@ where
             audit: None,
         })
         .await;
-        state.session.record_tool_call(
+        state.machine.record_tool_call(
             &tool_call.name,
             tool_arguments.clone(),
             error_payload.clone(),
             false,
         );
         state
-            .session
+            .machine
             .add_tool_message(&tool_call.id, &tool_call.name, error_payload);
         emit(Event::Error {
             message: "Delegated skill invocation is not available in this runtime.".to_string(),
@@ -1198,9 +1186,10 @@ where
                             child_result.child_run_id.as_deref(),
                             output_reference.as_ref(),
                         ) {
-                            global_child_run_registry()
+                            state
+                                .child_run_registry()
                                 .set_state_ref(child_run_id, reference.clone());
-                            child_result.child_run = global_child_run_registry().get(child_run_id);
+                            child_result.child_run = state.child_run_registry().get(child_run_id);
                         }
                         (
                             persisted_request,
@@ -1265,14 +1254,14 @@ where
         audit: None,
     })
     .await;
-    state.session.record_tool_call(
+    state.machine.record_tool_call(
         &tool_call.name,
         persisted_arguments,
         rollout_payload,
         invocation_succeeded,
     );
     state
-        .session
+        .machine
         .add_tool_message(&tool_call.id, &tool_call.name, tape_payload);
     Ok(VirtualToolOutcome::Continue {
         refresh_context: true,
@@ -1287,7 +1276,7 @@ async fn spawn_and_join_delegated_child(
     if cancel.is_cancelled() {
         return Ok(ChildRuntimeResult {
             status: ChildRuntimeStatus::Cancelled,
-            session_id: String::new(),
+            process_path: String::new(),
             child_run_id: None,
             rollout_path: None,
             output_text: String::new(),
@@ -1711,9 +1700,7 @@ fn child_failure_result(
 struct DelegatedChildRunReference {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     child_run_id: Option<String>,
-    session_id: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    process_path: Option<String>,
+    process_path: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     state_ref: Option<DelegatedSkillOutputRef>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1732,11 +1719,7 @@ struct DelegatedSkillRolloutRecord {
 fn delegated_child_run_reference(result: &ChildRuntimeResult) -> DelegatedChildRunReference {
     DelegatedChildRunReference {
         child_run_id: result.child_run_id.clone(),
-        session_id: result.session_id.clone(),
-        process_path: result
-            .child_run
-            .as_ref()
-            .and_then(|record| record.process_path.clone()),
+        process_path: result.process_path.clone(),
         state_ref: result
             .child_run
             .as_ref()
@@ -1776,12 +1759,19 @@ async fn persist_delegated_child_evidence(
     {
         return None;
     }
-    let result_doc = json!({
-        "child_session_id": result.session_id,
+    let mut result_doc = json!({
+        "child_process_path": result.process_path,
         "child_run_id": result.child_run_id,
         "terminal_status": child_runtime_status_label(result.status.clone()),
         "redactions": redacted.markers,
     });
+    if let Some(agent_path) = result
+        .child_run
+        .as_ref()
+        .and_then(|record| record.agent_path.as_deref())
+    {
+        result_doc["child_agent_path"] = json!(agent_path);
+    }
     let action_id = state
         .namespace_environment()
         .write_action(
@@ -1814,7 +1804,7 @@ async fn persist_delegated_child_evidence(
         offset: reference.offset,
         length: reference.length,
         debug: Some(DelegatedSkillOutputDebugMetadata {
-            session_id: result.session_id.clone(),
+            process_path: result.process_path.clone(),
             rollout_path: result
                 .rollout_path
                 .as_ref()
@@ -2095,7 +2085,6 @@ fn yield_kind_label(kind: &YieldKind) -> String {
     match kind {
         YieldKind::Confirmation => "confirmation".to_string(),
         YieldKind::StructuredInput => "structured_input".to_string(),
-        YieldKind::DynamicTool => "dynamic_tool".to_string(),
         YieldKind::Custom(kind) => kind.clone(),
     }
 }
@@ -2366,23 +2355,10 @@ fn boolean_options() -> Vec<StructuredInputOption> {
 }
 
 fn structured_input_yield_payload(
-    capabilities: &alan_agent_protocol::ClientCapabilities,
     title: String,
     prompt: String,
     questions: Vec<StructuredInputQuestion>,
 ) -> StructuredInputYieldPayload {
-    let questions = if capabilities.adaptive_yields.presentation_hints {
-        questions
-    } else {
-        questions
-            .into_iter()
-            .map(|mut question| {
-                question.presentation_hints.clear();
-                question
-            })
-            .collect()
-    };
-
     StructuredInputYieldPayload {
         title,
         prompt: Some(prompt),

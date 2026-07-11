@@ -1,10 +1,10 @@
-//! Session persistence using JSONL format (similar to Codex rollout files)
+//! AgentMachine persistence using JSONL format (similar to Codex rollout files)
 
 use alan_agent_protocol::{
     CompactionAttemptSnapshot, CompactionReason, CompactionResult, CompactionTrigger,
     MemoryFlushAttemptSnapshot,
 };
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow};
 use chrono::Datelike;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -24,7 +24,7 @@ const DURABLE_PREVIEW_MAX_CHARS: usize = 160;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum RolloutItem {
-    SessionMeta(SessionMeta),
+    AgentMachineMeta(AgentMachineMeta),
     Message(MessageRecord),
     TurnContext(TurnContextItem),
     CompactionAttempt(CompactionAttemptSnapshot),
@@ -37,8 +37,11 @@ pub enum RolloutItem {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SessionMeta {
-    pub session_id: String,
+pub struct AgentMachineMeta {
+    /// Stable identity of this rollout evidence file.
+    pub rollout_id: String,
+    /// AgentFS path of the Agent Process that produced this rollout.
+    pub process_path: String,
     pub started_at: String, // ISO 8601
     pub cwd: String,
     pub model: String,
@@ -46,8 +49,8 @@ pub struct SessionMeta {
     pub reasoning_effort: Option<alan_agent_protocol::ReasoningEffort>,
 }
 
-pub fn session_storage_key(session_id: &str) -> String {
-    hex::encode(Sha256::digest(session_id.as_bytes()))
+pub fn process_storage_key(process_path: &str) -> String {
+    hex::encode(Sha256::digest(process_path.as_bytes()))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -375,7 +378,7 @@ pub enum EffectStatus {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EffectRecord {
     pub effect_id: String,
-    pub run_id: String,
+    pub process_path: String,
     pub tool_call_id: String,
     pub idempotency_key: String,
     pub effect_type: String,
@@ -441,10 +444,11 @@ enum RolloutCmd {
     },
 }
 
-/// Persistent recorder for session history
+/// Persistent recorder for machine history
 #[derive(Debug)]
 pub struct RolloutRecorder {
     tx: mpsc::UnboundedSender<RolloutCmd>,
+    rollout_id: String,
     rollout_path: PathBuf,
 }
 
@@ -487,67 +491,91 @@ impl RolloutRecorder {
         }
     }
 
-    /// Create a new recorder for a session
-    pub async fn new(session_id: &str, model: &str) -> anyhow::Result<Self> {
-        let rollout_path = Self::build_rollout_path(session_id).await?;
-        Self::new_with_rollout_path(session_id, model, rollout_path, None, None).await
+    /// Create a new recorder for one Agent Process machine.
+    pub async fn new(process_path: &str, model: &str) -> anyhow::Result<Self> {
+        Self::new_with_cwd_and_reasoning_effort(process_path, model, None, None).await
     }
 
-    /// Create a new recorder for a session and capture an explicit runtime tool cwd in session
+    /// Create a new recorder for a machine and capture an explicit runtime tool cwd in machine
     /// metadata.
     pub async fn new_with_cwd(
-        session_id: &str,
+        process_path: &str,
         model: &str,
         cwd: Option<&std::path::Path>,
     ) -> anyhow::Result<Self> {
-        Self::new_with_cwd_and_reasoning_effort(session_id, model, cwd, None).await
+        Self::new_with_cwd_and_reasoning_effort(process_path, model, cwd, None).await
     }
 
     pub async fn new_with_cwd_and_reasoning_effort(
-        session_id: &str,
+        process_path: &str,
         model: &str,
         cwd: Option<&std::path::Path>,
         reasoning_effort: Option<alan_agent_protocol::ReasoningEffort>,
     ) -> anyhow::Result<Self> {
-        let rollout_path = Self::build_rollout_path(session_id).await?;
-        Self::new_with_rollout_path(session_id, model, rollout_path, cwd, reasoning_effort).await
+        let rollout_id = uuid::Uuid::new_v4().to_string();
+        let rollout_path = Self::build_rollout_path(&rollout_id).await?;
+        Self::new_with_rollout_path(
+            &rollout_id,
+            process_path,
+            model,
+            rollout_path,
+            cwd,
+            reasoning_effort,
+        )
+        .await
     }
 
-    /// Create a new recorder for a session under a specific sessions directory.
+    /// Create a new recorder for a machine under a specific rollouts directory.
     pub async fn new_in_dir(
-        session_id: &str,
+        process_path: &str,
         model: &str,
-        sessions_dir: &std::path::Path,
+        rollouts_dir: &std::path::Path,
     ) -> anyhow::Result<Self> {
-        let rollout_path = Self::build_rollout_path_in_dir(session_id, sessions_dir).await?;
-        Self::new_with_rollout_path(session_id, model, rollout_path, None, None).await
+        Self::new_in_dir_with_cwd_and_reasoning_effort(
+            process_path,
+            model,
+            rollouts_dir,
+            None,
+            None,
+        )
+        .await
     }
 
-    /// Create a new recorder under a specific sessions directory and capture the runtime tool cwd
-    /// in session metadata.
+    /// Create a new recorder under a specific rollouts directory and capture the runtime tool cwd
+    /// in machine metadata.
     pub async fn new_in_dir_with_cwd(
-        session_id: &str,
+        process_path: &str,
         model: &str,
-        sessions_dir: &std::path::Path,
+        rollouts_dir: &std::path::Path,
         cwd: Option<&std::path::Path>,
     ) -> anyhow::Result<Self> {
-        Self::new_in_dir_with_cwd_and_reasoning_effort(session_id, model, sessions_dir, cwd, None)
+        Self::new_in_dir_with_cwd_and_reasoning_effort(process_path, model, rollouts_dir, cwd, None)
             .await
     }
 
     pub async fn new_in_dir_with_cwd_and_reasoning_effort(
-        session_id: &str,
+        process_path: &str,
         model: &str,
-        sessions_dir: &std::path::Path,
+        rollouts_dir: &std::path::Path,
         cwd: Option<&std::path::Path>,
         reasoning_effort: Option<alan_agent_protocol::ReasoningEffort>,
     ) -> anyhow::Result<Self> {
-        let rollout_path = Self::build_rollout_path_in_dir(session_id, sessions_dir).await?;
-        Self::new_with_rollout_path(session_id, model, rollout_path, cwd, reasoning_effort).await
+        let rollout_id = uuid::Uuid::new_v4().to_string();
+        let rollout_path = Self::build_rollout_path_in_dir(&rollout_id, rollouts_dir).await?;
+        Self::new_with_rollout_path(
+            &rollout_id,
+            process_path,
+            model,
+            rollout_path,
+            cwd,
+            reasoning_effort,
+        )
+        .await
     }
 
     async fn new_with_rollout_path(
-        session_id: &str,
+        rollout_id: &str,
+        process_path: &str,
         model: &str,
         rollout_path: PathBuf,
         cwd: Option<&std::path::Path>,
@@ -603,12 +631,14 @@ impl RolloutRecorder {
 
         let recorder = Self {
             tx,
+            rollout_id: rollout_id.to_string(),
             rollout_path: rollout_path.clone(),
         };
 
-        // Record session metadata
-        let meta = SessionMeta {
-            session_id: session_id.to_string(),
+        // Record machine metadata
+        let meta = AgentMachineMeta {
+            rollout_id: rollout_id.to_string(),
+            process_path: process_path.to_string(),
             started_at: chrono::Utc::now().to_rfc3339(),
             cwd: cwd
                 .map(|path| path.to_string_lossy().to_string())
@@ -621,7 +651,7 @@ impl RolloutRecorder {
             model: model.to_string(),
             reasoning_effort,
         };
-        recorder.record_nowait(RolloutItem::SessionMeta(meta))?;
+        recorder.record_nowait(RolloutItem::AgentMachineMeta(meta))?;
         recorder.flush().await?;
 
         debug!(?rollout_path, "RolloutRecorder created");
@@ -687,7 +717,7 @@ impl RolloutRecorder {
         });
         self.record(item).await?;
         // Ensure message records are persisted promptly so rollouts stay in sync
-        // with the UI during long-running sessions.
+        // with the file-backed renderer during long-running turns.
         self.flush().await?;
         Ok(())
     }
@@ -1080,18 +1110,57 @@ impl RolloutRecorder {
 
     /// Load history from a rollout file
     pub async fn load_history(path: &PathBuf) -> anyhow::Result<Vec<RolloutItem>> {
-        let content = fs::read_to_string(path).await?;
+        let content = fs::read(path).await?;
+        let ends_with_record_delimiter = content.ends_with(b"\n");
         let mut items = Vec::new();
+        let mut lines = content.split(|byte| *byte == b'\n').enumerate().peekable();
 
-        for line in content.lines() {
+        while let Some((index, line_bytes)) = lines.next() {
+            let is_unterminated_tail = lines.peek().is_none() && !ends_with_record_delimiter;
+            let line = match std::str::from_utf8(line_bytes) {
+                Ok(line) => line,
+                Err(err) if is_unterminated_tail && err.error_len().is_none() => {
+                    warn!(
+                        path = %path.display(),
+                        line = index + 1,
+                        error = %err,
+                        "Ignoring torn trailing rollout record with incomplete UTF-8"
+                    );
+                    break;
+                }
+                Err(err) => {
+                    return Err(anyhow!(err)).with_context(|| {
+                        format!(
+                            "invalid UTF-8 in current rollout record at {}:{}",
+                            path.display(),
+                            index + 1
+                        )
+                    });
+                }
+            };
             let line = line.trim();
             if line.is_empty() {
                 continue;
             }
             match serde_json::from_str::<RolloutItem>(line) {
                 Ok(item) => items.push(item),
-                Err(e) => {
-                    warn!(?e, line = ?line, "Failed to parse rollout line");
+                Err(err) if is_unterminated_tail && err.is_eof() => {
+                    warn!(
+                        path = %path.display(),
+                        line = index + 1,
+                        error = %err,
+                        "Ignoring torn trailing rollout record"
+                    );
+                    break;
+                }
+                Err(err) => {
+                    return Err(err).with_context(|| {
+                        format!(
+                            "invalid current rollout record at {}:{}",
+                            path.display(),
+                            index + 1
+                        )
+                    });
                 }
             }
         }
@@ -1104,8 +1173,13 @@ impl RolloutRecorder {
         &self.rollout_path
     }
 
+    /// Identity of the execution-evidence rollout written by this recorder.
+    pub fn rollout_id(&self) -> &str {
+        &self.rollout_id
+    }
+
     /// Build the rollout file path
-    async fn build_rollout_path(session_id: &str) -> anyhow::Result<PathBuf> {
+    async fn build_rollout_path(rollout_id: &str) -> anyhow::Result<PathBuf> {
         let alan_dir = crate::AlanHomePaths::detect()
             .map(|paths| paths.alan_home_dir)
             .unwrap_or_else(|| {
@@ -1114,7 +1188,7 @@ impl RolloutRecorder {
             });
 
         let now = chrono::Local::now();
-        let date_dir = crate::workspace_sessions_dir_from_alan_dir(&alan_dir)
+        let date_dir = crate::workspace_rollouts_dir_from_alan_dir(&alan_dir)
             .join(format!("{:04}", now.year()))
             .join(format!("{:02}", now.month()))
             .join(format!("{:02}", now.day()));
@@ -1122,20 +1196,20 @@ impl RolloutRecorder {
         fs::create_dir_all(&date_dir).await?;
 
         let timestamp = now.format("%Y%m%d-%H%M%S");
-        let filename = format!("rollout-{}-{}.jsonl", timestamp, session_id);
+        let filename = format!("rollout-{}-{}.jsonl", timestamp, rollout_id);
 
         Ok(date_dir.join(filename))
     }
 
     async fn build_rollout_path_in_dir(
-        session_id: &str,
-        sessions_dir: &std::path::Path,
+        rollout_id: &str,
+        rollouts_dir: &std::path::Path,
     ) -> anyhow::Result<PathBuf> {
-        fs::create_dir_all(sessions_dir).await?;
+        fs::create_dir_all(rollouts_dir).await?;
 
         let timestamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
-        let filename = format!("rollout-{}-{}.jsonl", timestamp, session_id);
-        Ok(sessions_dir.join(filename))
+        let filename = format!("rollout-{}-{}.jsonl", timestamp, rollout_id);
+        Ok(rollouts_dir.join(filename))
     }
 
     /// Write a single item to the writer
@@ -1169,9 +1243,10 @@ impl Clone for RolloutRecorder {
     fn clone(&self) -> Self {
         // Create a new channel for the cloned recorder
         // This is a limitation - cloned recorders share the same file but have separate channels
-        // In practice, only one recorder should be used per session
+        // In practice, only one recorder should be used per machine
         Self {
             tx: self.tx.clone(),
+            rollout_id: self.rollout_id.clone(),
             rollout_path: self.rollout_path.clone(),
         }
     }
@@ -1216,17 +1291,24 @@ mod tests {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
             let temp_dir = TempDir::new().unwrap();
-            let recorder = RolloutRecorder::new_in_dir(
-                "test-session-123",
-                "gemini-2.0-flash",
-                temp_dir.path(),
-            )
-            .await;
+            let recorder =
+                RolloutRecorder::new_in_dir("/proc/123", "gemini-2.0-flash", temp_dir.path()).await;
             assert!(recorder.is_ok());
 
             let recorder = recorder.unwrap();
             let path = recorder.path();
-            assert!(path.to_string_lossy().contains("test-session-123"));
+            assert!(
+                path.file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .starts_with("rollout-")
+            );
+            assert!(path.to_string_lossy().ends_with(".jsonl"));
+            let items = RolloutRecorder::load_history(path).await.unwrap();
+            assert!(matches!(
+                items.first(),
+                Some(RolloutItem::AgentMachineMeta(meta)) if meta.process_path == "/proc/123"
+            ));
 
             // Clean up - remove the created file
             let _ = fs::remove_file(path).await;
@@ -1242,7 +1324,7 @@ mod tests {
             fs::create_dir_all(&explicit_cwd).await.unwrap();
 
             let recorder = RolloutRecorder::new_in_dir_with_cwd(
-                "test-session-cwd",
+                "test-machine-cwd",
                 "gemini-2.0-flash",
                 temp_dir.path(),
                 Some(explicit_cwd.as_path()),
@@ -1254,10 +1336,10 @@ mod tests {
                 .await
                 .unwrap();
             match &items[0] {
-                RolloutItem::SessionMeta(meta) => {
+                RolloutItem::AgentMachineMeta(meta) => {
                     assert_eq!(meta.cwd, explicit_cwd.to_string_lossy());
                 }
-                _ => panic!("Expected SessionMeta"),
+                _ => panic!("Expected AgentMachineMeta"),
             }
 
             let _ = fs::remove_file(recorder.path()).await;
@@ -1270,7 +1352,7 @@ mod tests {
         rt.block_on(async {
             let temp_dir = TempDir::new().unwrap();
             let recorder = RolloutRecorder::new_in_dir(
-                "test-session-flush",
+                "test-machine-flush",
                 "gemini-2.0-flash",
                 temp_dir.path(),
             )
@@ -1369,27 +1451,36 @@ mod tests {
     #[tokio::test]
     async fn test_load_history() {
         let temp_dir = TempDir::new().unwrap();
-        let file_path = temp_dir.path().join("test.jsonl");
+        let recorder = RolloutRecorder::new_in_dir("/proc/7", "gemini-2.0-flash", temp_dir.path())
+            .await
+            .unwrap();
+        recorder
+            .record_tape_message(&crate::tape::Message::user("Hello"))
+            .await
+            .unwrap();
+        recorder
+            .record_tool_call(
+                "test_tool",
+                serde_json::json!({}),
+                serde_json::json!({}),
+                true,
+            )
+            .await
+            .unwrap();
 
-        // Create a test file
-        let content = r#"{"type":"session_meta","session_id":"test-123","started_at":"2026-01-29T14:30:52Z","cwd":"/home/user","model":"gemini-2.0-flash"}
-{"type":"message","role":"user","content":"Hello","tool_name":null,"timestamp":"2026-01-29T14:30:55Z"}
-{"type":"tool_call","name":"test_tool","arguments":{},"result":{},"success":true,"timestamp":"2026-01-29T14:31:02Z"}
-"#;
-
-        fs::write(&file_path, content).await.unwrap();
-
-        let items = RolloutRecorder::load_history(&file_path).await.unwrap();
+        let items = RolloutRecorder::load_history(recorder.path())
+            .await
+            .unwrap();
         assert_eq!(items.len(), 3);
 
-        // Verify first item is session meta
+        // Verify first item is machine meta
         match &items[0] {
-            RolloutItem::SessionMeta(meta) => {
-                assert_eq!(meta.session_id, "test-123");
+            RolloutItem::AgentMachineMeta(meta) => {
+                assert_eq!(meta.process_path, "/proc/7");
+                assert!(!meta.rollout_id.is_empty());
                 assert_eq!(meta.model, "gemini-2.0-flash");
-                assert_eq!(meta.cwd, "/home/user");
             }
-            _ => panic!("Expected SessionMeta"),
+            _ => panic!("Expected AgentMachineMeta"),
         }
 
         // Verify second item is message
@@ -1589,7 +1680,74 @@ this is not valid json
 
         fs::write(&file_path, content).await.unwrap();
 
-        // Should skip invalid lines and continue
+        let error = RolloutRecorder::load_history(&file_path).await.unwrap_err();
+        assert!(error.to_string().contains("invalid current rollout record"));
+    }
+
+    #[tokio::test]
+    async fn test_load_history_ignores_torn_trailing_json_record() {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("with_torn_tail.jsonl");
+        let content = concat!(
+            "{\"type\":\"message\",\"role\":\"user\",\"content\":\"Valid\",",
+            "\"tool_name\":null,\"timestamp\":\"2026-01-29T14:30:55Z\"}\n",
+            "{\"type\":\"message\",\"role\":\"assistant\",\"content\":"
+        );
+
+        fs::write(&file_path, content).await.unwrap();
+
+        let items = RolloutRecorder::load_history(&file_path).await.unwrap();
+        assert_eq!(items.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_load_history_ignores_torn_trailing_utf8_record() {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("with_torn_utf8_tail.jsonl");
+        let mut content = concat!(
+            "{\"type\":\"message\",\"role\":\"user\",\"content\":\"Valid\",",
+            "\"tool_name\":null,\"timestamp\":\"2026-01-29T14:30:55Z\"}\n",
+            "{\"type\":\"message\",\"role\":\"assistant\",\"content\":\""
+        )
+        .as_bytes()
+        .to_vec();
+        content.extend_from_slice(&[0xe2, 0x82]);
+
+        fs::write(&file_path, content).await.unwrap();
+
+        let items = RolloutRecorder::load_history(&file_path).await.unwrap();
+        assert_eq!(items.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_load_history_rejects_non_torn_invalid_trailing_record() {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("with_invalid_tail.jsonl");
+        let content = concat!(
+            "{\"type\":\"message\",\"role\":\"user\",\"content\":\"Valid\",",
+            "\"tool_name\":null,\"timestamp\":\"2026-01-29T14:30:55Z\"}\n",
+            "not json"
+        );
+
+        fs::write(&file_path, content).await.unwrap();
+
+        let error = RolloutRecorder::load_history(&file_path).await.unwrap_err();
+        assert!(error.to_string().contains("invalid current rollout record"));
+    }
+
+    #[tokio::test]
+    async fn test_load_history_accepts_valid_final_record_without_newline() {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("valid_without_newline.jsonl");
+        let content = concat!(
+            "{\"type\":\"message\",\"role\":\"user\",\"content\":\"First\",",
+            "\"tool_name\":null,\"timestamp\":\"2026-01-29T14:30:55Z\"}\n",
+            "{\"type\":\"message\",\"role\":\"assistant\",\"content\":\"Second\",",
+            "\"tool_name\":null,\"timestamp\":\"2026-01-29T14:30:56Z\"}"
+        );
+
+        fs::write(&file_path, content).await.unwrap();
+
         let items = RolloutRecorder::load_history(&file_path).await.unwrap();
         assert_eq!(items.len(), 2);
     }
@@ -1605,8 +1763,9 @@ this is not valid json
 
     #[test]
     fn test_rollout_item_serialization() {
-        let meta = RolloutItem::SessionMeta(SessionMeta {
-            session_id: "test-123".to_string(),
+        let meta = RolloutItem::AgentMachineMeta(AgentMachineMeta {
+            rollout_id: "rollout-123".to_string(),
+            process_path: "/proc/7".to_string(),
             started_at: "2026-01-29T14:30:52Z".to_string(),
             cwd: "/test".to_string(),
             model: "gemini-test".to_string(),
@@ -1614,14 +1773,15 @@ this is not valid json
         });
 
         let json = serde_json::to_string(&meta).unwrap();
-        assert!(json.contains("session_meta"));
-        assert!(json.contains("test-123"));
+        assert!(json.contains("agent_machine_meta"));
+        assert!(json.contains("rollout-123"));
+        assert!(json.contains("/proc/7"));
         assert!(json.contains("gemini-test"));
 
         let deserialized: RolloutItem = serde_json::from_str(&json).unwrap();
         match deserialized {
-            RolloutItem::SessionMeta(m) => assert_eq!(m.session_id, "test-123"),
-            _ => panic!("Expected SessionMeta"),
+            RolloutItem::AgentMachineMeta(m) => assert_eq!(m.rollout_id, "rollout-123"),
+            _ => panic!("Expected AgentMachineMeta"),
         }
     }
 
@@ -1689,7 +1849,7 @@ this is not valid json
     async fn test_record_turn_context_persists_reasoning_effort() {
         let temp_dir = TempDir::new().unwrap();
         let recorder =
-            RolloutRecorder::new_in_dir("session-123", "gemini-2.0-flash", temp_dir.path())
+            RolloutRecorder::new_in_dir("machine-123", "gemini-2.0-flash", temp_dir.path())
                 .await
                 .unwrap();
 
@@ -1768,22 +1928,6 @@ this is not valid json
         assert_eq!(deserialized.reason, Some(CompactionReason::ExplicitRequest));
         assert_eq!(deserialized.focus.as_deref(), Some("preserve todos"));
         assert_eq!(deserialized.reference_context_revision, Some(3));
-    }
-
-    #[test]
-    fn test_compacted_item_deserializes_legacy_shape() {
-        let json = r#"{
-            "message":"Summary",
-            "timestamp":"2026-01-29T14:31:00Z"
-        }"#;
-
-        let deserialized: CompactedItem = serde_json::from_str(json).unwrap();
-        assert_eq!(deserialized.message, "Summary");
-        assert_eq!(deserialized.attempt_id, None);
-        assert_eq!(deserialized.trigger, None);
-        assert_eq!(deserialized.reason, None);
-        assert_eq!(deserialized.focus, None);
-        assert_eq!(deserialized.result, None);
     }
 
     #[test]
@@ -1870,10 +2014,10 @@ this is not valid json
     fn test_build_durable_tool_payload_redacts_sensitive_headers() {
         let durable = build_durable_tool_payload(&serde_json::json!({
             "github_token": "github-secret",
-            "session_token": "session-secret",
+            "session_token": "machine-secret",
             "status": 200,
             "headers": {
-                "set-cookie": "session=secret",
+                "set-cookie": "machine=secret",
                 "authorization": "Bearer top-secret",
                 "content-type": "application/json"
             }
@@ -1975,7 +2119,7 @@ this is not valid json
     fn test_effect_record_serialization() {
         let effect = EffectRecord {
             effect_id: "ef-1".to_string(),
-            run_id: "run-1".to_string(),
+            process_path: "/proc/7".to_string(),
             tool_call_id: "call-1".to_string(),
             idempotency_key: "idem-1".to_string(),
             effect_type: "file".to_string(),
@@ -2016,7 +2160,7 @@ this is not valid json
                 }),
                 serde_json::json!({
                     "headers": {
-                        "set-cookie": "session=super-secret"
+                        "set-cookie": "machine=super-secret"
                     }
                 }),
                 true,

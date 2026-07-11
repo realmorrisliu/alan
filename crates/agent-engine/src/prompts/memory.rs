@@ -10,7 +10,7 @@ pub const WORKSPACE_MEMORY_FILENAME: &str = "MEMORY.md";
 pub const MEMORY_HANDOFFS_DIRNAME: &str = "handoffs";
 pub const MEMORY_LATEST_FILENAME: &str = "LATEST.md";
 pub const MEMORY_DAILY_DIRNAME: &str = "daily";
-pub const MEMORY_SESSIONS_DIRNAME: &str = "sessions";
+pub const MEMORY_EPISODIC_DIRNAME: &str = "episodic";
 pub const MEMORY_WORKING_DIRNAME: &str = "working";
 pub const MEMORY_TOPICS_DIRNAME: &str = "topics";
 pub const MEMORY_INBOX_DIRNAME: &str = "inbox";
@@ -38,7 +38,7 @@ struct LatestDailyNoteTarget {
 const REQUIRED_MEMORY_DIRS: [&str; 6] = [
     MEMORY_HANDOFFS_DIRNAME,
     MEMORY_DAILY_DIRNAME,
-    MEMORY_SESSIONS_DIRNAME,
+    MEMORY_EPISODIC_DIRNAME,
     MEMORY_WORKING_DIRNAME,
     MEMORY_TOPICS_DIRNAME,
     MEMORY_INBOX_DIRNAME,
@@ -158,7 +158,7 @@ pub(crate) fn render_workspace_memory_context(memory_dir: &Path) -> String {
         "The following pure-text memory surfaces are already injected into this prompt.\n",
     );
     prompt.push_str(
-        "Prefer them before spending tool calls to rediscover stable identity, workspace memory, or recent cross-session continuity.\n",
+        "Prefer them before spending tool calls to rediscover stable identity, workspace memory, or recent cross-machine continuity.\n",
     );
     prompt.push_str(
         "Do not re-read them with tools by default; only inspect the on-disk files when you need exact verification or you are editing them.\n",
@@ -261,33 +261,15 @@ fn latest_daily_note_targets(memory_dir: &Path) -> Vec<LatestDailyNoteTarget> {
         return Vec::new();
     };
     let canonical_path = daily_dir.join(format!("{latest_stem}.md"));
-    let legacy_path = memory_dir.join(format!("{latest_stem}.md"));
-    let canonical_write_path = canonical_path.clone();
-    let has_canonical = canonical_path.is_file();
-    let has_legacy = legacy_path.is_file();
-
-    let mut files = Vec::new();
-    if has_canonical {
-        files.push(LatestDailyNoteTarget {
+    canonical_path
+        .is_file()
+        .then(|| LatestDailyNoteTarget {
             label: format!("{MEMORY_DAILY_DIRNAME}/{latest_stem}.md"),
-            path: canonical_path,
-            write_path: canonical_write_path.clone(),
-        });
-    }
-    if has_legacy {
-        let label = if has_canonical {
-            format!("{latest_stem}.md (legacy same-day note)")
-        } else {
-            format!("{MEMORY_DAILY_DIRNAME}/{latest_stem}.md (resolved from legacy root note)")
-        };
-        files.push(LatestDailyNoteTarget {
-            label,
-            path: legacy_path,
-            write_path: canonical_write_path,
-        });
-    }
-
-    files
+            path: canonical_path.clone(),
+            write_path: canonical_path,
+        })
+        .into_iter()
+        .collect()
 }
 
 fn latest_daily_note_stem(memory_dir: &Path) -> Option<String> {
@@ -295,7 +277,6 @@ fn latest_daily_note_stem(memory_dir: &Path) -> Option<String> {
     fs::read_dir(&daily_dir)
         .into_iter()
         .flatten()
-        .chain(fs::read_dir(memory_dir).into_iter().flatten())
         .filter_map(|entry| entry.ok())
         .map(|entry| entry.path())
         .filter(|path| path.is_file() && is_dated_memory_note_path(path))
@@ -374,7 +355,7 @@ mod tests {
                 .exists()
         );
         assert!(memory_dir.join(MEMORY_DAILY_DIRNAME).exists());
-        assert!(memory_dir.join(MEMORY_SESSIONS_DIRNAME).exists());
+        assert!(memory_dir.join(MEMORY_EPISODIC_DIRNAME).exists());
         assert!(memory_dir.join(MEMORY_WORKING_DIRNAME).exists());
         assert!(memory_dir.join(MEMORY_TOPICS_DIRNAME).exists());
         assert!(memory_dir.join(MEMORY_INBOX_DIRNAME).exists());
@@ -416,109 +397,5 @@ mod tests {
         assert!(prompt.contains("daily/2026-04-15.md"));
         assert!(prompt.contains("newer"));
         assert!(!prompt.contains("daily/2026-04-14.md"));
-    }
-
-    #[test]
-    fn test_render_workspace_memory_context_falls_back_to_legacy_root_daily_note() {
-        let temp_dir = TempDir::new().unwrap();
-        let memory_dir = temp_dir.path().join("memory");
-        ensure_workspace_memory_layout_at(&memory_dir).unwrap();
-        fs::write(
-            memory_dir.join("2026-04-15.md"),
-            "# 2026-04-15\nlegacy root note",
-        )
-        .unwrap();
-
-        let prompt = render_workspace_memory_context(&memory_dir);
-
-        assert!(prompt.contains("### daily/2026-04-15.md (resolved from legacy root note)"));
-        assert!(
-            prompt.contains(
-                format!(
-                    "Resolved from: {}",
-                    memory_dir.join("2026-04-15.md").display()
-                )
-                .as_str()
-            )
-        );
-        assert!(
-            prompt.contains(
-                format!(
-                    "Write updates to: {}",
-                    memory_dir
-                        .join(MEMORY_DAILY_DIRNAME)
-                        .join("2026-04-15.md")
-                        .display()
-                )
-                .as_str()
-            )
-        );
-        assert!(prompt.contains("legacy root note"));
-    }
-
-    #[test]
-    fn test_render_workspace_memory_context_includes_same_day_canonical_and_legacy_notes() {
-        let temp_dir = TempDir::new().unwrap();
-        let memory_dir = temp_dir.path().join("memory");
-        ensure_workspace_memory_layout_at(&memory_dir).unwrap();
-        fs::write(
-            memory_dir.join("2026-04-15.md"),
-            "# 2026-04-15\nlegacy root note",
-        )
-        .unwrap();
-        fs::write(
-            memory_dir.join(MEMORY_DAILY_DIRNAME).join("2026-04-15.md"),
-            "# 2026-04-15\ncanonical daily note",
-        )
-        .unwrap();
-
-        let prompt = render_workspace_memory_context(&memory_dir);
-
-        assert!(prompt.contains("### daily/2026-04-15.md"));
-        assert!(prompt.contains("canonical daily note"));
-        assert!(prompt.contains("### 2026-04-15.md (legacy same-day note)"));
-        assert!(prompt.contains("legacy root note"));
-        assert!(
-            prompt.contains(
-                memory_dir
-                    .join(MEMORY_DAILY_DIRNAME)
-                    .join("2026-04-15.md")
-                    .to_string_lossy()
-                    .as_ref()
-            )
-        );
-    }
-
-    #[test]
-    fn test_workspace_memory_tracked_paths_include_memory_root_for_legacy_note_detection() {
-        let temp_dir = TempDir::new().unwrap();
-        let memory_dir = temp_dir.path().join("memory");
-        ensure_workspace_memory_layout_at(&memory_dir).unwrap();
-        fs::write(
-            memory_dir.join("2026-04-15.md"),
-            "# 2026-04-15\nlegacy root note",
-        )
-        .unwrap();
-
-        let tracked = workspace_memory_tracked_paths(&memory_dir);
-
-        assert!(tracked.contains(&memory_dir));
-        assert!(tracked.contains(&memory_dir.join("2026-04-15.md")));
-    }
-
-    #[test]
-    fn test_workspace_memory_tracked_paths_include_same_day_canonical_and_legacy_notes() {
-        let temp_dir = TempDir::new().unwrap();
-        let memory_dir = temp_dir.path().join("memory");
-        ensure_workspace_memory_layout_at(&memory_dir).unwrap();
-        let legacy_path = memory_dir.join("2026-04-15.md");
-        let canonical_path = memory_dir.join(MEMORY_DAILY_DIRNAME).join("2026-04-15.md");
-        fs::write(&legacy_path, "# 2026-04-15\nlegacy root note").unwrap();
-        fs::write(&canonical_path, "# 2026-04-15\ncanonical daily note").unwrap();
-
-        let tracked = workspace_memory_tracked_paths(&memory_dir);
-
-        assert!(tracked.contains(&legacy_path));
-        assert!(tracked.contains(&canonical_path));
     }
 }

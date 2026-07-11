@@ -46,7 +46,6 @@ private enum ShellCoreFFIAdapterTestRunner {
             try testDescribeAndABIVersion()
             try testSchemaMismatchAndUnknownOperationErrors()
             try testProductionAdapterFacadeErrorsWithNullPayloads()
-            try testCapabilityRows()
             try testManifestReducerAndActionCalls()
             try testProductionAdapterReducerFocus()
             try testProductionAdapterActions()
@@ -234,41 +233,6 @@ private func testProductionAdapterFacadeErrorsWithNullPayloads() throws {
             "adapter must surface error envelopes with null payloads as facade errors"
         )
     }
-}
-
-private func testCapabilityRows() throws {
-    let adapter = try RawShellCoreFFIAdapter()
-    let response = try adapter.send(
-        operation: "settings.capability_rows",
-        payload: [
-            "skills": [
-                [
-                    "id": "memory",
-                    "name": "Memory",
-                    "enabled": true,
-                    "allow_implicit_invocation": false,
-                    "available": true,
-                ],
-                [
-                    "id": "plan",
-                    "name": "Plan",
-                    "enabled": false,
-                    "allow_implicit_invocation": false,
-                    "available": true,
-                ],
-            ],
-        ]
-    )
-
-    try expect(response.error == nil, "capability rows must succeed")
-    guard let rows = response.payload?["rows"] as? [[String: Any]],
-          let first = rows.first
-    else {
-        throw TestFailure.message("capability response must contain rows")
-    }
-    try expect(first["id"] as? String == "capabilitiesAvailable", "first row id must match Swift summary")
-    try expect(first["value"] as? String == "1 of 2", "capability count must be projected by Rust")
-    try expect(first["mutability"] as? String == "read_only", "row mutability must decode")
 }
 
 private func testManifestReducerAndActionCalls() throws {

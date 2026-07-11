@@ -322,23 +322,11 @@ mod tests {
                 serde_json::json!({"success": true})
             )],
         }));
-        assert!(!is_turn_resume_submission(&Op::RegisterDynamicTools {
-            tools: vec![]
-        }));
-        assert!(!is_turn_inband_submission(&Op::RegisterDynamicTools {
-            tools: vec![]
-        }));
         assert!(!should_drive_turn_submission(&Op::CompactWithOptions {
             focus: None,
         }));
         assert!(!should_drive_turn_submission(&Op::CompactWithOptions {
             focus: Some("preserve todos".to_string()),
-        }));
-        assert!(!is_turn_resume_submission(&Op::SetClientCapabilities {
-            capabilities: alan_agent_protocol::ClientCapabilities::default(),
-        }));
-        assert!(!is_turn_inband_submission(&Op::SetClientCapabilities {
-            capabilities: alan_agent_protocol::ClientCapabilities::default(),
         }));
     }
 
@@ -514,7 +502,7 @@ mod tests {
         let mut state = RuntimeLoopState {
             workspace_id: "namespace-pending-wait-test".to_string(),
             workspace_root_dir: None,
-            session: crate::Session::new(),
+            machine: crate::AgentMachine::new(),
             current_submission_id: None,
             environment: super::super::RuntimeEnvironment::namespace(environment),
             tool_catalog: crate::tools::ToolRegistry::new(),

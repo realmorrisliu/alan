@@ -44,7 +44,7 @@ pub use alan_llm::factory::{self, ProviderConfig, ProviderType};
 /// - Anthropic Messages / OpenAI Responses / OpenAI Chat Completions: preserves thinking blocks
 /// - Google Gemini GenerateContent: drops thinking (not supported in wire format)
 pub trait LlmProjection: Send + Sync {
-    fn project(&self, messages: &[crate::session::Message]) -> Vec<Message>;
+    fn project(&self, messages: &[crate::agent_machine::Message]) -> Vec<Message>;
 }
 
 /// Projection for providers that preserve thinking content.
@@ -54,13 +54,13 @@ struct PreserveThinkingProjection;
 struct DropThinkingProjection;
 
 impl LlmProjection for PreserveThinkingProjection {
-    fn project(&self, messages: &[crate::session::Message]) -> Vec<Message> {
+    fn project(&self, messages: &[crate::agent_machine::Message]) -> Vec<Message> {
         project_messages_impl(messages, true)
     }
 }
 
 impl LlmProjection for DropThinkingProjection {
-    fn project(&self, messages: &[crate::session::Message]) -> Vec<Message> {
+    fn project(&self, messages: &[crate::agent_machine::Message]) -> Vec<Message> {
         project_messages_impl(messages, false)
     }
 }
@@ -220,7 +220,7 @@ impl LlmClient {
     }
 
     /// Project tape messages to LLM wire format using the provider-specific projection.
-    pub fn project_messages(&self, messages: &[crate::session::Message]) -> Vec<Message> {
+    pub fn project_messages(&self, messages: &[crate::agent_machine::Message]) -> Vec<Message> {
         self.projection.project(messages)
     }
 }
@@ -238,12 +238,12 @@ impl std::fmt::Debug for LlmClient {
 // Conversion Helpers
 // ============================================================================
 
-/// Convert session messages to LLM messages (preserves thinking).
+/// Convert machine messages to LLM messages (preserves thinking).
 ///
 /// This is the legacy free-function entry point. Prefer `LlmClient::project_messages()`
 /// which automatically selects the right projection for the provider.
 #[cfg(test)]
-pub fn convert_session_messages(messages: &[crate::session::Message]) -> Vec<Message> {
+pub fn convert_agent_machine_messages(messages: &[crate::agent_machine::Message]) -> Vec<Message> {
     project_messages_impl(messages, true)
 }
 
@@ -252,7 +252,7 @@ pub fn convert_session_messages(messages: &[crate::session::Message]) -> Vec<Mes
 /// `preserve_thinking`: if true, thinking content is forwarded to the LLM message;
 /// if false, thinking is stripped (for providers that don't support it).
 fn project_messages_impl(
-    messages: &[crate::session::Message],
+    messages: &[crate::agent_machine::Message],
     preserve_thinking: bool,
 ) -> Vec<Message> {
     use crate::tape;
@@ -503,7 +503,7 @@ fn utf8_prefix(text: &str, max_len: usize) -> String {
     text[..end].to_string()
 }
 
-/// Build a generation request from session context.
+/// Build a generation request from machine context.
 pub fn build_generation_request(
     system_prompt: Option<String>,
     messages: Vec<Message>,
@@ -682,9 +682,9 @@ mod tests {
         assert!(!client.is_openai_chat_completions_compatible());
         assert!(client.capabilities().supports_reasoning_text);
 
-        let mut session = crate::session::Session::new();
-        session.add_assistant_message("hi", Some("openrouter thinking"));
-        let messages = session.tape.messages();
+        let mut machine = crate::agent_machine::AgentMachine::new();
+        machine.add_assistant_message("hi", Some("openrouter thinking"));
+        let messages = machine.tape.messages();
         let projected = client.project_messages(messages);
         assert_eq!(
             projected[0].thinking.as_deref(),
@@ -693,15 +693,15 @@ mod tests {
     }
 
     #[test]
-    fn test_convert_session_messages() {
-        use crate::session::Message as SessionMessage;
+    fn test_convert_agent_machine_messages() {
+        use crate::agent_machine::Message as AgentMachineMessage;
 
-        let session_messages = vec![
-            SessionMessage::user("Hello"),
-            SessionMessage::assistant("Hi there"),
+        let machine_messages = vec![
+            AgentMachineMessage::user("Hello"),
+            AgentMachineMessage::assistant("Hi there"),
         ];
 
-        let llm_messages = convert_session_messages(&session_messages);
+        let llm_messages = convert_agent_machine_messages(&machine_messages);
 
         assert_eq!(llm_messages.len(), 2);
         assert_eq!(llm_messages[0].role, MessageRole::User);
@@ -710,12 +710,12 @@ mod tests {
     }
 
     #[test]
-    fn test_convert_session_messages_ignores_blank_tool_ids() {
-        use crate::session::Message as SessionMessage;
+    fn test_convert_agent_machine_messages_ignores_blank_tool_ids() {
+        use crate::agent_machine::Message as AgentMachineMessage;
         use crate::tape::ToolRequest;
 
-        let session_messages = vec![
-            SessionMessage::assistant_with_tools(
+        let machine_messages = vec![
+            AgentMachineMessage::assistant_with_tools(
                 "",
                 vec![ToolRequest {
                     id: "   ".to_string(),
@@ -723,29 +723,29 @@ mod tests {
                     arguments: serde_json::json!({"query": "test"}),
                 }],
             ),
-            SessionMessage::tool_text("   ", "{}"),
+            AgentMachineMessage::tool_text("   ", "{}"),
         ];
 
-        let llm_messages = convert_session_messages(&session_messages);
+        let llm_messages = convert_agent_machine_messages(&machine_messages);
         assert_eq!(llm_messages.len(), 2);
         assert_eq!(llm_messages[0].tool_calls.as_ref().unwrap()[0].id, None);
         assert_eq!(llm_messages[1].tool_call_id, None);
     }
 
     #[test]
-    fn test_convert_session_messages_uses_tool_payload_for_tool_content() {
-        use crate::session::Message as SessionMessage;
+    fn test_convert_agent_machine_messages_uses_tool_payload_for_tool_content() {
+        use crate::agent_machine::Message as AgentMachineMessage;
 
         let payload = serde_json::json!({
             "success": true,
             "company": "y-warm.com"
         });
-        let session_messages = vec![SessionMessage::tool_structured(
+        let machine_messages = vec![AgentMachineMessage::tool_structured(
             "tool_call_123",
             payload.clone(),
         )];
 
-        let llm_messages = convert_session_messages(&session_messages);
+        let llm_messages = convert_agent_machine_messages(&machine_messages);
         assert_eq!(llm_messages.len(), 1);
         assert_eq!(llm_messages[0].role, MessageRole::Tool);
         assert_eq!(
@@ -756,28 +756,34 @@ mod tests {
     }
 
     #[test]
-    fn test_convert_session_messages_tool_without_payload_uses_content() {
-        use crate::session::Message as SessionMessage;
+    fn test_convert_agent_machine_messages_tool_without_payload_uses_content() {
+        use crate::agent_machine::Message as AgentMachineMessage;
 
-        let session_messages = vec![SessionMessage::tool_text("tool_call_123", "{\"ok\":true}")];
+        let machine_messages = vec![AgentMachineMessage::tool_text(
+            "tool_call_123",
+            "{\"ok\":true}",
+        )];
 
-        let llm_messages = convert_session_messages(&session_messages);
+        let llm_messages = convert_agent_machine_messages(&machine_messages);
         assert_eq!(llm_messages.len(), 1);
         assert_eq!(llm_messages[0].content, "{\"ok\":true}");
     }
 
     #[test]
-    fn test_convert_session_messages_truncates_large_tool_payload_for_projection() {
-        use crate::session::Message as SessionMessage;
+    fn test_convert_agent_machine_messages_truncates_large_tool_payload_for_projection() {
+        use crate::agent_machine::Message as AgentMachineMessage;
 
         let large_content = "x".repeat(50_000);
         let payload = serde_json::json!({
             "success": true,
             "content": large_content
         });
-        let session_messages = vec![SessionMessage::tool_structured("tool_call_123", payload)];
+        let machine_messages = vec![AgentMachineMessage::tool_structured(
+            "tool_call_123",
+            payload,
+        )];
 
-        let llm_messages = convert_session_messages(&session_messages);
+        let llm_messages = convert_agent_machine_messages(&machine_messages);
         assert_eq!(llm_messages.len(), 1);
         assert!(llm_messages[0].content.len() <= 30_000);
         assert!(
@@ -788,13 +794,16 @@ mod tests {
     }
 
     #[test]
-    fn test_convert_session_messages_truncates_large_tool_text_for_projection() {
-        use crate::session::Message as SessionMessage;
+    fn test_convert_agent_machine_messages_truncates_large_tool_text_for_projection() {
+        use crate::agent_machine::Message as AgentMachineMessage;
 
         let large_content = "x".repeat(50_000);
-        let session_messages = vec![SessionMessage::tool_text("tool_call_123", large_content)];
+        let machine_messages = vec![AgentMachineMessage::tool_text(
+            "tool_call_123",
+            large_content,
+        )];
 
-        let llm_messages = convert_session_messages(&session_messages);
+        let llm_messages = convert_agent_machine_messages(&machine_messages);
         assert_eq!(llm_messages.len(), 1);
         assert!(llm_messages[0].content.len() <= 30_000);
         assert!(
@@ -805,25 +814,32 @@ mod tests {
     }
 
     #[test]
-    fn test_convert_session_messages_preserves_single_part_tool_text_within_projection_budget() {
-        use crate::session::Message as SessionMessage;
+    fn test_convert_agent_machine_messages_preserves_single_part_tool_text_within_projection_budget()
+     {
+        use crate::agent_machine::Message as AgentMachineMessage;
 
         let content = "x".repeat(20_000);
-        let session_messages = vec![SessionMessage::tool_text("tool_call_123", content.clone())];
+        let machine_messages = vec![AgentMachineMessage::tool_text(
+            "tool_call_123",
+            content.clone(),
+        )];
 
-        let llm_messages = convert_session_messages(&session_messages);
+        let llm_messages = convert_agent_machine_messages(&machine_messages);
         assert_eq!(llm_messages.len(), 1);
         assert_eq!(llm_messages[0].content, content);
     }
 
     #[test]
-    fn test_convert_session_messages_caps_tool_text_projection_by_bytes() {
-        use crate::session::Message as SessionMessage;
+    fn test_convert_agent_machine_messages_caps_tool_text_projection_by_bytes() {
+        use crate::agent_machine::Message as AgentMachineMessage;
 
         let large_content = "你".repeat(20_000);
-        let session_messages = vec![SessionMessage::tool_text("tool_call_123", large_content)];
+        let machine_messages = vec![AgentMachineMessage::tool_text(
+            "tool_call_123",
+            large_content,
+        )];
 
-        let llm_messages = convert_session_messages(&session_messages);
+        let llm_messages = convert_agent_machine_messages(&machine_messages);
         assert_eq!(llm_messages.len(), 1);
         assert!(llm_messages[0].content.len() <= 30_000);
         assert!(
@@ -862,12 +878,12 @@ mod tests {
 
     #[test]
     fn test_anthropic_projection_preserves_thinking() {
-        use crate::session::Session;
+        use crate::agent_machine::AgentMachine;
 
-        let mut session = Session::new();
-        session.add_assistant_message("hello", Some("my reasoning"));
+        let mut machine = AgentMachine::new();
+        machine.add_assistant_message("hello", Some("my reasoning"));
 
-        let messages = session.tape.messages();
+        let messages = machine.tape.messages();
         let projection = PreserveThinkingProjection;
         let llm_messages = projection.project(messages);
 
@@ -878,18 +894,18 @@ mod tests {
 
     #[test]
     fn test_anthropic_projection_preserves_thinking_metadata() {
-        use crate::session::Session;
+        use crate::agent_machine::AgentMachine;
 
-        let mut session = Session::new();
+        let mut machine = AgentMachine::new();
         let redacted = vec!["ciphertext".to_string()];
-        session.add_assistant_message_with_reasoning(
+        machine.add_assistant_message_with_reasoning(
             "hello",
             Some("my reasoning"),
             Some("sig_123"),
             &redacted,
         );
 
-        let messages = session.tape.messages();
+        let messages = machine.tape.messages();
         let projection = PreserveThinkingProjection;
         let llm_messages = projection.project(messages);
 
@@ -907,12 +923,12 @@ mod tests {
 
     #[test]
     fn test_drop_thinking_projection_strips_thinking() {
-        use crate::session::Session;
+        use crate::agent_machine::AgentMachine;
 
-        let mut session = Session::new();
-        session.add_assistant_message("hello", Some("my reasoning"));
+        let mut machine = AgentMachine::new();
+        machine.add_assistant_message("hello", Some("my reasoning"));
 
-        let messages = session.tape.messages();
+        let messages = machine.tape.messages();
         let projection = DropThinkingProjection;
         let llm_messages = projection.project(messages);
 
@@ -930,9 +946,9 @@ mod tests {
         assert!(client.is_openai_responses());
 
         // The Responses path preserves thinking metadata when available.
-        let mut session = crate::session::Session::new();
-        session.add_assistant_message("hi", Some("thinking..."));
-        let messages = session.tape.messages();
+        let mut machine = crate::agent_machine::AgentMachine::new();
+        machine.add_assistant_message("hi", Some("thinking..."));
+        let messages = machine.tape.messages();
         let projected = client.project_messages(messages);
         assert_eq!(projected[0].thinking.as_deref(), Some("thinking..."));
     }

@@ -654,7 +654,7 @@ impl Sandbox {
         // inside a quoted script the outer tokenizer can't decompose. Under an OS
         // sandbox these are allowed to run, so recurse into the inline script and
         // apply the same protected-subpath checks (with their carve-outs, e.g.
-        // `.alan/memory`) to the wrapped command.
+        // `.alan/runtime/<channel>/memory`) to the wrapped command.
         if protected_only {
             for words in &commands {
                 if let Some(inner) = shell_wrapper_inline_script(words) {
@@ -1524,12 +1524,11 @@ fn is_allowed_protected_relative_path(relative: &Path) -> bool {
         components.push(name);
     }
 
-    matches!(
-        components.as_slice(),
-        [".alan", "memory", ..]
-            | [".alan", "agent", "persona", ..]
-            | [".alan", "agents", _, "persona", ..]
-    )
+    match components.as_slice() {
+        [".alan", "runtime", channel, "memory", ..] => InstallChannel::from_id(channel).is_some(),
+        [".alan", "agents", _, "persona", ..] => true,
+        _ => false,
+    }
 }
 
 fn looks_like_path_token(token: &str) -> bool {

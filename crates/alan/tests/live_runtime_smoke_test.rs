@@ -219,7 +219,7 @@ async fn live_chatgpt_runtime_smoke() -> Result<()> {
 
 #[tokio::test]
 #[ignore = "live runtime memory smoke; requires ALAN_LIVE_PROVIDER_TESTS=1 and managed ChatGPT auth"]
-async fn live_chatgpt_runtime_cross_session_memory_smoke() -> Result<()> {
+async fn live_chatgpt_runtime_cross_process_memory_smoke() -> Result<()> {
     if !live_enabled() {
         eprintln!(
             "[live-runtime-smoke] skipping chatgpt memory: set {LIVE_ENABLE_ENV}=1 to enable"
@@ -277,7 +277,7 @@ async fn live_chatgpt_runtime_cross_session_memory_smoke() -> Result<()> {
         .submission_tx
         .send(Submission::new(Op::Turn {
             parts: vec![ContentPart::text(format!(
-                "Persist one stable preference across future sessions. Use tools to update the exact `USER.md` write target from the workspace persona context so it contains the line `Favorite live runtime marker: {marker}`. Do not create `./USER.md` or any sibling copy. After the tool call succeeds, reply with exactly: stored:{marker}"
+                "Persist one stable preference across future Agent Processes. Use tools to update the exact `USER.md` write target from the workspace persona context so it contains the line `Favorite live runtime marker: {marker}`. Do not create `./USER.md` or any sibling copy. After the tool call succeeds, reply with exactly: stored:{marker}"
             ))],
             context: None,
         }))
@@ -286,7 +286,7 @@ async fn live_chatgpt_runtime_cross_session_memory_smoke() -> Result<()> {
 
     let first_turn = collect_events_until_terminal(rx, TURN_TIMEOUT).await;
     print_event_summary(
-        "live_chatgpt_runtime_cross_session_memory_smoke (store)",
+        "live_chatgpt_runtime_cross_process_memory_smoke (store)",
         &first_turn,
     );
     first_controller
@@ -362,7 +362,7 @@ async fn live_chatgpt_runtime_cross_session_memory_smoke() -> Result<()> {
 
     let second_turn = collect_events_until_terminal(rx, TURN_TIMEOUT).await;
     print_event_summary(
-        "live_chatgpt_runtime_cross_session_memory_smoke (recall)",
+        "live_chatgpt_runtime_cross_process_memory_smoke (recall)",
         &second_turn,
     );
     second_controller
@@ -392,7 +392,7 @@ async fn live_chatgpt_runtime_cross_session_memory_smoke() -> Result<()> {
 
 #[tokio::test]
 #[ignore = "live runtime continuity smoke; requires ALAN_LIVE_PROVIDER_TESTS=1 and managed ChatGPT auth"]
-async fn live_chatgpt_runtime_cross_session_continuity_smoke() -> Result<()> {
+async fn live_chatgpt_runtime_cross_process_continuity_smoke() -> Result<()> {
     if !live_enabled() {
         eprintln!(
             "[live-runtime-smoke] skipping chatgpt continuity: set {LIVE_ENABLE_ENV}=1 to enable"
@@ -456,7 +456,7 @@ async fn live_chatgpt_runtime_cross_session_continuity_smoke() -> Result<()> {
 
     let first_turn = collect_events_until_terminal(rx, TURN_TIMEOUT).await;
     print_event_summary(
-        "live_chatgpt_runtime_cross_session_continuity_smoke (seed)",
+        "live_chatgpt_runtime_cross_process_continuity_smoke (seed)",
         &first_turn,
     );
     first_controller
@@ -481,7 +481,11 @@ async fn live_chatgpt_runtime_cross_session_continuity_smoke() -> Result<()> {
         first_turn.text
     );
 
-    let handoff_path = workspace_alan_dir.join("memory/handoffs/LATEST.md");
+    let handoff_path = alan_agent_engine::workspace_runtime_memory_dir_from_alan_dir(
+        &workspace_alan_dir,
+        alan_agent_engine::InstallChannel::Stable,
+    )
+    .join("handoffs/LATEST.md");
     let latest_handoff = std::fs::read_to_string(&handoff_path)
         .with_context(|| format!("read {}", handoff_path.display()))?;
     ensure!(
@@ -515,7 +519,7 @@ async fn live_chatgpt_runtime_cross_session_continuity_smoke() -> Result<()> {
         .submission_tx
         .send(Submission::new(Op::Turn {
             parts: vec![ContentPart::text(
-                "What was the last continuity marker from the previous session? Reply with exactly the saved marker and nothing else.",
+                "What was the last continuity marker from the previous Agent Process? Reply with exactly the saved marker and nothing else.",
             )],
             context: None,
         }))
@@ -524,7 +528,7 @@ async fn live_chatgpt_runtime_cross_session_continuity_smoke() -> Result<()> {
 
     let second_turn = collect_events_until_terminal(rx, TURN_TIMEOUT).await;
     print_event_summary(
-        "live_chatgpt_runtime_cross_session_continuity_smoke (recall)",
+        "live_chatgpt_runtime_cross_process_continuity_smoke (recall)",
         &second_turn,
     );
     second_controller

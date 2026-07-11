@@ -341,7 +341,7 @@ impl Message {
     }
 }
 
-pub const SUMMARY_PREFIX: &str = "The following is a compacted summary of the earlier conversation history in this session. Use this context to continue the work seamlessly without duplicating what has already been done:";
+pub const SUMMARY_PREFIX: &str = "The following is a compacted summary of the earlier conversation history in this machine. Use this context to continue the work seamlessly without duplicating what has already been done:";
 
 #[derive(Debug, Clone)]
 pub struct Tape {
@@ -350,7 +350,7 @@ pub struct Tape {
     messages_token_estimate: usize,
     summary: Option<String>,
     summary_token_estimate: usize,
-    /// Number of times compaction has been applied in this session.
+    /// Number of times compaction has been applied in this machine.
     compaction_count: usize,
 }
 
@@ -474,7 +474,7 @@ impl Tape {
         self.summary.as_deref()
     }
 
-    /// Get the number of compactions applied in this session.
+    /// Get the number of compactions applied in this machine.
     pub fn compaction_count(&self) -> usize {
         self.compaction_count
     }

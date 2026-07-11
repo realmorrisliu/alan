@@ -28,7 +28,7 @@ impl Default for MemoryConfig {
     }
 }
 
-/// Session durability configuration.
+/// AgentMachine durability configuration.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct DurabilityConfig {
     /// Fail startup instead of silently degrading to in-memory mode.
@@ -135,14 +135,6 @@ pub struct LoadedConfig {
     pub config: Config,
     pub path: Option<PathBuf>,
     pub source: ConfigSourceKind,
-}
-
-const HOST_ONLY_AGENT_CONFIG_KEYS: &[&str] = &["bind_address", "daemon_url"];
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ConfigFileKind {
-    Agent,
-    EnvOverride,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -634,13 +626,8 @@ impl Config {
 
     /// Load configuration from file (TOML format)
     pub fn from_file(path: &std::path::Path) -> anyhow::Result<Self> {
-        Self::from_file_with_kind(path, ConfigFileKind::Agent)
-    }
-
-    fn from_file_with_kind(path: &std::path::Path, kind: ConfigFileKind) -> anyhow::Result<Self> {
         let content = std::fs::read_to_string(path)
             .with_context(|| format!("failed to read configuration file {}", path.display()))?;
-        Self::reject_host_only_keys(&content, path, kind)?;
         let mut config: Self = toml::from_str(&content)
             .with_context(|| format!("failed to parse configuration file {}", path.display()))?;
         config.skill_overrides = config.resolved_skill_overrides();
@@ -701,7 +688,7 @@ impl Config {
         if let Some(config_path) = override_path
             && config_path.exists()
         {
-            let config = Self::from_file_with_kind(&config_path, ConfigFileKind::EnvOverride)?;
+            let config = Self::from_file(&config_path)?;
             tracing::info!(path = %config_path.display(), "Loaded configuration from file");
             return Ok(LoadedConfig {
                 config,
@@ -713,7 +700,7 @@ impl Config {
         if let Some(config_path) = global_agent_path
             && config_path.exists()
         {
-            let config = Self::from_file_with_kind(&config_path, ConfigFileKind::Agent)?;
+            let config = Self::from_file(&config_path)?;
             tracing::info!(path = %config_path.display(), "Loaded configuration from file");
             return Ok(LoadedConfig {
                 config,
@@ -744,7 +731,6 @@ impl Config {
 
             let content = std::fs::read_to_string(path)
                 .with_context(|| format!("failed to read configuration file {}", path.display()))?;
-            Self::reject_host_only_keys(&content, path, ConfigFileKind::Agent)?;
             let overlay: toml::Value = toml::from_str(&content).with_context(|| {
                 format!("failed to parse configuration file {}", path.display())
             })?;
@@ -774,41 +760,6 @@ impl Config {
 
     pub fn resolved_skill_overrides(&self) -> Vec<SkillOverride> {
         self.skill_overrides.clone()
-    }
-
-    fn reject_host_only_keys(
-        content: &str,
-        path: &std::path::Path,
-        kind: ConfigFileKind,
-    ) -> anyhow::Result<()> {
-        let document: toml::Value = toml::from_str(content)
-            .with_context(|| format!("failed to parse configuration file {}", path.display()))?;
-        let Some(table) = document.as_table() else {
-            anyhow::bail!("failed to parse configuration file {}", path.display());
-        };
-
-        let present_keys: Vec<&str> = HOST_ONLY_AGENT_CONFIG_KEYS
-            .iter()
-            .copied()
-            .filter(|key| table.contains_key(*key))
-            .collect();
-        if present_keys.is_empty() {
-            return Ok(());
-        }
-
-        let remediation = match kind {
-            ConfigFileKind::Agent => "Move them to ~/.alan/host.toml.",
-            ConfigFileKind::EnvOverride => {
-                "Move them to ~/.alan/host.toml, then update the file referenced by ALAN_CONFIG_PATH or unset ALAN_CONFIG_PATH."
-            }
-        };
-
-        anyhow::bail!(
-            "host-only setting(s) {} are not valid in agent configuration file {}. {}",
-            present_keys.join(", "),
-            path.display(),
-            remediation
-        );
     }
 
     pub fn for_google_gemini_generate_content(
@@ -1814,7 +1765,7 @@ thinking_budget_tokens = 2048
     #[test]
     fn test_request_control_resolver_uses_model_default_without_budget() {
         let config = Config::for_openai_responses("sk-test", None, Some("gpt-5.4"));
-        let resolved = crate::resolve_session_request_controls(
+        let resolved = crate::resolve_runtime_request_controls(
             &config,
             crate::provider_capabilities_for_config(&config),
             crate::RequestControlIntent::default(),
@@ -2115,26 +2066,6 @@ allow_implicit_invocation = false
     }
 
     #[test]
-    fn test_load_with_override_rejects_host_only_keys() {
-        let temp = TempDir::new().unwrap();
-        let override_path = temp.path().join("override.toml");
-        std::fs::write(
-            &override_path,
-            r#"
-llm_provider = "openai_responses"
-        bind_address = "127.0.0.1:9123"
-"#,
-        )
-        .unwrap();
-
-        let err = Config::load_with_paths(Some(override_path), None).unwrap_err();
-        assert!(
-            err.to_string()
-                .contains("host-only setting(s) bind_address")
-        );
-    }
-
-    #[test]
     fn test_load_with_paths_rejects_deprecated_provider_key_names() {
         let temp = TempDir::new().unwrap();
         let override_path = temp.path().join("legacy.toml");
@@ -2170,44 +2101,6 @@ openai_model = "gpt-5"
         let message = err.to_string();
         assert!(message.contains("failed to parse configuration file"));
         assert!(message.contains(&config_path.display().to_string()));
-    }
-
-    #[test]
-    fn test_config_from_file_rejects_host_only_keys_in_agent_config() {
-        let temp = TempDir::new().unwrap();
-        let config_path = temp.path().join("agent.toml");
-        std::fs::write(
-            &config_path,
-            r#"
-llm_provider = "openai_responses"
-bind_address = "127.0.0.1:9123"
-"#,
-        )
-        .unwrap();
-
-        let err = Config::from_file(&config_path).unwrap_err();
-        let message = err.to_string();
-        assert!(message.contains("host-only setting(s) bind_address"));
-        assert!(message.contains("~/.alan/host.toml"));
-    }
-
-    #[test]
-    fn test_load_with_paths_rejects_host_only_keys_in_env_override_with_override_specific_hint() {
-        let temp = TempDir::new().unwrap();
-        let override_path = temp.path().join("override-agent.toml");
-        std::fs::write(
-            &override_path,
-            r#"
-llm_provider = "openai_responses"
-bind_address = "127.0.0.1:9123"
-"#,
-        )
-        .unwrap();
-
-        let err = Config::load_with_paths(Some(override_path.clone()), None).unwrap_err();
-        let message = err.to_string();
-        assert!(message.contains("host-only setting(s) bind_address"));
-        assert!(message.contains("ALAN_CONFIG_PATH"));
     }
 
     #[test]
@@ -2468,7 +2361,7 @@ supports_reasoning = true
         let overlaid = config.with_agent_root_overlays(&[overlay_path]).unwrap();
 
         assert_eq!(
-            crate::resolve_session_request_controls(
+            crate::resolve_runtime_request_controls(
                 &overlaid,
                 crate::provider_capabilities_for_config(&overlaid),
                 crate::RequestControlIntent::default(),

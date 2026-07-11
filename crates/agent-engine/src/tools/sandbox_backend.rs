@@ -705,7 +705,7 @@ pub fn os_backend_active() -> bool {
     detect_backend().is_os_enforced()
 }
 
-/// Name of the active execution backend for audits/sessions/snapshots (the
+/// Name of the active execution backend for audits, rollouts, and snapshots (the
 /// real `seatbelt`/`landlock` when one is enforcing, else the path guard).
 pub fn active_backend_name() -> &'static str {
     detect_backend().name()
@@ -813,9 +813,10 @@ pub fn seatbelt_profile(
     // `.agents`). The kernel cannot distinguish a tool's tampering from the
     // legitimate program-internal writes those dirs are designed for — denying
     // `.git` breaks `git` itself (init/add/commit all write `.git`), and denying
-    // `.alan` breaks the agent's own `.alan/memory`. Protected-subpath tampering is
-    // instead blocked by the path-guard parser (direct + shell-wrapper-nested path
-    // writes), which leaves program-internal writes (git porcelain, memory) intact.
+    // `.alan` breaks the agent's channel-scoped Memory Store. Protected-subpath
+    // tampering is instead blocked by the path-guard parser (direct +
+    // shell-wrapper-nested path writes), which leaves program-internal writes
+    // (git porcelain, memory) intact.
     // The OS sandbox's role here is the workspace + network boundary.
     let network_rule = if allow_network {
         ""
@@ -859,7 +860,7 @@ fn read_deny_matches_any_writable_root(deny_path: &Path, writable_roots: &[PathB
 /// all outbound/listening TCP network access (Landlock ABI v4, best-effort).
 ///
 /// Intended to run in a `pre_exec` hook so it confines the spawned shell, not
-/// the daemon. Returns an `io::Error` (fail-closed) when enforcement fails.
+/// the host Process. Returns an `io::Error` (fail-closed) when enforcement fails.
 #[cfg(target_os = "linux")]
 pub fn apply_landlock(
     writable_roots: &[PathBuf],

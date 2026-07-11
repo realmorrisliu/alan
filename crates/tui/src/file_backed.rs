@@ -38,7 +38,7 @@ pub struct FileBackedRunConfig {
     pub workspace_dir: Option<PathBuf>,
     /// Whether stdin/stdout must be interactive before entering the UI.
     pub require_interactive_terminal: bool,
-    /// Optional file used to persist composer input history across sessions.
+    /// Optional file used to persist composer input history across launches.
     pub history_path: Option<PathBuf>,
     /// Optional local skill candidates used for `$` completion.
     pub skill_candidates: Vec<CompletionCandidate>,
@@ -809,9 +809,7 @@ fn request_snapshot_to_pending_yield(snapshot: RequestSnapshot) -> Result<Pendin
             .get("details")
             .and_then(Value::as_str)
             .map(str::to_string),
-        YieldKind::StructuredInput | YieldKind::DynamicTool | YieldKind::Custom(_) => {
-            Some(snapshot.prompt.clone())
-        }
+        YieldKind::StructuredInput | YieldKind::Custom(_) => Some(snapshot.prompt.clone()),
     };
     let options = payload
         .get("options")
@@ -849,7 +847,6 @@ fn request_snapshot_to_pending_yield(snapshot: RequestSnapshot) -> Result<Pendin
 fn request_yield_kind(kind: &str) -> YieldKind {
     match kind {
         "structured_input" => YieldKind::StructuredInput,
-        "dynamic_tool" => YieldKind::DynamicTool,
         "confirmation" => YieldKind::Confirmation,
         other if other.ends_with("_confirmation") => YieldKind::Confirmation,
         other => YieldKind::Custom(other.to_string()),
@@ -2190,7 +2187,7 @@ mod tests {
     }
 
     #[test]
-    fn transcript_render_matches_daemon_styles() {
+    fn transcript_renders_error_style() {
         let mut app = FileBackedApp::new("/agent/1".to_string());
         app.transcript.push(HistoryCell::Error("boom".to_string()));
 

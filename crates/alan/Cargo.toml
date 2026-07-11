@@ -1,6 +1,6 @@
 [package]
 name = "alan"
-description = "alan — AI Turing Machine CLI & daemon"
+description = "Alan command-line host and file-backed terminal UI"
 version.workspace = true
 edition.workspace = true
 
@@ -30,17 +30,11 @@ thiserror.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 uuid.workspace = true
-axum.workspace = true
-tower.workspace = true
-tower-http.workspace = true
-futures.workspace = true
-tokio-stream.workspace = true
 dirs.workspace = true
 chrono.workspace = true
 sha2.workspace = true
 clap = { version = "4", features = ["derive"] }
 reqwest.workspace = true
-tokio-tungstenite = "0.29"
 toml = "1.1"
 urlencoding.workspace = true
 

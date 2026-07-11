@@ -57,13 +57,6 @@ impl ResponseGuardrailContext {
             }
         }
 
-        for tool in state.session.dynamic_tools.values() {
-            has_any_tools = true;
-            if matches!(tool.capability, Some(ToolCapability::Network)) {
-                has_network_capability = true;
-            }
-        }
-
         Self {
             has_any_tools,
             has_network_capability,
@@ -136,7 +129,7 @@ impl ResponseGuardrails {
                 rule_id: RULE_ID_CAPABILITY_CONTRADICTION,
                 reason: "Assistant claimed tools are unavailable despite registered tools."
                     .to_string(),
-                instruction: "Correction: tools are available in this session. Do not claim tools are unavailable. If a tool is needed, call a relevant tool first. If it fails, report the observed failure.".to_string(),
+                instruction: "Correction: tools are available in this machine. Do not claim tools are unavailable. If a tool is needed, call a relevant tool first. If it fails, report the observed failure.".to_string(),
             };
         }
 
@@ -149,7 +142,7 @@ impl ResponseGuardrails {
                 rule_id: RULE_ID_CAPABILITY_CONTRADICTION,
                 reason: "Assistant claimed external/current data access is unavailable despite network-capable tools."
                     .to_string(),
-                instruction: "Correction: network-capable tools are available in this session. For requests requiring external or current data, call a relevant tool before stating limitations. If the tool fails, include the actual error.".to_string(),
+                instruction: "Correction: network-capable tools are available in this machine. For requests requiring external or current data, call a relevant tool before stating limitations. If the tool fails, include the actual error.".to_string(),
             };
         }
 
@@ -158,7 +151,7 @@ impl ResponseGuardrails {
 }
 
 fn current_turn_tool_failures(state: &RuntimeLoopState) -> RecentToolFailureContext {
-    let messages = state.session.tape.messages();
+    let messages = state.machine.tape.messages();
     let current_turn = active_turn_messages(messages, state.turn_state.active_turn_message_start());
     let tool_capabilities = current_turn_tool_capabilities(state, current_turn);
     let mut failures = RecentToolFailureContext::default();
@@ -219,15 +212,7 @@ fn capability_for_tool_request(
     state: &RuntimeLoopState,
     request: &ToolRequest,
 ) -> Option<ToolCapability> {
-    state
-        .static_tool_capability(&request.name, &request.arguments)
-        .or_else(|| {
-            state
-                .session
-                .dynamic_tools
-                .get(&request.name)
-                .and_then(|tool| tool.capability)
-        })
+    state.static_tool_capability(&request.name, &request.arguments)
 }
 
 fn tool_response_has_failure(response: &ToolResponse) -> bool {
@@ -488,7 +473,7 @@ mod tests {
     fn unrelated_tool_failure_does_not_excuse_network_unavailability_claim() {
         let mut guardrails = ResponseGuardrails::default();
         let context = ResponseGuardrailContext::for_tests(true, true, true, false);
-        let draft = AssistantDraft::new("I can't browse the web from this session.", false);
+        let draft = AssistantDraft::new("I can't browse the web from this machine.", false);
 
         let decision = guardrails.evaluate(&context, &draft);
         assert!(matches!(

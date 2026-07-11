@@ -3,10 +3,8 @@ use alan_shell_core::{
     ManagedTerminalAccountProfileState, ManagedTerminalAccountRecord,
     ManagedTerminalAccountRequest, ManagedTerminalAccountSettingsSummary,
     ManagedTerminalAccountState, ManagedTerminalAccountSudoersState,
-    ManagedTerminalAccountVerificationStatus, ShellSettingsCapabilitiesSummary,
-    ShellSettingsDiagnosticsSummary, ShellSettingsLocalSummary, ShellSettingsRowMutability,
-    ShellSettingsSkillSummary, ShellSettingsSummaryRows, ShellSettingsWorkspaceContext,
-    ShellSettingsWorkspaceContextInput, ShellSettingsWorkspaceRegistryEntry,
+    ManagedTerminalAccountVerificationStatus, ShellSettingsDiagnosticsSummary,
+    ShellSettingsLocalSummary, ShellSettingsRowMutability, ShellSettingsSummaryRows,
     TerminalProfileDefinition, TerminalProfileLaunch, TerminalProfilePresentation,
     TerminalProfileSettingsSummary,
 };
@@ -124,40 +122,15 @@ fn managed_account_rows_project_plan_status_and_detail() {
 }
 
 #[test]
-fn capability_and_local_rows_match_compact_settings_copy() {
-    let capabilities = ShellSettingsCapabilitiesSummary {
-        skills: vec![
-            ShellSettingsSkillSummary {
-                id: "memory".to_string(),
-                name: "Memory".to_string(),
-                enabled: true,
-                allow_implicit_invocation: false,
-                available: true,
-            },
-            ShellSettingsSkillSummary {
-                id: "plan".to_string(),
-                name: "Plan".to_string(),
-                enabled: false,
-                allow_implicit_invocation: false,
-                available: true,
-            },
-        ],
-        unavailable_reason: None,
-    };
-    let capability_rows = ShellSettingsSummaryRows::capability_rows(&capabilities);
-    assert_eq!(capability_rows[0].value.as_deref(), Some("1 of 2"));
-
+fn local_rows_match_compact_settings_copy() {
     let local = ShellSettingsLocalSummary {
         bundle_identifier: "app.alanworks.macos.dev".to_string(),
         channel_label: "Dev".to_string(),
         cli_tool_name: "alan-dev".to_string(),
-        daemon_url: "http://127.0.0.1:8091".to_string(),
-        daemon_bind_address: "127.0.0.1:8091".to_string(),
         update_summary: "Manual local build".to_string(),
         update_detail: "Use manual updates.".to_string(),
         alan_home_display_path: "~/.alan-dev".to_string(),
         application_support_display_path: "~/Library/Application Support/Alan Dev".to_string(),
-        global_skills_display_path: "~/.agents-dev/skills".to_string(),
         shell_control_namespace: "alan-dev-shell-control".to_string(),
     };
     let diagnostics = ShellSettingsDiagnosticsSummary {
@@ -181,44 +154,6 @@ fn capability_and_local_rows_match_compact_settings_copy() {
             .find(|row| row.id == "performanceDiagnostics")
             .and_then(|row| row.value.as_deref()),
         Some("Enabled")
-    );
-}
-
-#[test]
-fn workspace_context_prefers_registered_roots_then_discovered_roots() {
-    let registered = ShellSettingsWorkspaceContext::resolve(&ShellSettingsWorkspaceContextInput {
-        active_working_directory: Some("/repo/app/Sources".to_string()),
-        registered_workspaces: vec![ShellSettingsWorkspaceRegistryEntry {
-            path: "/repo/app".to_string(),
-            catalog_identifier: Some("app".to_string()),
-        }],
-        discovered_workspace_root: None,
-        agent_name: Some(" default ".to_string()),
-    });
-
-    assert_eq!(
-        registered.connection_workspace_dir.as_deref(),
-        Some("/repo/app")
-    );
-    assert_eq!(
-        registered.skill_catalog_workspace_dir.as_deref(),
-        Some("app")
-    );
-    assert_eq!(registered.agent_name.as_deref(), Some("default"));
-
-    let discovered = ShellSettingsWorkspaceContext::resolve(&ShellSettingsWorkspaceContextInput {
-        active_working_directory: Some("/repo/unregistered/Sources".to_string()),
-        registered_workspaces: vec![],
-        discovered_workspace_root: Some("/repo/unregistered".to_string()),
-        agent_name: None,
-    });
-    assert_eq!(
-        discovered.connection_workspace_dir.as_deref(),
-        Some("/repo/unregistered")
-    );
-    assert_eq!(
-        discovered.skill_catalog_unavailable_reason.as_deref(),
-        Some("Register this workspace to show workspace skills.")
     );
 }
 

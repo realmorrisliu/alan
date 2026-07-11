@@ -2,7 +2,7 @@
 //!
 //! `alan-shell-core` owns reusable shell workspace domain semantics that can be
 //! shared by macOS, Linux, and future desktop clients. The crate intentionally
-//! avoids platform UI, terminal renderer, daemon hosting, filesystem location,
+//! avoids platform UI, terminal renderer, host-service plumbing, filesystem location,
 //! clipboard, file picker, and privileged OS executor dependencies.
 //!
 //! The public API starts with coarse-grained request/response envelopes. Typed
@@ -55,11 +55,9 @@ pub use reducer::{
     ReducerOperation, ReducerResult, RuntimeIntent,
 };
 pub use settings_summary::{
-    ManagedTerminalAccountSettingsSummary, ShellSettingsCapabilitiesSummary,
-    ShellSettingsDiagnosticsSummary, ShellSettingsLocalSummary, ShellSettingsRowMutability,
-    ShellSettingsRowSummary, ShellSettingsSkillSummary, ShellSettingsSummaryRows,
-    ShellSettingsWorkspaceContext, ShellSettingsWorkspaceContextInput,
-    ShellSettingsWorkspaceRegistryEntry, TerminalProfileSettingsSummary,
+    ManagedTerminalAccountSettingsSummary, ShellSettingsDiagnosticsSummary,
+    ShellSettingsLocalSummary, ShellSettingsRowMutability, ShellSettingsRowSummary,
+    ShellSettingsSummaryRows, TerminalProfileSettingsSummary,
 };
 pub use terminal_profile::{
     ManagedTerminalAccountApplyResult, ManagedTerminalAccountFakeExecutor,

@@ -1,7 +1,5 @@
 use alan_agent_protocol::{
-    AdaptiveForm, AdaptivePresentationHint, ConfirmationYieldPayload, DynamicToolYieldPayload,
-    Event, InputMode, Op, StructuredInputKind, StructuredInputOption, StructuredInputQuestion,
-    ToolCapability,
+    AdaptivePresentationHint, ConfirmationYieldPayload, Event, InputMode, Op, ToolCapability,
 };
 use anyhow::{Context, Result};
 use serde_json::{Map, Value, json};
@@ -71,97 +69,13 @@ pub(super) enum ToolBatchOrchestratorOutcome {
     EndTurn { surfaces_refreshed: bool },
 }
 
-fn dynamic_tool_resume_form(
-    capabilities: &alan_agent_protocol::ClientCapabilities,
-    tool_name: &str,
-) -> Option<AdaptiveForm> {
-    if !capabilities.adaptive_yields.schema_driven_forms {
-        return None;
-    }
-
-    let field_hints = if capabilities.adaptive_yields.presentation_hints {
-        vec![AdaptivePresentationHint::Toggle]
-    } else {
-        vec![]
-    };
-
-    Some(AdaptiveForm {
-        fields: vec![
-            StructuredInputQuestion {
-                id: "success".to_string(),
-                label: "Success".to_string(),
-                prompt: "Did the client-side tool execution succeed?".to_string(),
-                kind: StructuredInputKind::Boolean,
-                required: true,
-                placeholder: None,
-                help_text: Some(
-                    "Set to false if the client-side tool execution failed.".to_string(),
-                ),
-                default_value: Some("true".to_string()),
-                default_values: vec![],
-                min_selected: None,
-                max_selected: None,
-                options: vec![
-                    StructuredInputOption {
-                        value: "true".to_string(),
-                        label: "Yes".to_string(),
-                        description: None,
-                    },
-                    StructuredInputOption {
-                        value: "false".to_string(),
-                        label: "No".to_string(),
-                        description: None,
-                    },
-                ],
-                presentation_hints: field_hints,
-            },
-            StructuredInputQuestion {
-                id: "result".to_string(),
-                label: "Result".to_string(),
-                prompt: format!("Return a simple result for {tool_name}."),
-                kind: StructuredInputKind::Text,
-                required: false,
-                placeholder: Some("Short result summary".to_string()),
-                help_text: Some(
-                    "Use raw /resume JSON if you need nested or richer structured output."
-                        .to_string(),
-                ),
-                default_value: None,
-                default_values: vec![],
-                min_selected: None,
-                max_selected: None,
-                options: vec![],
-                presentation_hints: vec![],
-            },
-            StructuredInputQuestion {
-                id: "error".to_string(),
-                label: "Error".to_string(),
-                prompt: format!("Optional error details for {tool_name}."),
-                kind: StructuredInputKind::Text,
-                required: false,
-                placeholder: Some("Only fill when success is false".to_string()),
-                help_text: None,
-                default_value: None,
-                default_values: vec![],
-                min_selected: None,
-                max_selected: None,
-                options: vec![],
-                presentation_hints: vec![],
-            },
-        ],
-    })
-}
-
 fn confirmation_payload(
-    capabilities: &alan_agent_protocol::ClientCapabilities,
     checkpoint_type: String,
     summary: String,
     details: Value,
     options: Vec<String>,
 ) -> ConfirmationYieldPayload {
-    let presentation_hints = if capabilities.adaptive_yields.presentation_hints
-        && is_runtime_confirmation_checkpoint_type(&checkpoint_type)
-    {
+    let presentation_hints = if is_runtime_confirmation_checkpoint_type(&checkpoint_type) {
         vec![AdaptivePresentationHint::Dangerous]
     } else {
         vec![]
@@ -357,7 +271,7 @@ fn sha256_hex(input: &str) -> String {
 }
 
 fn build_effect_identity(
-    session: &crate::session::Session,
+    machine: &crate::agent_machine::AgentMachine,
     tool_name: &str,
     tool_arguments: &Value,
     category: EffectCategory,
@@ -369,10 +283,12 @@ fn build_effect_identity(
         "arguments": normalized_arguments,
     });
     let request_fingerprint = sha256_hex(&request_payload.to_string());
+    // The effect index is owned by the Agent Machine and is carried into a
+    // recovered machine. Process paths remain provenance on EffectRecord, but
+    // cannot be part of the key: recovery intentionally launches a fresh PID.
     let idempotency_key = format!(
-        "run:{}:turn:{}:{}",
-        session.id,
-        session.user_turn_ordinal(),
+        "machine:turn:{}:{}",
+        machine.user_turn_ordinal(),
         request_fingerprint
     );
     EffectIdentity {
@@ -582,23 +498,14 @@ where
 
     let tool_capability = state
         .static_tool_capability(&tool_call.name, &tool_arguments)
-        .or_else(|| {
-            state
-                .session
-                .dynamic_tools
-                .get(&tool_call.name)
-                .and_then(|tool| tool.capability)
-        })
         .unwrap_or_else(|| namespace_builtin_tool_capability(&tool_call.name));
-    let is_dynamic_tool = state.session.dynamic_tools.contains_key(&tool_call.name);
     let tool_locality = state.static_tool_locality(&tool_call.name);
-    if !is_dynamic_tool
-        && tool_locality == Some(crate::tools::ToolLocality::WorkspaceLocal)
+    if tool_locality == Some(crate::tools::ToolLocality::WorkspaceLocal)
         && (tool_call.name == "bash" || tool_capability != ToolCapability::Network)
         && let Some((routing_payload, routing_preview, routing_audit)) =
             workspace_routing_preflight(state, &tool_call.name, &tool_arguments, tool_capability)
     {
-        state.session.record_event(
+        state.machine.record_event(
             "tool_policy_decision",
             json!({
                 "tool_call_id": tool_call.id,
@@ -629,7 +536,7 @@ where
             audit: Some(routing_audit.clone()),
         })
         .await;
-        state.session.record_tool_call_with_audit(
+        state.machine.record_tool_call_with_audit(
             &tool_call.name,
             tool_arguments.clone(),
             routing_payload.clone(),
@@ -637,7 +544,7 @@ where
             Some(routing_audit),
         );
         state
-            .session
+            .machine
             .add_tool_message(&tool_call.id, &tool_call.name, routing_payload);
         return Ok(ToolOrchestratorOutcome::ContinueToolBatch {
             refresh_context: false,
@@ -661,7 +568,7 @@ where
         | ToolPolicyDecision::Escalate { audit, .. }
         | ToolPolicyDecision::Forbidden { audit, .. } => audit.clone(),
     };
-    state.session.record_event(
+    state.machine.record_event(
         "tool_policy_decision",
         json!({
             "tool_call_id": tool_call.id,
@@ -699,7 +606,7 @@ where
             // a human. The sandbox + the deterministic red line remain the
             // boundary; the reviewer only decides whether to bother the human.
             let go_human = if matches!(route, super::tool_policy::EscalationRoute::Reviewer) {
-                let transcript = super::guardian::build_transcript(state.session.tape.messages());
+                let transcript = super::guardian::build_transcript(state.machine.tape.messages());
                 let outcome = {
                     let review_ctx = super::guardian::ReviewContext {
                         policy: super::guardian::DEFAULT_REVIEWER_POLICY,
@@ -752,14 +659,14 @@ where
                                 audit: Some(audit.clone()),
                             })
                             .await;
-                            state.session.record_tool_call_with_audit(
+                            state.machine.record_tool_call_with_audit(
                                 &tool_call.name,
                                 tool_arguments.clone(),
                                 denied_payload.clone(),
                                 false,
                                 Some(audit),
                             );
-                            state.session.add_tool_message(
+                            state.machine.add_tool_message(
                                 &tool_call.id,
                                 &tool_call.name,
                                 denied_payload,
@@ -791,7 +698,7 @@ where
                     .write_namespace_confirmation_request(&pending)
                     .await?
                     .unwrap_or_else(|| pending.checkpoint_id.clone());
-                state.session.record_tool_call_with_audit(
+                state.machine.record_tool_call_with_audit(
                     &tool_call.name,
                     tool_arguments.clone(),
                     json!({"status":"escalation_required","request_id": request_id.clone()}),
@@ -805,7 +712,6 @@ where
                     request_id,
                     kind: alan_agent_protocol::YieldKind::Confirmation,
                     payload: serde_json::to_value(confirmation_payload(
-                        &state.session.client_capabilities,
                         pending.checkpoint_type.clone(),
                         pending.summary.clone(),
                         pending.details.clone(),
@@ -842,7 +748,7 @@ where
                 audit: Some(audit.clone()),
             })
             .await;
-            state.session.record_tool_call_with_audit(
+            state.machine.record_tool_call_with_audit(
                 &tool_call.name,
                 tool_arguments.clone(),
                 blocked_payload.clone(),
@@ -850,7 +756,7 @@ where
                 Some(audit),
             );
             state
-                .session
+                .machine
                 .add_tool_message(&tool_call.id, &tool_call.name, blocked_payload);
             return Ok(ToolOrchestratorOutcome::ContinueToolBatch {
                 refresh_context: false,
@@ -858,63 +764,14 @@ where
         }
     };
 
-    if is_dynamic_tool {
-        emit(Event::ToolCallStarted {
-            title: None,
-            id: tool_call.id.clone(),
-            name: tool_call.name.clone(),
-            audit: tool_audit.clone(),
-        })
-        .await;
-        let pending_dynamic_tool = crate::approval::PendingDynamicToolCall {
-            call_id: tool_call.id.clone(),
-            tool_name: tool_call.name.clone(),
-            arguments: tool_arguments.clone(),
-        };
-        let request_id = state
-            .write_namespace_dynamic_tool_request(&pending_dynamic_tool)
-            .await?
-            .unwrap_or_else(|| pending_dynamic_tool.call_id.clone());
-        state
-            .turn_state
-            .set_dynamic_tool_call_for_request(request_id.clone(), pending_dynamic_tool);
-        state.session.record_tool_call_with_audit(
-            &tool_call.name,
-            tool_arguments.clone(),
-            json!({
-                "status":"pending_dynamic_tool_result",
-                "call_id": tool_call.id.clone(),
-                "request_id": request_id.clone()
-            }),
-            true,
-            tool_audit.clone(),
-        );
-        emit(Event::Yield {
-            request_id,
-            kind: alan_agent_protocol::YieldKind::DynamicTool,
-            payload: serde_json::to_value(DynamicToolYieldPayload {
-                tool_name: tool_call.name.clone(),
-                arguments: tool_arguments.clone(),
-                title: format!("Resolve dynamic tool: {}", tool_call.name),
-                prompt: Some(
-                    "Use the adaptive form for simple success/result payloads, or /resume <json> for raw structured results."
-                        .to_string(),
-                ),
-                form: dynamic_tool_resume_form(&state.session.client_capabilities, &tool_call.name),
-            })
-            .unwrap_or_else(|_| json!({})),
-        })
-        .await;
-        return Ok(ToolOrchestratorOutcome::PauseTurn);
-    }
-
+    let process_path = state.process_path().to_string();
     let effect_identity =
         classify_effect_category(&tool_call.name, tool_capability).map(|category| {
-            build_effect_identity(&state.session, &tool_call.name, &tool_arguments, category)
+            build_effect_identity(&state.machine, &tool_call.name, &tool_arguments, category)
         });
     let existing_effect = effect_identity.as_ref().and_then(|identity| {
         state
-            .session
+            .machine
             .effect_by_idempotency_key(&identity.idempotency_key)
     });
 
@@ -924,10 +781,10 @@ where
     {
         let escalation_reason =
             "Previous side effect attempt has unknown status; explicit confirmation required";
-        state.session.record_event(
+        state.machine.record_event(
             "effect_dedupe_decision",
             json!({
-                "run_id": state.session.id,
+                "process_path": process_path,
                 "tool_call_id": tool_call.id,
                 "tool_name": tool_call.name,
                 "effect_type": identity.category.as_str(),
@@ -968,7 +825,7 @@ where
             .write_namespace_confirmation_request(&pending)
             .await?
             .unwrap_or_else(|| pending.checkpoint_id.clone());
-        state.session.record_tool_call_with_audit(
+        state.machine.record_tool_call_with_audit(
             &tool_call.name,
             tool_arguments.clone(),
             json!({
@@ -988,7 +845,6 @@ where
             request_id,
             kind: alan_agent_protocol::YieldKind::Confirmation,
             payload: serde_json::to_value(confirmation_payload(
-                &state.session.client_capabilities,
                 pending.checkpoint_type.clone(),
                 pending.summary.clone(),
                 pending.details.clone(),
@@ -1013,7 +869,7 @@ where
     {
         let dedupe_reason = "Matching applied side effect found; skipped physical execution";
         let replay_payload = state
-            .session
+            .machine
             .tool_payload_by_call_id(&existing.tool_call_id)
             .or_else(|| existing.result_payload.clone())
             .unwrap_or_else(|| {
@@ -1035,7 +891,7 @@ where
             audit: tool_audit.clone(),
         })
         .await;
-        state.session.record_tool_call_with_audit(
+        state.machine.record_tool_call_with_audit(
             &tool_call.name,
             tool_arguments.clone(),
             replay_payload.clone(),
@@ -1043,12 +899,12 @@ where
             tool_audit,
         );
         state
-            .session
+            .machine
             .add_tool_message(&tool_call.id, &tool_call.name, replay_payload.clone());
-        state.session.record_event(
+        state.machine.record_event(
             "effect_dedupe_decision",
             json!({
-                "run_id": state.session.id,
+                "process_path": process_path,
                 "tool_call_id": tool_call.id,
                 "tool_name": tool_call.name,
                 "effect_type": identity.category.as_str(),
@@ -1069,9 +925,9 @@ where
             .result_digest
             .clone()
             .unwrap_or_else(|| durable_replay_payload.digest.clone());
-        state.session.record_effect(crate::rollout::EffectRecord {
+        state.machine.record_effect(crate::rollout::EffectRecord {
             effect_id: format!("ef-{}", uuid::Uuid::new_v4()),
-            run_id: state.session.id.clone(),
+            process_path: process_path.clone(),
             tool_call_id: tool_call.id.clone(),
             idempotency_key: identity.idempotency_key.clone(),
             effect_type: identity.category.as_str().to_string(),
@@ -1091,10 +947,10 @@ where
 
     if let Some(identity) = &effect_identity {
         let existing_status = existing_effect.as_ref().map(|effect| effect.status.clone());
-        state.session.record_event(
+        state.machine.record_event(
             "effect_dedupe_decision",
             json!({
-                "run_id": state.session.id,
+                "process_path": process_path,
                 "tool_call_id": tool_call.id,
                 "tool_name": tool_call.name,
                 "effect_type": identity.category.as_str(),
@@ -1113,7 +969,7 @@ where
     let effect_start = effect_identity.as_ref().map(|identity| {
         let record = crate::rollout::EffectRecord {
             effect_id: format!("ef-{}", uuid::Uuid::new_v4()),
-            run_id: state.session.id.clone(),
+            process_path: process_path.clone(),
             tool_call_id: tool_call.id.clone(),
             idempotency_key: identity.idempotency_key.clone(),
             effect_type: identity.category.as_str().to_string(),
@@ -1126,12 +982,12 @@ where
             dedupe_hit: false,
             timestamp: chrono::Utc::now().to_rfc3339(),
         };
-        state.session.record_effect(record.clone());
+        state.machine.record_effect(record.clone());
         record
     });
 
     if effect_start.is_some()
-        && let Some(recorder) = state.session.recorder.as_ref()
+        && let Some(recorder) = state.machine.recorder.as_ref()
         && let Err(err) = recorder.flush().await
     {
         let flush_error = format!("Failed to persist side-effect checkpoint: {err}");
@@ -1142,9 +998,9 @@ where
         if let (Some(identity), Some(effect_start)) = (&effect_identity, &effect_start) {
             let durable_flush_error_payload =
                 crate::rollout::build_durable_tool_payload(&flush_error_payload);
-            state.session.record_effect(crate::rollout::EffectRecord {
+            state.machine.record_effect(crate::rollout::EffectRecord {
                 effect_id: effect_start.effect_id.clone(),
-                run_id: effect_start.run_id.clone(),
+                process_path: effect_start.process_path.clone(),
                 tool_call_id: effect_start.tool_call_id.clone(),
                 idempotency_key: identity.idempotency_key.clone(),
                 effect_type: identity.category.as_str().to_string(),
@@ -1172,7 +1028,7 @@ where
             audit: tool_audit.clone(),
         })
         .await;
-        state.session.record_tool_call_with_audit(
+        state.machine.record_tool_call_with_audit(
             &tool_call.name,
             tool_arguments.clone(),
             flush_error_payload.clone(),
@@ -1180,7 +1036,7 @@ where
             tool_audit,
         );
         state
-            .session
+            .machine
             .add_tool_message(&tool_call.id, &tool_call.name, flush_error_payload);
         return Ok(ToolOrchestratorOutcome::ContinueToolBatch {
             refresh_context: false,
@@ -1229,9 +1085,9 @@ where
                         Some("tool reported failure in payload".to_string()),
                     )
                 };
-                state.session.record_effect(crate::rollout::EffectRecord {
+                state.machine.record_effect(crate::rollout::EffectRecord {
                     effect_id: effect_start.effect_id.clone(),
-                    run_id: effect_start.run_id.clone(),
+                    process_path: effect_start.process_path.clone(),
                     tool_call_id: effect_start.tool_call_id.clone(),
                     idempotency_key: identity.idempotency_key.clone(),
                     effect_type: identity.category.as_str().to_string(),
@@ -1259,7 +1115,7 @@ where
                 audit: tool_audit.clone(),
             })
             .await;
-            state.session.record_tool_call_with_audit(
+            state.machine.record_tool_call_with_audit(
                 &tool_call.name,
                 tool_arguments.clone(),
                 value.clone(),
@@ -1267,7 +1123,7 @@ where
                 tool_audit.clone(),
             );
             state
-                .session
+                .machine
                 .add_tool_message(&tool_call.id, &tool_call.name, tape_value);
             info!(
                 tool_name = %tool_call.name,
@@ -1284,9 +1140,9 @@ where
             if let (Some(identity), Some(effect_start)) = (&effect_identity, &effect_start) {
                 let durable_error_payload =
                     crate::rollout::build_durable_tool_payload(&error_payload);
-                state.session.record_effect(crate::rollout::EffectRecord {
+                state.machine.record_effect(crate::rollout::EffectRecord {
                     effect_id: effect_start.effect_id.clone(),
-                    run_id: effect_start.run_id.clone(),
+                    process_path: effect_start.process_path.clone(),
                     tool_call_id: effect_start.tool_call_id.clone(),
                     idempotency_key: identity.idempotency_key.clone(),
                     effect_type: identity.category.as_str().to_string(),
@@ -1309,7 +1165,7 @@ where
                 audit: tool_audit.clone(),
             })
             .await;
-            state.session.record_tool_call_with_audit(
+            state.machine.record_tool_call_with_audit(
                 &tool_call.name,
                 tool_arguments.clone(),
                 error_payload.clone(),
@@ -1317,7 +1173,7 @@ where
                 tool_audit,
             );
             state
-                .session
+                .machine
                 .add_tool_message(&tool_call.id, &tool_call.name, error_payload);
             info!(
                 tool_name = %tool_call.name,
@@ -1626,7 +1482,7 @@ where
 
     state.turn_state.note_resumed_user_input();
     for parts in steering_inputs {
-        state.session.add_user_message_parts(parts);
+        state.machine.add_user_message_parts(parts);
     }
 
     let remaining = &tool_calls[remaining_start_idx..];
@@ -1662,14 +1518,14 @@ where
             audit: None,
         })
         .await;
-        state.session.record_tool_call(
+        state.machine.record_tool_call(
             &skipped.name,
             skipped.arguments.clone(),
             skipped_payload.clone(),
             false,
         );
         state
-            .session
+            .machine
             .add_tool_message(&skipped.id, &skipped.name, skipped_payload);
     }
 
@@ -1680,12 +1536,12 @@ where
 mod tests {
     use super::*;
     use crate::{
+        agent_machine::AgentMachine,
         config::Config,
         runtime::{NamespaceRuntimeEnvironment, RuntimeEnvironment, TurnState},
-        session::Session,
         tools::{Tool, ToolContext, ToolRegistry, ToolResult},
     };
-    use alan_agent_protocol::{DynamicToolSpec, ToolCapability};
+    use alan_agent_protocol::ToolCapability;
     use alan_agentfs::AgentFs;
     use alan_ap::{
         ErrorCode, Fid, FileKind, FileServer, InProcessTransport, OpenMode, Qid, Request, Stat,
@@ -2079,7 +1935,7 @@ mod tests {
 
     fn create_test_state() -> RuntimeLoopState {
         let config = Config::default();
-        let session = Session::new();
+        let machine = AgentMachine::new();
         let runtime_config = super::super::RuntimeConfig::default();
         let mut namespace = Namespace::new();
         namespace.mount(
@@ -2092,7 +1948,7 @@ mod tests {
         RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
             workspace_root_dir: None,
-            session,
+            machine,
             current_submission_id: None,
             environment: RuntimeEnvironment::namespace(NamespaceRuntimeEnvironment::new(
                 root, "/agent/1", "default",
@@ -2145,7 +2001,7 @@ mod tests {
         let state = RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
             workspace_root_dir: None,
-            session: Session::new(),
+            machine: AgentMachine::new(),
             current_submission_id: None,
             environment: RuntimeEnvironment::namespace(NamespaceRuntimeEnvironment::new(
                 root, "/agent/1", "default",
@@ -2179,8 +2035,8 @@ mod tests {
         counter: &Arc<AtomicUsize>,
         decision: &str,
     ) -> RuntimeLoopState {
-        let mut session = Session::new();
-        session.add_user_message("do the thing");
+        let mut machine = AgentMachine::new();
+        machine.add_user_message("do the thing");
         let mut tools = ToolRegistry::new();
         tools.register(CountingEffectTool {
             // Unknown capability → autonomous policy escalates → reviewer route.
@@ -2188,8 +2044,8 @@ mod tests {
             capability: ToolCapability::Unknown,
             counter: Arc::clone(counter),
         });
-        create_test_state_with_session_tools_and_provider(
-            session,
+        create_test_state_with_machine_tools_and_provider(
+            machine,
             tools,
             alan_llm::MockLlmProvider::new().with_response(reviewer_response(decision)),
         )
@@ -2241,17 +2097,28 @@ mod tests {
         assert_eq!(counter.load(Ordering::SeqCst), 0);
     }
 
-    fn create_test_state_with_session_and_tools(
-        session: Session,
+    fn create_test_state_with_machine_and_tools(
+        machine: AgentMachine,
         tools: ToolRegistry,
     ) -> RuntimeLoopState {
-        create_test_state_with_session_tools_and_provider(session, tools, SimpleMockProvider)
+        create_test_state_with_machine_tools_and_provider(machine, tools, SimpleMockProvider)
     }
 
-    fn create_test_state_with_session_tools_and_provider<P: LlmProvider + 'static>(
-        session: Session,
+    fn create_test_state_with_machine_tools_and_provider<P: LlmProvider + 'static>(
+        machine: AgentMachine,
         tools: ToolRegistry,
         provider: P,
+    ) -> RuntimeLoopState {
+        create_test_state_with_machine_tools_provider_and_agent_path(
+            machine, tools, provider, "/agent/1",
+        )
+    }
+
+    fn create_test_state_with_machine_tools_provider_and_agent_path<P: LlmProvider + 'static>(
+        machine: AgentMachine,
+        tools: ToolRegistry,
+        provider: P,
+        agent_path: &str,
     ) -> RuntimeLoopState {
         let agentfs = Arc::new(AgentFs::new());
         let llmfs = Arc::new(alan_llmfs::LlmFs::new());
@@ -2259,7 +2126,7 @@ mod tests {
 
         let mut process_namespace = Namespace::new();
         process_namespace.mount(
-            "/agent/1",
+            agent_path,
             InProcessTransport::new(agentfs.clone()),
             Access::ReadWrite,
         );
@@ -2295,10 +2162,10 @@ mod tests {
         RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
             workspace_root_dir: None,
-            session,
+            machine,
             current_submission_id: None,
             environment: RuntimeEnvironment::namespace(NamespaceRuntimeEnvironment::new(
-                root, "/agent/1", "default",
+                root, agent_path, "default",
             )),
             tool_catalog: tools,
             core_config: config,
@@ -2372,7 +2239,7 @@ mod tests {
             } if id == "call-read" && name.as_deref() == Some("read_file")
         )));
         let payload = state
-            .session
+            .machine
             .tool_payload_by_call_id("call-read")
             .expect("tool response payload should be recorded on tape");
         assert_eq!(payload["success"], json!(true));
@@ -2414,7 +2281,7 @@ mod tests {
         .await;
 
         let payload = state
-            .session
+            .machine
             .tool_payload_by_call_id("call-long")
             .expect("projected tool payload should be on tape");
         assert_eq!(payload["type"], "evidence_projection");
@@ -2440,7 +2307,7 @@ mod tests {
         .await;
 
         let payload = state
-            .session
+            .machine
             .tool_payload_by_call_id("call-redacted-short")
             .expect("inline tool payload should be on tape");
         let serialized = serde_json::to_string(&payload).unwrap();
@@ -2464,7 +2331,7 @@ mod tests {
         .await;
 
         let payload = state
-            .session
+            .machine
             .tool_payload_by_call_id("call-redaction-expanded")
             .expect("expanded payload should be projected");
         assert_eq!(payload["type"], "evidence_projection");
@@ -2492,7 +2359,7 @@ mod tests {
         .await;
 
         let payload = state
-            .session
+            .machine
             .tool_payload_by_call_id("call-forged-action-id")
             .expect("projected tool payload should be on tape");
         assert_eq!(payload["metadata"]["action_id"], "a0");
@@ -2531,7 +2398,7 @@ mod tests {
         .await;
 
         let payload = state
-            .session
+            .machine
             .tool_payload_by_call_id("call-redacted-long")
             .unwrap();
         assert!(!payload["preview"].as_str().unwrap().contains("top-secret"));
@@ -2546,56 +2413,6 @@ mod tests {
         let full = read_shell_utf8(&shell, "/agent/1/actions/a0/output").await;
         assert!(full.contains("[REDACTED reason=secret_key]"));
         assert!(!full.contains("top-secret"));
-    }
-
-    #[tokio::test]
-    async fn namespace_dynamic_tool_yield_writes_request_file_and_waits_on_file_id() {
-        let (mut state, shell) = create_namespace_test_state_and_shell();
-        state.session.dynamic_tools.insert(
-            "custom_dynamic_tool".to_string(),
-            DynamicToolSpec {
-                name: "custom_dynamic_tool".to_string(),
-                description: "A test dynamic tool".to_string(),
-                parameters: json!({"type": "object", "properties": {}}),
-                capability: Some(alan_agent_protocol::ToolCapability::Read),
-            },
-        );
-
-        let (outcome, events) = execute_single_tool_call(
-            &mut state,
-            "call_dynamic",
-            "custom_dynamic_tool",
-            json!({"path": "demo.txt"}),
-        )
-        .await;
-
-        assert!(matches!(outcome, ToolBatchOrchestratorOutcome::PauseTurn));
-        assert_eq!(
-            state.turn_state.pending_request_ids(),
-            vec!["r0".to_string()]
-        );
-        assert_eq!(
-            read_shell_utf8(&shell, "/agent/1/requests/r0/kind").await,
-            "dynamic_tool"
-        );
-        assert_eq!(
-            read_shell_utf8(&shell, "/agent/1/requests/r0/prompt").await,
-            "Resolve dynamic tool: custom_dynamic_tool"
-        );
-        let options: serde_json::Value =
-            serde_json::from_str(&read_shell_utf8(&shell, "/agent/1/requests/r0/options").await)
-                .unwrap();
-        assert_eq!(options["call_id"], "call_dynamic");
-        assert_eq!(options["tool_name"], "custom_dynamic_tool");
-        assert_eq!(options["arguments"]["path"], "demo.txt");
-        assert!(events.iter().any(|event| matches!(
-            event,
-            Event::Yield {
-                request_id,
-                kind: alan_agent_protocol::YieldKind::DynamicTool,
-                ..
-            } if request_id == "r0"
-        )));
     }
 
     #[tokio::test]
@@ -2626,7 +2443,7 @@ mod tests {
             } if id == "call-read" && name.as_deref() == Some("read_file")
         )));
         let payload = state
-            .session
+            .machine
             .tool_payload_by_call_id("call-read")
             .expect("failed tool response payload should be recorded on tape");
         assert_eq!(payload["success"], json!(false));
@@ -2808,12 +2625,12 @@ mod tests {
         let mut state = create_test_state();
         state
             .turn_state
-            .begin_turn(state.session.tape.messages().len());
-        state.session.add_user_message("Initial task");
+            .begin_turn(state.machine.tape.messages().len());
+        state.machine.add_user_message("Initial task");
         state.turn_state.set_plan_snapshot_at_message_count(
             Some("Initial plan".to_string()),
             Vec::new(),
-            state.session.tape.messages().len(),
+            state.machine.tape.messages().len(),
         );
         assert!(state.turn_state.plan_snapshot_is_from_active_turn());
 
@@ -2837,7 +2654,7 @@ mod tests {
         assert!(handled);
         assert!(!state.turn_state.plan_snapshot_is_from_active_turn());
         assert_eq!(
-            state.session.tape.messages().last().unwrap().text_content(),
+            state.machine.tape.messages().last().unwrap().text_content(),
             "Steer to the new task"
         );
     }
@@ -3109,147 +2926,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_tool_batch_with_dynamic_tool() {
-        let mut state = create_test_state();
-        state
-            .session
-            .client_capabilities
-            .adaptive_yields
-            .schema_driven_forms = true;
-        state
-            .session
-            .client_capabilities
-            .adaptive_yields
-            .presentation_hints = true;
-        // Register a dynamic tool
-        state.session.dynamic_tools.insert(
-            "custom_dynamic_tool".to_string(),
-            DynamicToolSpec {
-                name: "custom_dynamic_tool".to_string(),
-                description: "A test tool".to_string(),
-                parameters: json!({"type": "object", "properties": {}}),
-                capability: Some(alan_agent_protocol::ToolCapability::Read),
-            },
-        );
-
-        let mut orchestrator = ToolTurnOrchestrator::new(None, 4);
-        let cancel = CancellationToken::new();
-
-        let mut events = vec![];
-        let mut emit = |event: Event| {
-            events.push(event);
-            async {}
-        };
-
-        let tool_calls = vec![NormalizedToolCall {
-            id: "call_1".to_string(),
-            name: "custom_dynamic_tool".to_string(),
-            arguments: json!({}),
-        }];
-
-        let inputs = ToolOrchestratorInputs {
-            cancel: &cancel,
-            steering_broker: None,
-        };
-
-        let result = orchestrator
-            .orchestrate_tool_batch(&mut state, &tool_calls, inputs, &mut emit)
-            .await;
-
-        assert!(result.is_ok());
-        // Should pause for dynamic tool
-        match result.unwrap() {
-            ToolBatchOrchestratorOutcome::PauseTurn => {
-                let payload = events.iter().find_map(|event| match event {
-                    Event::Yield {
-                        kind: alan_agent_protocol::YieldKind::DynamicTool,
-                        payload,
-                        ..
-                    } => Some(payload),
-                    _ => None,
-                });
-                let payload = payload.expect("Expected Yield DynamicTool event");
-                assert_eq!(payload["tool_name"], "custom_dynamic_tool");
-                assert_eq!(payload["form"]["fields"][0]["kind"], "boolean");
-                assert_eq!(
-                    payload["form"]["fields"][0]["presentation_hints"][0],
-                    "toggle"
-                );
-            }
-            _ => panic!("Expected PauseTurn for dynamic tool"),
-        }
-    }
-
-    #[tokio::test]
-    async fn test_tool_batch_with_dynamic_delegated_tool_is_not_shadowed() {
-        let mut state = create_test_state();
-        state
-            .session
-            .client_capabilities
-            .adaptive_yields
-            .schema_driven_forms = true;
-        state
-            .session
-            .client_capabilities
-            .adaptive_yields
-            .presentation_hints = true;
-        state.session.dynamic_tools.insert(
-            "invoke_delegated_skill".to_string(),
-            DynamicToolSpec {
-                name: "invoke_delegated_skill".to_string(),
-                description: "Delegated execution bridge".to_string(),
-                parameters: json!({"type": "object", "properties": {}}),
-                capability: Some(alan_agent_protocol::ToolCapability::Read),
-            },
-        );
-
-        let mut orchestrator = ToolTurnOrchestrator::new(None, 4);
-        let cancel = CancellationToken::new();
-
-        let mut events = vec![];
-        let mut emit = |event: Event| {
-            events.push(event);
-            async {}
-        };
-
-        let tool_calls = vec![NormalizedToolCall {
-            id: "call_1".to_string(),
-            name: "invoke_delegated_skill".to_string(),
-            arguments: json!({
-                "skill_id": "repo-review",
-                "target": "reviewer",
-                "task": "Review the current diff and summarize risks."
-            }),
-        }];
-
-        let inputs = ToolOrchestratorInputs {
-            cancel: &cancel,
-            steering_broker: None,
-        };
-
-        let result = orchestrator
-            .orchestrate_tool_batch(&mut state, &tool_calls, inputs, &mut emit)
-            .await;
-
-        assert!(result.is_ok());
-        match result.unwrap() {
-            ToolBatchOrchestratorOutcome::PauseTurn => {
-                let payload = events.iter().find_map(|event| match event {
-                    Event::Yield {
-                        kind: alan_agent_protocol::YieldKind::DynamicTool,
-                        payload,
-                        ..
-                    } => Some(payload),
-                    _ => None,
-                });
-                let payload = payload.expect("Expected Yield DynamicTool event");
-                assert_eq!(payload["tool_name"], "invoke_delegated_skill");
-            }
-            _ => panic!("Expected PauseTurn for dynamic delegated tool"),
-        }
-    }
-
-    #[tokio::test]
     async fn test_orchestrate_tool_batch_with_cancel() {
         let mut state = create_test_state();
         state.turn_state.begin_turn(0);
@@ -3394,14 +3070,14 @@ mod tests {
     async fn test_cross_workspace_bash_is_blocked_before_policy_escalation() {
         let workspace_root = tempfile::TempDir::new().unwrap();
         let other_workspace = tempfile::TempDir::new().unwrap();
-        let session = Session::new();
+        let machine = AgentMachine::new();
         let mut tools = ToolRegistry::new();
         tools.register(StaticResultTool {
             name: "bash",
             capability: ToolCapability::Unknown,
             workspace_local: true,
         });
-        let mut state = create_test_state_with_session_and_tools(session, tools);
+        let mut state = create_test_state_with_machine_and_tools(machine, tools);
         state.core_config.memory.workspace_dir = Some(workspace_root.path().join(".alan/memory"));
         state
             .tool_catalog_mut_for_test()
@@ -3462,14 +3138,14 @@ mod tests {
     fn test_approved_mount_root_bypasses_workspace_routing_preflight() {
         let workspace_root = tempfile::TempDir::new().unwrap();
         let approved_root = tempfile::TempDir::new().unwrap();
-        let session = Session::new();
+        let machine = AgentMachine::new();
         let mut tools = ToolRegistry::new();
         tools.register(StaticResultTool {
             name: "bash",
             capability: ToolCapability::Unknown,
             workspace_local: true,
         });
-        let mut state = create_test_state_with_session_and_tools(session, tools);
+        let mut state = create_test_state_with_machine_and_tools(machine, tools);
         state.workspace_root_dir = Some(workspace_root.path().to_path_buf());
         state
             .tool_catalog_mut_for_test()
@@ -3505,14 +3181,14 @@ mod tests {
      {
         let workspace_root = tempfile::TempDir::new().unwrap();
         let other_workspace = tempfile::TempDir::new().unwrap();
-        let session = Session::new();
+        let machine = AgentMachine::new();
         let mut tools = ToolRegistry::new();
         tools.register(StaticResultTool {
             name: "bash",
             capability: ToolCapability::Network,
             workspace_local: true,
         });
-        let mut state = create_test_state_with_session_and_tools(session, tools);
+        let mut state = create_test_state_with_machine_and_tools(machine, tools);
         state.core_config.memory.workspace_dir = Some(workspace_root.path().join(".alan/memory"));
         state
             .tool_catalog_mut_for_test()
@@ -3582,14 +3258,14 @@ default_action: allow
         )
         .unwrap();
 
-        let session = Session::new();
+        let machine = AgentMachine::new();
         let mut tools = ToolRegistry::new();
         tools.register(StaticResultTool {
             name: "write_file",
             capability: ToolCapability::Write,
             workspace_local: true,
         });
-        let mut state = create_test_state_with_session_and_tools(session, tools);
+        let mut state = create_test_state_with_machine_and_tools(machine, tools);
         state.core_config.memory.workspace_dir = Some(workspace_alan.join("memory"));
         state.runtime_config.policy_engine =
             crate::policy::PolicyEngine::load_or_default(Some(&workspace_alan));
@@ -3636,14 +3312,14 @@ default_action: allow
         let workspace_root = tempfile::TempDir::new().unwrap();
         let other_workspace = tempfile::TempDir::new().unwrap();
         let custom_memory_root = tempfile::TempDir::new().unwrap();
-        let session = Session::new();
+        let machine = AgentMachine::new();
         let mut tools = ToolRegistry::new();
         tools.register(StaticResultTool {
             name: "bash",
             capability: ToolCapability::Unknown,
             workspace_local: true,
         });
-        let mut state = create_test_state_with_session_and_tools(session, tools);
+        let mut state = create_test_state_with_machine_and_tools(machine, tools);
         state.workspace_root_dir = Some(workspace_root.path().to_path_buf());
         state.core_config.memory.workspace_dir = Some(custom_memory_root.path().join("memory"));
         state
@@ -3700,14 +3376,14 @@ default_action: allow
         std::fs::create_dir_all(&workspace_root).unwrap();
         std::fs::create_dir_all(other_workspace.join("docs")).unwrap();
 
-        let session = Session::new();
+        let machine = AgentMachine::new();
         let mut tools = ToolRegistry::new();
         tools.register(StaticResultTool {
             name: "glob",
             capability: ToolCapability::Read,
             workspace_local: true,
         });
-        let mut state = create_test_state_with_session_and_tools(session, tools);
+        let mut state = create_test_state_with_machine_and_tools(machine, tools);
         state.core_config.memory.workspace_dir = Some(workspace_root.join(".alan/memory"));
         state
             .tool_catalog_mut_for_test()
@@ -3758,14 +3434,14 @@ default_action: allow
         std::fs::create_dir_all(workspace_root.join("search-root")).unwrap();
         std::fs::create_dir_all(workspace_root.join("docs")).unwrap();
 
-        let session = Session::new();
+        let machine = AgentMachine::new();
         let mut tools = ToolRegistry::new();
         tools.register(StaticResultTool {
             name: "glob",
             capability: ToolCapability::Read,
             workspace_local: true,
         });
-        let mut state = create_test_state_with_session_and_tools(session, tools);
+        let mut state = create_test_state_with_machine_and_tools(machine, tools);
         state.core_config.memory.workspace_dir = Some(workspace_root.join(".alan/memory"));
         state
             .tool_catalog_mut_for_test()
@@ -3811,68 +3487,16 @@ default_action: allow
     }
 
     #[tokio::test]
-    async fn test_dynamic_tool_with_path_like_payload_bypasses_workspace_routing_preflight() {
-        let workspace_root = tempfile::TempDir::new().unwrap();
-        let mut state = create_test_state();
-        state.core_config.memory.workspace_dir = Some(workspace_root.path().join(".alan/memory"));
-        state
-            .tool_catalog_mut_for_test()
-            .set_default_cwd(workspace_root.path().to_path_buf());
-        state.session.dynamic_tools.insert(
-            "custom_dynamic_tool".to_string(),
-            DynamicToolSpec {
-                name: "custom_dynamic_tool".to_string(),
-                description: "Host-provided dynamic tool".to_string(),
-                parameters: json!({"type": "object", "properties": {}}),
-                capability: Some(alan_agent_protocol::ToolCapability::Read),
-            },
-        );
-
-        let (_, events) = execute_single_tool_call(
-            &mut state,
-            "call-dynamic-with-path",
-            "custom_dynamic_tool",
-            json!({
-                "path": "/v1/projects",
-                "workspace_root": "/api/root"
-            }),
-        )
-        .await;
-
-        assert!(
-            events.iter().any(|event| matches!(
-                event,
-                Event::Yield {
-                    kind: alan_agent_protocol::YieldKind::DynamicTool,
-                    ..
-                }
-            )),
-            "expected dynamic tool payload to reach YieldKind::DynamicTool"
-        );
-        assert!(
-            events.iter().all(|event| match event {
-                Event::ToolCallCompleted { result_preview, .. } => !result_preview
-                    .as_deref()
-                    .unwrap_or_default()
-                    .contains("requires_workspace_delegation"),
-                Event::Error { message, .. } => !message.contains("requires workspace delegation"),
-                _ => true,
-            }),
-            "dynamic tools should not be rejected by workspace routing preflight"
-        );
-    }
-
-    #[tokio::test]
     async fn test_static_host_tool_with_path_like_payload_bypasses_workspace_routing_preflight() {
         let workspace_root = tempfile::TempDir::new().unwrap();
-        let session = Session::new();
+        let machine = AgentMachine::new();
         let mut tools = ToolRegistry::new();
         tools.register(StaticResultTool {
             name: "custom_static_tool",
             capability: ToolCapability::Read,
             workspace_local: false,
         });
-        let mut state = create_test_state_with_session_and_tools(session, tools);
+        let mut state = create_test_state_with_machine_and_tools(machine, tools);
         state.core_config.memory.workspace_dir = Some(workspace_root.path().join(".alan/memory"));
         state
             .tool_catalog_mut_for_test()
@@ -3920,14 +3544,14 @@ default_action: allow
     #[tokio::test]
     async fn test_side_effect_dedupe_survives_rollout_recovery_for_file_effects() {
         let temp = tempfile::TempDir::new().unwrap();
-        let sessions_dir = temp.path();
+        let rollouts_dir = temp.path();
         let counter = Arc::new(AtomicUsize::new(0));
 
-        let mut session =
-            Session::new_with_id_and_recorder_in_dir("sess-dedupe", "mock", sessions_dir)
+        let mut machine =
+            AgentMachine::new_with_recorder_in_dir("/proc/test", "mock", rollouts_dir)
                 .await
                 .unwrap();
-        session.add_user_message("write file once");
+        machine.add_user_message("write file once");
         let mut tools = ToolRegistry::new();
         tools.register(CountingEffectTool {
             name: "write_file",
@@ -3935,7 +3559,8 @@ default_action: allow
             counter: Arc::clone(&counter),
         });
 
-        let mut state = create_test_state_with_session_and_tools(session, tools);
+        let mut state = create_test_state_with_machine_and_tools(machine, tools);
+        assert_eq!(state.process_path(), "/proc/1");
         let (_, first_events) = execute_single_tool_call(
             &mut state,
             "call-file-1",
@@ -3952,15 +3577,15 @@ default_action: allow
 
         tokio::time::sleep(std::time::Duration::from_millis(80)).await;
         let rollout_path = state
-            .session
+            .machine
             .recorder
             .as_ref()
             .expect("recorder should exist")
             .path()
             .clone();
 
-        let recovered_session =
-            Session::load_from_rollout_in_dir(&rollout_path, "mock", sessions_dir)
+        let recovered_machine =
+            AgentMachine::load_from_rollout_in_dir(&rollout_path, "/proc/2", "mock", rollouts_dir)
                 .await
                 .unwrap();
         let mut recovered_tools = ToolRegistry::new();
@@ -3969,13 +3594,25 @@ default_action: allow
             capability: ToolCapability::Write,
             counter: Arc::clone(&counter),
         });
-        let mut recovered_state =
-            create_test_state_with_session_and_tools(recovered_session, recovered_tools);
+        let mut recovered_state = create_test_state_with_machine_tools_provider_and_agent_path(
+            recovered_machine,
+            recovered_tools,
+            SimpleMockProvider,
+            "/agent/2",
+        );
+        assert_eq!(recovered_state.process_path(), "/proc/2");
+        let replay_arguments = json!({"path": "notes.txt", "payload": "hello"});
+        let replay_identity = build_effect_identity(
+            &recovered_state.machine,
+            "write_file",
+            &replay_arguments,
+            EffectCategory::File,
+        );
         let _ = execute_single_tool_call(
             &mut recovered_state,
             "call-file-2",
             "write_file",
-            json!({"path": "notes.txt", "payload": "hello"}),
+            replay_arguments,
         )
         .await;
 
@@ -3986,29 +3623,35 @@ default_action: allow
         );
         assert_eq!(
             recovered_state
-                .session
+                .machine
                 .tool_payload_by_call_id("call-file-2")
                 .expect("replayed tool payload should exist"),
             recovered_state
-                .session
+                .machine
                 .tool_payload_by_call_id("call-file-1")
                 .expect("original tool payload should exist"),
             "dedupe replay should preserve original tool payload"
         );
+        let replayed_effect = recovered_state
+            .machine
+            .effect_by_idempotency_key(&replay_identity.idempotency_key)
+            .expect("dedupe replay effect should exist");
+        assert_eq!(replayed_effect.process_path, "/proc/2");
+        assert!(replayed_effect.dedupe_hit);
     }
 
     #[tokio::test]
     async fn test_side_effect_dedupe_for_network_effects() {
         let counter = Arc::new(AtomicUsize::new(0));
-        let mut session = Session::new();
-        session.add_user_message("call api once");
+        let mut machine = AgentMachine::new();
+        machine.add_user_message("call api once");
         let mut tools = ToolRegistry::new();
         tools.register(CountingEffectTool {
             name: "bash",
             capability: ToolCapability::Network,
             counter: Arc::clone(&counter),
         });
-        let mut state = create_test_state_with_session_and_tools(session, tools);
+        let mut state = create_test_state_with_machine_and_tools(machine, tools);
         // Exercise effect dedupe independent of the locked auto-approve posture
         // (which would otherwise escalate the network call).
         state.runtime_config.policy_engine = crate::policy::PolicyEngine::allow_all();
@@ -4020,20 +3663,20 @@ default_action: allow
             }
         });
         let identity =
-            build_effect_identity(&state.session, "bash", &arguments, EffectCategory::Network);
+            build_effect_identity(&state.machine, "bash", &arguments, EffectCategory::Network);
 
         let _ = execute_single_tool_call(&mut state, "call-net-1", "bash", arguments.clone()).await;
         let _ = execute_single_tool_call(&mut state, "call-net-2", "bash", arguments).await;
 
         assert_eq!(counter.load(Ordering::SeqCst), 1);
         let replayed_payload = state
-            .session
+            .machine
             .tool_payload_by_call_id("call-net-2")
             .expect("replayed tool payload should exist");
         assert_eq!(
             replayed_payload,
             state
-                .session
+                .machine
                 .tool_payload_by_call_id("call-net-1")
                 .expect("original tool payload should exist"),
             "dedupe replay should preserve original network-tool payload"
@@ -4044,7 +3687,7 @@ default_action: allow
             "dedupe replay should preserve the redacted tape payload"
         );
         let effect = state
-            .session
+            .machine
             .effect_by_idempotency_key(&identity.idempotency_key)
             .expect("effect record should exist");
         assert_eq!(
@@ -4062,15 +3705,15 @@ default_action: allow
     #[tokio::test]
     async fn test_effect_record_and_tape_payload_are_both_redacted() {
         let counter = Arc::new(AtomicUsize::new(0));
-        let mut session = Session::new();
-        session.add_user_message("call api with auth");
+        let mut machine = AgentMachine::new();
+        machine.add_user_message("call api with auth");
         let mut tools = ToolRegistry::new();
         tools.register(CountingEffectTool {
             name: "bash",
             capability: ToolCapability::Network,
             counter: Arc::clone(&counter),
         });
-        let mut state = create_test_state_with_session_and_tools(session, tools);
+        let mut state = create_test_state_with_machine_and_tools(machine, tools);
         // Exercise effect recording independent of the locked auto-approve
         // posture (which would otherwise escalate the network call).
         state.runtime_config.policy_engine = crate::policy::PolicyEngine::allow_all();
@@ -4082,12 +3725,12 @@ default_action: allow
             }
         });
         let identity =
-            build_effect_identity(&state.session, "bash", &arguments, EffectCategory::Network);
+            build_effect_identity(&state.machine, "bash", &arguments, EffectCategory::Network);
 
         let _ = execute_single_tool_call(&mut state, "call-net-secret", "bash", arguments).await;
 
         let effect = state
-            .session
+            .machine
             .effect_by_idempotency_key(&identity.idempotency_key)
             .expect("effect record should exist");
         assert_eq!(
@@ -4109,7 +3752,7 @@ default_action: allow
         );
 
         let tape_payload = state
-            .session
+            .machine
             .tool_payload_by_call_id("call-net-secret")
             .expect("tool payload should exist on tape");
         assert_eq!(
@@ -4125,15 +3768,15 @@ default_action: allow
     #[tokio::test]
     async fn test_side_effect_dedupe_for_process_effects() {
         let counter = Arc::new(AtomicUsize::new(0));
-        let mut session = Session::new();
-        session.add_user_message("run command once");
+        let mut machine = AgentMachine::new();
+        machine.add_user_message("run command once");
         let mut tools = ToolRegistry::new();
         tools.register(CountingEffectTool {
             name: "bash",
             capability: ToolCapability::Write,
             counter: Arc::clone(&counter),
         });
-        let mut state = create_test_state_with_session_and_tools(session, tools);
+        let mut state = create_test_state_with_machine_and_tools(machine, tools);
 
         let _ = execute_single_tool_call(
             &mut state,
@@ -4153,11 +3796,11 @@ default_action: allow
         assert_eq!(counter.load(Ordering::SeqCst), 1);
         assert_eq!(
             state
-                .session
+                .machine
                 .tool_payload_by_call_id("call-proc-2")
                 .expect("replayed tool payload should exist"),
             state
-                .session
+                .machine
                 .tool_payload_by_call_id("call-proc-1")
                 .expect("original tool payload should exist"),
             "dedupe replay should preserve original process-tool payload"
@@ -4166,19 +3809,19 @@ default_action: allow
 
     #[test]
     fn test_effect_identity_turn_component_remains_monotonic_across_rollback() {
-        let mut session = Session::new();
+        let mut machine = AgentMachine::new();
         let arguments = json!({"path":"notes.txt","payload":"hello"});
 
-        session.add_user_message("turn-1");
-        let first = build_effect_identity(&session, "write_file", &arguments, EffectCategory::File);
-        session.add_user_message("turn-2");
+        machine.add_user_message("turn-1");
+        let first = build_effect_identity(&machine, "write_file", &arguments, EffectCategory::File);
+        machine.add_user_message("turn-2");
         let second =
-            build_effect_identity(&session, "write_file", &arguments, EffectCategory::File);
+            build_effect_identity(&machine, "write_file", &arguments, EffectCategory::File);
 
-        let removed = session.rollback_last_turns(1);
+        let removed = machine.rollback_last_turns(1);
         assert!(removed.removed_messages > 0);
-        session.add_user_message("turn-3");
-        let third = build_effect_identity(&session, "write_file", &arguments, EffectCategory::File);
+        machine.add_user_message("turn-3");
+        let third = build_effect_identity(&machine, "write_file", &arguments, EffectCategory::File);
 
         assert_ne!(
             second.idempotency_key, third.idempotency_key,
@@ -4189,16 +3832,16 @@ default_action: allow
 
     #[test]
     fn test_effect_identity_is_stable_when_confirmation_adds_control_message() {
-        let mut session = Session::new();
+        let mut machine = AgentMachine::new();
         let arguments = json!({"path":"notes.txt","payload":"hello"});
-        session.add_user_message("write once");
-        let first = build_effect_identity(&session, "write_file", &arguments, EffectCategory::File);
+        machine.add_user_message("write once");
+        let first = build_effect_identity(&machine, "write_file", &arguments, EffectCategory::File);
 
-        session.add_user_control_message_parts(vec![crate::tape::ContentPart::structured(
+        machine.add_user_control_message_parts(vec![crate::tape::ContentPart::structured(
             json!({"checkpoint_type":"effect_replay_confirmation","choice":"approve"}),
         )]);
         let replayed =
-            build_effect_identity(&session, "write_file", &arguments, EffectCategory::File);
+            build_effect_identity(&machine, "write_file", &arguments, EffectCategory::File);
 
         assert_eq!(
             first.idempotency_key, replayed.idempotency_key,
@@ -4209,25 +3852,25 @@ default_action: allow
     #[tokio::test]
     async fn test_unknown_effect_status_escalates_without_execution() {
         let counter = Arc::new(AtomicUsize::new(0));
-        let mut session = Session::new();
-        session.add_user_message("write file with safety");
+        let mut machine = AgentMachine::new();
+        machine.add_user_message("write file with safety");
         let mut tools = ToolRegistry::new();
         tools.register(CountingEffectTool {
             name: "write_file",
             capability: ToolCapability::Write,
             counter: Arc::clone(&counter),
         });
-        let mut state = create_test_state_with_session_and_tools(session, tools);
+        let mut state = create_test_state_with_machine_and_tools(machine, tools);
         let arguments = json!({"path": "notes.txt", "payload": "hello"});
         let identity = build_effect_identity(
-            &state.session,
+            &state.machine,
             "write_file",
             &arguments,
             EffectCategory::File,
         );
-        state.session.record_effect(crate::rollout::EffectRecord {
+        state.machine.record_effect(crate::rollout::EffectRecord {
             effect_id: "ef-unknown".to_string(),
-            run_id: state.session.id.clone(),
+            process_path: state.process_path(),
             tool_call_id: "call-prev".to_string(),
             idempotency_key: identity.idempotency_key.clone(),
             effect_type: "file".to_string(),
@@ -4261,25 +3904,25 @@ default_action: allow
     #[tokio::test]
     async fn test_replay_approved_unknown_effect_executes_tool_once() {
         let counter = Arc::new(AtomicUsize::new(0));
-        let mut session = Session::new();
-        session.add_user_message("write file with approval");
+        let mut machine = AgentMachine::new();
+        machine.add_user_message("write file with approval");
         let mut tools = ToolRegistry::new();
         tools.register(CountingEffectTool {
             name: "write_file",
             capability: ToolCapability::Write,
             counter: Arc::clone(&counter),
         });
-        let mut state = create_test_state_with_session_and_tools(session, tools);
+        let mut state = create_test_state_with_machine_and_tools(machine, tools);
         let arguments = json!({"path": "notes.txt", "payload": "hello"});
         let identity = build_effect_identity(
-            &state.session,
+            &state.machine,
             "write_file",
             &arguments,
             EffectCategory::File,
         );
-        state.session.record_effect(crate::rollout::EffectRecord {
+        state.machine.record_effect(crate::rollout::EffectRecord {
             effect_id: "ef-unknown".to_string(),
-            run_id: state.session.id.clone(),
+            process_path: state.process_path(),
             tool_call_id: "call-prev".to_string(),
             idempotency_key: identity.idempotency_key.clone(),
             effect_type: "file".to_string(),
@@ -4340,7 +3983,7 @@ default_action: allow
         );
 
         let restored = state
-            .session
+            .machine
             .effect_by_idempotency_key(&identity.idempotency_key)
             .expect("updated effect record should exist");
         assert_eq!(restored.status, crate::rollout::EffectStatus::Applied);
@@ -4349,15 +3992,15 @@ default_action: allow
     #[tokio::test]
     async fn test_replay_approved_tool_escalation_executes_tool_once() {
         let counter = Arc::new(AtomicUsize::new(0));
-        let mut session = Session::new();
-        session.add_user_message("run unknown tool with approval");
+        let mut machine = AgentMachine::new();
+        machine.add_user_message("run unknown tool with approval");
         let mut tools = ToolRegistry::new();
         tools.register(CountingEffectTool {
             name: "unknown_effect_tool",
             capability: ToolCapability::Unknown,
             counter: Arc::clone(&counter),
         });
-        let mut state = create_test_state_with_session_and_tools(session, tools);
+        let mut state = create_test_state_with_machine_and_tools(machine, tools);
 
         let cancel = CancellationToken::new();
         let inputs = ToolOrchestratorInputs {
@@ -4409,32 +4052,32 @@ default_action: allow
     #[tokio::test]
     async fn test_replay_approved_batch_bypasses_unknown_only_for_first_tool_call() {
         let counter = Arc::new(AtomicUsize::new(0));
-        let mut session = Session::new();
-        session.add_user_message("write file with batch replay");
+        let mut machine = AgentMachine::new();
+        machine.add_user_message("write file with batch replay");
         let mut tools = ToolRegistry::new();
         tools.register(CountingEffectTool {
             name: "write_file",
             capability: ToolCapability::Write,
             counter: Arc::clone(&counter),
         });
-        let mut state = create_test_state_with_session_and_tools(session, tools);
+        let mut state = create_test_state_with_machine_and_tools(machine, tools);
         let arguments_first = json!({"path": "notes-1.txt", "payload": "hello"});
         let arguments_second = json!({"path": "notes-2.txt", "payload": "world"});
         let identity_first = build_effect_identity(
-            &state.session,
+            &state.machine,
             "write_file",
             &arguments_first,
             EffectCategory::File,
         );
         let identity_second = build_effect_identity(
-            &state.session,
+            &state.machine,
             "write_file",
             &arguments_second,
             EffectCategory::File,
         );
-        state.session.record_effect(crate::rollout::EffectRecord {
+        state.machine.record_effect(crate::rollout::EffectRecord {
             effect_id: "ef-unknown-1".to_string(),
-            run_id: state.session.id.clone(),
+            process_path: state.process_path(),
             tool_call_id: "call-prev-1".to_string(),
             idempotency_key: identity_first.idempotency_key.clone(),
             effect_type: "file".to_string(),
@@ -4447,9 +4090,9 @@ default_action: allow
             dedupe_hit: false,
             timestamp: chrono::Utc::now().to_rfc3339(),
         });
-        state.session.record_effect(crate::rollout::EffectRecord {
+        state.machine.record_effect(crate::rollout::EffectRecord {
             effect_id: "ef-unknown-2".to_string(),
-            run_id: state.session.id.clone(),
+            process_path: state.process_path(),
             tool_call_id: "call-prev-2".to_string(),
             idempotency_key: identity_second.idempotency_key.clone(),
             effect_type: "file".to_string(),

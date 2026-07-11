@@ -1,6 +1,6 @@
 //! Dependency boundary (substrate §8.3, ADR-0025 D1): `alan-kernel` depends only
-//! on `alan-ap` among Alan crates, and never on the agent runtime, the legacy
-//! session protocol, provider clients, memory stores, sandbox backends, or
+//! on `alan-ap` among Alan crates, and never on the Agent Execution Engine,
+//! provider clients, Memory Stores, sandbox backends, or
 //! renderers. Enforced structurally so "the kernel changes least" is a fact, not
 //! a hope — and so the retired V1 ontology cannot creep back in.
 

@@ -12,7 +12,7 @@ Rules:
 
 1. `repo-coding` local evals check skill selection, bounded repo-local routing,
    delivery-contract honesty, and evaluator-boundary behavior.
-2. Full steward mode still means the root alan runtime owns routing,
+2. Steward execution still means the Root Agent Process owns routing,
    continuity, and delivery framing. The repo-worker child owns only bounded
    repo-local execution.
 3. Findings motivated by SWE-bench or similar ladders must still be
@@ -55,5 +55,5 @@ That split keeps the boundary clean:
 
 1. `repo-coding` is the measured coding product.
 2. `swebench` is the operator-facing benchmark package.
-3. Full-steward benchmark runs still exercise the same measured path:
-   steward session -> `$repo-coding` -> repo-worker child.
+3. Benchmark execution must enter through an explicitly selected Agent Process
+   workflow rather than a package-owned host control path.

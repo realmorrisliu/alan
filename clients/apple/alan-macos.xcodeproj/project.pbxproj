@@ -8,8 +8,6 @@
 
 /* Begin PBXBuildFile section */
 		000000000000000000000001 /* AlanApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000101 /* AlanApp.swift */; };
-		000000000000000000000002 /* Views/Console/ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000102 /* Views/Console/ContentView.swift */; };
-		000000000000000000000003 /* Services/Daemon/AlanAPIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000103 /* Services/Daemon/AlanAPIClient.swift */; };
 		000000000000000000000004 /* MacShellRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000104 /* MacShellRootView.swift */; };
 		000000000000000000000005 /* ShellModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000105 /* ShellModel.swift */; };
 		000000000000000000000006 /* ShellHostController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000106 /* ShellHostController.swift */; };
@@ -37,9 +35,6 @@
 		0000000000000000000000F0 /* Views/Shell/ShellSpaceCreationForm.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0000000000000000000001F0 /* Views/Shell/ShellSpaceCreationForm.swift */; };
 		00000000000000000000001B /* Views/Shell/ShellWorkspaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000011B /* Views/Shell/ShellWorkspaceView.swift */; };
 		00000000000000000000001D /* Support/ShellVoiceCommandController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000011D /* Support/ShellVoiceCommandController.swift */; };
-		00000000000000000000001E /* Models/Console/ConsoleModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000011E /* Models/Console/ConsoleModels.swift */; };
-		00000000000000000000001F /* Models/API/DaemonAPIModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000011F /* Models/API/DaemonAPIModels.swift */; };
-		000000000000000000000020 /* Services/Daemon/ConsoleEventReducer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000120 /* Services/Daemon/ConsoleEventReducer.swift */; };
 		000000000000000000000021 /* Models/Shell/ShellValueTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000121 /* Models/Shell/ShellValueTypes.swift */; };
 		000000000000000000000022 /* Models/Shell/ShellSnapshots.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000122 /* Models/Shell/ShellSnapshots.swift */; };
 		00000000000000000000006B /* Models/Shell/ShellStateRuntimeSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000016B /* Models/Shell/ShellStateRuntimeSupport.swift */; };
@@ -100,9 +95,6 @@
 		A11000000000000000000006 /* AlanDarwinPtySpawn.c in Sources */ = {isa = PBXBuildFile; fileRef = A11000000000000000000105 /* AlanDarwinPtySpawn.c */; };
 		A11000000000000000000007 /* AlanDarwinPtySpawn.c in Sources */ = {isa = PBXBuildFile; fileRef = A11000000000000000000105 /* AlanDarwinPtySpawn.c */; };
 		A11000000000000000000008 /* Services/Shell/AlanPrivilegedHelperAppClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11000000000000000000106 /* Services/Shell/AlanPrivilegedHelperAppClient.swift */; };
-		000000000000000000000034 /* Controllers/Console/AlanConsoleViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000134 /* Controllers/Console/AlanConsoleViewModel.swift */; };
-		000000000000000000000035 /* Views/Console/ConsoleSupportViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000135 /* Views/Console/ConsoleSupportViews.swift */; };
-		000000000000000000000036 /* Support/ConsoleAdaptiveColor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000136 /* Support/ConsoleAdaptiveColor.swift */; };
 		000000000000000000000037 /* Controllers/Shell/ShellHostControlCommandHandling.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000137 /* Controllers/Shell/ShellHostControlCommandHandling.swift */; };
 		000000000000000000000038 /* Support/ShellSidebarSwipeMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000138 /* Support/ShellSidebarSwipeMonitor.swift */; };
 		000000000000000000000039 /* Models/Shell/ShellWorkspaceManifest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000139 /* Models/Shell/ShellWorkspaceManifest.swift */; };
@@ -142,8 +134,6 @@
 		0000000000000000000000F1 /* Alan.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Alan.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A110000000000000000000F1 /* app.alanworks.macos.privileged-helper */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = "$(ALAN_PRIVILEGED_HELPER_LABEL)"; sourceTree = BUILT_PRODUCTS_DIR; };
 		000000000000000000000101 /* AlanApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlanApp.swift; sourceTree = "<group>"; };
-		000000000000000000000102 /* Views/Console/ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Console/ContentView.swift; sourceTree = "<group>"; };
-		000000000000000000000103 /* Services/Daemon/AlanAPIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Daemon/AlanAPIClient.swift; sourceTree = "<group>"; };
 		000000000000000000000104 /* MacShellRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacShellRootView.swift; sourceTree = "<group>"; };
 		000000000000000000000105 /* ShellModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShellModel.swift; sourceTree = "<group>"; };
 		000000000000000000000106 /* ShellHostController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShellHostController.swift; sourceTree = "<group>"; };
@@ -171,9 +161,6 @@
 		0000000000000000000001F0 /* Views/Shell/ShellSpaceCreationForm.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Shell/ShellSpaceCreationForm.swift; sourceTree = "<group>"; };
 		00000000000000000000011B /* Views/Shell/ShellWorkspaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Shell/ShellWorkspaceView.swift; sourceTree = "<group>"; };
 		00000000000000000000011D /* Support/ShellVoiceCommandController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Support/ShellVoiceCommandController.swift; sourceTree = "<group>"; };
-		00000000000000000000011E /* Models/Console/ConsoleModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/Console/ConsoleModels.swift; sourceTree = "<group>"; };
-		00000000000000000000011F /* Models/API/DaemonAPIModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/API/DaemonAPIModels.swift; sourceTree = "<group>"; };
-		000000000000000000000120 /* Services/Daemon/ConsoleEventReducer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Daemon/ConsoleEventReducer.swift; sourceTree = "<group>"; };
 		000000000000000000000121 /* Models/Shell/ShellValueTypes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/Shell/ShellValueTypes.swift; sourceTree = "<group>"; };
 		000000000000000000000122 /* Models/Shell/ShellSnapshots.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/Shell/ShellSnapshots.swift; sourceTree = "<group>"; };
 		00000000000000000000016B /* Models/Shell/ShellStateRuntimeSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/Shell/ShellStateRuntimeSupport.swift; sourceTree = "<group>"; };
@@ -199,9 +186,6 @@
 		000000000000000000000143 /* Models/Shell/ShellAutomationCommand.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/Shell/ShellAutomationCommand.swift; sourceTree = "<group>"; };
 		000000000000000000000144 /* Models/Shell/ShellAutomationEntities.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/Shell/ShellAutomationEntities.swift; sourceTree = "<group>"; };
 		000000000000000000000145 /* Models/Shell/ShellAutomationIntents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/Shell/ShellAutomationIntents.swift; sourceTree = "<group>"; };
-		000000000000000000000134 /* Controllers/Console/AlanConsoleViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Controllers/Console/AlanConsoleViewModel.swift; sourceTree = "<group>"; };
-		000000000000000000000135 /* Views/Console/ConsoleSupportViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Console/ConsoleSupportViews.swift; sourceTree = "<group>"; };
-		000000000000000000000136 /* Support/ConsoleAdaptiveColor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Support/ConsoleAdaptiveColor.swift; sourceTree = "<group>"; };
 		000000000000000000000137 /* Controllers/Shell/ShellHostControlCommandHandling.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Controllers/Shell/ShellHostControlCommandHandling.swift; sourceTree = "<group>"; };
 		000000000000000000000138 /* Support/ShellSidebarSwipeMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Support/ShellSidebarSwipeMonitor.swift; sourceTree = "<group>"; };
 		000000000000000000000139 /* Models/Shell/ShellWorkspaceManifest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/Shell/ShellWorkspaceManifest.swift; sourceTree = "<group>"; };
@@ -284,14 +268,9 @@
 				00000000000000000000013F /* AppIcon.icon */,
 				000000000000000000000150 /* Info.plist */,
 				000000000000000000000304 /* App */,
-				00000000000000000000030E /* Controllers/Console */,
 				00000000000000000000030F /* Controllers/Shell */,
 				000000000000000000000306 /* Views/Shell */,
-				000000000000000000000307 /* Views/Console */,
-				000000000000000000000309 /* Models/API */,
-				000000000000000000000308 /* Models/Console */,
 				00000000000000000000030B /* Models/Shell */,
-				00000000000000000000030A /* Services/Daemon */,
 				00000000000000000000030C /* Services/Shell */,
 				00000000000000000000030D /* Services/Terminal */,
 				000000000000000000000101 /* AlanApp.swift */,
@@ -350,7 +329,6 @@
 				000000000000000000000118 /* Support/ShellDesignTokens.swift */,
 				00000000000000000000013C /* Support/AlanCommandLineToolInstaller.swift */,
 				000000000000000000000152 /* Support/AlanMacUpdatePolicy.swift */,
-				000000000000000000000136 /* Support/ConsoleAdaptiveColor.swift */,
 				000000000000000000000138 /* Support/ShellSidebarSwipeMonitor.swift */,
 				00000000000000000000013D /* Support/ShellSidebarPresentation.swift */,
 				00000000000000000000013B /* Support/ShellSidebarSpaceContentPager.swift */,
@@ -371,40 +349,6 @@
 				00000000000000000000011B /* Views/Shell/ShellWorkspaceView.swift */,
 			);
 			name = Views/Shell;
-			sourceTree = "<group>";
-		};
-		000000000000000000000307 /* Views/Console */ = {
-			isa = PBXGroup;
-			children = (
-				000000000000000000000102 /* Views/Console/ContentView.swift */,
-				000000000000000000000135 /* Views/Console/ConsoleSupportViews.swift */,
-			);
-			name = Views/Console;
-			sourceTree = "<group>";
-		};
-		000000000000000000000308 /* Models/Console */ = {
-			isa = PBXGroup;
-			children = (
-				00000000000000000000011E /* Models/Console/ConsoleModels.swift */,
-			);
-			name = Models/Console;
-			sourceTree = "<group>";
-		};
-		000000000000000000000309 /* Models/API */ = {
-			isa = PBXGroup;
-			children = (
-				00000000000000000000011F /* Models/API/DaemonAPIModels.swift */,
-			);
-			name = Models/API;
-			sourceTree = "<group>";
-		};
-		00000000000000000000030A /* Services/Daemon */ = {
-			isa = PBXGroup;
-			children = (
-				000000000000000000000103 /* Services/Daemon/AlanAPIClient.swift */,
-				000000000000000000000120 /* Services/Daemon/ConsoleEventReducer.swift */,
-			);
-			name = Services/Daemon;
 			sourceTree = "<group>";
 		};
 		00000000000000000000030B /* Models/Shell */ = {
@@ -481,14 +425,6 @@
 			name = Services/Terminal;
 			sourceTree = "<group>";
 		};
-		00000000000000000000030E /* Controllers/Console */ = {
-			isa = PBXGroup;
-			children = (
-				000000000000000000000134 /* Controllers/Console/AlanConsoleViewModel.swift */,
-			);
-			name = Controllers/Console;
-			sourceTree = "<group>";
-		};
 		00000000000000000000030F /* Controllers/Shell */ = {
 			isa = PBXGroup;
 			children = (
@@ -505,10 +441,10 @@
 			buildConfigurationList = 000000000000000000000601 /* Build configuration list for PBXNativeTarget "alan-macos" */;
 			buildPhases = (
 				000000000000000000000204 /* Check Ghostty Artifacts */,
-				000000000000000000000205 /* Build Shell Core FFI */,
 				000000000000000000000202 /* Sources */,
 				000000000000000000000201 /* Frameworks */,
 				000000000000000000000203 /* Resources */,
+				000000000000000000000205 /* Build Shell Core FFI */,
 				A11000000000000000000207 /* Copy Privileged Helper */,
 				A11000000000000000000206 /* Generate Privileged Helper LaunchDaemon Plist */,
 			);
@@ -686,8 +622,6 @@
 			buildActionMask = 2147483647;
 			files = (
 				000000000000000000000001 /* AlanApp.swift in Sources */,
-				000000000000000000000002 /* Views/Console/ContentView.swift in Sources */,
-				000000000000000000000003 /* Services/Daemon/AlanAPIClient.swift in Sources */,
 				000000000000000000000004 /* MacShellRootView.swift in Sources */,
 				000000000000000000000005 /* ShellModel.swift in Sources */,
 				000000000000000000000006 /* ShellHostController.swift in Sources */,
@@ -712,9 +646,6 @@
 				0000000000000000000000F0 /* Views/Shell/ShellSpaceCreationForm.swift in Sources */,
 				00000000000000000000001B /* Views/Shell/ShellWorkspaceView.swift in Sources */,
 				00000000000000000000001D /* Support/ShellVoiceCommandController.swift in Sources */,
-				00000000000000000000001E /* Models/Console/ConsoleModels.swift in Sources */,
-				00000000000000000000001F /* Models/API/DaemonAPIModels.swift in Sources */,
-				000000000000000000000020 /* Services/Daemon/ConsoleEventReducer.swift in Sources */,
 				000000000000000000000021 /* Models/Shell/ShellValueTypes.swift in Sources */,
 				000000000000000000000022 /* Models/Shell/ShellSnapshots.swift in Sources */,
 				00000000000000000000006B /* Models/Shell/ShellStateRuntimeSupport.swift in Sources */,
@@ -741,9 +672,6 @@
 				000000000000000000000031 /* Services/Terminal/TerminalNativeScrollViewAdapter.swift in Sources */,
 				000000000000000000000032 /* Services/Terminal/TerminalHostOverlayPresenter.swift in Sources */,
 				000000000000000000000033 /* Services/Terminal/TerminalHostViewSupport.swift in Sources */,
-				000000000000000000000034 /* Controllers/Console/AlanConsoleViewModel.swift in Sources */,
-				000000000000000000000035 /* Views/Console/ConsoleSupportViews.swift in Sources */,
-				000000000000000000000036 /* Support/ConsoleAdaptiveColor.swift in Sources */,
 				000000000000000000000037 /* Controllers/Shell/ShellHostControlCommandHandling.swift in Sources */,
 				000000000000000000000038 /* Support/ShellSidebarSwipeMonitor.swift in Sources */,
 				00000000000000000000003D /* Support/ShellSidebarPresentation.swift in Sources */,

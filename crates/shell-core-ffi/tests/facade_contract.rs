@@ -59,44 +59,6 @@ fn facade_reports_unknown_operation_without_panicking() {
 }
 
 #[test]
-fn facade_dispatches_settings_capability_rows() {
-    let response = request(
-        "settings.capability_rows",
-        json!({
-            "skills": [
-                {
-                    "id": "memory",
-                    "name": "Memory",
-                    "enabled": true,
-                    "allow_implicit_invocation": false,
-                    "available": true
-                },
-                {
-                    "id": "plan",
-                    "name": "Plan",
-                    "enabled": false,
-                    "allow_implicit_invocation": false,
-                    "available": true
-                }
-            ]
-        }),
-    );
-
-    assert!(response.error.is_none());
-    assert_eq!(
-        response.payload.unwrap()["rows"][0],
-        json!({
-            "id": "capabilitiesAvailable",
-            "system_name": "puzzlepiece.extension",
-            "title": "Skill catalog",
-            "value": "1 of 2",
-            "mutability": "read_only",
-            "offers_freeform_editing": false
-        })
-    );
-}
-
-#[test]
 fn facade_dispatches_manifest_materialize_and_reducer_apply() {
     let manifest = request(
         "manifest.default_manifest",

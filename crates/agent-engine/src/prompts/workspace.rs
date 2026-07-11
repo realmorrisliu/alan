@@ -164,7 +164,7 @@ pub(crate) fn render_workspace_persona_context_from_dirs(workspace_dirs: &[PathB
         "Do not re-read them with tools by default; only open or edit the on-disk files when you need to verify or persist changes.\n",
     );
     prompt.push_str(
-        "When the user explicitly asks you to remember stable information across sessions, update the relevant user-context or memory files with tools instead of only acknowledging it in text.\n",
+        "When the user explicitly asks you to remember stable information across Agent Processes, update the relevant user-context or memory files with tools instead of only acknowledging it in text.\n",
     );
     prompt.push_str(
         "Paths below are exact on-disk targets. Always edit the exact `Write updates to:` path shown for a file.\n",
@@ -173,7 +173,7 @@ pub(crate) fn render_workspace_persona_context_from_dirs(workspace_dirs: &[PathB
         "Do not create cwd-relative or sibling duplicates such as `./USER.md` based on guesswork.\n",
     );
     prompt.push_str(
-        "Only persist user-confirmed stable information. Do not store guesses, inferred traits, or transient session focus in `USER.md`.\n",
+        "Only persist user-confirmed stable information. Do not store guesses, inferred traits, or transient machine focus in `USER.md`.\n",
     );
 
     for file in files {
@@ -367,7 +367,7 @@ mod tests {
 
         assert!(prompt.contains("already injected into this prompt"));
         assert!(prompt.contains("Do not re-read them with tools by default"));
-        assert!(prompt.contains("remember stable information across sessions"));
+        assert!(prompt.contains("remember stable information across Agent Processes"));
         assert!(prompt.contains("Write updates to:"));
         assert!(prompt.contains("Do not create cwd-relative or sibling duplicates"));
         assert!(prompt.contains("Resolved from:"));

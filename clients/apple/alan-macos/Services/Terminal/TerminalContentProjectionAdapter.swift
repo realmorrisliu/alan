@@ -72,9 +72,9 @@ struct TerminalContentProjectionAdapter {
 
         let bindingSummary: String?
         if let projectedBinding {
-            bindingSummary = projectedBinding.pendingYield
+            bindingSummary = projectedBinding.pendingRequest
                 ? "alan is waiting for user input"
-                : "alan run status: \(projectedBinding.runStatus)"
+                : "Alan Machine state: \(projectedBinding.machineState)"
         } else {
             bindingSummary = nil
         }
@@ -98,7 +98,7 @@ struct TerminalContentProjectionAdapter {
                     bootProfile: bootProfile
                 ),
                 process: pane.process,
-                attention: projectedBinding?.pendingYield == true ? .awaitingUser : pane.attention,
+                attention: projectedBinding?.pendingRequest == true ? .awaitingUser : pane.attention,
                 context: projectedContext,
                 viewport: viewport,
                 activity: pane.activity,

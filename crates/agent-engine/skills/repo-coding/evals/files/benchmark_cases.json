@@ -14,7 +14,7 @@
     },
     {
       "id": "cross_repo_orchestration",
-      "goal": "Coordinate API and web repositories for one feature rollout without collapsing the task into a single repo shell session.",
+      "goal": "Coordinate API and web repositories for one feature rollout without collapsing the task into a single repo shell Process.",
       "expected_route": "steward_multi_repo",
       "expected_handles": [
         "approval_scope",

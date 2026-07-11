@@ -35,6 +35,7 @@ private enum TerminalAccountDevDryRunSmoke {
             ownershipState: .missing,
             readinessState: .accountMissing,
             accountExists: false,
+            isAdmin: false,
             homeDirectoryExists: false,
             shellMatches: false,
             hiddenFromLoginWindow: false,

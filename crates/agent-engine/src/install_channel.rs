@@ -40,10 +40,6 @@ pub struct InstallChannelDescriptor {
     /// Global public skill parent directory name, relative to the user's home
     /// directory.
     pub global_skills_parent_dir_name: &'static str,
-    /// Default daemon bind address.
-    pub daemon_bind: &'static str,
-    /// Default daemon client URL.
-    pub daemon_url: &'static str,
     /// Shell-control namespace.
     pub shell_control_namespace: &'static str,
 }
@@ -114,8 +110,6 @@ impl InstallChannel {
                 alan_home_dir_name: ".alan",
                 global_skills_dir: "~/.agents/skills",
                 global_skills_parent_dir_name: ".agents",
-                daemon_bind: "0.0.0.0:8090",
-                daemon_url: "http://127.0.0.1:8090",
                 shell_control_namespace: "alan-shell-control",
             },
             Self::Dev => InstallChannelDescriptor {
@@ -128,8 +122,6 @@ impl InstallChannel {
                 alan_home_dir_name: ".alan-dev",
                 global_skills_dir: "~/.agents-dev/skills",
                 global_skills_parent_dir_name: ".agents-dev",
-                daemon_bind: "127.0.0.1:8091",
-                daemon_url: "http://127.0.0.1:8091",
                 shell_control_namespace: "alan-dev-shell-control",
             },
         }
@@ -158,8 +150,6 @@ mod tests {
                 alan_home_dir_name: ".alan",
                 global_skills_dir: "~/.agents/skills",
                 global_skills_parent_dir_name: ".agents",
-                daemon_bind: "0.0.0.0:8090",
-                daemon_url: "http://127.0.0.1:8090",
                 shell_control_namespace: "alan-shell-control",
             }
         );
@@ -179,8 +169,6 @@ mod tests {
                 alan_home_dir_name: ".alan-dev",
                 global_skills_dir: "~/.agents-dev/skills",
                 global_skills_parent_dir_name: ".agents-dev",
-                daemon_bind: "127.0.0.1:8091",
-                daemon_url: "http://127.0.0.1:8091",
                 shell_control_namespace: "alan-dev-shell-control",
             }
         );

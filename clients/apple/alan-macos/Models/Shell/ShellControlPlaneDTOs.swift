@@ -525,9 +525,9 @@ struct AlanShellEventEnvelope: Codable, Equatable, Identifiable {
 }
 
 struct AlanShellBindingProjection: Codable, Equatable {
-    let sessionID: String
-    let runStatus: String
-    let pendingYield: Bool
+    let processPath: String
+    let machineState: String
+    let pendingRequest: Bool
     let source: String?
     let lastProjectedAt: String?
     let windowID: String?
@@ -536,9 +536,9 @@ struct AlanShellBindingProjection: Codable, Equatable {
     let paneID: String?
 
     private enum CodingKeys: String, CodingKey {
-        case sessionID = "session_id"
-        case runStatus = "run_status"
-        case pendingYield = "pending_yield"
+        case processPath = "process_path"
+        case machineState = "machine_state"
+        case pendingRequest = "pending_request"
         case source
         case lastProjectedAt = "last_projected_at"
         case windowID = "window_id"
@@ -549,9 +549,9 @@ struct AlanShellBindingProjection: Codable, Equatable {
 
     var shellBinding: ShellAlanBinding {
         ShellAlanBinding(
-            sessionID: sessionID,
-            runStatus: runStatus,
-            pendingYield: pendingYield,
+            processPath: processPath,
+            machineState: machineState,
+            pendingRequest: pendingRequest,
             source: source ?? "pane_binding_file",
             lastProjectedAt: lastProjectedAt
         )

@@ -12,13 +12,11 @@ pub struct AlanHomePaths {
     pub global_named_agents_dir: PathBuf,
     pub global_public_skills_dir: PathBuf,
     pub global_agent_config_path: PathBuf,
-    pub global_host_config_path: PathBuf,
     pub global_models_path: PathBuf,
     pub global_connections_path: PathBuf,
     pub global_credentials_dir: PathBuf,
     pub global_auth_path: PathBuf,
     pub global_registry_path: PathBuf,
-    pub global_daemon_pid_path: PathBuf,
 }
 
 impl AlanHomePaths {
@@ -71,13 +69,11 @@ impl AlanHomePaths {
             global_named_agents_dir,
             global_public_skills_dir,
             global_agent_config_path: layout.agent_config_path(&global_agent_root_dir),
-            global_host_config_path: alan_home_dir.join("host.toml"),
             global_models_path: alan_home_dir.join("models.toml"),
             global_connections_path: alan_home_dir.join("connections.toml"),
             global_credentials_dir: alan_home_dir.join("credentials"),
             global_auth_path: alan_home_dir.join("auth.json"),
             global_registry_path: alan_home_dir.join("registry.json"),
-            global_daemon_pid_path: alan_home_dir.join("daemon.pid"),
         }
     }
 }
@@ -122,10 +118,6 @@ mod tests {
             Path::new("/tmp/demo-home/.alan/agents/default/agent.toml")
         );
         assert_eq!(
-            paths.global_host_config_path,
-            Path::new("/tmp/demo-home/.alan/host.toml")
-        );
-        assert_eq!(
             paths.global_models_path,
             Path::new("/tmp/demo-home/.alan/models.toml")
         );
@@ -144,10 +136,6 @@ mod tests {
         assert_eq!(
             paths.global_registry_path,
             Path::new("/tmp/demo-home/.alan/registry.json")
-        );
-        assert_eq!(
-            paths.global_daemon_pid_path,
-            Path::new("/tmp/demo-home/.alan/daemon.pid")
         );
     }
 

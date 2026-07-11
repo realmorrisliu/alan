@@ -57,7 +57,7 @@ d4e5f6     alan                 ~/Developer/Alan
 alan workspace info <alias-or-id>
 ```
 
-Shows: alias, ID, path, creation date, status, and session count.
+Shows: alias, ID, path, creation date, initialization status, and rollout count.
 
 ### Register an existing workspace
 
@@ -84,7 +84,7 @@ project/
 │   ├── state.json           # Workspace state
 │   ├── context/
 │   │   └── skills/          # Workspace-specific skills
-│   ├── sessions/            # Session rollout files (.jsonl)
+│   ├── rollouts/            # Agent Machine rollout files (.jsonl)
 │   └── memory/
 │       ├── MEMORY.md        # Persistent knowledge
 │       └── YYYY-MM-DD.md    # Daily work logs
