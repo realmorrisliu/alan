@@ -47,6 +47,8 @@ pub struct AgentMachine {
     pub tape: Tape,
     /// Optional recorder for persistence
     pub recorder: Option<RolloutRecorder>,
+    /// Per-Process durable-record discriminator used by generated Memory Store paths.
+    memory_record_id: String,
     /// Whether a sourcing task has been started in this machine
     pub has_active_task: bool,
     /// Latest effect record by idempotency key (used for side-effect dedupe).
@@ -309,6 +311,7 @@ impl AgentMachine {
         Self {
             tape: Tape::new(),
             recorder: None,
+            memory_record_id: uuid::Uuid::new_v4().to_string(),
             has_active_task: false,
             effect_index: HashMap::new(),
             last_turn_context_snapshot_fingerprint: None,
@@ -349,10 +352,12 @@ impl AgentMachine {
                 .await?
             }
         };
+        let memory_record_id = recorder.rollout_id().to_string();
 
         Ok(Self {
             tape: Tape::new(),
             recorder: Some(recorder),
+            memory_record_id,
             has_active_task: false,
             effect_index: HashMap::new(),
             last_turn_context_snapshot_fingerprint: None,
@@ -1283,6 +1288,11 @@ impl AgentMachine {
     /// Get the rollout file path if recorder is available
     pub fn rollout_path(&self) -> Option<&PathBuf> {
         self.recorder.as_ref().map(|r| r.path())
+    }
+
+    /// Stable discriminator for this Agent Process's generated memory records.
+    pub(crate) fn memory_record_id(&self) -> &str {
+        &self.memory_record_id
     }
 }
 

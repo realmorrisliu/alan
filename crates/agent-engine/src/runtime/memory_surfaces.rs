@@ -42,16 +42,23 @@ pub(crate) async fn refresh_turn_memory_surfaces(state: &RuntimeLoopState) -> Re
 
     let now = Utc::now();
     let process_path = state.process_path();
-    let rendered = render_memory_surfaces(&state.machine, &state.turn_state, &process_path, now);
+    let memory_record_id = state.machine.memory_record_id();
+    let rendered = render_memory_surfaces(
+        &state.machine,
+        &state.turn_state,
+        &process_path,
+        memory_record_id,
+        now,
+    );
 
     write_text_file(
-        &working_memory_path(memory_dir, &process_path),
+        &working_memory_path(memory_dir, memory_record_id),
         &rendered.working_memory,
     )
     .await?;
     write_text_file(&latest_handoff_path(memory_dir), &rendered.handoff).await?;
     write_text_file(
-        &episodic_record_path(memory_dir, &process_path, now),
+        &episodic_record_path(memory_dir, memory_record_id, now),
         &rendered.episodic_record,
     )
     .await?;
@@ -84,6 +91,7 @@ fn render_memory_surfaces(
     machine: &AgentMachine,
     turn_state: &TurnState,
     process_path: &str,
+    memory_record_id: &str,
     now: DateTime<Utc>,
 ) -> RenderedMemorySurfaces {
     let current_goal = derive_current_goal(machine, turn_state);
@@ -96,19 +104,19 @@ fn render_memory_surfaces(
     let updated_at = now.to_rfc3339();
 
     let working_memory = format!(
-        "# Working Memory\n\nprocess_path: {process_path}\nupdated_at: {updated_at}\n\n## Current Goal\n{current_goal}\n\n## Active Subgoals\n{active_plan_items}\n\n## Confirmed Constraints\n{compaction_summary}\n\n## Pending Verification\n{active_plan_items}\n\n## Open Loops\n{active_plan_items}\n\n## Recent Findings\n- Latest assistant state: {latest_assistant_state}\n{recent_messages}\n\n## Active Recall\n{latest_memory_flush}\n"
+        "# Working Memory\n\nprocess_path: {process_path}\nmemory_record_id: {memory_record_id}\nupdated_at: {updated_at}\n\n## Current Goal\n{current_goal}\n\n## Active Subgoals\n{active_plan_items}\n\n## Confirmed Constraints\n{compaction_summary}\n\n## Pending Verification\n{active_plan_items}\n\n## Open Loops\n{active_plan_items}\n\n## Recent Findings\n- Latest assistant state: {latest_assistant_state}\n{recent_messages}\n\n## Active Recall\n{latest_memory_flush}\n"
     );
 
     let handoff = format!(
-        "# Latest Handoff\n\nupdated_at: {updated_at}\nprocess_path: {process_path}\n\n## Current Goal\n{current_goal}\n\n## What Just Happened\n- {latest_assistant_state}\n\n## Next Steps\n{active_plan_items}\n\n## Recent Context\n{compaction_summary}\n{recent_messages}\n"
+        "# Latest Handoff\n\nupdated_at: {updated_at}\nprocess_path: {process_path}\nmemory_record_id: {memory_record_id}\n\n## Current Goal\n{current_goal}\n\n## What Just Happened\n- {latest_assistant_state}\n\n## Next Steps\n{active_plan_items}\n\n## Recent Context\n{compaction_summary}\n{recent_messages}\n"
     );
 
     let episodic_record = format!(
-        "# Agent Process Activity\n\nprocess_path: {process_path}\nupdated_at: {updated_at}\n\n## Current Goal\n{current_goal}\n\n## Latest Assistant State\n- {latest_assistant_state}\n\n## Active Plan\n{active_plan_items}\n\n## Completed Plan Items\n{completed_plan_items}\n\n## Prior Compaction Summary\n{compaction_summary}\n\n## Recent Activity\n{recent_messages}\n\n## Latest Memory Flush\n{latest_memory_flush}\n"
+        "# Agent Process Activity\n\nprocess_path: {process_path}\nmemory_record_id: {memory_record_id}\nupdated_at: {updated_at}\n\n## Current Goal\n{current_goal}\n\n## Latest Assistant State\n- {latest_assistant_state}\n\n## Active Plan\n{active_plan_items}\n\n## Completed Plan Items\n{completed_plan_items}\n\n## Prior Compaction Summary\n{compaction_summary}\n\n## Recent Activity\n{recent_messages}\n\n## Latest Memory Flush\n{latest_memory_flush}\n"
     );
 
     let daily_entry = format!(
-        "## {updated_at}\n\nprocess_path: {process_path}\n\n### Current Goal\n{current_goal}\n\n### Latest Assistant State\n- {latest_assistant_state}\n\n### Next Steps\n{active_plan_items}\n\n### Latest Memory Flush\n{latest_memory_flush}\n\n"
+        "## {updated_at}\n\nprocess_path: {process_path}\nmemory_record_id: {memory_record_id}\n\n### Current Goal\n{current_goal}\n\n### Latest Assistant State\n- {latest_assistant_state}\n\n### Next Steps\n{active_plan_items}\n\n### Latest Memory Flush\n{latest_memory_flush}\n\n"
     );
 
     RenderedMemorySurfaces {
@@ -401,8 +409,8 @@ fn render_latest_memory_flush(machine: &AgentMachine) -> String {
         .unwrap_or_else(|| "- No memory flush attempt recorded.\n".to_string())
 }
 
-fn working_memory_path(memory_dir: &Path, process_path: &str) -> PathBuf {
-    let key = crate::process_storage_key(process_path);
+fn working_memory_path(memory_dir: &Path, memory_record_id: &str) -> PathBuf {
+    let key = crate::process_storage_key(memory_record_id);
     memory_dir.join("working").join(format!("process-{key}.md"))
 }
 
@@ -410,8 +418,8 @@ fn latest_handoff_path(memory_dir: &Path) -> PathBuf {
     memory_dir.join("handoffs").join("LATEST.md")
 }
 
-fn episodic_record_path(memory_dir: &Path, process_path: &str, now: DateTime<Utc>) -> PathBuf {
-    let key = crate::process_storage_key(process_path);
+fn episodic_record_path(memory_dir: &Path, memory_record_id: &str, now: DateTime<Utc>) -> PathBuf {
+    let key = crate::process_storage_key(memory_record_id);
     memory_dir.join("episodic").join(format!(
         "{:04}/{:02}/{:02}/process-{}.md",
         now.year(),
@@ -614,7 +622,13 @@ mod tests {
         let now = DateTime::parse_from_rfc3339("2026-04-15T15:30:00Z")
             .unwrap()
             .with_timezone(&Utc);
-        let rendered = render_memory_surfaces(&machine, &turn_state, "/proc/1", now);
+        let rendered = render_memory_surfaces(
+            &machine,
+            &turn_state,
+            "/proc/1",
+            machine.memory_record_id(),
+            now,
+        );
 
         assert!(rendered.working_memory.contains("# Working Memory"));
         assert!(rendered.handoff.contains("# Latest Handoff"));
@@ -624,6 +638,11 @@ mod tests {
                 .contains("# Agent Process Activity")
         );
         assert!(rendered.working_memory.contains("process_path: /proc/1"));
+        assert!(
+            rendered
+                .working_memory
+                .contains(&format!("memory_record_id: {}", machine.memory_record_id()))
+        );
         assert!(
             rendered
                 .daily_entry
@@ -659,7 +678,13 @@ mod tests {
         let now = DateTime::parse_from_rfc3339("2026-04-15T15:30:00Z")
             .unwrap()
             .with_timezone(&Utc);
-        let rendered = render_memory_surfaces(&machine, &turn_state, "/proc/1", now);
+        let rendered = render_memory_surfaces(
+            &machine,
+            &turn_state,
+            "/proc/1",
+            machine.memory_record_id(),
+            now,
+        );
 
         assert!(
             rendered
@@ -963,7 +988,7 @@ mod tests {
 
         refresh_turn_memory_surfaces(&state).await.unwrap();
 
-        assert!(working_memory_path(&memory_dir, "/proc/1").exists());
+        assert!(working_memory_path(&memory_dir, state.machine.memory_record_id()).exists());
         assert!(latest_handoff_path(&memory_dir).exists());
         assert!(
             std::fs::read_dir(memory_dir.join("daily"))
@@ -1007,9 +1032,39 @@ mod tests {
         refresh_turn_memory_surfaces(&state).await.unwrap();
 
         assert_eq!(state.machine.tape.messages().len(), message_count);
-        let working = tokio::fs::read_to_string(working_memory_path(&memory_dir, "/proc/1"))
+        let working = tokio::fs::read_to_string(working_memory_path(
+            &memory_dir,
+            state.machine.memory_record_id(),
+        ))
+        .await
+        .unwrap();
+        assert!(working.contains("Refresh local memory surfaces mechanically."));
+    }
+
+    #[tokio::test]
+    async fn reused_process_path_gets_distinct_durable_memory_paths() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let rollouts_dir = temp.path().join("rollouts");
+        let memory_dir = temp.path().join("memory");
+        let first = AgentMachine::new_with_recorder_in_dir("/proc/1", "mock", &rollouts_dir)
             .await
             .unwrap();
-        assert!(working.contains("Refresh local memory surfaces mechanically."));
+        let second = AgentMachine::new_with_recorder_in_dir("/proc/1", "mock", &rollouts_dir)
+            .await
+            .unwrap();
+
+        assert_ne!(first.memory_record_id(), second.memory_record_id());
+        assert_ne!(
+            working_memory_path(&memory_dir, first.memory_record_id()),
+            working_memory_path(&memory_dir, second.memory_record_id())
+        );
+        assert_eq!(
+            first.memory_record_id(),
+            first.recorder.as_ref().unwrap().rollout_id()
+        );
+        assert_eq!(
+            second.memory_record_id(),
+            second.recorder.as_ref().unwrap().rollout_id()
+        );
     }
 }

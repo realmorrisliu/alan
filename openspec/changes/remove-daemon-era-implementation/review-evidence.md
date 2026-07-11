@@ -119,6 +119,17 @@ The guard runs in CI against the built debug binary.
   the fresh Process, JSON and UTF-8 torn tails, invalid-tail rejection, valid
   final records without a newline, and Agent Machine recovery from the complete
   prefix.
+- Generated working and episodic Memory Store files use a per-Process
+  `memory_record_id`. Recorder-backed machines use their rollout UUID; an
+  in-memory machine receives an internal UUID. The live Process path remains
+  human-readable provenance but cannot collide in the durable filename when a
+  later Kernel reuses the same PID.
+- macOS active-task decoding maps any unrecognized current-format raw value to
+  the existing conservative `unknown` state. This is not a Session-specific
+  alias or migration: no retired raw value is named or re-emitted, and the next
+  manifest write uses only the current enum. The workspace-manifest lane proves
+  that an unknown value preserves the saved tab instead of quarantining the
+  entire workspace.
 
 ## Validation result
 

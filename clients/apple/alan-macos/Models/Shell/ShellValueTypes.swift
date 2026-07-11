@@ -2498,6 +2498,17 @@ enum ShellTabActiveTaskState: String, Codable, Equatable, CaseIterable {
     case alanProcess = "alan_process"
     case unknown
 
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let rawValue = try container.decode(String.self)
+        self = Self(rawValue: rawValue) ?? .unknown
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
+
     var protectsFromPruning: Bool {
         switch self {
         case .inactive:
