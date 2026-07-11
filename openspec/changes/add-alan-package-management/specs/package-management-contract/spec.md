@@ -24,6 +24,12 @@ loading, or exposure rules.
   stable channel SHALL use `~/.alan/pkg/`, the dev channel
   `~/.alan-dev/pkg/` — and does not affect other channels
 
+#### Scenario: Dev-channel install respects skill-source isolation
+- **WHEN** a dev-channel `q install` materializes skills without an explicit
+  destination
+- **THEN** the skills land under `~/.agents-dev/skills/`
+- **AND** nothing is created, modified, or removed under `~/.agents/skills/`
+
 #### Scenario: Backing is reachable only through the runtime
 - **WHEN** an agent-authored command references the store backing by host path
 - **THEN** the execution guard denies it as it denies any alan-home read,
@@ -33,7 +39,9 @@ loading, or exposure rules.
 ### Requirement: Install materializes skills from the store
 `q install` SHALL fetch the source into the package store and
 materialize skill packages into the selected skill source, defaulting to the
-stable global public skill source keyed by normalized skill id. Two
+channel-selected global public skill source (stable `~/.agents/skills/`, dev
+`~/.agents-dev/skills/`) keyed by normalized skill id, preserving the
+install-channel isolation defined by `skill-system-contract`. Two
 materialization forms are supported in v1:
 
 - **Conversion**: a Claude Code command-style single `.md` file (body text,

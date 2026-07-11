@@ -27,7 +27,7 @@
 
 ## 4. CLI surface
 
-- [ ] 4.1 Add the Quartermaster `q` command family (install/list/upgrade/uninstall), hosted by the alan CLI in v0, with `--dest` skill-source selection (global public default) and `--force`
+- [ ] 4.1 Add the Quartermaster `q` command family (install/list/upgrade/uninstall), hosted by the alan CLI in v0, with `--dest` skill-source selection (channel-selected global public default) and `--force`
 - [ ] 4.2 Render the operation report (materialized/updated/skipped with reasons, required tools, missing host capabilities, unknown vocabulary, collisions)
 - [ ] 4.3 Wire missing-`required_tools` detection at install time through `skill_availability_issues` so the report and existing inspection surfaces agree
 
@@ -35,7 +35,7 @@
 
 - [ ] 5.1 Build a synthetic fixture repo mimicking the external shapes: command `.md` with `$ARGUMENTS` + foreign vocabulary, bare portable `SKILL.md` package, shared repo-root helper script referenced by both
 - [ ] 5.2 Cover conversion output: frontmatter, preamble placement, verbatim body, `required_tools` emission, unknown-token reporting, `/lib/pkg` helper addressing
-- [ ] 5.3 Cover install: store layout, provenance (git and non-git sources), manifest, materialized sidecar provenance, collision warn/skip/force
+- [ ] 5.3 Cover install: store layout, channel-scoped destination defaults (dev writes `~/.agents-dev/skills/`, never `~/.agents/skills/`), provenance (git and non-git sources), manifest, materialized sidecar provenance, collision warn/skip/force
 - [ ] 5.4 Cover upgrade: unchanged no-op, upstream-change re-materialization, local-modification warn/skip/force
 - [ ] 5.5 Cover uninstall exactness (manifest-only deletion, diverged-file preservation) and list output
 - [ ] 5.6 Cover honest failure: materialized skill with unsatisfied `required_tools` produces availability issues visible through inspection

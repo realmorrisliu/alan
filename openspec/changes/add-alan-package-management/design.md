@@ -113,7 +113,9 @@ registry exists and v0 needs none).
 ### D3: Materialization reuses the conversion/adoption primitives
 
 From the store, alan materializes skill packages into the chosen skill source
-(default: global public `~/.agents/skills/<skill-id>`):
+(default: the channel-selected global public source — stable
+`~/.agents/skills/<skill-id>`, dev `~/.agents-dev/skills/<skill-id>` — per
+skill-system-contract's install-channel isolation):
 
 - **Convert**: command-style `.md` without portable frontmatter → generated
   package with derived `name`/`description` frontmatter, versioned adapter
