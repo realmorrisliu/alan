@@ -1,7 +1,9 @@
 # macos-privileged-helper Specification
 
 ## Purpose
-TBD - created by archiving change add-macos-privileged-helper-pty-provider. Update Purpose after archive.
+Defines the signed, install-channel-scoped macOS privileged helper, including
+explicit lifecycle authorization, declarative Managed User operations, client
+validation, PTY supervision, and sanitized observability.
 ## Requirements
 ### Requirement: Privileged Helper Is Channel Scoped
 Alan for macOS SHALL install and communicate with a signed privileged helper

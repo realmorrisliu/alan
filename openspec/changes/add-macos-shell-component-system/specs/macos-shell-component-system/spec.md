@@ -163,7 +163,7 @@ semantic-token usage as debt. First, the raw-literal floor: the project design-t
 guard (`scripts/check-shell-design-tokens.sh`, baseline
 `scripts/shell-design-token-baseline.txt`) ratchets per-file raw-literal counts and
 SHALL NOT regress — its recorded baseline at the time the component layer lands is
-`MacShellRootView.swift` 1, `TerminalPaneView.swift` 63, `ShellSidebarView.swift` 16
+`MacShellRootView.swift` 1, `TerminalPaneView.swift` 58, `ShellSidebarView.swift` 16
 (and console files 19 / 86, which this capability does not own). Second, no shell
 feature file SHALL introduce a *new* local struct that duplicates a design-system
 primitive's role (row, card, chip, badge, button, field, section label, or
@@ -235,7 +235,7 @@ silently left unowned. At the time the component layer lands the shell raw-liter
 resides in exactly three files (the guard baseline, console excluded), hosting five
 surfaces:
 
-- `TerminalPaneView.swift` — guard baseline **63** — hosts two surfaces:
+- `TerminalPaneView.swift` — guard baseline **58** — hosts two surfaces:
   **terminal-pane SwiftUI chrome** and the **settings surface** (separate migration
   changes).
 - `Views/Shell/ShellSidebarView.swift` — guard baseline **16** — hosts two surfaces:
@@ -293,11 +293,3 @@ surfaces share a file.)
 - **AND** the terminal-host bridge behavior remains owned by the terminal-host
   boundary defined in `macos-app-architecture-maintainability` and is not folded into
   presentational primitives
-
-#### Scenario: Legacy/mobile console surfaces are out of scope
-
-- **WHEN** the component layer is adopted or migrated
-- **THEN** the legacy/mobile remote-control console surfaces (`Views/Console/`) are
-  NOT migrated through the shell design-system home
-- **AND** they remain isolated from the primary macOS shell as required by
-  `macos-app-architecture-maintainability`

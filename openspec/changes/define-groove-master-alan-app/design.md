@@ -6,9 +6,7 @@ hosts it: practice phases, day plans, audio sources, sessions, recordings,
 markers, reflections, journal entries, and producer suggestions must remain
 portable and app-owned.
 
-The prior design mapped those concepts onto a generic programmable environment
-and planned direct `ShellContentInstance` wiring. ADR-0024 retired the generic
-Object/Buffer/View/Command/Query ontology, and the canonical
+ADR-0024 retired the generic Object/Buffer/View/Command/Query ontology, and the canonical
 `alan-app-service-integration` capability establishes the durable boundary:
 domain core → aP adapter → `/srv` handle → `/mnt` tree → symmetric UI/Tool/agent
 file clients.
@@ -34,7 +32,7 @@ file clients.
 - Automatic pitch/timing analysis in V1.
 - Commerce, marketplace, community challenges, or cloud sync in V1.
 - A generic Alan app object framework or new Kernel primitives.
-- Making `ShellContentInstance` or SwiftUI state the domain source of truth.
+- Making host or SwiftUI state the domain source of truth.
 
 ## Decisions
 
@@ -136,14 +134,13 @@ The producer does not receive raw audio by default, cannot mutate committed
 journal entries directly, and cannot grade. Proposals remain inspectable files;
 the app or user commits accepted changes.
 
-### 7. Alan for macOS is a file client with a temporary bridge if required
+### 7. Alan for macOS requires direct file-client attachment
 
 The native UI reads snapshots and events, writes reflection/plan documents, and
-writes owning `ctl` commands. During the parked macOS migration it may use a
-named `GrooveMasterHostCompatibilityBridge` that translates current shell
-content actions into those file operations. The bridge owns no domain state,
-cannot add bridge-only behavior, and is deleted when the surface reads the aP
-tree directly.
+writes owning `ctl` commands through the mounted aP tree. Native Groove Master
+surface work does not begin until Alan for macOS can open, watch, and write
+those files directly; if that attachment is unavailable, the surface remains
+parked instead of introducing an alternate client-facing authority.
 
 ### 8. Product presentation stays instrument-first
 
@@ -162,8 +159,9 @@ gamification, and school-like correction.
   thread.
 - [Risk] Producer suggestions feel intrusive → Mitigation: low presence, one
   bounded note, proposal files, and no real-time interruption.
-- [Risk] Compatibility bridge becomes permanent → Mitigation: no bridge-only
-  behavior and an explicit file-native deletion gate.
+- [Risk] Direct macOS attachment is unavailable → Mitigation: keep native UI
+  work parked while the domain tree, service lifecycle, and file fixtures land
+  independently.
 - [Risk] First slice is still too broad → Mitigation: phase by domain tree,
   read-only renderer, then live audio, then producer spawn.
 
@@ -171,11 +169,12 @@ gamification, and school-like correction.
 
 1. Implement domain models and in-memory aP tree with deterministic fixtures.
 2. Add durable journal/loop backing and service registration/mounting.
-3. Add Alan for macOS read-only Today/Journal client through the temporary host
-   bridge if necessary.
+3. After direct aP attachment is available, add the Alan for macOS read-only
+   Today/Journal file client.
 4. Add Live Session audio, marker, reflection, and commit control.
 5. Add producer Agent Executable spawn and proposal review.
-6. Delete the host bridge when the macOS surface consumes the aP tree directly.
+6. Verify the macOS surface consumes only the mounted aP tree and close the
+   change.
 
 ## Open Questions
 

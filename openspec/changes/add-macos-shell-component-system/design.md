@@ -9,7 +9,7 @@ and *adoption*: the control library is referenced by exactly one surface (the Sp
 creation form). Raw-literal styling drift is *already* guarded: the project ships
 `scripts/check-shell-design-tokens.sh` + `scripts/shell-design-token-baseline.txt`, a
 per-file ratchet over `system(size:`/`Color(red:`/`NSColor(red:`/numeric `.padding(`
-whose shell baseline is `TerminalPaneView.swift` 63, `ShellSidebarView.swift` 16,
+whose shell baseline is `TerminalPaneView.swift` 58, `ShellSidebarView.swift` 16,
 `MacShellRootView.swift` 1. Two real gaps remain: (1) that guard is only a local `just`
 recipe, not a CI check; (2) it does not address presentational *duplication* — the
 same concepts live as `private struct`s inside large feature files. (An earlier draft
@@ -24,10 +24,6 @@ zero; `ShellPalette` is the semantic token namespace, so referencing it is the
   `ShellWorkspacePanelFrame` modifier (all in `TerminalPaneView.swift`).
 - A canonical press style (`ShellButtonPressStyle`) and field (`ShellTextField`)
   already exist in the control library but are not adopted across shell surfaces.
-
-(`TimelineRow`, `SidebarActionButtonStyle`, `InlineActionButtonStyle`, and
-`CompactDarkFieldStyle` live only under `Views/Console/` and are intentionally NOT in
-scope — they belong to the isolated legacy/mobile console.)
 
 Two related specs already exist and this design deliberately does not overlap them:
 `macos-app-architecture-maintainability` owns file/ownership boundaries and the
@@ -77,10 +73,7 @@ previewable, token-governed SwiftUI primitives.
 - No big-bang rewrite of multiple surfaces in a single change.
 - No changes to Ghostty/AppKit terminal-host internals (input, attachment, overlay
   layout) — those stay under the terminal-host boundary.
-- No migration of the legacy/mobile remote-control console (`Views/Console/`). It is
-  classified as legacy/mobile and `macos-app-architecture-maintainability` requires it
-  to stay isolated from the primary macOS shell, so it is not pulled through the shell
-  design-system home.
+- No migration of non-shell Apple client surfaces.
 - No new Swift build target / module (`AlanDesignSystem` package) at this time.
 - No token *value* changes; this is structure/adoption, not a visual redesign.
 - No changes to Rust crates or non-macOS clients.

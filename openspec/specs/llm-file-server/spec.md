@@ -1,7 +1,9 @@
 # llm-file-server Specification
 
 ## Purpose
-TBD - created by archiving change add-llm-file-server. Update Purpose after archive.
+Defines `alan-llmfs` provider, Connection, and Generation file trees, including
+clone-via-open lifecycle, clunk-committed versioned requests, typed event
+streams, metering, and phase-specific errors.
 ## Requirements
 ### Requirement: llmfs posts a handle in `/srv` and serves its tree under `/mnt/llm`
 Alan OS SHALL provide `alan-llmfs`, a file server that speaks aP (the `alan-ap`
@@ -128,4 +130,3 @@ record in `events`.
 - **WHEN** the upstream provider errors after streaming has begun
 - **THEN** a terminal error record appears in `events`
 - **AND** the reader observes it by reading the stream, not through a side channel
-

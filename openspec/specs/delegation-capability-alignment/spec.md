@@ -1,7 +1,9 @@
 # delegation-capability-alignment Specification
 
 ## Purpose
-TBD - created by archiving change align-delegation-capability-with-namespace. Update Purpose after archive.
+Defines namespace-vocabulary classification for delegated task requirements,
+pre-spawn capability satisfaction, visible mismatch recovery, and observable
+capability decisions.
 ## Requirements
 ### Requirement: Task Requirements Are Classified In Namespace Vocabulary
 The runtime SHALL classify the material capabilities a delegated task requires
@@ -73,4 +75,3 @@ NOT introduce a parallel capability-decision registry.
 - **WHEN** an auditor inspects a delegation that was declined or narrowed
 - **THEN** the parent's action record or tape contains the classified
   requirements, the unsatisfied capabilities, and the chosen recovery path
-

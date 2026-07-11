@@ -1,0 +1,2 @@
+# rule|repo-relative file|literal substring|reason
+bridge-identifier|openspec/changes/clean-canonical-spec-debt/tasks.md|Removed `UPDFPreviewHostCompatibilityBridge`|The cleanup fixture records completed removal.

@@ -1,7 +1,8 @@
 # mount-grant-tool-sandbox-projection Specification
 
 ## Purpose
-TBD - created by archiving change apply-mount-grants-to-tool-sandbox. Update Purpose after archive.
+Defines how approved read-write mount grants extend the active Tool sandbox's
+writable roots without widening read-only grants or duplicating existing roots.
 ## Requirements
 ### Requirement: Approved read-write mount grants update the runtime tool sandbox
 The runtime SHALL add the normalized host path to the running tool sandbox's
@@ -44,4 +45,3 @@ to receive the complete writable root list.
 - **WHEN** the active tool sandbox writable roots contain the workspace root and an approved host root
 - **THEN** bash execution with cwd under the approved host root passes sandbox cwd containment checks
 - **AND** bash execution with cwd outside every writable root is rejected
-

@@ -41,6 +41,18 @@ jobs:
       - name: Guard macOS shell raw-literal baseline
         run: ./scripts/check-shell-design-tokens.sh
 
+  openspec:
+    name: OpenSpec Current Surfaces
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install pinned OpenSpec CLI
+        run: npm install --global @fission-ai/openspec@1.4.1
+
+      - name: Validate canonical specs and active changes
+        run: just openspec-check
+
   clippy:
     name: Clippy Lint
     runs-on: ubuntu-latest

@@ -1,7 +1,8 @@
 # ap-wire-transport Specification
 
 ## Purpose
-TBD - created by archiving change add-ap-wire-transport. Update Purpose after archive.
+Defines byte framing for aP requests and responses, export/import of arbitrary
+file servers, and transport-independent Kernel integration.
 ## Requirements
 ### Requirement: aP operations are framed over bytes
 
@@ -67,4 +68,3 @@ SHALL NOT depend on transport-specific crates or call transport-specific APIs.
 - **THEN** `alan-kernel` still depends only on `alan-ap` among Alan crates
 - **AND** remote import/export is represented to the kernel as ordinary mounted
   file-server handles
-

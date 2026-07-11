@@ -1,0 +1,11 @@
+schema: spec-driven
+
+rules:
+  proposal:
+    - Keep proposals current.
+  design:
+    - Keep design ownership explicit.
+  specs:
+    - Keep requirements durable.
+  tasks:
+    - Verify before archive.

@@ -1,7 +1,8 @@
 # agent-mount-escalation Specification
 
 ## Purpose
-TBD - created by archiving change add-agent-mount-escalation. Update Purpose after archive.
+Defines how Agent Processes request host-directory mounts through validated,
+non-auto-allow approval flows that produce auditable mount grants.
 ## Requirements
 ### Requirement: Agent-requested host mounts require approval
 Agent Processes SHALL be able to request host directory mounts through a
@@ -62,4 +63,3 @@ reification or native subprocess visibility at the requested `/mnt/<name>` path.
 - **WHEN** a pending mount request is resumed with a reject choice
 - **THEN** the runtime returns a `request_mount` tool result with rejected status
 - **AND** no approved `host_mount_grant` event is recorded
-

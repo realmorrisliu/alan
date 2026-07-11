@@ -33,7 +33,8 @@
 
 - [ ] 3.1 Identify the first follow-up implementation slice for `crates/updf`,
   standalone binary, Typst-first build, QA, package, and inspect.
-- [ ] 3.2 Identify the Alan macOS read-only `.updf` preview follow-up slice.
+- [ ] 3.2 Identify the Alan macOS read-only `.updf` preview follow-up slice and
+  record direct package-file consumption as its entry criterion.
 - [ ] 3.3 Identify the Markdown manuscript authoring project follow-up slice.
 - [ ] 3.4 Identify the preview-comment-agent review loop follow-up slice.
 - [ ] 3.5 Identify the signed package and personalized watermark distribution
@@ -42,8 +43,9 @@
   focused specs rather than first-slice implementation requirements.
 - [ ] 3.7 Defer WYSIWYG-like semantic editing to a later slice after comments,
   anchors, and agent patch review are proven.
-- [ ] 3.8 Treat any initial `UPDFPreviewHostCompatibilityBridge` as a file-client
-  translation with no bridge-owned state and a direct-file deletion gate.
+- [ ] 3.8 Keep the macOS preview slice parked until Alan for macOS can open and
+  read the package file contract directly; do not introduce an alternate
+  client-facing authority.
 
 ## 4. Verification
 
