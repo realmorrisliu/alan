@@ -31,7 +31,9 @@
 
 - [ ] 3.1 Remove `ExecutionPolicy::{AcceptAll,DenyAll}` and refactor `ctl exec`
   into atomic validation of evaluator Process Path, body revision, address
-  revision, and selected range; editfs must never spawn or execute the command.
+  revision, and selected range; editfs must never spawn or execute the command,
+  and the legacy path-less `exec rev:... addr:... <start>..<end>` syntax is
+  rejected rather than validated.
 - [ ] 3.2 Define and implement Process-linked editfs event records for execution
   start and result materialization while keeping Process status, output,
   cancellation, and exit truth exclusively under `/proc`.
@@ -44,8 +46,9 @@
   their bytes in a `materialize` commit, and add concurrency tests proving a
   materialization event can never name another writer's bytes.
 - [ ] 3.5 Replace the existing editfs policy tests with focused tests for current
-  and stale evaluator snapshots, partial ctl writes, concurrent selection/body
-  changes, safe result append, materialization records, and blocking event reads.
+  and stale evaluator snapshots, legacy path-less exec rejection, partial ctl
+  writes, concurrent selection/body changes, safe result append, materialization
+  records, and blocking event reads.
 
 ## 4. Native run Tool And Package Projection
 

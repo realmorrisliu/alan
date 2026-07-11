@@ -1,3 +1,41 @@
+## MODIFIED Requirements
+
+### Requirement: Address ranges are revision-bound
+
+Alan SHALL store the active body range in `addr` using `rev:<body-revision>
+<start>..<end>` write syntax. Reads SHALL return the selected body revision,
+address revision, and range as `rev:<body-revision> addr:<addr-revision>
+<start>..<end>`. The only `exec` form `ctl` accepts SHALL be the evaluator
+`ctl exec` document carrying the `/proc/<pid>` Path and the expected
+body/address revision snapshot; the legacy path-less
+`exec rev:<body-revision> addr:<addr-revision> <start>..<end>` syntax SHALL be
+rejected rather than validated.
+
+#### Scenario: Address range is selected
+
+- **WHEN** a client writes a valid current-revision range to `addr` and clunks
+  the fid
+- **THEN** subsequent reads of `addr` return that range
+- **AND** an address event is appended to `event`
+
+#### Scenario: Stale address fails at execution
+
+- **WHEN** the body revision changes after an address range is selected
+- **AND** an evaluator Process clunks a complete `ctl exec` document carrying
+  its `/proc/<pid>` Path and the stale body/address revision snapshot
+- **THEN** the clunk fails with a typed aP error
+- **AND** no command text from the stale range is executed
+
+#### Scenario: Legacy path-less exec is rejected
+
+- **WHEN** a client writes the legacy `exec rev:<body-revision>
+  addr:<addr-revision> <start>..<end>` form to `ctl` without an evaluator
+  `/proc/<pid>` Path and clunks the fid
+- **THEN** the clunk fails with a typed aP error and no execution event is
+  recorded
+- **AND** stale-selection validation cannot be satisfied through the legacy
+  syntax
+
 ## REMOVED Requirements
 
 ### Requirement: Explicit exec records accepted and denied outcomes
