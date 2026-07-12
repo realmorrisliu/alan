@@ -66,6 +66,13 @@ exposure rules.
 - **AND** if the id is already owned by a different source, install writes
   nothing and requires an explicit non-conflicting `--name <package-id>`
 
+#### Scenario: Package identity is distinct from skill identity
+- **WHEN** two providers export the same skill id
+- **THEN** each provider retains a distinct, stable, provider-scoped, path-safe
+  Q package id and therefore a distinct `/lib/pkg/<package-id>/` projection
+- **AND** the exported skill id remains unchanged for precedence resolution
+- **AND** the Q package id contains no raw host path or credential material
+
 #### Scenario: Package source identity is stable
 - **WHEN** Q compares an install with an existing package id
 - **THEN** source identity is the canonical git URL with userinfo, query,
@@ -80,6 +87,19 @@ exposure rules.
   exported working tree without `.git` or other VCS control metadata
 - **AND** clone-local config, credentials, and remote URLs are not readable
   under `/lib/pkg/<package-id>/`
+
+#### Scenario: Local git export excludes incidental secrets
+- **WHEN** Q installs a local directory inside a git worktree
+- **THEN** the default export contains tracked files and tracked working-tree
+  modifications only
+- **AND** ignored and untracked files are excluded unless the operator names
+  them through an explicit include that passes path and symlink validation
+
+#### Scenario: Non-git local export is allowlisted
+- **WHEN** Q installs a local directory outside version control
+- **THEN** the default export contains detected skill package roots only
+- **AND** additional helpers or resources enter the export only through an
+  explicit include that passes path and symlink validation
 
 #### Scenario: Store is channel-scoped
 - **WHEN** a package is installed under a given install channel
@@ -148,6 +168,8 @@ skipped with a report entry.
 - **WHEN** a workspace or AgentRoot local-source skill intentionally reuses a
   built-in, global, or distribution skill id
 - **THEN** Q retains both packages in the resolved view
+- **AND** each package remains inspectable at its distinct provider-scoped Q
+  package id under `/lib/pkg`
 - **AND** existing scope and ordering precedence selects the local overlay as
   it did before the Q cutover
 
@@ -332,8 +354,8 @@ stored or rendered.
 ### Requirement: Upgrade is idempotent and protects local modifications
 `q upgrade` SHALL detect source change by a **source revision token**: the
 source commit for a remote git source, and a content fingerprint (hash of the
-exported source tree) for every local directory source, even when that
-directory is inside a git repository. `q upgrade` SHALL:
+actual allowlisted exported source tree) for every local directory source,
+even when that directory is inside a git repository. `q upgrade` SHALL:
 
 - be a no-op only when the recorded source revision token and converter version
   are both unchanged;
@@ -355,8 +377,9 @@ directory is inside a git repository. `q upgrade` SHALL:
   manifest
 
 #### Scenario: Local source is edited without a commit change
-- **WHEN** a package installed from a local directory is upgraded after tracked,
-  uncommitted, or untracked source files changed, regardless of git HEAD
+- **WHEN** a package installed from a local directory is upgraded after tracked
+  content, tracked modifications, or explicitly included untracked content
+  changed, regardless of git HEAD
 - **THEN** the re-computed content fingerprint differs from the recorded one
 - **AND** upgrade re-materializes rather than reporting the package up to date
 

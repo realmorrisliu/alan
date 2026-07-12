@@ -166,6 +166,11 @@ sanitized canonical git URL with userinfo, query, fragment, and an optional
 terminal `.git` suffix removed for git sources, or canonical absolute path for
 local sources. Fetch credentials are transient inputs owned by the credential
 provider; they never enter source identity, provenance, reports, or store files.
+Q package identity is distinct from exported skill identity. Every provider
+gets a stable, provider-scoped, path-safe package id, so same-skill-id overlays
+remain separately inspectable under `/lib/pkg`; skill ids continue to drive
+the existing precedence rules. Derived package ids expose neither raw host
+paths nor credential material.
 If an existing package with that id has different source identity, install
 fails before any write and tells the user to choose another `--name`; neither
 the store nor the projection is reused implicitly. The store's **canonical address is
@@ -191,6 +196,13 @@ its tracked working tree. The stored `source/` tree never contains `.git` or
 other VCS control metadata; clone-local config and credentialed remote URLs
 therefore cannot enter `/lib/pkg`. Upgrade repeats the staged fetch/export
 rather than retaining repository metadata in the projected store entry.
+For a local git worktree, the default export is its tracked files plus tracked
+working-tree modifications; ignored and untracked files require explicit,
+validated include paths. For a non-git local directory, the default allowlist
+is the detected skill package roots, and helpers or resources require the same
+explicit include mechanism. Symlink confinement applies after include
+resolution. The local revision token fingerprints the actual allowlisted
+export, so excluded incidental files cannot affect or leak into a package.
 
 ### D3: Skills are discovered in place from `/lib/pkg`, never copied out
 
