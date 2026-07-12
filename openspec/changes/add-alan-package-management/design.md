@@ -41,9 +41,9 @@ Current alan state (verified in-code):
   distribution is "a packaging detail, not a different contract").
 - The execution guard's sensitive-read denylist covers the channel alan home
   directories (`~/.alan`, `~/.alan-dev`; `sandbox.rs`
-  `sensitive_read_denylist_for_home`) because they hold `host.toml` and the
-  secret store. Under canonical `/lib/pkg` addressing this is a feature, not a
-  blocker: agents reach package content only through the projection and the
+  `sensitive_read_denylist_for_home`) because they hold operator configuration
+  and managed credentials. Under canonical `/lib/pkg` addressing this is a
+  feature, not a blocker: agents reach package content only through the projection and the
   exec resolver, and any host path that leaks into content fails fast at the
   guard.
 - The two upstream source forms overlap completely: all 19 command-style
@@ -81,7 +81,7 @@ unchanged as materialization rules.
 **Non-Goals:**
 
 - Registry, semantic version resolution, dependency graphs, lockfiles,
-  signing. A package's version is its source commit.
+  signing. A package's version is its source revision token.
 - Web-search capability (follow-up change; see Gap findings).
 - Multi-agent orchestration parity with Claude Code Team tools (follow-up).
 - Emulating foreign tools or rewriting prompt semantics.
@@ -89,8 +89,9 @@ unchanged as materialization rules.
 - Codex prompt formats (`codex-prompts/`) — marginal value over command `.md`.
 - Changing the one-skill-per-package rule, loading, or exposure — only the
   discovery *source* changes (to Q resolution).
-- Agent runtime self-discovery by walking `/lib/pkg` — gated on Ring 2; slice 1
-  feeds the engine through Q's host-side resolution interface.
+- Agent runtime self-discovery from manifest-selected roots under `/lib/pkg` —
+  gated on Ring 2; slice 1 feeds the engine through Q's host-side resolution
+  interface.
 - Force-migrating agent-root/workspace skills into the global store — they
   stay local-source providers at their existing location.
 - Tool resolution. Core tools stay compiled-in `Box<dyn Tool>`; `tools=/bin`
@@ -127,7 +128,9 @@ namespace view. Two things this must not conflate (ADR-0030 D6):
   capabilities as files) — gated on `refactor-engine-namespace-native`
   (Ring 2). Until it lands, the engine takes its resolved set from Q's
   host-side resolution interface — the "use Q to find skills" path the user
-  named. When Ring 2 lands, that interface degrades into walking `/lib/pkg`.
+  named. When Ring 2 lands, that interface degrades into walking the
+  manifest-selected roots under `/lib/pkg`, never recursively scanning the
+  whole projection.
 
 Alternative rejected: **interface-only unification** (Q as a façade over
 untouched enumerated sources). A façade is one reader over many owners, not one
@@ -142,14 +145,22 @@ untouched; only the *discovery source* changes (D1). Alternative rejected:
 multi-skill skill packages — that reopens a rule skill-system-contract
 deliberately closed and forces loader changes for one workload.
 
-### D2: The unit of distribution is the source tree pinned to a commit
+### D2: The unit of distribution is an identified source tree pinned to a revision
 
-`q install <git-url|path>` places a checkout in the package store. The store's
-**canonical address is `/lib/pkg/<name>` in the Alan OS namespace** — the
+`q install <git-url|path>` places a checkout in the package store. Q derives a
+package id by lowercasing the source basename, replacing each run of non-ASCII
+alphanumeric characters with `-`, and trimming edge hyphens; an empty result is
+rejected. `--name <package-id>` overrides that default under the same syntax.
+The id MUST be unique within the active channel. Source identity is the
+canonical git URL for git sources or canonical absolute path for local sources.
+If an existing package with that id has different source identity, install
+fails before any write and tells the user to choose another `--name`; neither
+the store nor the projection is reused implicitly. The store's **canonical address is
+`/lib/pkg/<package-id>` in the Alan OS namespace** — the
 alan-kernel (aP) namespace, a host-agnostic userspace construct, not a host-OS
 mount namespace — projected read-only through the existing
 host-directory-mounts machinery. Its host backing lives in the
-per-install-channel alan home (`~/.alan/pkg/<name>/` stable,
+per-install-channel alan home (`~/.alan/pkg/<package-id>/` stable,
 `~/.alan-dev/pkg/` dev): alan-owned state belongs under alan-controlled
 directories, and channel isolation is inherited for free. Backing is an
 implementation detail that never appears in contracts or generated content —
@@ -189,7 +200,10 @@ channel isolation is inherited from the channel-scoped store backing
 content is not a bypass source under D1 — Q registers it as a **local-source
 provider**, so it still works but flows through the one authority.
 
-When one package yields the same skill id from both source forms (ai-berkshire
+Q records the accepted skill package roots in the materialization manifest and
+passes only those roots to the loader. The verbatim source tree is package
+content, never an implicit recursive skill source. When one package yields the
+same skill id from both source forms (ai-berkshire
 ships all 19 skills both ways), **conversion from the canonical command file
 wins** and the duplicate portable package is skipped with a report entry. The
 counterintuitive-looking choice is deliberate: the portable duplicates carry a
@@ -202,11 +216,16 @@ else's adapter. The include/exclude scan flags remain the escape hatch.
 `/lib/pkg` is a read-only projection and the backing holds a verbatim upstream
 checkout, so conversion output cannot be written back into the checkout. The
 store entry therefore has two layers under its channel-scoped backing
-(`~/.alan/pkg/<name>/`): `source/` (the upstream checkout, byte-for-byte) and
-`materialized/` (generated skill packages plus the manifest). `/lib/pkg/<name>/`
-projects a merged view — original helpers (`tools/*.py`) from `source/`, skill
-packages from `materialized/` — so a converted skill and the helpers it calls
-share one namespace path prefix. This confines the only real added complexity
+(`~/.alan/pkg/<package-id>/`): `source/` (the upstream checkout,
+byte-for-byte) and
+`materialized/` (generated skill packages plus the manifest).
+`/lib/pkg/<package-id>/` projects a merged content view — original helpers
+(`tools/*.py`) from `source/`, skill packages from `materialized/` — so a
+converted skill and the helpers it calls share one namespace path prefix. Q's
+distribution provider resolves only the skill roots selected by the manifest;
+it never asks the loader to recursively scan the merged view. A skipped
+portable duplicate therefore remains readable source content but cannot become
+a second discovered skill. This confines the only real added complexity
 of in-place discovery to one place (the store entry), instead of spreading a
 double-write across the public skill source.
 
@@ -222,7 +241,7 @@ block after frontmatter):
   orchestration) **unavailable**, instructing the skill to state the limitation
   instead of improvising;
 - resolves upstream-relative helper invocations (e.g. `tools/*.py`) to the
-  package's canonical namespace path under `/lib/pkg/<name>/` — never to a
+  package's canonical namespace path under `/lib/pkg/<package-id>/` — never to a
   host path.
 
 Known vocabulary is converter data, versioned with the converter. Unknown
@@ -242,11 +261,11 @@ enforcement mechanism.
 ### D6: The `/lib/pkg` projection is the fix for shared helpers
 
 Materialized skills reference in-package helpers at the canonical namespace
-path (`/lib/pkg/<name>/tools/...`), which is stable for the life of the
+path (`/lib/pkg/<package-id>/tools/...`), which is stable for the life of the
 installation and identical on every host. Agent Processes see only the Alan OS
 file system; the store projection is how package content enters it. Helper
 *execution* (spawning an interpreter on a store file) is the one place the
-runtime must bridge: the execution backend resolves `/lib/pkg/<name>/...`
+runtime must bridge: the execution backend resolves `/lib/pkg/<package-id>/...`
 through the mount table to the store backing when spawning host processes — a
 deterministic prefix resolution, since the store is one declared
 host-directory mount. The guard gets exactly one narrow exception for this:
@@ -292,8 +311,8 @@ Slice 1 (ADR-0030 D7) establishes Q as the sole skill-resolution authority:
 providers replace enumerated sources, built-ins reseed as pre-installed
 packages, agent-root/workspace become local-source providers, distribution
 packages install from git/local, and the `/lib/pkg` projection is the single
-physical home. Deferred to later slices: agent runtime self-discovery by
-walking `/lib/pkg` (gated on Ring 2), further package types, permission-to-
+physical home. Deferred to later slices: agent runtime self-discovery from
+manifest-selected roots under `/lib/pkg` (gated on Ring 2), further package types, permission-to-
 policy wiring, per-agent namespace binds (the real "profiles"),
 reproducibility, registry/signing, `q` in `/bin`. The prior non-goal warning
 against turning `/mnt` into a package manager
@@ -315,8 +334,11 @@ under `/lib`, and Plan 9's `/lib` is precisely where data files belong.
   availability issues also surface through existing exposure/inspection paths,
   not only at install time.
 - [Skill-id collision between packages or with hand-authored skills] → warn
-  and skip by default; the manifest records ownership so collisions are
-  detectable both ways.
+  and skip; `--force` never steals another provider's ownership. The operator
+  must uninstall the owner or choose a non-colliding package/skill id, keeping
+  upgrade and uninstall exact without cross-manifest mutation.
+- [Two unrelated sources normalize to the same package id] → fail before any
+  write and require an explicit alternate `--name`; never alias store entries.
 - [User edits a materialized skill, upgrade wants to replace it] → manifest
   hashes detect divergence; warn-and-skip unless forced; the report tells the
   user to upstream their edit or fork the package.

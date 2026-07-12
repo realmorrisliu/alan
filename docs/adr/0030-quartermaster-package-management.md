@@ -62,7 +62,7 @@ system; host paths are runtime implementation detail.
 | Vision concept | Alan OS mechanism |
 |---|---|
 | Profiles (`default`, `work`, per-project) | Namespaces — a profile is a set of packages bound into a process's namespace, not a parallel switcher |
-| `/opt/apm/store` content-addressed store | alan-owned store projected read-only at `/lib/pkg` in the namespace (host-directory-mounts); backing location is implementation detail; content-addressing aligns with `content-addressed-knowledge` |
+| `/opt/apm/store` content-addressed store | alan-owned store projected read-only at `/lib/pkg/<package-id>` in the namespace (host-directory-mounts); backing location is implementation detail; content-addressing aligns with `content-addressed-knowledge` |
 | Per-package permission declarations | PolicyEngine / policy chain — declarations map into policy when that slice lands, never a parallel permission system |
 | App packages | `alan-app-distribution` and app/service integration contracts own app semantics |
 | Service packages | Service Manager owns service lifecycle |
@@ -82,7 +82,9 @@ types), not by a new umbrella noun.
 
 Package metadata is declarative data the manager can parse, validate, and
 audit without executing arbitrary code (no Homebrew-formula-style executable
-DSL). v0 keeps metadata minimal (provenance, materialization manifest) and
+DSL). Each package has a channel-unique package id (normalized source basename
+or explicit `--name`); a collision with a different source is rejected before
+write. v0 keeps metadata minimal (provenance, materialization manifest) and
 deliberately excludes a type enum; later slices pay the format-migration cost
 when a second package type becomes real.
 
@@ -110,14 +112,16 @@ Two concepts that "physical unification" must **not** be allowed to conflate:
   uninstall all flow through Q; no source escapes it. This is achievable
   without a namespace-native engine.
 - **"Discovered by the agent via `ls /lib/pkg`" (runtime self-discovery)** —
-  the agent reading its own capabilities as files. This is gated on
+  the agent reading manifest-selected capability roots as files, without
+  recursively treating all package content as skills. This is gated on
   `refactor-engine-namespace-native` (ADR-0027 Ring 2, unfinished).
 
 Until Ring 2 lands, the engine obtains its resolved capability set through Q's
 host-side resolution interface (the "use Q to find skills" path), while the
 store and `/lib/pkg` projection are already the single physical home. When Ring
-2 lands, the resolution interface degrades into the agent walking `/lib/pkg`
-directly — a presentation-layer finish, not a re-architecture.
+2 lands, the resolution interface degrades into the agent walking the
+manifest-selected roots under `/lib/pkg` directly — a presentation-layer
+finish, not a re-architecture.
 
 Scope note: this concerns **skill** capabilities. Core **tools**
 (`read`/`write`/`edit`/`bash`/`grep`/`glob`/`list_dir`) are compiled-in
@@ -130,7 +134,8 @@ stay outside Q's ownership in this model. `tools = /bin` (ADR-0027) is
 The `add-alan-package-management` change is **slice 1** of the D6 authority
 model, not a standalone package manager. Slice 1 establishes: Q as the sole
 skill-resolution authority (legacy `package_dirs_for_roots` enumeration
-retired), distribution packages from git/local sources (commit-as-version),
+retired), distribution packages from git/local sources
+(source-revision-token-as-version),
 built-in first-party skills reseeded as Q pre-installed packages, agent-root /
 workspace skills registered as Q local-source packages, the read-only
 `/lib/pkg` store projection, provenance, manifest, idempotent upgrade, exact

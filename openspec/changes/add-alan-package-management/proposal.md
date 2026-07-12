@@ -26,9 +26,10 @@ ai-berkshire run.
   directories itself. **BREAKING** for the internal discovery path (no stable
   external API depended on it).
 - **Distribution packages** are introduced: an external source tree (git repo
-  or local directory) pinned to a commit, held in a per-install-channel
+  or local directory) pinned to a source revision token, assigned a unique
+  package id, and held in a per-install-channel
   **package store** (`~/.alan/pkg/`, dev `~/.alan-dev/pkg/`), projected
-  read-only at **`/lib/pkg/<name>`** in the Alan OS namespace.
+  read-only at **`/lib/pkg/<package-id>`** in the Alan OS namespace.
 - **All skill sources become Q packages / providers**, physical unification
   (ADR-0030 D6):
   - built-in first-party skills are reseeded as Q **pre-installed packages**;
@@ -40,16 +41,19 @@ ai-berkshire run.
   store: Claude Code command-style `.md` files convert to directory-backed
   packages (verbatim body + versioned **adapter preamble** + emitted
   `capabilities.required_tools`); portable `SKILL.md` packages are adopted in
-  place. Shared helpers resolve at `/lib/pkg/<name>/...`, never a host path.
-- **Lifecycle** is exact: package provenance (source repo, commit, converter
+  place. Q resolves only manifest-selected skill roots; the verbatim source
+  tree remains package content, not an implicit recursive skill source. Shared
+  helpers resolve at `/lib/pkg/<package-id>/...`, never a host path.
+- **Lifecycle** is exact: package provenance (source identity, revision token, converter
   version) and a materialization manifest make `q upgrade` idempotent, protect
   local edits (warn, never silently overwrite), and make `q uninstall`
   complete. `q list` reports installed packages and unsatisfied capabilities.
 - **Honest failure**: recognized foreign vocabulary with no alan equivalent
   (web search, Team orchestration) is declared unavailable and surfaced through
   the existing `skill_availability_issues` machinery, never silently degraded.
-- **Out of scope** (later slices, ADR-0030 D7): agent runtime self-discovery by
-  walking `/lib/pkg` (gated on `refactor-engine-namespace-native`); additional
+- **Out of scope** (later slices, ADR-0030 D7): agent runtime self-discovery
+  from manifest-selected roots under `/lib/pkg` (gated on
+  `refactor-engine-namespace-native`); additional
   package types (MCP, tools/binaries, workflows, models, knowledge packs);
   permission-to-policy wiring; `q` in `/bin`; per-agent namespace binds
   ("profiles"); lockfile/registry/signing; web-capability and multi-agent gaps

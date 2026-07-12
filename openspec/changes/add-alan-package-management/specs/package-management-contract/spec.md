@@ -41,8 +41,8 @@ resolved set through Q's host-side resolution interface.
 
 ### Requirement: Distribution packages are the unit of external adoption
 alan SHALL define a distribution package as an external source tree (git
-repository or local directory) pinned to a source commit when one is
-resolvable, held in a per-install-channel package store, from which alan
+repository or local directory) pinned to a source revision token (git commit
+or non-git content fingerprint), held in a per-install-channel package store, from which alan
 materializes skill packages that Q resolves. Distribution packages sit above
 the skill package contract: every materialized unit is an ordinary
 single-skill package, and this contract SHALL NOT alter skill loading or
@@ -54,6 +54,20 @@ exposure rules.
   package store
 - **AND** each materialized skill is a valid single-skill package under the
   existing skill package contract
+
+#### Scenario: Default package id is unique
+- **WHEN** `q install` lowercases the source basename, replaces each run of
+  non-ASCII alphanumeric characters with `-`, and trims edge hyphens
+- **THEN** that id identifies the store entry and `/lib/pkg/<package-id>/`
+- **AND** an empty result is rejected, while `--name <package-id>` may provide
+  an id under the same syntax
+- **AND** if the id is already owned by a different source, install writes
+  nothing and requires an explicit non-conflicting `--name <package-id>`
+
+#### Scenario: Package source identity is stable
+- **WHEN** Q compares an install with an existing package id
+- **THEN** source identity is the canonical git URL for a git source or the
+  canonical absolute path for a local source
 
 #### Scenario: Store is channel-scoped
 - **WHEN** a package is installed under a given install channel
@@ -83,11 +97,15 @@ materialization forms are supported in v1:
   validated against the existing skill package contract and copied without
   content edits.
 
-Materialization SHALL NOT modify the source location, and a skill-id collision
-with a package the manifest does not own SHALL warn and skip rather than
-overwrite. When both source forms in one distribution package yield the same
-skill id, conversion from the command-style file SHALL win and the duplicate
-portable package SHALL be skipped with a report entry.
+Materialization SHALL NOT modify the source location. Q SHALL record the
+accepted skill package roots in the materialization manifest and SHALL resolve
+only those roots through the distribution provider; it SHALL NOT recursively
+scan the package's merged `/lib/pkg` content view for skills. A skill-id
+collision with a package the manifest does not own SHALL warn and skip rather
+than overwrite, including when `--force` is present. When both source forms in
+one distribution package yield the same skill id, conversion from the
+command-style file SHALL win and the duplicate portable package SHALL be
+skipped with a report entry.
 
 #### Scenario: Command-style file is converted
 - **WHEN** the package source contains a command-style `.md` skill file
@@ -104,14 +122,22 @@ portable package SHALL be skipped with a report entry.
 #### Scenario: Skill-id collision
 - **WHEN** materialization would write over a skill package not owned by this
   distribution package's manifest
-- **THEN** the skill is skipped with a warning naming both parties, and an
-  explicit force flag is required to overwrite
+- **THEN** the skill is skipped with a warning naming both parties
+- **AND** `--force` does not transfer ownership or mutate the other package's
+  provider entry or manifest
 
 #### Scenario: Same skill in both source forms
 - **WHEN** one distribution package contains a command-style file and a
   portable package that resolve to the same skill id
 - **THEN** the command-style file is converted with alan's adapter preamble,
   the portable duplicate is skipped, and the report records the choice
+
+#### Scenario: Skipped source package is not discovered
+- **WHEN** a portable `SKILL.md` in `source/` is skipped because a converted
+  skill with the same id won
+- **THEN** that source path is absent from the manifest-selected skill roots
+- **AND** Q does not expose it to the loader even though it remains readable as
+  package content under `/lib/pkg/<package-id>/`
 
 #### Scenario: Invalid source is rejected
 - **WHEN** the source is neither a readable git repository nor a local
