@@ -316,6 +316,12 @@ spawn, the exec resolver canonicalizes the helper target and verifies that it
 is still a descendant of the canonical package entry; an absolute or relative
 escape is denied and never receives the guard exception.
 
+Helper spawn also requires a sandbox backend that enforces read confinement:
+the current package entry may be read, while every other path under the channel
+Alan home remains denied. If the active backend cannot enforce that boundary
+(including a backend that ignores read deny rules), package helper execution is
+unavailable and fails closed; Q never falls back to an ordinary host spawn.
+
 ### D7: Provenance and manifest make the lifecycle exact
 
 The store keeps, per package: provenance (source repository, commit, source
@@ -387,6 +393,9 @@ under `/lib`, and Plan 9's `/lib` is precisely where data files belong.
   scoped v0 task, not an open-ended exec-through-namespace program. Preambles
   carry only `/lib/pkg` paths, so nothing re-materializes when the backing or
   resolution mechanism changes.
+- [A host sandbox backend does not enforce Alan-home read denial] → package
+  helper execution fails closed as unavailable; store-backed execution is
+  enabled only when the backend proves package-entry-only read confinement.
 - [Q resolution becomes a single point for all skill discovery] → it replaces
   an enumeration that was already the sole discovery path; in slice 1 Q is a
   host-side library, so its failure surface equals the enumeration it replaces,

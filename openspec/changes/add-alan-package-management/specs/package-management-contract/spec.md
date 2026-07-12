@@ -176,6 +176,12 @@ SHALL resolve it through the owning provider's projection to backing content.
 Package content SHALL exclude VCS control metadata. In particular, `.git`
 directories and clone-local configuration SHALL never be projected.
 
+Store-backed helper execution SHALL require an enforcing sandbox backend that
+allows reads from the resolved package entry while denying every other path
+under the channel Alan home. If the backend cannot enforce that read boundary,
+helper execution SHALL fail closed as unavailable and SHALL NOT fall back to an
+ordinary host spawn.
+
 #### Scenario: Package content is readable through the namespace
 - **WHEN** a store-backed or local-source Q package is resolved
 - **THEN** an Agent Process can read its files under `/lib/pkg/<package>/`
@@ -201,6 +207,12 @@ directories and clone-local configuration SHALL never be projected.
   that package's canonical store entry
 - **THEN** install rejects the escaping link or execution denies the target
 - **AND** the runtime does not grant the store-path guard exception
+
+#### Scenario: Read confinement backend is unavailable
+- **WHEN** the active sandbox backend cannot enforce package-entry-only reads
+  within the channel Alan home
+- **THEN** execution of a store-backed helper is unavailable
+- **AND** the helper is not spawned with broader host read access
 
 #### Scenario: Host backing stays out of content
 - **WHEN** conversion generates a preamble or a report references package

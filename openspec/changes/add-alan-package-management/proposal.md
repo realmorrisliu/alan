@@ -68,6 +68,8 @@ ai-berkshire run.
   `/lib/pkg` exposes an exported working tree without VCS control directories.
 - Persisted source identity is credential-free, and helper execution rejects
   symlink targets that escape the canonical package entry.
+- Store-backed helpers fail closed as unavailable unless the active sandbox
+  backend enforces package-entry-only reads within the channel Alan home.
 
 ## Capabilities
 
