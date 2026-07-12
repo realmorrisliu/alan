@@ -156,8 +156,9 @@ implementation detail that never appears in contracts or generated content —
 self-enforced by the alan home's presence on the execution guard's
 sensitive-read denylist: only the runtime's projection and exec resolver
 reach the backing, so a host path leaking into agent-visible content fails at
-the guard instead of silently working (see Context). "Version" = source commit; upgrade =
-fetch + re-materialize. Alternatives rejected: per-skill import (wrong unit —
+the guard instead of silently working (see Context). "Version" = a source
+revision token (git commit, or a content fingerprint for non-git local
+sources); upgrade = fetch + re-materialize. Alternatives rejected: per-skill import (wrong unit —
 severs shared helpers; superseded draft) and registry-based packaging (no
 registry exists and v0 needs none).
 
@@ -267,7 +268,8 @@ not by a back-pointer inside each skill — the earlier draft's per-skill
 `package.yaml` provenance block is now optional metadata, not a discovery
 requirement, since Q already knows which provider owns what. Semantics:
 
-- **upgrade**, unchanged commit + converter → no-op; changed → re-materialize;
+- **upgrade**, unchanged source revision token (commit, or content fingerprint
+  for non-git sources) + converter → no-op; changed → re-materialize;
 - materialized files diverging from manifest hashes (local edits) → warn and
   skip unless `--force`;
 - **uninstall** → delete exactly the manifest's files plus the store entry;

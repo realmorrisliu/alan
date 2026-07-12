@@ -209,8 +209,9 @@ skill availability reporting instead of degrading silently at runtime.
 
 ### Requirement: Packages record provenance and a materialization manifest
 The package store SHALL record, per distribution package: provenance (source
-repository when resolvable, source commit when resolvable, converter version)
-and a manifest listing every materialized file with a content hash. The store's
+repository when resolvable, the source revision token — commit for git sources,
+content fingerprint otherwise — and converter version) and a manifest listing
+every materialized file with a content hash. The store's
 provider registry and manifest are authoritative for ownership; a materialized
 skill package's `package.yaml` MAY additionally carry a `provenance` block
 naming the owning distribution package. Provenance and manifest are management
@@ -227,18 +228,21 @@ metadata and SHALL NOT alter runtime skill behavior.
   still succeeds
 
 ### Requirement: Upgrade is idempotent and protects local modifications
-`q upgrade` SHALL:
+`q upgrade` SHALL detect source change by a **source revision token**: the
+source commit for git sources, and a content fingerprint (hash of the source
+tree) for sources with no resolvable commit. `q upgrade` SHALL:
 
-- be a no-op when the recorded source commit and converter version are
-  unchanged;
-- re-fetch and re-materialize when the upstream source or converter version
-  changed;
+- be a no-op only when the recorded source revision token and converter version
+  are both unchanged;
+- re-fetch and re-materialize when the source revision token or converter
+  version changed — for a non-git local directory this means a re-computed
+  content fingerprint that differs from the recorded one;
 - warn and skip files whose destination no longer matches the manifest content
   hash (local edits), preserving the edits unless the user passes an explicit
   force flag.
 
 #### Scenario: Unchanged package upgraded
-- **WHEN** upgrade runs with the same source commit and converter version
+- **WHEN** upgrade runs with the same source revision token and converter version
 - **THEN** the destination is left untouched and the report says the package
   is up to date
 
@@ -246,6 +250,12 @@ metadata and SHALL NOT alter runtime skill behavior.
 - **WHEN** the source repository has new commits
 - **THEN** upgrade re-materializes the package and updates provenance and
   manifest
+
+#### Scenario: Non-git local source is edited
+- **WHEN** a package installed from a non-git local directory is upgraded after
+  its source files changed
+- **THEN** the re-computed content fingerprint differs from the recorded one
+- **AND** upgrade re-materializes rather than reporting the package up to date
 
 #### Scenario: Locally modified skill
 - **WHEN** a materialized file differs from its manifest hash
