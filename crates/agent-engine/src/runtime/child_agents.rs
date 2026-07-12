@@ -8,12 +8,11 @@ use super::delegation_capabilities::{
 };
 use super::engine::{
     AgentConfig, RuntimeController, RuntimeEventEnvelope, RuntimeLivenessEnvelope,
-    RuntimeStartupMetadata, WorkspaceRuntimeConfig, runtime_host_capabilities,
+    RuntimeStartupMetadata, WorkspaceRuntimeConfig, runtime_host_capabilities_for_tools,
     spawn_with_namespace_environment,
 };
 use crate::llm::LlmClient;
 use crate::tape::{ContentPart, Message};
-use crate::tools::ToolRegistry;
 use alan_agent_protocol::{
     DelegatedCapabilityDecision, DelegatedCapabilityRecovery, GovernanceConfig, Op, SpawnHandle,
     SpawnSpec, SpawnTarget, Submission, YieldKind,
@@ -327,9 +326,6 @@ where
             .context("Failed to assemble child-agent namespace plan")?;
     let delegation_capability_decision =
         evaluate_delegated_launch_capabilities(parent, &mut spec, &child_namespace_plan).await?;
-    // Transitional until task 6.1 removes ToolRegistry from RuntimeLoopState entirely.
-    // Tool visibility and execution are owned by the child namespace and shared Process runner.
-    let child_tools = ToolRegistry::with_config(Arc::new(effective_child_core_config.clone()));
     let llm_client = llm_client_factory(&effective_child_core_config)
         .context("Failed to create child-agent LLM client")?;
     let parent_process_context = parent.namespace_environment().process_context();
@@ -340,7 +336,9 @@ where
     let tool_runner = parent_process_context
         .as_ref()
         .map(|context| context.tool_runner.clone())
-        .unwrap_or_else(|| crate::tools::ToolProcessRunner::from_registry(&child_tools));
+        .unwrap_or_else(|| {
+            crate::tools::ToolProcessRunner::empty(Arc::new(effective_child_core_config.clone()))
+        });
     let runtime_procfs = launch_procfs
         .clone()
         .with_runner(Arc::new(tool_runner.clone()));
@@ -393,7 +391,13 @@ where
     .await?;
     let generation_capabilities =
         crate::provider_capabilities_for_config(&effective_child_core_config);
-    let host_capabilities = runtime_host_capabilities(&child_config, &child_tools);
+    let host_capabilities = runtime_host_capabilities_for_tools(
+        &child_config,
+        child_namespace_plan
+            .tool_packages
+            .iter()
+            .map(|manifest| manifest.name.clone()),
+    );
     let runtime = match spawn_with_namespace_environment(
         child_config,
         namespace_launch.environment,
@@ -2513,6 +2517,7 @@ mod tests {
     };
     use crate::skills::SkillHostCapabilities;
     use crate::tools::Tool;
+    use crate::tools::ToolRegistry;
     use alan_ap::{Fid, FileServer, InProcessTransport, OpenMode};
     use alan_kernel::{
         Access as KernelAccess, Credentials as KernelCredentials, Namespace as KernelNamespace,

@@ -44,7 +44,6 @@ pub use engine::{
     WorkspaceRuntimeConfig, effective_core_config_for_runtime, spawn, spawn_with_llm_client,
     spawn_with_llm_client_and_namespace_surface, spawn_with_llm_client_and_tools,
     spawn_with_llm_client_and_tools_and_namespace_surface, spawn_with_namespace_surface,
-    spawn_with_tool_registry, spawn_with_tool_registry_and_namespace_surface,
 };
 
 // Re-export agent loop types for internal use

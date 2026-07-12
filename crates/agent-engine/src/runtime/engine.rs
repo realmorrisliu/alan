@@ -304,12 +304,24 @@ pub(crate) fn runtime_host_capabilities(
     config: &WorkspaceRuntimeConfig,
     tools: &crate::tools::ToolRegistry,
 ) -> crate::skills::SkillHostCapabilities {
+    runtime_host_capabilities_for_tools(config, tools.list_tools().into_iter().map(str::to_string))
+}
+
+pub(crate) fn runtime_host_capabilities_for_tools(
+    config: &WorkspaceRuntimeConfig,
+    tools: impl IntoIterator<Item = String>,
+) -> crate::skills::SkillHostCapabilities {
     let path_dirs = std::env::var_os("PATH")
         .map(|path| std::env::split_paths(&path).collect::<Vec<_>>())
         .unwrap_or_default();
-    runtime_host_capabilities_with_path_dirs(config, tools, path_dirs)
+    crate::skills::build_skill_host_capabilities_with_path_dirs(
+        tools,
+        path_dirs,
+        config.launch_root_dir.is_none(),
+    )
 }
 
+#[cfg(test)]
 fn runtime_host_capabilities_with_path_dirs<I, P>(
     config: &WorkspaceRuntimeConfig,
     tools: &crate::tools::ToolRegistry,
@@ -1093,40 +1105,6 @@ pub async fn spawn_with_namespace_surface(
     )
     .context("Failed to create LLM client for runtime")?;
     let tools = crate::tools::ToolRegistry::with_config(Arc::new(core_config));
-
-    spawn_with_llm_client_and_tools_and_namespace_surface(config, llm_client, tools).await
-}
-
-/// Spawn a new agent runtime with an externally-provided LLM client.
-///
-/// This is useful for testing with a mock LLM provider.
-pub fn spawn_with_tool_registry(
-    config: WorkspaceRuntimeConfig,
-    tools: crate::tools::ToolRegistry,
-) -> Result<RuntimeController> {
-    let core_config = effective_core_config_for_runtime(&config)?;
-
-    let llm_client = LlmClient::from_core_config_with_chatgpt_auth_storage_path(
-        &core_config,
-        config.chatgpt_auth_storage_path.clone(),
-    )
-    .context("Failed to create LLM client for runtime")?;
-
-    spawn_with_llm_client_and_tools(config, llm_client, tools)
-}
-
-/// Spawn a new namespace-native runtime and return the renderer-host surface.
-pub async fn spawn_with_tool_registry_and_namespace_surface(
-    config: WorkspaceRuntimeConfig,
-    tools: crate::tools::ToolRegistry,
-) -> Result<RuntimeNamespaceLaunch> {
-    let core_config = effective_core_config_for_runtime(&config)?;
-
-    let llm_client = LlmClient::from_core_config_with_chatgpt_auth_storage_path(
-        &core_config,
-        config.chatgpt_auth_storage_path.clone(),
-    )
-    .context("Failed to create LLM client for runtime")?;
 
     spawn_with_llm_client_and_tools_and_namespace_surface(config, llm_client, tools).await
 }

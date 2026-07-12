@@ -539,6 +539,17 @@ struct ToolProcessRunnerInner {
 }
 
 impl ToolProcessRunner {
+    pub(crate) fn empty(config: Arc<Config>) -> Self {
+        Self {
+            inner: Arc::new(ToolProcessRunnerInner {
+                tools: HashMap::new(),
+                config,
+                default_binding: Arc::new(Mutex::new(None)),
+                process_bindings: Mutex::new(HashMap::new()),
+            }),
+        }
+    }
+
     pub(crate) fn from_registry(registry: &ToolRegistry) -> Self {
         Self {
             inner: Arc::new(ToolProcessRunnerInner {

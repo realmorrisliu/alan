@@ -1,6 +1,9 @@
-use alan_agent_engine::runtime::spawn_with_tool_registry;
+use alan_agent_engine::runtime::{
+    effective_core_config_for_runtime, spawn_with_llm_client_and_tools,
+};
 use alan_agent_engine::{
-    AlanHomePaths, Config, RuntimeEventEnvelope, ToolRegistry, WorkspaceRuntimeConfig,
+    AlanHomePaths, Config, LlmClient, RuntimeController, RuntimeEventEnvelope, ToolRegistry,
+    WorkspaceRuntimeConfig,
 };
 use alan_agent_protocol::{ContentPart, Event, Op, Submission};
 use anyhow::{Context, Result, ensure};
@@ -36,6 +39,18 @@ fn non_empty_env(name: &str) -> Option<String> {
         .ok()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
+}
+
+fn spawn_live_runtime(
+    config: WorkspaceRuntimeConfig,
+    tools: ToolRegistry,
+) -> Result<RuntimeController> {
+    let core_config = effective_core_config_for_runtime(&config)?;
+    let llm_client = LlmClient::from_core_config_with_chatgpt_auth_storage_path(
+        &core_config,
+        config.chatgpt_auth_storage_path.clone(),
+    )?;
+    spawn_with_llm_client_and_tools(config, llm_client, tools)
 }
 
 async fn collect_events_until_terminal(
@@ -171,7 +186,7 @@ async fn live_chatgpt_runtime_smoke() -> Result<()> {
         tools.set_default_cwd(cwd);
     }
 
-    let mut controller = spawn_with_tool_registry(runtime_config, tools)
+    let mut controller = spawn_live_runtime(runtime_config, tools)
         .context("spawn runtime with managed ChatGPT provider")?;
     controller
         .wait_until_ready()
@@ -264,7 +279,7 @@ async fn live_chatgpt_runtime_cross_process_memory_smoke() -> Result<()> {
         };
 
     let first_tools = alan_tools::create_tool_registry_with_core_tools(workspace_root.clone());
-    let mut first_controller = spawn_with_tool_registry(first_runtime_config, first_tools)
+    let mut first_controller = spawn_live_runtime(first_runtime_config, first_tools)
         .context("spawn first live runtime with tools")?;
     first_controller
         .wait_until_ready()
@@ -340,7 +355,7 @@ async fn live_chatgpt_runtime_cross_process_memory_smoke() -> Result<()> {
         second_tools.set_default_cwd(cwd);
     }
 
-    let mut second_controller = spawn_with_tool_registry(second_runtime_config, second_tools)
+    let mut second_controller = spawn_live_runtime(second_runtime_config, second_tools)
         .context("spawn second live runtime")?;
     second_controller
         .wait_until_ready()
@@ -434,7 +449,7 @@ async fn live_chatgpt_runtime_cross_process_continuity_smoke() -> Result<()> {
         first_tools.set_default_cwd(cwd);
     }
 
-    let mut first_controller = spawn_with_tool_registry(first_runtime_config, first_tools)
+    let mut first_controller = spawn_live_runtime(first_runtime_config, first_tools)
         .context("spawn first continuity runtime")?;
     first_controller
         .wait_until_ready()
@@ -506,7 +521,7 @@ async fn live_chatgpt_runtime_cross_process_continuity_smoke() -> Result<()> {
         second_tools.set_default_cwd(cwd);
     }
 
-    let mut second_controller = spawn_with_tool_registry(second_runtime_config, second_tools)
+    let mut second_controller = spawn_live_runtime(second_runtime_config, second_tools)
         .context("spawn second continuity runtime")?;
     second_controller
         .wait_until_ready()
