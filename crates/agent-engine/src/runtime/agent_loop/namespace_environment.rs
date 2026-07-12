@@ -362,6 +362,33 @@ impl NamespaceRuntimeEnvironment {
         &self.llm_connection
     }
 
+    /// Discover model-callable Tools from complete packages visible in this namespace.
+    pub(crate) async fn discover_tool_packages(
+        &self,
+    ) -> Result<Vec<super::super::ToolPackageManifest>> {
+        let client = self.client();
+        let mut packages = Vec::new();
+        for name in client
+            .try_read_directory_names("/bin")
+            .await?
+            .unwrap_or_default()
+        {
+            if name.is_empty() || name.contains('/') {
+                continue;
+            }
+            let path = format!("/lib/exec/{name}/manifest");
+            let Some(raw) = client.try_read_file(&path).await? else {
+                continue;
+            };
+            let manifest: super::super::ToolPackageManifest = serde_json::from_slice(&raw)
+                .with_context(|| format!("parse Tool manifest at {path}"))?;
+            manifest.validate_for_name(&name)?;
+            packages.push(manifest);
+        }
+        packages.sort_by(|left, right| left.name.cmp(&right.name));
+        Ok(packages)
+    }
+
     pub fn root_transport(&self) -> InProcessTransport {
         self.root.clone()
     }
@@ -1944,6 +1971,41 @@ impl NamespaceClient {
             (Err(err), _) => Err(err),
             (_, Err(err)) => Err(err),
         }
+    }
+
+    async fn try_read_directory_names(&self, path: &str) -> Result<Option<Vec<String>>> {
+        let fid = Fid(NEXT_FID.fetch_add(1, Ordering::Relaxed));
+        match self
+            .fs
+            .call(Request::Walk {
+                fid: Fid::ROOT,
+                newfid: fid,
+                names: split_path(path),
+            })
+            .await
+        {
+            Ok(Response::Walk { .. }) => {}
+            Ok(_) => bail!("unexpected walk response for {path}"),
+            Err(ErrorCode::NotFound) => return Ok(None),
+            Err(error) => return Err(error).with_context(|| format!("walk to {path}")),
+        }
+        let guarded = self.open_guarded_fid(fid, OpenMode::Read).await?;
+        if self.stat(guarded.fid()).await?.qid.kind != FileKind::Dir {
+            bail!("{path} is not a directory");
+        }
+        let mut bytes = Vec::new();
+        let mut offset = 0_u64;
+        loop {
+            let chunk = self.read_at(guarded.fid(), offset, 64 * 1024).await?;
+            if chunk.is_empty() {
+                break;
+            }
+            offset += chunk.len() as u64;
+            bytes.extend_from_slice(&chunk);
+        }
+        guarded.close().await?;
+        let listing = String::from_utf8(bytes).with_context(|| format!("read directory {path}"))?;
+        Ok(Some(listing.lines().map(str::to_string).collect()))
     }
 
     async fn try_read_file(&self, path: &str) -> Result<Option<Vec<u8>>> {

@@ -103,12 +103,24 @@ async fn finalize_turn_memory_best_effort(
     }
 }
 
-fn turn_tool_definitions(state: &RuntimeLoopState) -> Vec<crate::llm::ToolDefinition> {
+async fn turn_tool_definitions(
+    state: &RuntimeLoopState,
+) -> anyhow::Result<(
+    Vec<super::ToolPackageManifest>,
+    Vec<crate::llm::ToolDefinition>,
+)> {
     let include_runtime_delegated_tool = state.prompt_cache.supports_delegated_skill_invocation();
 
-    let mut tools = state.static_tool_definitions();
+    let tool_packages = state
+        .namespace_environment()
+        .discover_tool_packages()
+        .await?;
+    let mut tools = tool_packages
+        .iter()
+        .map(|package| package.model_definition())
+        .collect::<Vec<_>>();
     tools.extend(virtual_tool_definitions(include_runtime_delegated_tool));
-    tools
+    Ok((tool_packages, tools))
 }
 
 fn responses_status_supports_continuation(status: Option<&str>) -> bool {
@@ -973,7 +985,7 @@ where
     let _domain_prompt = prompt_build.domain_prompt;
     let system_prompt = prompt_build.system_prompt;
 
-    let tools = turn_tool_definitions(state);
+    let (tool_packages, tools) = turn_tool_definitions(state).await?;
     let tool_names = tools
         .iter()
         .map(|tool| tool.name.clone())
@@ -1199,7 +1211,7 @@ where
 
         let tool_calls = normalize_tool_calls(response.tool_calls);
 
-        let guardrail_context = ResponseGuardrailContext::from_state(state);
+        let guardrail_context = ResponseGuardrailContext::from_state(state, &tool_packages);
         let guardrail_draft = AssistantDraft::new(&response.content, !tool_calls.is_empty());
         match response_guardrails.evaluate(&guardrail_context, &guardrail_draft) {
             GuardrailDecision::Accept => {
@@ -2398,6 +2410,22 @@ mod tests {
                 )),
                 alan_kernel::Access::ReadOnly,
             );
+            let tool = tools.get(tool_name).unwrap();
+            let manifest = crate::runtime::ToolPackageManifest::from_tool(
+                tool.as_ref(),
+                tools.execution_timeout_secs(tool_name).unwrap_or(30),
+            )
+            .unwrap();
+            process_namespace.mount(
+                &format!("/lib/exec/{tool_name}"),
+                alan_ap::InProcessTransport::new(std::sync::Arc::new(
+                    alan_ap::reference::MemFs::with_read_only_file(
+                        "manifest",
+                        serde_json::to_vec(&manifest).unwrap(),
+                    ),
+                )),
+                alan_kernel::Access::ReadOnly,
+            );
         }
         let procfs = alan_kernel::ProcFs::new().with_runner(std::sync::Arc::new(
             TestToolProcessRunner::new(tools.clone()),
@@ -2502,8 +2530,8 @@ description: {description}
         .unwrap();
     }
 
-    #[test]
-    fn test_turn_tool_definitions_include_runtime_delegated_schema_when_supported() {
+    #[tokio::test]
+    async fn test_turn_tool_definitions_include_runtime_delegated_schema_when_supported() {
         let mut state = create_test_state_with_provider(ContentMockProvider::new("ok"));
         state.prompt_cache.set_host_capabilities(
             crate::skills::SkillHostCapabilities::default()
@@ -2511,12 +2539,21 @@ description: {description}
                 .with_delegated_skill_invocation(),
         );
 
-        let tools = turn_tool_definitions(&state);
+        let (_, tools) = turn_tool_definitions(&state).await.unwrap();
         assert!(
             tools
                 .iter()
                 .any(|tool| tool.name == "invoke_delegated_skill")
         );
+    }
+
+    #[tokio::test]
+    async fn hidden_registry_tool_is_not_model_callable() {
+        let mut state = create_test_state_with_provider(ContentMockProvider::new("ok"));
+        state.tool_catalog.register(NetworkCapabilityTool);
+
+        let (_, tools) = turn_tool_definitions(&state).await.unwrap();
+        assert!(!tools.iter().any(|tool| tool.name == "network_probe"));
     }
 
     #[test]
@@ -3819,10 +3856,9 @@ description: {description}
             ],
             Arc::clone(&generate_calls),
         );
-        let mut state = create_test_state_with_provider(provider);
-        state
-            .tool_catalog_mut_for_test()
-            .register(NetworkCapabilityTool);
+        let mut tools = ToolRegistry::new();
+        tools.register(NetworkCapabilityTool);
+        let mut state = create_test_state_with_provider_and_tools(provider, tools);
         let cancel = CancellationToken::new();
 
         let mut events = vec![];
@@ -3890,10 +3926,9 @@ description: {description}
             }],
             Arc::clone(&generate_calls),
         );
-        let mut state = create_test_state_with_provider(provider);
-        state
-            .tool_catalog_mut_for_test()
-            .register(NetworkCapabilityTool);
+        let mut tools = ToolRegistry::new();
+        tools.register(NetworkCapabilityTool);
+        let mut state = create_test_state_with_provider_and_tools(provider, tools);
         state
             .machine
             .tape
@@ -4006,13 +4041,10 @@ description: {description}
             ],
             Arc::clone(&generate_calls),
         );
-        let mut state = create_test_state_with_provider(provider);
-        state
-            .tool_catalog_mut_for_test()
-            .register(NetworkCapabilityTool);
-        state
-            .tool_catalog_mut_for_test()
-            .register(ReadCapabilityTool);
+        let mut tools = ToolRegistry::new();
+        tools.register(NetworkCapabilityTool);
+        tools.register(ReadCapabilityTool);
+        let mut state = create_test_state_with_provider_and_tools(provider, tools);
         state
             .machine
             .tape
@@ -4100,10 +4132,9 @@ description: {description}
             }],
             Arc::clone(&generate_calls),
         );
-        let mut state = create_test_state_with_provider(provider);
-        state
-            .tool_catalog_mut_for_test()
-            .register(NetworkCapabilityTool);
+        let mut tools = ToolRegistry::new();
+        tools.register(NetworkCapabilityTool);
+        let mut state = create_test_state_with_provider_and_tools(provider, tools);
         state.machine.tape.push(Message::user("earlier turn"));
         state
             .machine
@@ -4208,10 +4239,9 @@ description: {description}
             ],
             Arc::clone(&generate_calls),
         );
-        let mut state = create_test_state_with_provider(provider);
-        state
-            .tool_catalog_mut_for_test()
-            .register(NetworkCapabilityTool);
+        let mut tools = ToolRegistry::new();
+        tools.register(NetworkCapabilityTool);
+        let mut state = create_test_state_with_provider_and_tools(provider, tools);
         state.machine.tape.push(Message::user("earlier turn"));
         state.machine.tape.push(Message::Assistant {
             parts: Vec::new(),

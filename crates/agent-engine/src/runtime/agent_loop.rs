@@ -14,7 +14,7 @@ pub use namespace_environment::{
     NamespaceTurnRuntime, NamespaceTurnRuntimeConfig,
 };
 
-use alan_agent_protocol::{Event, Submission, ToolCapability};
+use alan_agent_protocol::{Event, Submission};
 use anyhow::Result;
 use tokio_util::sync::CancellationToken;
 use tracing::warn;
@@ -62,24 +62,13 @@ pub enum RuntimeEnvironment {
     #[allow(dead_code)]
     Namespace {
         namespace: NamespaceRuntimeEnvironment,
-        tool_definitions: Vec<crate::llm::ToolDefinition>,
     },
 }
 
 impl RuntimeEnvironment {
     #[allow(dead_code)]
     pub fn namespace(namespace: NamespaceRuntimeEnvironment) -> Self {
-        Self::namespace_with_tool_definitions(namespace, Vec::new())
-    }
-
-    pub fn namespace_with_tool_definitions(
-        namespace: NamespaceRuntimeEnvironment,
-        tool_definitions: Vec<crate::llm::ToolDefinition>,
-    ) -> Self {
-        Self::Namespace {
-            namespace,
-            tool_definitions,
-        }
+        Self::Namespace { namespace }
     }
 }
 
@@ -228,31 +217,12 @@ impl RuntimeLoopState {
         &self.tool_catalog
     }
 
-    pub(crate) fn static_tool_definitions(&self) -> Vec<crate::llm::ToolDefinition> {
-        self.tool_catalog.get_tool_definitions()
-    }
-
     pub(crate) fn static_tool_names(&self) -> Vec<String> {
         self.tool_catalog
             .list_tools()
             .into_iter()
             .map(str::to_string)
             .collect()
-    }
-
-    pub(crate) fn static_tool_capability(
-        &self,
-        tool_name: &str,
-        arguments: &serde_json::Value,
-    ) -> Option<ToolCapability> {
-        self.tool_catalog.capability_for_tool(tool_name, arguments)
-    }
-
-    pub(crate) fn static_tool_locality(
-        &self,
-        tool_name: &str,
-    ) -> Option<crate::tools::ToolLocality> {
-        self.tool_catalog.tool_locality(tool_name)
     }
 
     pub(crate) fn default_tool_cwd(&self) -> Option<std::path::PathBuf> {

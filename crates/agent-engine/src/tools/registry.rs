@@ -543,6 +543,123 @@ impl Default for ToolRegistry {
     }
 }
 
+/// Process-server host for Tool executables reached through `/proc/clone`.
+pub(crate) struct ToolProcessRunner {
+    tools: HashMap<String, Arc<dyn Tool>>,
+    config: Arc<Config>,
+    default_binding: Arc<Mutex<Option<ToolExecutionBinding>>>,
+}
+
+impl ToolProcessRunner {
+    pub(crate) fn from_registry(registry: &ToolRegistry) -> Self {
+        Self {
+            tools: registry.tools.clone(),
+            config: Arc::clone(&registry.config),
+            default_binding: Arc::clone(&registry.default_binding),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl alan_kernel::ProcessRunner for ToolProcessRunner {
+    async fn run(&self, invocation: alan_kernel::ProcessInvocation) -> alan_kernel::ProcessOutcome {
+        if invocation
+            .namespace
+            .resolve(&invocation.exec.executable)
+            .is_err()
+        {
+            return alan_kernel::ProcessOutcome::exited(127, b"executable is not mounted\n");
+        }
+        let name = invocation
+            .exec
+            .executable
+            .rsplit('/')
+            .next()
+            .unwrap_or(invocation.exec.executable.as_str());
+        let Some(tool) = self.tools.get(name) else {
+            return alan_kernel::ProcessOutcome::exited(127, b"Tool executable has no host\n");
+        };
+        let arguments = invocation
+            .exec
+            .args
+            .first()
+            .and_then(|raw| serde_json::from_str::<Value>(raw).ok())
+            .unwrap_or(Value::Null);
+        let schema = tool.parameters_schema();
+        let validator = match jsonschema::options()
+            .with_draft(Draft::Draft7)
+            .build(&schema)
+        {
+            Ok(validator) => validator,
+            Err(error) => {
+                return process_json_outcome(
+                    1,
+                    serde_json::json!({"success": false, "error": format!("invalid Tool schema: {error}")}),
+                );
+            }
+        };
+        let errors = validator
+            .iter_errors(&arguments)
+            .map(|error| error.to_string())
+            .collect::<Vec<_>>();
+        if !errors.is_empty() {
+            return process_json_outcome(
+                1,
+                serde_json::json!({"success": false, "error": errors.join("; ")}),
+            );
+        }
+        let binding = self
+            .default_binding
+            .lock()
+            .expect("default binding mutex poisoned")
+            .clone()
+            .unwrap_or_else(|| {
+                let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+                ToolExecutionBinding::without_workspace(
+                    cwd.clone(),
+                    default_scratch_dir_for_cwd(&cwd),
+                )
+            });
+        let context = ToolContext::from_binding(binding, Arc::clone(&self.config));
+        let timeout_secs = if self.config.tool_timeout_secs != 30 {
+            self.config.tool_timeout_secs
+        } else {
+            tool.timeout_secs()
+        };
+        let execution = tool.execute(arguments, &context);
+        let result = if timeout_secs == 0 {
+            execution.await
+        } else {
+            match tokio::time::timeout(
+                std::time::Duration::from_secs(timeout_secs as u64),
+                execution,
+            )
+            .await
+            {
+                Ok(result) => result,
+                Err(_) => Err(anyhow::anyhow!(
+                    "Tool execution timed out after {timeout_secs}s"
+                )),
+            }
+        };
+        match result {
+            Ok(output) => process_json_outcome(0, output),
+            Err(error) => process_json_outcome(
+                1,
+                serde_json::json!({"success": false, "error": format!("{error:#}")}),
+            ),
+        }
+    }
+}
+
+fn process_json_outcome(exit_code: i32, value: Value) -> alan_kernel::ProcessOutcome {
+    let mut bytes = serde_json::to_vec(&value).unwrap_or_else(|_| {
+        serde_json::to_vec(&serde_json::json!({"success": exit_code == 0})).unwrap()
+    });
+    bytes.push(b'\n');
+    alan_kernel::ProcessOutcome::exited(exit_code, bytes)
+}
+
 fn default_scratch_dir_for_cwd(cwd: &std::path::Path) -> std::path::PathBuf {
     if cwd
         .file_name()
@@ -969,6 +1086,28 @@ mod tests {
             .await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("not found"));
+    }
+
+    #[tokio::test]
+    async fn process_server_rejects_unmounted_tool() {
+        let mut registry = ToolRegistry::new();
+        registry.register(TestTool);
+        let runner = ToolProcessRunner::from_registry(&registry);
+        let invocation = alan_kernel::ProcessInvocation {
+            pid: alan_kernel::Pid(1),
+            parent: None,
+            credentials: alan_kernel::Credentials::user("agent"),
+            namespace: alan_kernel::Namespace::new(),
+            exec: alan_kernel::ExecSpec {
+                executable: "/bin/test_tool".to_string(),
+                args: vec!["{}".to_string()],
+                namespace: None,
+            },
+        };
+
+        let outcome = alan_kernel::ProcessRunner::run(&runner, invocation).await;
+        assert_eq!(outcome.exit_code, 127);
+        assert_eq!(outcome.output, b"executable is not mounted\n");
     }
 
     #[tokio::test]

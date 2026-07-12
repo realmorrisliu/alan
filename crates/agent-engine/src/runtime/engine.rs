@@ -65,59 +65,6 @@ impl LlmProvider for RuntimeLlmProvider {
     }
 }
 
-struct RuntimeToolProcessRunner {
-    tools: crate::tools::ToolRegistry,
-}
-
-impl RuntimeToolProcessRunner {
-    fn new(tools: crate::tools::ToolRegistry) -> Self {
-        Self { tools }
-    }
-}
-
-#[async_trait::async_trait]
-impl alan_kernel::ProcessRunner for RuntimeToolProcessRunner {
-    async fn run(&self, invocation: alan_kernel::ProcessInvocation) -> alan_kernel::ProcessOutcome {
-        if invocation
-            .namespace
-            .resolve(&invocation.exec.executable)
-            .is_err()
-        {
-            return alan_kernel::ProcessOutcome::exited(127, b"executable is not mounted\n");
-        }
-        let tool_name = invocation
-            .exec
-            .executable
-            .rsplit('/')
-            .next()
-            .unwrap_or(invocation.exec.executable.as_str());
-        let arguments = invocation
-            .exec
-            .args
-            .first()
-            .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok())
-            .unwrap_or(serde_json::Value::Null);
-
-        match self.tools.execute(tool_name, arguments).await {
-            Ok(output) => {
-                let mut bytes =
-                    serde_json::to_vec(&output).unwrap_or_else(|_| b"{\"success\":true}".to_vec());
-                bytes.push(b'\n');
-                alan_kernel::ProcessOutcome::exited(0, bytes)
-            }
-            Err(err) => {
-                let mut bytes = serde_json::to_vec(&serde_json::json!({
-                    "success": false,
-                    "error": format!("{err:#}"),
-                }))
-                .unwrap_or_else(|_| b"{\"success\":false}".to_vec());
-                bytes.push(b'\n');
-                alan_kernel::ProcessOutcome::exited(1, bytes)
-            }
-        }
-    }
-}
-
 enum RuntimeEnvironmentBootstrap {
     Ready(RuntimeEnvironment),
     NamespaceRoot {
@@ -1282,7 +1229,6 @@ async fn build_root_namespace_environment(
     tools: crate::tools::ToolRegistry,
     mount_grant_applicator_factory: Option<Arc<dyn super::MountGrantApplicatorFactory>>,
 ) -> Result<RuntimeEnvironment> {
-    let tool_definitions = tools.get_tool_definitions();
     let tool_names = tools
         .list_tools()
         .into_iter()
@@ -1309,9 +1255,27 @@ async fn build_root_namespace_environment(
     let route_tree =
         mount_routefs_standard_handles(&mut process_namespace, srvfs.clone(), routefs).await?;
     for tool_name in &tool_names {
+        let tool = tools
+            .get(tool_name)
+            .with_context(|| format!("materialize Tool package metadata for {tool_name}"))?;
+        let manifest = super::ToolPackageManifest::from_tool(
+            tool.as_ref(),
+            tools.execution_timeout_secs(tool_name).unwrap_or(30),
+        )?;
+        let manifest_bytes = serde_json::to_vec(&manifest)
+            .with_context(|| format!("serialize Tool manifest for {tool_name}"))?;
+        let manifest_fs = Arc::new(alan_ap::reference::MemFs::with_read_only_file(
+            "manifest",
+            manifest_bytes,
+        ));
         process_namespace.mount(
             &format!("/bin/{tool_name}"),
             InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::new())),
+            alan_kernel::Access::ReadOnly,
+        );
+        process_namespace.mount(
+            &format!("/lib/exec/{tool_name}"),
+            InProcessTransport::new(manifest_fs),
             alan_kernel::Access::ReadOnly,
         );
     }
@@ -1328,9 +1292,12 @@ async fn build_root_namespace_environment(
             .parse::<u64>()
             .with_context(|| format!("parse root agent pid '{root_pid}'"))?,
     );
-    let procfs_with_runner = procfs
-        .clone()
-        .with_runner(Arc::new(RuntimeToolProcessRunner::new(tools)));
+    let procfs_with_runner =
+        procfs
+            .clone()
+            .with_runner(Arc::new(crate::tools::ToolProcessRunner::from_registry(
+                &tools,
+            )));
     procfs
         .bind_live_namespace(root_pid_value, live_namespace.clone())
         .await;
@@ -1356,10 +1323,7 @@ async fn build_root_namespace_environment(
     } else {
         namespace_environment
     };
-    Ok(RuntimeEnvironment::namespace_with_tool_definitions(
-        namespace_environment,
-        tool_definitions,
-    ))
+    Ok(RuntimeEnvironment::namespace(namespace_environment))
 }
 
 async fn mount_llmfs_standard_handles(
@@ -1521,13 +1485,9 @@ pub(crate) fn spawn_with_namespace_environment(
     host_tools: crate::tools::ToolRegistry,
     generation_capabilities: crate::llm::ProviderCapabilities,
 ) -> Result<RuntimeController> {
-    let tool_definitions = host_tools.get_tool_definitions();
     spawn_with_prepared_runtime_environment(
         config,
-        RuntimeEnvironmentBootstrap::Ready(RuntimeEnvironment::namespace_with_tool_definitions(
-            namespace,
-            tool_definitions,
-        )),
+        RuntimeEnvironmentBootstrap::Ready(RuntimeEnvironment::namespace(namespace)),
         host_tools,
         generation_capabilities,
     )
@@ -2136,6 +2096,37 @@ mod tests {
     use std::sync::{Arc, Mutex};
     use tempfile::TempDir;
 
+    struct PackageTestTool {
+        name: &'static str,
+        description: &'static str,
+    }
+
+    impl crate::tools::Tool for PackageTestTool {
+        fn name(&self) -> &str {
+            self.name
+        }
+
+        fn description(&self) -> &str {
+            self.description
+        }
+
+        fn parameters_schema(&self) -> serde_json::Value {
+            serde_json::json!({"type": "object"})
+        }
+
+        fn execute(
+            &self,
+            _arguments: serde_json::Value,
+            _ctx: &crate::tools::ToolContext,
+        ) -> crate::tools::ToolResult {
+            Box::pin(async { Ok(serde_json::json!({"ok": true})) })
+        }
+    }
+
+    fn single_file_fs(name: &str, bytes: &[u8]) -> Arc<alan_ap::reference::MemFs> {
+        Arc::new(alan_ap::reference::MemFs::with_read_only_file(name, bytes))
+    }
+
     fn namespace_environment_for_test() -> RuntimeEnvironment {
         let root = InProcessTransport::new(Arc::new(alan_kernel::MountFs::new(
             alan_kernel::Namespace::new(),
@@ -2268,6 +2259,112 @@ mod tests {
             "{dead_letter}"
         );
         assert!(dead_letter.contains(r#""type":"status""#), "{dead_letter}");
+    }
+
+    #[tokio::test]
+    async fn root_namespace_mounts_complete_tool_packages() {
+        let mut tools = crate::tools::ToolRegistry::new();
+        tools.register(PackageTestTool {
+            name: "example",
+            description: "Example Tool",
+        });
+        let environment =
+            build_root_namespace_environment(LlmClient::new(MockLlmProvider::new()), tools, None)
+                .await
+                .unwrap();
+        let RuntimeEnvironment::Namespace { namespace, .. } = environment;
+        let shell = alan_shell::Shell::new(namespace.root_transport());
+
+        assert!(
+            shell
+                .ls("/bin")
+                .await
+                .unwrap()
+                .contains(&"example".to_string())
+        );
+        let manifest: crate::runtime::ToolPackageManifest =
+            serde_json::from_slice(&shell.cat("/lib/exec/example/manifest").await.unwrap())
+                .unwrap();
+        manifest.validate_for_name("example").unwrap();
+        let discovered = namespace.discover_tool_packages().await.unwrap();
+        assert_eq!(discovered, vec![manifest]);
+    }
+
+    #[tokio::test]
+    async fn namespace_discovery_ignores_incomplete_tool_packages() {
+        let manifest = crate::runtime::ToolPackageManifest::from_tool(
+            &PackageTestTool {
+                name: "hidden",
+                description: "Hidden Tool",
+            },
+            30,
+        )
+        .unwrap();
+        let manifest_fs = single_file_fs("manifest", &serde_json::to_vec(&manifest).unwrap());
+
+        let mut mounts = alan_kernel::Namespace::new();
+        mounts.mount(
+            "/bin/ordinary",
+            InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::new())),
+            alan_kernel::Access::ReadOnly,
+        );
+        mounts.mount(
+            "/lib/exec/hidden",
+            InProcessTransport::new(manifest_fs),
+            alan_kernel::Access::ReadOnly,
+        );
+        let root = InProcessTransport::new(Arc::new(alan_kernel::MountFs::new(mounts)));
+        let environment =
+            crate::runtime::NamespaceRuntimeEnvironment::new(root, "/agent/1", "default");
+
+        assert!(
+            environment
+                .discover_tool_packages()
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn namespace_discovery_rejects_invalid_mounted_manifest() {
+        let mut mounts = alan_kernel::Namespace::new();
+        mounts.mount(
+            "/bin/broken",
+            InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::new())),
+            alan_kernel::Access::ReadOnly,
+        );
+        mounts.mount(
+            "/lib/exec/broken",
+            InProcessTransport::new(single_file_fs("manifest", b"{}")),
+            alan_kernel::Access::ReadOnly,
+        );
+        let root = InProcessTransport::new(Arc::new(alan_kernel::MountFs::new(mounts)));
+        let environment =
+            crate::runtime::NamespaceRuntimeEnvironment::new(root, "/agent/1", "default");
+
+        assert!(environment.discover_tool_packages().await.is_err());
+    }
+
+    #[tokio::test]
+    async fn invalid_tool_package_fails_before_agent_launch() {
+        let mut tools = crate::tools::ToolRegistry::new();
+        tools.register(PackageTestTool {
+            name: "bad/name",
+            description: "Invalid Tool",
+        });
+
+        let error = match build_root_namespace_environment(
+            LlmClient::new(MockLlmProvider::new()),
+            tools,
+            None,
+        )
+        .await
+        {
+            Ok(_) => panic!("invalid Tool package must fail before launch"),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("does not match mounted package"));
     }
 
     #[test]

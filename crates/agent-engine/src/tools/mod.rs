@@ -11,6 +11,7 @@ mod sandbox;
 mod sandbox_backend;
 
 pub use context::{ToolContext, ToolExecutionBinding};
+pub(crate) use registry::ToolProcessRunner;
 pub use registry::{Tool, ToolLocality, ToolRegistry, ToolResult};
 pub use reified_namespace::{
     DEFAULT_SCRATCH_TMP_NAMESPACE_PATH, DEFAULT_WORKSPACE_NAMESPACE_PATH,

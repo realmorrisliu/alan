@@ -41,25 +41,17 @@ pub(super) struct ResponseGuardrailContext {
 }
 
 impl ResponseGuardrailContext {
-    pub(super) fn from_state(state: &RuntimeLoopState) -> Self {
-        let mut has_any_tools = false;
-        let mut has_network_capability = false;
-        let empty_args = serde_json::json!({});
-        let recent_failures = current_turn_tool_failures(state);
-
-        for tool_name in state.static_tool_names() {
-            has_any_tools = true;
-            if matches!(
-                state.static_tool_capability(&tool_name, &empty_args),
-                Some(ToolCapability::Network)
-            ) {
-                has_network_capability = true;
-            }
-        }
+    pub(super) fn from_state(
+        state: &RuntimeLoopState,
+        tool_packages: &[super::ToolPackageManifest],
+    ) -> Self {
+        let recent_failures = current_turn_tool_failures(state, tool_packages);
 
         Self {
-            has_any_tools,
-            has_network_capability,
+            has_any_tools: !tool_packages.is_empty(),
+            has_network_capability: tool_packages
+                .iter()
+                .any(|package| package.capability == ToolCapability::Network),
             has_recent_tool_failure: recent_failures.has_tool_failure,
             has_recent_network_failure: recent_failures.has_network_failure,
         }
@@ -150,10 +142,13 @@ impl ResponseGuardrails {
     }
 }
 
-fn current_turn_tool_failures(state: &RuntimeLoopState) -> RecentToolFailureContext {
+fn current_turn_tool_failures(
+    state: &RuntimeLoopState,
+    tool_packages: &[super::ToolPackageManifest],
+) -> RecentToolFailureContext {
     let messages = state.machine.tape.messages();
     let current_turn = active_turn_messages(messages, state.turn_state.active_turn_message_start());
-    let tool_capabilities = current_turn_tool_capabilities(state, current_turn);
+    let tool_capabilities = current_turn_tool_capabilities(tool_packages, current_turn);
     let mut failures = RecentToolFailureContext::default();
 
     for message in current_turn.iter().rev() {
@@ -188,7 +183,7 @@ fn active_turn_messages(messages: &[Message], active_turn_start: Option<usize>) 
 }
 
 fn current_turn_tool_capabilities(
-    state: &RuntimeLoopState,
+    tool_packages: &[super::ToolPackageManifest],
     messages: &[Message],
 ) -> HashMap<String, ToolCapability> {
     let mut capabilities = HashMap::new();
@@ -199,7 +194,7 @@ fn current_turn_tool_capabilities(
         };
 
         for request in tool_requests {
-            if let Some(capability) = capability_for_tool_request(state, request) {
+            if let Some(capability) = capability_for_tool_request(tool_packages, request) {
                 capabilities.insert(request.id.clone(), capability);
             }
         }
@@ -209,10 +204,13 @@ fn current_turn_tool_capabilities(
 }
 
 fn capability_for_tool_request(
-    state: &RuntimeLoopState,
+    tool_packages: &[super::ToolPackageManifest],
     request: &ToolRequest,
 ) -> Option<ToolCapability> {
-    state.static_tool_capability(&request.name, &request.arguments)
+    tool_packages
+        .iter()
+        .find(|package| package.name == request.name)
+        .map(|package| package.capability)
 }
 
 fn tool_response_has_failure(response: &ToolResponse) -> bool {

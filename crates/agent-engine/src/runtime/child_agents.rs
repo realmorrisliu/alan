@@ -74,59 +74,6 @@ impl LlmProvider for ChildLlmProvider {
     }
 }
 
-struct ChildToolProcessRunner {
-    tools: ToolRegistry,
-}
-
-impl ChildToolProcessRunner {
-    fn new(tools: ToolRegistry) -> Self {
-        Self { tools }
-    }
-}
-
-#[async_trait::async_trait]
-impl alan_kernel::ProcessRunner for ChildToolProcessRunner {
-    async fn run(&self, invocation: alan_kernel::ProcessInvocation) -> alan_kernel::ProcessOutcome {
-        if invocation
-            .namespace
-            .resolve(&invocation.exec.executable)
-            .is_err()
-        {
-            return alan_kernel::ProcessOutcome::exited(127, b"executable is not mounted\n");
-        }
-        let tool_name = invocation
-            .exec
-            .executable
-            .rsplit('/')
-            .next()
-            .unwrap_or(invocation.exec.executable.as_str());
-        let arguments = invocation
-            .exec
-            .args
-            .first()
-            .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok())
-            .unwrap_or(serde_json::Value::Null);
-
-        match self.tools.execute(tool_name, arguments).await {
-            Ok(output) => {
-                let mut bytes =
-                    serde_json::to_vec(&output).unwrap_or_else(|_| b"{\"success\":true}".to_vec());
-                bytes.push(b'\n');
-                alan_kernel::ProcessOutcome::exited(0, bytes)
-            }
-            Err(err) => {
-                let mut bytes = serde_json::to_vec(&serde_json::json!({
-                    "success": false,
-                    "error": format!("{err:#}"),
-                }))
-                .unwrap_or_else(|_| b"{\"success\":false}".to_vec());
-                bytes.push(b'\n');
-                alan_kernel::ProcessOutcome::exited(1, bytes)
-            }
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ChildRuntimeStatus {
     Completed,
@@ -374,9 +321,9 @@ where
         .as_ref()
         .map(|context| context.procfs.clone())
         .unwrap_or_default();
-    let runtime_procfs = launch_procfs
-        .clone()
-        .with_runner(Arc::new(ChildToolProcessRunner::new(child_tools.clone())));
+    let runtime_procfs = launch_procfs.clone().with_runner(Arc::new(
+        crate::tools::ToolProcessRunner::from_registry(&child_tools),
+    ));
     let agentfs = Arc::new(alan_agentfs::AgentFs::new());
     let llmfs = Arc::new(alan_llmfs::LlmFs::new());
     llmfs.register_connection(
@@ -386,9 +333,23 @@ where
     let mut handles = child_namespace_launch_handles_from_parent(parent, agentfs, llmfs)
         .context("Failed to assemble child-agent shared namespace handles")?;
     for mount in &child_namespace_plan.bin_tool_mounts {
-        handles = handles.with_bin_tool(
+        let name = mount.trim_start_matches("/bin/");
+        let tool = child_tools
+            .get(name)
+            .with_context(|| format!("missing child Tool host for {mount}"))?;
+        let manifest = super::ToolPackageManifest::from_tool(
+            tool.as_ref(),
+            child_tools.execution_timeout_secs(name).unwrap_or(30),
+        )?;
+        let manifest_fs = Arc::new(alan_ap::reference::MemFs::with_read_only_file(
+            "manifest",
+            serde_json::to_vec(&manifest)?,
+        ));
+        handles = handles.with_tool_package(
             mount.clone(),
             InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::new())),
+            format!("/lib/exec/{name}"),
+            InProcessTransport::new(manifest_fs),
         );
     }
     let namespace_launch = spawn_child_namespace_runtime_environment(
@@ -1638,6 +1599,9 @@ impl ChildNamespaceAssemblyPlan {
                 .cloned()
                 .map(|path| ExecNamespaceMount::new(path, ExecNamespaceAccess::ReadOnly)),
         );
+        mounts.extend(self.bin_tool_names().map(|name| {
+            ExecNamespaceMount::new(format!("/lib/exec/{name}"), ExecNamespaceAccess::ReadOnly)
+        }));
         mounts.sort_by(|left, right| {
             left.path
                 .cmp(&right.path)
@@ -1666,6 +1630,7 @@ struct ChildNamespaceLaunchHandles {
     srv: InProcessTransport,
     route: InProcessTransport,
     bin_tools: Vec<(String, InProcessTransport)>,
+    tool_manifests: Vec<(String, InProcessTransport)>,
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -1682,11 +1647,20 @@ impl ChildNamespaceLaunchHandles {
             srv,
             route,
             bin_tools: Vec::new(),
+            tool_manifests: Vec::new(),
         }
     }
 
-    fn with_bin_tool(mut self, mount_path: impl Into<String>, tree: InProcessTransport) -> Self {
-        self.bin_tools.push((mount_path.into(), tree));
+    fn with_tool_package(
+        mut self,
+        bin_path: impl Into<String>,
+        bin_tree: InProcessTransport,
+        manifest_path: impl Into<String>,
+        manifest_tree: InProcessTransport,
+    ) -> Self {
+        self.bin_tools.push((bin_path.into(), bin_tree));
+        self.tool_manifests
+            .push((manifest_path.into(), manifest_tree));
         self
     }
 }
@@ -1828,7 +1802,16 @@ fn validate_child_namespace_launch_handles(
         .iter()
         .map(|(mount, _)| mount.as_str())
         .collect();
-    if expected == actual {
+    let expected_manifests = plan
+        .bin_tool_names()
+        .map(|name| format!("/lib/exec/{name}"))
+        .collect::<BTreeSet<_>>();
+    let actual_manifests = handles
+        .tool_manifests
+        .iter()
+        .map(|(mount, _)| mount.clone())
+        .collect::<BTreeSet<_>>();
+    if expected == actual && expected_manifests == actual_manifests {
         return Ok(());
     }
 
@@ -1895,6 +1878,9 @@ fn child_namespace_from_launch_handles(
         alan_kernel::Access::ReadWrite,
     );
     for (mount, tree) in &handles.bin_tools {
+        namespace.mount(mount, tree.clone(), alan_kernel::Access::ReadOnly);
+    }
+    for (mount, tree) in &handles.tool_manifests {
         namespace.mount(mount, tree.clone(), alan_kernel::Access::ReadOnly);
     }
     namespace
@@ -2929,6 +2915,13 @@ Body
         for mount in &plan.bin_tool_mounts {
             namespace.mount(mount, memfs_transport(), KernelAccess::ReadOnly);
         }
+        for name in plan.bin_tool_names() {
+            namespace.mount(
+                &format!("/lib/exec/{name}"),
+                memfs_transport(),
+                KernelAccess::ReadOnly,
+            );
+        }
         namespace
     }
 
@@ -3296,6 +3289,7 @@ Body
                 "mounts": [
                     {"path": "/agent", "access": "rw"},
                     {"path": "/bin/alpha", "access": "ro"},
+                    {"path": "/lib/exec/alpha", "access": "ro"},
                     {"path": "/mnt/llm", "access": "rw"},
                     {"path": "/mnt/route", "access": "rw"},
                     {"path": "/srv", "access": "ro"}
@@ -3378,16 +3372,21 @@ Body
         )
         .unwrap();
         let launch_procfs = KernelProcFs::new();
-        let runtime_procfs = launch_procfs
-            .clone()
-            .with_runner(Arc::new(ChildToolProcessRunner::new(child_tools)));
+        let runtime_procfs = launch_procfs.clone().with_runner(Arc::new(
+            crate::tools::ToolProcessRunner::from_registry(&child_tools),
+        ));
         let handles = ChildNamespaceLaunchHandles::new(
             Arc::new(alan_agentfs::AgentFs::new()),
             memfs_transport(),
             memfs_transport(),
             memfs_transport(),
         )
-        .with_bin_tool("/bin/alpha", memfs_transport());
+        .with_tool_package(
+            "/bin/alpha",
+            memfs_transport(),
+            "/lib/exec/alpha",
+            memfs_transport(),
+        );
 
         let launch = spawn_child_namespace_runtime_environment(
             &launch_procfs,
@@ -3452,7 +3451,12 @@ Body
             memfs_transport(),
             memfs_transport(),
         )
-        .with_bin_tool("/bin/alpha", memfs_transport());
+        .with_tool_package(
+            "/bin/alpha",
+            memfs_transport(),
+            "/lib/exec/alpha",
+            memfs_transport(),
+        );
         let nested = spawn_child_namespace_runtime_environment(
             &launch_procfs,
             &runtime_procfs,
@@ -3595,16 +3599,21 @@ Body
         )
         .unwrap();
         let launch_procfs = KernelProcFs::new();
-        let runtime_procfs = launch_procfs
-            .clone()
-            .with_runner(Arc::new(ChildToolProcessRunner::new(child_tools)));
+        let runtime_procfs = launch_procfs.clone().with_runner(Arc::new(
+            crate::tools::ToolProcessRunner::from_registry(&child_tools),
+        ));
         let handles = ChildNamespaceLaunchHandles::new(
             Arc::new(alan_agentfs::AgentFs::new()),
             memfs_transport(),
             memfs_transport(),
             memfs_transport(),
         )
-        .with_bin_tool("/bin/alpha", memfs_transport());
+        .with_tool_package(
+            "/bin/alpha",
+            memfs_transport(),
+            "/lib/exec/alpha",
+            memfs_transport(),
+        );
         let launch = spawn_child_namespace_runtime_environment(
             &launch_procfs,
             &runtime_procfs,
@@ -3684,17 +3693,27 @@ Body
         )
         .unwrap();
         let launch_procfs = KernelProcFs::new();
-        let runtime_procfs = launch_procfs
-            .clone()
-            .with_runner(Arc::new(ChildToolProcessRunner::new(child_tools)));
+        let runtime_procfs = launch_procfs.clone().with_runner(Arc::new(
+            crate::tools::ToolProcessRunner::from_registry(&child_tools),
+        ));
         let handles = ChildNamespaceLaunchHandles::new(
             Arc::new(alan_agentfs::AgentFs::new()),
             memfs_transport(),
             memfs_transport(),
             memfs_transport(),
         )
-        .with_bin_tool("/bin/alpha", memfs_transport())
-        .with_bin_tool("/bin/beta", memfs_transport());
+        .with_tool_package(
+            "/bin/alpha",
+            memfs_transport(),
+            "/lib/exec/alpha",
+            memfs_transport(),
+        )
+        .with_tool_package(
+            "/bin/beta",
+            memfs_transport(),
+            "/lib/exec/beta",
+            memfs_transport(),
+        );
         let factory = Arc::new(RecordingMountGrantApplicatorFactory::default());
 
         let launch = spawn_child_namespace_runtime_environment(
@@ -3768,9 +3787,9 @@ Body
         )
         .unwrap();
         let launch_procfs = KernelProcFs::new();
-        let runtime_procfs = launch_procfs
-            .clone()
-            .with_runner(Arc::new(ChildToolProcessRunner::new(child_tools)));
+        let runtime_procfs = launch_procfs.clone().with_runner(Arc::new(
+            crate::tools::ToolProcessRunner::from_registry(&child_tools),
+        ));
         let llmfs = Arc::new(alan_llmfs::LlmFs::new());
         llmfs.register_connection(
             &plan.llm_connection_name().unwrap(),
@@ -3784,8 +3803,18 @@ Body
             llmfs,
         )
         .unwrap()
-        .with_bin_tool("/bin/alpha", memfs_transport())
-        .with_bin_tool("/bin/beta", memfs_transport());
+        .with_tool_package(
+            "/bin/alpha",
+            memfs_transport(),
+            "/lib/exec/alpha",
+            memfs_transport(),
+        )
+        .with_tool_package(
+            "/bin/beta",
+            memfs_transport(),
+            "/lib/exec/beta",
+            memfs_transport(),
+        );
 
         let launch = spawn_child_namespace_runtime_environment(
             &launch_procfs,
@@ -3826,7 +3855,7 @@ Body
             "mounted-only",
             crate::tools::ToolLocality::Global,
         ));
-        let runner = ChildToolProcessRunner::new(child_tools);
+        let runner = crate::tools::ToolProcessRunner::from_registry(&child_tools);
         let invocation = alan_kernel::ProcessInvocation {
             pid: alan_kernel::Pid(1),
             parent: Some(alan_kernel::Pid(0)),

@@ -182,3 +182,27 @@ is by reverting the complete change; partial fallback flags are not introduced.
 ## Open Questions
 
 None.
+
+## Implementation Inventory
+
+The pre-replacement inventory on main at `fa7a5f70` found these live-path owners:
+
+- `ToolRegistry`: 21 files across `agent-engine`, the Alan host, and built-in Tool
+  composition. The live authorities are `RuntimeLoopState.tool_catalog`, runtime bootstrap,
+  `RuntimeToolProcessRunner`, request/tool orchestration, and child registry rebinding; the
+  remaining occurrences are public exports, configuration comments, and tests.
+- `RuntimeToolProcessRunner`: one implementation in `runtime/engine.rs`; it owns the current
+  direct registry-backed Process materialization seam.
+- `RuntimeEventEnvelope`: seven files; the live owner is `runtime/engine.rs`, child supervision
+  consumes it in `runtime/child_agents.rs`, and Alan integration/smoke tests subscribe to it.
+- `event_sender`: five files; `RuntimeHandle` owns the broadcast sender, child supervision and
+  Alan tests consume receivers, and the runtime forwarding task bridges internal events to it.
+- `RuntimeUiProjector`: `runtime/ui_surfaces.rs` plus engine initialization/forwarding; it derives
+  AgentFS UI files from the generic event stream.
+- `RuntimeEnvironment`: 16 files; the single `Namespace` variant is stored by
+  `RuntimeLoopState` and propagated through engine, turn, child, memory, submission, and tests.
+
+Replacement order follows the migration plan: complete Tool packages and discovery first,
+replace execution and child composition next, move state owners and child observation to files,
+then delete the registry, broadcast/projector, and wrapper types. Test-only uses are converted
+with the production owner they observe rather than retained as compatibility seams.

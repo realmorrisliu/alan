@@ -496,11 +496,19 @@ where
         VirtualToolOutcome::EndTurn => return Ok(ToolOrchestratorOutcome::EndTurn),
     }
 
-    let tool_capability = state
-        .static_tool_capability(&tool_call.name, &tool_arguments)
+    let tool_package = state
+        .namespace_environment()
+        .discover_tool_packages()
+        .await?
+        .into_iter()
+        .find(|package| package.name == tool_call.name);
+    let tool_capability = tool_package
+        .as_ref()
+        .map(|package| package.capability)
         .unwrap_or_else(|| namespace_builtin_tool_capability(&tool_call.name));
-    let tool_locality = state.static_tool_locality(&tool_call.name);
-    if tool_locality == Some(crate::tools::ToolLocality::WorkspaceLocal)
+    if tool_package
+        .as_ref()
+        .is_some_and(|package| package.is_workspace_local())
         && (tool_call.name == "bash" || tool_capability != ToolCapability::Network)
         && let Some((routing_payload, routing_preview, routing_audit)) =
             workspace_routing_preflight(state, &tool_call.name, &tool_arguments, tool_capability)
@@ -1045,9 +1053,9 @@ where
 
     let execution_target = ToolExecutionTarget::Namespace(state.namespace_environment().clone());
     let tool_start = Instant::now();
-    let tool_timeout_secs = state
-        .tool_catalog()
-        .execution_timeout_secs(&tool_call.name)
+    let tool_timeout_secs = tool_package
+        .as_ref()
+        .map(|package| package.timeout_secs)
         .unwrap_or(state.core_config.tool_timeout_secs);
     let tool_result = execute_tool_effect(
         execution_target,
@@ -2139,6 +2147,20 @@ mod tests {
             process_namespace.mount(
                 &format!("/bin/{tool_name}"),
                 InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::new())),
+                Access::ReadOnly,
+            );
+            let tool = tools.get(tool_name).unwrap();
+            let manifest = crate::runtime::ToolPackageManifest::from_tool(
+                tool.as_ref(),
+                tools.execution_timeout_secs(tool_name).unwrap_or(30),
+            )
+            .unwrap();
+            process_namespace.mount(
+                &format!("/lib/exec/{tool_name}"),
+                InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::with_read_only_file(
+                    "manifest",
+                    serde_json::to_vec(&manifest).unwrap(),
+                ))),
                 Access::ReadOnly,
             );
         }

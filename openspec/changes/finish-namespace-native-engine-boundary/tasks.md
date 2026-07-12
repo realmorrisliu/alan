@@ -1,21 +1,21 @@
 ## 1. Prerequisite And Package Contract
 
-- [ ] 1.1 Start from main only after `clean-canonical-spec-debt`, `remove-residual-compatibility-shims`, and `remove-legacy-macos-persistence` are merged and their canonical deltas are synced.
-- [ ] 1.2 Inventory every `ToolRegistry`, `RuntimeToolProcessRunner`, `RuntimeEventEnvelope`, `event_sender`, event-forwarder/projector, runtime receiver, and single-variant `RuntimeEnvironment` live-path use before replacement.
-- [ ] 1.3 Complete built-in Tool package manifests under `/lib/exec/<tool>/manifest` with model definition, schema, capability, locality, timeout/execution hints, and tests that join each manifest to its `/bin` executable.
-- [ ] 1.4 Add composition tests proving permitted Tool packages mount executable plus manifest together and incomplete packages fail closed before Agent Process launch.
+- [x] 1.1 Start from main only after `clean-canonical-spec-debt`, `remove-residual-compatibility-shims`, and `remove-legacy-macos-persistence` are merged and their canonical deltas are synced.
+- [x] 1.2 Inventory every `ToolRegistry`, `RuntimeToolProcessRunner`, `RuntimeEventEnvelope`, `event_sender`, event-forwarder/projector, runtime receiver, and single-variant `RuntimeEnvironment` live-path use before replacement.
+- [x] 1.3 Complete built-in Tool package manifests under `/lib/exec/<tool>/manifest` with model definition, schema, capability, locality, timeout/execution hints, and tests that join each manifest to its `/bin` executable.
+- [x] 1.4 Add composition tests proving permitted Tool packages mount executable plus manifest together and incomplete packages fail closed before Agent Process launch.
 
 ## 2. Namespace-Native Tool Discovery
 
-- [ ] 2.1 Implement a namespace Tool-package walker that enumerates visible `/bin` entries, validates `/lib/exec/<tool>/manifest`, distinguishes Tools from Agent Executables/ordinary commands, and returns immutable request metadata without constructing a registry.
-- [ ] 2.2 Switch request assembly, Tool definitions, capability classification, locality, timeout hints, and policy inputs from `RuntimeLoopState.tool_registry` to the namespace walker.
-- [ ] 2.3 Add tests proving visible complete packages are model-callable, missing executables/manifests are not, and no hidden catalog can grant an unmounted Tool.
+- [x] 2.1 Implement a namespace Tool-package walker that enumerates visible `/bin` entries, validates `/lib/exec/<tool>/manifest`, distinguishes Tools from Agent Executables/ordinary commands, and returns immutable request metadata without constructing a registry.
+- [x] 2.2 Switch request assembly, Tool definitions, capability classification, locality, timeout hints, and policy inputs from `RuntimeLoopState.tool_registry` to the namespace walker.
+- [x] 2.3 Add tests proving visible complete packages are model-callable, missing executables/manifests are not, and no hidden catalog can grant an unmounted Tool.
 
 ## 3. Process-Native Tool Execution
 
-- [ ] 3.1 Implement the namespace Tool launcher that resolves `/bin/<tool>`, commits the exec spec through `/proc/clone`, passes arguments through the defined Process/file contract, and reads output/result files.
-- [ ] 3.2 Switch Tool orchestration and `actions/<id>` ownership from registry-backed materialization to the concrete Tool Process reference and result.
-- [ ] 3.3 Delete direct in-process Tool implementation calls from the Agent Execution Engine effect path and add tests proving unmounted Tools cannot execute.
+- [x] 3.1 Implement the namespace Tool launcher that resolves `/bin/<tool>`, commits the exec spec through `/proc/clone`, passes arguments through the defined Process/file contract, and reads output/result files.
+- [x] 3.2 Switch Tool orchestration and `actions/<id>` ownership from registry-backed materialization to the concrete Tool Process reference and result.
+- [x] 3.3 Delete direct in-process Tool implementation calls from the Agent Execution Engine effect path and add tests proving unmounted Tools cannot execute.
 - [ ] 3.4 Replace child Tool registry construction with pre-spawn complete-package mounts and make child request assembly walk its own namespace.
 
 ## 4. Direct AgentFS State Ownership
