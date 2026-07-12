@@ -82,9 +82,6 @@ impl ToolPackageManifest {
         if self.description.trim().is_empty() || !self.parameters.is_object() {
             bail!("Tool manifest '{mounted_name}' lacks model metadata");
         }
-        if self.timeout_secs == 0 {
-            bail!("Tool manifest '{mounted_name}' has a zero timeout hint");
-        }
         if self.execution.arguments != "json_first_arg" || self.execution.result != "stdout_json" {
             bail!("Tool manifest '{mounted_name}' has unsupported execution hints");
         }
@@ -141,6 +138,11 @@ mod tests {
         let decoded: ToolPackageManifest = serde_json::from_slice(&bytes).unwrap();
         decoded.validate_for_name("example").unwrap();
         assert!(decoded.validate_for_name("other").is_err());
+    }
+
+    #[test]
+    fn manifest_accepts_zero_as_the_no_timeout_sentinel() {
+        ToolPackageManifest::from_tool(&ExampleTool, 0).unwrap();
     }
 
     #[test]
