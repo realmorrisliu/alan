@@ -782,18 +782,21 @@ Ghostty integration prerequisites.
 - **THEN** the documented setup and failure messages are updated together
 
 ### Requirement: Content container model has focused tests
-Apple client SHALL 为 v0.2 content-container model、旧状态迁移、mixed split、content-aware
-command validation 和 content-keyed terminal runtime continuity 提供 focused 自动化测试或明确的人工验证记录。
+Apple client SHALL 为 v0.2 content-container model、current-schema restore、mixed split、
+content-aware command validation 和 content-keyed terminal runtime continuity 提供 focused
+自动化测试或明确的人工验证记录。
 
-#### Scenario: Old terminal state migrates
-- **WHEN** 测试加载 `persist-macos-shell-workspaces` 产生的 terminal-only workspace manifest
-- **THEN** shell model 迁移出 PaneSlot 和 terminal ContentInstance
-- **AND** focused space、focused tab、focused PaneSlot、pin/live snapshot 和 terminal metadata projection 保持一致
+#### Scenario: Current content state restores
+- **WHEN** 测试加载包含 terminal、markdown 和 settings ContentInstances 的 current-schema
+  workspace manifest
+- **THEN** shell model 恢复 PaneSlots、ContentInstances、focused space、focused tab、focused
+  PaneSlot、pin/live snapshot 和 terminal metadata projection
 
-#### Scenario: Legacy shell state is not restored as workspace authority
-- **WHEN** 测试环境同时存在旧 `shell-state-window_main.json` 和 workspace manifest
-- **THEN** app restore 使用 workspace manifest materializer
-- **AND** 旧 shell-state 只作为 runtime/control-plane projection 或诊断输入存在
+#### Scenario: Historical persistence input is rejected
+- **WHEN** 测试提供 terminal-only workspace manifest 或 persistent
+  `shell-state-window_main.json`
+- **THEN** app restore 不调用旧 decoder、upgrade 或 ContentInstance conversion path
+- **AND** unsupported workspace-manifest bytes 由 current corrupt-evidence path 保留
 
 #### Scenario: Mixed split mutates safely
 - **WHEN** 测试创建 terminal + markdown + settings 的 mixed split tab

@@ -45,4 +45,4 @@
 - [x] 6.3 Run the repeatable Apple UI smoke for Settings Managed Users and workspace restart, recording evidence that no legacy cleanup row/status or restore fallback appears.
 - [x] 6.4 Update affected canonical Purpose text during spec sync so distribution, workspace, shell-core, helper, and Managed User capabilities no longer claim legacy migration or sudoers ownership.
 - [x] 6.5 Open a narrowly scoped PR and keep the current HEAD under Codex review until every thread is resolved, required CI is green, and a delayed refresh shows no new findings before merge.
-- [x] 6.6 After merge, sync all nine capability deltas into canonical specs and mark the change archive-ready only when main has no steady-state reader or migrator and `remove-residual-compatibility-shims` is merged or independently green.
+- [x] 6.6 After merge, sync all ten capability deltas into canonical specs and mark the change archive-ready only when main has no steady-state reader or migrator and `remove-residual-compatibility-shims` is merged or independently green.

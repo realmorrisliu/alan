@@ -47,6 +47,8 @@ None.
 - `macos-shell-workspace-persistence`: accept only the current workspace-manifest schema as restore
   authority, remove the persistent shell-state file, and distinguish current in-memory/transient
   control-plane projections from durable restoration.
+- `macos-shell-content-containers`: restore ContentInstances only from the current workspace
+  manifest and remove historical terminal-only and persistent shell-state conversion semantics.
 - `shell-workspace-core-contract`: remove legacy manifest upgrades and `quick_terminal`
   load-tolerant discard semantics from the portable shell core.
 - `macos-privileged-helper`: remove steady-state legacy-sudoers state and operations after a
@@ -58,7 +60,8 @@ None.
 - `macos-shell-ui-ux-conformance`: remove sudoers and legacy-cleanup states from the current
   Managed Users UI contract.
 - `macos-shell-build-test-contract`: replace sudoers compatibility tests with current helper-owned
-  account, ownership-marker, PTY, and absence checks.
+  account, ownership-marker, PTY, and absence checks, and replace historical content-state
+  migration fixtures with current-schema restore and fail-closed rejection coverage.
 
 ## Impact
 
