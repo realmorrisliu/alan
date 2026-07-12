@@ -86,30 +86,77 @@ DSL). v0 keeps metadata minimal (provenance, materialization manifest) and
 deliberately excludes a type enum; later slices pay the format-migration cost
 when a second package type becomes real.
 
-### D6. Roadmap is sliced; v0 is skills-from-git only
+### D6. Q is the sole capability-resolution authority (physical unification)
 
-v0 (change `add-alan-package-management`): distribution packages from git/local
-sources, commit-as-version, materialized skill packages, the read-only
-`/lib/pkg` store projection (whole store, all agents), provenance, manifest,
-idempotent upgrade, exact uninstall, honest failure on missing capabilities.
-Explicitly deferred, in rough order of expected pressure: web-capability and
-multi-agent gaps (separate changes seeded by the dogfooding run), additional
+Skill capabilities have exactly one owner: Quartermaster. There is no bypass
+source. Every skill an agent can reach — including alan's own first-party
+built-ins — is a Q package that lives in the store and projects through
+`/lib/pkg`; agents/agent-roots and workspaces contribute skills only by being
+Q packages, never through a separately-enumerated host directory. This retires
+the legacy multi-source enumeration (`package_dirs_for_roots`: built-in +
+`AgentRoot/skills/` + `.agents/skills/` scanned as independent sources) in
+favor of one authority that resolves the capability set for a given agent.
+
+This is **physical unification**, chosen over interface-only unification (Q as
+a single façade that still aggregates untouched legacy source directories). The
+trade-off: physical unification requires migrating built-in and agent-root
+skills into the Q package model, which is real work; interface-only would have
+been cheaper but leaves the fragmentation D6 exists to remove, and a façade
+over unchanged sources is not "one owner" — it is one reader over many owners.
+
+Two concepts that "physical unification" must **not** be allowed to conflate:
+
+- **"Managed by Q" (ownership/lifecycle)** — install, register, upgrade,
+  uninstall all flow through Q; no source escapes it. This is achievable
+  without a namespace-native engine.
+- **"Discovered by the agent via `ls /lib/pkg`" (runtime self-discovery)** —
+  the agent reading its own capabilities as files. This is gated on
+  `refactor-engine-namespace-native` (ADR-0027 Ring 2, unfinished).
+
+Until Ring 2 lands, the engine obtains its resolved capability set through Q's
+host-side resolution interface (the "use Q to find skills" path), while the
+store and `/lib/pkg` projection are already the single physical home. When Ring
+2 lands, the resolution interface degrades into the agent walking `/lib/pkg`
+directly — a presentation-layer finish, not a re-architecture.
+
+Scope note: this concerns **skill** capabilities. Core **tools**
+(`read`/`write`/`edit`/`bash`/`grep`/`glob`/`list_dir`) are compiled-in
+`Box<dyn Tool>` registered on the `ToolRegistry` — kernel, not packages — and
+stay outside Q's ownership in this model. `tools = /bin` (ADR-0027) is
+`refactor-engine-namespace-native`'s concern, not Q's.
+
+### D7. Roadmap is sliced; the change is the first slice of D6
+
+The `add-alan-package-management` change is **slice 1** of the D6 authority
+model, not a standalone package manager. Slice 1 establishes: Q as the sole
+skill-resolution authority (legacy `package_dirs_for_roots` enumeration
+retired), distribution packages from git/local sources (commit-as-version),
+built-in first-party skills reseeded as Q pre-installed packages, agent-root /
+workspace skills registered as Q local-source packages, the read-only
+`/lib/pkg` store projection, provenance, manifest, idempotent upgrade, exact
+uninstall, honest failure on missing capabilities, and the ai-berkshire
+dogfooding validation.
+
+Explicitly deferred to later slices, in rough order of expected pressure:
+agent runtime self-discovery via `ls /lib/pkg` (gated on Ring 2), additional
 package types (MCP servers, tools/binaries, workflows, models, knowledge
 packs), permission declarations wired to policy, `q` registered in `/bin`,
 per-agent package visibility via namespace binds (different agents see
-different `/lib/pkg` contents — the real "profiles"; requires skill discovery
-through the namespace), reproducibility (lockfile-equivalent),
-registry/signing/trust, Homebrew-as-migration-source. None of these are
-promised by v0's contract; each needs its own change with its own contract
-delta.
+different `/lib/pkg` contents — the real "profiles"), reproducibility
+(lockfile-equivalent), registry/signing/trust, Homebrew-as-migration-source.
+None are promised by slice 1's contract; each needs its own change with its
+own contract delta.
 
 ## Consequences
 
-- The v0 change stays small and shippable while this ADR carries the long
-  arc; reviewers judge v0 against its own contract, not against the vision.
-- Future slices extend one subsystem instead of accreting parallel installers
-  (skills installer, MCP installer, model downloader) that would recreate the
-  fragmentation the vision criticizes.
+- Slice 1 is large — it MODIFYs skill-system-contract's discovery/first-party/
+  channel-source requirements and reseeds built-in distribution — because
+  physical unification cannot be faked with a façade. Reviewers judge it
+  against the D6 authority model, not against a minimal installer.
+- One owner for all skill capabilities means future slices extend one
+  subsystem instead of accreting parallel installers (skills installer, MCP
+  installer, model downloader) that would recreate the fragmentation the
+  vision criticizes.
 - Rejecting profiles/store/permission parallels binds Quartermaster's fate to
   alan's namespace and policy mechanisms — intentionally: if those mechanisms
   are not good enough for a package manager, that is a kernel problem to fix,

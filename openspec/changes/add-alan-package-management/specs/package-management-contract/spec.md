@@ -2,14 +2,51 @@
 
 ## ADDED Requirements
 
+### Requirement: Quartermaster is the sole skill-resolution authority
+alan SHALL resolve an agent's skill capability set through Quartermaster and
+SHALL NOT enumerate skill source directories independently of it. Every skill
+reachable by an agent SHALL be a Q package supplied by one of three provider
+kinds:
+
+- **Pre-installed provider**: alan's first-party built-in skills, reseeded into
+  the package store.
+- **Local-source provider**: `AgentRoot`, workspace, and user `.agents/skills/`
+  skills, registered with Q at their existing location without being copied
+  into the global store.
+- **Distribution provider**: external repositories installed into the store.
+
+There SHALL be no bypass discovery source. This requirement governs the
+discovery *source* only; skill loading, exposure resolution, and the
+one-skill-per-package rule are unchanged. Agent runtime self-discovery by
+walking `/lib/pkg` is out of scope for this slice; the engine obtains its
+resolved set through Q's host-side resolution interface.
+
+#### Scenario: Engine resolves skills through Q
+- **WHEN** the engine assembles an agent's skill capability set
+- **THEN** it obtains the set from Quartermaster's resolution
+- **AND** it does not separately scan built-in, `AgentRoot`, or `.agents/skills/`
+  directories as independent sources
+
+#### Scenario: Built-in skills are pre-installed packages
+- **WHEN** alan starts with no external packages installed
+- **THEN** its first-party built-in skills are present as Q pre-installed
+  packages
+- **AND** they are resolved through Q like any other package
+
+#### Scenario: Agent-root skills are local-source providers
+- **WHEN** an `AgentRoot` ships `skills/`
+- **THEN** Q registers them as a local-source provider at their existing
+  location
+- **AND** they are not copied into the global store
+
 ### Requirement: Distribution packages are the unit of external adoption
 alan SHALL define a distribution package as an external source tree (git
 repository or local directory) pinned to a source commit when one is
 resolvable, held in a per-install-channel package store, from which alan
-materializes skill packages into existing skill sources. Distribution packages
-sit above the skill package contract: every materialized unit is an ordinary
-single-skill package, and this contract SHALL NOT alter skill discovery,
-loading, or exposure rules.
+materializes skill packages that Q resolves. Distribution packages sit above
+the skill package contract: every materialized unit is an ordinary
+single-skill package, and this contract SHALL NOT alter skill loading or
+exposure rules.
 
 #### Scenario: Repository installed as one package
 - **WHEN** `q install` is given a git URL or local directory
@@ -23,12 +60,8 @@ loading, or exposure rules.
 - **THEN** its store backing lives under that channel's alan home — the
   stable channel SHALL use `~/.alan/pkg/`, the dev channel
   `~/.alan-dev/pkg/` — and does not affect other channels
-
-#### Scenario: Dev-channel install respects skill-source isolation
-- **WHEN** a dev-channel `q install` materializes skills without an explicit
-  destination
-- **THEN** the skills land under `~/.agents-dev/skills/`
-- **AND** nothing is created, modified, or removed under `~/.agents/skills/`
+- **AND** channel isolation of resolved skills is inherited from the
+  channel-scoped backing, with no write to `~/.agents/skills/`
 
 #### Scenario: Backing is reachable only through the runtime
 - **WHEN** an agent-authored command references the store backing by host path
@@ -61,7 +94,8 @@ portable package SHALL be skipped with a report entry.
 - **WHEN** the package source contains a command-style `.md` skill file
 - **THEN** materialization creates a skill package whose `SKILL.md` carries
   derived `name` and `description` frontmatter
-- **AND** the package is discoverable by the existing skill discovery rules
+- **AND** the package is resolvable through Quartermaster as a distribution
+  provider
 
 #### Scenario: Portable package is adopted
 - **WHEN** the package source contains a directory with a valid `SKILL.md`
@@ -177,15 +211,16 @@ skill availability reporting instead of degrading silently at runtime.
 ### Requirement: Packages record provenance and a materialization manifest
 The package store SHALL record, per distribution package: provenance (source
 repository when resolvable, source commit when resolvable, converter version)
-and a manifest listing every materialized file with a content hash. Each
-materialized skill package's `package.yaml` SHALL carry a `provenance` block
+and a manifest listing every materialized file with a content hash. The store's
+provider registry and manifest are authoritative for ownership; a materialized
+skill package's `package.yaml` MAY additionally carry a `provenance` block
 naming the owning distribution package. Provenance and manifest are management
 metadata and SHALL NOT alter runtime skill behavior.
 
 #### Scenario: Provenance is written on install
 - **WHEN** any install completes
-- **THEN** the store entry contains provenance and a manifest, and each
-  materialized skill's `package.yaml` names the owning package
+- **THEN** the store entry contains provenance and a manifest recording which
+  package owns each materialized skill
 
 #### Scenario: Source outside version control
 - **WHEN** the source is not inside a git repository
