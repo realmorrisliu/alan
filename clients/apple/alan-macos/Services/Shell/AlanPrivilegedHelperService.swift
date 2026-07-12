@@ -49,11 +49,18 @@ final class AlanPrivilegedHelperAppServiceManager: AlanPrivilegedHelperLifecycle
     }
 
     func status() -> AlanPrivilegedHelperStatus {
-        mapStatus(service.status, message: nil)
+        let registrationStatus = mapStatus(service.status, message: nil)
+        guard registrationStatus.state == .healthy else { return registrationStatus }
+        return AlanPrivilegedHelperStatus.fromXPCStatus(
+            AlanPrivilegedHelperXPCClient(identity: identity.xpcIdentity).helperStatus(),
+            identity: identity
+        )
     }
 
     func installOrUpdate() -> AlanPrivilegedHelperLifecycleResult {
-        let action: AlanPrivilegedHelperLifecycleAction = status().state == .healthy
+        let currentState = status().state
+        let action: AlanPrivilegedHelperLifecycleAction = currentState == .healthy
+            || currentState == .outdated
             ? .update
             : .install
         if action == .update {

@@ -154,6 +154,7 @@ fn dispatch_request(request: ShellCoreRequestEnvelope) -> ShellCoreResponseEnvel
             "supported_operations": supported_operations(),
         })),
         "manifest.default_manifest" => default_manifest(request.payload),
+        "manifest.validate" => validate_manifest(request.payload),
         "manifest.materialize" => materialize_manifest(request.payload),
         "manifest.pruning_expired_tabs" => pruning_expired_tabs(request.payload),
         "reducer.apply" => apply_reducer(request.payload),
@@ -190,6 +191,7 @@ fn supported_operations() -> &'static [&'static str] {
     &[
         "facade.describe",
         "manifest.default_manifest",
+        "manifest.validate",
         "manifest.materialize",
         "manifest.pruning_expired_tabs",
         "reducer.apply",
@@ -219,6 +221,19 @@ fn default_manifest(payload: Value) -> Result<Value, ShellCoreErrorEnvelope> {
             &input.now,
         ),
     }))
+}
+
+fn validate_manifest(payload: Value) -> Result<Value, ShellCoreErrorEnvelope> {
+    let input: ValidateManifestInput = decode_payload(payload, "manifest.validate")?;
+    serde_json::from_str::<ShellContentWorkspaceManifest>(&input.manifest_json).map_err(
+        |error| {
+            ShellCoreErrorCode::InvalidPayload
+                .envelope("invalid workspace manifest")
+                .with_detail("operation", json!("manifest.validate"))
+                .with_detail("message", json!(error.to_string()))
+        },
+    )?;
+    Ok(json!({}))
 }
 
 fn materialize_manifest(payload: Value) -> Result<Value, ShellCoreErrorEnvelope> {
@@ -427,6 +442,11 @@ struct DefaultManifestInput {
     window_id: String,
     default_working_directory: String,
     now: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ValidateManifestInput {
+    manifest_json: String,
 }
 
 #[derive(Debug, Deserialize)]

@@ -13,13 +13,9 @@ final class AlanPrivilegedHelperAppClient: AlanPrivilegedHelperClienting {
     }
 
     func status() -> AlanPrivilegedHelperStatus {
-        let response = xpcClient.helperStatus()
-        return AlanPrivilegedHelperStatus(
-            state: response.accepted ? .healthy : .unavailable,
-            identity: helperIdentity,
-            installedVersion: nil,
-            expectedVersion: nil,
-            sanitizedMessage: response.accepted ? nil : response.sanitizedMessage
+        AlanPrivilegedHelperStatus.fromXPCStatus(
+            xpcClient.helperStatus(),
+            identity: helperIdentity
         )
     }
 

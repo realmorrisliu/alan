@@ -31,6 +31,12 @@ fn facade_describe_reports_c_abi_byte_envelope_boundary() {
             .expect("supported operations")
             .contains(&json!("managed_terminal_account.validate_request"))
     );
+    assert!(
+        payload["supported_operations"]
+            .as_array()
+            .expect("supported operations")
+            .contains(&json!("manifest.validate"))
+    );
 }
 
 #[test]
@@ -111,6 +117,32 @@ fn facade_dispatches_manifest_materialize_and_reducer_apply() {
     assert_eq!(
         payload["result"]["runtime_intents"][0]["type"],
         json!("start_terminal")
+    );
+}
+
+#[test]
+fn manifest_validate_rejects_unknown_nested_fields() {
+    let mut manifest = request(
+        "manifest.default_manifest",
+        json!({
+            "window_id": "window_main",
+            "default_working_directory": "/repo/app",
+            "now": "2026-06-17T12:00:00Z"
+        }),
+    )
+    .payload
+    .expect("default manifest payload")["manifest"]
+        .clone();
+    manifest["spaces"][0]["tabs"][0]["future_field"] = json!(true);
+
+    let response = request(
+        "manifest.validate",
+        json!({ "manifest_json": manifest.to_string() }),
+    );
+
+    assert_eq!(
+        response.error.expect("unknown nested field must fail").code,
+        ShellCoreErrorCode::InvalidPayload
     );
 }
 

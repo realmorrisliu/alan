@@ -93,7 +93,7 @@ struct ShellWorkspaceManifestStore {
             )
         }
 
-        if Self.hasOnlyCurrentRootKeys(data),
+        if (try? ShellCoreFFIAdapter.shared.validateContentWorkspaceManifest(data: data)) != nil,
            let manifest = try? Self.decoder.decode(ShellContentWorkspaceManifest.self, from: data)
         {
             guard manifest.schemaVersion == ShellContentWorkspaceManifest.currentSchemaVersion,
@@ -171,23 +171,6 @@ struct ShellWorkspaceManifestStore {
         decoder.dateDecodingStrategy = .iso8601
         return decoder
     }()
-
-    private static func hasOnlyCurrentRootKeys(_ data: Data) -> Bool {
-        guard let object = try? JSONSerialization.jsonObject(with: data),
-              let document = object as? [String: Any]
-        else {
-            return false
-        }
-        let allowedKeys: Set<String> = [
-            "schema_version",
-            "content_contract_version",
-            "window_id",
-            "selected_space_id",
-            "selected_tab_id",
-            "spaces",
-        ]
-        return Set(document.keys).isSubset(of: allowedKeys)
-    }
 
     private static func sanitizedWindowID(_ windowID: String) -> String {
         let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "_-"))

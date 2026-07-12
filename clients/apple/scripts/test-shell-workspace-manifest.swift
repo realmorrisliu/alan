@@ -53,6 +53,7 @@ private enum ShellWorkspaceManifestTests {
         try verifiesMissingManifestCreatesCurrentDefault()
         try verifiesCorruptManifestIsQuarantined()
         try verifiesUnsupportedManifestIsQuarantined()
+        try verifiesNestedUnknownManifestFieldIsQuarantined()
         try verifiesUnknownActiveTaskDoesNotQuarantineWorkspace()
         try verifiesOldManifestDecodesWithoutSpaceLocalSelection()
         try verifiesOldManifestWithoutSpaceIconUsesDefaultWithoutRewriteEvidence()
@@ -169,6 +170,49 @@ private enum ShellWorkspaceManifestTests {
         expect(
             content.payload.terminal?.cwd == "/fresh/project",
             "unsupported manifest recovery must create a current default"
+        )
+    }
+
+    private static func verifiesNestedUnknownManifestFieldIsQuarantined() throws {
+        let fileManager = FileManager.default
+        let tempDirectory = try makeTempDirectory()
+        let manifestURL = tempDirectory.appendingPathComponent("shell-workspace-window_main.json")
+        let manifest = try defaultManifestWithShellCore(
+            windowID: "window_main",
+            defaultWorkingDirectory: "/unsupported/project",
+            now: referenceDate
+        )
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        var object = try JSONSerialization.jsonObject(with: encoder.encode(manifest)) as? [String: Any]
+            ?? [:]
+        var spaces = object["spaces"] as? [[String: Any]] ?? []
+        var tabs = spaces[0]["tabs"] as? [[String: Any]] ?? []
+        tabs[0]["future_field"] = true
+        spaces[0]["tabs"] = tabs
+        object["spaces"] = spaces
+        let unsupportedData = try JSONSerialization.data(
+            withJSONObject: object,
+            options: [.sortedKeys]
+        )
+        try unsupportedData.write(to: manifestURL)
+
+        let result = try ShellWorkspaceManifestStore(
+            fileManager: fileManager,
+            manifestURL: manifestURL
+        ).loadOrCreateDefault(
+            windowID: "window_main",
+            defaultWorkingDirectory: "/fresh/project",
+            now: referenceDate
+        )
+
+        guard case .quarantinedCorruptFile(let corruptURL) = result.recovery else {
+            throw TestFailure("nested unknown manifest field must be quarantined")
+        }
+        let quarantinedData = try Data(contentsOf: corruptURL)
+        expect(
+            quarantinedData == unsupportedData,
+            "nested unsupported manifest bytes must be preserved"
         )
     }
 

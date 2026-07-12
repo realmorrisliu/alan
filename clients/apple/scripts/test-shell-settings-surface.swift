@@ -311,6 +311,34 @@ private func testPrivilegedHelperXPCBoundaryIsTypedAndChannelScoped() throws {
             && !response.sanitizedMessage.contains("do shell script"),
         "helper XPC success response must stay sanitized"
     )
+    let protocolStatus: AlanPrivilegedHelperProtocolStatus? = try decodedPayload(response)
+    try expect(
+        protocolStatus?.protocolVersion == AlanPrivilegedHelperProtocolStatus.currentVersion,
+        "helper status must identify the current wire protocol"
+    )
+    try expect(
+        AlanPrivilegedHelperStatus.fromXPCStatus(
+            response,
+            identity: AlanInstallChannel.dev.privilegedHelperIdentity(
+                signingTeamIdentifier: "TEAMID1234"
+            )
+        ).state == .healthy,
+        "current helper protocol must be healthy"
+    )
+    let oldHelperResponse = AlanPrivilegedHelperXPCResponse.accepted(
+        request: request,
+        identity: identity,
+        message: "Privileged helper XPC boundary is available."
+    )
+    try expect(
+        AlanPrivilegedHelperStatus.fromXPCStatus(
+            oldHelperResponse,
+            identity: AlanInstallChannel.dev.privilegedHelperIdentity(
+                signingTeamIdentifier: "TEAMID1234"
+            )
+        ).state == .outdated,
+        "helper response without a protocol version must require update"
+    )
 
     let stableIdentity = AlanInstallChannel.stable.privilegedHelperIdentity(
         signingTeamIdentifier: "TEAMID1234"
