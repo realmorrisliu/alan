@@ -2634,11 +2634,8 @@ mod tests {
             .await
             .unwrap();
         let shell = alan_shell::Shell::new(launch.surface.root_transport());
-        let mut ui_events = shell
-            .tail(&format!(
-                "{}/machine/ui/events",
-                launch.surface.agent_path()
-            ))
+        let mut output = shell
+            .tail(&format!("{}/io/output", launch.surface.agent_path()))
             .await
             .unwrap();
         let mut controller = launch.controller;
@@ -2655,7 +2652,11 @@ mod tests {
             .await
             .unwrap();
 
-        wait_for_ui_turn_completion(&mut ui_events, Duration::from_secs(15)).await;
+        let output = tokio::time::timeout(Duration::from_secs(15), output.read(4096))
+            .await
+            .expect("turn output did not arrive")
+            .unwrap();
+        assert_eq!(String::from_utf8(output).unwrap(), "Noted.");
 
         controller.shutdown().await.unwrap();
 
