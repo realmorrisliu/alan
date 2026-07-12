@@ -218,9 +218,9 @@ privileged Managed Terminal Account apply operations.
 ### Requirement: Privileged account effects stay platform-owned
 Privileged account effects SHALL remain platform-owned.
 
-Managed Terminal Account privileged apply, sudoers writes, AppleScript
-authorization, account lookup commands, and platform verification executors SHALL
-remain outside the shell core and MUST stay platform-owned.
+Managed Terminal Account privileged apply, account lookup commands, and platform
+verification executors SHALL remain outside the shell core and MUST stay
+platform-owned.
 
 The shell core MAY own portable request, plan, validation, handoff, or profile
 intent semantics only when those semantics do not execute OS effects directly.
@@ -228,10 +228,10 @@ intent semantics only when those semantics do not execute OS effects directly.
 #### Scenario: Managed account apply is approved
 - **WHEN** the user approves a Managed Terminal Account provisioning plan on
   macOS
-- **THEN** macOS executes privileged account and sudoers operations through the
-  platform-owned executor
+- **THEN** macOS executes privileged account operations through the signed
+  helper
 - **AND** shell core does not receive reusable privileged credentials or invoke
-  AppleScript, sudoers writes, or account-management commands directly
+  account-management commands directly
 
 ### Requirement: Terminal Profile domain decisions use shell core
 The macOS shell SHALL use Rust shell core for Terminal Profile validation,

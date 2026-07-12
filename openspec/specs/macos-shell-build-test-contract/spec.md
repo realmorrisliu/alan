@@ -1050,11 +1050,6 @@ action, control, or presentation paths active.
 - **THEN** they fail if detached terminal panel, global terminal slot,
   show/hide/close/promote, or shell-action compatibility paths remain active
 
-#### Scenario: Legacy manifest cleanup is verified
-- **WHEN** a manifest containing an old `quick_terminal` restore record is read
-- **THEN** focused tests prove the record is discarded and omitted from future
-  manifest writes
-
 ### Requirement: Removed Ask alan and alan tab surfaces are verified
 The Apple client SHALL include focused contract checks proving Ask alan,
 floating command input, Command-P command input, first-party alan tab creation,

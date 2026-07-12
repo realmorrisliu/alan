@@ -3,8 +3,7 @@
 ## Purpose
 Define Managed Terminal Account provisioning for Alan for macOS: previewable,
 explicitly authorized creation and repair of terminal-only local Unix accounts,
-narrow sudoers entry, readiness verification, Terminal Profile handoff, and
-conservative rollback.
+readiness verification, Terminal Profile handoff, and conservative rollback.
 ## Requirements
 ### Requirement: Managed Terminal Accounts Are Terminal-Only Local Users
 Alan for macOS SHALL provision Managed Terminal Accounts as local standard Unix
