@@ -78,6 +78,12 @@ pub(crate) async fn resumed(namespace: &NamespaceRuntimeEnvironment) -> Result<(
         .await
 }
 
+pub(crate) async fn heartbeat(namespace: &NamespaceRuntimeEnvironment) -> Result<()> {
+    namespace
+        .write_ui_activity_snapshot(&UiActivitySnapshot::running(now_unix_ms()))
+        .await
+}
+
 pub(crate) async fn plan_updated(
     namespace: &NamespaceRuntimeEnvironment,
     explanation: Option<String>,

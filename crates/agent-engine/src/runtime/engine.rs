@@ -1799,6 +1799,7 @@ fn spawn_with_prepared_runtime_environment(
                     };
                     let namespace_input = state.namespace_environment().clone();
                     let namespace_control = state.namespace_environment().clone();
+                    let namespace_heartbeat = state.namespace_environment().clone();
                     let mut submission_fut: std::pin::Pin<
                         Box<dyn std::future::Future<Output = Result<()>> + Send + '_>,
                     > = if drive_as_turn_submission {
@@ -1931,6 +1932,9 @@ fn spawn_with_prepared_runtime_environment(
                                 }
                             }
                             _ = heartbeat_interval.tick() => {
+                                if let Err(err) = super::ui_surfaces::heartbeat(&namespace_heartbeat).await {
+                                    warn!(error = %err, "Failed to write runtime activity heartbeat");
+                                }
                                 let _ = liveness_tx_for_task.send(RuntimeLivenessEnvelope {
                                     submission_id: submission_event_ctx.get_submission_id(),
                                     status: Some("active_submission".to_string()),
