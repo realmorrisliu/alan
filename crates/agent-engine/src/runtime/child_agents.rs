@@ -685,6 +685,9 @@ impl ChildRuntimeController {
         let activity = tokio::time::timeout(timeout, environment.read_ui_activity_snapshot())
             .await
             .context("observe child activity timed out")??;
+        let output_text = tokio::time::timeout(timeout, environment.read_assistant_output())
+            .await
+            .context("observe child output timed out")??;
         let ui_events_offset = tokio::time::timeout(timeout, environment.ui_events_offset())
             .await
             .context("observe child UI events offset timed out")??;
@@ -725,13 +728,7 @@ impl ChildRuntimeController {
                 alan_kernel::Status::Running
             }),
             process_exit_code,
-            output_text: String::from_utf8(
-                process
-                    .as_ref()
-                    .map(|snapshot| snapshot.output.clone())
-                    .unwrap_or_default(),
-            )
-            .context("child process output is utf8")?,
+            output_text,
             process_output_offset: process
                 .as_ref()
                 .map(|snapshot| snapshot.output_offset)
@@ -803,12 +800,7 @@ impl ChildRuntimeController {
             push_bounded_child_warning(&mut warnings, warning);
         }
         self.finish_runtime_and_process(&observed.status).await;
-        let process_output = if observed.output_text.trim().is_empty() {
-            self.retained_process_output().await
-        } else {
-            None
-        };
-        let output_text = process_output.unwrap_or(observed.output_text);
+        let output_text = observed.output_text;
         let rollout_fallback_text = if output_text.trim().is_empty() {
             read_latest_assistant_text_from_rollout(self.startup_metadata.rollout_path.as_deref())
                 .await
@@ -1091,17 +1083,6 @@ impl ChildRuntimeController {
             )
             .await;
         self.reconcile_exited_process().await;
-    }
-
-    async fn retained_process_output(&self) -> Option<String> {
-        let pid = alan_kernel::Pid(self.process_pid.parse().ok()?);
-        String::from_utf8(
-            self.process_registry
-                .observe_process_files(pid)
-                .await?
-                .output,
-        )
-        .ok()
     }
 
     async fn abort_runtime(&mut self) {
@@ -3306,6 +3287,11 @@ Body
 
         let process_reader = launch.environment.clone();
         let process_pid = launch.pid.clone();
+        launch
+            .environment
+            .write_assistant_output("AgentFS child result")
+            .await
+            .unwrap();
         crate::runtime::ui_surfaces::turn_completed(&launch.environment, false)
             .await
             .unwrap();
@@ -3322,6 +3308,7 @@ Body
 
         let result = controller.join().await.unwrap();
         assert_eq!(result.status, ChildRuntimeStatus::Completed);
+        assert_eq!(result.output_text, "AgentFS child result");
         assert_eq!(
             process_reader
                 .read_process_exit_code(&process_pid)

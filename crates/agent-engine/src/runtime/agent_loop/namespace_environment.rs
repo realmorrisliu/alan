@@ -785,6 +785,12 @@ impl NamespaceRuntimeEnvironment {
         .context("parse agent activity snapshot")
     }
 
+    pub(crate) async fn read_assistant_output(&self) -> Result<String> {
+        let path = format!("{}/io/output", self.agent_path);
+        String::from_utf8(self.client().read_file(&path).await?)
+            .context("agent assistant output is utf8")
+    }
+
     pub(crate) async fn read_ui_notice_snapshot(
         &self,
     ) -> Result<alan_agent_protocol::UiNoticeSnapshot> {
