@@ -107,8 +107,9 @@ materialization forms are supported in v1:
   optionally using `$ARGUMENTS`, without portable `SKILL.md` frontmatter)
   becomes a directory-backed alan skill package.
 - **Adoption**: a directory containing a valid portable `SKILL.md` is
-  validated against the existing skill package contract and copied without
-  content edits.
+  validated against the existing skill package contract and registered in
+  place as a manifest-selected root inside the exported `source/` tree, without
+  content edits or a second copy.
 
 Materialization SHALL NOT modify the source location. Q SHALL record the
 accepted skill package roots in the materialization manifest and SHALL resolve
@@ -130,7 +131,8 @@ skipped with a report entry.
 #### Scenario: Portable package is adopted
 - **WHEN** the package source contains a directory with a valid `SKILL.md`
 - **THEN** materialization validates it with the same rules used for discovery
-  and copies it without modifying its body
+- **AND** registers that directory in place as a manifest-selected skill root
+  without copying or modifying its body
 
 #### Scenario: Skill-id collision
 - **WHEN** materialization would write over a skill package not owned by this
