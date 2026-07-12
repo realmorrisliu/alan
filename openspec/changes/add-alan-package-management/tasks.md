@@ -30,7 +30,7 @@
 - [ ] 4.1 Implement install: fetch + materialize + provider/provenance/manifest write, atomic enough that a failed install leaves no partial skills
 - [ ] 4.2 Implement upgrade: no-op only on unchanged source revision token (git commit, or re-computed content fingerprint for non-git local sources) + converter; re-materialize on change; manifest-hash divergence warn/skip/force
 - [ ] 4.3 Implement uninstall: check divergence before removing the store entry — relocate diverged files out of the entry (never delete with it) unless forced — then delete manifest-listed files, the store entry, and provider registration
-- [ ] 4.4 Project the store read-only at `/lib/pkg` via the host-directory mount machinery on install/boot; verify Agent Processes read package content through the namespace
+- [ ] 4.4 Project every Q provider read-only at `/lib/pkg/<package-id>` on install/boot: host-directory mounts for store-backed packages and read-only binds for local-source authored roots; verify Agent Processes read both kinds through the namespace without copying local sources
 - [ ] 4.5 Implement execution-backend resolution of `/lib/pkg/...` paths to store backing for spawned helper processes; canonicalize the target immediately before spawn and require it to remain under the canonical package entry before granting the narrow guard exception; verify direct backing references and absolute/relative symlink escapes stay denied
 - [ ] 4.6 Implement list: installed packages with provenance and resolved-skill summary including unsatisfied required tools
 
@@ -42,7 +42,7 @@
 
 ## 6. Tests (per rust-test-placement-contract, synthetic fixtures only)
 
-- [ ] 6.1 Cover Q resolution: built-in pre-installed + agent-root local-source + distribution all resolve through one authority; no independent directory scan remains
+- [ ] 6.1 Cover Q resolution and projection: built-in pre-installed + agent-root/workspace/public local-source + distribution all resolve through one authority and appear read-only under `/lib/pkg`; no independent directory scan or local-source store copy remains
 - [ ] 6.2 Build a synthetic fixture repo: command `.md` with `$ARGUMENTS` + foreign vocabulary, bare portable `SKILL.md`, shared repo-root helper referenced by both
 - [ ] 6.3 Cover conversion output: frontmatter, preamble placement, verbatim body, tool-vs-runtime-capability dependency emission, PATH cannot satisfy unsupported surfaces, unknown-token reporting, `/lib/pkg` helper addressing
 - [ ] 6.4 Cover install: path-safe package ids, equivalent git URLs with/without `.git`, sanitized source identity with credentialed URL userinfo/query/fragment removed from provenance/reports/logs/store, package-id collisions, no VCS metadata in `/lib/pkg`, escaping-symlink rejection, store layout, manifest-selected roots, cross-owner collision rejection, duplicate-source precedence

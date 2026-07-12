@@ -120,7 +120,8 @@ one of three provider kinds:
 - **Local-source provider** — `AgentRoot`, workspace, and user
   `.agents/skills/` skills, *registered* with Q at their existing location
   (not force-migrated into the global store — that would break AgentRoot
-  encapsulation) and folded into the agent's resolved set and `/lib/pkg` view.
+  encapsulation), read-only bound into `/lib/pkg`, and folded into the agent's
+  resolved set.
 - **Distribution provider** — external repositories installed into the store.
 
 Physical unification means **no bypass source**: the engine sees skills only
@@ -230,8 +231,11 @@ else's adapter. The include/exclude scan flags remain the escape hatch.
 
 ### D3a: The store entry is layered; `/lib/pkg` projects a merged view
 
-`/lib/pkg` is a read-only projection and the backing holds a verbatim upstream
-checkout, so conversion output cannot be written back into the checkout. The
+`/lib/pkg` is the read-only namespace view of every Q provider. Store-backed
+packages use the layered projection below; local-source providers use read-only
+binds of their authored package roots and are never copied into the store.
+The distribution backing holds an exported upstream working tree, so
+conversion output cannot be written back into the source layer. The
 store entry therefore has two layers under its channel-scoped backing
 (`~/.alan/pkg/<package-id>/`): `source/` (the exported upstream working tree,
 byte-for-byte except excluded VCS control metadata) and

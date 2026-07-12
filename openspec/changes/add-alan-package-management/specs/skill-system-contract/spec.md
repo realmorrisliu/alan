@@ -1,5 +1,3 @@
-# skill-system-contract — delta
-
 ## MODIFIED Requirements
 
 ### Requirement: Discovery is separate from exposure

@@ -1,5 +1,3 @@
-# package-management-contract — delta
-
 ## ADDED Requirements
 
 ### Requirement: Quartermaster is the sole skill-resolution authority
@@ -160,22 +158,28 @@ skipped with a report entry.
 - **THEN** the install fails with a diagnostic and writes nothing to the store
   or skill sources
 
-### Requirement: The package store is projected into the Alan OS namespace
-alan SHALL project the package store read-only at `/lib/pkg` in the Alan OS
-namespace, using the host-directory mount machinery, so that
-`/lib/pkg/<package>/` exposes each installed package's content to Agent
-Processes. `/lib/pkg/<package>/` is the canonical address for package content:
-contracts, generated skill content, and reports SHALL reference package
-content by namespace path, never by host backing path. When a tool execution
-references a path under `/lib/pkg`, the execution backend SHALL resolve it
-through the store projection to the backing content.
+### Requirement: All Q providers are projected into the Alan OS namespace
+alan SHALL project every Q package read-only at `/lib/pkg/<package-id>` in the
+Alan OS namespace. Store-backed pre-installed and distribution providers SHALL
+use the host-directory mount machinery over their store entries. Local-source
+providers SHALL use read-only namespace binds to their authored package roots
+without copying them into the store. `/lib/pkg/<package-id>/` is the canonical
+address for package content: contracts, generated skill content, and reports
+SHALL reference package content by namespace path, never by host backing path.
+When a tool execution references a path under `/lib/pkg`, the execution backend
+SHALL resolve it through the owning provider's projection to backing content.
 
 Package content SHALL exclude VCS control metadata. In particular, `.git`
 directories and clone-local configuration SHALL never be projected.
 
 #### Scenario: Package content is readable through the namespace
-- **WHEN** a package is installed
+- **WHEN** a store-backed or local-source Q package is resolved
 - **THEN** an Agent Process can read its files under `/lib/pkg/<package>/`
+
+#### Scenario: Local-source package is bound without copying
+- **WHEN** Q resolves an AgentRoot, workspace, or public local-source package
+- **THEN** `/lib/pkg/<package-id>/` is a read-only bind of its authored root
+- **AND** no package content is copied into the channel store
 
 #### Scenario: Helper executes via the canonical path
 - **WHEN** a materialized skill invokes an interpreter on
