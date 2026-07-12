@@ -1292,12 +1292,8 @@ async fn build_root_namespace_environment(
             .parse::<u64>()
             .with_context(|| format!("parse root agent pid '{root_pid}'"))?,
     );
-    let procfs_with_runner =
-        procfs
-            .clone()
-            .with_runner(Arc::new(crate::tools::ToolProcessRunner::from_registry(
-                &tools,
-            )));
+    let tool_runner = crate::tools::ToolProcessRunner::from_registry(&tools);
+    let procfs_with_runner = procfs.clone().with_runner(Arc::new(tool_runner.clone()));
     procfs
         .bind_live_namespace(root_pid_value, live_namespace.clone())
         .await;
@@ -1316,7 +1312,7 @@ async fn build_root_namespace_environment(
     )));
     let namespace_environment =
         super::NamespaceRuntimeEnvironment::new(root, format!("/agent/{root_pid}"), "default")
-            .with_process_context(procfs, agent_root, root_pid_value)
+            .with_process_context(procfs_with_runner, agent_root, root_pid_value, tool_runner)
             .with_shared_services(InProcessTransport::new(srvfs), route_tree);
     let namespace_environment = if let Some(factory) = mount_grant_applicator_factory {
         namespace_environment.with_mount_grant_applicator_factory(factory, live_namespace)

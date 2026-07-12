@@ -321,9 +321,14 @@ where
         .as_ref()
         .map(|context| context.procfs.clone())
         .unwrap_or_default();
-    let runtime_procfs = launch_procfs.clone().with_runner(Arc::new(
-        crate::tools::ToolProcessRunner::from_registry(&child_tools),
-    ));
+    let tool_runner = parent_process_context
+        .as_ref()
+        .map(|context| context.tool_runner.clone())
+        .unwrap_or_else(|| crate::tools::ToolProcessRunner::from_registry(&child_tools));
+    let runtime_procfs = launch_procfs
+        .clone()
+        .with_runner(Arc::new(tool_runner.clone()));
+    let child_tool_binding = child_tools.default_execution_binding();
     let agentfs = Arc::new(alan_agentfs::AgentFs::new());
     let llmfs = Arc::new(alan_llmfs::LlmFs::new());
     llmfs.register_connection(
@@ -358,6 +363,8 @@ where
         &child_namespace_plan,
         handles,
         parent_process_context,
+        tool_runner,
+        child_tool_binding,
         child_config.mount_grant_applicator_factory.clone(),
         "/bin/alan-agent",
     )
@@ -1696,6 +1703,8 @@ async fn spawn_child_namespace_runtime_environment(
     plan: &ChildNamespaceAssemblyPlan,
     handles: ChildNamespaceLaunchHandles,
     parent_process_context: Option<super::agent_loop::NamespaceProcessContext>,
+    tool_runner: crate::tools::ToolProcessRunner,
+    tool_binding: Option<crate::tools::ToolExecutionBinding>,
     mount_grant_applicator_factory: Option<Arc<dyn super::MountGrantApplicatorFactory>>,
     executable: &str,
 ) -> Result<ChildNamespaceRuntimeLaunch> {
@@ -1752,6 +1761,9 @@ async fn spawn_child_namespace_runtime_environment(
         pid.parse::<u64>()
             .with_context(|| format!("parse child pid '{pid}'"))?,
     );
+    if let Some(binding) = tool_binding {
+        tool_runner.register_process_binding(child_pid, binding);
+    }
     let child_namespace =
         child_runtime_namespace_from_launch_handles(plan, agent_root_tree, &handles);
     let live_namespace = alan_kernel::LiveNamespace::new(child_namespace);
@@ -1776,7 +1788,7 @@ async fn spawn_child_namespace_runtime_environment(
         format!("/agent/{pid}"),
         plan.llm_connection_name()?,
     )
-    .with_process_context(launch_procfs.clone(), agent_root, child_pid)
+    .with_process_context(runtime_procfs.clone(), agent_root, child_pid, tool_runner)
     .with_shared_services(handles.srv.clone(), handles.route.clone());
     let environment = if let Some(factory) = mount_grant_applicator_factory {
         environment.with_mount_grant_applicator_factory(factory, live_namespace)
@@ -3372,9 +3384,10 @@ Body
         )
         .unwrap();
         let launch_procfs = KernelProcFs::new();
-        let runtime_procfs = launch_procfs.clone().with_runner(Arc::new(
-            crate::tools::ToolProcessRunner::from_registry(&child_tools),
-        ));
+        let tool_runner = crate::tools::ToolProcessRunner::from_registry(&child_tools);
+        let runtime_procfs = launch_procfs
+            .clone()
+            .with_runner(Arc::new(tool_runner.clone()));
         let handles = ChildNamespaceLaunchHandles::new(
             Arc::new(alan_agentfs::AgentFs::new()),
             memfs_transport(),
@@ -3394,6 +3407,8 @@ Body
             &plan,
             handles,
             None,
+            tool_runner.clone(),
+            child_tools.default_execution_binding(),
             None,
             "/bin/alan-agent",
         )
@@ -3463,6 +3478,8 @@ Body
             &plan,
             child_handles,
             launch.environment.process_context(),
+            tool_runner.clone(),
+            child_tools.default_execution_binding(),
             None,
             "/bin/alan-agent",
         )
@@ -3599,9 +3616,10 @@ Body
         )
         .unwrap();
         let launch_procfs = KernelProcFs::new();
-        let runtime_procfs = launch_procfs.clone().with_runner(Arc::new(
-            crate::tools::ToolProcessRunner::from_registry(&child_tools),
-        ));
+        let tool_runner = crate::tools::ToolProcessRunner::from_registry(&child_tools);
+        let runtime_procfs = launch_procfs
+            .clone()
+            .with_runner(Arc::new(tool_runner.clone()));
         let handles = ChildNamespaceLaunchHandles::new(
             Arc::new(alan_agentfs::AgentFs::new()),
             memfs_transport(),
@@ -3620,6 +3638,8 @@ Body
             &plan,
             handles,
             None,
+            tool_runner,
+            child_tools.default_execution_binding(),
             None,
             "/bin/alan-agent",
         )
@@ -3693,9 +3713,10 @@ Body
         )
         .unwrap();
         let launch_procfs = KernelProcFs::new();
-        let runtime_procfs = launch_procfs.clone().with_runner(Arc::new(
-            crate::tools::ToolProcessRunner::from_registry(&child_tools),
-        ));
+        let tool_runner = crate::tools::ToolProcessRunner::from_registry(&child_tools);
+        let runtime_procfs = launch_procfs
+            .clone()
+            .with_runner(Arc::new(tool_runner.clone()));
         let handles = ChildNamespaceLaunchHandles::new(
             Arc::new(alan_agentfs::AgentFs::new()),
             memfs_transport(),
@@ -3722,6 +3743,8 @@ Body
             &plan,
             handles,
             None,
+            tool_runner,
+            child_tools.default_execution_binding(),
             Some(factory.clone()),
             "/bin/alan-agent",
         )
@@ -3822,6 +3845,8 @@ Body
             &plan,
             handles,
             None,
+            crate::tools::ToolProcessRunner::from_registry(&child_tools),
+            child_tools.default_execution_binding(),
             None,
             "/bin/alan-agent",
         )

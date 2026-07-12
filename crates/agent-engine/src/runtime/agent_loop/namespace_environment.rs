@@ -249,6 +249,7 @@ pub(crate) struct NamespaceProcessContext {
     pub(crate) procfs: alan_kernel::ProcFs,
     pub(crate) agent_root: Arc<alan_agentfs::AgentRootFs>,
     pub(crate) pid: alan_kernel::Pid,
+    pub(crate) tool_runner: crate::tools::ToolProcessRunner,
 }
 
 #[derive(Clone)]
@@ -300,11 +301,13 @@ impl NamespaceRuntimeEnvironment {
         procfs: alan_kernel::ProcFs,
         agent_root: Arc<alan_agentfs::AgentRootFs>,
         pid: alan_kernel::Pid,
+        tool_runner: crate::tools::ToolProcessRunner,
     ) -> Self {
         self.process_context = Some(NamespaceProcessContext {
             procfs,
             agent_root,
             pid,
+            tool_runner,
         });
         self
     }
