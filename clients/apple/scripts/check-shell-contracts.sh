@@ -1060,13 +1060,13 @@ require_pattern \
 
 require_pattern \
     "clients/apple/scripts/test-shell-runtime-metadata.swift" \
-    "persisted content manifest must not dual-write terminal-only panes" \
-    "workspace manifest tests must reject terminal-only snapshot dual-write"
+    "persisted workspace manifest must contain only current content records" \
+    "workspace manifest tests must reject obsolete pane records"
 
 require_pattern \
     "clients/apple/alan-macos/ShellHostController.swift" \
-    "case \\.workspaceManifest:" \
-    "shell host startup must have a workspace-manifest restore path"
+    "ShellWorkspaceManifestStartupCoordinator\(fileManager: fileManager\)\.prepare" \
+    "shell host startup must always prepare the workspace manifest"
 
 require_pattern \
     "clients/apple/alan-macos/Services/Shell/ShellWorkspaceManifestStartupCoordinator.swift" \
@@ -1110,18 +1110,18 @@ reject_pattern \
 
 require_pattern \
     "clients/apple/alan-macos/App/AlanMacPrimaryShellOwner.swift" \
-    "startupMode: \\.workspaceManifest" \
-    "primary macOS shell must start from the workspace manifest"
+    "ShellHostController\.live\(" \
+    "primary macOS shell must use the manifest-backed live host"
 
 reject_pattern \
     "clients/apple/alan-macos/App/AlanMacPrimaryShellOwner.swift" \
-    "startupMode: \\.fresh|startupMode: \\.restorePrevious|restoreShellState|ShellStatePersistenceStore" \
+    "startupMode|restoreShellState|ShellStatePersistenceStore" \
     "primary macOS shell must not restore workspace identity from ShellStateSnapshot"
 
 require_pattern \
     "clients/apple/scripts/test-shell-workspace-manifest.swift" \
-    "verifiesMissingManifestCreatesDefaultWithoutMigratingShellState" \
-    "workspace manifest tests must prove legacy ShellStateSnapshot is not migrated"
+    "verifiesUnsupportedManifestIsQuarantined" \
+    "workspace manifest tests must prove unsupported bytes are quarantined"
 
 require_pattern \
     "clients/apple/scripts/test-terminal-surface-controller.sh" \

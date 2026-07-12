@@ -1,6 +1,14 @@
 import Foundation
 
 extension ShellCoreFFIAdapter {
+    func validateContentWorkspaceManifest(data: Data) throws -> Bool {
+        let response: ManifestValidationPayload = try send(
+            operation: "manifest.validate",
+            payload: ValidateManifestPayload(manifestJSON: String(decoding: data, as: UTF8.self))
+        )
+        return response.valid
+    }
+
     func defaultContentWorkspaceManifest(
         windowID: String,
         defaultWorkingDirectory: String,
@@ -14,16 +22,6 @@ extension ShellCoreFFIAdapter {
         let response: ManifestPayload = try send(
             operation: "manifest.default_manifest",
             payload: payload
-        )
-        return response.manifest
-    }
-
-    func migrateLegacyTerminalManifest(
-        _ manifest: ShellWorkspaceManifest
-    ) throws -> ShellContentWorkspaceManifest {
-        let response: ManifestPayload = try send(
-            operation: "manifest.migrate_legacy_terminal_manifest",
-            payload: LegacyManifestPayload(manifest: manifest)
         )
         return response.manifest
     }
@@ -62,6 +60,18 @@ extension ShellCoreFFIAdapter {
 
 }
 
+private struct ValidateManifestPayload: Encodable {
+    let manifestJSON: String
+
+    private enum CodingKeys: String, CodingKey {
+        case manifestJSON = "manifest_json"
+    }
+}
+
+private struct ManifestValidationPayload: Decodable {
+    let valid: Bool
+}
+
 private struct DefaultManifestPayload: Encodable {
     let windowID: String
     let defaultWorkingDirectory: String
@@ -72,10 +82,6 @@ private struct DefaultManifestPayload: Encodable {
         case defaultWorkingDirectory = "default_working_directory"
         case now
     }
-}
-
-private struct LegacyManifestPayload: Encodable {
-    let manifest: ShellWorkspaceManifest
 }
 
 private struct PruningExpiredTabsPayload: Encodable {

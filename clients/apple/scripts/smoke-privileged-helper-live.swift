@@ -68,7 +68,6 @@ struct PrivilegedHelperLiveSmoke {
 
         let request = ManagedTerminalAccountRequest(
             accountName: accountName,
-            guiUserName: normalized(environment["ALAN_PRIVILEGED_HELPER_SMOKE_GUI_USER"]) ?? NSUserName(),
             fullName: nil
         )
         let diagnosisResponse = xpcClient.perform(

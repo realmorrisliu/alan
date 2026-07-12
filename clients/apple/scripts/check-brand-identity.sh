@@ -16,6 +16,9 @@ is_allowed_occurrence() {
         openspec/changes/capitalize-alan-macos-app-brand/*)
             return 0
             ;;
+        openspec/changes/remove-legacy-macos-persistence/*)
+            return 0
+            ;;
         openspec/specs/product-brand-identity/spec.md:*)
             return 0
             ;;
@@ -40,37 +43,16 @@ is_allowed_occurrence() {
         *'workspace_root": "Alan"'*)
             return 0
             ;;
-        *"ShellStatePersistenceStore.swift:"*"AlanNative"*)
-            return 0
-            ;;
-        *"clients/apple/README.md:"*"Application Support/AlanNative"*)
-            return 0
-            ;;
-        *"scripts/install.sh:"*"LEGACY_APP_TARGET"*|*"scripts/install.sh:"*"/alan.app/Contents/Resources/bin/"*)
-            return 0
-            ;;
-        *"scripts/install-channel.sh:"*"ALAN_LEGACY_APP_BUNDLE_NAME=\"alan.app\""*)
-            return 0
-            ;;
-        *"scripts/test-install-channel-descriptor.sh:"*"ALAN_LEGACY_APP_BUNDLE_NAME"*'"alan.app"'*)
-            return 0
-            ;;
-        *"scripts/uninstall.sh:"*"LEGACY_APP_TARGET"*|*"scripts/uninstall.sh:"*"/alan.app/Contents/Resources/bin/"*)
-            return 0
-            ;;
-        *"AlanCommandLineToolInstaller.swift:"*"\"alan.app\""*)
-            return 0
-            ;;
         *"scripts/test-app-bundle-paths.sh:"*"alan.app"*)
             return 0
             ;;
-        *"AlanCommandLineToolInstaller.swift:"*"/alan.app/Contents/Resources/bin/"*)
-            return 0
-            ;;
-        *"clients/apple/scripts/test-command-line-tool-installer.swift:"*"/Applications/alan.app"*)
+        *"clients/apple/scripts/test-command-line-tool-installer.swift:"*"/alan.app"*)
             return 0
             ;;
         *"clients/apple/scripts/check-brand-identity.sh:"*)
+            return 0
+            ;;
+        *"scripts/check-legacy-macos-absence.sh:"*)
             return 0
             ;;
         *"github.com/realmorrisliu/Alan"*|*"git@github.com:realmorrisliu/Alan.git"*)

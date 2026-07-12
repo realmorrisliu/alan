@@ -40,7 +40,6 @@
 		00000000000000000000006B /* Models/Shell/ShellStateRuntimeSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000016B /* Models/Shell/ShellStateRuntimeSupport.swift */; };
 		00000000000000000000006C /* Models/Shell/ShellSpaceCreationProfileOptions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000016C /* Models/Shell/ShellSpaceCreationProfileOptions.swift */; };
 		000000000000000000000025 /* Services/Shell/ShellPaneProjectionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000125 /* Services/Shell/ShellPaneProjectionService.swift */; };
-		000000000000000000000026 /* Services/Shell/ShellStatePersistenceStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000126 /* Services/Shell/ShellStatePersistenceStore.swift */; };
 		000000000000000000000027 /* Services/Terminal/TerminalHostRuntimeReporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000127 /* Services/Terminal/TerminalHostRuntimeReporter.swift */; };
 		000000000000000000000028 /* Services/Terminal/TerminalHostWindowObserver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000128 /* Services/Terminal/TerminalHostWindowObserver.swift */; };
 		000000000000000000000029 /* Models/Shell/ShellControlPlaneDTOs.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000129 /* Models/Shell/ShellControlPlaneDTOs.swift */; };
@@ -166,7 +165,6 @@
 		00000000000000000000016B /* Models/Shell/ShellStateRuntimeSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/Shell/ShellStateRuntimeSupport.swift; sourceTree = "<group>"; };
 		00000000000000000000016C /* Models/Shell/ShellSpaceCreationProfileOptions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/Shell/ShellSpaceCreationProfileOptions.swift; sourceTree = "<group>"; };
 		000000000000000000000125 /* Services/Shell/ShellPaneProjectionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Shell/ShellPaneProjectionService.swift; sourceTree = "<group>"; };
-		000000000000000000000126 /* Services/Shell/ShellStatePersistenceStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Shell/ShellStatePersistenceStore.swift; sourceTree = "<group>"; };
 		000000000000000000000127 /* Services/Terminal/TerminalHostRuntimeReporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Terminal/TerminalHostRuntimeReporter.swift; sourceTree = "<group>"; };
 		000000000000000000000128 /* Services/Terminal/TerminalHostWindowObserver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Terminal/TerminalHostWindowObserver.swift; sourceTree = "<group>"; };
 		000000000000000000000129 /* Models/Shell/ShellControlPlaneDTOs.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/Shell/ShellControlPlaneDTOs.swift; sourceTree = "<group>"; };
@@ -402,7 +400,6 @@
 				00000000000000000000012C /* Services/Shell/ShellPublishedStateMerger.swift */,
 				000000000000000000000167 /* Services/Shell/ShellReducerCommandCoordinator.swift */,
 				00000000000000000000012B /* Services/Shell/ShellSocketServer.swift */,
-				000000000000000000000126 /* Services/Shell/ShellStatePersistenceStore.swift */,
 				000000000000000000000169 /* Services/Shell/TerminalProfileStore.swift */,
 				000000000000000000000164 /* Services/Shell/ShellWorkspaceManifestStartupCoordinator.swift */,
 				000000000000000000000165 /* Services/Shell/ShellWorkspacePersistenceCoordinator.swift */,
@@ -655,7 +652,6 @@
 				000000000000000000000044 /* Models/Shell/ShellAutomationEntities.swift in Sources */,
 				000000000000000000000045 /* Models/Shell/ShellAutomationIntents.swift in Sources */,
 				000000000000000000000025 /* Services/Shell/ShellPaneProjectionService.swift in Sources */,
-				000000000000000000000026 /* Services/Shell/ShellStatePersistenceStore.swift in Sources */,
 				000000000000000000000027 /* Services/Terminal/TerminalHostRuntimeReporter.swift in Sources */,
 				000000000000000000000028 /* Services/Terminal/TerminalHostWindowObserver.swift in Sources */,
 				000000000000000000000029 /* Models/Shell/ShellControlPlaneDTOs.swift in Sources */,

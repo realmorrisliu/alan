@@ -160,9 +160,6 @@ private enum ShellRuntimeMetadataTests {
         verifiesMixedContentPaneSlotMutationsStayContentAgnostic()
         verifiesChannelScopedSupportStatePaths()
         verifiesSmokeEnvironmentPathOverrides()
-        verifiesShellStatePersistenceWritesContentStateShape()
-        verifiesLegacyShellStateDecodeRemainsCompatibilityOnly()
-        verifiesLegacyShellStateDropsUnsupportedAlanBindingMetadata()
         verifiesWorkspaceManifestStartupRestoresPinnedSnapshot()
         verifiesWorkspaceManifestStartupSeedsRestoredTerminalTranscript()
         verifiesRestoredTranscriptPanelPresentationMatchesTerminalLayout()
@@ -186,10 +183,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesLegacyDefaultTerminalProfileDoesNotCaptureUnboundStartup()
         verifiesTerminalProfileControlPlaneOverrides()
         verifiesTerminalProfileSettingsRowsStayLocal()
-        verifiesManagedTerminalAccountPlannerSudoersAndProfileHandoff()
-        verifiesManagedTerminalAccountDiscoveryVerificationAndAuthorizedExecutor()
-        verifiesManagedTerminalAccountExecutorAndRollbackSafety()
-        verifiesManagedTerminalAccountProcessRunnerTimesOut()
+        verifiesManagedTerminalAccountHelperPlanAndRollbackSafety()
         print("Shell runtime metadata tests passed.")
     }
 
@@ -971,12 +965,9 @@ private enum ShellRuntimeMetadataTests {
             windowID: windowID,
             terminalRuntimeRegistry: registry
         )
-        let persistenceURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("\(windowID).json")
         let controller = ShellHostController(
             shellState: .bootstrapDefault(windowID: windowID),
             windowContext: context,
-            persistenceURL: persistenceURL,
             terminalRuntimeRegistry: registry
         )
         let stalePane = ShellPane(
@@ -5136,7 +5127,6 @@ private enum ShellRuntimeMetadataTests {
         )
         let restored = ShellHostController.live(
             windowContext: restoredContext,
-            startupMode: .workspaceManifest,
             workspaceManifestURL: url,
             defaultWorkingDirectory: "/tmp",
             now: Date(timeIntervalSince1970: 121)
@@ -5411,22 +5401,6 @@ private enum ShellRuntimeMetadataTests {
             "markdown open must not create a terminal runtime"
         )
 
-        let persistenceURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("markdown-content-\(UUID().uuidString).json")
-        let store = ShellStatePersistenceStore(persistenceURL: persistenceURL)
-        defer { try? FileManager.default.removeItem(at: persistenceURL) }
-        store.save(controller.shellState)
-
-        let restored = ShellStatePersistenceStore.restoreShellState(
-            fileManager: .default,
-            persistenceURL: persistenceURL
-        )
-        let restoredContent = restored?.contentStateProjection().focusedContent
-        expect(restoredContent?.kind == .markdown, "persisted markdown state must restore markdown kind")
-        expect(
-            restoredContent?.payload.markdown?.fileURL == expectedURL,
-            "persisted markdown state must restore markdown file URL"
-        )
     }
 
     private static func verifiesOpeningContentTabDefaultsToTerminalIntent() {
@@ -5512,22 +5486,6 @@ private enum ShellRuntimeMetadataTests {
         expect(settingsContents.count == 1, "settings content must remain singleton")
         expect(settingsSlots.count == 1, "settings PaneSlot must remain singleton")
 
-        let persistenceURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("settings-content-\(UUID().uuidString).json")
-        let store = ShellStatePersistenceStore(persistenceURL: persistenceURL)
-        defer { try? FileManager.default.removeItem(at: persistenceURL) }
-        store.save(controller.shellState)
-
-        let restored = ShellStatePersistenceStore.restoreShellState(
-            fileManager: .default,
-            persistenceURL: persistenceURL
-        )
-        let restoredContent = restored?.contentStateProjection().focusedContent
-        expect(restoredContent?.kind == .settings, "persisted settings state must restore settings kind")
-        expect(
-            restoredContent?.payload.settings?.surfaceID == ShellContentInstance.settingsSurfaceID,
-            "persisted settings state must restore settings surface identity"
-        )
     }
 
     private static func verifiesSplitPaneAcceptsMarkdownContentIntent() {
@@ -6455,16 +6413,6 @@ private enum ShellRuntimeMetadataTests {
 
     private static func verifiesChannelScopedSupportStatePaths() {
         let fileManager = FileManager.default
-        let stableState = ShellStatePersistenceStore.defaultPersistenceURL(
-            windowID: "window_main",
-            fileManager: fileManager,
-            channel: .stable
-        )
-        let devState = ShellStatePersistenceStore.defaultPersistenceURL(
-            windowID: "window_main",
-            fileManager: fileManager,
-            channel: .dev
-        )
         let stableManifest = ShellWorkspaceManifestStore.defaultManifestURL(
             windowID: "window_main",
             fileManager: fileManager,
@@ -6475,17 +6423,17 @@ private enum ShellRuntimeMetadataTests {
             fileManager: fileManager,
             channel: .dev
         )
+        let stableControl = alanShellControlPlaneRootURL(
+            windowID: "window_main",
+            channel: .stable
+        )
+        let devControl = alanShellControlPlaneRootURL(
+            windowID: "window_main",
+            channel: .dev
+        )
 
-        expect(stableState != devState, "stable and dev shell state paths must differ")
         expect(stableManifest != devManifest, "stable and dev shell manifest paths must differ")
-        expect(
-            stableState.path.contains("/alan-macos/"),
-            "stable shell state path must remain under alan-macos"
-        )
-        expect(
-            devState.path.contains("/alan-macos-dev/"),
-            "dev shell state path must be under alan-macos-dev"
-        )
+        expect(stableControl != devControl, "stable and dev temporary control roots must differ")
         expect(
             stableManifest.path.contains("/alan-macos/"),
             "stable shell manifest path must remain under alan-macos"
@@ -6522,217 +6470,29 @@ private enum ShellRuntimeMetadataTests {
         )
     }
 
-    private static func verifiesShellStatePersistenceWritesContentStateShape() {
-        let windowID = "content_state_persist_\(UUID().uuidString)"
-        let persistenceURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("\(windowID).json")
-        let store = ShellStatePersistenceStore(persistenceURL: persistenceURL)
-        var state = ShellStateSnapshot.bootstrapDefault(windowID: windowID, workingDirectory: "/tmp")
-        do {
-            state = try state.splittingPane("pane_1", placement: .right).state
-        } catch {
-            fail("content persistence setup must split the bootstrap pane: \(error)")
-        }
-
-        store.save(state)
-
-        guard let data = try? Data(contentsOf: persistenceURL),
-              let persisted = try? JSONDecoder().decode(ShellContentStateSnapshot.self, from: data),
-              let text = String(data: data, encoding: .utf8)
-        else {
-            fail("shell state persistence must write a decodable content-state snapshot")
-        }
-
-        expect(persisted.windowID == windowID, "content-state persistence must preserve window identity")
-        expect(persisted.paneSlots.count == 2, "content-state persistence must save PaneSlots")
-        expect(persisted.contents.count == 2, "content-state persistence must save ContentInstances")
-        expect(
-            text.contains("\"pane_slots\"") && text.contains("\"contents\""),
-            "content-state persistence must use content-container keys"
-        )
-        expect(!text.contains("\"panes\""), "content-state persistence must not write v0.1 panes")
-        let restored = ShellStatePersistenceStore.restoreShellState(
-            fileManager: .default,
-            persistenceURL: persistenceURL
-        )
-        guard let restored else {
-            fail("content-state restore must materialize shell state")
-        }
-        expect(restored.contractVersion == "0.2", "content-state restore must materialize v0.2 shell state")
-        expect(restored.paneSlots?.count == 2, "content-state restore must preserve PaneSlots")
-        expect(restored.contents?.count == 2, "content-state restore must preserve ContentInstances")
-        expect(
-            restored.contentStateProjection().contents.map(\.kind) == [.terminal, .terminal],
-            "content-state restore must preserve terminal content descriptors"
-        )
-
-        let refreshedPanes = restored.panes.map { pane -> ShellPane in
-            guard pane.paneID == "pane_1" else { return pane }
-            return ShellPane(
-                paneID: pane.paneID,
-                tabID: pane.tabID,
-                spaceID: pane.spaceID,
-                launchTarget: pane.launchTarget,
-                cwd: "/tmp/refreshed",
-                process: pane.process,
-                attention: pane.attention,
-                context: pane.context,
-                viewport: ShellViewportSnapshot(
-                    title: "vim README.md",
-                    summary: pane.viewport?.summary,
-                    visibleExcerpt: nil,
-                    lastActivityAt: pane.viewport?.lastActivityAt
-                ),
-                activity: pane.activity,
-                alanBinding: pane.alanBinding
-            )
-        }
-        let refreshed = ShellStateSnapshot(
-            contractVersion: restored.contractVersion,
-            windowID: restored.windowID,
-            focusedSpaceID: restored.focusedSpaceID,
-            focusedTabID: restored.focusedTabID,
-            focusedPaneID: restored.focusedPaneID,
-            spaces: restored.spaces,
-            panes: refreshedPanes,
-            paneSlots: restored.paneSlots,
-            contents: restored.contents
-        )
-        let refreshedContent = refreshed.contentStateProjection().contentMounted(in: "pane_1")
-        expect(
-            refreshedContent?.title == "vim README.md",
-            "explicit terminal descriptors must refresh from current pane metadata"
-        )
-        expect(
-            refreshedContent?.payload.terminal?.cwd == "/tmp/refreshed",
-            "explicit terminal descriptors must refresh cwd from current pane metadata"
-        )
-    }
-
-    private static func verifiesLegacyShellStateDecodeRemainsCompatibilityOnly() {
-        let windowID = "legacy_state_\(UUID().uuidString)"
-        let persistenceURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("\(windowID).json")
-        let state = ShellStateSnapshot.bootstrapDefault(windowID: windowID, workingDirectory: "/tmp")
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-
-        guard let data = try? encoder.encode(state) else {
-            fail("legacy shell state setup must encode v0.1 state")
-        }
-
-        do {
-            try data.write(to: persistenceURL, options: .atomic)
-        } catch {
-            fail("legacy shell state setup must write v0.1 state: \(error)")
-        }
-
-        let restored = ShellStatePersistenceStore.restoreShellState(
-            fileManager: .default,
-            persistenceURL: persistenceURL
-        )
-        expect(restored?.windowID == windowID, "legacy v0.1 shell-state decode must remain available")
-        expect(restored?.panes.first?.paneID == "pane_1", "legacy v0.1 shell-state decode must preserve panes")
-    }
-
-    private static func verifiesLegacyShellStateDropsUnsupportedAlanBindingMetadata() {
-        let windowID = "unsupported_binding_\(UUID().uuidString)"
-        let persistenceURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("\(windowID).json")
-        let workingDirectory = "/tmp/unsupported-binding-project"
-        let state = ShellStateSnapshot.bootstrapDefault(
-            windowID: windowID,
-            workingDirectory: workingDirectory
-        )
-        defer { try? FileManager.default.removeItem(at: persistenceURL) }
-
-        guard let encoded = try? JSONEncoder().encode(state),
-              var document = (try? JSONSerialization.jsonObject(with: encoded)) as? [String: Any],
-              var panes = document["panes"] as? [[String: Any]],
-              !panes.isEmpty
-        else {
-            fail("unsupported binding setup must encode a legacy shell state")
-        }
-        panes[0]["alan_binding"] = ["unsupported_binding_contract": 1]
-        document["panes"] = panes
-
-        guard let unsupportedBindingState = try? JSONSerialization.data(
-            withJSONObject: document,
-            options: [.sortedKeys]
-        ) else {
-            fail("unsupported binding setup must encode JSON")
-        }
-        do {
-            try unsupportedBindingState.write(to: persistenceURL, options: .atomic)
-        } catch {
-            fail("unsupported binding setup must write shell state: \(error)")
-        }
-
-        let restored = ShellStatePersistenceStore.restoreShellState(
-            fileManager: .default,
-            persistenceURL: persistenceURL
-        )
-        expect(restored?.windowID == windowID, "unsupported binding metadata must not discard workspace state")
-        expect(restored?.panes.first?.paneID == "pane_1", "unsupported binding metadata must preserve panes")
-        expect(
-            restored?.panes.first?.cwd == workingDirectory,
-            "unsupported binding metadata must preserve terminal working directory"
-        )
-        expect(restored?.panes.first?.alanBinding == nil, "unsupported binding metadata must be dropped")
-
-        let rewritten = restored.flatMap { try? JSONEncoder().encode($0) }
-        let rewrittenText = rewritten.map { String(decoding: $0, as: UTF8.self) } ?? ""
-        expect(
-            !rewrittenText.contains("\"alan_binding\""),
-            "rewritten shell state must not retain unsupported binding metadata"
-        )
-    }
-
     private static func verifiesWorkspaceManifestStartupRestoresPinnedSnapshot() {
         let windowID = "manifest_startup_\(UUID().uuidString)"
         let manifestURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("\(windowID)-workspace.json")
         let context = ShellWindowContext.make(windowID: windowID)
         let store = ShellWorkspaceManifestStore(manifestURL: manifestURL)
-        let manifest = ShellWorkspaceManifest(
-            schemaVersion: ShellWorkspaceManifest.currentSchemaVersion,
-            windowID: windowID,
-            selectedSpaceID: "space_main",
-            selectedTabID: "tab_main",
-            spaces: [
-                ShellWorkspaceSpaceRecord(
-                    spaceID: "space_main",
-                    title: "Main",
-                    order: 0,
-                    createdAt: Date(timeIntervalSince1970: 10),
-                    updatedAt: Date(timeIntervalSince1970: 10),
-                    tabs: [
-                        ShellWorkspaceTabRecord(
-                            tabID: "tab_main",
-                            title: "Pinned",
-                            kind: .terminal,
-                            createdAt: Date(timeIntervalSince1970: 10),
-                            lastActivatedAt: Date(timeIntervalSince1970: 10),
-                            lastActivityAt: Date(timeIntervalSince1970: 10),
-                            isPinned: true,
-                            pinSnapshot: restoreSnapshot(tabID: "tab_main", paneID: "pane_1", cwd: "/pinned"),
-                            liveSnapshot: restoreSnapshot(tabID: "tab_main", paneID: "pane_1", cwd: "/live"),
-                            activeTask: .inactive
-                        )
-                    ]
-                )
-            ]
+        var manifest = contentManifest(windowID: windowID, cwd: "/live", transcriptSnapshot: nil)
+        manifest.spaces[0].tabs[0].isPinned = true
+        manifest.spaces[0].tabs[0].pinSnapshot = contentRestoreSnapshot(
+            paneSlotID: "pane_1",
+            contentID: "content_pane_1",
+            cwd: "/pinned",
+            transcriptSnapshot: nil
         )
 
         do {
-            try store.saveLegacyTerminalManifest(manifest)
+            try store.save(manifest)
         } catch {
             fail("failed to write test manifest: \(error)")
         }
 
         let controller = ShellHostController.live(
             windowContext: context,
-            startupMode: .workspaceManifest,
             workspaceManifestURL: manifestURL,
             defaultWorkingDirectory: "/fallback",
             now: Date(timeIntervalSince1970: 20)
@@ -6747,18 +6507,18 @@ private enum ShellRuntimeMetadataTests {
             controller.shellState.focusedTabID == "tab_main",
             "workspace manifest startup must preserve selected tab"
         )
-        guard let migratedManifest = decodeManifest(at: manifestURL),
-              let migratedTab = migratedManifest.spaces.flatMap(\.tabs).first
+        guard let restoredManifest = decodeManifest(at: manifestURL),
+              let restoredTab = restoredManifest.spaces.flatMap(\.tabs).first
         else {
-            fail("workspace manifest startup must migrate legacy terminal manifest")
+            fail("workspace manifest startup must retain the current manifest")
         }
         expect(
-            migratedTab.pinSnapshot?.paneSlots.first?.paneSlotID == "pane_1",
-            "legacy terminal manifest migration must preserve PaneSlot identity"
+            restoredTab.pinSnapshot?.paneSlots.first?.paneSlotID == "pane_1",
+            "current manifest restore must preserve PaneSlot identity"
         )
         expect(
-            migratedTab.pinSnapshot?.contents.first?.payload.terminal?.cwd == "/pinned",
-            "legacy terminal manifest migration must preserve terminal restore payload"
+            restoredTab.pinSnapshot?.contents.first?.payload.terminal?.cwd == "/pinned",
+            "current manifest restore must preserve terminal restore payload"
         )
     }
 
@@ -6790,7 +6550,7 @@ private enum ShellRuntimeMetadataTests {
             alternateScreen: false
         )
         let manifest = ShellContentWorkspaceManifest(
-            schemaVersion: ShellWorkspaceManifest.currentSchemaVersion,
+            schemaVersion: ShellContentWorkspaceManifest.currentSchemaVersion,
             contentContractVersion: ShellContentWorkspaceManifest.currentContentContractVersion,
             windowID: windowID,
             selectedSpaceID: "space_main",
@@ -6833,7 +6593,6 @@ private enum ShellRuntimeMetadataTests {
 
         let controller = ShellHostController.live(
             windowContext: context,
-            startupMode: .workspaceManifest,
             workspaceManifestURL: manifestURL,
             defaultWorkingDirectory: "/fallback",
             now: Date(timeIntervalSince1970: 95)
@@ -7117,7 +6876,7 @@ private enum ShellRuntimeMetadataTests {
 
         expect(
             rawManifestText(at: manifestURL)?.contains("\"panes\"") == false,
-            "persisted content manifest must not dual-write terminal-only panes"
+            "persisted workspace manifest must contain only current content records"
         )
         expect(tab.isPinned, "pin-tab must mark the tab as pinned")
         expect(tab.pinSnapshot?.paneTree.paneSlotIDs.count == 2, "pin snapshot must preserve split layout at pin time")
@@ -7189,7 +6948,7 @@ private enum ShellRuntimeMetadataTests {
 
         expect(
             rawManifestText(at: manifestURL)?.contains("\"panes\"") == false,
-            "mixed content manifest must not dual-write terminal-only panes"
+            "mixed workspace manifest must contain only current content records"
         )
         expect(
             tab.pinSnapshot?.paneTree.paneSlotIDs == ["pane_1", markdownPaneID, settingsPaneID],
@@ -8124,7 +7883,7 @@ private enum ShellRuntimeMetadataTests {
     private static func verifiesTerminalProfileReferencesPersistThroughManifestRoundTrip() {
         let now = Date(timeIntervalSince1970: 2_001)
         let manifest = ShellContentWorkspaceManifest(
-            schemaVersion: ShellWorkspaceManifest.currentSchemaVersion,
+            schemaVersion: ShellContentWorkspaceManifest.currentSchemaVersion,
             contentContractVersion: ShellContentWorkspaceManifest.currentContentContractVersion,
             windowID: "window_profiles",
             selectedSpaceID: "space_main",
@@ -8794,14 +8553,10 @@ private enum ShellRuntimeMetadataTests {
         )
         let terminalAccounts = ManagedTerminalAccountSettingsSummary(
             plans: [
-                ManagedTerminalAccountPlanner.plan(
-                    request: ManagedTerminalAccountRequest(accountName: "alan", guiUserName: "morris"),
-                    state: ManagedTerminalAccountState(
-                        account: .standard(homeDirectory: "/Users/alan", shell: "/bin/zsh", hidden: true),
-                        sudoers: .alanOwnedValid(path: "/etc/sudoers.d/alan-terminal-morris-to-alan"),
-                        terminalProfile: .existingManaged(profileID: "alan"),
-                        verification: .passed
-                    )
+                ManagedTerminalAccountPlan(
+                    request: ManagedTerminalAccountRequest(accountName: "alan"),
+                    status: .alreadyReady,
+                    steps: []
                 )
             ]
         )
@@ -8868,17 +8623,12 @@ private enum ShellRuntimeMetadataTests {
         )
     }
 
-    private static func verifiesManagedTerminalAccountPlannerSudoersAndProfileHandoff() {
+    private static func verifiesManagedTerminalAccountHelperPlanAndRollbackSafety() {
         let request = ManagedTerminalAccountRequest(
             accountName: "alan",
-            guiUserName: "morris",
-            fullName: "Alan Terminal",
-            shell: "/bin/zsh",
-            homeDirectory: "/Users/alan",
-            hideFromLoginWindow: true,
-            bindCurrentSpaceAfterSuccess: true
+            fullName: "Alan Terminal"
         )
-        let diagnosis = AlanManagedUserDiagnosis(
+        let missingDiagnosis = AlanManagedUserDiagnosis(
             request: request,
             ownershipState: .missing,
             readinessState: .accountMissing,
@@ -8887,723 +8637,136 @@ private enum ShellRuntimeMetadataTests {
             homeDirectoryExists: false,
             shellMatches: false,
             hiddenFromLoginWindow: false,
-            legacySudoersPath: nil,
             terminalProfileID: nil,
             ptySmokeVerified: false,
             diagnostic: nil
         )
-        let plan = ManagedTerminalAccountPlanner.plan(request: request, diagnosis: diagnosis)
-        expect(
-            plan.steps.map(\.kind).contains(.helperStep(.createStandardAccount)),
-            "missing account plan must create a standard account through the helper"
+        let plan = ManagedTerminalAccountPlanner.plan(
+            request: request,
+            diagnosis: missingDiagnosis
         )
+        let helperKinds = plan.steps.compactMap { step -> AlanManagedUserHelperPlanStepKind? in
+            guard case .helperStep(let kind) = step.kind else { return nil }
+            return kind
+        }
         expect(
-            !plan.steps.map(\.kind).contains(.writeSudoersDropIn),
-            "helper-backed missing account plan must not write Alan-owned sudoers"
-        )
-        expect(
-            !plan.steps.map(\.kind).contains(.verifyTerminalEntry),
-            "helper-backed missing account plan must not use sudo terminal-entry verification"
-        )
-        expect(
-            plan.steps.map(\.kind).contains(.helperStep(.verifyManagedUserPTY)),
-            "helper-backed missing account plan must verify helper-managed PTY startup"
+            helperKinds == [
+                .createStandardAccount,
+                .hideAccount,
+                .writeOwnershipMarker,
+                .verifyAccount,
+                .verifyManagedUserPTY,
+            ],
+            "Managed User creation must use only current helper-owned account and PTY steps"
         )
         expect(
             plan.steps.map(\.kind).contains(.createOrUpdateTerminalProfile),
-            "ready path must include terminal profile handoff"
-        )
-        expect(
-            !plan.steps.map(\.kind).contains(.bindCurrentSpace),
-            "Managed User creation must not bind the current Space even if legacy request data asks for it"
+            "Managed User creation must hand off to a canonical managed_user profile"
         )
 
-        let sudoers = ManagedTerminalAccountSudoersRule(request: request)
-        expect(
-            sudoers.filePath == "/etc/sudoers.d/alan-terminal-morris-to-alan",
-            "sudoers path must be deterministic and Alan-owned"
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("managed-user-current-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = TerminalProfileStore(
+            fileManager: .default,
+            storeURL: root.appendingPathComponent("terminal-profiles.json")
         )
-        expect(
-            sudoers.contents.contains("morris ALL=(alan) NOPASSWD: ALL"),
-            "sudoers rule must allow GUI user to target account"
+        let manualProfile = TerminalProfileDefinition(
+            id: "manual-sudo",
+            title: "Manual sudo",
+            launch: .sudoUser(unixUser: "operator-target"),
+            defaultWorkingDirectory: "/Users/operator-target",
+            presentation: nil
         )
-        expect(
-            !sudoers.contents.contains("ALL=(ALL)"),
-            "sudoers rule must not grant passwordless root or all-user access"
-        )
-        let unmanagedSudoersPlan = ManagedTerminalAccountPlanner.plan(
-            request: request,
-            state: ManagedTerminalAccountState(
-                account: .standard(homeDirectory: "/Users/alan", shell: "/bin/zsh", hidden: true),
-                sudoers: .unmanaged(path: sudoers.filePath),
-                ownership: .alanManaged(.helperMarker(path: "/Library/Application Support/alan-macos/privileged-helper/managed-users/alan/ownership.json")),
-                terminalProfile: .missing,
-                verification: .notRun
+        do {
+            try store.save(
+                TerminalProfileDocument(
+                    defaultProfileID: manualProfile.id,
+                    profiles: [manualProfile]
+                )
             )
-        )
-        expect(
-            !unmanagedSudoersPlan.steps.map(\.kind).contains(.writeSudoersDropIn),
-            "unmanaged sudoers files must not be overwritten by a generic repair plan"
-        )
-        expect(
-            unmanagedSudoersPlan.status == .sudoersConflict(path: sudoers.filePath),
-            "unmanaged sudoers files must surface as conflicts"
-        )
-        let unmanagedTerminalProfilePlan = ManagedTerminalAccountPlanner.plan(
-            request: request,
-            state: ManagedTerminalAccountState(
-                account: .standard(homeDirectory: "/Users/alan", shell: "/bin/zsh", hidden: true),
-                sudoers: .alanOwnedValid(path: sudoers.filePath),
-                ownership: .alanManaged(.helperMarker(path: "/Library/Application Support/alan-macos/privileged-helper/managed-users/alan/ownership.json")),
-                terminalProfile: .existingUnmanaged(profileID: "alan"),
-                verification: .passed
-            )
-        )
-        expect(
-            !unmanagedTerminalProfilePlan.steps.map(\.kind).contains(.createOrUpdateTerminalProfile),
-            "unmanaged Terminal Profiles must not be overwritten by a generic repair plan"
-        )
-        expect(
-            unmanagedTerminalProfilePlan.status == .terminalProfileConflict(profileID: "alan"),
-            "unmanaged Terminal Profiles must surface as conflicts"
-        )
-
-        let invalid = ManagedTerminalAccountRequest(accountName: "root", guiUserName: "morris")
-        expect(
-            ManagedTerminalAccountIdentifierValidator.validate(invalid)
-                .contains(.reservedAccountName("root")),
-            "root target account must be rejected"
-        )
-
-        let readyState = ManagedTerminalAccountState(
-            account: .standard(homeDirectory: "/Users/alan", shell: "/bin/zsh", hidden: true),
-            sudoers: .alanOwnedValid(path: sudoers.filePath),
-            terminalProfile: .missing,
-            verification: .passed
-        )
-        let handoff = ManagedTerminalAccountProfileHandoff.profileDefinition(
-            for: request,
-            state: readyState
-        )
-        expect(handoff?.id == "alan", "ready account must create matching profile id")
-        expect(
-            handoff?.launch == .managedUser(unixUser: "alan"),
-            "ready managed account profile must use managed_user launch"
-        )
-
-        let failedState = ManagedTerminalAccountState(
-            account: .standard(homeDirectory: "/Users/alan", shell: "/bin/zsh", hidden: true),
-            sudoers: .alanOwnedValid(path: sudoers.filePath),
-            terminalProfile: .missing,
-            verification: .failed(step: .nonInteractiveSudo, message: "sudo requires password")
-        )
-        expect(
-            ManagedTerminalAccountProfileHandoff.profileDefinition(for: request, state: failedState) == nil,
-            "failed verification must suppress ready profile creation"
-        )
-    }
-
-    private static func verifiesManagedTerminalAccountDiscoveryVerificationAndAuthorizedExecutor() {
-        let request = ManagedTerminalAccountRequest(accountName: "alan", guiUserName: "morris")
-        let rule = ManagedTerminalAccountSudoersRule(request: request)
-        let commandRunner = StubManagedTerminalAccountCommandRunner(
-            responses: [
-                "/usr/bin/dscl . -read /Users/alan UniqueID PrimaryGroupID NFSHomeDirectory UserShell IsHidden AuthenticationAuthority":
-                    ManagedTerminalAccountCommandResult(
-                        exitCode: 0,
-                        standardOutput: """
-                        UniqueID: 502
-                        PrimaryGroupID: 20
-                        NFSHomeDirectory: /Users/alan
-                        UserShell: /bin/zsh
-                        IsHidden: 1
-                        AuthenticationAuthority: ;DisabledUser;
-                        """,
-                        standardError: ""
-                    ),
-                "/usr/sbin/dseditgroup -o checkmember -m alan admin":
-                    ManagedTerminalAccountCommandResult(
-                        exitCode: 0,
-                        standardOutput: "no alan is not a member of admin",
-                        standardError: ""
-                    ),
-            ]
-        )
-        let fileManager = SudoersFixtureFileManager(
-            files: [rule.filePath: rule.contents],
-            existingPaths: ["/Users/alan"]
-        )
-        let profiles = TerminalProfileDocument(
-            defaultProfileID: "alan",
-            profiles: [
-                TerminalProfileDefinition(
-                    id: "alan",
-                    title: "Alan",
-                    launch: .managedUser(unixUser: "alan"),
-                    defaultWorkingDirectory: "/Users/alan",
-                    presentation: nil,
-                    managedTerminalAccountID: "alan"
-                ),
-            ]
-        )
-        let discoverer = ManagedTerminalAccountLocalStateDiscoverer(
-            fileManager: fileManager,
-            commandRunner: commandRunner,
-            sudoersSyntaxChecker: StubSudoersSyntaxChecker(result: .passed)
-        )
-        let state = discoverer.discover(request: request, terminalProfiles: profiles)
-
-        expect(
-            state.account == .standard(homeDirectory: "/Users/alan", shell: "/bin/zsh", hidden: true),
-            "local state discovery must parse account home, shell, hidden, and admin state"
-        )
-        let nativeHiddenCommandRunner = StubManagedTerminalAccountCommandRunner(
-            responses: [
-                "/usr/bin/dscl . -read /Users/alan UniqueID PrimaryGroupID NFSHomeDirectory UserShell IsHidden AuthenticationAuthority":
-                    ManagedTerminalAccountCommandResult(
-                        exitCode: 0,
-                        standardOutput: """
-                        dsAttrTypeNative:IsHidden: 1
-                        NFSHomeDirectory: /Users/alan
-                        PrimaryGroupID: 20
-                        UniqueID: 502
-                        UserShell: /bin/zsh
-                        """,
-                        standardError: "No such key: AuthenticationAuthority"
-                    ),
-                "/usr/sbin/dseditgroup -o checkmember -m alan admin":
-                    ManagedTerminalAccountCommandResult(
-                        exitCode: 1,
-                        standardOutput: "no alan is not a member of admin",
-                        standardError: ""
-                    ),
-            ]
-        )
-        let nativeHiddenDiscoverer = ManagedTerminalAccountLocalStateDiscoverer(
-            fileManager: fileManager,
-            commandRunner: nativeHiddenCommandRunner,
-            sudoersSyntaxChecker: StubSudoersSyntaxChecker(result: .passed)
-        )
-        let nativeHiddenState = nativeHiddenDiscoverer.discover(
-            request: request,
-            terminalProfiles: profiles
-        )
-        expect(
-            nativeHiddenState.account == .standard(
-                homeDirectory: "/Users/alan",
-                shell: "/bin/zsh",
-                hidden: true
-            ),
-            "local state discovery must parse native dscl IsHidden output"
-        )
-        let nativeHiddenPlan = ManagedTerminalAccountPlanner.plan(
-            request: request,
-            state: ManagedTerminalAccountState(
-                account: nativeHiddenState.account,
-                sudoers: nativeHiddenState.sudoers,
-                terminalProfile: nativeHiddenState.terminalProfile,
-                verification: .passed,
-                homeDirectoryExists: nativeHiddenState.homeDirectoryExists
-            )
-        )
-        expect(
-            !nativeHiddenPlan.steps.map(\.kind).contains(.hideAccount),
-            "already-hidden native dscl accounts must not prompt for another hide repair"
-        )
-        expect(state.homeDirectoryExists, "ready local state must record that the home directory exists")
-        let partialCommandRunner = StubManagedTerminalAccountCommandRunner(
-            responses: [
-                "/usr/bin/dscl . -read /Users/alan UniqueID PrimaryGroupID NFSHomeDirectory UserShell IsHidden AuthenticationAuthority":
-                    ManagedTerminalAccountCommandResult(
-                        exitCode: 0,
-                        standardOutput: """
-                        PrimaryGroupID: 20
-                        NFSHomeDirectory: /Users/alan
-                        UserShell: /bin/zsh
-                        """,
-                        standardError: """
-                        No such key: UniqueID
-                        No such key: AuthenticationAuthority
-                        """
-                    ),
-                "/usr/sbin/dseditgroup -o checkmember -m alan admin":
-                    ManagedTerminalAccountCommandResult(
-                        exitCode: 1,
-                        standardOutput: "no alan is not a member of admin",
-                        standardError: ""
-                    ),
-            ]
-        )
-        let partialDiscoverer = ManagedTerminalAccountLocalStateDiscoverer(
-            fileManager: fileManager,
-            commandRunner: partialCommandRunner,
-            sudoersSyntaxChecker: StubSudoersSyntaxChecker(result: .passed)
-        )
-        let partialState = partialDiscoverer.discover(request: request, terminalProfiles: profiles)
-        if case .invalid(let reason) = partialState.account {
-            expect(
-                reason.contains("incomplete"),
-                "partial account records must be reported as incomplete"
-            )
-        } else {
-            fail("missing UniqueID must not be treated as a ready standard account")
+        } catch {
+            fail("current Managed User test setup must save manual profile: \(error)")
         }
-        let partialPlan = ManagedTerminalAccountPlanner.plan(request: request, state: partialState)
-        expect(
-            partialPlan.steps.first?.kind == .createStandardAccount,
-            "partial account records must be completed through the account creation repair path"
-        )
-        let manualCommandRunner = StubManagedTerminalAccountCommandRunner(
-            responses: [
-                "/usr/bin/dscl . -read /Users/alan UniqueID PrimaryGroupID NFSHomeDirectory UserShell IsHidden AuthenticationAuthority":
-                    ManagedTerminalAccountCommandResult(
-                        exitCode: 0,
-                        standardOutput: """
-                        No such key: IsHidden
-                        No such key: AuthenticationAuthority
-                        NFSHomeDirectory: /Users/alan
-                        PrimaryGroupID: 20
-                        UniqueID: 502
-                        UserShell: /bin/zsh
-                        """,
-                        standardError: ""
-                    ),
-                "/usr/sbin/dseditgroup -o checkmember -m alan admin":
-                    ManagedTerminalAccountCommandResult(
-                        exitCode: 1,
-                        standardOutput: "no alan is not a member of admin",
-                        standardError: ""
-                    ),
-            ]
-        )
-        let manualDiscoverer = ManagedTerminalAccountLocalStateDiscoverer(
-            fileManager: fileManager,
-            commandRunner: manualCommandRunner,
-            sudoersSyntaxChecker: StubSudoersSyntaxChecker(result: .passed)
-        )
-        let manualState = manualDiscoverer.discover(request: request, terminalProfiles: profiles)
-        expect(
-            manualState.account == .standard(homeDirectory: "/Users/alan", shell: "/bin/zsh", hidden: false),
-            "local users with UniqueID and PrimaryGroupID must not be treated as incomplete only because AuthenticationAuthority is absent"
-        )
-        expect(
-            state.sudoers == .alanOwnedValid(path: rule.filePath),
-            "local state discovery must validate Alan-owned sudoers drop-ins"
-        )
-        expect(
-            state.terminalProfile == .existingManaged(profileID: "alan"),
-            "local state discovery must link managed Terminal Profile state"
-        )
-        let driftedProfiles = TerminalProfileDocument(
-            defaultProfileID: "alan",
-            profiles: [
-                TerminalProfileDefinition(
-                    id: "alan",
-                    title: "Alan",
-                    launch: .managedUser(unixUser: "alan"),
-                    defaultWorkingDirectory: "/Users/old-alan",
-                    presentation: nil,
-                    managedTerminalAccountID: "alan"
-                ),
-            ]
-        )
-        let driftedProfileState = discoverer.discover(
-            request: request,
-            terminalProfiles: driftedProfiles
-        )
-        expect(
-            driftedProfileState.terminalProfile != .existingManaged(profileID: "alan"),
-            "managed Terminal Profile discovery must not treat stale default directories as ready"
-        )
-        let driftedProfilePlan = ManagedTerminalAccountPlanner.plan(
-            request: request,
-            state: ManagedTerminalAccountState(
-                account: driftedProfileState.account,
-                sudoers: driftedProfileState.sudoers,
-                ownership: .alanManaged(.helperMarker(path: "/Library/Application Support/alan-macos/privileged-helper/managed-users/alan/ownership.json")),
-                terminalProfile: driftedProfileState.terminalProfile,
-                verification: .passed
-            )
-        )
-        expect(
-            driftedProfilePlan.steps.map(\.kind).contains(.createOrUpdateTerminalProfile),
-            "stale managed Terminal Profiles must schedule a refresh even after readiness passes"
-        )
 
-        let readiness = ManagedTerminalAccountReadinessVerifier.verify(
-            request: request,
-            state: state,
-            entryVerifier: StubTerminalEntryVerifier(result: .passed)
-        )
-        expect(readiness == .passed, "ready state must pass mandatory terminal-entry verification")
-
-        let missingHomeDiscoverer = ManagedTerminalAccountLocalStateDiscoverer(
-            fileManager: SudoersFixtureFileManager(files: [rule.filePath: rule.contents]),
-            commandRunner: commandRunner,
-            sudoersSyntaxChecker: StubSudoersSyntaxChecker(result: .passed)
-        )
-        let missingHomeState = missingHomeDiscoverer.discover(
-            request: request,
-            terminalProfiles: profiles
-        )
-        let missingHomeReadiness = ManagedTerminalAccountReadinessVerifier.verify(
-            request: request,
-            state: missingHomeState,
-            entryVerifier: StubTerminalEntryVerifier(result: .passed)
-        )
-        expect(
-            missingHomeReadiness == .failed(
-                step: .homeDirectory,
-                message: "Home directory is missing."
-            ),
-            "readiness verification must reject managed users whose home directory was not created"
-        )
-        let missingHomePlan = ManagedTerminalAccountPlanner.plan(
-            request: request,
-            state: ManagedTerminalAccountState(
-                account: missingHomeState.account,
-                sudoers: missingHomeState.sudoers,
-                ownership: .alanManaged(.helperMarker(path: "/Library/Application Support/alan-macos/privileged-helper/managed-users/alan/ownership.json")),
-                terminalProfile: missingHomeState.terminalProfile,
-                verification: missingHomeReadiness,
-                homeDirectoryExists: missingHomeState.homeDirectoryExists
-            )
-        )
-        expect(
-            missingHomePlan.steps.map(\.kind).contains(.repairHomeDirectory),
-            "missing home directories must schedule a privileged home-directory repair"
-        )
-
-        let unreadableSudoersDiscoverer = ManagedTerminalAccountLocalStateDiscoverer(
-            fileManager: UnreadableSudoersFixtureFileManager(
-                paths: [rule.filePath],
-                existingPaths: ["/Users/alan"]
-            ),
-            commandRunner: commandRunner,
-            sudoersSyntaxChecker: StubSudoersSyntaxChecker(result: .passed)
-        )
-        let unreadableSudoersState = unreadableSudoersDiscoverer.discover(
-            request: request,
-            terminalProfiles: profiles
-        )
-        expect(
-            unreadableSudoersState.sudoers == .existingUnreadable(path: rule.filePath),
-            "installed root-owned sudoers drop-ins may be unreadable without being classified as Alan-owned"
-        )
-        let unreadableReadiness = ManagedTerminalAccountReadinessVerifier.verify(
-            request: request,
-            state: unreadableSudoersState,
-            entryVerifier: StubTerminalEntryVerifier(result: .passed)
-        )
-        expect(
-            unreadableReadiness != .passed,
-            "unreadable sudoers must not become helper-backed readiness through sudo fallback"
-        )
-        let unreadableLegacyPlan = ManagedTerminalAccountPlanner.plan(
-            request: request,
-            diagnosis: AlanManagedUserDiagnosis(
-                request: request,
-                ownershipState: .alanManaged,
-                readinessState: .legacySudoersPresent,
-                accountExists: true,
-                isAdmin: false,
-                homeDirectoryExists: true,
-                shellMatches: true,
-                hiddenFromLoginWindow: true,
-                legacySudoersPath: rule.filePath,
-                terminalProfileID: "alan",
-                ptySmokeVerified: true,
-                diagnostic: nil
-            )
-        )
-        expect(
-            unreadableLegacyPlan.steps.map(\.kind).contains(.helperStep(.cleanupLegacySudoers)),
-            "legacy unreadable sudoers cleanup must be represented as a helper cleanup step"
-        )
-
-        let invalidSudoers = ManagedTerminalAccountSudoersValidator.validate(
-            contents: rule.contents,
-            rule: rule,
-            syntaxChecker: StubSudoersSyntaxChecker(result: .failed("syntax error"))
-        )
-        expect(!invalidSudoers.isValid, "sudoers validation helper must surface visudo failure")
-
-        let adminReadiness = ManagedTerminalAccountReadinessVerifier.verify(
-            request: request,
-            state: ManagedTerminalAccountState(
-                account: .admin(homeDirectory: "/Users/alan", shell: "/bin/zsh", hidden: true),
-                sudoers: .alanOwnedValid(path: rule.filePath),
-                terminalProfile: .existingManaged(profileID: "alan"),
-                verification: .notRun
-            ),
-            entryVerifier: StubTerminalEntryVerifier(result: .passed)
-        )
-        expect(
-            adminReadiness == .failed(step: .nonAdminAccount, message: "Managed terminal account must be standard."),
-            "readiness verification must reject admin target accounts"
-        )
-
-        let localRoot = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
-            .appendingPathComponent("alan-managed-terminal-account-effects-\(UUID().uuidString)", isDirectory: true)
-        let localStore = TerminalProfileStore(
-            fileManager: FileManager.default,
-            storeURL: localRoot.appendingPathComponent("terminal-profiles.json")
-        )
-        var boundProfileID: String?
-        let helperClient = AlanPrivilegedHelperFakeClient(channel: .dev)
+        let helper = AlanPrivilegedHelperFakeClient(channel: .dev)
         let executor = ManagedTerminalAccountHelperExecutor(
             channel: .dev,
-            helperClient: helperClient,
-            localEffectExecutor: ManagedTerminalAccountTerminalProfileEffectExecutor(
-                store: localStore,
-                currentSpaceBinder: { profileID in
-                    boundProfileID = profileID
-                    return true
-                }
-            ),
+            helperClient: helper,
+            localEffectExecutor: ManagedTerminalAccountTerminalProfileEffectExecutor(store: store)
         )
-        let helperPlan = ManagedTerminalAccountPlanner.plan(
-            request: request,
-            diagnosis: AlanManagedUserDiagnosis(
-                request: request,
-                ownershipState: .missing,
-                readinessState: .accountMissing,
-                accountExists: false,
-                isAdmin: false,
-                homeDirectoryExists: false,
-                shellMatches: false,
-                hiddenFromLoginWindow: false,
-                legacySudoersPath: nil,
-                terminalProfileID: nil,
-                ptySmokeVerified: false,
-                diagnostic: nil
-            )
-        )
-        let result = executor.apply(helperPlan)
-        let diagnostics = result.visibleDiagnostics.joined(separator: " ")
-        expect(result.failedStep == nil, "helper executor must apply helper-authored Managed User plans")
+        let apply = executor.apply(plan)
+        expect(apply.failedStep == nil, "current helper-backed Managed User plan must apply")
+        let appliedDocument = store.load().document
         expect(
-            !diagnostics.contains("account_password"),
-            "helper executor diagnostics must not expose account password internals"
+            appliedDocument.profile(id: "alan")?.launch == .managedUser(unixUser: "alan"),
+            "new Managed User profiles must use managed_user"
         )
         expect(
-            helperClient.appliedPlans.first?.steps.map(\.kind).contains(.createStandardAccount) == true,
-            "helper executor must route account creation through typed helper operations"
-        )
-        expect(
-            helperClient.appliedPlans.first?.steps.map(\.kind).contains(.verifyManagedUserPTY) == true,
-            "helper executor must route readiness through helper PTY verification"
-        )
-        let managedProfile = localStore.load().document.profile(id: "alan")
-        expect(
-            managedProfile?.managedTerminalAccountID == "alan",
-            "helper executor must create the managed Terminal Profile handoff"
-        )
-        expect(
-            managedProfile?.launch == .managedUser(unixUser: "alan"),
-            "helper executor profile handoff must use managed_user launch"
-        )
-        expect(
-            boundProfileID == nil,
-            "helper executor must not bind the current Space during Managed User creation"
+            appliedDocument.profile(id: manualProfile.id) == manualProfile,
+            "manually authored sudo_user profiles must remain operator-owned and unchanged"
         )
 
-        let legacyPlan = ManagedTerminalAccountPlanner.plan(
-            request: request,
-            state: ManagedTerminalAccountState(
-                account: .missing,
-                sudoers: .missing,
-                terminalProfile: .missing,
-                verification: .notRun
-            )
-        )
-        let rejectedLegacy = executor.apply(legacyPlan)
-        expect(
-            rejectedLegacy.failedStep == .createStandardAccount,
-            "helper executor must reject legacy privileged account steps"
-        )
-        expect(
-            helperClient.appliedPlans.count == 1,
-            "helper executor must not send legacy sudoers-backed plans to the helper"
-        )
-    }
-
-    private static func verifiesManagedTerminalAccountExecutorAndRollbackSafety() {
-        let request = ManagedTerminalAccountRequest(accountName: "alan", guiUserName: "morris")
-        let rule = ManagedTerminalAccountSudoersRule(request: request)
-        let plan = ManagedTerminalAccountPlanner.plan(
-            request: request,
-            state: ManagedTerminalAccountState(
-                account: .standard(homeDirectory: "/Users/alan", shell: "/bin/zsh", hidden: false),
-                sudoers: .missing,
-                ownership: .alanManaged(.helperMarker(path: "/Library/Application Support/alan-macos/privileged-helper/managed-users/alan/ownership.json")),
-                terminalProfile: .existingManaged(profileID: "alan"),
-                verification: .failed(step: .sudoersValidation, message: "missing sudoers")
-            )
-        )
-        let executor = ManagedTerminalAccountFakeExecutor()
-        let result = executor.apply(plan)
-        expect(
-            result.completedSteps == plan.steps.map(\.kind),
-            "fake executor must apply requested steps in order"
-        )
-        expect(
-            !result.visibleDiagnostics.joined(separator: " ").contains("password"),
-            "executor diagnostics must redact credential wording"
-        )
-
-        let rollback = ManagedTerminalAccountPlanner.rollbackPlan(
-            request: request,
-            state: ManagedTerminalAccountState(
-                account: .standard(homeDirectory: "/Users/alan", shell: "/bin/zsh", hidden: true),
-                sudoers: .alanOwnedValid(path: "/etc/sudoers.d/alan-terminal-morris-to-alan"),
-                ownership: .alanManaged(.helperMarker(path: "/Library/Application Support/alan-macos/privileged-helper/managed-users/alan/ownership.json")),
-                terminalProfile: .existingManaged(profileID: "alan"),
-                verification: .passed
-            ),
-            scope: .alanIntegrationOnly
-        )
-        expect(
-            rollback.steps.map(\.kind) == [.removeSudoersDropIn, .removeManagedTerminalProfile],
-            "ordinary rollback must only remove Alan-owned integration"
-        )
-        expect(
-            !rollback.steps.map(\.kind).contains(.deleteAccount),
-            "ordinary rollback must not delete account"
-        )
-        expect(
-            !rollback.steps.map(\.kind).contains(.deleteHomeDirectory),
-            "ordinary rollback must not delete home"
-        )
-
-        let unreadableRollback = ManagedTerminalAccountPlanner.rollbackPlan(
-            request: request,
-            state: ManagedTerminalAccountState(
-                account: .standard(homeDirectory: "/Users/alan", shell: "/bin/zsh", hidden: true),
-                sudoers: .existingUnreadable(path: rule.filePath),
-                ownership: .alanManaged(.helperMarker(path: "/Library/Application Support/alan-macos/privileged-helper/managed-users/alan/ownership.json")),
-                terminalProfile: .existingManaged(profileID: "alan"),
-                verification: .passed
-            ),
-            scope: .alanIntegrationOnly
-        )
-        expect(
-            unreadableRollback.steps.map(\.kind) == [.removeSudoersDropIn, .removeManagedTerminalProfile],
-            "ordinary rollback must remove unreadable Alan sudoers integration"
-        )
-        let helperRollback = ManagedTerminalAccountPlanner.rollbackPlan(
-            request: request,
-            diagnosis: AlanManagedUserDiagnosis(
-                request: request,
-                ownershipState: .alanManaged,
-                readinessState: .legacySudoersPresent,
-                accountExists: true,
-                isAdmin: false,
-                homeDirectoryExists: true,
-                shellMatches: true,
-                hiddenFromLoginWindow: true,
-                legacySudoersPath: rule.filePath,
-                terminalProfileID: "alan",
-                ptySmokeVerified: true,
-                diagnostic: nil
-            ),
-            scope: .alanIntegrationOnly
-        )
-        expect(
-            helperRollback.steps.map(\.kind).contains(.helperStep(.cleanupLegacySudoers)),
-            "helper rollback must route unreadable legacy sudoers cleanup through the helper"
-        )
-        expect(
-            helperRollback.steps.map(\.kind).contains(.helperStep(.removeManagedUserIntegration)),
-            "helper rollback must remove helper-owned integration through a typed helper step"
-        )
-
-        let destructive = ManagedTerminalAccountPlanner.rollbackPlan(
-            request: request,
-            state: ManagedTerminalAccountState(
-                account: .standard(homeDirectory: "/Users/alan", shell: "/bin/zsh", hidden: true),
-                sudoers: .alanOwnedValid(path: "/etc/sudoers.d/alan-terminal-morris-to-alan"),
-                ownership: .alanManaged(.helperMarker(path: "/Library/Application Support/alan-macos/privileged-helper/managed-users/alan/ownership.json")),
-                terminalProfile: .existingManaged(profileID: "alan"),
-                verification: .passed
-            ),
-            scope: .deleteAccountAndHome(confirmation: nil)
-        )
-        expect(
-            destructive.status == .requiresDestructiveConfirmation,
-            "account/home deletion must require separate destructive confirmation"
-        )
-        let confirmedDestructive = ManagedTerminalAccountPlanner.rollbackPlan(
-            request: request,
-            state: ManagedTerminalAccountState(
-                account: .standard(homeDirectory: "/Users/alan", shell: "/bin/zsh", hidden: true),
-                sudoers: .alanOwnedValid(path: "/etc/sudoers.d/alan-terminal-morris-to-alan"),
-                ownership: .alanManaged(.helperMarker(path: "/Library/Application Support/alan-macos/privileged-helper/managed-users/alan/ownership.json")),
-                terminalProfile: .existingManaged(profileID: "alan"),
-                verification: .passed
-            ),
-            scope: .deleteAccountAndHome(confirmation: "alan")
-        )
-        expect(
-            confirmedDestructive.steps.map(\.kind).contains(.deleteHomeDirectory),
-            "confirmed destructive rollback may delete the canonical managed home"
-        )
-
-        let customHomeRequest = ManagedTerminalAccountRequest(
-            accountName: "alan",
-            guiUserName: "morris",
-            homeDirectory: "/Users/unrelated"
-        )
-        let customHomeDestructive = ManagedTerminalAccountPlanner.rollbackPlan(
-            request: customHomeRequest,
-            state: ManagedTerminalAccountState(
-                account: .standard(homeDirectory: "/Users/unrelated", shell: "/bin/zsh", hidden: true),
-                sudoers: .alanOwnedValid(path: "/etc/sudoers.d/alan-terminal-morris-to-alan"),
-                ownership: .alanManaged(.helperMarker(path: "/Library/Application Support/alan-macos/privileged-helper/managed-users/alan/ownership.json")),
-                terminalProfile: .existingManaged(profileID: "alan"),
-                verification: .passed
-            ),
-            scope: .deleteAccountAndHome(confirmation: "alan")
-        )
-        expect(
-            customHomeDestructive.steps.map(\.kind).contains(.deleteAccount),
-            "custom-home destructive rollback may still delete the confirmed account"
-        )
-        expect(
-            !customHomeDestructive.steps.map(\.kind).contains(.deleteHomeDirectory),
-            "custom-home destructive rollback must not delete a non-canonical home directory"
-        )
-        let rollbackStoreURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("alan-managed-terminal-account-rollback-\(UUID().uuidString).json")
-        let rollbackStore = TerminalProfileStore(fileManager: .default, storeURL: rollbackStoreURL)
-        let managedProfile = TerminalProfileDefinition(
+        let retiredManagedProfile = TerminalProfileDefinition(
             id: "alan",
-            title: "Alan",
-            launch: .managedUser(unixUser: "alan"),
+            title: "Alan Terminal",
+            launch: .sudoUser(unixUser: "alan"),
             defaultWorkingDirectory: "/Users/alan",
             presentation: nil,
             managedTerminalAccountID: "alan"
         )
-        do {
-            try rollbackStore.save(
-                TerminalProfileDocument(defaultProfileID: "alan", profiles: [managedProfile])
-            )
-        } catch {
-            fail("rollback profile store setup must save: \(error)")
-        }
-        let rollbackExecutor = ManagedTerminalAccountHelperExecutor(
-            channel: .dev,
-            helperClient: AlanPrivilegedHelperFakeClient(channel: .dev),
-            localEffectExecutor: ManagedTerminalAccountTerminalProfileEffectExecutor(store: rollbackStore)
+        let retiredDocument = TerminalProfileDocument(
+            defaultProfileID: retiredManagedProfile.id,
+            profiles: [retiredManagedProfile]
         )
-        let rollbackResult = rollbackExecutor.apply(helperRollback)
-        expect(
-            rollbackResult.completedSteps.contains(.removeManagedTerminalProfile),
-            "helper executor rollback must execute managed Terminal Profile removal"
+        let readyDiagnosis = AlanManagedUserDiagnosis(
+            request: request,
+            ownershipState: .alanManaged,
+            readinessState: .ready,
+            accountExists: true,
+            isAdmin: false,
+            homeDirectoryExists: true,
+            shellMatches: true,
+            hiddenFromLoginWindow: true,
+            terminalProfileID: request.terminalProfileID,
+            ptySmokeVerified: true,
+            diagnostic: nil
+        )
+        let repair = ManagedTerminalAccountPlanner.plan(
+            request: request,
+            diagnosis: readyDiagnosis,
+            terminalProfiles: retiredDocument
         )
         expect(
-            rollbackStore.load().document.profile(id: "alan") == nil,
-            "managed Terminal Profile rollback must remove the Alan-owned profile"
+            repair.steps.map(\.kind).contains(.createOrUpdateTerminalProfile),
+            "retired managed sudo_user input must require explicit canonical profile repair"
+        )
+        expect(
+            retiredDocument.profile(id: "alan")?.launch == .sudoUser(unixUser: "alan"),
+            "planning must not rewrite retired managed profiles as a load-time migration"
+        )
+
+        let rollback = ManagedTerminalAccountPlanner.rollbackPlan(
+            request: request,
+            diagnosis: readyDiagnosis,
+            scope: .alanIntegrationOnly,
+            terminalProfiles: appliedDocument
+        )
+        expect(
+            rollback.steps.map(\.kind) == [
+                .removeManagedTerminalProfile,
+                .helperStep(.removeManagedUserIntegration),
+            ],
+            "ordinary rollback must remove only current profile and helper-owned integration"
+        )
+        let destructive = ManagedTerminalAccountPlanner.rollbackPlan(
+            request: request,
+            diagnosis: readyDiagnosis,
+            scope: .deleteAccountAndHome(confirmation: nil)
+        )
+        expect(
+            destructive.status == .requiresDestructiveConfirmation,
+            "account and home deletion must require a separate confirmation"
         )
     }
 
@@ -9776,7 +8939,7 @@ private enum ShellRuntimeMetadataTests {
 
         expect(
             writer.syncWrites == 0,
-            "terminal metadata callbacks must not write the manifest or shell-state file "
+            "terminal metadata callbacks must not write the manifest "
                 + "synchronously (got \(writer.syncWrites) synchronous writes)"
         )
     }
@@ -9833,9 +8996,9 @@ private enum ShellRuntimeMetadataTests {
         scheduler.fire()
 
         expect(
-            writer.manifestWrites == 1 && writer.shellStateWrites == 1,
-            "the coalesced flush must write the manifest and shell-state file exactly once each "
-                + "(manifest \(writer.manifestWrites), shellState \(writer.shellStateWrites))"
+            writer.manifestWrites == 1,
+            "the coalesced flush must write the workspace manifest exactly once "
+                + "(manifest \(writer.manifestWrites))"
         )
         expect(
             writer.syncWrites == 0,
@@ -9868,16 +9031,13 @@ private enum ShellRuntimeMetadataTests {
         let windowID = "manifest_async_fail_\(UUID().uuidString)"
         let manifestURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("\(windowID).json")
-        let stateURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("\(windowID)-state.json")
         // Inject the real persistence writer and verify the controller wires its
         // async error sink to control-plane diagnostics. (This exercises the
         // wiring/routing closure; the param-vs-resolved-writer selection itself
         // is only observable with the internal default writer, which is verified
         // by inspection.)
         let writer = ShellPersistenceWriter(
-            manifestStore: ShellWorkspaceManifestStore(manifestURL: manifestURL),
-            stateStore: ShellStatePersistenceStore(persistenceURL: stateURL)
+            manifestStore: ShellWorkspaceManifestStore(manifestURL: manifestURL)
         )
         let controller = makeController(
             windowID: windowID,
@@ -9945,8 +9105,8 @@ private enum ShellRuntimeMetadataTests {
         controller.flushWorkspacePersistence()
 
         expect(
-            writer.syncWrites >= 2,
-            "lifecycle flush must synchronously persist the manifest and shell-state file "
+            writer.syncWrites >= 1,
+            "lifecycle flush must synchronously persist the workspace manifest "
                 + "(synchronous writes \(writer.syncWrites))"
         )
     }
@@ -10001,21 +9161,6 @@ private enum ShellRuntimeMetadataTests {
         )
     }
 
-    private static func verifiesManagedTerminalAccountProcessRunnerTimesOut() {
-        let start = Date()
-        let result = ManagedTerminalAccountProcessRunner(timeoutSeconds: 0.1).run(
-            executablePath: "/bin/sh",
-            arguments: ["-c", "sleep 2"]
-        )
-        let elapsed = Date().timeIntervalSince(start)
-        expect(result.exitCode == 124, "timed-out managed account command must return timeout status")
-        expect(
-            result.standardError.contains("timed out"),
-            "timed-out managed account command must include timeout diagnostics"
-        )
-        expect(elapsed < 1.0, "managed account command timeout must not wait for the child process forever")
-    }
-
     private static func makeController(
         windowID: String = "metadata_test_\(UUID().uuidString)",
         shellState: ShellStateSnapshot? = nil,
@@ -10037,19 +9182,15 @@ private enum ShellRuntimeMetadataTests {
             windowID: windowID,
             terminalRuntimeRegistry: registry
         )
-        let persistenceURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("\(windowID).json")
         let resolvedWriter =
             persistenceWriter
             ?? SynchronousPersistenceWriter(
-                manifestStore: workspaceManifestStore,
-                stateStore: ShellStatePersistenceStore(persistenceURL: persistenceURL)
+                manifestStore: workspaceManifestStore
             )
         let resolvedScheduler = manifestFlushScheduler ?? ImmediateManifestFlushScheduler()
         return ShellHostController(
             shellState: shellState ?? .bootstrapDefault(windowID: windowID),
             windowContext: context,
-            persistenceURL: persistenceURL,
             terminalRuntimeRegistry: registry,
             workspaceManifestStore: workspaceManifestStore,
             workspaceManifest: workspaceManifest,
@@ -10067,7 +9208,6 @@ private enum ShellRuntimeMetadataTests {
         private(set) var syncWrites = 0
         private(set) var asyncWrites = 0
         private(set) var manifestWrites = 0
-        private(set) var shellStateWrites = 0
         private(set) var lastManifest: ShellContentWorkspaceManifest?
 
         @discardableResult
@@ -10084,15 +9224,6 @@ private enum ShellRuntimeMetadataTests {
             lastManifest = manifest
         }
 
-        func writeShellStateSync(_ state: ShellStateSnapshot) {
-            syncWrites += 1
-            shellStateWrites += 1
-        }
-
-        func writeShellStateAsync(_ state: ShellStateSnapshot) {
-            asyncWrites += 1
-            shellStateWrites += 1
-        }
     }
 
     /// Default test writer: persists synchronously to the real stores so the
@@ -10101,11 +9232,9 @@ private enum ShellRuntimeMetadataTests {
     /// scheduler instead.
     final class SynchronousPersistenceWriter: ShellPersistenceWriting {
         private let manifestStore: ShellWorkspaceManifestStore?
-        private let stateStore: ShellStatePersistenceStore
 
-        init(manifestStore: ShellWorkspaceManifestStore?, stateStore: ShellStatePersistenceStore) {
+        init(manifestStore: ShellWorkspaceManifestStore?) {
             self.manifestStore = manifestStore
-            self.stateStore = stateStore
         }
 
         @discardableResult
@@ -10119,8 +9248,6 @@ private enum ShellRuntimeMetadataTests {
         }
 
         func writeManifestAsync(_ manifest: ShellContentWorkspaceManifest) { try? manifestStore?.save(manifest) }
-        func writeShellStateSync(_ state: ShellStateSnapshot) { stateStore.save(state) }
-        func writeShellStateAsync(_ state: ShellStateSnapshot) { stateStore.save(state) }
     }
 
     final class ImmediateManifestFlushScheduler: ManifestFlushScheduling {
@@ -10131,8 +9258,6 @@ private enum ShellRuntimeMetadataTests {
         @discardableResult
         func writeManifestSync(_ manifest: ShellContentWorkspaceManifest) -> Bool { false }
         func writeManifestAsync(_ manifest: ShellContentWorkspaceManifest) {}
-        func writeShellStateSync(_ state: ShellStateSnapshot) {}
-        func writeShellStateAsync(_ state: ShellStateSnapshot) {}
     }
 
     final class ManualManifestFlushScheduler: ManifestFlushScheduling {
@@ -10255,7 +9380,7 @@ private enum ShellRuntimeMetadataTests {
         transcriptSnapshot: TerminalTranscriptSnapshot?
     ) -> ShellContentWorkspaceManifest {
         ShellContentWorkspaceManifest(
-            schemaVersion: ShellWorkspaceManifest.currentSchemaVersion,
+            schemaVersion: ShellContentWorkspaceManifest.currentSchemaVersion,
             contentContractVersion: ShellContentWorkspaceManifest.currentContentContractVersion,
             windowID: windowID,
             selectedSpaceID: "space_main",
@@ -10286,30 +9411,6 @@ private enum ShellRuntimeMetadataTests {
                             activeTask: .inactive
                         )
                     ]
-                )
-            ]
-        )
-    }
-
-    private static func restoreSnapshot(
-        tabID: String,
-        paneID: String,
-        cwd: String
-    ) -> ShellTabRestoreSnapshot {
-        ShellTabRestoreSnapshot(
-            paneTree: ShellPaneTreeNode(
-                nodeID: "node_\(paneID)",
-                kind: .pane,
-                direction: nil,
-                paneID: paneID,
-                children: nil
-            ),
-            panes: [
-                ShellPaneRestoreRecord(
-                    paneID: paneID,
-                    launchTarget: .shell,
-                    cwd: cwd,
-                    title: tabID
                 )
             ]
         )
@@ -10910,88 +10011,6 @@ private enum ShellRuntimeMetadataTests {
         }
     }
 
-    private struct StubManagedTerminalAccountCommandRunner: ManagedTerminalAccountCommandRunning {
-        let responses: [String: ManagedTerminalAccountCommandResult]
 
-        func run(
-            executablePath: String,
-            arguments: [String]
-        ) -> ManagedTerminalAccountCommandResult {
-            let key = ([executablePath] + arguments).joined(separator: " ")
-            return responses[key]
-                ?? ManagedTerminalAccountCommandResult(
-                    exitCode: 1,
-                    standardOutput: "",
-                    standardError: "missing stub response for \(key)"
-                )
-        }
-    }
-
-    private struct FixedManagedTerminalAccountCommandRunner: ManagedTerminalAccountCommandRunning {
-        let result: ManagedTerminalAccountCommandResult
-
-        func run(
-            executablePath: String,
-            arguments: [String]
-        ) -> ManagedTerminalAccountCommandResult {
-            result
-        }
-    }
-
-    private struct StubSudoersSyntaxChecker: ManagedTerminalAccountSudoersSyntaxChecking {
-        let result: ManagedTerminalAccountSudoersValidationResult
-
-        func validateSudoersFile(atPath path: String) -> ManagedTerminalAccountSudoersValidationResult {
-            result
-        }
-    }
-
-    private struct StubTerminalEntryVerifier: ManagedTerminalAccountEntryVerifying {
-        let result: ManagedTerminalAccountSudoersValidationResult
-
-        func verifyTerminalEntry(
-            request: ManagedTerminalAccountRequest
-        ) -> ManagedTerminalAccountSudoersValidationResult {
-            result
-        }
-    }
-
-    private final class SudoersFixtureFileManager: FileManager {
-        private let files: [String: String]
-        private let existingPaths: Set<String>
-
-        init(files: [String: String], existingPaths: Set<String> = []) {
-            self.files = files
-            self.existingPaths = existingPaths
-            super.init()
-        }
-
-        override func fileExists(atPath path: String) -> Bool {
-            files[path] != nil || existingPaths.contains(path)
-        }
-
-        override func contents(atPath path: String) -> Data? {
-            files[path]?.data(using: .utf8)
-        }
-    }
-
-    private final class UnreadableSudoersFixtureFileManager: FileManager {
-        private let paths: Set<String>
-        private let existingPaths: Set<String>
-
-        init(paths: Set<String>, existingPaths: Set<String> = []) {
-            self.paths = paths
-            self.existingPaths = existingPaths
-            super.init()
-        }
-
-        override func fileExists(atPath path: String) -> Bool {
-            paths.contains(path) || existingPaths.contains(path)
-        }
-
-        override func contents(atPath path: String) -> Data? {
-            nil
-        }
-    }
 }
 #endif

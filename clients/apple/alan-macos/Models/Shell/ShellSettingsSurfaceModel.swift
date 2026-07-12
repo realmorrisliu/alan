@@ -484,13 +484,12 @@ struct ShellSettingsSurfaceSnapshot: Equatable {
         switch user.readinessState {
         case .ready:
             kinds = [.review, .verify, .remove]
-        case .repairable, .readyToApply, .legacySudoersPresent, .ptySpawnFailed:
+        case .repairable, .readyToApply, .ptySpawnFailed:
             kinds = [.review, .repair]
         case .invalid,
              .helperUnavailable,
              .accountNotAlanManaged,
              .destructiveConfirmation,
-             .sudoersConflict,
              .terminalProfileConflict:
             kinds = [.review]
         }
@@ -666,10 +665,7 @@ struct ManagedTerminalAccountSettingsSummary: Equatable {
 
     static func current(
         terminalProfiles: TerminalProfileSettingsSummary,
-        guiUserName: String = NSUserName(),
-        discoverer: ManagedTerminalAccountLocalStateDiscoverer = ManagedTerminalAccountLocalStateDiscoverer(),
-        entryVerifier: ManagedTerminalAccountEntryVerifying = ManagedTerminalAccountSudoEntryVerifier(),
-        helperClient: AlanPrivilegedHelperClienting? = nil,
+        helperClient: AlanPrivilegedHelperClienting,
         catalog: ManagedTerminalAccountCatalog? = nil
     ) -> ManagedTerminalAccountSettingsSummary {
         let storedCatalog = catalog ?? ManagedTerminalAccountCatalogStore.defaultStore().load()
@@ -687,7 +683,6 @@ struct ManagedTerminalAccountSettingsSummary: Equatable {
             upsertRequest(
                 ManagedTerminalAccountRequest(
                     accountName: entry.accountName,
-                    guiUserName: guiUserName,
                     fullName: entry.displayLabel
                 )
             )
@@ -698,7 +693,6 @@ struct ManagedTerminalAccountSettingsSummary: Equatable {
             upsertRequest(
                 ManagedTerminalAccountRequest(
                     accountName: accountID,
-                    guiUserName: guiUserName,
                     fullName: profile.title
                 )
             )
@@ -706,35 +700,15 @@ struct ManagedTerminalAccountSettingsSummary: Equatable {
 
         let plans = orderedAccountNames.compactMap { accountName -> ManagedTerminalAccountPlan? in
             guard let request = requestsByAccount[accountName] else { return nil }
-            if let helperClient {
-                let status = helperClient.status()
-                let diagnosis = status.isHealthy
-                    ? helperClient.diagnoseManagedUser(request)
-                    : AlanManagedUserDiagnosis.helperUnavailable(request: request, status: status)
-                return ManagedTerminalAccountPlanner.plan(
-                    request: request,
-                    diagnosis: diagnosis,
-                    terminalProfiles: terminalProfiles.document
-                )
-            }
-            let discoveredState = discoverer.discover(
+            let status = helperClient.status()
+            let diagnosis = status.isHealthy
+                ? helperClient.diagnoseManagedUser(request)
+                : AlanManagedUserDiagnosis.helperUnavailable(request: request, status: status)
+            return ManagedTerminalAccountPlanner.plan(
                 request: request,
+                diagnosis: diagnosis,
                 terminalProfiles: terminalProfiles.document
             )
-            let verification = ManagedTerminalAccountReadinessVerifier.verify(
-                request: request,
-                state: discoveredState,
-                entryVerifier: entryVerifier
-            )
-            let verifiedState = ManagedTerminalAccountState(
-                account: discoveredState.account,
-                sudoers: discoveredState.sudoers,
-                ownership: discoveredState.ownership,
-                terminalProfile: discoveredState.terminalProfile,
-                verification: verification,
-                homeDirectoryExists: discoveredState.homeDirectoryExists
-            )
-            return ManagedTerminalAccountPlanner.plan(request: request, state: verifiedState)
         }
         return ManagedTerminalAccountSettingsSummary(plans: plans)
     }
@@ -875,10 +849,8 @@ enum ManagedTerminalUserReadinessState: String, Equatable {
     case invalid
     case helperUnavailable
     case accountNotAlanManaged
-    case legacySudoersPresent
     case ptySpawnFailed
     case destructiveConfirmation
-    case sudoersConflict
     case terminalProfileConflict
 }
 
@@ -927,12 +899,6 @@ struct ManagedTerminalUserSummary: Equatable, Identifiable {
             readinessState = .accountNotAlanManaged
             repairState = nil
             conflictState = "\(plan.request.accountName) is an existing local account outside Alan management."
-        case .legacySudoersPresent(let path):
-            readinessState = .legacySudoersPresent
-            repairState = path.map {
-                "\(plan.request.accountName) has legacy Alan sudoers state at \($0)."
-            } ?? "\(plan.request.accountName) has legacy Alan sudoers state."
-            conflictState = nil
         case .ptySpawnFailed:
             readinessState = .ptySpawnFailed
             repairState = "\(plan.request.accountName) failed helper-managed PTY verification."
@@ -941,10 +907,6 @@ struct ManagedTerminalUserSummary: Equatable, Identifiable {
             readinessState = .destructiveConfirmation
             repairState = nil
             conflictState = nil
-        case .sudoersConflict(let path):
-            readinessState = .sudoersConflict
-            repairState = nil
-            conflictState = "\(plan.request.accountName) has an existing non-Alan sudoers file at \(path)."
         case .terminalProfileConflict(let profileID):
             readinessState = .terminalProfileConflict
             repairState = nil
@@ -957,12 +919,10 @@ struct ManagedTerminalUserSummary: Equatable, Identifiable {
 struct ManagedTerminalUserCreationDraft: Equatable {
     var unixUserName: String
     var displayLabel: String
-    var guiUserName: String
 
     var request: ManagedTerminalAccountRequest {
         ManagedTerminalAccountRequest(
             accountName: unixUserName.trimmingCharacters(in: .whitespacesAndNewlines),
-            guiUserName: guiUserName.trimmingCharacters(in: .whitespacesAndNewlines),
             fullName: normalizedDisplayLabel
         )
     }
@@ -1011,18 +971,8 @@ struct ManagedTerminalUserCreationPreview: Equatable {
             return "Repair shell"
         case .hideAccount:
             return "Hide from login window"
-        case .writeSudoersDropIn:
-            return "Prepare helper-managed account entry"
-        case .validateSudoers:
-            return "Validate helper plan"
-        case .verifyTerminalEntry:
-            return "Verify terminal entry"
         case .createOrUpdateTerminalProfile:
             return "Terminal Profile \(request.terminalProfileID)"
-        case .bindCurrentSpace:
-            return "Bind current Space"
-        case .removeSudoersDropIn:
-            return "Remove Alan-owned sudoers drop-in"
         case .removeManagedTerminalProfile:
             return "Remove managed Terminal Profile"
         case .deleteAccount:
@@ -1062,21 +1012,6 @@ enum ManagedTerminalUserCreationPreviewBuilder {
                 diagnosis: diagnosis,
                 terminalProfiles: terminalProfiles.document
             )
-        )
-    }
-
-    static func make(
-        draft: ManagedTerminalUserCreationDraft,
-        existingUsers: [ManagedTerminalUserSummary],
-        terminalProfiles: TerminalProfileSettingsSummary,
-        state: ManagedTerminalAccountState
-    ) -> ManagedTerminalUserCreationPreviewResult {
-        make(
-            draft: draft,
-            existingUsers: existingUsers,
-            terminalProfiles: terminalProfiles,
-            accountIsUnavailable: accountIsUnavailableForCreation(state.account),
-            plan: ManagedTerminalAccountPlanner.plan(request: draft.request, state: state)
         )
     }
 
@@ -1123,18 +1058,6 @@ enum ManagedTerminalUserCreationPreviewBuilder {
         )
     }
 
-    private static func accountIsUnavailableForCreation(
-        _ account: ManagedTerminalAccountRecord
-    ) -> Bool {
-        switch account {
-        case .missing:
-            return false
-        case .invalid(let reason) where reason.localizedCaseInsensitiveContains("incomplete"):
-            return false
-        case .invalid, .standard, .admin:
-            return true
-        }
-    }
 }
 
 struct ManagedTerminalUserProvisioningApplyResult: Equatable {

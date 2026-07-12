@@ -18,7 +18,6 @@ final class ShellWorkspacePersistenceCoordinator {
 
     init(
         manifestStore: ShellWorkspaceManifestStore?,
-        stateStore: ShellStatePersistenceStore,
         workspaceManifest: ShellContentWorkspaceManifest?,
         persistenceWriter: ShellPersistenceWriting? = nil,
         manifestFlushScheduler: ManifestFlushScheduling? = nil
@@ -27,8 +26,7 @@ final class ShellWorkspacePersistenceCoordinator {
         self.persistenceWriter =
             persistenceWriter
             ?? ShellPersistenceWriter(
-                manifestStore: manifestStore,
-                stateStore: stateStore
+                manifestStore: manifestStore
             )
         self.manifestFlushScheduler = manifestFlushScheduler ?? DebouncedManifestFlushScheduler()
         self.workspaceManifest = workspaceManifest
@@ -74,9 +72,8 @@ final class ShellWorkspacePersistenceCoordinator {
     ) {
         // The high-frequency terminal callback path keeps the in-memory
         // control-plane state fresh (so IPC clients never read stale pane state)
-        // but defers all disk work: manifest + shell-state file + control-plane
-        // event log + state.json mirror. Structural mutations persist
-        // synchronously for prompt durability.
+        // but defers disk work: manifest + control-plane event log + temporary
+        // state.json mirror. Structural mutations persist synchronously.
         if coalesced {
             controlPlane.publishInMemory(state: state)
             scheduleContentFlush(
@@ -91,7 +88,6 @@ final class ShellWorkspacePersistenceCoordinator {
                 makeManifest: makeManifest,
                 makePinnedSnapshot: makePinnedSnapshot
             )
-            persistShellState(state)
             controlPlane.publish(state: state)
         }
     }
@@ -107,7 +103,6 @@ final class ShellWorkspacePersistenceCoordinator {
             makeManifest: makeManifest,
             makePinnedSnapshot: makePinnedSnapshot
         )
-        persistShellState(state)
         controlPlane.publish(state: state)
         controlPlane.flushStateFile()
     }
@@ -190,13 +185,12 @@ final class ShellWorkspacePersistenceCoordinator {
         makePinnedSnapshot: PinnedSnapshotProvider
     ) {
         pendingContentFlushScheduled = false
-        guard let state = latestState() else { return }
+        guard latestState() != nil else { return }
         syncManifestFromShellState(
             coalesced: true,
             makeManifest: makeManifest,
             makePinnedSnapshot: makePinnedSnapshot
         )
-        persistShellState(state, coalesced: true)
         controlPlane.persistPublished()
     }
 
@@ -228,17 +222,6 @@ final class ShellWorkspacePersistenceCoordinator {
             workspaceManifest = manifestToSave
         } else {
             onDiagnostic("workspace manifest save failed")
-        }
-    }
-
-    func persistShellState(
-        _ state: ShellStateSnapshot,
-        coalesced: Bool = false
-    ) {
-        if coalesced {
-            persistenceWriter.writeShellStateAsync(state)
-        } else {
-            persistenceWriter.writeShellStateSync(state)
         }
     }
 

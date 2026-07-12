@@ -17,10 +17,6 @@ DERIVED_DATA="${ALAN_XCODE_DERIVED_DATA:-$PROJECT_ROOT/target/xcode-derived}"
 APP_SOURCE="$DERIVED_DATA/Build/Products/Release/$ALAN_APP_BUNDLE_NAME"
 APP_INSTALL_DIR="${ALAN_APP_INSTALL_DIR:-$HOME/Applications}"
 APP_TARGET="$APP_INSTALL_DIR/$ALAN_APP_BUNDLE_NAME"
-LEGACY_APP_TARGET=""
-if [[ -n "$ALAN_LEGACY_APP_BUNDLE_NAME" ]]; then
-    LEGACY_APP_TARGET="$APP_INSTALL_DIR/$ALAN_LEGACY_APP_BUNDLE_NAME"
-fi
 CLI_INSTALL_DIR="${ALAN_CLI_INSTALL_DIR:-/usr/local/bin}"
 APP_WAS_RUNNING=0
 
@@ -45,11 +41,6 @@ is_app_running() {
 
     pgrep -f "/$app_pattern/Contents/MacOS/" >/dev/null 2>&1 && return 0
 
-    if [[ -n "$ALAN_LEGACY_APP_BUNDLE_NAME" ]]; then
-        local legacy_pattern="${ALAN_LEGACY_APP_BUNDLE_NAME//./\\.}"
-        pgrep -f "/$legacy_pattern/Contents/MacOS/" >/dev/null 2>&1 && return 0
-    fi
-
     return 1
 }
 
@@ -69,14 +60,6 @@ is_alan_owned_link() {
         *)
             ;;
     esac
-
-    if [[ -n "$ALAN_LEGACY_APP_BUNDLE_NAME" ]]; then
-        case "$target" in
-            *"/$ALAN_LEGACY_APP_BUNDLE_NAME/Contents/Resources/bin/"*)
-                return 0
-                ;;
-        esac
-    fi
 
     return 1
 }
@@ -137,14 +120,6 @@ has_homebrew_managed_tool_links() {
                 return 0
                 ;;
         esac
-        if [[ -n "$ALAN_LEGACY_APP_BUNDLE_NAME" ]]; then
-            case "$target" in
-                *"/$ALAN_LEGACY_APP_BUNDLE_NAME/Contents/Resources/bin/$tool")
-                    printf '%s\n' "$link"
-                    return 0
-                    ;;
-            esac
-        fi
     done
 
     return 1
@@ -196,11 +171,6 @@ if [[ -f "$APP_TARGET/Contents/Frameworks/libalan_shell_core_ffi.dylib" ]]; then
     verify_shell_core_ffi_loadable "$APP_TARGET/Contents/Frameworks/libalan_shell_core_ffi.dylib"
 fi
 codesign --verify --strict --verbose=2 "$APP_TARGET" >/dev/null
-if [[ -n "$LEGACY_APP_TARGET" ]] && alan_is_distinct_existing_path "$LEGACY_APP_TARGET" "$APP_TARGET"; then
-    printf 'Removing legacy lowercase app bundle at %s...\n' "$LEGACY_APP_TARGET"
-    rm -rf "$LEGACY_APP_TARGET"
-fi
-
 printf 'Linking CLI into %s...\n' "$CLI_INSTALL_DIR"
 if is_homebrew_prefix_target "$CLI_INSTALL_DIR"; then
     printf 'error: %s is inside a Homebrew prefix.\n' "$CLI_INSTALL_DIR" >&2

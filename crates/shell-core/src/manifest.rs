@@ -8,166 +8,9 @@ use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
-/// Legacy terminal-only workspace manifest.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ShellWorkspaceManifest {
-    /// Manifest schema version.
-    pub schema_version: u32,
-    /// Window id.
-    pub window_id: String,
-    /// Selected Space id.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub selected_space_id: Option<String>,
-    /// Selected Tab id.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub selected_tab_id: Option<String>,
-    /// Spaces.
-    pub spaces: Vec<ShellWorkspaceSpaceRecord>,
-}
-
-impl ShellWorkspaceManifest {
-    /// Migrates legacy terminal pane restore snapshots into content-container snapshots.
-    pub fn migrating_terminal_restore_snapshots_to_content_containers(
-        &self,
-    ) -> ShellContentWorkspaceManifest {
-        ShellContentWorkspaceManifest {
-            schema_version: self.schema_version,
-            content_contract_version:
-                ShellContentWorkspaceManifest::CURRENT_CONTENT_CONTRACT_VERSION.to_string(),
-            window_id: self.window_id.clone(),
-            selected_space_id: self.selected_space_id.clone(),
-            selected_tab_id: self.selected_tab_id.clone(),
-            spaces: self
-                .spaces
-                .iter()
-                .map(ShellContentWorkspaceSpaceRecord::from_legacy)
-                .collect(),
-            legacy_quick_terminal: None,
-        }
-    }
-}
-
-/// Legacy terminal-only Space manifest record.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ShellWorkspaceSpaceRecord {
-    /// Space id.
-    pub space_id: String,
-    /// Space title.
-    pub title: String,
-    /// Sort order.
-    pub order: i32,
-    /// Creation time.
-    pub created_at: DateTime<Utc>,
-    /// Last update time.
-    pub updated_at: DateTime<Utc>,
-    /// Space-local selected tab id.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub selected_tab_id: Option<String>,
-    /// Tab records.
-    pub tabs: Vec<ShellWorkspaceTabRecord>,
-    /// Terminal Profile id.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub terminal_profile_id: Option<String>,
-    /// Optional presentation icon.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub presentation_icon: Option<String>,
-}
-
-/// Legacy terminal-only tab manifest record.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ShellWorkspaceTabRecord {
-    /// Tab id.
-    pub tab_id: String,
-    /// Optional title.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub title: Option<String>,
-    /// Tab kind.
-    pub kind: TabKind,
-    /// Creation time.
-    pub created_at: DateTime<Utc>,
-    /// Last activation time.
-    pub last_activated_at: DateTime<Utc>,
-    /// Last activity time.
-    pub last_activity_at: DateTime<Utc>,
-    /// Whether tab is pinned.
-    pub is_pinned: bool,
-    /// Whether the title is user locked.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub is_title_user_locked: Option<bool>,
-    /// Pinned restore snapshot.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub pin_snapshot: Option<ShellTabRestoreSnapshot>,
-    /// Live restore snapshot.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub live_snapshot: Option<ShellTabRestoreSnapshot>,
-    /// Active task state.
-    #[serde(default)]
-    pub active_task: ShellTabActiveTaskState,
-}
-
-/// Legacy terminal-only tab restore snapshot.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ShellTabRestoreSnapshot {
-    /// Legacy pane tree.
-    pub pane_tree: PaneTreeNode,
-    /// Legacy terminal pane restore records.
-    pub panes: Vec<ShellPaneRestoreRecord>,
-}
-
-impl ShellTabRestoreSnapshot {
-    fn migrating_terminal_panes_to_content_containers(&self) -> ShellContentTabRestoreSnapshot {
-        ShellContentTabRestoreSnapshot {
-            pane_tree: self.pane_tree.clone(),
-            pane_slots: self
-                .panes
-                .iter()
-                .map(|pane| ShellPaneSlotRestoreRecord {
-                    pane_slot_id: pane.pane_id.clone(),
-                    content_id: content_id_for_pane_id(&pane.pane_id),
-                })
-                .collect(),
-            contents: self
-                .panes
-                .iter()
-                .map(|pane| {
-                    let title = pane.title.clone().unwrap_or_else(|| "Shell".to_string());
-                    ShellContentRestoreRecord {
-                        content_id: content_id_for_pane_id(&pane.pane_id),
-                        kind: ContentKind::Terminal,
-                        title: title.clone(),
-                        payload: ShellContentPayload::terminal_with_profile(
-                            pane.launch_target,
-                            pane.cwd.as_deref(),
-                            Some(&title),
-                            pane.terminal_profile_id.as_deref(),
-                        ),
-                    }
-                })
-                .collect(),
-        }
-    }
-}
-
-/// Legacy terminal pane restore record.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ShellPaneRestoreRecord {
-    /// Pane id.
-    pub pane_id: String,
-    /// Launch target.
-    pub launch_target: ShellLaunchTarget,
-    /// Restored current working directory.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub cwd: Option<String>,
-    /// Restored terminal title.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub title: Option<String>,
-    /// Terminal Profile id.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub terminal_profile_id: Option<String>,
-}
-
 /// Content record stored in a restore snapshot.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ShellContentRestoreRecord {
     /// Content id.
     pub content_id: String,
@@ -181,6 +24,7 @@ pub struct ShellContentRestoreRecord {
 
 /// Pane slot restore record.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ShellPaneSlotRestoreRecord {
     /// Pane slot id.
     pub pane_slot_id: String,
@@ -190,6 +34,7 @@ pub struct ShellPaneSlotRestoreRecord {
 
 /// Tab restore snapshot.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ShellContentTabRestoreSnapshot {
     /// Pane tree.
     #[serde(with = "manifest_pane_tree")]
@@ -241,6 +86,7 @@ impl ShellContentTabRestoreSnapshot {
 
 /// Workspace tab manifest record.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ShellContentWorkspaceTabRecord {
     /// Tab id.
     pub tab_id: String,
@@ -313,6 +159,7 @@ impl ShellContentWorkspaceTabRecord {
 
 /// Workspace space manifest record.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ShellContentWorkspaceSpaceRecord {
     /// Space id.
     pub space_id: String,
@@ -337,81 +184,9 @@ pub struct ShellContentWorkspaceSpaceRecord {
     pub presentation_icon: Option<String>,
 }
 
-impl ShellContentWorkspaceSpaceRecord {
-    fn from_legacy(space: &ShellWorkspaceSpaceRecord) -> Self {
-        Self {
-            space_id: space.space_id.clone(),
-            title: space.title.clone(),
-            order: space.order,
-            created_at: space.created_at,
-            updated_at: space.updated_at,
-            selected_tab_id: space.selected_tab_id.clone(),
-            tabs: space
-                .tabs
-                .iter()
-                .map(ShellContentWorkspaceTabRecord::from_legacy)
-                .collect(),
-            terminal_profile_id: space.terminal_profile_id.clone(),
-            presentation_icon: space.presentation_icon.clone(),
-        }
-    }
-}
-
-impl ShellContentWorkspaceTabRecord {
-    fn from_legacy(tab: &ShellWorkspaceTabRecord) -> Self {
-        Self {
-            tab_id: tab.tab_id.clone(),
-            title: tab.title.clone(),
-            kind: tab.kind,
-            created_at: tab.created_at,
-            last_activated_at: tab.last_activated_at,
-            last_activity_at: tab.last_activity_at,
-            is_pinned: tab.is_pinned,
-            is_title_user_locked: tab.is_title_user_locked,
-            pin_snapshot: tab
-                .pin_snapshot
-                .as_ref()
-                .map(ShellTabRestoreSnapshot::migrating_terminal_panes_to_content_containers),
-            live_snapshot: tab
-                .live_snapshot
-                .as_ref()
-                .map(ShellTabRestoreSnapshot::migrating_terminal_panes_to_content_containers),
-            active_task: tab.active_task,
-        }
-    }
-}
-
-/// Legacy quick-terminal presentation state decoded only to discard old manifest data.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum LegacyQuickTerminalPresentation {
-    /// Legacy quick terminal was visible.
-    Visible,
-    /// Legacy quick terminal was hidden.
-    Hidden,
-}
-
-/// Legacy quick terminal restore record decoded only to discard old manifest data.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct LegacyQuickTerminalRestoreRecord {
-    /// Pane id.
-    pub pane_id: String,
-    /// Persisted presentation state.
-    #[serde(default = "default_legacy_quick_terminal_presentation")]
-    pub presentation: LegacyQuickTerminalPresentation,
-    /// Last working directory.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub last_working_directory: Option<String>,
-    /// Live restore snapshot.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub live_snapshot: Option<ShellContentTabRestoreSnapshot>,
-    /// Active task state.
-    #[serde(default)]
-    pub active_task: ShellTabActiveTaskState,
-}
-
 /// Content-container workspace manifest.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ShellContentWorkspaceManifest {
     /// Manifest schema version.
     pub schema_version: u32,
@@ -427,9 +202,6 @@ pub struct ShellContentWorkspaceManifest {
     pub selected_tab_id: Option<String>,
     /// Spaces.
     pub spaces: Vec<ShellContentWorkspaceSpaceRecord>,
-    /// Legacy quick-terminal restore record. Decoded for load tolerance and omitted on write.
-    #[serde(default, rename = "quick_terminal", skip_serializing)]
-    pub legacy_quick_terminal: Option<LegacyQuickTerminalRestoreRecord>,
 }
 
 impl ShellContentWorkspaceManifest {
@@ -490,7 +262,6 @@ impl ShellContentWorkspaceManifest {
                 terminal_profile_id: None,
                 presentation_icon: None,
             }],
-            legacy_quick_terminal: None,
         }
     }
 
@@ -773,14 +544,6 @@ fn restored_content_instance(
     }
 }
 
-fn content_id_for_pane_id(pane_id: &str) -> String {
-    format!("content_{pane_id}")
-}
-
-fn default_legacy_quick_terminal_presentation() -> LegacyQuickTerminalPresentation {
-    LegacyQuickTerminalPresentation::Hidden
-}
-
 fn strongest_attention(pane_slots: &[PaneSlot], space_id: &str) -> ShellAttentionState {
     pane_slots
         .iter()
@@ -857,6 +620,7 @@ mod manifest_pane_tree {
     }
 
     #[derive(Debug, Clone, Serialize, Deserialize)]
+    #[serde(deny_unknown_fields)]
     struct ManifestPaneTreeNode {
         node_id: String,
         kind: PaneTreeKind,

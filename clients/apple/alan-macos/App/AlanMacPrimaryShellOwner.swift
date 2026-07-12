@@ -14,8 +14,7 @@ final class AlanMacPrimaryShellOwner: ObservableObject {
         )
         let resolvedHost = ShellHostController.live(
             fileManager: fileManager,
-            windowContext: windowContext,
-            startupMode: .workspaceManifest
+            windowContext: windowContext
         )
         #if canImport(AppIntents)
         ShellAutomationEntityStore.install(snapshotProvider: { [weak resolvedHost] in

@@ -34,11 +34,8 @@ pub use envelope::{
     ShellCoreResponseEnvelope,
 };
 pub use manifest::{
-    LegacyQuickTerminalPresentation, LegacyQuickTerminalRestoreRecord, ShellContentRestoreRecord,
-    ShellContentTabRestoreSnapshot, ShellContentWorkspaceManifest,
-    ShellContentWorkspaceSpaceRecord, ShellContentWorkspaceTabRecord, ShellPaneRestoreRecord,
-    ShellPaneSlotRestoreRecord, ShellTabRestoreSnapshot, ShellWorkspaceManifest,
-    ShellWorkspaceSpaceRecord, ShellWorkspaceTabRecord,
+    ShellContentRestoreRecord, ShellContentTabRestoreSnapshot, ShellContentWorkspaceManifest,
+    ShellContentWorkspaceSpaceRecord, ShellContentWorkspaceTabRecord, ShellPaneSlotRestoreRecord,
 };
 pub use model::{
     ContentCapability, ContentInstance, ContentKind, ContentLifecycleState, PaneSlot, PaneTreeKind,
@@ -67,7 +64,6 @@ pub use terminal_profile::{
     ManagedTerminalAccountPlanStepKind, ManagedTerminalAccountPlanner,
     ManagedTerminalAccountProfileHandoff, ManagedTerminalAccountProfileState,
     ManagedTerminalAccountRecord, ManagedTerminalAccountRequest, ManagedTerminalAccountState,
-    ManagedTerminalAccountSudoersRule, ManagedTerminalAccountSudoersState,
     ManagedTerminalAccountValidationError, ManagedTerminalAccountVerificationStatus,
     ManagedTerminalAccountVerificationStep, TerminalExecutableAvailability,
     TerminalLaunchEnvironment, TerminalLaunchIntent, TerminalLaunchStrategy,
