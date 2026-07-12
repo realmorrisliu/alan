@@ -993,8 +993,8 @@ mod tests {
     use crate::{
         config::Config,
         runtime::{
-            NamespaceRuntimeEnvironment, RuntimeConfig, RuntimeEnvironment, RuntimeLoopState,
-            TurnState, prompt_cache::PromptAssemblyCache,
+            NamespaceRuntimeEnvironment, RuntimeConfig, RuntimeLoopState, TurnState,
+            prompt_cache::PromptAssemblyCache,
         },
     };
 
@@ -1418,10 +1418,7 @@ Direct user-stated stable identity detail.
             workspace_root_dir: None,
             machine: AgentMachine::new(),
             current_submission_id: None,
-            environment: RuntimeEnvironment::namespace(NamespaceRuntimeEnvironment::new(
-                root, "/agent/1", "default",
-            )),
-            tool_catalog: crate::tools::ToolRegistry::new(),
+            environment: NamespaceRuntimeEnvironment::new(root, "/agent/1", "default"),
             core_config: Config::default(),
             runtime_config: RuntimeConfig::default(),
             workspace_persona_dirs: Vec::new(),

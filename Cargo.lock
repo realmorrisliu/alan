@@ -36,6 +36,7 @@ dependencies = [
  "alan-hostfs",
  "alan-kernel",
  "alan-llm",
+ "alan-shell",
  "alan-swebench-tooling",
  "alan-terminal-ui",
  "alan-tools",

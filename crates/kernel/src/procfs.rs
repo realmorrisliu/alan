@@ -223,6 +223,16 @@ pub struct ProcFs {
     runner: Option<Arc<dyn ProcessRunner>>,
 }
 
+/// Point-in-time observation of the files owned by one Process.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProcessFileSnapshot {
+    pub status: Status,
+    pub exit_code: Option<i32>,
+    pub output: Vec<u8>,
+    pub output_offset: u64,
+    pub io_events_offset: u64,
+}
+
 impl Default for ProcFs {
     fn default() -> Self {
         Self::new()
@@ -363,6 +373,60 @@ impl ProcFs {
             )
             .await;
         }
+    }
+
+    /// Observe Process lifecycle and retained IO files without opening a live-edge reader.
+    pub async fn observe_process_files(&self, pid: Pid) -> Option<ProcessFileSnapshot> {
+        let (status, exit_code, output, io_events) = {
+            let state = self.state.lock().await;
+            let process = state.table.get(pid)?;
+            (
+                process.status,
+                process.exit_code,
+                state.outputs.get(&pid).cloned(),
+                state.io_events.get(&pid).cloned(),
+            )
+        };
+        let output_offset = match output.as_ref() {
+            Some(stream) => stream.len().await,
+            None => 0,
+        };
+        let output = match output {
+            Some(stream) => {
+                let mut bytes = Vec::new();
+                let mut offset = 0;
+                while offset < output_offset {
+                    let chunk = stream
+                        .read(offset, (output_offset - offset).min(u32::MAX as u64) as u32)
+                        .await;
+                    if chunk.is_empty() {
+                        break;
+                    }
+                    offset += chunk.len() as u64;
+                    bytes.extend(chunk);
+                }
+                bytes
+            }
+            None => Vec::new(),
+        };
+        let io_events_offset = match io_events {
+            Some(stream) => stream.len().await,
+            None => 0,
+        };
+        Some(ProcessFileSnapshot {
+            status,
+            exit_code,
+            output,
+            output_offset,
+            io_events_offset,
+        })
+    }
+
+    /// Observe Process lifecycle without waiting on retained IO work.
+    pub fn try_observe_process_lifecycle(&self, pid: Pid) -> Option<(Status, Option<i32>)> {
+        let state = self.state.try_lock().ok()?;
+        let process = state.table.get(pid)?;
+        Some((process.status, process.exit_code))
     }
 
     fn child_namespace_for_spawn(&self, pid: Pid) -> Namespace {

@@ -246,9 +246,10 @@ pub struct NamespaceRuntimeEnvironment {
 
 #[derive(Clone)]
 pub(crate) struct NamespaceProcessContext {
-    pub(crate) procfs: alan_kernel::ProcFs,
+    pub(crate) launch_procfs: alan_kernel::ProcFs,
     pub(crate) agent_root: Arc<alan_agentfs::AgentRootFs>,
     pub(crate) pid: alan_kernel::Pid,
+    pub(crate) tool_runner: crate::tools::ToolProcessRunner,
 }
 
 #[derive(Clone)]
@@ -297,20 +298,76 @@ impl NamespaceRuntimeEnvironment {
 
     pub(crate) fn with_process_context(
         mut self,
-        procfs: alan_kernel::ProcFs,
+        launch_procfs: alan_kernel::ProcFs,
         agent_root: Arc<alan_agentfs::AgentRootFs>,
         pid: alan_kernel::Pid,
+        tool_runner: crate::tools::ToolProcessRunner,
     ) -> Self {
         self.process_context = Some(NamespaceProcessContext {
-            procfs,
+            launch_procfs,
             agent_root,
             pid,
+            tool_runner,
         });
         self
     }
 
     pub(crate) fn process_context(&self) -> Option<NamespaceProcessContext> {
         self.process_context.clone()
+    }
+
+    pub(crate) fn tool_execution_binding(&self) -> Option<crate::tools::ToolExecutionBinding> {
+        let context = self.process_context.as_ref()?;
+        context.tool_runner.process_binding(context.pid)
+    }
+
+    pub(crate) fn resolve_tool_capability(
+        &self,
+        package: &super::super::ToolPackageManifest,
+        arguments: &serde_json::Value,
+    ) -> alan_agent_protocol::ToolCapability {
+        if !package.capability_is_argument_dependent {
+            return package.capability;
+        }
+        self.process_context
+            .as_ref()
+            .and_then(|context| {
+                context
+                    .tool_runner
+                    .capability_for_tool(&package.name, arguments)
+            })
+            .unwrap_or(alan_agent_protocol::ToolCapability::Unknown)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_tool_execution_binding(
+        &self,
+        binding: crate::tools::ToolExecutionBinding,
+    ) -> bool {
+        self.process_context.as_ref().is_some_and(|context| {
+            context
+                .tool_runner
+                .register_process_binding(context.pid, binding);
+            true
+        })
+    }
+
+    pub(crate) fn add_tool_sandbox_writable_root(&self, path: std::path::PathBuf) -> bool {
+        self.process_context.as_ref().is_some_and(|context| {
+            context
+                .tool_runner
+                .add_process_sandbox_writable_root(context.pid, path)
+        })
+    }
+
+    pub(crate) fn tool_sandbox_writable_roots(&self) -> Vec<std::path::PathBuf> {
+        let Some(binding) = self.tool_execution_binding() else {
+            return Vec::new();
+        };
+        binding
+            .sandbox_spec
+            .map(|spec| spec.writable_roots)
+            .unwrap_or_else(|| binding.workspace_root.into_iter().collect())
     }
 
     pub(crate) fn with_shared_services(
@@ -360,6 +417,33 @@ impl NamespaceRuntimeEnvironment {
 
     pub fn llm_connection(&self) -> &str {
         &self.llm_connection
+    }
+
+    /// Discover model-callable Tools from complete packages visible in this namespace.
+    pub(crate) async fn discover_tool_packages(
+        &self,
+    ) -> Result<Vec<super::super::ToolPackageManifest>> {
+        let client = self.client();
+        let mut packages = Vec::new();
+        for name in client
+            .try_read_directory_names("/bin")
+            .await?
+            .unwrap_or_default()
+        {
+            if name.is_empty() || name.contains('/') {
+                continue;
+            }
+            let path = format!("/lib/exec/{name}/manifest");
+            let Some(raw) = client.try_read_file(&path).await? else {
+                continue;
+            };
+            let manifest: super::super::ToolPackageManifest = serde_json::from_slice(&raw)
+                .with_context(|| format!("parse Tool manifest at {path}"))?;
+            manifest.validate_for_name(&name)?;
+            packages.push(manifest);
+        }
+        packages.sort_by(|left, right| left.name.cmp(&right.name));
+        Ok(packages)
     }
 
     pub fn root_transport(&self) -> InProcessTransport {
@@ -705,6 +789,96 @@ impl NamespaceRuntimeEnvironment {
     pub async fn write_action(&self, record: NamespaceActionRecord) -> Result<String> {
         let client = NamespaceClient::new(self.root.clone());
         write_action_record(&client, &self.agent_path, record).await
+    }
+
+    pub(crate) async fn read_ui_activity_snapshot(
+        &self,
+    ) -> Result<alan_agent_protocol::UiActivitySnapshot> {
+        serde_json::from_slice(
+            &self
+                .client()
+                .read_file(&ui_activity_path(&self.agent_path))
+                .await?,
+        )
+        .context("parse agent activity snapshot")
+    }
+
+    pub(crate) async fn read_assistant_output(&self) -> Result<String> {
+        let path = format!("{}/io/output", self.agent_path);
+        String::from_utf8(self.client().read_file(&path).await?)
+            .context("agent assistant output is utf8")
+    }
+
+    pub(crate) async fn read_ui_notice_snapshot(
+        &self,
+    ) -> Result<alan_agent_protocol::UiNoticeSnapshot> {
+        serde_json::from_slice(
+            &self
+                .client()
+                .read_file(&ui_notice_path(&self.agent_path))
+                .await?,
+        )
+        .context("parse agent notice snapshot")
+    }
+
+    pub(crate) async fn ui_events_offset(&self) -> Result<u64> {
+        Ok(self
+            .client()
+            .stat_path(&ui_events_path(&self.agent_path))
+            .await?
+            .length)
+    }
+
+    pub(crate) async fn request_ids(&self) -> Result<Vec<String>> {
+        self.child_tree_ids("requests").await
+    }
+
+    pub(crate) async fn pending_request_id(&self, ids: &[String]) -> Result<Option<String>> {
+        for id in ids {
+            let path = format!("{}/requests/{id}/status", self.agent_path);
+            let status = String::from_utf8(self.client().read_file(&path).await?)
+                .context("request status is utf8")?;
+            if status.trim() == "pending" {
+                return Ok(Some(id.clone()));
+            }
+        }
+        Ok(None)
+    }
+
+    pub(crate) async fn action_ids(&self) -> Result<Vec<String>> {
+        self.child_tree_ids("actions").await
+    }
+
+    pub(crate) async fn read_request_kind(&self, id: &str) -> Result<String> {
+        let path = format!("{}/requests/{id}/kind", self.agent_path);
+        String::from_utf8(self.client().read_file(&path).await?).context("request kind is utf8")
+    }
+
+    pub(crate) async fn request_events_offset(&self) -> Result<u64> {
+        self.child_tree_events_offset("requests").await
+    }
+
+    pub(crate) async fn action_events_offset(&self) -> Result<u64> {
+        self.child_tree_events_offset("actions").await
+    }
+
+    async fn child_tree_events_offset(&self, tree: &str) -> Result<u64> {
+        Ok(self
+            .client()
+            .stat_path(&format!("{}/{tree}/events", self.agent_path))
+            .await?
+            .length)
+    }
+
+    async fn child_tree_ids(&self, tree: &str) -> Result<Vec<String>> {
+        let mut ids = self
+            .client()
+            .try_read_directory_names(&format!("{}/{tree}", self.agent_path))
+            .await?
+            .unwrap_or_default();
+        ids.retain(|name| !matches!(name.as_str(), "clone" | "events" | "help"));
+        ids.sort();
+        Ok(ids)
     }
 
     /// Build a bounded reference only when the path currently resolves in this
@@ -1946,6 +2120,41 @@ impl NamespaceClient {
         }
     }
 
+    async fn try_read_directory_names(&self, path: &str) -> Result<Option<Vec<String>>> {
+        let fid = Fid(NEXT_FID.fetch_add(1, Ordering::Relaxed));
+        match self
+            .fs
+            .call(Request::Walk {
+                fid: Fid::ROOT,
+                newfid: fid,
+                names: split_path(path),
+            })
+            .await
+        {
+            Ok(Response::Walk { .. }) => {}
+            Ok(_) => bail!("unexpected walk response for {path}"),
+            Err(ErrorCode::NotFound) => return Ok(None),
+            Err(error) => return Err(error).with_context(|| format!("walk to {path}")),
+        }
+        let guarded = self.open_guarded_fid(fid, OpenMode::Read).await?;
+        if self.stat(guarded.fid()).await?.qid.kind != FileKind::Dir {
+            bail!("{path} is not a directory");
+        }
+        let mut bytes = Vec::new();
+        let mut offset = 0_u64;
+        loop {
+            let chunk = self.read_at(guarded.fid(), offset, 64 * 1024).await?;
+            if chunk.is_empty() {
+                break;
+            }
+            offset += chunk.len() as u64;
+            bytes.extend_from_slice(&chunk);
+        }
+        guarded.close().await?;
+        let listing = String::from_utf8(bytes).with_context(|| format!("read directory {path}"))?;
+        Ok(Some(listing.lines().map(str::to_string).collect()))
+    }
+
     async fn try_read_file(&self, path: &str) -> Result<Option<Vec<u8>>> {
         let fid = Fid(NEXT_FID.fetch_add(1, Ordering::Relaxed));
         match self
@@ -2913,8 +3122,7 @@ mod tests {
             workspace_root_dir: None,
             machine: crate::AgentMachine::new(),
             current_submission_id: None,
-            environment: super::super::RuntimeEnvironment::namespace(environment),
-            tool_catalog: crate::tools::ToolRegistry::new(),
+            environment,
             core_config: crate::Config::default(),
             runtime_config: super::super::super::RuntimeConfig::default(),
             workspace_persona_dirs: Vec::new(),
@@ -2952,6 +3160,40 @@ mod tests {
         assert_eq!(
             messages[0].tool_responses()[0].text_content(),
             r#"{"answers":[{"question_id":"q1","value":"answer from request file"}]}"#
+        );
+    }
+
+    #[tokio::test]
+    async fn pending_request_selection_ignores_lexicographic_id_order() {
+        let agentfs = Arc::new(AgentFs::new());
+        let mut ns = Namespace::new();
+        ns.mount(
+            "/agent/1",
+            InProcessTransport::new(agentfs),
+            Access::ReadWrite,
+        );
+        let root = InProcessTransport::new(Arc::new(MountFs::new(ns)));
+        let shell = Shell::new(root.clone());
+        let environment = NamespaceRuntimeEnvironment::new(root, "/agent/1", "default");
+
+        for index in 0..11 {
+            let id = environment
+                .write_request(NamespaceRequestRecord::new("confirmation", "approve?"))
+                .await
+                .unwrap();
+            assert_eq!(id, format!("r{index}"));
+            if index < 10 {
+                shell
+                    .write(&format!("/agent/1/requests/{id}/response"), b"approved")
+                    .await
+                    .unwrap();
+            }
+        }
+
+        let ids = environment.request_ids().await.unwrap();
+        assert_eq!(
+            environment.pending_request_id(&ids).await.unwrap(),
+            Some("r10".into())
         );
     }
 

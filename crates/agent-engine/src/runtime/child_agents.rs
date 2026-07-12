@@ -7,12 +7,11 @@ use super::delegation_capabilities::{
     DelegatedSpawnRejected, evaluate_delegated_namespace, namespace_summary_from_bindings,
 };
 use super::engine::{
-    AgentConfig, RuntimeController, RuntimeEventEnvelope, RuntimeLivenessEnvelope,
-    RuntimeStartupMetadata, WorkspaceRuntimeConfig, spawn_with_namespace_environment,
+    AgentConfig, RuntimeController, RuntimeStartupMetadata, WorkspaceRuntimeConfig,
+    runtime_host_capabilities_for_tools, spawn_with_namespace_environment,
 };
 use crate::llm::LlmClient;
 use crate::tape::{ContentPart, Message};
-use crate::tools::ToolRegistry;
 use alan_agent_protocol::{
     DelegatedCapabilityDecision, DelegatedCapabilityRecovery, GovernanceConfig, Op, SpawnHandle,
     SpawnSpec, SpawnTarget, Submission, YieldKind,
@@ -28,7 +27,6 @@ use std::sync::{
     atomic::{AtomicU64, Ordering},
 };
 use std::time::{Duration, Instant};
-use tokio::sync::broadcast::error::{RecvError, TryRecvError};
 use tokio_util::sync::CancellationToken;
 
 const CHILD_AGENT_LAUNCH_CANCELLED_MESSAGE: &str = "Child-agent launch cancelled";
@@ -40,6 +38,7 @@ const MAX_CHILD_TOOL_RESULTS: usize = 6;
 const MAX_CHILD_TOOL_RESULT_CHARS: usize = 1_200;
 const MAX_OBSERVED_CHILD_WARNINGS: usize = 32;
 const MAX_OBSERVED_CHILD_WARNING_CHARS: usize = 512;
+const MAX_CHILD_FILE_OBSERVATION_POLL_INTERVAL: Duration = Duration::from_millis(250);
 static NEXT_CHILD_NAMESPACE_FID: AtomicU64 = AtomicU64::new(80_000);
 
 struct ChildLlmProvider {
@@ -71,59 +70,6 @@ impl LlmProvider for ChildLlmProvider {
 
     fn provider_name(&self) -> &'static str {
         self.client.provider_name()
-    }
-}
-
-struct ChildToolProcessRunner {
-    tools: ToolRegistry,
-}
-
-impl ChildToolProcessRunner {
-    fn new(tools: ToolRegistry) -> Self {
-        Self { tools }
-    }
-}
-
-#[async_trait::async_trait]
-impl alan_kernel::ProcessRunner for ChildToolProcessRunner {
-    async fn run(&self, invocation: alan_kernel::ProcessInvocation) -> alan_kernel::ProcessOutcome {
-        if invocation
-            .namespace
-            .resolve(&invocation.exec.executable)
-            .is_err()
-        {
-            return alan_kernel::ProcessOutcome::exited(127, b"executable is not mounted\n");
-        }
-        let tool_name = invocation
-            .exec
-            .executable
-            .rsplit('/')
-            .next()
-            .unwrap_or(invocation.exec.executable.as_str());
-        let arguments = invocation
-            .exec
-            .args
-            .first()
-            .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok())
-            .unwrap_or(serde_json::Value::Null);
-
-        match self.tools.execute(tool_name, arguments).await {
-            Ok(output) => {
-                let mut bytes =
-                    serde_json::to_vec(&output).unwrap_or_else(|_| b"{\"success\":true}".to_vec());
-                bytes.push(b'\n');
-                alan_kernel::ProcessOutcome::exited(0, bytes)
-            }
-            Err(err) => {
-                let mut bytes = serde_json::to_vec(&serde_json::json!({
-                    "success": false,
-                    "error": format!("{err:#}"),
-                }))
-                .unwrap_or_else(|_| b"{\"success\":false}".to_vec());
-                bytes.push(b'\n');
-                alan_kernel::ProcessOutcome::exited(1, bytes)
-            }
-        }
     }
 }
 
@@ -174,16 +120,22 @@ enum ChildRuntimeWaitOutcome {
     Cancelled,
 }
 
-enum ChildEventObservation {
-    Terminal(ObservedChildTerminalEvent),
-    Progress,
-    Ignored,
-}
-
-enum ChildLivenessObservation {
-    Progress,
-    Ignored,
-    Closed,
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ChildFileObservation {
+    process_status: Option<alan_kernel::Status>,
+    process_exit_code: Option<i32>,
+    output_text: String,
+    process_output_offset: u64,
+    process_io_events_offset: u64,
+    request_ids: Vec<String>,
+    pending_request_id: Option<String>,
+    request_events_offset: u64,
+    action_ids: Vec<String>,
+    action_events_offset: u64,
+    ui_events_offset: u64,
+    terminal_error: Option<String>,
+    activity: alan_agent_protocol::UiActivitySnapshot,
+    notice: alan_agent_protocol::UiNoticeSnapshot,
 }
 
 fn push_bounded_child_warning(warnings: &mut Vec<String>, warning: String) {
@@ -219,15 +171,12 @@ fn truncate_child_text_with_suffix(text: &str, max_chars: usize, suffix: &str) -
 pub(crate) struct ChildRuntimeController {
     runtime: Option<RuntimeController>,
     startup_metadata: RuntimeStartupMetadata,
-    event_rx: tokio::sync::broadcast::Receiver<RuntimeEventEnvelope>,
-    liveness_rx: tokio::sync::broadcast::Receiver<RuntimeLivenessEnvelope>,
-    submission_id: String,
     child_run_id: String,
     child_run_registry: ChildRunRegistry,
     timeout: Option<Duration>,
-    process_registry: Option<alan_kernel::ProcFs>,
-    process_environment: Option<super::NamespaceRuntimeEnvironment>,
-    process_pid: Option<String>,
+    process_registry: alan_kernel::ProcFs,
+    process_environment: super::NamespaceRuntimeEnvironment,
+    process_pid: String,
 }
 
 #[allow(dead_code)]
@@ -357,26 +306,27 @@ where
     child_config.core_config_source = crate::ConfigSourceKind::EnvOverride;
     let child_namespace_plan =
         build_child_namespace_assembly_plan(parent, &spec, &effective_child_core_config)
+            .await
             .context("Failed to assemble child-agent namespace plan")?;
     let delegation_capability_decision =
-        evaluate_delegated_launch_capabilities(parent, &mut spec, &child_namespace_plan)?;
-    let child_tools = build_child_tool_registry_from_namespace_plan(
-        parent,
-        &spec,
-        &effective_child_core_config,
-        &child_namespace_plan,
-    )
-    .context("Failed to build child-agent tool registry")?;
+        evaluate_delegated_launch_capabilities(parent, &mut spec, &child_namespace_plan).await?;
     let llm_client = llm_client_factory(&effective_child_core_config)
         .context("Failed to create child-agent LLM client")?;
     let parent_process_context = parent.namespace_environment().process_context();
     let launch_procfs = parent_process_context
         .as_ref()
-        .map(|context| context.procfs.clone())
+        .map(|context| context.launch_procfs.clone())
         .unwrap_or_default();
+    let tool_runner = parent_process_context
+        .as_ref()
+        .map(|context| context.tool_runner.clone())
+        .unwrap_or_else(|| {
+            crate::tools::ToolProcessRunner::empty(Arc::new(effective_child_core_config.clone()))
+        });
     let runtime_procfs = launch_procfs
         .clone()
-        .with_runner(Arc::new(ChildToolProcessRunner::new(child_tools.clone())));
+        .with_runner(Arc::new(tool_runner.clone()));
+    let child_tool_binding = child_namespace_plan.execution_binding();
     let agentfs = Arc::new(alan_agentfs::AgentFs::new());
     let llmfs = Arc::new(alan_llmfs::LlmFs::new());
     llmfs.register_connection(
@@ -385,10 +335,17 @@ where
     );
     let mut handles = child_namespace_launch_handles_from_parent(parent, agentfs, llmfs)
         .context("Failed to assemble child-agent shared namespace handles")?;
-    for mount in &child_namespace_plan.bin_tool_mounts {
-        handles = handles.with_bin_tool(
-            mount.clone(),
+    for manifest in &child_namespace_plan.tool_packages {
+        let name = &manifest.name;
+        let manifest_fs = Arc::new(alan_ap::reference::MemFs::with_read_only_file(
+            "manifest",
+            serde_json::to_vec(&manifest)?,
+        ));
+        handles = handles.with_tool_package(
+            format!("/bin/{name}"),
             InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::new())),
+            format!("/lib/exec/{name}"),
+            InProcessTransport::new(manifest_fs),
         );
     }
     let namespace_launch = spawn_child_namespace_runtime_environment(
@@ -397,19 +354,39 @@ where
         &child_namespace_plan,
         handles,
         parent_process_context,
+        tool_runner,
+        child_tool_binding,
         child_config.mount_grant_applicator_factory.clone(),
         "/bin/alan-agent",
     )
     .await
     .context("Failed to spawn child-agent process namespace")?;
-    let child_process_environment = namespace_launch.environment.clone();
     let child_process_pid = namespace_launch.pid.clone();
+    let process_context = namespace_launch
+        .environment
+        .process_context()
+        .expect("child namespace launch installs process context");
+    let child_agent_root = process_context.agent_root.clone();
+    let child_process_environment = child_observation_environment(
+        &runtime_procfs,
+        child_agent_root.clone(),
+        &child_process_pid,
+        &child_namespace_plan,
+    )
+    .await?;
     let generation_capabilities =
         crate::provider_capabilities_for_config(&effective_child_core_config);
+    let host_capabilities = runtime_host_capabilities_for_tools(
+        &child_config,
+        child_namespace_plan
+            .tool_packages
+            .iter()
+            .map(|manifest| manifest.name.clone()),
+    );
     let runtime = match spawn_with_namespace_environment(
         child_config,
         namespace_launch.environment,
-        child_tools,
+        host_capabilities,
         generation_capabilities,
     )
     .context("Failed to spawn child-agent namespace runtime")
@@ -418,7 +395,7 @@ where
         Err(err) => {
             record_child_launch_failure_process(
                 &launch_procfs,
-                &child_process_environment,
+                &child_agent_root,
                 &child_process_pid,
                 &err,
             )
@@ -431,7 +408,7 @@ where
         Err(err) => {
             record_child_launch_failure_process(
                 &launch_procfs,
-                &child_process_environment,
+                &child_agent_root,
                 &child_process_pid,
                 &err,
             )
@@ -456,8 +433,6 @@ where
         child_run_record = child_run_record.with_delegation_capability_decision(decision);
     }
     child_run_registry.register(child_run_record);
-    let event_rx = runtime.handle.event_sender.subscribe();
-    let liveness_rx = runtime.handle.liveness_sender.subscribe();
     let submission = Submission::new(Op::Turn {
         parts: vec![ContentPart::text(build_child_task_text(parent, &spec))],
         context: None,
@@ -468,7 +443,7 @@ where
             let status = child_run_status_for_launch_error(&err);
             record_child_launch_failure_process(
                 &launch_procfs,
-                &child_process_environment,
+                &child_agent_root,
                 &child_process_pid,
                 &err,
             )
@@ -482,19 +457,16 @@ where
     Ok(ChildRuntimeController {
         runtime: Some(runtime),
         startup_metadata,
-        event_rx,
-        liveness_rx,
-        submission_id: submission.id,
         child_run_id,
         child_run_registry,
         timeout: spec.launch.timeout_secs.map(Duration::from_secs),
-        process_registry: Some(launch_procfs),
-        process_environment: Some(child_process_environment),
-        process_pid: Some(child_process_pid),
+        process_registry: launch_procfs,
+        process_environment: child_process_environment,
+        process_pid: child_process_pid,
     })
 }
 
-fn evaluate_delegated_launch_capabilities(
+async fn evaluate_delegated_launch_capabilities(
     parent: &RuntimeLoopState,
     spec: &mut SpawnSpec,
     plan: &ChildNamespaceAssemblyPlan,
@@ -504,7 +476,7 @@ fn evaluate_delegated_launch_capabilities(
     };
     let requirements = context.requirements.clone();
     let child_namespace = namespace_summary_from_child_plan(plan);
-    let parent_namespace = namespace_summary_from_parent(parent);
+    let parent_namespace = namespace_summary_from_parent(parent).await?;
     let decision = evaluate_delegated_namespace(
         &spec.launch.task,
         &requirements,
@@ -544,10 +516,10 @@ fn namespace_summary_from_child_plan(
     )
 }
 
-fn namespace_summary_from_parent(
+async fn namespace_summary_from_parent(
     parent: &RuntimeLoopState,
-) -> alan_agent_protocol::DelegatedNamespaceSummary {
-    namespace_summary_from_bindings(
+) -> Result<alan_agent_protocol::DelegatedNamespaceSummary> {
+    Ok(namespace_summary_from_bindings(
         vec![
             "/agent".to_string(),
             "/mnt/llm".to_string(),
@@ -556,6 +528,7 @@ fn namespace_summary_from_parent(
         ],
         parent
             .static_tool_names()
+            .await?
             .into_iter()
             .map(|tool| format!("/bin/{tool}"))
             .collect(),
@@ -567,7 +540,7 @@ fn namespace_summary_from_parent(
                 .clone()
                 .unwrap_or_else(|| "default".to_string()),
         ),
-    )
+    ))
 }
 
 async fn wait_for_child_runtime_startup(
@@ -706,6 +679,78 @@ fn resolve_launch_root_dir(
 
 #[allow(dead_code)]
 impl ChildRuntimeController {
+    async fn observe_files(&self) -> Result<Option<ChildFileObservation>> {
+        let environment = &self.process_environment;
+        let process_registry = &self.process_registry;
+        let pid = self.process_pid.as_str();
+        let timeout = Duration::from_secs(1);
+        let pid = alan_kernel::Pid(pid.parse().context("parse observed child pid")?);
+        let (process_status, process_exit_code) = process_registry
+            .try_observe_process_lifecycle(pid)
+            .unwrap_or((alan_kernel::Status::Running, None));
+        let process = if process_status == alan_kernel::Status::Exited {
+            process_registry.observe_process_files(pid).await
+        } else {
+            None
+        };
+        let activity = tokio::time::timeout(timeout, environment.read_ui_activity_snapshot())
+            .await
+            .context("observe child activity timed out")??;
+        let output_text = tokio::time::timeout(timeout, environment.read_assistant_output())
+            .await
+            .context("observe child output timed out")??;
+        let ui_events_offset = tokio::time::timeout(timeout, environment.ui_events_offset())
+            .await
+            .context("observe child UI events offset timed out")??;
+        let notice = tokio::time::timeout(timeout, environment.read_ui_notice_snapshot())
+            .await
+            .context("observe child notice timed out")??;
+        let request_ids = tokio::time::timeout(timeout, environment.request_ids())
+            .await
+            .context("observe child requests timed out")??;
+        let pending_request_id =
+            tokio::time::timeout(timeout, environment.pending_request_id(&request_ids))
+                .await
+                .context("observe child pending request timed out")??;
+        let request_events_offset =
+            tokio::time::timeout(timeout, environment.request_events_offset())
+                .await
+                .context("observe child request stream offset timed out")??;
+        let action_ids = tokio::time::timeout(timeout, environment.action_ids())
+            .await
+            .context("observe child actions timed out")??;
+        let action_events_offset =
+            tokio::time::timeout(timeout, environment.action_events_offset())
+                .await
+                .context("observe child action stream offset timed out")??;
+        Ok(Some(ChildFileObservation {
+            process_status: Some(process_status),
+            process_exit_code,
+            output_text,
+            process_output_offset: process
+                .as_ref()
+                .map(|snapshot| snapshot.output_offset)
+                .unwrap_or(0),
+            process_io_events_offset: process
+                .as_ref()
+                .map(|snapshot| snapshot.io_events_offset)
+                .unwrap_or(0),
+            request_ids,
+            pending_request_id,
+            request_events_offset,
+            action_ids,
+            action_events_offset,
+            ui_events_offset,
+            terminal_error: if notice.kind == alan_agent_protocol::UiNoticeKind::Error {
+                Some(notice.message.clone())
+            } else {
+                None
+            },
+            activity,
+            notice,
+        }))
+    }
+
     pub(crate) fn startup_metadata(&self) -> &RuntimeStartupMetadata {
         &self.startup_metadata
     }
@@ -754,16 +799,17 @@ impl ChildRuntimeController {
             push_bounded_child_warning(&mut warnings, warning);
         }
         self.finish_runtime_and_process(&observed.status).await;
-        let rollout_fallback_text = if observed.output_text.trim().is_empty() {
+        let output_text = observed.output_text;
+        let rollout_fallback_text = if output_text.trim().is_empty() {
             read_latest_assistant_text_from_rollout(self.startup_metadata.rollout_path.as_deref())
                 .await
         } else {
             None
         };
-        let output_text = if observed.output_text.trim().is_empty() {
-            rollout_fallback_text.unwrap_or(observed.output_text)
+        let output_text = if output_text.trim().is_empty() {
+            rollout_fallback_text.unwrap_or(output_text)
         } else {
-            observed.output_text
+            output_text
         };
         let structured_output = observed
             .structured_output
@@ -832,38 +878,122 @@ impl ChildRuntimeController {
         let mut latest_liveness_at = Instant::now();
         let started_at = Instant::now();
         let wall_clock_cap = self.timeout.map(|timeout| timeout.saturating_mul(4));
-        let mut liveness_closed = false;
-        let mut check_process_stop = false;
+        let file_poll_interval = self
+            .timeout
+            .map(|timeout| (timeout / 4).min(MAX_CHILD_FILE_OBSERVATION_POLL_INTERVAL))
+            .unwrap_or(MAX_CHILD_FILE_OBSERVATION_POLL_INTERVAL)
+            .max(Duration::from_millis(10));
+        let mut last_file_observation = None;
 
         loop {
-            if let Some(observed) = self.observe_buffered_child_events(
-                &mut output_text,
-                &mut warnings,
-                &mut latest_liveness_at,
-            ) {
-                if self.external_process_stop_observed().await {
-                    self.abort_runtime().await;
+            if let Some(observation) = self.observe_files().await? {
+                if last_file_observation.as_ref() != Some(&observation) {
+                    latest_liveness_at = Instant::now();
+                    self.child_run_registry.observe_progress(
+                        &self.child_run_id,
+                        "agentfs",
+                        Some(format!(
+                            "process={:?} exit={:?} activity={:?} output={} output_offset={} io_offset={} requests={} request_offset={} actions={} action_offset={} ui_offset={}",
+                            observation.process_status,
+                            observation.process_exit_code,
+                            observation.activity.state,
+                            observation.output_text.len(),
+                            observation.process_output_offset,
+                            observation.process_io_events_offset,
+                            observation.request_ids.len(),
+                            observation.request_events_offset,
+                            observation.action_ids.len(),
+                            observation.action_events_offset,
+                            observation.ui_events_offset,
+                        )),
+                    );
+                    if last_file_observation.as_ref().is_none_or(
+                        |previous: &ChildFileObservation| previous.notice != observation.notice,
+                    ) && observation.notice.kind == alan_agent_protocol::UiNoticeKind::Warning
+                        && !observation.notice.message.is_empty()
+                    {
+                        push_bounded_child_warning(
+                            &mut warnings,
+                            observation.notice.message.clone(),
+                        );
+                    }
+                }
+                output_text.clone_from(&observation.output_text);
+                if observation.process_status == Some(alan_kernel::Status::Exited) {
+                    let exit_code = observation.process_exit_code.unwrap_or(1);
+                    if exit_code == 130 {
+                        return Ok(ChildRuntimeWaitOutcome::Observed(
+                            self.externally_stopped_observed_event(
+                                &observation.output_text,
+                                &warnings,
+                            ),
+                        ));
+                    }
                     return Ok(ChildRuntimeWaitOutcome::Observed(
-                        self.externally_stopped_observed_event(
-                            &observed.output_text,
-                            &observed.warnings,
+                        file_terminal_observation(
+                            observation.output_text,
+                            warnings,
+                            if exit_code == 0 {
+                                ChildRuntimeStatus::Completed
+                            } else {
+                                ChildRuntimeStatus::Failed
+                            },
+                            (exit_code != 0)
+                                .then(|| format!("Child Process exited with code {exit_code}")),
+                            None,
                         ),
                     ));
                 }
-                return Ok(ChildRuntimeWaitOutcome::Observed(observed));
+                if observation.activity.state == alan_agent_protocol::UiActivityState::Paused
+                    && let Some(request_id) = observation.pending_request_id.as_ref()
+                {
+                    let kind = self
+                        .process_environment
+                        .read_request_kind(request_id)
+                        .await?;
+                    let kind = match kind.as_str() {
+                        "confirmation" => YieldKind::Confirmation,
+                        "structured_input" => YieldKind::StructuredInput,
+                        other => YieldKind::Custom(other.to_string()),
+                    };
+                    return Ok(ChildRuntimeWaitOutcome::Observed(
+                        file_terminal_observation(
+                            observation.output_text,
+                            warnings,
+                            ChildRuntimeStatus::Paused,
+                            None,
+                            Some(ChildRuntimePause {
+                                request_id: request_id.clone(),
+                                kind,
+                            }),
+                        ),
+                    ));
+                }
+                if observation.activity.state == alan_agent_protocol::UiActivityState::Idle
+                    && observation.ui_events_offset > 0
+                {
+                    let status = if observation.terminal_error.is_some() {
+                        ChildRuntimeStatus::Failed
+                    } else {
+                        ChildRuntimeStatus::Completed
+                    };
+                    return Ok(ChildRuntimeWaitOutcome::Observed(
+                        file_terminal_observation(
+                            observation.output_text,
+                            warnings,
+                            status,
+                            observation.terminal_error,
+                            None,
+                        ),
+                    ));
+                }
+                last_file_observation = Some(observation);
             }
 
             if let Some(request) = self
                 .child_run_registry
                 .termination_request(&self.child_run_id)
             {
-                if let Some(observed) = self.observe_buffered_child_events(
-                    &mut output_text,
-                    &mut warnings,
-                    &mut latest_liveness_at,
-                ) {
-                    return Ok(ChildRuntimeWaitOutcome::Observed(observed));
-                }
                 match request.mode {
                     ChildRunTerminationMode::Graceful => self.terminate_runtime().await,
                     ChildRunTerminationMode::Forceful => self.abort_runtime().await,
@@ -872,14 +1002,6 @@ impl ChildRuntimeController {
                     self.terminated_observed_event(request),
                 ));
             }
-
-            if check_process_stop && self.external_process_stop_observed().await {
-                self.abort_runtime().await;
-                return Ok(ChildRuntimeWaitOutcome::Observed(
-                    self.externally_stopped_observed_event(&output_text, &warnings),
-                ));
-            }
-            check_process_stop = false;
 
             if let Some(cap) = wall_clock_cap
                 && started_at.elapsed() >= cap
@@ -891,7 +1013,7 @@ impl ChildRuntimeController {
                 ));
             }
 
-            let recv = if let Some(timeout) = self.timeout {
+            if let Some(timeout) = self.timeout {
                 let deadline = latest_liveness_at + timeout;
                 let idle_remaining = deadline.saturating_duration_since(Instant::now());
                 if let Some(cancel) = cancel {
@@ -906,19 +1028,9 @@ impl ChildRuntimeController {
                                 self.timed_out_observed_event("Child-agent turn idle timed out"),
                             ));
                         }
-                        _ = tokio::time::sleep(Duration::from_millis(250)) => {
-                            check_process_stop = true;
+                        _ = tokio::time::sleep(file_poll_interval) => {
                             continue;
                         }
-                        liveness = self.liveness_rx.recv(), if !liveness_closed => {
-                            self.apply_liveness_observation(
-                                liveness,
-                                &mut latest_liveness_at,
-                                &mut liveness_closed,
-                            );
-                            continue;
-                        }
-                        recv = self.event_rx.recv() => recv,
                     }
                 } else {
                     tokio::select! {
@@ -928,19 +1040,9 @@ impl ChildRuntimeController {
                                 self.timed_out_observed_event("Child-agent turn idle timed out"),
                             ));
                         }
-                        _ = tokio::time::sleep(Duration::from_millis(250)) => {
-                            check_process_stop = true;
+                        _ = tokio::time::sleep(file_poll_interval) => {
                             continue;
                         }
-                        liveness = self.liveness_rx.recv(), if !liveness_closed => {
-                            self.apply_liveness_observation(
-                                liveness,
-                                &mut latest_liveness_at,
-                                &mut liveness_closed,
-                            );
-                            continue;
-                        }
-                        recv = self.event_rx.recv() => recv,
                     }
                 }
             } else if let Some(cancel) = cancel {
@@ -949,289 +1051,13 @@ impl ChildRuntimeController {
                         self.terminate_runtime().await;
                         return Ok(ChildRuntimeWaitOutcome::Cancelled);
                     }
-                    liveness = self.liveness_rx.recv(), if !liveness_closed => {
-                        self.apply_liveness_observation(
-                            liveness,
-                            &mut latest_liveness_at,
-                            &mut liveness_closed,
-                        );
+                    _ = tokio::time::sleep(file_poll_interval) => {
                         continue;
                     }
-                    _ = tokio::time::sleep(Duration::from_millis(250)) => {
-                        check_process_stop = true;
-                        continue;
-                    }
-                    recv = self.event_rx.recv() => recv,
                 }
             } else {
-                tokio::select! {
-                    liveness = self.liveness_rx.recv(), if !liveness_closed => {
-                        self.apply_liveness_observation(
-                            liveness,
-                            &mut latest_liveness_at,
-                            &mut liveness_closed,
-                        );
-                        continue;
-                    }
-                    _ = tokio::time::sleep(Duration::from_millis(250)) => {
-                        check_process_stop = true;
-                        continue;
-                    }
-                    recv = self.event_rx.recv() => recv,
-                }
-            };
-
-            match self.observe_child_event(recv, &mut output_text, &mut warnings) {
-                ChildEventObservation::Terminal(observed) => {
-                    if self.external_process_stop_observed().await {
-                        self.abort_runtime().await;
-                        return Ok(ChildRuntimeWaitOutcome::Observed(
-                            self.externally_stopped_observed_event(
-                                &observed.output_text,
-                                &observed.warnings,
-                            ),
-                        ));
-                    }
-                    return Ok(ChildRuntimeWaitOutcome::Observed(observed));
-                }
-                ChildEventObservation::Progress => {
-                    latest_liveness_at = Instant::now();
-                    continue;
-                }
-                ChildEventObservation::Ignored => continue,
+                tokio::time::sleep(file_poll_interval).await;
             }
-        }
-    }
-
-    fn observe_buffered_child_events(
-        &mut self,
-        output_text: &mut String,
-        warnings: &mut Vec<String>,
-        latest_liveness_at: &mut Instant,
-    ) -> Option<ObservedChildTerminalEvent> {
-        loop {
-            let recv = match self.event_rx.try_recv() {
-                Ok(envelope) => Ok(envelope),
-                Err(TryRecvError::Empty) => return None,
-                Err(TryRecvError::Lagged(skipped)) => Err(RecvError::Lagged(skipped)),
-                Err(TryRecvError::Closed) => Err(RecvError::Closed),
-            };
-            match self.observe_child_event(recv, output_text, warnings) {
-                ChildEventObservation::Terminal(observed) => return Some(observed),
-                ChildEventObservation::Progress => {
-                    *latest_liveness_at = Instant::now();
-                }
-                ChildEventObservation::Ignored => {}
-            }
-        }
-    }
-
-    fn apply_liveness_observation(
-        &self,
-        recv: std::result::Result<RuntimeLivenessEnvelope, RecvError>,
-        latest_liveness_at: &mut Instant,
-        liveness_closed: &mut bool,
-    ) {
-        match self.observe_liveness_event(recv) {
-            ChildLivenessObservation::Progress => {
-                *latest_liveness_at = Instant::now();
-            }
-            ChildLivenessObservation::Closed => {
-                *liveness_closed = true;
-            }
-            ChildLivenessObservation::Ignored => {}
-        }
-    }
-
-    fn observe_liveness_event(
-        &self,
-        recv: std::result::Result<RuntimeLivenessEnvelope, RecvError>,
-    ) -> ChildLivenessObservation {
-        match recv {
-            Ok(envelope) => {
-                if envelope.submission_id.as_deref() != Some(self.submission_id.as_str()) {
-                    return ChildLivenessObservation::Ignored;
-                }
-                self.child_run_registry
-                    .observe_heartbeat(&self.child_run_id, envelope.status.clone());
-                self.child_run_registry.observe_progress(
-                    &self.child_run_id,
-                    "runtime_heartbeat",
-                    envelope.status,
-                );
-                ChildLivenessObservation::Progress
-            }
-            Err(RecvError::Lagged(_)) => {
-                let status = Some("active_submission".to_string());
-                self.child_run_registry
-                    .observe_heartbeat(&self.child_run_id, status.clone());
-                self.child_run_registry.observe_progress(
-                    &self.child_run_id,
-                    "runtime_heartbeat",
-                    status,
-                );
-                ChildLivenessObservation::Progress
-            }
-            Err(RecvError::Closed) => ChildLivenessObservation::Closed,
-        }
-    }
-
-    fn observe_child_event(
-        &self,
-        recv: std::result::Result<RuntimeEventEnvelope, RecvError>,
-        output_text: &mut String,
-        warnings: &mut Vec<String>,
-    ) -> ChildEventObservation {
-        match recv {
-            Ok(envelope) => {
-                if envelope.submission_id.as_deref() != Some(self.submission_id.as_str()) {
-                    return ChildEventObservation::Ignored;
-                }
-
-                match envelope.event {
-                    alan_agent_protocol::Event::TextDelta { chunk, .. } => {
-                        if !chunk.is_empty() {
-                            output_text.push_str(&chunk);
-                            self.child_run_registry.observe_progress(
-                                &self.child_run_id,
-                                "text_delta",
-                                Some("child emitted text".to_string()),
-                            );
-                        }
-                        ChildEventObservation::Progress
-                    }
-                    alan_agent_protocol::Event::Warning { message } => {
-                        self.child_run_registry
-                            .observe_warning(&self.child_run_id, message.clone());
-                        self.child_run_registry.observe_progress(
-                            &self.child_run_id,
-                            "warning",
-                            Some(message.clone()),
-                        );
-                        push_bounded_child_warning(warnings, message);
-                        ChildEventObservation::Progress
-                    }
-                    alan_agent_protocol::Event::TurnCompleted { summary } => {
-                        self.child_run_registry.observe_progress(
-                            &self.child_run_id,
-                            "turn_completed",
-                            summary.clone(),
-                        );
-                        let structured_output = parse_child_structured_output(output_text.as_str());
-                        ChildEventObservation::Terminal(ObservedChildTerminalEvent {
-                            output_text: output_text.clone(),
-                            turn_summary: summary,
-                            structured_output,
-                            warnings: warnings.clone(),
-                            error_message: None,
-                            pause: None,
-                            status: ChildRuntimeStatus::Completed,
-                        })
-                    }
-                    alan_agent_protocol::Event::Yield {
-                        request_id, kind, ..
-                    } => {
-                        self.child_run_registry.observe_progress(
-                            &self.child_run_id,
-                            "yield",
-                            Some(format!("child yielded for {}", yield_kind_label(&kind))),
-                        );
-                        let structured_output = parse_child_structured_output(output_text.as_str());
-                        ChildEventObservation::Terminal(ObservedChildTerminalEvent {
-                            output_text: output_text.clone(),
-                            turn_summary: None,
-                            structured_output,
-                            warnings: warnings.clone(),
-                            error_message: None,
-                            pause: Some(ChildRuntimePause { request_id, kind }),
-                            status: ChildRuntimeStatus::Paused,
-                        })
-                    }
-                    alan_agent_protocol::Event::Error {
-                        message,
-                        recoverable,
-                    } if !recoverable => {
-                        self.child_run_registry.observe_progress(
-                            &self.child_run_id,
-                            "error",
-                            Some(message.clone()),
-                        );
-                        let structured_output = parse_child_structured_output(output_text.as_str());
-                        ChildEventObservation::Terminal(ObservedChildTerminalEvent {
-                            output_text: output_text.clone(),
-                            turn_summary: None,
-                            structured_output,
-                            warnings: warnings.clone(),
-                            error_message: Some(message),
-                            pause: None,
-                            status: ChildRuntimeStatus::Failed,
-                        })
-                    }
-                    alan_agent_protocol::Event::Error { message, .. } => {
-                        self.child_run_registry
-                            .observe_warning(&self.child_run_id, message.clone());
-                        self.child_run_registry.observe_progress(
-                            &self.child_run_id,
-                            "recoverable_error",
-                            Some(message.clone()),
-                        );
-                        push_bounded_child_warning(warnings, message);
-                        ChildEventObservation::Progress
-                    }
-                    alan_agent_protocol::Event::ToolCallStarted { name, .. } => {
-                        self.child_run_registry.observe_progress(
-                            &self.child_run_id,
-                            "tool_call_started",
-                            Some(format!("tool {name} started")),
-                        );
-                        ChildEventObservation::Progress
-                    }
-                    alan_agent_protocol::Event::ToolCallCompleted { name, success, .. } => {
-                        let tool = name.unwrap_or_else(|| "<unknown>".to_string());
-                        self.child_run_registry.observe_progress(
-                            &self.child_run_id,
-                            "tool_call_completed",
-                            Some(format!("tool {tool} completed success={success:?}")),
-                        );
-                        ChildEventObservation::Progress
-                    }
-                    alan_agent_protocol::Event::PlanUpdated { explanation, .. } => {
-                        self.child_run_registry.observe_progress(
-                            &self.child_run_id,
-                            "plan_updated",
-                            explanation,
-                        );
-                        ChildEventObservation::Progress
-                    }
-                    _ => ChildEventObservation::Progress,
-                }
-            }
-            Err(RecvError::Lagged(skipped)) => {
-                let message = format!(
-                    "Child-agent runtime event stream lagged by {skipped} event(s) before a terminal event could be observed"
-                );
-                push_bounded_child_warning(warnings, message.clone());
-                ChildEventObservation::Terminal(ObservedChildTerminalEvent {
-                    output_text: output_text.clone(),
-                    turn_summary: None,
-                    structured_output: parse_child_structured_output(output_text.as_str()),
-                    warnings: warnings.clone(),
-                    error_message: Some(message),
-                    pause: None,
-                    status: ChildRuntimeStatus::Failed,
-                })
-            }
-            Err(RecvError::Closed) => ChildEventObservation::Terminal(ObservedChildTerminalEvent {
-                output_text: output_text.clone(),
-                turn_summary: None,
-                structured_output: parse_child_structured_output(output_text.as_str()),
-                warnings: warnings.clone(),
-                error_message: Some(
-                    "Child-agent runtime stopped before producing a terminal event".to_string(),
-                ),
-                pause: None,
-                status: ChildRuntimeStatus::Failed,
-            }),
         }
     }
 
@@ -1246,15 +1072,10 @@ impl ChildRuntimeController {
         if let Some(runtime) = self.runtime.take() {
             let _ = runtime.shutdown().await;
         }
-        let (Some(process_registry), Some(pid)) =
-            (self.process_registry.as_ref(), self.process_pid.as_deref())
-        else {
+        let Ok(pid) = self.process_pid.parse::<u64>() else {
             return;
         };
-        let Ok(pid) = pid.parse::<u64>() else {
-            return;
-        };
-        process_registry
+        self.process_registry
             .record_exit(
                 alan_kernel::Pid(pid),
                 child_runtime_process_exit_code(status),
@@ -1274,15 +1095,10 @@ impl ChildRuntimeController {
         if let Some(runtime) = self.runtime.take() {
             runtime.abort().await;
         }
-        let (Some(process_registry), Some(pid)) =
-            (self.process_registry.as_ref(), self.process_pid.as_deref())
-        else {
+        let Ok(pid) = self.process_pid.parse::<u64>() else {
             return;
         };
-        let Ok(pid) = pid.parse::<u64>() else {
-            return;
-        };
-        process_registry
+        self.process_registry
             .record_exit(
                 alan_kernel::Pid(pid),
                 child_runtime_process_exit_code(status),
@@ -1292,12 +1108,8 @@ impl ChildRuntimeController {
     }
 
     async fn terminate_process_and_reconcile(&self) {
-        let (Some(environment), Some(pid)) = (
-            self.process_environment.as_ref(),
-            self.process_pid.as_deref(),
-        ) else {
-            return;
-        };
+        let environment = &self.process_environment;
+        let pid = self.process_pid.as_str();
         if let Ok(Some(exit_code)) = environment.read_process_exit_code(pid).await {
             self.child_run_registry
                 .reconcile_process_exit(&self.child_run_id, exit_code);
@@ -1313,12 +1125,8 @@ impl ChildRuntimeController {
     }
 
     async fn reconcile_exited_process(&self) {
-        let (Some(environment), Some(pid)) = (
-            self.process_environment.as_ref(),
-            self.process_pid.as_deref(),
-        ) else {
-            return;
-        };
+        let environment = &self.process_environment;
+        let pid = self.process_pid.as_str();
         if let Ok(Some(exit_code)) = environment.read_process_exit_code(pid).await {
             self.child_run_registry
                 .reconcile_process_exit(&self.child_run_id, exit_code);
@@ -1326,12 +1134,8 @@ impl ChildRuntimeController {
     }
 
     async fn external_process_stop_observed(&self) -> bool {
-        let (Some(environment), Some(pid)) = (
-            self.process_environment.as_ref(),
-            self.process_pid.as_deref(),
-        ) else {
-            return false;
-        };
+        let environment = &self.process_environment;
+        let pid = self.process_pid.as_str();
         matches!(environment.read_process_exit_code(pid).await, Ok(Some(130)))
     }
 
@@ -1396,6 +1200,24 @@ fn parse_child_structured_output(text: &str) -> Option<serde_json::Value> {
         .or_else(|| parse_last_json_fenced_block(trimmed))
 }
 
+fn file_terminal_observation(
+    output_text: String,
+    warnings: Vec<String>,
+    status: ChildRuntimeStatus,
+    error_message: Option<String>,
+    pause: Option<ChildRuntimePause>,
+) -> ObservedChildTerminalEvent {
+    ObservedChildTerminalEvent {
+        structured_output: parse_child_structured_output(&output_text),
+        output_text,
+        turn_summary: None,
+        warnings,
+        error_message,
+        pause,
+        status,
+    }
+}
+
 fn child_run_status_for_runtime_status(status: ChildRuntimeStatus) -> ChildRunStatus {
     match status {
         ChildRuntimeStatus::Completed => ChildRunStatus::Completed,
@@ -1430,7 +1252,7 @@ fn child_run_status_for_launch_error(error: &anyhow::Error) -> ChildRunStatus {
 
 async fn record_child_launch_failure_process(
     procfs: &alan_kernel::ProcFs,
-    environment: &super::NamespaceRuntimeEnvironment,
+    agent_root: &alan_agentfs::AgentRootFs,
     pid: &str,
     error: &anyhow::Error,
 ) {
@@ -1442,17 +1264,7 @@ async fn record_child_launch_failure_process(
         _ => 1,
     };
     procfs.record_exit(alan_kernel::Pid(pid), exit_code).await;
-    if let Some(context) = environment.process_context() {
-        context.agent_root.unbind_process(&pid.to_string()).await;
-    }
-}
-
-fn yield_kind_label(kind: &YieldKind) -> String {
-    match kind {
-        YieldKind::Confirmation => "confirmation".to_string(),
-        YieldKind::StructuredInput => "structured_input".to_string(),
-        YieldKind::Custom(value) => value.clone(),
-    }
+    agent_root.unbind_process(&pid.to_string()).await;
 }
 
 async fn read_latest_assistant_text_from_rollout(rollout_path: Option<&Path>) -> Option<String> {
@@ -1577,16 +1389,6 @@ fn build_child_agent_config(parent: &RuntimeLoopState, spec: &SpawnSpec) -> Agen
     child_agent_config
 }
 
-#[cfg(test)]
-fn build_child_tool_registry(
-    parent: &RuntimeLoopState,
-    spec: &SpawnSpec,
-    child_core_config: &crate::Config,
-) -> Result<ToolRegistry> {
-    let namespace_plan = build_child_namespace_assembly_plan(parent, spec, child_core_config)?;
-    build_child_tool_registry_from_namespace_plan(parent, spec, child_core_config, &namespace_plan)
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ChildNamespaceAssemblyPlan {
     agent_mount: String,
@@ -1595,11 +1397,20 @@ struct ChildNamespaceAssemblyPlan {
     srv_mount: String,
     route_mount: String,
     bin_tool_mounts: Vec<String>,
+    tool_packages: Vec<super::ToolPackageManifest>,
     workspace_root: Option<PathBuf>,
     cwd: Option<PathBuf>,
 }
 
 impl ChildNamespaceAssemblyPlan {
+    fn execution_binding(&self) -> Option<crate::tools::ToolExecutionBinding> {
+        let cwd = self.cwd.clone()?;
+        let scratch = crate::tools::default_scratch_dir_for_cwd(&cwd);
+        Some(match self.workspace_root.clone() {
+            Some(root) => crate::tools::ToolExecutionBinding::with_workspace(root, cwd, scratch),
+            None => crate::tools::ToolExecutionBinding::without_workspace(cwd, scratch),
+        })
+    }
     fn bin_tool_names(&self) -> impl Iterator<Item = &str> {
         self.bin_tool_mounts
             .iter()
@@ -1638,6 +1449,9 @@ impl ChildNamespaceAssemblyPlan {
                 .cloned()
                 .map(|path| ExecNamespaceMount::new(path, ExecNamespaceAccess::ReadOnly)),
         );
+        mounts.extend(self.bin_tool_names().map(|name| {
+            ExecNamespaceMount::new(format!("/lib/exec/{name}"), ExecNamespaceAccess::ReadOnly)
+        }));
         mounts.sort_by(|left, right| {
             left.path
                 .cmp(&right.path)
@@ -1666,6 +1480,7 @@ struct ChildNamespaceLaunchHandles {
     srv: InProcessTransport,
     route: InProcessTransport,
     bin_tools: Vec<(String, InProcessTransport)>,
+    tool_manifests: Vec<(String, InProcessTransport)>,
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -1682,11 +1497,20 @@ impl ChildNamespaceLaunchHandles {
             srv,
             route,
             bin_tools: Vec::new(),
+            tool_manifests: Vec::new(),
         }
     }
 
-    fn with_bin_tool(mut self, mount_path: impl Into<String>, tree: InProcessTransport) -> Self {
-        self.bin_tools.push((mount_path.into(), tree));
+    fn with_tool_package(
+        mut self,
+        bin_path: impl Into<String>,
+        bin_tree: InProcessTransport,
+        manifest_path: impl Into<String>,
+        manifest_tree: InProcessTransport,
+    ) -> Self {
+        self.bin_tools.push((bin_path.into(), bin_tree));
+        self.tool_manifests
+            .push((manifest_path.into(), manifest_tree));
         self
     }
 }
@@ -1716,12 +1540,15 @@ struct ChildNamespaceRuntimeLaunch {
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
+#[allow(clippy::too_many_arguments)]
 async fn spawn_child_namespace_runtime_environment(
     launch_procfs: &alan_kernel::ProcFs,
     runtime_procfs: &alan_kernel::ProcFs,
     plan: &ChildNamespaceAssemblyPlan,
     handles: ChildNamespaceLaunchHandles,
     parent_process_context: Option<super::agent_loop::NamespaceProcessContext>,
+    tool_runner: crate::tools::ToolProcessRunner,
+    tool_binding: Option<crate::tools::ToolExecutionBinding>,
     mount_grant_applicator_factory: Option<Arc<dyn super::MountGrantApplicatorFactory>>,
     executable: &str,
 ) -> Result<ChildNamespaceRuntimeLaunch> {
@@ -1778,6 +1605,9 @@ async fn spawn_child_namespace_runtime_environment(
         pid.parse::<u64>()
             .with_context(|| format!("parse child pid '{pid}'"))?,
     );
+    if let Some(binding) = tool_binding {
+        tool_runner.register_process_binding(child_pid, binding);
+    }
     let child_namespace =
         child_runtime_namespace_from_launch_handles(plan, agent_root_tree, &handles);
     let live_namespace = alan_kernel::LiveNamespace::new(child_namespace);
@@ -1802,7 +1632,7 @@ async fn spawn_child_namespace_runtime_environment(
         format!("/agent/{pid}"),
         plan.llm_connection_name()?,
     )
-    .with_process_context(launch_procfs.clone(), agent_root, child_pid)
+    .with_process_context(launch_procfs.clone(), agent_root, child_pid, tool_runner)
     .with_shared_services(handles.srv.clone(), handles.route.clone());
     let environment = if let Some(factory) = mount_grant_applicator_factory {
         environment.with_mount_grant_applicator_factory(factory, live_namespace)
@@ -1828,7 +1658,16 @@ fn validate_child_namespace_launch_handles(
         .iter()
         .map(|(mount, _)| mount.as_str())
         .collect();
-    if expected == actual {
+    let expected_manifests = plan
+        .bin_tool_names()
+        .map(|name| format!("/lib/exec/{name}"))
+        .collect::<BTreeSet<_>>();
+    let actual_manifests = handles
+        .tool_manifests
+        .iter()
+        .map(|(mount, _)| mount.clone())
+        .collect::<BTreeSet<_>>();
+    if expected == actual && expected_manifests == actual_manifests {
         return Ok(());
     }
 
@@ -1897,7 +1736,39 @@ fn child_namespace_from_launch_handles(
     for (mount, tree) in &handles.bin_tools {
         namespace.mount(mount, tree.clone(), alan_kernel::Access::ReadOnly);
     }
+    for (mount, tree) in &handles.tool_manifests {
+        namespace.mount(mount, tree.clone(), alan_kernel::Access::ReadOnly);
+    }
     namespace
+}
+
+async fn child_observation_environment(
+    procfs: &alan_kernel::ProcFs,
+    agent_root: Arc<alan_agentfs::AgentRootFs>,
+    pid: &str,
+    plan: &ChildNamespaceAssemblyPlan,
+) -> Result<super::NamespaceRuntimeEnvironment> {
+    let agent_path = format!("/agent/{pid}");
+    let agent_tree = agent_root
+        .process_tree(pid)
+        .await
+        .with_context(|| format!("attach observer to child AgentFS {agent_path}"))?;
+    let mut namespace = alan_kernel::Namespace::new();
+    namespace.mount(
+        &agent_path,
+        InProcessTransport::new(agent_tree),
+        alan_kernel::Access::ReadWrite,
+    );
+    namespace.mount(
+        "/proc",
+        InProcessTransport::new(Arc::new(procfs.clone())),
+        alan_kernel::Access::ReadWrite,
+    );
+    Ok(super::NamespaceRuntimeEnvironment::new(
+        InProcessTransport::new(Arc::new(alan_kernel::MountFs::new(namespace))),
+        agent_path,
+        plan.llm_connection_name.clone(),
+    ))
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -1905,7 +1776,7 @@ fn next_child_namespace_fid() -> Fid {
     Fid(NEXT_CHILD_NAMESPACE_FID.fetch_add(1, Ordering::Relaxed))
 }
 
-fn build_child_namespace_assembly_plan(
+async fn build_child_namespace_assembly_plan(
     parent: &RuntimeLoopState,
     spec: &SpawnSpec,
     child_core_config: &crate::Config,
@@ -1928,6 +1799,7 @@ fn build_child_namespace_assembly_plan(
         srv_mount: "/srv".to_string(),
         route_mount: alan_routefs::MOUNT_PATH.to_string(),
         bin_tool_mounts: Vec::new(),
+        tool_packages: Vec::new(),
         workspace_root: workspace_root.clone(),
         cwd,
     };
@@ -1936,148 +1808,49 @@ fn build_child_namespace_assembly_plan(
         return Ok(plan);
     }
 
-    let selected_tool_names = selected_child_tool_names(parent, spec);
-    let normalized_requested_workspace_root =
-        workspace_root.as_deref().map(lexically_normalize_path);
-    let normalized_parent_workspace_root =
-        bound_workspace_root(parent).map(|root| lexically_normalize_path(&root));
-
-    plan.bin_tool_mounts = selected_tool_names
+    let shares_parent_workspace = workspace_root
+        .as_ref()
+        .zip(bound_workspace_root(parent).as_ref())
+        .is_some_and(|(child, parent)| {
+            lexically_normalize_path(child) == lexically_normalize_path(parent)
+        });
+    let packages = parent
+        .namespace_environment()
+        .discover_tool_packages()
+        .await?
         .into_iter()
-        .filter(|tool_name| {
-            child_tool_is_mountable(
-                parent,
-                tool_name,
-                normalized_requested_workspace_root.as_ref(),
-                normalized_parent_workspace_root.as_ref(),
-            )
-        })
-        .map(|tool_name| format!("/bin/{tool_name}"))
+        .filter(|package| !package.is_workspace_local() || shares_parent_workspace)
+        .collect::<Vec<_>>();
+    plan.tool_packages = if let Some(profile) = spec.runtime_overrides.tool_profile.as_ref() {
+        let available = packages
+            .iter()
+            .map(|package| package.name.as_str())
+            .collect::<BTreeSet<_>>();
+        let missing = profile
+            .allowed_tools
+            .iter()
+            .filter(|name| !available.contains(name.as_str()))
+            .cloned()
+            .collect::<Vec<_>>();
+        if !missing.is_empty() {
+            bail!(
+                "Child-agent launch requested unavailable tools: {}",
+                missing.join(", ")
+            );
+        }
+        packages
+            .into_iter()
+            .filter(|package| profile.allowed_tools.contains(&package.name))
+            .collect()
+    } else {
+        packages
+    };
+    plan.bin_tool_mounts = plan
+        .tool_packages
+        .iter()
+        .map(|package| format!("/bin/{}", package.name))
         .collect();
     Ok(plan)
-}
-
-fn selected_child_tool_names(parent: &RuntimeLoopState, spec: &SpawnSpec) -> Vec<String> {
-    spec.runtime_overrides
-        .tool_profile
-        .as_ref()
-        .map(|tool_profile| tool_profile.allowed_tools.clone())
-        .unwrap_or_else(|| parent.static_tool_names())
-}
-
-fn child_tool_is_mountable(
-    parent: &RuntimeLoopState,
-    tool_name: &str,
-    normalized_requested_workspace_root: Option<&PathBuf>,
-    normalized_parent_workspace_root: Option<&PathBuf>,
-) -> bool {
-    child_tool_can_share_existing_binding(
-        parent,
-        tool_name,
-        normalized_requested_workspace_root,
-        normalized_parent_workspace_root,
-    ) || parent.tool_catalog().has_tool_factory(tool_name)
-}
-
-fn child_tool_can_share_existing_binding(
-    parent: &RuntimeLoopState,
-    tool_name: &str,
-    normalized_requested_workspace_root: Option<&PathBuf>,
-    normalized_parent_workspace_root: Option<&PathBuf>,
-) -> bool {
-    let Some(tool) = parent.tool_catalog().get(tool_name) else {
-        return false;
-    };
-    tool.locality() == crate::tools::ToolLocality::Global
-        || (normalized_parent_workspace_root.is_some()
-            && normalized_requested_workspace_root == normalized_parent_workspace_root)
-}
-
-fn build_child_tool_registry_from_namespace_plan(
-    parent: &RuntimeLoopState,
-    spec: &SpawnSpec,
-    child_core_config: &crate::Config,
-    namespace_plan: &ChildNamespaceAssemblyPlan,
-) -> Result<ToolRegistry> {
-    let child_config = Arc::new(child_core_config.clone());
-    if !spec.has_handle(SpawnHandle::Workspace) {
-        return Ok(ToolRegistry::with_config(child_config));
-    }
-
-    let mut tools = if let Some(workspace_root) = spec.launch.workspace_root.as_deref() {
-        let mut rebound = ToolRegistry::with_config(Arc::clone(&child_config));
-        let normalized_requested_workspace_root = lexically_normalize_path(workspace_root);
-        let normalized_parent_workspace_root =
-            bound_workspace_root(parent).map(|root| lexically_normalize_path(&root));
-
-        for tool_name in namespace_plan.bin_tool_names() {
-            if child_tool_can_share_existing_binding(
-                parent,
-                tool_name,
-                Some(&normalized_requested_workspace_root),
-                normalized_parent_workspace_root.as_ref(),
-            ) && let Some(tool) = parent.tool_catalog().get(tool_name)
-            {
-                rebound.register_shared(tool);
-                continue;
-            }
-
-            if let Some(materialized_tool) = parent.tool_catalog().materialize(tool_name) {
-                rebound.register_boxed(materialized_tool);
-            }
-        }
-        validate_child_tool_profile_allowlist(
-            &rebound,
-            spec.runtime_overrides.tool_profile.as_ref(),
-            spec.launch.workspace_root.as_deref(),
-        )?;
-        rebound
-    } else if let Some(tool_profile) = spec.runtime_overrides.tool_profile.as_ref() {
-        let filtered = parent
-            .tool_catalog()
-            .catalog_filtered_clone_with_config(namespace_plan.bin_tool_names(), child_config);
-        validate_child_tool_profile_allowlist(&filtered, Some(tool_profile), None)?;
-        filtered
-    } else {
-        parent.tool_catalog().clone_with_config(child_config)
-    };
-
-    if let Some(cwd) = namespace_plan.cwd.clone() {
-        if let Some(workspace_root) = namespace_plan.workspace_root.clone() {
-            tools.set_default_workspace_binding(workspace_root, cwd);
-        } else {
-            tools.set_default_cwd(cwd);
-        }
-    }
-    Ok(tools)
-}
-
-fn validate_child_tool_profile_allowlist(
-    tools: &ToolRegistry,
-    tool_profile: Option<&alan_agent_protocol::SpawnToolProfileOverride>,
-    workspace_root: Option<&Path>,
-) -> Result<()> {
-    let Some(tool_profile) = tool_profile else {
-        return Ok(());
-    };
-
-    let missing_tools = tools.validate_required_tools(&tool_profile.allowed_tools)?;
-    if missing_tools.is_empty() {
-        return Ok(());
-    }
-
-    if let Some(workspace_root) = workspace_root {
-        bail!(
-            "Child-agent launch requested tools that cannot be bound for workspace '{}': {}",
-            workspace_root.display(),
-            missing_tools.join(", ")
-        );
-    }
-
-    bail!(
-        "Child-agent launch requested unavailable tools: {}",
-        missing_tools.join(", ")
-    );
 }
 
 fn resolve_child_workspace_root(parent: &RuntimeLoopState, spec: &SpawnSpec) -> Option<PathBuf> {
@@ -2321,10 +2094,11 @@ mod tests {
     use crate::llm::{GenerationRequest, GenerationResponse, StreamChunk, TokenUsage};
     use crate::runtime::{
         ApprovedMountGrant, ApprovedMountGrantAccess, MountGrantApplicator,
-        MountGrantApplicatorFactory, RuntimeConfig, RuntimeEnvironment,
+        MountGrantApplicatorFactory, NamespaceRuntimeEnvironment, RuntimeConfig,
     };
     use crate::skills::SkillHostCapabilities;
     use crate::tools::Tool;
+    use crate::tools::ToolRegistry;
     use alan_ap::{Fid, FileServer, InProcessTransport, OpenMode};
     use alan_kernel::{
         Access as KernelAccess, Credentials as KernelCredentials, Namespace as KernelNamespace,
@@ -2334,10 +2108,6 @@ mod tests {
     use serde_json::json;
     use std::sync::{Arc, Mutex};
     use tempfile::TempDir;
-
-    fn test_liveness_rx() -> tokio::sync::broadcast::Receiver<RuntimeLivenessEnvelope> {
-        tokio::sync::broadcast::channel(8).0.subscribe()
-    }
 
     fn test_startup_metadata(
         process_path: impl Into<String>,
@@ -2359,19 +2129,35 @@ mod tests {
         }
     }
 
-    fn namespace_environment_for_parent_test() -> RuntimeEnvironment {
+    fn namespace_environment_for_parent_test() -> NamespaceRuntimeEnvironment {
         namespace_environment_for_parent_test_with_route(Arc::new(alan_routefs::RouteFs::new()))
     }
 
     fn namespace_environment_for_parent_test_with_route(
         routefs: Arc<alan_routefs::RouteFs>,
-    ) -> RuntimeEnvironment {
-        let root =
-            InProcessTransport::new(Arc::new(alan_kernel::MountFs::new(KernelNamespace::new())));
-        let namespace =
-            crate::runtime::NamespaceRuntimeEnvironment::new(root, "/agent/1", "default")
-                .with_shared_services(memfs_transport(), InProcessTransport::new(routefs));
-        RuntimeEnvironment::namespace(namespace)
+    ) -> NamespaceRuntimeEnvironment {
+        let mut mounts = KernelNamespace::new();
+        for name in ["alpha", "beta"] {
+            let manifest =
+                crate::runtime::ToolPackageManifest::from_tool(&NamedTestTool::new(name), 30)
+                    .unwrap();
+            mounts.mount(
+                &format!("/bin/{name}"),
+                memfs_transport(),
+                KernelAccess::ReadOnly,
+            );
+            mounts.mount(
+                &format!("/lib/exec/{name}"),
+                InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::with_read_only_file(
+                    "manifest",
+                    serde_json::to_vec(&manifest).unwrap(),
+                ))),
+                KernelAccess::ReadOnly,
+            );
+        }
+        let root = InProcessTransport::new(Arc::new(alan_kernel::MountFs::new(mounts)));
+        crate::runtime::NamespaceRuntimeEnvironment::new(root, "/agent/1", "default")
+            .with_shared_services(memfs_transport(), InProcessTransport::new(routefs))
     }
 
     #[derive(Clone, Default)]
@@ -2489,6 +2275,10 @@ mod tests {
         ) -> crate::tools::ToolResult {
             Box::pin(async { Ok(json!({"ok": true})) })
         }
+
+        fn locality(&self) -> crate::tools::ToolLocality {
+            crate::tools::ToolLocality::WorkspaceLocal
+        }
     }
 
     #[derive(Debug, Default)]
@@ -2532,70 +2322,6 @@ mod tests {
             self.live_namespace
                 .mount(&grant.namespace_path, memfs_transport(), access);
             Ok(())
-        }
-    }
-
-    struct WorkspaceBoundTestTool {
-        name: String,
-        workspace_root: PathBuf,
-    }
-
-    impl WorkspaceBoundTestTool {
-        fn new(name: &str, workspace_root: PathBuf) -> Self {
-            Self {
-                name: name.to_string(),
-                workspace_root,
-            }
-        }
-    }
-
-    impl Tool for WorkspaceBoundTestTool {
-        fn name(&self) -> &str {
-            &self.name
-        }
-
-        fn description(&self) -> &str {
-            "workspace-bound test tool"
-        }
-
-        fn parameters_schema(&self) -> serde_json::Value {
-            json!({
-                "type": "object",
-                "required": ["path"],
-                "properties": {
-                    "path": {
-                        "type": "string"
-                    }
-                }
-            })
-        }
-
-        fn execute(
-            &self,
-            arguments: serde_json::Value,
-            ctx: &crate::tools::ToolContext,
-        ) -> crate::tools::ToolResult {
-            let workspace_root = self.workspace_root.clone();
-            let path = ctx.resolve_path(arguments["path"].as_str().unwrap_or(""));
-            Box::pin(async move {
-                if !path.starts_with(&workspace_root) {
-                    anyhow::bail!(
-                        "outside workspace: '{}' not within '{}'",
-                        path.display(),
-                        workspace_root.display()
-                    );
-                }
-
-                let content = tokio::fs::read_to_string(&path).await?;
-                Ok(json!({
-                    "path": path.to_string_lossy(),
-                    "content": content
-                }))
-            })
-        }
-
-        fn locality(&self) -> crate::tools::ToolLocality {
-            crate::tools::ToolLocality::WorkspaceLocal
         }
     }
 
@@ -2682,11 +2408,6 @@ mod tests {
             crate::InstallChannel::Stable,
         ));
         core_config.openai_responses_model = "gpt-5.4".to_string();
-        let mut tools = ToolRegistry::with_config(Arc::new(core_config.clone()));
-        tools.set_default_cwd(workspace_root.clone());
-        tools.register(NamedTestTool::new("alpha"));
-        tools.register(NamedTestTool::new("beta"));
-
         let mut machine = crate::AgentMachine::new();
         machine.add_user_message("Parent user asks for review");
         machine.add_assistant_message("Parent assistant explains the approach", None);
@@ -2708,7 +2429,6 @@ mod tests {
             machine,
             current_submission_id: None,
             environment: namespace_environment_for_parent_test(),
-            tool_catalog: tools,
             core_config,
             runtime_config: RuntimeConfig::default(),
             workspace_persona_dirs: Vec::new(),
@@ -2720,6 +2440,13 @@ mod tests {
                 ),
             turn_state,
         }
+    }
+
+    fn parent_test_tools(config: &crate::Config) -> ToolRegistry {
+        let mut tools = ToolRegistry::with_config(Arc::new(config.clone()));
+        tools.register(NamedTestTool::new("alpha"));
+        tools.register(NamedTestTool::new("beta"));
+        tools
     }
 
     fn launch_spec(root_dir: PathBuf) -> SpawnSpec {
@@ -2749,13 +2476,14 @@ mod tests {
             srv_mount: "/srv".to_string(),
             route_mount: alan_routefs::MOUNT_PATH.to_string(),
             bin_tool_mounts: tools.iter().map(|tool| format!("/bin/{tool}")).collect(),
+            tool_packages: Vec::new(),
             cwd: workspace_root.clone(),
             workspace_root,
         }
     }
 
-    #[test]
-    fn delegated_spawn_boundary_passes_satisfied_task_unchanged() {
+    #[tokio::test]
+    async fn delegated_spawn_boundary_passes_satisfied_task_unchanged() {
         let temp = TempDir::new().unwrap();
         let parent = make_parent_state(
             &temp,
@@ -2779,6 +2507,7 @@ mod tests {
             &mut spec,
             &capability_plan(Some(workspace_root), &["read_file"]),
         )
+        .await
         .unwrap()
         .unwrap();
 
@@ -2789,8 +2518,8 @@ mod tests {
         assert_eq!(spec.launch.task, "Inspect local files");
     }
 
-    #[test]
-    fn delegated_spawn_boundary_rewrites_narrowed_task_explicitly() {
+    #[tokio::test]
+    async fn delegated_spawn_boundary_rewrites_narrowed_task_explicitly() {
         let temp = TempDir::new().unwrap();
         let parent = make_parent_state(
             &temp,
@@ -2814,6 +2543,7 @@ mod tests {
             &mut spec,
             &capability_plan(Some(workspace_root), &["read_file"]),
         )
+        .await
         .unwrap()
         .unwrap();
 
@@ -2825,8 +2555,8 @@ mod tests {
         assert!(spec.launch.task.contains("Withheld capabilities: github"));
     }
 
-    #[test]
-    fn delegated_spawn_boundary_declines_unsatisfied_workspace() {
+    #[tokio::test]
+    async fn delegated_spawn_boundary_declines_unsatisfied_workspace() {
         let temp = TempDir::new().unwrap();
         let parent = make_parent_state(
             &temp,
@@ -2847,6 +2577,7 @@ mod tests {
             &mut spec,
             &capability_plan(None, &["read_file"]),
         )
+        .await
         .unwrap_err();
         let rejection = error.downcast_ref::<DelegatedSpawnRejected>().unwrap();
 
@@ -2928,6 +2659,13 @@ Body
         );
         for mount in &plan.bin_tool_mounts {
             namespace.mount(mount, memfs_transport(), KernelAccess::ReadOnly);
+        }
+        for name in plan.bin_tool_names() {
+            namespace.mount(
+                &format!("/lib/exec/{name}"),
+                memfs_transport(),
+                KernelAccess::ReadOnly,
+            );
         }
         namespace
     }
@@ -3192,8 +2930,8 @@ Body
         assert!(!tool_names.contains(&"beta"));
     }
 
-    #[test]
-    fn child_namespace_plan_without_workspace_handle_mounts_no_bin_tools() {
+    #[tokio::test]
+    async fn child_namespace_plan_without_workspace_handle_mounts_no_bin_tools() {
         let temp = TempDir::new().unwrap();
         let requests = RecordedRequests::default();
         let response = completed_response("Child finished cleanly.");
@@ -3203,7 +2941,9 @@ Body
         child_core_config.connection_profile = Some("child-main".to_string());
         let spec = launch_spec(root_dir);
 
-        let plan = build_child_namespace_assembly_plan(&parent, &spec, &child_core_config).unwrap();
+        let plan = build_child_namespace_assembly_plan(&parent, &spec, &child_core_config)
+            .await
+            .unwrap();
 
         assert_eq!(plan.agent_mount, "/agent");
         assert_eq!(plan.llm_mount, "/mnt/llm");
@@ -3214,8 +2954,8 @@ Body
         assert_eq!(plan.workspace_root, None);
     }
 
-    #[test]
-    fn child_namespace_plan_mounts_only_allowed_workspace_tools() {
+    #[tokio::test]
+    async fn child_namespace_plan_mounts_only_allowed_workspace_tools() {
         let temp = TempDir::new().unwrap();
         let requests = RecordedRequests::default();
         let response = completed_response("Child finished cleanly.");
@@ -3227,8 +2967,9 @@ Body
             allowed_tools: vec!["alpha".to_string()],
         });
 
-        let plan =
-            build_child_namespace_assembly_plan(&parent, &spec, &parent.core_config).unwrap();
+        let plan = build_child_namespace_assembly_plan(&parent, &spec, &parent.core_config)
+            .await
+            .unwrap();
 
         assert_eq!(plan.llm_mount, "/mnt/llm");
         assert_eq!(plan.llm_connection_name().unwrap(), "default");
@@ -3239,8 +2980,28 @@ Body
         assert_eq!(plan.bin_tool_mounts, vec!["/bin/alpha"]);
     }
 
-    #[test]
-    fn child_clone_exec_spec_declares_agent_and_llm_mounts_for_pid() {
+    #[tokio::test]
+    async fn child_namespace_plan_with_different_root_withholds_parent_workspace_tools() {
+        let temp = TempDir::new().unwrap();
+        let parent = make_parent_state(
+            &temp,
+            RecordedRequests::default(),
+            completed_response("unused"),
+        );
+        let mut spec = launch_spec(temp.path().join("other/.alan/agents/grader"));
+        spec.handles = vec![SpawnHandle::Workspace];
+        spec.launch.workspace_root = Some(temp.path().join("other"));
+
+        let plan = build_child_namespace_assembly_plan(&parent, &spec, &parent.core_config)
+            .await
+            .unwrap();
+
+        assert!(plan.tool_packages.is_empty());
+        assert!(plan.bin_tool_mounts.is_empty());
+    }
+
+    #[tokio::test]
+    async fn child_clone_exec_spec_declares_agent_and_llm_mounts_for_pid() {
         let temp = TempDir::new().unwrap();
         let requests = RecordedRequests::default();
         let response = completed_response("Child finished cleanly.");
@@ -3250,7 +3011,9 @@ Body
         child_core_config.connection_profile = Some("child-main".to_string());
         let spec = launch_spec(root_dir);
 
-        let plan = build_child_namespace_assembly_plan(&parent, &spec, &child_core_config).unwrap();
+        let plan = build_child_namespace_assembly_plan(&parent, &spec, &child_core_config)
+            .await
+            .unwrap();
         let exec = plan.clone_exec_spec_for_pid("42", "/bin/alan-agent", ["--boot"]);
 
         assert_eq!(
@@ -3273,8 +3036,8 @@ Body
         assert_eq!(decoded, exec);
     }
 
-    #[test]
-    fn child_clone_exec_spec_declares_only_allowed_bin_mounts() {
+    #[tokio::test]
+    async fn child_clone_exec_spec_declares_only_allowed_bin_mounts() {
         let temp = TempDir::new().unwrap();
         let requests = RecordedRequests::default();
         let response = completed_response("Child finished cleanly.");
@@ -3286,8 +3049,9 @@ Body
             allowed_tools: vec!["alpha".to_string()],
         });
 
-        let plan =
-            build_child_namespace_assembly_plan(&parent, &spec, &parent.core_config).unwrap();
+        let plan = build_child_namespace_assembly_plan(&parent, &spec, &parent.core_config)
+            .await
+            .unwrap();
         let manifest = plan.namespace_manifest_for_pid("99");
 
         assert_eq!(
@@ -3296,6 +3060,7 @@ Body
                 "mounts": [
                     {"path": "/agent", "access": "rw"},
                     {"path": "/bin/alpha", "access": "ro"},
+                    {"path": "/lib/exec/alpha", "access": "ro"},
                     {"path": "/mnt/llm", "access": "rw"},
                     {"path": "/mnt/route", "access": "rw"},
                     {"path": "/srv", "access": "ro"}
@@ -3316,8 +3081,9 @@ Body
         spec.runtime_overrides.tool_profile = Some(alan_agent_protocol::SpawnToolProfileOverride {
             allowed_tools: vec!["alpha".to_string()],
         });
-        let plan =
-            build_child_namespace_assembly_plan(&parent, &spec, &parent.core_config).unwrap();
+        let plan = build_child_namespace_assembly_plan(&parent, &spec, &parent.core_config)
+            .await
+            .unwrap();
         let procfs = KernelProcFs::new();
         let spawner = procfs.for_spawner(
             None,
@@ -3357,7 +3123,7 @@ Body
     }
 
     #[tokio::test]
-    async fn child_namespace_launch_helper_returns_runtime_environment_for_proc_pid() {
+    async fn child_namespace_launch_and_supervisor_reattachment_use_proc_pid_files() {
         let temp = TempDir::new().unwrap();
         let requests = RecordedRequests::default();
         let response = completed_response("Child finished cleanly.");
@@ -3368,26 +3134,27 @@ Body
         spec.runtime_overrides.tool_profile = Some(alan_agent_protocol::SpawnToolProfileOverride {
             allowed_tools: vec!["alpha".to_string()],
         });
-        let plan =
-            build_child_namespace_assembly_plan(&parent, &spec, &parent.core_config).unwrap();
-        let child_tools = build_child_tool_registry_from_namespace_plan(
-            &parent,
-            &spec,
-            &parent.core_config,
-            &plan,
-        )
-        .unwrap();
+        let plan = build_child_namespace_assembly_plan(&parent, &spec, &parent.core_config)
+            .await
+            .unwrap();
         let launch_procfs = KernelProcFs::new();
+        let tool_runner =
+            crate::tools::ToolProcessRunner::from_registry(&parent_test_tools(&parent.core_config));
         let runtime_procfs = launch_procfs
             .clone()
-            .with_runner(Arc::new(ChildToolProcessRunner::new(child_tools)));
+            .with_runner(Arc::new(tool_runner.clone()));
         let handles = ChildNamespaceLaunchHandles::new(
             Arc::new(alan_agentfs::AgentFs::new()),
             memfs_transport(),
             memfs_transport(),
             memfs_transport(),
         )
-        .with_bin_tool("/bin/alpha", memfs_transport());
+        .with_tool_package(
+            "/bin/alpha",
+            memfs_transport(),
+            "/lib/exec/alpha",
+            memfs_transport(),
+        );
 
         let launch = spawn_child_namespace_runtime_environment(
             &launch_procfs,
@@ -3395,6 +3162,8 @@ Body
             &plan,
             handles,
             None,
+            tool_runner.clone(),
+            plan.execution_binding(),
             None,
             "/bin/alan-agent",
         )
@@ -3452,13 +3221,20 @@ Body
             memfs_transport(),
             memfs_transport(),
         )
-        .with_bin_tool("/bin/alpha", memfs_transport());
+        .with_tool_package(
+            "/bin/alpha",
+            memfs_transport(),
+            "/lib/exec/alpha",
+            memfs_transport(),
+        );
         let nested = spawn_child_namespace_runtime_environment(
             &launch_procfs,
             &runtime_procfs,
             &plan,
             child_handles,
             launch.environment.process_context(),
+            tool_runner.clone(),
+            plan.execution_binding(),
             None,
             "/bin/alan-agent",
         )
@@ -3482,7 +3258,7 @@ Body
         );
         record_child_launch_failure_process(
             &launch_procfs,
-            &nested.environment,
+            &nested.environment.process_context().unwrap().agent_root,
             &nested.pid,
             &anyhow::anyhow!("simulated child runtime startup failure"),
         )
@@ -3541,28 +3317,28 @@ Body
 
         let process_reader = launch.environment.clone();
         let process_pid = launch.pid.clone();
-        let (tx, event_rx) = tokio::sync::broadcast::channel(4);
-        let submission_id = "completed-child-process".to_string();
-        let _ = tx.send(RuntimeEventEnvelope {
-            submission_id: Some(submission_id.clone()),
-            event: alan_agent_protocol::Event::TurnCompleted { summary: None },
-        });
+        launch
+            .environment
+            .write_assistant_output("AgentFS child result")
+            .await
+            .unwrap();
+        crate::runtime::ui_surfaces::turn_completed(&launch.environment, false)
+            .await
+            .unwrap();
         let controller = ChildRuntimeController {
             runtime: None,
             startup_metadata: test_startup_metadata("child-machine", None, false),
-            event_rx,
-            liveness_rx: test_liveness_rx(),
-            submission_id,
             child_run_id: format!("test-child-run-{}", uuid::Uuid::new_v4()),
             child_run_registry: ChildRunRegistry::default(),
             timeout: None,
-            process_registry: Some(launch_procfs),
-            process_environment: Some(launch.environment),
-            process_pid: Some(process_pid.clone()),
+            process_registry: launch_procfs,
+            process_environment: launch.environment,
+            process_pid: process_pid.clone(),
         };
 
         let result = controller.join().await.unwrap();
         assert_eq!(result.status, ChildRuntimeStatus::Completed);
+        assert_eq!(result.output_text, "AgentFS child result");
         assert_eq!(
             process_reader
                 .read_process_exit_code(&process_pid)
@@ -3585,32 +3361,35 @@ Body
         spec.runtime_overrides.tool_profile = Some(alan_agent_protocol::SpawnToolProfileOverride {
             allowed_tools: vec!["alpha".to_string()],
         });
-        let plan =
-            build_child_namespace_assembly_plan(&parent, &spec, &parent.core_config).unwrap();
-        let child_tools = build_child_tool_registry_from_namespace_plan(
-            &parent,
-            &spec,
-            &parent.core_config,
-            &plan,
-        )
-        .unwrap();
+        let plan = build_child_namespace_assembly_plan(&parent, &spec, &parent.core_config)
+            .await
+            .unwrap();
         let launch_procfs = KernelProcFs::new();
+        let tool_runner =
+            crate::tools::ToolProcessRunner::from_registry(&parent_test_tools(&parent.core_config));
         let runtime_procfs = launch_procfs
             .clone()
-            .with_runner(Arc::new(ChildToolProcessRunner::new(child_tools)));
+            .with_runner(Arc::new(tool_runner.clone()));
         let handles = ChildNamespaceLaunchHandles::new(
             Arc::new(alan_agentfs::AgentFs::new()),
             memfs_transport(),
             memfs_transport(),
             memfs_transport(),
         )
-        .with_bin_tool("/bin/alpha", memfs_transport());
+        .with_tool_package(
+            "/bin/alpha",
+            memfs_transport(),
+            "/lib/exec/alpha",
+            memfs_transport(),
+        );
         let launch = spawn_child_namespace_runtime_environment(
             &launch_procfs,
             &runtime_procfs,
             &plan,
             handles,
             None,
+            tool_runner,
+            plan.execution_binding(),
             None,
             "/bin/alan-agent",
         )
@@ -3618,31 +3397,21 @@ Body
         .unwrap();
         let process_pid = launch.pid.clone();
         let process_environment = launch.environment.clone();
-        let (event_tx, event_rx) = tokio::sync::broadcast::channel(4);
-        let submission_id = "externally-stopped-child".to_string();
         let controller = ChildRuntimeController {
             runtime: None,
             startup_metadata: test_startup_metadata("child-machine", None, false),
-            event_rx,
-            liveness_rx: test_liveness_rx(),
-            submission_id: submission_id.clone(),
             child_run_id: format!("test-child-run-{}", uuid::Uuid::new_v4()),
             child_run_registry: ChildRunRegistry::default(),
             timeout: None,
-            process_registry: Some(launch_procfs),
-            process_environment: Some(launch.environment),
-            process_pid: Some(process_pid.clone()),
+            process_registry: launch_procfs,
+            process_environment: launch.environment,
+            process_pid: process_pid.clone(),
         };
 
+        assert_eq!(process_environment.ui_events_offset().await.unwrap(), 0);
         process_environment
             .write_process_control_for_pid(&process_pid, "cancel")
             .await
-            .unwrap();
-        event_tx
-            .send(RuntimeEventEnvelope {
-                submission_id: Some(submission_id),
-                event: alan_agent_protocol::Event::TurnCompleted { summary: None },
-            })
             .unwrap();
         let result = tokio::time::timeout(Duration::from_secs(2), controller.join())
             .await
@@ -3674,27 +3443,33 @@ Body
         let root_dir = temp.path().join("repo/.alan/agents/grader");
         let mut spec = launch_spec(root_dir);
         spec.handles = vec![SpawnHandle::Workspace];
-        let plan =
-            build_child_namespace_assembly_plan(&parent, &spec, &parent.core_config).unwrap();
-        let child_tools = build_child_tool_registry_from_namespace_plan(
-            &parent,
-            &spec,
-            &parent.core_config,
-            &plan,
-        )
-        .unwrap();
+        let plan = build_child_namespace_assembly_plan(&parent, &spec, &parent.core_config)
+            .await
+            .unwrap();
         let launch_procfs = KernelProcFs::new();
+        let tool_runner =
+            crate::tools::ToolProcessRunner::from_registry(&parent_test_tools(&parent.core_config));
         let runtime_procfs = launch_procfs
             .clone()
-            .with_runner(Arc::new(ChildToolProcessRunner::new(child_tools)));
+            .with_runner(Arc::new(tool_runner.clone()));
         let handles = ChildNamespaceLaunchHandles::new(
             Arc::new(alan_agentfs::AgentFs::new()),
             memfs_transport(),
             memfs_transport(),
             memfs_transport(),
         )
-        .with_bin_tool("/bin/alpha", memfs_transport())
-        .with_bin_tool("/bin/beta", memfs_transport());
+        .with_tool_package(
+            "/bin/alpha",
+            memfs_transport(),
+            "/lib/exec/alpha",
+            memfs_transport(),
+        )
+        .with_tool_package(
+            "/bin/beta",
+            memfs_transport(),
+            "/lib/exec/beta",
+            memfs_transport(),
+        );
         let factory = Arc::new(RecordingMountGrantApplicatorFactory::default());
 
         let launch = spawn_child_namespace_runtime_environment(
@@ -3703,6 +3478,8 @@ Body
             &plan,
             handles,
             None,
+            tool_runner,
+            plan.execution_binding(),
             Some(factory.clone()),
             "/bin/alan-agent",
         )
@@ -3758,19 +3535,13 @@ Body
         let root_dir = temp.path().join("repo/.alan/agents/grader");
         let mut spec = launch_spec(root_dir);
         spec.handles = vec![SpawnHandle::Workspace];
-        let plan =
-            build_child_namespace_assembly_plan(&parent, &spec, &parent.core_config).unwrap();
-        let child_tools = build_child_tool_registry_from_namespace_plan(
-            &parent,
-            &spec,
-            &parent.core_config,
-            &plan,
-        )
-        .unwrap();
+        let plan = build_child_namespace_assembly_plan(&parent, &spec, &parent.core_config)
+            .await
+            .unwrap();
         let launch_procfs = KernelProcFs::new();
-        let runtime_procfs = launch_procfs
-            .clone()
-            .with_runner(Arc::new(ChildToolProcessRunner::new(child_tools)));
+        let runtime_procfs = launch_procfs.clone().with_runner(Arc::new(
+            crate::tools::ToolProcessRunner::from_registry(&parent_test_tools(&parent.core_config)),
+        ));
         let llmfs = Arc::new(alan_llmfs::LlmFs::new());
         llmfs.register_connection(
             &plan.llm_connection_name().unwrap(),
@@ -3784,8 +3555,18 @@ Body
             llmfs,
         )
         .unwrap()
-        .with_bin_tool("/bin/alpha", memfs_transport())
-        .with_bin_tool("/bin/beta", memfs_transport());
+        .with_tool_package(
+            "/bin/alpha",
+            memfs_transport(),
+            "/lib/exec/alpha",
+            memfs_transport(),
+        )
+        .with_tool_package(
+            "/bin/beta",
+            memfs_transport(),
+            "/lib/exec/beta",
+            memfs_transport(),
+        );
 
         let launch = spawn_child_namespace_runtime_environment(
             &launch_procfs,
@@ -3793,6 +3574,8 @@ Body
             &plan,
             handles,
             None,
+            crate::tools::ToolProcessRunner::from_registry(&parent_test_tools(&parent.core_config)),
+            plan.execution_binding(),
             None,
             "/bin/alan-agent",
         )
@@ -3826,7 +3609,7 @@ Body
             "mounted-only",
             crate::tools::ToolLocality::Global,
         ));
-        let runner = ChildToolProcessRunner::new(child_tools);
+        let runner = crate::tools::ToolProcessRunner::from_registry(&child_tools);
         let invocation = alan_kernel::ProcessInvocation {
             pid: alan_kernel::Pid(1),
             parent: Some(alan_kernel::Pid(0)),
@@ -3843,270 +3626,6 @@ Body
 
         assert_eq!(outcome.exit_code, 127);
         assert_eq!(outcome.output, b"executable is not mounted\n");
-    }
-
-    #[test]
-    fn child_namespace_plan_omits_unbindable_workspace_local_tool_for_other_workspace() {
-        let temp = TempDir::new().unwrap();
-        let parent_root = temp.path().join("repo");
-        let child_root = temp.path().join("other-repo");
-        std::fs::create_dir_all(&child_root).unwrap();
-
-        let requests = RecordedRequests::default();
-        let response = completed_response("Child finished cleanly.");
-        let mut parent = make_parent_state(&temp, requests, response);
-        let mut parent_tools = ToolRegistry::new();
-        parent_tools.set_default_cwd(parent_root);
-        parent_tools.register(WorkspaceBoundTestTool::new(
-            "workspace_read",
-            temp.path().join("repo"),
-        ));
-        *parent.tool_catalog_mut_for_test() = parent_tools;
-
-        let mut spec = launch_spec(temp.path().join("repo/.alan/agents/grader"));
-        spec.handles = vec![SpawnHandle::Workspace];
-        spec.launch.workspace_root = Some(child_root.clone());
-        spec.launch.cwd = Some(child_root.clone());
-
-        let plan =
-            build_child_namespace_assembly_plan(&parent, &spec, &parent.core_config).unwrap();
-
-        assert_eq!(plan.workspace_root, Some(child_root.clone()));
-        assert_eq!(plan.cwd, Some(child_root));
-        assert!(plan.bin_tool_mounts.is_empty());
-    }
-
-    #[tokio::test]
-    async fn build_child_tool_registry_skips_workspace_local_tools_without_catalog_factory() {
-        let temp = TempDir::new().unwrap();
-        let parent_root = temp.path().join("repo");
-        let child_root = temp.path().join("other-repo");
-        std::fs::create_dir_all(&child_root).unwrap();
-        std::fs::write(child_root.join("target.txt"), "child workspace contents\n").unwrap();
-
-        let requests = RecordedRequests::default();
-        let response = completed_response("Child finished cleanly.");
-        let mut parent = make_parent_state(&temp, requests, response);
-        let mut parent_tools = ToolRegistry::new();
-        parent_tools.set_default_cwd(parent_root.clone());
-        parent_tools.register(WorkspaceBoundTestTool::new("workspace_read", parent_root));
-        *parent.tool_catalog_mut_for_test() = parent_tools;
-
-        let mut spec = launch_spec(temp.path().join("repo/.alan/agents/grader"));
-        spec.handles = vec![SpawnHandle::Workspace];
-        spec.launch.workspace_root = Some(child_root.clone());
-        spec.launch.cwd = Some(child_root.clone());
-
-        let child_tools = build_child_tool_registry(&parent, &spec, &parent.core_config).unwrap();
-        assert!(child_tools.get("workspace_read").is_none());
-    }
-
-    #[tokio::test]
-    async fn build_child_tool_registry_rejects_missing_requested_workspace_tool_without_factory() {
-        let temp = TempDir::new().unwrap();
-        let parent_root = temp.path().join("repo");
-        let child_root = temp.path().join("other-repo");
-        std::fs::create_dir_all(&child_root).unwrap();
-
-        let requests = RecordedRequests::default();
-        let response = completed_response("Child finished cleanly.");
-        let mut parent = make_parent_state(&temp, requests, response);
-        let mut parent_tools = ToolRegistry::new();
-        parent_tools.set_default_cwd(parent_root.clone());
-        parent_tools.register(WorkspaceBoundTestTool::new("workspace_read", parent_root));
-        *parent.tool_catalog_mut_for_test() = parent_tools;
-
-        let mut spec = launch_spec(temp.path().join("repo/.alan/agents/grader"));
-        spec.handles = vec![SpawnHandle::Workspace];
-        spec.launch.workspace_root = Some(child_root.clone());
-        spec.launch.cwd = Some(child_root);
-        spec.runtime_overrides.tool_profile = Some(alan_agent_protocol::SpawnToolProfileOverride {
-            allowed_tools: vec!["workspace_read".to_string()],
-        });
-
-        let err = match build_child_tool_registry(&parent, &spec, &parent.core_config) {
-            Ok(_) => panic!("expected missing requested workspace tool to fail"),
-            Err(err) => err,
-        };
-        assert!(
-            err.to_string()
-                .contains("requested tools that cannot be bound for workspace")
-        );
-        assert!(err.to_string().contains("workspace_read"));
-    }
-
-    #[tokio::test]
-    async fn build_child_tool_registry_materializes_workspace_tools_from_parent_factories() {
-        let temp = TempDir::new().unwrap();
-        let parent_root = temp.path().join("repo");
-        let child_root = temp.path().join("other-repo");
-        std::fs::create_dir_all(&child_root).unwrap();
-        std::fs::write(child_root.join("target.txt"), "child workspace contents\n").unwrap();
-
-        let requests = RecordedRequests::default();
-        let response = completed_response("Child finished cleanly.");
-        let mut parent = make_parent_state(&temp, requests, response);
-        let mut parent_tools = ToolRegistry::new();
-        parent_tools.set_default_cwd(parent_root);
-        let child_root_for_factory = child_root.clone();
-        parent_tools.register_tool_factory("workspace_read", move || {
-            Box::new(WorkspaceBoundTestTool::new(
-                "workspace_read",
-                child_root_for_factory.clone(),
-            ))
-        });
-        *parent.tool_catalog_mut_for_test() = parent_tools;
-
-        let mut spec = launch_spec(temp.path().join("repo/.alan/agents/grader"));
-        spec.handles = vec![SpawnHandle::Workspace];
-        spec.launch.workspace_root = Some(child_root.clone());
-        spec.launch.cwd = Some(child_root.clone());
-        spec.runtime_overrides.tool_profile = Some(alan_agent_protocol::SpawnToolProfileOverride {
-            allowed_tools: vec!["workspace_read".to_string()],
-        });
-
-        let child_tools = build_child_tool_registry(&parent, &spec, &parent.core_config).unwrap();
-        let result = child_tools
-            .execute("workspace_read", json!({ "path": "target.txt" }))
-            .await
-            .unwrap();
-
-        assert_eq!(result["content"], json!("child workspace contents\n"));
-        assert_eq!(
-            result["path"],
-            json!(child_root.join("target.txt").to_string_lossy().to_string())
-        );
-    }
-
-    #[tokio::test]
-    async fn build_child_tool_registry_preserves_global_override_before_factory() {
-        let temp = TempDir::new().unwrap();
-        let parent_root = temp.path().join("repo");
-        let child_root = temp.path().join("other-repo");
-        std::fs::create_dir_all(&child_root).unwrap();
-
-        let requests = RecordedRequests::default();
-        let response = completed_response("Child finished cleanly.");
-        let mut parent = make_parent_state(&temp, requests, response);
-        let mut parent_tools = ToolRegistry::new();
-        parent_tools.set_default_cwd(parent_root);
-        parent_tools.register(MarkerTool::new(
-            "override_tool",
-            "override",
-            crate::tools::ToolLocality::Global,
-        ));
-        parent_tools.register_tool_factory("override_tool", || {
-            Box::new(MarkerTool::new(
-                "override_tool",
-                "factory",
-                crate::tools::ToolLocality::Global,
-            ))
-        });
-        *parent.tool_catalog_mut_for_test() = parent_tools;
-
-        let mut spec = launch_spec(temp.path().join("repo/.alan/agents/grader"));
-        spec.handles = vec![SpawnHandle::Workspace];
-        spec.launch.workspace_root = Some(child_root.clone());
-        spec.launch.cwd = Some(child_root);
-        spec.runtime_overrides.tool_profile = Some(alan_agent_protocol::SpawnToolProfileOverride {
-            allowed_tools: vec!["override_tool".to_string()],
-        });
-
-        let child_tools = build_child_tool_registry(&parent, &spec, &parent.core_config).unwrap();
-        let result = child_tools
-            .execute("override_tool", json!({}))
-            .await
-            .unwrap();
-
-        assert_eq!(result["marker"], json!("override"));
-    }
-
-    #[tokio::test]
-    async fn build_child_tool_registry_preserves_same_workspace_local_override_before_factory() {
-        let temp = TempDir::new().unwrap();
-        let workspace_root = temp.path().join("repo");
-        std::fs::create_dir_all(&workspace_root).unwrap();
-
-        let requests = RecordedRequests::default();
-        let response = completed_response("Child finished cleanly.");
-        let mut parent = make_parent_state(&temp, requests, response);
-        let mut parent_tools = ToolRegistry::new();
-        parent_tools.set_default_workspace_root(workspace_root.clone());
-        parent_tools.register(MarkerTool::new(
-            "workspace_override",
-            "override",
-            crate::tools::ToolLocality::WorkspaceLocal,
-        ));
-        parent_tools.register_tool_factory("workspace_override", || {
-            Box::new(MarkerTool::new(
-                "workspace_override",
-                "factory",
-                crate::tools::ToolLocality::WorkspaceLocal,
-            ))
-        });
-        *parent.tool_catalog_mut_for_test() = parent_tools;
-
-        let mut spec = launch_spec(temp.path().join("repo/.alan/agents/grader"));
-        spec.handles = vec![SpawnHandle::Workspace];
-        spec.launch.workspace_root = Some(workspace_root.clone());
-        spec.launch.cwd = Some(workspace_root);
-        spec.runtime_overrides.tool_profile = Some(alan_agent_protocol::SpawnToolProfileOverride {
-            allowed_tools: vec!["workspace_override".to_string()],
-        });
-
-        let child_tools = build_child_tool_registry(&parent, &spec, &parent.core_config).unwrap();
-        let result = child_tools
-            .execute("workspace_override", json!({}))
-            .await
-            .unwrap();
-
-        assert_eq!(result["marker"], json!("override"));
-    }
-
-    #[tokio::test]
-    async fn build_child_tool_registry_preserves_inherited_sandbox_grants() {
-        let temp = TempDir::new().unwrap();
-        let approved = TempDir::new().unwrap();
-        let requests = RecordedRequests::default();
-        let response = completed_response("Child finished cleanly.");
-        let mut parent = make_parent_state(&temp, requests, response);
-        let workspace_root = parent.workspace_root_dir.clone().unwrap();
-        {
-            let parent_tools = parent.tool_catalog_mut_for_test();
-            parent_tools.set_default_workspace_root(workspace_root.clone());
-            assert!(parent_tools.add_default_sandbox_writable_root(approved.path().to_path_buf()));
-        }
-
-        let mut spec = launch_spec(workspace_root.join(".alan/agents/grader"));
-        spec.handles = vec![SpawnHandle::Workspace];
-
-        let child_tools = build_child_tool_registry(&parent, &spec, &parent.core_config).unwrap();
-        let roots = child_tools.default_sandbox_writable_roots();
-
-        assert_eq!(roots.len(), 2);
-        assert_eq!(roots[0], workspace_root);
-        assert_eq!(roots[1], dunce::canonicalize(approved.path()).unwrap());
-    }
-
-    #[tokio::test]
-    async fn build_child_tool_registry_rejects_unavailable_requested_tool_profile_entries() {
-        let temp = TempDir::new().unwrap();
-        let requests = RecordedRequests::default();
-        let response = completed_response("Child finished cleanly.");
-        let parent = make_parent_state(&temp, requests, response);
-
-        let mut spec = launch_spec(temp.path().join("repo/.alan/agents/grader"));
-        spec.handles = vec![SpawnHandle::Workspace];
-        spec.runtime_overrides.tool_profile = Some(alan_agent_protocol::SpawnToolProfileOverride {
-            allowed_tools: vec!["alpha".to_string(), "missing".to_string()],
-        });
-
-        let err = match build_child_tool_registry(&parent, &spec, &parent.core_config) {
-            Ok(_) => panic!("expected unavailable requested tool profile entry to fail"),
-            Err(err) => err,
-        };
-        assert!(err.to_string().contains("requested unavailable tools"));
-        assert!(err.to_string().contains("missing"));
     }
 
     #[tokio::test]
@@ -4386,14 +3905,8 @@ model_reasoning_effort = "high"
         let temp = TempDir::new().unwrap();
         let requests = RecordedRequests::default();
         let response = completed_response("Child finished cleanly.");
-        let mut parent = make_parent_state(&temp, requests, response);
+        let parent = make_parent_state(&temp, requests, response);
         let workspace_root = temp.path().join("repo");
-        let nested_cwd = workspace_root.join("nested/src");
-        std::fs::create_dir_all(&nested_cwd).unwrap();
-        parent
-            .tool_catalog_mut_for_test()
-            .set_default_cwd(nested_cwd);
-
         let mut spec = launch_spec(workspace_root.join(".alan/agents/grader"));
         spec.handles = vec![SpawnHandle::Workspace];
 
@@ -4456,155 +3969,6 @@ model_reasoning_effort = "high"
         );
     }
 
-    #[tokio::test]
-    async fn child_runtime_join_captures_non_empty_final_text_delta() {
-        let (tx, rx) = tokio::sync::broadcast::channel(8);
-        let submission_id = "sub-123".to_string();
-        let _ = tx.send(RuntimeEventEnvelope {
-            submission_id: Some(submission_id.clone()),
-            event: alan_agent_protocol::Event::TextDelta {
-                chunk: "final child output".to_string(),
-                is_final: true,
-            },
-        });
-        let _ = tx.send(RuntimeEventEnvelope {
-            submission_id: Some(submission_id.clone()),
-            event: alan_agent_protocol::Event::TurnCompleted { summary: None },
-        });
-
-        let controller = ChildRuntimeController {
-            runtime: None,
-            startup_metadata: test_startup_metadata("child-machine", None, false),
-            event_rx: rx,
-            liveness_rx: test_liveness_rx(),
-            submission_id,
-            child_run_id: format!("test-child-run-{}", uuid::Uuid::new_v4()),
-            child_run_registry: ChildRunRegistry::default(),
-            timeout: None,
-            process_registry: None,
-            process_environment: None,
-            process_pid: None,
-        };
-
-        let result = controller.join().await.unwrap();
-        assert_eq!(result.status, ChildRuntimeStatus::Completed);
-        assert_eq!(result.output_text, "final child output");
-        assert!(result.structured_output.is_none());
-    }
-
-    #[tokio::test]
-    async fn child_runtime_join_extracts_structured_output_from_json_body() {
-        let (tx, rx) = tokio::sync::broadcast::channel(8);
-        let submission_id = "sub-json".to_string();
-        let _ = tx.send(RuntimeEventEnvelope {
-            submission_id: Some(submission_id.clone()),
-            event: alan_agent_protocol::Event::TextDelta {
-                chunk: "{\"status\":\"completed\",\"summary\":\"done\"}".to_string(),
-                is_final: true,
-            },
-        });
-        let _ = tx.send(RuntimeEventEnvelope {
-            submission_id: Some(submission_id.clone()),
-            event: alan_agent_protocol::Event::TurnCompleted { summary: None },
-        });
-
-        let controller = ChildRuntimeController {
-            runtime: None,
-            startup_metadata: test_startup_metadata("child-machine", None, false),
-            event_rx: rx,
-            liveness_rx: test_liveness_rx(),
-            submission_id,
-            child_run_id: format!("test-child-run-{}", uuid::Uuid::new_v4()),
-            child_run_registry: ChildRunRegistry::default(),
-            timeout: None,
-            process_registry: None,
-            process_environment: None,
-            process_pid: None,
-        };
-
-        let result = controller.join().await.unwrap();
-        assert_eq!(result.status, ChildRuntimeStatus::Completed);
-        assert_eq!(
-            result
-                .structured_output
-                .as_ref()
-                .and_then(|v| v.get("summary")),
-            Some(&serde_json::json!("done"))
-        );
-    }
-
-    #[tokio::test]
-    async fn child_runtime_join_backfills_output_from_rollout_without_text_deltas() {
-        let rollout = tempfile::NamedTempFile::new().unwrap();
-        let answer = "{\"status\":\"completed\",\"summary\":\"done\"}";
-        let items = [
-            crate::rollout::RolloutItem::AgentMachineMeta(crate::rollout::AgentMachineMeta {
-                rollout_id: "rollout-child".to_string(),
-                process_path: "/proc/42".to_string(),
-                started_at: "2026-04-22T13:08:19Z".to_string(),
-                cwd: "/tmp".to_string(),
-                model: "gpt-5.4".to_string(),
-                reasoning_effort: None,
-            }),
-            crate::rollout::RolloutItem::Message(crate::rollout::MessageRecord {
-                role: "assistant".to_string(),
-                content: Some(answer.to_string()),
-                tool_name: None,
-                message: Some(Message::assistant(answer)),
-                timestamp: "2026-04-22T13:08:20Z".to_string(),
-            }),
-        ];
-        let content = items
-            .iter()
-            .map(serde_json::to_string)
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap()
-            .join("\n")
-            + "\n";
-        std::fs::write(rollout.path(), content).unwrap();
-
-        let (tx, rx) = tokio::sync::broadcast::channel(8);
-        let submission_id = "sub-rollout".to_string();
-        let _ = tx.send(RuntimeEventEnvelope {
-            submission_id: Some(submission_id.clone()),
-            event: alan_agent_protocol::Event::TurnCompleted {
-                summary: Some("Task completed".to_string()),
-            },
-        });
-
-        let controller = ChildRuntimeController {
-            runtime: None,
-            startup_metadata: test_startup_metadata(
-                "child-machine",
-                Some(rollout.path().to_path_buf()),
-                true,
-            ),
-            event_rx: rx,
-            liveness_rx: test_liveness_rx(),
-            submission_id,
-            child_run_id: format!("test-child-run-{}", uuid::Uuid::new_v4()),
-            child_run_registry: ChildRunRegistry::default(),
-            timeout: None,
-            process_registry: None,
-            process_environment: None,
-            process_pid: None,
-        };
-
-        let result = controller.join().await.unwrap();
-        assert_eq!(result.status, ChildRuntimeStatus::Completed);
-        assert_eq!(
-            result.output_text,
-            "{\"status\":\"completed\",\"summary\":\"done\"}"
-        );
-        assert_eq!(
-            result
-                .structured_output
-                .as_ref()
-                .and_then(|value| value.get("summary")),
-            Some(&serde_json::json!("done"))
-        );
-    }
-
     #[test]
     fn parse_child_structured_output_reads_last_json_fence() {
         let text = "Notes before\n```json\n{\"status\":\"completed\",\"summary\":\"first\"}\n```\nMore notes\n```json\n{\"status\":\"completed\",\"summary\":\"second\"}\n```";
@@ -4625,303 +3989,34 @@ model_reasoning_effort = "high"
     }
 
     #[tokio::test]
-    async fn child_runtime_join_fails_when_event_stream_lags() {
-        let (tx, rx) = tokio::sync::broadcast::channel(1);
-        let submission_id = "sub-456".to_string();
-        let _ = tx.send(RuntimeEventEnvelope {
-            submission_id: Some(submission_id.clone()),
-            event: alan_agent_protocol::Event::TextDelta {
-                chunk: "partial child output".to_string(),
-                is_final: false,
-            },
-        });
-        let _ = tx.send(RuntimeEventEnvelope {
-            submission_id: Some(submission_id.clone()),
-            event: alan_agent_protocol::Event::TurnCompleted {
-                summary: Some("done".to_string()),
-            },
-        });
-
-        let controller = ChildRuntimeController {
-            runtime: None,
-            startup_metadata: test_startup_metadata("child-machine", None, false),
-            event_rx: rx,
-            liveness_rx: test_liveness_rx(),
-            submission_id,
-            child_run_id: format!("test-child-run-{}", uuid::Uuid::new_v4()),
-            child_run_registry: ChildRunRegistry::default(),
-            timeout: None,
-            process_registry: None,
-            process_environment: None,
-            process_pid: None,
-        };
-
-        let result = controller.join().await.unwrap();
-        assert_eq!(result.status, ChildRuntimeStatus::Failed);
-        assert_eq!(
-            result.error_message.as_deref(),
-            Some(
-                "Child-agent runtime event stream lagged by 1 event(s) before a terminal event could be observed"
-            )
-        );
-        assert_eq!(
-            result.warnings,
-            vec![
-                "Child-agent runtime event stream lagged by 1 event(s) before a terminal event could be observed"
-                    .to_string()
-            ]
-        );
-    }
-
-    #[tokio::test]
-    async fn child_runtime_join_until_cancelled_handles_none_timeout_without_panicking() {
-        let (tx, rx) = tokio::sync::broadcast::channel(8);
-        let submission_id = "sub-789".to_string();
-        let submission_id_for_task = submission_id.clone();
-        tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_millis(10)).await;
-            let _ = tx.send(RuntimeEventEnvelope {
-                submission_id: Some(submission_id_for_task),
-                event: alan_agent_protocol::Event::TurnCompleted {
-                    summary: Some("done".to_string()),
-                },
-            });
-        });
-
-        let controller = ChildRuntimeController {
-            runtime: None,
-            startup_metadata: test_startup_metadata("child-machine", None, false),
-            event_rx: rx,
-            liveness_rx: test_liveness_rx(),
-            submission_id,
-            child_run_id: format!("test-child-run-{}", uuid::Uuid::new_v4()),
-            child_run_registry: ChildRunRegistry::default(),
-            timeout: None,
-            process_registry: None,
-            process_environment: None,
-            process_pid: None,
-        };
-        let cancel = CancellationToken::new();
-
-        let result = controller.join_until_cancelled(&cancel).await.unwrap();
-        assert_eq!(result.status, ChildRuntimeStatus::Completed);
-        assert_eq!(result.turn_summary.as_deref(), Some("done"));
-    }
-
-    #[tokio::test]
-    async fn child_runtime_join_prefers_buffered_terminal_event_over_termination_request() {
-        let (tx, rx) = tokio::sync::broadcast::channel(8);
-        let submission_id = "sub-terminal-before-termination".to_string();
-        let child_run_id = format!("test-child-run-{}", uuid::Uuid::new_v4());
-        let child_run_registry = ChildRunRegistry::default();
-        child_run_registry.register(ChildRunRecord::new(
-            child_run_id.clone(),
-            "parent-machine".to_string(),
-            "child-machine".to_string(),
-            None,
-            None,
-            None,
-        ));
-        let _ = tx.send(RuntimeEventEnvelope {
-            submission_id: Some(submission_id.clone()),
-            event: alan_agent_protocol::Event::TextDelta {
-                chunk: "finished".to_string(),
-                is_final: true,
-            },
-        });
-        let _ = tx.send(RuntimeEventEnvelope {
-            submission_id: Some(submission_id.clone()),
-            event: alan_agent_protocol::Event::TurnCompleted {
-                summary: Some("done".to_string()),
-            },
-        });
-        child_run_registry
-            .request_termination(
-                "parent-machine",
-                &child_run_id,
-                "operator",
-                ChildRunTerminationMode::Forceful,
-                "late stop",
-            )
-            .unwrap();
-
-        let controller = ChildRuntimeController {
-            runtime: None,
-            startup_metadata: test_startup_metadata("child-machine", None, false),
-            event_rx: rx,
-            liveness_rx: test_liveness_rx(),
-            submission_id,
-            child_run_id: child_run_id.clone(),
-            child_run_registry: child_run_registry.clone(),
-            timeout: None,
-            process_registry: None,
-            process_environment: None,
-            process_pid: None,
-        };
-
-        let result = controller.join().await.unwrap();
-        assert_eq!(result.status, ChildRuntimeStatus::Completed);
-        assert_eq!(result.output_text, "finished");
-        assert_eq!(
-            child_run_registry.get(&child_run_id).unwrap().status,
-            ChildRunStatus::Completed
-        );
-    }
-
-    #[tokio::test]
-    async fn child_runtime_join_marks_paused_child_run_terminal_after_shutdown() {
-        let (tx, rx) = tokio::sync::broadcast::channel(8);
-        let submission_id = "sub-yield".to_string();
-        let child_run_id = format!("test-child-run-{}", uuid::Uuid::new_v4());
-        let child_run_registry = ChildRunRegistry::default();
-        child_run_registry.register(ChildRunRecord::new(
-            child_run_id.clone(),
-            "parent-machine".to_string(),
-            "child-machine".to_string(),
-            None,
-            None,
-            None,
-        ));
-        let _ = tx.send(RuntimeEventEnvelope {
-            submission_id: Some(submission_id.clone()),
-            event: alan_agent_protocol::Event::Yield {
-                request_id: "yield-1".to_string(),
-                kind: YieldKind::Confirmation,
-                payload: serde_json::json!({}),
-            },
-        });
-
-        let controller = ChildRuntimeController {
-            runtime: None,
-            startup_metadata: test_startup_metadata("child-machine", None, false),
-            event_rx: rx,
-            liveness_rx: test_liveness_rx(),
-            submission_id,
-            child_run_id: child_run_id.clone(),
-            child_run_registry: child_run_registry.clone(),
-            timeout: None,
-            process_registry: None,
-            process_environment: None,
-            process_pid: None,
-        };
-
-        let result = controller.join().await.unwrap();
-        assert_eq!(result.status, ChildRuntimeStatus::Paused);
-        let child_run = child_run_registry.get(&child_run_id).unwrap();
-        assert_eq!(child_run.status, ChildRunStatus::Failed);
-        assert!(child_run.status.is_terminal());
-    }
-
-    #[tokio::test]
-    async fn cancel_child_runtime_returns_cancelled_status() {
+    async fn child_runtime_join_keeps_running_while_activity_file_is_fresh() {
         let temp = TempDir::new().unwrap();
         let requests = RecordedRequests::default();
-        let response = completed_response("This should not finish before cancellation.");
-        let parent = make_parent_state_with_capability_view(
-            &temp,
-            requests.clone(),
-            response.clone(),
-            crate::skills::ResolvedCapabilityView::default(),
-        );
-        let root_dir = temp.path().join("repo/.alan/agents/grader");
-        let spec = launch_spec(root_dir);
-
-        let child = spawn_child_runtime_with_client_factory(&parent, spec, |_| {
+        let response = completed_response("finished after file heartbeat");
+        let parent = make_parent_state(&temp, requests.clone(), response.clone());
+        let spec = launch_spec(temp.path().join("repo/.alan/agents/grader"));
+        let mut child = spawn_child_runtime_with_client_factory(&parent, spec, |_| {
             Ok(LlmClient::new(
                 RecordingProvider::new(requests.clone(), response.clone())
-                    .with_delay(Duration::from_secs(5)),
+                    .with_delay(Duration::from_millis(250)),
             ))
         })
         .await
         .unwrap();
-        let result = child.cancel().await.unwrap();
-
-        assert_eq!(result.status, ChildRuntimeStatus::Cancelled);
-    }
-
-    #[tokio::test]
-    async fn child_runtime_join_until_cancelled_returns_cancelled_status() {
-        let temp = TempDir::new().unwrap();
-        let requests = RecordedRequests::default();
-        let response = completed_response("This should not finish before cancellation.");
-        let parent = make_parent_state_with_capability_view(
-            &temp,
-            requests.clone(),
-            response.clone(),
-            crate::skills::ResolvedCapabilityView::default(),
-        );
-        let root_dir = temp.path().join("repo/.alan/agents/grader");
-        let spec = launch_spec(root_dir);
-
-        let child = spawn_child_runtime_with_client_factory(&parent, spec, |_| {
-            Ok(LlmClient::new(
-                RecordingProvider::new(requests.clone(), response.clone())
-                    .with_delay(Duration::from_secs(5)),
-            ))
-        })
-        .await
-        .unwrap();
-
-        let cancel = CancellationToken::new();
-        let cancel_for_task = cancel.clone();
+        child.timeout = Some(Duration::from_millis(200));
+        let environment = child.process_environment.clone();
         tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_millis(10)).await;
-            cancel_for_task.cancel();
-        });
-
-        let result = child.join_until_cancelled(&cancel).await.unwrap();
-        assert_eq!(result.status, ChildRuntimeStatus::Cancelled);
-    }
-
-    #[tokio::test]
-    async fn child_runtime_join_keeps_running_while_heartbeat_is_fresh() {
-        let (tx, rx) = tokio::sync::broadcast::channel(16);
-        let (liveness_tx, liveness_rx) = tokio::sync::broadcast::channel(16);
-        let submission_id = "sub-heartbeat".to_string();
-        let submission_id_for_task = submission_id.clone();
-        let liveness_submission_id_for_task = submission_id.clone();
-        tokio::spawn(async move {
-            let _ = liveness_tx.send(RuntimeLivenessEnvelope {
-                submission_id: Some(liveness_submission_id_for_task.clone()),
-                status: Some("still running".to_string()),
-            });
-            for _ in 0..4 {
+            for _ in 0..5 {
+                crate::runtime::ui_surfaces::heartbeat(&environment)
+                    .await
+                    .unwrap();
                 tokio::time::sleep(Duration::from_millis(35)).await;
-                let _ = liveness_tx.send(RuntimeLivenessEnvelope {
-                    submission_id: Some(liveness_submission_id_for_task.clone()),
-                    status: Some("still running".to_string()),
-                });
             }
-            let _ = tx.send(RuntimeEventEnvelope {
-                submission_id: Some(submission_id_for_task.clone()),
-                event: alan_agent_protocol::Event::TextDelta {
-                    chunk: "finished after heartbeat".to_string(),
-                    is_final: true,
-                },
-            });
-            let _ = tx.send(RuntimeEventEnvelope {
-                submission_id: Some(submission_id_for_task),
-                event: alan_agent_protocol::Event::TurnCompleted { summary: None },
-            });
         });
 
-        let controller = ChildRuntimeController {
-            runtime: None,
-            startup_metadata: test_startup_metadata("child-machine", None, false),
-            event_rx: rx,
-            liveness_rx,
-            submission_id,
-            child_run_id: format!("test-child-run-{}", uuid::Uuid::new_v4()),
-            child_run_registry: ChildRunRegistry::default(),
-            timeout: Some(Duration::from_millis(80)),
-            process_registry: None,
-            process_environment: None,
-            process_pid: None,
-        };
-
-        let result = controller.join().await.unwrap();
+        let result = child.join().await.unwrap();
         assert_eq!(result.status, ChildRuntimeStatus::Completed);
-        assert_eq!(result.output_text, "finished after heartbeat");
+        assert_eq!(result.output_text, "finished after file heartbeat");
     }
 
     #[tokio::test]
@@ -4978,8 +4073,8 @@ model_reasoning_effort = "high"
         })
         .await
         .unwrap();
-        let process_environment = child.process_environment.clone().unwrap();
-        let process_pid = child.process_pid.clone().unwrap();
+        let process_environment = child.process_environment.clone();
+        let process_pid = child.process_pid.clone();
 
         let started_at = std::time::Instant::now();
         let result = child.join().await.unwrap();

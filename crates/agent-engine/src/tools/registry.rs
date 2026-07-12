@@ -48,6 +48,11 @@ pub trait Tool: Send + Sync {
         alan_agent_protocol::ToolCapability::Read
     }
 
+    /// Whether capability depends on the concrete invocation arguments.
+    fn capability_is_argument_dependent(&self) -> bool {
+        false
+    }
+
     /// Get the recommended timeout for this tool in seconds.
     fn timeout_secs(&self) -> usize {
         30
@@ -134,25 +139,7 @@ impl ToolRegistry {
         let Some(binding) = default_binding.as_mut() else {
             return false;
         };
-        let Some(workspace_root) = binding.workspace_root.clone() else {
-            return false;
-        };
-
-        let normalized = normalize_sandbox_root(path);
-        if protected_path_component(&normalized).is_some() {
-            return false;
-        }
-        let mut spec = binding
-            .sandbox_spec
-            .clone()
-            .unwrap_or_else(|| SandboxSpec::seed(workspace_root));
-        if spec.writable_roots.iter().any(|root| root == &normalized) {
-            binding.sandbox_spec = Some(spec);
-            return false;
-        }
-        spec.writable_roots.push(normalized);
-        binding.sandbox_spec = Some(spec);
-        true
+        add_sandbox_writable_root(binding, path)
     }
 
     /// Set a default workspace binding using the provided workspace root and cwd.
@@ -543,7 +530,236 @@ impl Default for ToolRegistry {
     }
 }
 
-fn default_scratch_dir_for_cwd(cwd: &std::path::Path) -> std::path::PathBuf {
+/// Process-server host for Tool executables reached through `/proc/clone`.
+#[derive(Clone)]
+pub(crate) struct ToolProcessRunner {
+    inner: Arc<ToolProcessRunnerInner>,
+}
+
+struct ToolProcessRunnerInner {
+    tools: HashMap<String, Arc<dyn Tool>>,
+    config: Arc<Config>,
+    default_binding: Arc<Mutex<Option<ToolExecutionBinding>>>,
+    process_bindings: Mutex<HashMap<alan_kernel::Pid, ToolExecutionBinding>>,
+}
+
+impl ToolProcessRunner {
+    pub(crate) fn empty(config: Arc<Config>) -> Self {
+        Self {
+            inner: Arc::new(ToolProcessRunnerInner {
+                tools: HashMap::new(),
+                config,
+                default_binding: Arc::new(Mutex::new(None)),
+                process_bindings: Mutex::new(HashMap::new()),
+            }),
+        }
+    }
+
+    pub(crate) fn from_registry(registry: &ToolRegistry) -> Self {
+        Self {
+            inner: Arc::new(ToolProcessRunnerInner {
+                tools: registry.tools.clone(),
+                config: Arc::clone(&registry.config),
+                default_binding: Arc::clone(&registry.default_binding),
+                process_bindings: Mutex::new(HashMap::new()),
+            }),
+        }
+    }
+
+    pub(crate) fn register_process_binding(
+        &self,
+        pid: alan_kernel::Pid,
+        binding: ToolExecutionBinding,
+    ) {
+        self.inner
+            .process_bindings
+            .lock()
+            .expect("process binding mutex poisoned")
+            .insert(pid, binding);
+    }
+
+    pub(crate) fn process_binding(&self, pid: alan_kernel::Pid) -> Option<ToolExecutionBinding> {
+        self.inner
+            .process_bindings
+            .lock()
+            .expect("process binding mutex poisoned")
+            .get(&pid)
+            .cloned()
+            .or_else(|| {
+                self.inner
+                    .default_binding
+                    .lock()
+                    .expect("default binding mutex poisoned")
+                    .clone()
+            })
+    }
+
+    pub(crate) fn capability_for_tool(
+        &self,
+        name: &str,
+        arguments: &Value,
+    ) -> Option<alan_agent_protocol::ToolCapability> {
+        self.inner
+            .tools
+            .get(name)
+            .map(|tool| tool.capability(arguments))
+    }
+
+    pub(crate) fn add_process_sandbox_writable_root(
+        &self,
+        pid: alan_kernel::Pid,
+        path: std::path::PathBuf,
+    ) -> bool {
+        let mut bindings = self
+            .inner
+            .process_bindings
+            .lock()
+            .expect("process binding mutex poisoned");
+        if let Some(binding) = bindings.get_mut(&pid) {
+            return add_sandbox_writable_root(binding, path);
+        }
+        drop(bindings);
+        self.inner
+            .default_binding
+            .lock()
+            .expect("default binding mutex poisoned")
+            .as_mut()
+            .is_some_and(|binding| add_sandbox_writable_root(binding, path))
+    }
+}
+
+fn add_sandbox_writable_root(binding: &mut ToolExecutionBinding, path: std::path::PathBuf) -> bool {
+    let Some(workspace_root) = binding.workspace_root.clone() else {
+        return false;
+    };
+    let normalized = normalize_sandbox_root(path);
+    if protected_path_component(&normalized).is_some() {
+        return false;
+    }
+    let mut spec = binding
+        .sandbox_spec
+        .clone()
+        .unwrap_or_else(|| SandboxSpec::seed(workspace_root));
+    if spec.writable_roots.iter().any(|root| root == &normalized) {
+        binding.sandbox_spec = Some(spec);
+        return false;
+    }
+    spec.writable_roots.push(normalized);
+    binding.sandbox_spec = Some(spec);
+    true
+}
+
+#[async_trait::async_trait]
+impl alan_kernel::ProcessRunner for ToolProcessRunner {
+    async fn run(&self, invocation: alan_kernel::ProcessInvocation) -> alan_kernel::ProcessOutcome {
+        if invocation
+            .namespace
+            .resolve(&invocation.exec.executable)
+            .is_err()
+        {
+            return alan_kernel::ProcessOutcome::exited(127, b"executable is not mounted\n");
+        }
+        let name = invocation
+            .exec
+            .executable
+            .rsplit('/')
+            .next()
+            .unwrap_or(invocation.exec.executable.as_str());
+        let Some(tool) = self.inner.tools.get(name) else {
+            return alan_kernel::ProcessOutcome::exited(127, b"Tool executable has no host\n");
+        };
+        let arguments = invocation
+            .exec
+            .args
+            .first()
+            .and_then(|raw| serde_json::from_str::<Value>(raw).ok())
+            .unwrap_or(Value::Null);
+        let schema = tool.parameters_schema();
+        let validator = match jsonschema::options()
+            .with_draft(Draft::Draft7)
+            .build(&schema)
+        {
+            Ok(validator) => validator,
+            Err(error) => {
+                return process_json_outcome(
+                    1,
+                    serde_json::json!({"success": false, "error": format!("invalid Tool schema: {error}")}),
+                );
+            }
+        };
+        let errors = validator
+            .iter_errors(&arguments)
+            .map(|error| error.to_string())
+            .collect::<Vec<_>>();
+        if !errors.is_empty() {
+            return process_json_outcome(
+                1,
+                serde_json::json!({"success": false, "error": errors.join("; ")}),
+            );
+        }
+        let process_binding = self
+            .inner
+            .process_bindings
+            .lock()
+            .expect("process binding mutex poisoned")
+            .get(&invocation.parent.unwrap_or(invocation.pid))
+            .cloned();
+        let binding = process_binding.unwrap_or_else(|| {
+            self.inner
+                .default_binding
+                .lock()
+                .expect("default binding mutex poisoned")
+                .clone()
+                .unwrap_or_else(|| {
+                    let cwd =
+                        std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+                    ToolExecutionBinding::without_workspace(
+                        cwd.clone(),
+                        default_scratch_dir_for_cwd(&cwd),
+                    )
+                })
+        });
+        let context = ToolContext::from_binding(binding, Arc::clone(&self.inner.config));
+        let timeout_secs = if self.inner.config.tool_timeout_secs != 30 {
+            self.inner.config.tool_timeout_secs
+        } else {
+            tool.timeout_secs()
+        };
+        let execution = tool.execute(arguments, &context);
+        let result = if timeout_secs == 0 {
+            execution.await
+        } else {
+            match tokio::time::timeout(
+                std::time::Duration::from_secs(timeout_secs as u64),
+                execution,
+            )
+            .await
+            {
+                Ok(result) => result,
+                Err(_) => Err(anyhow::anyhow!(
+                    "Tool execution timed out after {timeout_secs}s"
+                )),
+            }
+        };
+        match result {
+            Ok(output) => process_json_outcome(0, output),
+            Err(error) => process_json_outcome(
+                1,
+                serde_json::json!({"success": false, "error": format!("{error:#}")}),
+            ),
+        }
+    }
+}
+
+fn process_json_outcome(exit_code: i32, value: Value) -> alan_kernel::ProcessOutcome {
+    let mut bytes = serde_json::to_vec(&value).unwrap_or_else(|_| {
+        serde_json::to_vec(&serde_json::json!({"success": exit_code == 0})).unwrap()
+    });
+    bytes.push(b'\n');
+    alan_kernel::ProcessOutcome::exited(exit_code, bytes)
+}
+
+pub(crate) fn default_scratch_dir_for_cwd(cwd: &std::path::Path) -> std::path::PathBuf {
     if cwd
         .file_name()
         .map(|name| name == std::ffi::OsStr::new(".alan"))
@@ -722,6 +938,38 @@ mod tests {
         }
     }
 
+    struct ArgumentCapabilityTool;
+
+    impl Tool for ArgumentCapabilityTool {
+        fn name(&self) -> &str {
+            "argument_capability"
+        }
+
+        fn description(&self) -> &str {
+            "Argument capability tool"
+        }
+
+        fn parameters_schema(&self) -> Value {
+            serde_json::json!({"type": "object"})
+        }
+
+        fn capability(&self, arguments: &Value) -> alan_agent_protocol::ToolCapability {
+            if arguments["network"].as_bool() == Some(true) {
+                alan_agent_protocol::ToolCapability::Network
+            } else {
+                alan_agent_protocol::ToolCapability::Read
+            }
+        }
+
+        fn capability_is_argument_dependent(&self) -> bool {
+            true
+        }
+
+        fn execute(&self, _args: Value, _ctx: &ToolContext) -> ToolResult {
+            Box::pin(async move { Ok(serde_json::json!({"status": "ok"})) })
+        }
+    }
+
     struct WorkspaceLocalTool;
 
     impl Tool for WorkspaceLocalTool {
@@ -810,6 +1058,26 @@ mod tests {
             Some(alan_agent_protocol::ToolCapability::Network)
         );
         assert_eq!(registry.capability_for_tool("nonexistent", &args), None);
+    }
+
+    #[test]
+    fn process_runner_resolves_capability_from_concrete_arguments() {
+        let mut registry = ToolRegistry::new();
+        registry.register(ArgumentCapabilityTool);
+        let runner = ToolProcessRunner::from_registry(&registry);
+
+        assert_eq!(
+            runner
+                .capability_for_tool("argument_capability", &serde_json::json!({"network": true})),
+            Some(alan_agent_protocol::ToolCapability::Network)
+        );
+        assert_eq!(
+            runner.capability_for_tool(
+                "argument_capability",
+                &serde_json::json!({"network": false})
+            ),
+            Some(alan_agent_protocol::ToolCapability::Read)
+        );
     }
 
     #[test]
@@ -969,6 +1237,64 @@ mod tests {
             .await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("not found"));
+    }
+
+    #[tokio::test]
+    async fn process_server_rejects_unmounted_tool() {
+        let mut registry = ToolRegistry::new();
+        registry.register(TestTool);
+        let runner = ToolProcessRunner::from_registry(&registry);
+        let invocation = alan_kernel::ProcessInvocation {
+            pid: alan_kernel::Pid(1),
+            parent: None,
+            credentials: alan_kernel::Credentials::user("agent"),
+            namespace: alan_kernel::Namespace::new(),
+            exec: alan_kernel::ExecSpec {
+                executable: "/bin/test_tool".to_string(),
+                args: vec!["{}".to_string()],
+                namespace: None,
+            },
+        };
+
+        let outcome = alan_kernel::ProcessRunner::run(&runner, invocation).await;
+        assert_eq!(outcome.exit_code, 127);
+        assert_eq!(outcome.output, b"executable is not mounted\n");
+    }
+
+    #[tokio::test]
+    async fn process_server_uses_spawning_agent_execution_binding() {
+        let mut registry = ToolRegistry::new();
+        registry.register(CwdEchoTool);
+        let runner = ToolProcessRunner::from_registry(&registry);
+        runner.register_process_binding(
+            alan_kernel::Pid(7),
+            ToolExecutionBinding::without_workspace(
+                PathBuf::from("/tmp/child-cwd"),
+                PathBuf::from("/tmp/child-scratch"),
+            ),
+        );
+        let mut namespace = alan_kernel::Namespace::new();
+        namespace.mount(
+            "/bin/cwd_echo",
+            alan_ap::InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::new())),
+            alan_kernel::Access::ReadOnly,
+        );
+        let invocation = alan_kernel::ProcessInvocation {
+            pid: alan_kernel::Pid(8),
+            parent: Some(alan_kernel::Pid(7)),
+            credentials: alan_kernel::Credentials::user("agent"),
+            namespace,
+            exec: alan_kernel::ExecSpec {
+                executable: "/bin/cwd_echo".to_string(),
+                args: vec!["{}".to_string()],
+                namespace: None,
+            },
+        };
+
+        let outcome = alan_kernel::ProcessRunner::run(&runner, invocation).await;
+        assert_eq!(outcome.exit_code, 0);
+        let value: Value = serde_json::from_slice(&outcome.output).unwrap();
+        assert_eq!(value["cwd"], "/tmp/child-cwd");
     }
 
     #[tokio::test]

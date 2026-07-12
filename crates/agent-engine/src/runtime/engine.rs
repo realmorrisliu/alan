@@ -9,7 +9,7 @@ use super::turn_driver::{
     is_turn_inband_submission, namespace_pending_resume_submission, should_drive_turn_submission,
 };
 use super::turn_state::TurnState;
-use super::{RuntimeConfig, RuntimeEnvironment, RuntimeLoopState};
+use super::{NamespaceRuntimeEnvironment, RuntimeConfig, RuntimeLoopState};
 use crate::{agent_machine::AgentMachine, llm::LlmClient};
 use alan_agent_protocol::{Event, InputMode, Submission};
 use alan_ap::{Fid, FileServer, InProcessTransport, OpenMode};
@@ -18,7 +18,7 @@ use anyhow::{Context, Result};
 use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::{
-    Arc, Mutex,
+    Arc,
     atomic::{AtomicU64, Ordering},
 };
 use std::time::Duration;
@@ -65,61 +65,8 @@ impl LlmProvider for RuntimeLlmProvider {
     }
 }
 
-struct RuntimeToolProcessRunner {
-    tools: crate::tools::ToolRegistry,
-}
-
-impl RuntimeToolProcessRunner {
-    fn new(tools: crate::tools::ToolRegistry) -> Self {
-        Self { tools }
-    }
-}
-
-#[async_trait::async_trait]
-impl alan_kernel::ProcessRunner for RuntimeToolProcessRunner {
-    async fn run(&self, invocation: alan_kernel::ProcessInvocation) -> alan_kernel::ProcessOutcome {
-        if invocation
-            .namespace
-            .resolve(&invocation.exec.executable)
-            .is_err()
-        {
-            return alan_kernel::ProcessOutcome::exited(127, b"executable is not mounted\n");
-        }
-        let tool_name = invocation
-            .exec
-            .executable
-            .rsplit('/')
-            .next()
-            .unwrap_or(invocation.exec.executable.as_str());
-        let arguments = invocation
-            .exec
-            .args
-            .first()
-            .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok())
-            .unwrap_or(serde_json::Value::Null);
-
-        match self.tools.execute(tool_name, arguments).await {
-            Ok(output) => {
-                let mut bytes =
-                    serde_json::to_vec(&output).unwrap_or_else(|_| b"{\"success\":true}".to_vec());
-                bytes.push(b'\n');
-                alan_kernel::ProcessOutcome::exited(0, bytes)
-            }
-            Err(err) => {
-                let mut bytes = serde_json::to_vec(&serde_json::json!({
-                    "success": false,
-                    "error": format!("{err:#}"),
-                }))
-                .unwrap_or_else(|_| b"{\"success\":false}".to_vec());
-                bytes.push(b'\n');
-                alan_kernel::ProcessOutcome::exited(1, bytes)
-            }
-        }
-    }
-}
-
 enum RuntimeEnvironmentBootstrap {
-    Ready(RuntimeEnvironment),
+    Ready(NamespaceRuntimeEnvironment),
     NamespaceRoot {
         llm_client: LlmClient,
         tools: crate::tools::ToolRegistry,
@@ -128,7 +75,7 @@ enum RuntimeEnvironmentBootstrap {
 }
 
 impl RuntimeEnvironmentBootstrap {
-    async fn into_environment(self) -> Result<RuntimeEnvironment> {
+    async fn into_environment(self) -> Result<NamespaceRuntimeEnvironment> {
         match self {
             Self::Ready(environment) => Ok(environment),
             Self::NamespaceRoot {
@@ -191,6 +138,10 @@ fn should_requeue_deferred_action(
     exit: DeferredRuntimeActionExit,
 ) -> bool {
     requeue_requested && matches!(exit, DeferredRuntimeActionExit::Cancelled)
+}
+
+fn preserves_paused_terminal_state(result: &Result<()>, has_pending_interaction: bool) -> bool {
+    result.is_ok() && has_pending_interaction
 }
 
 async fn read_namespace_input_submission(
@@ -264,44 +215,6 @@ impl RuntimeSubmissionQueues {
     }
 }
 
-/// Internal runtime event metadata preserved when forwarding events to hosts.
-#[derive(Debug, Clone)]
-pub struct RuntimeEventEnvelope {
-    /// Submission id that produced this event, if any.
-    pub submission_id: Option<String>,
-    /// Actual protocol event payload.
-    pub event: Event,
-}
-
-/// Internal runtime liveness metadata for supervision-only consumers.
-#[derive(Debug, Clone)]
-pub(crate) struct RuntimeLivenessEnvelope {
-    /// Submission id that is still active, if any.
-    pub submission_id: Option<String>,
-    /// Compact runtime status suitable for operator child-run records.
-    pub status: Option<String>,
-}
-
-#[derive(Debug, Clone, Default)]
-struct SubmissionEventContext {
-    current_submission_id: Arc<Mutex<Option<String>>>,
-}
-
-impl SubmissionEventContext {
-    fn set_submission_id(&self, submission_id: impl Into<String>) {
-        if let Ok(mut guard) = self.current_submission_id.lock() {
-            *guard = Some(submission_id.into());
-        }
-    }
-
-    fn get_submission_id(&self) -> Option<String> {
-        self.current_submission_id
-            .lock()
-            .ok()
-            .and_then(|guard| guard.clone())
-    }
-}
-
 /// Effective durability state for a runtime machine.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AgentMachineDurabilityState {
@@ -332,25 +245,6 @@ struct AgentMachineStartupOutcome {
     metadata: RuntimeStartupMetadata,
 }
 
-async fn emit_runtime_event(
-    tx: &mpsc::Sender<RuntimeEventEnvelope>,
-    ui_projector: &tokio::sync::Mutex<super::ui_surfaces::RuntimeUiProjector>,
-    submission_id: Option<String>,
-    event: Event,
-) {
-    let mut projector = ui_projector.lock().await;
-    if let Err(err) = projector.apply_event(&event).await {
-        warn!(error = %err, "Failed to project runtime ui surface event");
-    }
-    drop(projector);
-    let _ = tx
-        .send(RuntimeEventEnvelope {
-            submission_id,
-            event,
-        })
-        .await;
-}
-
 fn best_effort_durability_warning(err: &anyhow::Error) -> String {
     format!("AgentMachine is running without persistent recorder; using in-memory mode: {err}")
 }
@@ -359,16 +253,28 @@ fn current_execution_backend() -> String {
     crate::tools::active_backend_name().to_string()
 }
 
-fn runtime_host_capabilities(
+pub(crate) fn runtime_host_capabilities(
     config: &WorkspaceRuntimeConfig,
     tools: &crate::tools::ToolRegistry,
+) -> crate::skills::SkillHostCapabilities {
+    runtime_host_capabilities_for_tools(config, tools.list_tools().into_iter().map(str::to_string))
+}
+
+pub(crate) fn runtime_host_capabilities_for_tools(
+    config: &WorkspaceRuntimeConfig,
+    tools: impl IntoIterator<Item = String>,
 ) -> crate::skills::SkillHostCapabilities {
     let path_dirs = std::env::var_os("PATH")
         .map(|path| std::env::split_paths(&path).collect::<Vec<_>>())
         .unwrap_or_default();
-    runtime_host_capabilities_with_path_dirs(config, tools, path_dirs)
+    crate::skills::build_skill_host_capabilities_with_path_dirs(
+        tools,
+        path_dirs,
+        config.launch_root_dir.is_none(),
+    )
 }
 
+#[cfg(test)]
 fn runtime_host_capabilities_with_path_dirs<I, P>(
     config: &WorkspaceRuntimeConfig,
     tools: &crate::tools::ToolRegistry,
@@ -518,9 +424,6 @@ async fn initialize_agent_machine(
 #[derive(Clone)]
 pub struct RuntimeHandle {
     pub submission_tx: mpsc::Sender<Submission>,
-    /// Broadcast sender for events - create a receiver by calling subscribe()
-    pub event_sender: tokio::sync::broadcast::Sender<RuntimeEventEnvelope>,
-    pub(crate) liveness_sender: tokio::sync::broadcast::Sender<RuntimeLivenessEnvelope>,
     /// Shutdown signal sender for graceful shutdown
     shutdown_tx: Option<mpsc::Sender<()>>,
 }
@@ -955,8 +858,6 @@ pub struct RuntimeController {
     pub handle: RuntimeHandle,
     /// Join handle for the main runtime task (Option to allow take on abort)
     task_handle: Option<JoinHandle<()>>,
-    /// Join handle for the event forwarding task
-    event_task_handle: Option<JoinHandle<()>>,
     /// Runtime readiness channel
     ready_rx: Option<oneshot::Receiver<std::result::Result<RuntimeStartupMetadata, String>>>,
     /// Cached startup metadata for repeated readiness checks and child-launch introspection.
@@ -1029,7 +930,7 @@ impl RuntimeController {
         let timeout = tokio::time::Duration::from_secs(10);
 
         // Use &mut handle so we don't consume it on timeout
-        let result = if let Some(ref mut handle) = self.task_handle {
+        if let Some(ref mut handle) = self.task_handle {
             match tokio::time::timeout(timeout, &mut *handle).await {
                 Ok(Ok(())) => {
                     info!("Runtime task completed gracefully");
@@ -1055,16 +956,7 @@ impl RuntimeController {
             }
         } else {
             Err(anyhow::anyhow!("Task handle not available"))
-        };
-
-        // Always abort event task
-        if let Some(ref mut handle) = self.event_task_handle {
-            handle.abort();
-            // Wait a bit for the event task to actually stop
-            let _ = tokio::time::timeout(Duration::from_secs(1), handle).await;
         }
-
-        result
     }
 
     /// Abort the runtime immediately without waiting for graceful shutdown
@@ -1080,16 +972,11 @@ impl RuntimeController {
             let _ = tx.try_send(());
         }
 
-        // Take and abort both task handles
+        // Take and abort the runtime task.
         if let Some(handle) = self.task_handle.take() {
             handle.abort();
             // Wait for the task to actually stop
             let _ = tokio::time::timeout(Duration::from_secs(5), handle).await;
-        }
-
-        if let Some(handle) = self.event_task_handle.take() {
-            handle.abort();
-            let _ = tokio::time::timeout(Duration::from_secs(1), handle).await;
         }
     }
 }
@@ -1159,40 +1046,6 @@ pub async fn spawn_with_namespace_surface(
 /// Spawn a new agent runtime with an externally-provided LLM client.
 ///
 /// This is useful for testing with a mock LLM provider.
-pub fn spawn_with_tool_registry(
-    config: WorkspaceRuntimeConfig,
-    tools: crate::tools::ToolRegistry,
-) -> Result<RuntimeController> {
-    let core_config = effective_core_config_for_runtime(&config)?;
-
-    let llm_client = LlmClient::from_core_config_with_chatgpt_auth_storage_path(
-        &core_config,
-        config.chatgpt_auth_storage_path.clone(),
-    )
-    .context("Failed to create LLM client for runtime")?;
-
-    spawn_with_llm_client_and_tools(config, llm_client, tools)
-}
-
-/// Spawn a new namespace-native runtime and return the renderer-host surface.
-pub async fn spawn_with_tool_registry_and_namespace_surface(
-    config: WorkspaceRuntimeConfig,
-    tools: crate::tools::ToolRegistry,
-) -> Result<RuntimeNamespaceLaunch> {
-    let core_config = effective_core_config_for_runtime(&config)?;
-
-    let llm_client = LlmClient::from_core_config_with_chatgpt_auth_storage_path(
-        &core_config,
-        config.chatgpt_auth_storage_path.clone(),
-    )
-    .context("Failed to create LLM client for runtime")?;
-
-    spawn_with_llm_client_and_tools_and_namespace_surface(config, llm_client, tools).await
-}
-
-/// Spawn a new agent runtime with an externally-provided LLM client.
-///
-/// This is useful for testing with a mock LLM provider.
 pub fn spawn_with_llm_client(
     config: WorkspaceRuntimeConfig,
     llm_client: LlmClient,
@@ -1201,6 +1054,16 @@ pub fn spawn_with_llm_client(
     let tools = crate::tools::ToolRegistry::with_config(Arc::new(core_config));
 
     spawn_with_llm_client_and_tools(config, llm_client, tools)
+}
+
+/// Spawn a namespace-native runtime with an externally provided LLM client.
+pub async fn spawn_with_llm_client_and_namespace_surface(
+    config: WorkspaceRuntimeConfig,
+    llm_client: LlmClient,
+) -> Result<RuntimeNamespaceLaunch> {
+    let core_config = effective_core_config_for_runtime(&config)?;
+    let tools = crate::tools::ToolRegistry::with_config(Arc::new(core_config));
+    spawn_with_llm_client_and_tools_and_namespace_surface(config, llm_client, tools).await
 }
 
 fn configure_runtime_tool_execution_binding(
@@ -1281,8 +1144,7 @@ async fn build_root_namespace_environment(
     llm_client: LlmClient,
     tools: crate::tools::ToolRegistry,
     mount_grant_applicator_factory: Option<Arc<dyn super::MountGrantApplicatorFactory>>,
-) -> Result<RuntimeEnvironment> {
-    let tool_definitions = tools.get_tool_definitions();
+) -> Result<NamespaceRuntimeEnvironment> {
     let tool_names = tools
         .list_tools()
         .into_iter()
@@ -1309,9 +1171,27 @@ async fn build_root_namespace_environment(
     let route_tree =
         mount_routefs_standard_handles(&mut process_namespace, srvfs.clone(), routefs).await?;
     for tool_name in &tool_names {
+        let tool = tools
+            .get(tool_name)
+            .with_context(|| format!("materialize Tool package metadata for {tool_name}"))?;
+        let manifest = super::ToolPackageManifest::from_tool(
+            tool.as_ref(),
+            tools.execution_timeout_secs(tool_name).unwrap_or(30),
+        )?;
+        let manifest_bytes = serde_json::to_vec(&manifest)
+            .with_context(|| format!("serialize Tool manifest for {tool_name}"))?;
+        let manifest_fs = Arc::new(alan_ap::reference::MemFs::with_read_only_file(
+            "manifest",
+            manifest_bytes,
+        ));
         process_namespace.mount(
             &format!("/bin/{tool_name}"),
             InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::new())),
+            alan_kernel::Access::ReadOnly,
+        );
+        process_namespace.mount(
+            &format!("/lib/exec/{tool_name}"),
+            InProcessTransport::new(manifest_fs),
             alan_kernel::Access::ReadOnly,
         );
     }
@@ -1328,9 +1208,8 @@ async fn build_root_namespace_environment(
             .parse::<u64>()
             .with_context(|| format!("parse root agent pid '{root_pid}'"))?,
     );
-    let procfs_with_runner = procfs
-        .clone()
-        .with_runner(Arc::new(RuntimeToolProcessRunner::new(tools)));
+    let tool_runner = crate::tools::ToolProcessRunner::from_registry(&tools);
+    let procfs_with_runner = procfs.clone().with_runner(Arc::new(tool_runner.clone()));
     procfs
         .bind_live_namespace(root_pid_value, live_namespace.clone())
         .await;
@@ -1349,17 +1228,14 @@ async fn build_root_namespace_environment(
     )));
     let namespace_environment =
         super::NamespaceRuntimeEnvironment::new(root, format!("/agent/{root_pid}"), "default")
-            .with_process_context(procfs, agent_root, root_pid_value)
+            .with_process_context(procfs, agent_root, root_pid_value, tool_runner)
             .with_shared_services(InProcessTransport::new(srvfs), route_tree);
     let namespace_environment = if let Some(factory) = mount_grant_applicator_factory {
         namespace_environment.with_mount_grant_applicator_factory(factory, live_namespace)
     } else {
         namespace_environment
     };
-    Ok(RuntimeEnvironment::namespace_with_tool_definitions(
-        namespace_environment,
-        tool_definitions,
-    ))
+    Ok(namespace_environment)
 }
 
 async fn mount_llmfs_standard_handles(
@@ -1468,7 +1344,7 @@ pub fn spawn_with_llm_client_and_tools(
     configure_runtime_tool_execution_binding(&config, &mut tools)?;
 
     let generation_capabilities = llm_client.capabilities();
-    let host_tools = tools.clone();
+    let host_capabilities = runtime_host_capabilities(&config, &tools);
     let mount_grant_applicator_factory = config.mount_grant_applicator_factory.clone();
     spawn_with_prepared_runtime_environment(
         config,
@@ -1477,12 +1353,12 @@ pub fn spawn_with_llm_client_and_tools(
             tools,
             mount_grant_applicator_factory,
         },
-        host_tools,
+        host_capabilities,
         generation_capabilities,
     )
 }
 
-async fn spawn_with_llm_client_and_tools_and_namespace_surface(
+pub async fn spawn_with_llm_client_and_tools_and_namespace_surface(
     config: WorkspaceRuntimeConfig,
     llm_client: LlmClient,
     mut tools: crate::tools::ToolRegistry,
@@ -1490,22 +1366,21 @@ async fn spawn_with_llm_client_and_tools_and_namespace_surface(
     configure_runtime_tool_execution_binding(&config, &mut tools)?;
 
     let generation_capabilities = llm_client.capabilities();
-    let host_tools = tools.clone();
+    let host_capabilities = runtime_host_capabilities(&config, &tools);
     let environment = build_root_namespace_environment(
         llm_client,
         tools,
         config.mount_grant_applicator_factory.clone(),
     )
     .await?;
-    let RuntimeEnvironment::Namespace { namespace, .. } = &environment;
     let surface = RuntimeNamespaceSurface::new(
-        namespace.root_transport(),
-        namespace.agent_path().to_string(),
+        environment.root_transport(),
+        environment.agent_path().to_string(),
     );
     let controller = spawn_with_prepared_runtime_environment(
         config,
         RuntimeEnvironmentBootstrap::Ready(environment),
-        host_tools,
+        host_capabilities,
         generation_capabilities,
     )?;
     Ok(RuntimeNamespaceLaunch {
@@ -1518,17 +1393,13 @@ async fn spawn_with_llm_client_and_tools_and_namespace_surface(
 pub(crate) fn spawn_with_namespace_environment(
     config: WorkspaceRuntimeConfig,
     namespace: super::NamespaceRuntimeEnvironment,
-    host_tools: crate::tools::ToolRegistry,
+    host_capabilities: crate::skills::SkillHostCapabilities,
     generation_capabilities: crate::llm::ProviderCapabilities,
 ) -> Result<RuntimeController> {
-    let tool_definitions = host_tools.get_tool_definitions();
     spawn_with_prepared_runtime_environment(
         config,
-        RuntimeEnvironmentBootstrap::Ready(RuntimeEnvironment::namespace_with_tool_definitions(
-            namespace,
-            tool_definitions,
-        )),
-        host_tools,
+        RuntimeEnvironmentBootstrap::Ready(namespace),
+        host_capabilities,
         generation_capabilities,
     )
 }
@@ -1536,14 +1407,11 @@ pub(crate) fn spawn_with_namespace_environment(
 fn spawn_with_prepared_runtime_environment(
     config: WorkspaceRuntimeConfig,
     environment: RuntimeEnvironmentBootstrap,
-    host_tools: crate::tools::ToolRegistry,
+    host_capabilities: crate::skills::SkillHostCapabilities,
     _generation_capabilities: crate::llm::ProviderCapabilities,
 ) -> Result<RuntimeController> {
     let (sub_tx, mut sub_rx) = mpsc::channel::<Submission>(32);
-    let (evt_tx, mut evt_rx) = mpsc::channel::<RuntimeEventEnvelope>(256);
     let (shutdown_tx, mut shutdown_rx) = mpsc::channel::<()>(1);
-    let (liveness_tx, _) = tokio::sync::broadcast::channel::<RuntimeLivenessEnvelope>(256);
-    let liveness_tx_for_task = liveness_tx.clone();
     let (ready_tx, ready_rx) =
         oneshot::channel::<std::result::Result<RuntimeStartupMetadata, String>>();
 
@@ -1611,7 +1479,6 @@ fn spawn_with_prepared_runtime_environment(
     let runtime_workspace_root_dir = resolved_agent_definition.workspace_root_dir.clone();
     let recovery_rollout_path = config.recovery_rollout_path.clone();
     let generation_capabilities = crate::provider_capabilities_for_config(&core_config);
-    let host_capabilities = runtime_host_capabilities(&config, &host_tools);
     let mut prompt_cache =
         super::prompt_cache::PromptAssemblyCache::with_fixed_capability_view_and_overrides(
             resolved_agent_definition.capability_view.clone(),
@@ -1636,18 +1503,14 @@ fn spawn_with_prepared_runtime_environment(
                 return;
             }
         };
-        let (process_path, agent_path) = match &environment {
-            RuntimeEnvironment::Namespace { namespace, .. } => {
-                let process_path = match namespace.process_path() {
-                    Ok(path) => path,
-                    Err(err) => {
-                        let _ = ready_tx.send(Err(format!("{:#}", err)));
-                        return;
-                    }
-                };
-                (process_path, namespace.agent_path().to_string())
+        let process_path = match environment.process_path() {
+            Ok(path) => path,
+            Err(err) => {
+                let _ = ready_tx.send(Err(format!("{:#}", err)));
+                return;
             }
         };
+        let agent_path = environment.agent_path().to_string();
         let model = core_config.effective_model().to_string();
         let machine_request_controls = match crate::resolve_runtime_request_controls(
             &core_config,
@@ -1689,19 +1552,14 @@ fn spawn_with_prepared_runtime_environment(
             machine,
             current_submission_id: None,
             environment,
-            tool_catalog: host_tools.clone(),
             core_config,
             runtime_config,
             workspace_persona_dirs: prompt_cache_persona_dirs.clone(),
             prompt_cache,
             turn_state: super::TurnState::default(),
         };
-        let ui_projector = match super::ui_surfaces::RuntimeUiProjector::initialize(
-            state.namespace_environment().clone(),
-        )
-        .await
-        {
-            Ok(projector) => Arc::new(tokio::sync::Mutex::new(projector)),
+        match super::ui_surfaces::initialize(state.namespace_environment()).await {
+            Ok(()) => {}
             Err(err) => {
                 let _ = ready_tx.send(Err(format!("{:#}", err)));
                 return;
@@ -1821,31 +1679,15 @@ fn spawn_with_prepared_runtime_environment(
                 QueuedRuntimeItem::Submission(submission) => {
                     debug!(?submission.id, "Received submission");
                     let drive_as_turn_submission = should_drive_turn_submission(&submission.op);
-                    let submission_event_ctx = SubmissionEventContext::default();
-                    submission_event_ctx.set_submission_id(submission.id.clone());
                     state.current_submission_id = Some(submission.id.clone());
 
                     let cancel = CancellationToken::new();
-                    let event_tx_clone = evt_tx.clone();
-                    let submission_event_ctx_for_emit = submission_event_ctx.clone();
-                    let ui_projector_for_emit = ui_projector.clone();
-                    let mut emit = |event: Event| {
-                        let tx = event_tx_clone.clone();
-                        let ui_projector = ui_projector_for_emit.clone();
-                        let submission_id = submission_event_ctx_for_emit.get_submission_id();
-                        async move {
-                            emit_runtime_event(&tx, ui_projector.as_ref(), submission_id, event)
-                                .await;
-                        }
-                    };
+                    let mut emit = |_event: Event| async {};
 
                     let broker_for_submission = queues.active_turn_broker.clone();
-                    let submission_event_ctx_for_turn = submission_event_ctx.clone();
-                    let mut set_active_submission_id = |submission_id: &str| {
-                        submission_event_ctx_for_turn.set_submission_id(submission_id.to_string());
-                    };
                     let namespace_input = state.namespace_environment().clone();
                     let namespace_control = state.namespace_environment().clone();
+                    let namespace_heartbeat = state.namespace_environment().clone();
                     let mut submission_fut: std::pin::Pin<
                         Box<dyn std::future::Future<Output = Result<()>> + Send + '_>,
                     > = if drive_as_turn_submission {
@@ -1854,7 +1696,6 @@ fn spawn_with_prepared_runtime_environment(
                             submission,
                             &broker_for_submission,
                             &mut emit,
-                            &mut set_active_submission_id,
                             &cancel,
                         ))
                     } else {
@@ -1869,6 +1710,25 @@ fn spawn_with_prepared_runtime_environment(
                         tokio::select! {
                             result = &mut submission_fut => {
                                 drop(submission_fut);
+                                let terminal_ui_result = match &result {
+                                    Ok(()) if preserves_paused_terminal_state(
+                                        &result,
+                                        state.turn_state.has_pending_interaction(),
+                                    ) => Ok(()),
+                                    Ok(()) => super::ui_surfaces::turn_completed(
+                                        &namespace_heartbeat,
+                                        false,
+                                    )
+                                    .await,
+                                    Err(err) => super::ui_surfaces::turn_failed(
+                                        &namespace_heartbeat,
+                                        &format!("Error handling submission: {err}"),
+                                    )
+                                    .await,
+                                };
+                                if let Err(err) = terminal_ui_result {
+                                    warn!(error = %err, "Failed to write terminal runtime state");
+                                }
                                 if drive_as_turn_submission {
                                     let _ = queues
                                         .requeue_active_turn_leftovers(&mut state.turn_state)
@@ -1877,16 +1737,6 @@ fn spawn_with_prepared_runtime_environment(
                                 if let Err(e) = result {
                                     let error_msg = format!("Error handling submission: {}", e);
                                     error!(error = %error_msg);
-                                    emit_runtime_event(
-                                        &evt_tx,
-                                        ui_projector.as_ref(),
-                                        submission_event_ctx.get_submission_id(),
-                                        Event::Error {
-                                            message: error_msg,
-                                            recoverable: true,
-                                        },
-                                    )
-                                    .await;
                                 }
                                 queues.outer_queue.extend(
                                     state
@@ -1933,16 +1783,10 @@ fn spawn_with_prepared_runtime_environment(
                                     Some(Err(err)) => {
                                         let error_msg = format!("Failed to read namespace io/input frame: {err:#}");
                                         error!(error = %error_msg);
-                                        emit_runtime_event(
-                                            &evt_tx,
-                                            ui_projector.as_ref(),
-                                            submission_event_ctx.get_submission_id(),
-                                            Event::Error {
-                                                message: error_msg,
-                                                recoverable: true,
-                                            },
-                                        )
-                                        .await;
+                                        let _ = super::ui_surfaces::warning(
+                                            &namespace_heartbeat,
+                                            error_msg,
+                                        ).await;
                                     }
                                     None => {}
                                 }
@@ -1966,25 +1810,18 @@ fn spawn_with_prepared_runtime_environment(
                                     Some(Err(err)) => {
                                         let error_msg = format!("Failed to read namespace machine/ctl command: {err:#}");
                                         error!(error = %error_msg);
-                                        emit_runtime_event(
-                                            &evt_tx,
-                                            ui_projector.as_ref(),
-                                            submission_event_ctx.get_submission_id(),
-                                            Event::Error {
-                                                message: error_msg,
-                                                recoverable: true,
-                                            },
-                                        )
-                                        .await;
+                                        let _ = super::ui_surfaces::warning(
+                                            &namespace_heartbeat,
+                                            error_msg,
+                                        ).await;
                                     }
                                     None => {}
                                 }
                             }
                             _ = heartbeat_interval.tick() => {
-                                let _ = liveness_tx_for_task.send(RuntimeLivenessEnvelope {
-                                    submission_id: submission_event_ctx.get_submission_id(),
-                                    status: Some("active_submission".to_string()),
-                                });
+                                if let Err(err) = super::ui_surfaces::heartbeat(&namespace_heartbeat).await {
+                                    warn!(error = %err, "Failed to write runtime activity heartbeat");
+                                }
                             }
                             _ = shutdown_rx.recv() => {
                                 shutdown_requested = true;
@@ -2090,24 +1927,12 @@ fn spawn_with_prepared_runtime_environment(
         state.machine.flush().await;
     });
 
-    // Spawn a task to forward events to a broadcast channel
-    let (broadcast_tx, _) = tokio::sync::broadcast::channel::<RuntimeEventEnvelope>(256);
-    let broadcast_tx_clone = broadcast_tx.clone();
-    let event_task_handle = tokio::spawn(async move {
-        while let Some(runtime_event) = evt_rx.recv().await {
-            let _ = broadcast_tx_clone.send(runtime_event);
-        }
-    });
-
     Ok(RuntimeController {
         handle: RuntimeHandle {
             submission_tx: sub_tx,
-            event_sender: broadcast_tx,
-            liveness_sender: liveness_tx,
             shutdown_tx: Some(shutdown_tx),
         },
         task_handle: Some(task_handle),
-        event_task_handle: Some(event_task_handle),
         ready_rx: Some(ready_rx),
         startup_metadata: None,
     })
@@ -2136,13 +1961,42 @@ mod tests {
     use std::sync::{Arc, Mutex};
     use tempfile::TempDir;
 
-    fn namespace_environment_for_test() -> RuntimeEnvironment {
+    struct PackageTestTool {
+        name: &'static str,
+        description: &'static str,
+    }
+
+    impl crate::tools::Tool for PackageTestTool {
+        fn name(&self) -> &str {
+            self.name
+        }
+
+        fn description(&self) -> &str {
+            self.description
+        }
+
+        fn parameters_schema(&self) -> serde_json::Value {
+            serde_json::json!({"type": "object"})
+        }
+
+        fn execute(
+            &self,
+            _arguments: serde_json::Value,
+            _ctx: &crate::tools::ToolContext,
+        ) -> crate::tools::ToolResult {
+            Box::pin(async { Ok(serde_json::json!({"ok": true})) })
+        }
+    }
+
+    fn single_file_fs(name: &str, bytes: &[u8]) -> Arc<alan_ap::reference::MemFs> {
+        Arc::new(alan_ap::reference::MemFs::with_read_only_file(name, bytes))
+    }
+
+    fn namespace_environment_for_test() -> NamespaceRuntimeEnvironment {
         let root = InProcessTransport::new(Arc::new(alan_kernel::MountFs::new(
             alan_kernel::Namespace::new(),
         )));
-        RuntimeEnvironment::namespace(crate::runtime::NamespaceRuntimeEnvironment::new(
-            root, "/agent/1", "default",
-        ))
+        crate::runtime::NamespaceRuntimeEnvironment::new(root, "/agent/1", "default")
     }
 
     fn write_agent_overlay(path: &Path, body: &str) {
@@ -2172,7 +2026,6 @@ mod tests {
             machine,
             current_submission_id: None,
             environment: namespace_environment_for_test(),
-            tool_catalog: crate::tools::ToolRegistry::new(),
             core_config,
             runtime_config,
             workspace_persona_dirs: Vec::new(),
@@ -2233,8 +2086,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let RuntimeEnvironment::Namespace { namespace, .. } = environment;
-        let shell = alan_shell::Shell::new(namespace.root_transport());
+        let shell = alan_shell::Shell::new(environment.root_transport());
 
         let srv_entries = shell.ls("/srv").await.unwrap();
         assert!(srv_entries.iter().any(|entry| entry == "llm"));
@@ -2270,6 +2122,111 @@ mod tests {
         assert!(dead_letter.contains(r#""type":"status""#), "{dead_letter}");
     }
 
+    #[tokio::test]
+    async fn root_namespace_mounts_complete_tool_packages() {
+        let mut tools = crate::tools::ToolRegistry::new();
+        tools.register(PackageTestTool {
+            name: "example",
+            description: "Example Tool",
+        });
+        let environment =
+            build_root_namespace_environment(LlmClient::new(MockLlmProvider::new()), tools, None)
+                .await
+                .unwrap();
+        let shell = alan_shell::Shell::new(environment.root_transport());
+
+        assert!(
+            shell
+                .ls("/bin")
+                .await
+                .unwrap()
+                .contains(&"example".to_string())
+        );
+        let manifest: crate::runtime::ToolPackageManifest =
+            serde_json::from_slice(&shell.cat("/lib/exec/example/manifest").await.unwrap())
+                .unwrap();
+        manifest.validate_for_name("example").unwrap();
+        let discovered = environment.discover_tool_packages().await.unwrap();
+        assert_eq!(discovered, vec![manifest]);
+    }
+
+    #[tokio::test]
+    async fn namespace_discovery_ignores_incomplete_tool_packages() {
+        let manifest = crate::runtime::ToolPackageManifest::from_tool(
+            &PackageTestTool {
+                name: "hidden",
+                description: "Hidden Tool",
+            },
+            30,
+        )
+        .unwrap();
+        let manifest_fs = single_file_fs("manifest", &serde_json::to_vec(&manifest).unwrap());
+
+        let mut mounts = alan_kernel::Namespace::new();
+        mounts.mount(
+            "/bin/ordinary",
+            InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::new())),
+            alan_kernel::Access::ReadOnly,
+        );
+        mounts.mount(
+            "/lib/exec/hidden",
+            InProcessTransport::new(manifest_fs),
+            alan_kernel::Access::ReadOnly,
+        );
+        let root = InProcessTransport::new(Arc::new(alan_kernel::MountFs::new(mounts)));
+        let environment =
+            crate::runtime::NamespaceRuntimeEnvironment::new(root, "/agent/1", "default");
+
+        assert!(
+            environment
+                .discover_tool_packages()
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn namespace_discovery_rejects_invalid_mounted_manifest() {
+        let mut mounts = alan_kernel::Namespace::new();
+        mounts.mount(
+            "/bin/broken",
+            InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::new())),
+            alan_kernel::Access::ReadOnly,
+        );
+        mounts.mount(
+            "/lib/exec/broken",
+            InProcessTransport::new(single_file_fs("manifest", b"{}")),
+            alan_kernel::Access::ReadOnly,
+        );
+        let root = InProcessTransport::new(Arc::new(alan_kernel::MountFs::new(mounts)));
+        let environment =
+            crate::runtime::NamespaceRuntimeEnvironment::new(root, "/agent/1", "default");
+
+        assert!(environment.discover_tool_packages().await.is_err());
+    }
+
+    #[tokio::test]
+    async fn invalid_tool_package_fails_before_agent_launch() {
+        let mut tools = crate::tools::ToolRegistry::new();
+        tools.register(PackageTestTool {
+            name: "bad/name",
+            description: "Invalid Tool",
+        });
+
+        let error = match build_root_namespace_environment(
+            LlmClient::new(MockLlmProvider::new()),
+            tools,
+            None,
+        )
+        .await
+        {
+            Ok(_) => panic!("invalid Tool package must fail before launch"),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("does not match mounted package"));
+    }
+
     #[test]
     fn test_should_requeue_deferred_action_only_after_cancelled_exit() {
         assert!(should_requeue_deferred_action(
@@ -2283,6 +2240,16 @@ mod tests {
         assert!(!should_requeue_deferred_action(
             false,
             DeferredRuntimeActionExit::Cancelled
+        ));
+    }
+
+    #[test]
+    fn paused_submission_keeps_its_terminal_ui_state() {
+        assert!(preserves_paused_terminal_state(&Ok(()), true));
+        assert!(!preserves_paused_terminal_state(&Ok(()), false));
+        assert!(!preserves_paused_terminal_state(
+            &Err(anyhow!("failed")),
+            true
         ));
     }
 
@@ -2305,6 +2272,40 @@ mod tests {
             provider_response_status: None,
             warnings: Vec::new(),
         }
+    }
+
+    async fn wait_for_ui_turn_completion(
+        tail: &mut alan_shell::Tail,
+        timeout: Duration,
+    ) -> Vec<alan_agent_protocol::UiEvent> {
+        tokio::time::timeout(timeout, async {
+            let mut pending = String::new();
+            let mut events = Vec::new();
+            let mut saw_running = false;
+            loop {
+                pending.push_str(&String::from_utf8(tail.read(4096).await.unwrap()).unwrap());
+                while let Some(newline) = pending.find('\n') {
+                    let line = pending[..newline].to_string();
+                    pending.drain(..=newline);
+                    let event: alan_agent_protocol::UiEvent = serde_json::from_str(&line).unwrap();
+                    if let alan_agent_protocol::UiEvent::Activity { snapshot } = &event {
+                        saw_running |= matches!(
+                            snapshot.state,
+                            alan_agent_protocol::UiActivityState::Running
+                        );
+                        if saw_running
+                            && matches!(snapshot.state, alan_agent_protocol::UiActivityState::Idle)
+                        {
+                            events.push(event);
+                            return events;
+                        }
+                    }
+                    events.push(event);
+                }
+            }
+        })
+        .await
+        .expect("turn UI stream did not reach idle")
     }
 
     fn response_stream(response: GenerationResponse) -> tokio::sync::mpsc::Receiver<StreamChunk> {
@@ -2415,15 +2416,24 @@ mod tests {
             MockLlmProvider::new()
                 .with_response(mock_generation_response("hello from namespace bootstrap")),
         );
-        let mut controller = spawn_with_llm_client_and_tools(
+        let launch = spawn_with_llm_client_and_tools_and_namespace_surface(
             WorkspaceRuntimeConfig::default(),
             llm_client,
             crate::tools::ToolRegistry::new(),
         )
+        .await
         .unwrap();
+        let shell = alan_shell::Shell::new(launch.surface.root_transport());
+        let mut ui_events = shell
+            .tail(&format!(
+                "{}/machine/ui/events",
+                launch.surface.agent_path()
+            ))
+            .await
+            .unwrap();
+        let mut controller = launch.controller;
         controller.wait_until_ready().await.unwrap();
 
-        let mut events = controller.handle.event_sender.subscribe();
         controller
             .handle
             .submission_tx
@@ -2434,27 +2444,19 @@ mod tests {
             .await
             .unwrap();
 
-        let mut text = String::new();
-        let mut completed = false;
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
-        while tokio::time::Instant::now() < deadline {
-            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-            let envelope = tokio::time::timeout(remaining, events.recv())
+        let observed = wait_for_ui_turn_completion(&mut ui_events, Duration::from_secs(5)).await;
+        assert!(observed.iter().any(|event| matches!(
+            event,
+            alan_agent_protocol::UiEvent::Activity { snapshot }
+                if snapshot.state == alan_agent_protocol::UiActivityState::Running
+        )));
+        let text = String::from_utf8(
+            shell
+                .cat(&format!("{}/io/output", launch.surface.agent_path()))
                 .await
-                .unwrap()
-                .unwrap();
-            match envelope.event {
-                Event::TextDelta { chunk, .. } => text.push_str(&chunk),
-                Event::TurnCompleted { .. } => {
-                    completed = true;
-                    break;
-                }
-                Event::Error { message, .. } => panic!("runtime emitted error: {message}"),
-                _ => {}
-            }
-        }
-
-        assert!(completed, "turn did not complete; text so far: {text:?}");
+                .unwrap(),
+        )
+        .unwrap();
         assert_eq!(text, "hello from namespace bootstrap");
         controller.shutdown().await.unwrap();
     }
@@ -2646,10 +2648,17 @@ mod tests {
             deferred_delay: Duration::from_millis(100),
         });
 
-        let mut controller = spawn_with_llm_client(config, llm_client).unwrap();
+        let launch = spawn_with_llm_client_and_namespace_surface(config, llm_client)
+            .await
+            .unwrap();
+        let shell = alan_shell::Shell::new(launch.surface.root_transport());
+        let mut output = shell
+            .tail(&format!("{}/io/output", launch.surface.agent_path()))
+            .await
+            .unwrap();
+        let mut controller = launch.controller;
         controller.wait_until_ready().await.unwrap();
 
-        let mut event_rx = controller.handle.event_sender.subscribe();
         let submission = Submission::new(Op::Turn {
             parts: vec![alan_agent_protocol::ContentPart::text("My name is Morris.")],
             context: None,
@@ -2661,33 +2670,11 @@ mod tests {
             .await
             .unwrap();
 
-        let mut observed_events = Vec::new();
-        let wait_result = tokio::time::timeout(Duration::from_secs(15), async {
-            loop {
-                let envelope = event_rx
-                    .recv()
-                    .await
-                    .expect("runtime event stream closed before turn completion");
-                observed_events.push(format!(
-                    "{:?} submission_id={:?}",
-                    envelope.event, envelope.submission_id
-                ));
-                match &envelope.event {
-                    Event::TurnCompleted { .. } => break,
-                    Event::Error { message, .. } => {
-                        panic!(
-                            "runtime emitted error before shutdown drain: {message}; \
-                             observed_events={observed_events:?}"
-                        );
-                    }
-                    _ => {}
-                }
-            }
-        })
-        .await;
-        if wait_result.is_err() {
-            panic!("wait for turn completion; observed_events={observed_events:?}");
-        }
+        let output = tokio::time::timeout(Duration::from_secs(15), output.read(4096))
+            .await
+            .expect("turn output did not arrive")
+            .unwrap();
+        assert_eq!(String::from_utf8(output).unwrap(), "Noted.");
 
         controller.shutdown().await.unwrap();
 
@@ -2723,7 +2710,7 @@ mod tests {
         let mut controller = spawn_with_namespace_environment(
             config,
             namespace_environment,
-            crate::tools::ToolRegistry::new(),
+            crate::skills::SkillHostCapabilities::default(),
             generation_capabilities,
         )
         .unwrap();
@@ -2780,28 +2767,19 @@ mod tests {
         let mut controller = spawn_with_namespace_environment(
             config,
             namespace_environment,
-            crate::tools::ToolRegistry::new(),
+            crate::skills::SkillHostCapabilities::default(),
             generation_capabilities,
         )
         .unwrap();
         controller.wait_until_ready().await.unwrap();
 
-        let mut event_rx = controller.handle.event_sender.subscribe();
+        let mut ui_events = shell.tail("/agent/1/machine/ui/events").await.unwrap();
         shell
             .write("/agent/1/io/input", b"hello through files")
             .await
             .unwrap();
 
-        tokio::time::timeout(Duration::from_secs(5), async {
-            loop {
-                let envelope = event_rx.recv().await.unwrap();
-                if matches!(envelope.event, Event::TurnCompleted { .. }) {
-                    break;
-                }
-            }
-        })
-        .await
-        .expect("namespace io/input should drive a turn to completion");
+        wait_for_ui_turn_completion(&mut ui_events, Duration::from_secs(5)).await;
 
         let output = String::from_utf8(shell.cat("/agent/1/io/output").await.unwrap()).unwrap();
         assert_eq!(output, "hello from namespace runtime");
@@ -2842,8 +2820,7 @@ mod tests {
             workspace_root_dir: None,
             machine: crate::AgentMachine::new(),
             current_submission_id: None,
-            environment: RuntimeEnvironment::namespace(namespace_environment),
-            tool_catalog: crate::tools::ToolRegistry::new(),
+            environment: namespace_environment,
             core_config: crate::Config::default(),
             runtime_config: RuntimeConfig::default(),
             workspace_persona_dirs: Vec::new(),
@@ -2932,49 +2909,44 @@ mod tests {
         let mut controller = spawn_with_namespace_environment(
             config,
             namespace_environment,
-            crate::tools::ToolRegistry::new(),
+            crate::skills::SkillHostCapabilities::default(),
             generation_capabilities,
         )
         .unwrap();
         controller.wait_until_ready().await.unwrap();
 
-        let mut event_rx = controller.handle.event_sender.subscribe();
+        let mut ui_events = shell.tail("/agent/1/machine/ui/events").await.unwrap();
         shell
             .write("/agent/1/io/input", b"hello through files")
             .await
             .unwrap();
 
-        tokio::time::timeout(Duration::from_secs(5), async {
-            loop {
-                let envelope = event_rx.recv().await.unwrap();
-                if matches!(envelope.event, Event::TurnCompleted { .. }) {
-                    break;
-                }
-            }
-        })
-        .await
-        .expect("namespace io/input should drive a turn to completion");
+        wait_for_ui_turn_completion(&mut ui_events, Duration::from_secs(5)).await;
 
         shell
             .write("/agent/1/machine/ctl", b"rollback")
             .await
             .unwrap();
 
-        let rollback = tokio::time::timeout(Duration::from_secs(5), async {
-            loop {
-                let envelope = event_rx.recv().await.unwrap();
-                if let Event::MachineRolledBack {
-                    turns,
-                    removed_messages,
-                } = envelope.event
-                {
-                    break (turns, removed_messages);
+        let rollback_notice = tokio::time::timeout(Duration::from_secs(5), async {
+            let mut pending = String::new();
+            'events: loop {
+                pending.push_str(&String::from_utf8(ui_events.read(4096).await.unwrap()).unwrap());
+                while let Some(newline) = pending.find('\n') {
+                    let line = pending[..newline].to_string();
+                    pending.drain(..=newline);
+                    let event: alan_agent_protocol::UiEvent = serde_json::from_str(&line).unwrap();
+                    if let alan_agent_protocol::UiEvent::Notice { snapshot } = event
+                        && snapshot.kind == alan_agent_protocol::UiNoticeKind::Rollback
+                    {
+                        break 'events snapshot.message;
+                    }
                 }
             }
         })
         .await
         .expect("namespace machine/ctl should drive rollback submission");
-        assert_eq!(rollback, (1, 2));
+        assert_eq!(rollback_notice, "rolled back 1 turns");
 
         controller.shutdown().await.unwrap();
     }
@@ -3074,12 +3046,9 @@ mod tests {
     #[test]
     fn test_agent_runtime_handle_clone() {
         let (sub_tx, _sub_rx) = mpsc::channel(10);
-        let (evt_tx, _) = mpsc::channel::<RuntimeEventEnvelope>(10);
 
         let handle = RuntimeHandle {
             submission_tx: sub_tx,
-            event_sender: tokio::sync::broadcast::channel(10).0,
-            liveness_sender: tokio::sync::broadcast::channel(10).0,
             shutdown_tx: None,
         };
 
@@ -3087,7 +3056,6 @@ mod tests {
         // Both handles should share the same channels
         drop(cloned);
         drop(handle);
-        drop(evt_tx); // Clean up
     }
 
     #[test]
@@ -3096,8 +3064,6 @@ mod tests {
 
         let handle = RuntimeHandle {
             submission_tx: sub_tx,
-            event_sender: tokio::sync::broadcast::channel(10).0,
-            liveness_sender: tokio::sync::broadcast::channel(10).0,
             shutdown_tx: None,
         };
 
@@ -3105,25 +3071,11 @@ mod tests {
         assert!(!handle.submission_tx.is_closed());
     }
 
-    #[test]
-    fn test_submission_event_context_tracks_latest_submission_id() {
-        let ctx = SubmissionEventContext::default();
-        assert_eq!(ctx.get_submission_id(), None);
-
-        ctx.set_submission_id("sub-1");
-        assert_eq!(ctx.get_submission_id().as_deref(), Some("sub-1"));
-
-        ctx.set_submission_id("sub-2");
-        assert_eq!(ctx.get_submission_id().as_deref(), Some("sub-2"));
-    }
-
     #[tokio::test]
     async fn test_agent_runtime_handle_shutdown_without_channel() {
         let (sub_tx, _sub_rx) = mpsc::channel::<Submission>(10);
         let handle = RuntimeHandle {
             submission_tx: sub_tx,
-            event_sender: tokio::sync::broadcast::channel(10).0,
-            liveness_sender: tokio::sync::broadcast::channel(10).0,
             shutdown_tx: None,
         };
 
@@ -3994,8 +3946,6 @@ required = true
 
         let handle = RuntimeHandle {
             submission_tx: sub_tx,
-            event_sender: tokio::sync::broadcast::channel(10).0,
-            liveness_sender: tokio::sync::broadcast::channel(10).0,
             shutdown_tx: Some(shutdown_tx),
         };
 
@@ -4006,17 +3956,6 @@ required = true
         // Verify shutdown signal was sent
         let signal = shutdown_rx.recv().await;
         assert!(signal.is_some());
-    }
-
-    #[test]
-    fn test_runtime_event_envelope_creation() {
-        let envelope = RuntimeEventEnvelope {
-            submission_id: Some("sub-123".to_string()),
-            event: Event::TurnStarted {},
-        };
-
-        assert_eq!(envelope.submission_id, Some("sub-123".to_string()));
-        assert!(matches!(envelope.event, Event::TurnStarted {}));
     }
 
     #[test]

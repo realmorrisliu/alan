@@ -41,6 +41,7 @@ urlencoding.workspace = true
 [dev-dependencies]
 alan-llm = { workspace = true, features = ["mock"] }
 alan-agent-engine = { workspace = true, features = ["mock"] }
+alan-shell = { path = "../shell" }
 async-trait.workspace = true
 base64.workspace = true
 tempfile.workspace = true

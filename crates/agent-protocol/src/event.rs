@@ -1,11 +1,12 @@
-//! System event definitions (Event Queue).
+//! Transition-local event record definitions.
 //!
-//! These are events emitted by the agent to notify frontends.
+//! These values describe one engine transition or a durable record. They are
+//! not a live runtime transport; observers read AgentFS-owned files and streams.
 
 use crate::{CompactionAttemptSnapshot, MemoryFlushAttemptSnapshot, PlanItem};
 use serde::{Deserialize, Serialize};
 
-/// Events emitted by the agent.
+/// Semantic outcomes produced inside one Agent Machine transition.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Event {
@@ -81,7 +82,7 @@ pub enum Event {
         audit: Option<ToolDecisionAudit>,
     },
 
-    /// Transport-level plan snapshot published by `update_plan`.
+    /// Plan snapshot accepted by `update_plan`.
     PlanUpdated {
         /// Optional explanation associated with the latest plan.
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -90,7 +91,7 @@ pub enum Event {
         items: Vec<PlanItem>,
     },
 
-    /// Agent Machine rollback notification published by `Op::Rollback`.
+    /// Agent Machine rollback outcome for `Op::Rollback`.
     MachineRolledBack {
         /// Number of logical turns removed from in-memory history.
         turns: u32,
@@ -162,7 +163,7 @@ pub struct ToolDecisionAudit {
     pub capability: String,
     /// Effective execution backend name.
     ///
-    /// Field name is kept for compatibility with existing event consumers.
+    /// Stable durable-schema field name for the execution backend.
     pub sandbox_backend: String,
     /// Native subprocess path semantics for this backend.
     #[serde(default, skip_serializing_if = "Option::is_none")]

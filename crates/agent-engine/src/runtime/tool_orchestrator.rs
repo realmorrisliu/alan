@@ -26,11 +26,6 @@ use super::turn_driver::{MAX_BUFFERED_INBAND_USER_INPUTS, TurnInputBroker};
 use super::turn_support::{check_turn_cancelled, tool_result_preview};
 use super::virtual_tools::{VirtualToolOutcome, try_handle_virtual_tool_call};
 
-#[derive(Clone)]
-enum ToolExecutionTarget {
-    Namespace(crate::runtime::NamespaceRuntimeEnvironment),
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum EffectCategory {
     File,
@@ -424,29 +419,25 @@ async fn tool_payload_for_tape(state: &RuntimeLoopState, payload: &Value) -> Val
 }
 
 async fn execute_tool_effect(
-    target: ToolExecutionTarget,
+    namespace: crate::runtime::NamespaceRuntimeEnvironment,
     tool_name: &str,
     tool_arguments: Value,
     cancel: &CancellationToken,
     timeout_secs: usize,
 ) -> Result<Value> {
-    match target {
-        ToolExecutionTarget::Namespace(namespace) => {
-            let executable = format!("/bin/{tool_name}");
-            let arguments_doc =
-                serde_json::to_string(&tool_arguments).context("serialize tool arguments")?;
-            let tool = namespace
-                .run_tool_action_with_cancel_and_timeout(
-                    tool_name,
-                    &executable,
-                    [arguments_doc],
-                    cancel,
-                    timeout_secs,
-                )
-                .await?;
-            namespace_tool_payload(tool)
-        }
-    }
+    let executable = format!("/bin/{tool_name}");
+    let arguments_doc =
+        serde_json::to_string(&tool_arguments).context("serialize tool arguments")?;
+    let tool = namespace
+        .run_tool_action_with_cancel_and_timeout(
+            tool_name,
+            &executable,
+            [arguments_doc],
+            cancel,
+            timeout_secs,
+        )
+        .await?;
+    namespace_tool_payload(tool)
 }
 
 async fn orchestrate_tool_call_with_guard<E, F>(
@@ -496,11 +487,23 @@ where
         VirtualToolOutcome::EndTurn => return Ok(ToolOrchestratorOutcome::EndTurn),
     }
 
-    let tool_capability = state
-        .static_tool_capability(&tool_call.name, &tool_arguments)
+    let tool_package = state
+        .namespace_environment()
+        .discover_tool_packages()
+        .await?
+        .into_iter()
+        .find(|package| package.name == tool_call.name);
+    let tool_capability = tool_package
+        .as_ref()
+        .map(|package| {
+            state
+                .namespace_environment()
+                .resolve_tool_capability(package, &tool_arguments)
+        })
         .unwrap_or_else(|| namespace_builtin_tool_capability(&tool_call.name));
-    let tool_locality = state.static_tool_locality(&tool_call.name);
-    if tool_locality == Some(crate::tools::ToolLocality::WorkspaceLocal)
+    if tool_package
+        .as_ref()
+        .is_some_and(|package| package.is_workspace_local())
         && (tool_call.name == "bash" || tool_capability != ToolCapability::Network)
         && let Some((routing_payload, routing_preview, routing_audit)) =
             workspace_routing_preflight(state, &tool_call.name, &tool_arguments, tool_capability)
@@ -631,16 +634,19 @@ where
                     }
                     super::guardian::ReviewOutcome::Deny { rationale } => {
                         let tripped = state.turn_state.record_guardian_review(true);
-                        emit(Event::Warning {
-                            message: format!("auto-review denied: {rationale}"),
-                        })
-                        .await;
+                        let message = format!("auto-review denied: {rationale}");
+                        super::ui_surfaces::warning(state.namespace_environment(), message.clone())
+                            .await?;
+                        emit(Event::Warning { message }).await;
                         if tripped {
-                            emit(Event::Warning {
-                                message: "auto-review circuit breaker tripped; pausing for you"
-                                    .to_string(),
-                            })
-                            .await;
+                            let message =
+                                "auto-review circuit breaker tripped; pausing for you".to_string();
+                            super::ui_surfaces::warning(
+                                state.namespace_environment(),
+                                message.clone(),
+                            )
+                            .await?;
+                            emit(Event::Warning { message }).await;
                             true
                         } else {
                             // Self-correction: feed the denial back to the agent.
@@ -708,6 +714,7 @@ where
                 state
                     .turn_state
                     .set_confirmation_for_request(request_id.clone(), pending.clone());
+                super::ui_surfaces::paused(state.namespace_environment()).await?;
                 emit(Event::Yield {
                     request_id,
                     kind: alan_agent_protocol::YieldKind::Confirmation,
@@ -841,6 +848,7 @@ where
         state
             .turn_state
             .set_confirmation_for_request(request_id.clone(), pending.clone());
+        super::ui_surfaces::paused(state.namespace_environment()).await?;
         emit(Event::Yield {
             request_id,
             kind: alan_agent_protocol::YieldKind::Confirmation,
@@ -1043,11 +1051,11 @@ where
         });
     }
 
-    let execution_target = ToolExecutionTarget::Namespace(state.namespace_environment().clone());
+    let execution_target = state.namespace_environment().clone();
     let tool_start = Instant::now();
-    let tool_timeout_secs = state
-        .tool_catalog()
-        .execution_timeout_secs(&tool_call.name)
+    let tool_timeout_secs = tool_package
+        .as_ref()
+        .map(|package| package.timeout_secs)
         .unwrap_or(state.core_config.tool_timeout_secs);
     let tool_result = execute_tool_effect(
         execution_target,
@@ -1197,8 +1205,9 @@ fn workspace_routing_preflight(
 ) -> Option<(Value, String, alan_agent_protocol::ToolDecisionAudit)> {
     let workspace_root = bound_workspace_root(state)?;
     let sandbox_spec = state
-        .tool_catalog
-        .default_sandbox_spec()
+        .namespace_environment()
+        .tool_execution_binding()
+        .and_then(|binding| binding.sandbox_spec)
         .unwrap_or_else(|| crate::tools::SandboxSpec::seed(workspace_root.clone()));
     let sandbox = crate::tools::Sandbox::from_spec(sandbox_spec);
     let current_cwd = state
@@ -1538,7 +1547,7 @@ mod tests {
     use crate::{
         agent_machine::AgentMachine,
         config::Config,
-        runtime::{NamespaceRuntimeEnvironment, RuntimeEnvironment, TurnState},
+        runtime::{NamespaceRuntimeEnvironment, TurnState},
         tools::{Tool, ToolContext, ToolRegistry, ToolResult},
     };
     use alan_agent_protocol::ToolCapability;
@@ -1950,10 +1959,7 @@ mod tests {
             workspace_root_dir: None,
             machine,
             current_submission_id: None,
-            environment: RuntimeEnvironment::namespace(NamespaceRuntimeEnvironment::new(
-                root, "/agent/1", "default",
-            )),
-            tool_catalog: ToolRegistry::new(),
+            environment: NamespaceRuntimeEnvironment::new(root, "/agent/1", "default"),
             core_config: config,
             runtime_config,
             workspace_persona_dirs: Vec::new(),
@@ -2003,10 +2009,7 @@ mod tests {
             workspace_root_dir: None,
             machine: AgentMachine::new(),
             current_submission_id: None,
-            environment: RuntimeEnvironment::namespace(NamespaceRuntimeEnvironment::new(
-                root, "/agent/1", "default",
-            )),
-            tool_catalog: ToolRegistry::new(),
+            environment: NamespaceRuntimeEnvironment::new(root, "/agent/1", "default"),
             core_config: Config::default(),
             runtime_config: super::super::RuntimeConfig::default(),
             workspace_persona_dirs: Vec::new(),
@@ -2141,9 +2144,25 @@ mod tests {
                 InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::new())),
                 Access::ReadOnly,
             );
+            let tool = tools.get(tool_name).unwrap();
+            let manifest = crate::runtime::ToolPackageManifest::from_tool(
+                tool.as_ref(),
+                tools.execution_timeout_secs(tool_name).unwrap_or(30),
+            )
+            .unwrap();
+            process_namespace.mount(
+                &format!("/lib/exec/{tool_name}"),
+                InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::with_read_only_file(
+                    "manifest",
+                    serde_json::to_vec(&manifest).unwrap(),
+                ))),
+                Access::ReadOnly,
+            );
         }
 
         let procfs = ProcFs::new().with_runner(Arc::new(RegistryToolRunner::new(tools.clone())));
+        let agent_root = Arc::new(alan_agentfs::AgentRootFs::new(Arc::new(procfs.clone())));
+        let tool_runner = crate::tools::ToolProcessRunner::from_registry(&tools);
         let spawner_procfs = Arc::new(procfs.for_spawner(
             None,
             process_namespace.clone(),
@@ -2164,16 +2183,29 @@ mod tests {
             workspace_root_dir: None,
             machine,
             current_submission_id: None,
-            environment: RuntimeEnvironment::namespace(NamespaceRuntimeEnvironment::new(
-                root, agent_path, "default",
-            )),
-            tool_catalog: tools,
+            environment: NamespaceRuntimeEnvironment::new(root, agent_path, "default")
+                .with_process_context(procfs, agent_root, alan_kernel::Pid(1), tool_runner),
             core_config: config,
             runtime_config: super::super::RuntimeConfig::default(),
             workspace_persona_dirs: Vec::new(),
             prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
             turn_state: TurnState::default(),
         }
+    }
+
+    fn bind_test_tool_workspace(
+        state: &mut RuntimeLoopState,
+        workspace_root: &std::path::Path,
+        cwd: &std::path::Path,
+    ) {
+        state.workspace_root_dir = Some(workspace_root.to_path_buf());
+        assert!(state.namespace_environment().set_tool_execution_binding(
+            crate::tools::ToolExecutionBinding::with_workspace(
+                workspace_root.to_path_buf(),
+                cwd.to_path_buf(),
+                workspace_root.join(".alan/runtime/test/tmp"),
+            ),
+        ));
     }
 
     async fn execute_single_tool_call(
@@ -2489,7 +2521,7 @@ mod tests {
 
         for (idx, tool_name) in BUILTIN_BIN_TOOLS.iter().enumerate() {
             let payload = execute_tool_effect(
-                ToolExecutionTarget::Namespace(namespace.clone()),
+                namespace.clone(),
                 tool_name,
                 json!({ "tool": tool_name, "call_index": idx }),
                 &cancel,
@@ -3079,9 +3111,7 @@ mod tests {
         });
         let mut state = create_test_state_with_machine_and_tools(machine, tools);
         state.core_config.memory.workspace_dir = Some(workspace_root.path().join(".alan/memory"));
-        state
-            .tool_catalog_mut_for_test()
-            .set_default_cwd(workspace_root.path().to_path_buf());
+        bind_test_tool_workspace(&mut state, workspace_root.path(), workspace_root.path());
 
         let (_, events) = execute_single_tool_call(
             &mut state,
@@ -3146,13 +3176,7 @@ mod tests {
             workspace_local: true,
         });
         let mut state = create_test_state_with_machine_and_tools(machine, tools);
-        state.workspace_root_dir = Some(workspace_root.path().to_path_buf());
-        state
-            .tool_catalog_mut_for_test()
-            .set_default_workspace_binding(
-                workspace_root.path().to_path_buf(),
-                workspace_root.path().to_path_buf(),
-            );
+        bind_test_tool_workspace(&mut state, workspace_root.path(), workspace_root.path());
         let arguments = json!({
             "command": format!("cd {} && pwd", approved_root.path().display()),
             "timeout": 60
@@ -3166,8 +3190,8 @@ mod tests {
 
         assert!(
             state
-                .tool_catalog_mut_for_test()
-                .add_default_sandbox_writable_root(approved_root.path().to_path_buf())
+                .namespace_environment()
+                .add_tool_sandbox_writable_root(approved_root.path().to_path_buf())
         );
 
         let preflight =
@@ -3190,9 +3214,7 @@ mod tests {
         });
         let mut state = create_test_state_with_machine_and_tools(machine, tools);
         state.core_config.memory.workspace_dir = Some(workspace_root.path().join(".alan/memory"));
-        state
-            .tool_catalog_mut_for_test()
-            .set_default_cwd(workspace_root.path().to_path_buf());
+        bind_test_tool_workspace(&mut state, workspace_root.path(), workspace_root.path());
 
         let (_, events) = execute_single_tool_call(
             &mut state,
@@ -3269,9 +3291,7 @@ default_action: allow
         state.core_config.memory.workspace_dir = Some(workspace_alan.join("memory"));
         state.runtime_config.policy_engine =
             crate::policy::PolicyEngine::load_or_default(Some(&workspace_alan));
-        state
-            .tool_catalog_mut_for_test()
-            .set_default_cwd(workspace_root.join("src"));
+        bind_test_tool_workspace(&mut state, &workspace_root, &workspace_root.join("src"));
 
         let (_, events) = execute_single_tool_call(
             &mut state,
@@ -3320,11 +3340,8 @@ default_action: allow
             workspace_local: true,
         });
         let mut state = create_test_state_with_machine_and_tools(machine, tools);
-        state.workspace_root_dir = Some(workspace_root.path().to_path_buf());
         state.core_config.memory.workspace_dir = Some(custom_memory_root.path().join("memory"));
-        state
-            .tool_catalog_mut_for_test()
-            .set_default_cwd(workspace_root.path().to_path_buf());
+        bind_test_tool_workspace(&mut state, workspace_root.path(), workspace_root.path());
 
         let (_, events) = execute_single_tool_call(
             &mut state,
@@ -3385,9 +3402,7 @@ default_action: allow
         });
         let mut state = create_test_state_with_machine_and_tools(machine, tools);
         state.core_config.memory.workspace_dir = Some(workspace_root.join(".alan/memory"));
-        state
-            .tool_catalog_mut_for_test()
-            .set_default_cwd(workspace_root.clone());
+        bind_test_tool_workspace(&mut state, &workspace_root, &workspace_root);
 
         let (_, events) = execute_single_tool_call(
             &mut state,
@@ -3443,9 +3458,7 @@ default_action: allow
         });
         let mut state = create_test_state_with_machine_and_tools(machine, tools);
         state.core_config.memory.workspace_dir = Some(workspace_root.join(".alan/memory"));
-        state
-            .tool_catalog_mut_for_test()
-            .set_default_cwd(workspace_root.clone());
+        bind_test_tool_workspace(&mut state, &workspace_root, &workspace_root);
 
         let (_, events) = execute_single_tool_call(
             &mut state,
@@ -3498,9 +3511,7 @@ default_action: allow
         });
         let mut state = create_test_state_with_machine_and_tools(machine, tools);
         state.core_config.memory.workspace_dir = Some(workspace_root.path().join(".alan/memory"));
-        state
-            .tool_catalog_mut_for_test()
-            .set_default_cwd(workspace_root.path().to_path_buf());
+        bind_test_tool_workspace(&mut state, workspace_root.path(), workspace_root.path());
 
         let (_, events) = execute_single_tool_call(
             &mut state,

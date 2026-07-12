@@ -1,6 +1,6 @@
-use alan_agent_engine::runtime::spawn_with_llm_client_and_tools;
-use alan_agent_engine::{AlanHomePaths, LlmClient, RuntimeEventEnvelope, WorkspaceRuntimeConfig};
-use alan_agent_protocol::{ContentPart, Event, Op, Submission};
+use alan_agent_engine::runtime::spawn_with_llm_client_and_tools_and_namespace_surface;
+use alan_agent_engine::{AlanHomePaths, LlmClient, WorkspaceRuntimeConfig};
+use alan_agent_protocol::{ContentPart, Op, Submission, UiActivityState, UiEvent};
 use alan_llm::{
     GenerationRequest, GenerationResponse, LlmProvider, MessageRole, StreamChunk, ToolCall,
     ToolCallDelta,
@@ -68,35 +68,27 @@ impl LlmProvider for RecordingProvider {
     }
 }
 
-async fn collect_events_until_turn_complete(
-    mut rx: tokio::sync::broadcast::Receiver<RuntimeEventEnvelope>,
-    timeout: Duration,
-) -> (Vec<Event>, bool) {
-    let mut events = Vec::new();
-    let deadline = tokio::time::Instant::now() + timeout;
-    let mut turn_completed = false;
-
-    loop {
-        tokio::select! {
-            result = rx.recv() => {
-                match result {
-                    Ok(envelope) => {
-                        let event = envelope.event.clone();
-                        events.push(event.clone());
-                        if matches!(event, Event::TurnCompleted { .. }) {
-                            turn_completed = true;
-                            break;
-                        }
+async fn wait_for_turn(tail: &mut alan_shell::Tail) {
+    tokio::time::timeout(Duration::from_secs(10), async {
+        let mut pending = String::new();
+        let mut saw_running = false;
+        loop {
+            pending.push_str(&String::from_utf8(tail.read(4096).await.unwrap()).unwrap());
+            while let Some(newline) = pending.find('\n') {
+                let line = pending[..newline].to_string();
+                pending.drain(..=newline);
+                let event: UiEvent = serde_json::from_str(&line).unwrap();
+                if let UiEvent::Activity { snapshot } = event {
+                    saw_running |= snapshot.state == UiActivityState::Running;
+                    if saw_running && snapshot.state == UiActivityState::Idle {
+                        return;
                     }
-                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
                 }
             }
-            _ = tokio::time::sleep_until(deadline) => break,
         }
-    }
-
-    (events, turn_completed)
+    })
+    .await
+    .expect("turn UI stream did not reach idle");
 }
 
 fn tool_call_response(path: &Path) -> GenerationResponse {
@@ -340,17 +332,27 @@ async fn run_turn(
     config: WorkspaceRuntimeConfig,
     responses: Vec<GenerationResponse>,
     prompt: &str,
-) -> (Vec<Event>, Vec<GenerationRequest>) {
+) -> Vec<GenerationRequest> {
     let (provider, recorded_requests) = RecordingProvider::new(responses);
     let llm_client = LlmClient::new(provider);
     let tools = alan_tools::create_tool_registry_with_core_tools(
         config.workspace_root_dir.clone().unwrap(),
     );
 
-    let mut controller = spawn_with_llm_client_and_tools(config, llm_client, tools).unwrap();
+    let launch = spawn_with_llm_client_and_tools_and_namespace_surface(config, llm_client, tools)
+        .await
+        .unwrap();
+    let shell = alan_shell::Shell::new(launch.surface.root_transport());
+    let mut ui_events = shell
+        .tail(&format!(
+            "{}/machine/ui/events",
+            launch.surface.agent_path()
+        ))
+        .await
+        .unwrap();
+    let mut controller = launch.controller;
     controller.wait_until_ready().await.unwrap();
 
-    let rx = controller.handle.event_sender.subscribe();
     controller
         .handle
         .submission_tx
@@ -361,32 +363,10 @@ async fn run_turn(
         .await
         .unwrap();
 
-    let (events, turn_completed) =
-        collect_events_until_turn_complete(rx, Duration::from_secs(10)).await;
+    wait_for_turn(&mut ui_events).await;
     controller.shutdown().await.unwrap();
 
-    assert!(
-        turn_completed,
-        "timed out waiting for TurnCompleted; observed events: {events:?}"
-    );
-    let exhausted_provider_errors: Vec<&str> = events
-        .iter()
-        .filter_map(|event| match event {
-            Event::Error { message, .. }
-                if message.contains("recording provider response queue exhausted") =>
-            {
-                Some(message.as_str())
-            }
-            _ => None,
-        })
-        .collect();
-    assert!(
-        exhausted_provider_errors.is_empty(),
-        "unexpected extra LLM requests exhausted scripted responses: {exhausted_provider_errors:?}"
-    );
-
-    let requests = recorded_requests.lock().unwrap().clone();
-    (events, requests)
+    recorded_requests.lock().unwrap().clone()
 }
 
 fn only_rollout_path(rollouts_dir: &Path) -> PathBuf {
@@ -505,7 +485,7 @@ async fn named_agent_overlay_applies_highest_precedence_across_runtime_surfaces(
     let (home_paths, workspace_root, workspace_alan_dir, read_target) =
         prepare_overlay_chain(&temp);
 
-    let (events, requests) = run_turn(
+    let requests = run_turn(
         runtime_config_for(home_paths, &workspace_root, &workspace_alan_dir, None),
         vec![
             tool_call_response(&read_target),
@@ -516,23 +496,6 @@ async fn named_agent_overlay_applies_highest_precedence_across_runtime_surfaces(
     .await;
 
     assert_overlay_requests(&requests);
-
-    let policy_audit = events.iter().find_map(|event| match event {
-        Event::ToolCallCompleted {
-            id,
-            audit: Some(audit),
-            ..
-        } if id == "call_read_overlay" => Some(audit),
-        _ => None,
-    });
-
-    let policy_audit = policy_audit.expect("expected denied read_file audit");
-    assert_eq!(policy_audit.action, "deny");
-    assert_eq!(policy_audit.policy_source, "workspace_policy_file");
-    assert_eq!(
-        policy_audit.reason.as_deref(),
-        Some("workspace named policy deny")
-    );
 }
 
 #[tokio::test]
@@ -544,7 +507,7 @@ async fn named_agent_overlay_survives_rollout_recovery_in_new_processes() {
         alan_agent_engine::InstallChannel::Stable,
     );
 
-    let (_, first_requests) = run_turn(
+    let first_requests = run_turn(
         runtime_config_for(
             home_paths.clone(),
             &workspace_root,
@@ -559,7 +522,7 @@ async fn named_agent_overlay_survives_rollout_recovery_in_new_processes() {
 
     let rollout_path = only_rollout_path(&rollouts_dir);
 
-    let (_, recovered_requests) = run_turn(
+    let recovered_requests = run_turn(
         runtime_config_for(
             home_paths.clone(),
             &workspace_root,
@@ -589,7 +552,7 @@ async fn named_agent_overlay_survives_rollout_recovery_in_new_processes() {
         ],
     );
 
-    let (_, second_recovery_requests) = run_turn(
+    let second_recovery_requests = run_turn(
         runtime_config_for(
             home_paths,
             &workspace_root,

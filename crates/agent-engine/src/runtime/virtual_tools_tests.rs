@@ -4,8 +4,8 @@ use crate::{
     config::Config,
     rollout::{RolloutItem, RolloutRecorder},
     runtime::{
-        ChildRunRecord, ChildRunStatus, NamespaceRuntimeEnvironment, RuntimeConfig,
-        RuntimeEnvironment, TurnState, turn_state::TurnActivityState,
+        ChildRunRecord, ChildRunStatus, NamespaceRuntimeEnvironment, RuntimeConfig, TurnState,
+        turn_state::TurnActivityState,
     },
     skills::{
         ActiveSkillEnvelope, ResolvedCapabilityView, ResolvedSkillExecution, ScopedPackageDir,
@@ -23,7 +23,9 @@ use std::sync::{Arc, Mutex};
 use tempfile::TempDir;
 use tokio_util::sync::CancellationToken;
 
-fn namespace_environment_for_virtual_tool_test() -> RuntimeEnvironment {
+fn namespace_environment_for_virtual_tool_test(
+    tools: &ToolRegistry,
+) -> NamespaceRuntimeEnvironment {
     let agentfs = Arc::new(AgentFs::new());
     let mut namespace = Namespace::new();
     namespace.mount(
@@ -32,9 +34,15 @@ fn namespace_environment_for_virtual_tool_test() -> RuntimeEnvironment {
         Access::ReadWrite,
     );
     let root = InProcessTransport::new(Arc::new(MountFs::new(namespace)));
-    RuntimeEnvironment::namespace(NamespaceRuntimeEnvironment::new(
-        root, "/agent/1", "default",
-    ))
+    let procfs = alan_kernel::ProcFs::new();
+    let agent_root = Arc::new(alan_agentfs::AgentRootFs::new(Arc::new(procfs.clone())));
+    let runner = crate::tools::ToolProcessRunner::from_registry(tools);
+    NamespaceRuntimeEnvironment::new(root, "/agent/1", "default").with_process_context(
+        procfs,
+        agent_root,
+        alan_kernel::Pid(1),
+        runner,
+    )
 }
 
 fn create_test_agent_loop_state() -> super::super::agent_loop::RuntimeLoopState {
@@ -55,14 +63,26 @@ fn create_test_agent_loop_state() -> super::super::agent_loop::RuntimeLoopState 
         workspace_root_dir: None,
         machine,
         current_submission_id: None,
-        environment: namespace_environment_for_virtual_tool_test(),
-        tool_catalog: tools,
+        environment: namespace_environment_for_virtual_tool_test(&tools),
         core_config: config,
         runtime_config,
         workspace_persona_dirs: Vec::new(),
         prompt_cache,
         turn_state: TurnState::default(),
     }
+}
+
+fn set_test_tool_cwd(state: &RuntimeLoopState, cwd: PathBuf) {
+    let mut binding = state
+        .namespace_environment()
+        .tool_execution_binding()
+        .expect("test Tool binding");
+    binding.cwd = cwd;
+    assert!(
+        state
+            .namespace_environment()
+            .set_tool_execution_binding(binding)
+    );
 }
 
 fn create_namespace_agent_loop_state_and_shell()
@@ -77,9 +97,7 @@ fn create_namespace_agent_loop_state_and_shell()
     let root = InProcessTransport::new(Arc::new(MountFs::new(namespace)));
     let shell = Shell::new(root.clone());
     let mut state = create_test_agent_loop_state();
-    state.environment = RuntimeEnvironment::namespace(NamespaceRuntimeEnvironment::new(
-        root, "/agent/1", "default",
-    ));
+    state.environment = NamespaceRuntimeEnvironment::new(root, "/agent/1", "default");
     (state, shell)
 }
 
@@ -2956,9 +2974,10 @@ async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_keeps_workspac
     let mut state = create_test_agent_loop_state();
     state.core_config.memory.workspace_dir =
         Some(PathBuf::from("/tmp/alan-delegated-parent/.alan/memory"));
-    state
-        .tool_catalog_mut_for_test()
-        .set_default_cwd(PathBuf::from("/tmp/alan-delegated-parent/nested/src"));
+    set_test_tool_cwd(
+        &state,
+        PathBuf::from("/tmp/alan-delegated-parent/nested/src"),
+    );
     activate_test_delegated_skill(&mut state, "repo-review", "reviewer");
 
     let tool_call = NormalizedToolCall {
@@ -3024,9 +3043,7 @@ async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_honors_explici
  {
     let mut state = create_test_agent_loop_state();
     state.core_config.memory.workspace_dir = Some(PathBuf::from("/tmp/alan-home/.alan/memory"));
-    state
-        .tool_catalog_mut_for_test()
-        .set_default_cwd(PathBuf::from("/tmp/alan-home/nested/src"));
+    set_test_tool_cwd(&state, PathBuf::from("/tmp/alan-home/nested/src"));
     activate_test_delegated_skill(&mut state, "workspace-inspect", "workspace-reader");
 
     let tool_call = NormalizedToolCall {
@@ -3105,9 +3122,7 @@ async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_does_not_promo
  {
     let mut state = create_test_agent_loop_state();
     state.core_config.memory.workspace_dir = Some(PathBuf::from("/tmp/alan-home/.alan/memory"));
-    state
-        .tool_catalog_mut_for_test()
-        .set_default_cwd(PathBuf::from("/tmp/alan-home/nested/src"));
+    set_test_tool_cwd(&state, PathBuf::from("/tmp/alan-home/nested/src"));
     activate_test_delegated_skill(&mut state, "workspace-inspect", "workspace-reader");
 
     let tool_call = NormalizedToolCall {
@@ -3175,9 +3190,7 @@ async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_uses_bound_wor
     let mut state = create_test_agent_loop_state();
     state.workspace_root_dir = Some(PathBuf::from("/Users/morris/Developer/Alan"));
     state.core_config.memory.workspace_dir = Some(PathBuf::from("/tmp/custom-memory-layout"));
-    state
-        .tool_catalog_mut_for_test()
-        .set_default_cwd(PathBuf::from("/Users/morris/Developer/Alan/docs"));
+    set_test_tool_cwd(&state, PathBuf::from("/Users/morris/Developer/Alan/docs"));
     activate_test_delegated_skill(&mut state, "workspace-inspect", "workspace-reader");
 
     let tool_call = NormalizedToolCall {
@@ -3242,9 +3255,7 @@ async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_uses_bound_wor
 async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_normalizes_relative_workspace_root_and_cwd()
  {
     let mut state = create_test_agent_loop_state();
-    state
-        .tool_catalog_mut_for_test()
-        .set_default_cwd(PathBuf::from("/Users/morris/Developer"));
+    set_test_tool_cwd(&state, PathBuf::from("/Users/morris/Developer"));
     activate_test_delegated_skill(&mut state, "workspace-inspect", "workspace-reader");
 
     let tool_call = NormalizedToolCall {
@@ -3311,7 +3322,7 @@ async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_normalizes_rel
 async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_rejects_unresolvable_relative_cwd()
  {
     let mut state = create_test_agent_loop_state();
-    *state.tool_catalog_mut_for_test() = ToolRegistry::new();
+    state.environment = namespace_environment_for_virtual_tool_test(&ToolRegistry::new());
     activate_test_delegated_skill(&mut state, "workspace-inspect", "workspace-reader");
 
     let tool_call = NormalizedToolCall {
@@ -3382,9 +3393,10 @@ async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_rejects_unreso
 async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_leaves_workspace_root_unset_without_memory_context()
  {
     let mut state = create_test_agent_loop_state();
-    state
-        .tool_catalog_mut_for_test()
-        .set_default_cwd(PathBuf::from("/tmp/alan-delegated-parent/nested/src"));
+    set_test_tool_cwd(
+        &state,
+        PathBuf::from("/tmp/alan-delegated-parent/nested/src"),
+    );
     activate_test_delegated_skill(&mut state, "repo-review", "reviewer");
 
     let tool_call = NormalizedToolCall {
@@ -3517,9 +3529,7 @@ async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_records_normal
     state.machine = AgentMachine::new_with_recorder_in_dir("/proc/test", "gpt-5-mini", temp.path())
         .await
         .unwrap();
-    state
-        .tool_catalog_mut_for_test()
-        .set_default_cwd(PathBuf::from("/Users/morris/Developer"));
+    set_test_tool_cwd(&state, PathBuf::from("/Users/morris/Developer"));
     activate_test_delegated_skill(&mut state, "workspace-inspect", "workspace-reader");
 
     let tool_call = NormalizedToolCall {

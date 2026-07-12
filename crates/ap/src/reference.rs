@@ -128,6 +128,25 @@ impl MemFs {
             state: Mutex::new(state),
         }
     }
+
+    /// Create a root containing exactly one read-only byte file.
+    pub fn with_read_only_file(name: impl Into<String>, bytes: impl Into<Vec<u8>>) -> Self {
+        let name = name.into();
+        assert!(!name.is_empty() && !name.contains('/'));
+        let mut state = State {
+            nodes: vec![Node::Dir(BTreeMap::new())],
+            fids: HashMap::new(),
+            versions: VersionTable::new(),
+        };
+        let file = state.push(Node::Bytes(bytes.into()));
+        if let Node::Dir(entries) = &mut state.nodes[0] {
+            entries.insert(name, file);
+        }
+        state.fids.insert(Fid::ROOT, FidState::at(0));
+        Self {
+            state: Mutex::new(state),
+        }
+    }
 }
 
 #[async_trait]

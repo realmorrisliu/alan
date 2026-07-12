@@ -1,8 +1,7 @@
 //! Protocol definitions for the alan agent.
 //!
-//! This crate defines the `Op` (user operations) and `Event` (system events)
-//! types that form the execution alphabet shared by the Agent Execution Engine,
-//! AgentFS projection, Tools, and renderers.
+//! This crate defines the `Op` input alphabet, transition-local `Event` records,
+//! and AgentFS file schemas shared by the Agent Execution Engine and hosts.
 
 mod adaptive;
 mod compaction;

@@ -964,6 +964,14 @@ async fn registered_runner_writes_process_output_and_exit() {
             )
             .unwrap();
             assert_eq!(output, "hello tool\n");
+            let snapshot = fs
+                .observe_process_files(Pid(pid.parse().unwrap()))
+                .await
+                .unwrap();
+            assert_eq!(snapshot.status, alan_kernel::Status::Exited);
+            assert_eq!(snapshot.exit_code, Some(0));
+            assert_eq!(snapshot.output, b"hello tool\n");
+            assert_eq!(snapshot.output_offset, 11);
             let io_events = String::from_utf8(
                 read_at(&fs, &[&pid, "io", "events"], Fid(202))
                     .await

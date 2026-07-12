@@ -311,6 +311,16 @@ impl AgentRootFs {
         }
     }
 
+    /// Return a fresh attachment handle for the AgentFS tree bound to `pid`.
+    pub async fn process_tree(&self, pid: &str) -> Option<Arc<dyn FileServer>> {
+        self.state
+            .lock()
+            .await
+            .agents
+            .get(pid)
+            .map(|registration| registration.backing.clone())
+    }
+
     /// Remove the agent-state backing tree for a process that failed to launch.
     pub async fn unbind_process(&self, pid: &str) -> bool {
         let mut state = self.state.lock().await;

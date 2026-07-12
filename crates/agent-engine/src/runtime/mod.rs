@@ -18,6 +18,7 @@ mod prompt_cache;
 mod response_guardrails;
 mod submission_handlers;
 mod tool_orchestrator;
+mod tool_packages;
 mod tool_policy;
 mod tool_presentation;
 mod turn_driver;
@@ -38,15 +39,16 @@ pub use child_runs::{
     ChildRunTerminationRequest,
 };
 pub use engine::{
-    AgentConfig, AgentMachineDurabilityState, RuntimeController, RuntimeEventEnvelope,
-    RuntimeHandle, RuntimeNamespaceLaunch, RuntimeNamespaceSurface, RuntimeStartupMetadata,
+    AgentConfig, AgentMachineDurabilityState, RuntimeController, RuntimeHandle,
+    RuntimeNamespaceLaunch, RuntimeNamespaceSurface, RuntimeStartupMetadata,
     WorkspaceRuntimeConfig, effective_core_config_for_runtime, spawn, spawn_with_llm_client,
-    spawn_with_llm_client_and_tools, spawn_with_namespace_surface, spawn_with_tool_registry,
-    spawn_with_tool_registry_and_namespace_surface,
+    spawn_with_llm_client_and_namespace_surface, spawn_with_llm_client_and_tools,
+    spawn_with_llm_client_and_tools_and_namespace_surface, spawn_with_namespace_surface,
 };
 
 // Re-export agent loop types for internal use
-pub(crate) use agent_loop::{RuntimeEnvironment, RuntimeLoopState};
+pub(crate) use agent_loop::RuntimeLoopState;
+pub(crate) use tool_packages::ToolPackageManifest;
 pub(crate) use turn_state::TurnState;
 
 /// Configuration for the agent runtime

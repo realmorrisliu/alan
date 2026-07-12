@@ -103,12 +103,24 @@ async fn finalize_turn_memory_best_effort(
     }
 }
 
-fn turn_tool_definitions(state: &RuntimeLoopState) -> Vec<crate::llm::ToolDefinition> {
+async fn turn_tool_definitions(
+    state: &RuntimeLoopState,
+) -> anyhow::Result<(
+    Vec<super::ToolPackageManifest>,
+    Vec<crate::llm::ToolDefinition>,
+)> {
     let include_runtime_delegated_tool = state.prompt_cache.supports_delegated_skill_invocation();
 
-    let mut tools = state.static_tool_definitions();
+    let tool_packages = state
+        .namespace_environment()
+        .discover_tool_packages()
+        .await?;
+    let mut tools = tool_packages
+        .iter()
+        .map(|package| package.model_definition())
+        .collect::<Vec<_>>();
     tools.extend(virtual_tool_definitions(include_runtime_delegated_tool));
-    tools
+    Ok((tool_packages, tools))
 }
 
 fn responses_status_supports_continuation(status: Option<&str>) -> bool {
@@ -875,7 +887,14 @@ where
 {
     if matches!(turn_kind, TurnRunKind::NewTurn) {
         state.turn_state.reset_auto_mid_turn_compaction_state();
+        super::ui_surfaces::turn_started(state.namespace_environment())
+            .await
+            .context("write turn-start UI state")?;
         emit(Event::TurnStarted {}).await;
+    } else {
+        super::ui_surfaces::resumed(state.namespace_environment())
+            .await
+            .context("write resumed turn UI state")?;
     }
 
     let namespace_generation = state.namespace_environment().clone();
@@ -973,7 +992,7 @@ where
     let _domain_prompt = prompt_build.domain_prompt;
     let system_prompt = prompt_build.system_prompt;
 
-    let tools = turn_tool_definitions(state);
+    let (tool_packages, tools) = turn_tool_definitions(state).await?;
     let tool_names = tools
         .iter()
         .map(|tool| tool.name.clone())
@@ -1191,6 +1210,9 @@ where
         }
 
         for warning in &response.warnings {
+            super::ui_surfaces::warning(state.namespace_environment(), warning.clone())
+                .await
+                .context("write provider warning UI state")?;
             emit(Event::Warning {
                 message: warning.clone(),
             })
@@ -1199,7 +1221,7 @@ where
 
         let tool_calls = normalize_tool_calls(response.tool_calls);
 
-        let guardrail_context = ResponseGuardrailContext::from_state(state);
+        let guardrail_context = ResponseGuardrailContext::from_state(state, &tool_packages);
         let guardrail_draft = AssistantDraft::new(&response.content, !tool_calls.is_empty());
         match response_guardrails.evaluate(&guardrail_context, &guardrail_draft) {
             GuardrailDecision::Accept => {
@@ -1215,12 +1237,12 @@ where
                     reason = %reason,
                     "Response guardrail triggered for assistant output"
                 );
-                emit(Event::Warning {
-                    message: format!(
-                        "Guardrail recovered ({rule_id}): {reason}. Retrying before output."
-                    ),
-                })
-                .await;
+                let message =
+                    format!("Guardrail recovered ({rule_id}): {reason}. Retrying before output.");
+                super::ui_surfaces::warning(state.namespace_environment(), message.clone())
+                    .await
+                    .context("write guardrail warning UI state")?;
+                emit(Event::Warning { message }).await;
                 pending_guardrail_instruction = Some(instruction);
                 maybe_compact_mid_turn_if_needed(
                     state,
@@ -1242,6 +1264,9 @@ where
         if let Some(ref thinking) = response.thinking
             && !thinking.is_empty()
         {
+            super::ui_surfaces::thinking(state.namespace_environment(), thinking)
+                .await
+                .context("write thinking UI state")?;
             emit_thinking_chunks(emit, thinking).await;
         }
 
@@ -1424,12 +1449,15 @@ where
                 summary: Some("Turn completed with empty response fallback".to_string()),
             })
             .await;
+            super::ui_surfaces::turn_completed(state.namespace_environment(), false)
+                .await
+                .context("write fallback turn completion UI state")?;
             return Ok(TurnExecutionOutcome::Finished);
         }
 
         finalize_turn_memory_best_effort(state, false, "turn-completed", "after completed turn")
             .await;
-        emit_task_completed_success(emit, "Task completed").await;
+        emit_task_completed_success(state, emit, "Task completed").await?;
         return Ok(TurnExecutionOutcome::Finished);
     }
 }
@@ -1501,7 +1529,7 @@ mod tests {
         agent_machine::AgentMachine,
         config::Config,
         rollout::{RolloutItem, RolloutRecorder},
-        runtime::{RuntimeConfig, RuntimeEnvironment, TurnState},
+        runtime::{NamespaceRuntimeEnvironment, RuntimeConfig, TurnState},
         skills::{ResolvedCapabilityView, ScopedPackageDir, SkillScope},
         tape::{ContentPart, Message, ToolRequest, ToolResponse},
         tools::{Tool, ToolContext, ToolRegistry, ToolResult},
@@ -2398,6 +2426,22 @@ mod tests {
                 )),
                 alan_kernel::Access::ReadOnly,
             );
+            let tool = tools.get(tool_name).unwrap();
+            let manifest = crate::runtime::ToolPackageManifest::from_tool(
+                tool.as_ref(),
+                tools.execution_timeout_secs(tool_name).unwrap_or(30),
+            )
+            .unwrap();
+            process_namespace.mount(
+                &format!("/lib/exec/{tool_name}"),
+                alan_ap::InProcessTransport::new(std::sync::Arc::new(
+                    alan_ap::reference::MemFs::with_read_only_file(
+                        "manifest",
+                        serde_json::to_vec(&manifest).unwrap(),
+                    ),
+                )),
+                alan_kernel::Access::ReadOnly,
+            );
         }
         let procfs = alan_kernel::ProcFs::new().with_runner(std::sync::Arc::new(
             TestToolProcessRunner::new(tools.clone()),
@@ -2427,14 +2471,7 @@ mod tests {
             workspace_root_dir: None,
             machine,
             current_submission_id: None,
-            environment: RuntimeEnvironment::namespace(
-                crate::runtime::NamespaceRuntimeEnvironment::new(
-                    root.clone(),
-                    "/agent/1",
-                    "default",
-                ),
-            ),
-            tool_catalog: tools,
+            environment: NamespaceRuntimeEnvironment::new(root.clone(), "/agent/1", "default"),
             core_config: config,
             runtime_config,
             workspace_persona_dirs: Vec::new(),
@@ -2502,8 +2539,8 @@ description: {description}
         .unwrap();
     }
 
-    #[test]
-    fn test_turn_tool_definitions_include_runtime_delegated_schema_when_supported() {
+    #[tokio::test]
+    async fn test_turn_tool_definitions_include_runtime_delegated_schema_when_supported() {
         let mut state = create_test_state_with_provider(ContentMockProvider::new("ok"));
         state.prompt_cache.set_host_capabilities(
             crate::skills::SkillHostCapabilities::default()
@@ -2511,12 +2548,20 @@ description: {description}
                 .with_delegated_skill_invocation(),
         );
 
-        let tools = turn_tool_definitions(&state);
+        let (_, tools) = turn_tool_definitions(&state).await.unwrap();
         assert!(
             tools
                 .iter()
                 .any(|tool| tool.name == "invoke_delegated_skill")
         );
+    }
+
+    #[tokio::test]
+    async fn unmounted_tool_is_not_model_callable() {
+        let state = create_test_state_with_provider(ContentMockProvider::new("ok"));
+
+        let (_, tools) = turn_tool_definitions(&state).await.unwrap();
+        assert!(!tools.iter().any(|tool| tool.name == "network_probe"));
     }
 
     #[test]
@@ -2681,9 +2726,7 @@ description: {description}
         let mut output_tail = shell.tail("/agent/1/io/output").await.unwrap();
 
         let mut state = create_test_state_with_provider(PanicIfGeneratedProvider);
-        state.environment = RuntimeEnvironment::namespace(
-            crate::runtime::NamespaceRuntimeEnvironment::new(root, "/agent/1", "default"),
-        );
+        state.environment = NamespaceRuntimeEnvironment::new(root, "/agent/1", "default");
 
         let cancel = CancellationToken::new();
         let mut events = vec![];
@@ -2836,9 +2879,7 @@ description: {description}
         let shell = alan_shell::Shell::new(root.clone());
 
         let mut state = create_test_state_with_provider(PanicIfGeneratedProvider);
-        state.environment = RuntimeEnvironment::namespace(
-            crate::runtime::NamespaceRuntimeEnvironment::new(root, "/agent/1", "default"),
-        );
+        state.environment = NamespaceRuntimeEnvironment::new(root, "/agent/1", "default");
         let cancel = CancellationToken::new();
         let mut events = Vec::new();
         let mut emit = |event: Event| {
@@ -2899,9 +2940,7 @@ description: {description}
             .unwrap();
 
         let mut state = create_test_state_with_provider(PanicIfGeneratedProvider);
-        state.environment = RuntimeEnvironment::namespace(
-            crate::runtime::NamespaceRuntimeEnvironment::new(root, "/agent/1", "missing"),
-        );
+        state.environment = NamespaceRuntimeEnvironment::new(root, "/agent/1", "missing");
 
         let cancel = CancellationToken::new();
         let mut events = vec![];
@@ -2986,9 +3025,7 @@ description: {description}
         let mut output_tail = shell.tail("/agent/1/io/output").await.unwrap();
 
         let mut state = create_test_state_with_provider(PanicIfGeneratedProvider);
-        state.environment = RuntimeEnvironment::namespace(
-            crate::runtime::NamespaceRuntimeEnvironment::new(root, "/agent/1", "live"),
-        );
+        state.environment = NamespaceRuntimeEnvironment::new(root, "/agent/1", "live");
 
         let cancel = CancellationToken::new();
         let mut emit = |_event: Event| async {};
@@ -3819,10 +3856,9 @@ description: {description}
             ],
             Arc::clone(&generate_calls),
         );
-        let mut state = create_test_state_with_provider(provider);
-        state
-            .tool_catalog_mut_for_test()
-            .register(NetworkCapabilityTool);
+        let mut tools = ToolRegistry::new();
+        tools.register(NetworkCapabilityTool);
+        let mut state = create_test_state_with_provider_and_tools(provider, tools);
         let cancel = CancellationToken::new();
 
         let mut events = vec![];
@@ -3890,10 +3926,9 @@ description: {description}
             }],
             Arc::clone(&generate_calls),
         );
-        let mut state = create_test_state_with_provider(provider);
-        state
-            .tool_catalog_mut_for_test()
-            .register(NetworkCapabilityTool);
+        let mut tools = ToolRegistry::new();
+        tools.register(NetworkCapabilityTool);
+        let mut state = create_test_state_with_provider_and_tools(provider, tools);
         state
             .machine
             .tape
@@ -4006,13 +4041,10 @@ description: {description}
             ],
             Arc::clone(&generate_calls),
         );
-        let mut state = create_test_state_with_provider(provider);
-        state
-            .tool_catalog_mut_for_test()
-            .register(NetworkCapabilityTool);
-        state
-            .tool_catalog_mut_for_test()
-            .register(ReadCapabilityTool);
+        let mut tools = ToolRegistry::new();
+        tools.register(NetworkCapabilityTool);
+        tools.register(ReadCapabilityTool);
+        let mut state = create_test_state_with_provider_and_tools(provider, tools);
         state
             .machine
             .tape
@@ -4100,10 +4132,9 @@ description: {description}
             }],
             Arc::clone(&generate_calls),
         );
-        let mut state = create_test_state_with_provider(provider);
-        state
-            .tool_catalog_mut_for_test()
-            .register(NetworkCapabilityTool);
+        let mut tools = ToolRegistry::new();
+        tools.register(NetworkCapabilityTool);
+        let mut state = create_test_state_with_provider_and_tools(provider, tools);
         state.machine.tape.push(Message::user("earlier turn"));
         state
             .machine
@@ -4208,10 +4239,9 @@ description: {description}
             ],
             Arc::clone(&generate_calls),
         );
-        let mut state = create_test_state_with_provider(provider);
-        state
-            .tool_catalog_mut_for_test()
-            .register(NetworkCapabilityTool);
+        let mut tools = ToolRegistry::new();
+        tools.register(NetworkCapabilityTool);
+        let mut state = create_test_state_with_provider_and_tools(provider, tools);
         state.machine.tape.push(Message::user("earlier turn"));
         state.machine.tape.push(Message::Assistant {
             parts: Vec::new(),

@@ -706,6 +706,10 @@ async fn record_and_emit_compaction_attempt<E, F>(
         error!(error = %err, "Failed to persist compaction observation batch");
         return;
     }
+    if let Err(err) = super::ui_surfaces::compaction(state.namespace_environment(), &attempt).await
+    {
+        error!(error = %err, "Failed to write compaction UI state");
+    }
     emit(Event::CompactionObserved { attempt }).await;
 }
 
@@ -727,6 +731,11 @@ where
         return None;
     }
     let attempt_id = attempt.attempt_id.clone();
+    if let Err(err) =
+        super::ui_surfaces::memory_flush(state.namespace_environment(), &attempt).await
+    {
+        error!(error = %err, "Failed to write memory flush UI state");
+    }
     emit(Event::MemoryFlushObserved { attempt }).await;
     Some(attempt_id)
 }
@@ -779,6 +788,11 @@ where
     }
 
     if let Some(message) = attempt.warning_message.clone() {
+        if let Err(err) =
+            super::ui_surfaces::warning(state.namespace_environment(), message.clone()).await
+        {
+            error!(error = %err, "Failed to write memory warning UI state");
+        }
         emit(Event::Warning { message }).await;
     }
 
@@ -818,6 +832,7 @@ where
             retry_count,
             failure_streak,
         );
+        super::ui_surfaces::warning(state.namespace_environment(), warning_message.clone()).await?;
         emit(Event::Warning {
             message: warning_message.clone(),
         })
@@ -886,6 +901,7 @@ where
         retry_count,
         failure_streak,
     );
+    super::ui_surfaces::warning(state.namespace_environment(), warning_message.clone()).await?;
     emit(Event::Warning {
         message: warning_message.clone(),
     })
@@ -1242,8 +1258,8 @@ mod tests {
         agent_machine::AgentMachine,
         config::Config,
         runtime::{
-            NamespaceRuntimeEnvironment, RuntimeConfig, RuntimeEnvironment, RuntimeLoopState,
-            TurnState, prompt_cache::PromptAssemblyCache,
+            NamespaceRuntimeEnvironment, RuntimeConfig, RuntimeLoopState, TurnState,
+            prompt_cache::PromptAssemblyCache,
         },
     };
 
@@ -1311,10 +1327,7 @@ mod tests {
             workspace_root_dir: None,
             machine: AgentMachine::new(),
             current_submission_id: None,
-            environment: RuntimeEnvironment::namespace(NamespaceRuntimeEnvironment::new(
-                root, "/agent/1", "default",
-            )),
-            tool_catalog: crate::tools::ToolRegistry::new(),
+            environment: NamespaceRuntimeEnvironment::new(root, "/agent/1", "default"),
             core_config: Config::default(),
             runtime_config: RuntimeConfig {
                 compaction_trigger_messages: 1,
