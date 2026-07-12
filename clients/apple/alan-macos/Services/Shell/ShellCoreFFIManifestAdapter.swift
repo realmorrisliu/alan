@@ -1,11 +1,12 @@
 import Foundation
 
 extension ShellCoreFFIAdapter {
-    func validateContentWorkspaceManifest(data: Data) throws {
-        let _: EmptyManifestPayload = try send(
+    func validateContentWorkspaceManifest(data: Data) throws -> Bool {
+        let response: ManifestValidationPayload = try send(
             operation: "manifest.validate",
             payload: ValidateManifestPayload(manifestJSON: String(decoding: data, as: UTF8.self))
         )
+        return response.valid
     }
 
     func defaultContentWorkspaceManifest(
@@ -67,7 +68,9 @@ private struct ValidateManifestPayload: Encodable {
     }
 }
 
-private struct EmptyManifestPayload: Decodable {}
+private struct ManifestValidationPayload: Decodable {
+    let valid: Bool
+}
 
 private struct DefaultManifestPayload: Encodable {
     let windowID: String

@@ -43,13 +43,18 @@ final class DebouncedManifestFlushScheduler: ManifestFlushScheduling {
 struct ShellWorkspaceManifestStore {
     let fileManager: FileManager
     let manifestURL: URL
+    let validateManifest: (Data) throws -> Bool
 
     init(
         fileManager: FileManager = .default,
-        manifestURL: URL
+        manifestURL: URL,
+        validateManifest: @escaping (Data) throws -> Bool = {
+            try ShellCoreFFIAdapter.shared.validateContentWorkspaceManifest(data: $0)
+        }
     ) {
         self.fileManager = fileManager
         self.manifestURL = manifestURL
+        self.validateManifest = validateManifest
     }
 
     init(
@@ -93,7 +98,7 @@ struct ShellWorkspaceManifestStore {
             )
         }
 
-        if (try? ShellCoreFFIAdapter.shared.validateContentWorkspaceManifest(data: data)) != nil,
+        if try validateManifest(data),
            let manifest = try? Self.decoder.decode(ShellContentWorkspaceManifest.self, from: data)
         {
             guard manifest.schemaVersion == ShellContentWorkspaceManifest.currentSchemaVersion,

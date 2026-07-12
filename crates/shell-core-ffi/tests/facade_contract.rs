@@ -140,9 +140,10 @@ fn manifest_validate_rejects_unknown_nested_fields() {
         json!({ "manifest_json": manifest.to_string() }),
     );
 
+    assert!(response.error.is_none());
     assert_eq!(
-        response.error.expect("unknown nested field must fail").code,
-        ShellCoreErrorCode::InvalidPayload
+        response.payload.expect("validation payload")["valid"],
+        false
     );
 }
 

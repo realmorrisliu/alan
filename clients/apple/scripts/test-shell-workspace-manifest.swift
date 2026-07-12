@@ -54,6 +54,7 @@ private enum ShellWorkspaceManifestTests {
         try verifiesCorruptManifestIsQuarantined()
         try verifiesUnsupportedManifestIsQuarantined()
         try verifiesNestedUnknownManifestFieldIsQuarantined()
+        try verifiesValidationOutagePreservesManifest()
         try verifiesUnknownActiveTaskDoesNotQuarantineWorkspace()
         try verifiesOldManifestDecodesWithoutSpaceLocalSelection()
         try verifiesOldManifestWithoutSpaceIconUsesDefaultWithoutRewriteEvidence()
@@ -213,6 +214,38 @@ private enum ShellWorkspaceManifestTests {
         expect(
             quarantinedData == unsupportedData,
             "nested unsupported manifest bytes must be preserved"
+        )
+    }
+
+    private static func verifiesValidationOutagePreservesManifest() throws {
+        let fileManager = FileManager.default
+        let tempDirectory = try makeTempDirectory()
+        let manifestURL = tempDirectory.appendingPathComponent("shell-workspace-window_main.json")
+        let originalData = Data("valid workspace bytes".utf8)
+        try originalData.write(to: manifestURL)
+        let store = ShellWorkspaceManifestStore(
+            fileManager: fileManager,
+            manifestURL: manifestURL,
+            validateManifest: { _ in throw TestFailure("shell-core unavailable") }
+        )
+
+        do {
+            _ = try store.loadOrCreateDefault(
+                windowID: "window_main",
+                defaultWorkingDirectory: "/fresh/project",
+                now: referenceDate
+            )
+            throw TestFailure("validation outage must fail startup")
+        } catch let error as TestFailure {
+            expect(
+                error.description == "shell-core unavailable",
+                "validation outage must propagate its original error"
+            )
+        }
+        let preservedData = try Data(contentsOf: manifestURL)
+        expect(
+            preservedData == originalData,
+            "validation outage must leave the manifest untouched"
         )
     }
 

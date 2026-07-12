@@ -225,15 +225,10 @@ fn default_manifest(payload: Value) -> Result<Value, ShellCoreErrorEnvelope> {
 
 fn validate_manifest(payload: Value) -> Result<Value, ShellCoreErrorEnvelope> {
     let input: ValidateManifestInput = decode_payload(payload, "manifest.validate")?;
-    serde_json::from_str::<ShellContentWorkspaceManifest>(&input.manifest_json).map_err(
-        |error| {
-            ShellCoreErrorCode::InvalidPayload
-                .envelope("invalid workspace manifest")
-                .with_detail("operation", json!("manifest.validate"))
-                .with_detail("message", json!(error.to_string()))
-        },
-    )?;
-    Ok(json!({}))
+    Ok(json!({
+        "valid": serde_json::from_str::<ShellContentWorkspaceManifest>(&input.manifest_json)
+            .is_ok(),
+    }))
 }
 
 fn materialize_manifest(payload: Value) -> Result<Value, ShellCoreErrorEnvelope> {
