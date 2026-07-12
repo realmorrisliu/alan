@@ -1224,7 +1224,7 @@ async fn build_root_namespace_environment(
     )));
     let namespace_environment =
         super::NamespaceRuntimeEnvironment::new(root, format!("/agent/{root_pid}"), "default")
-            .with_process_context(procfs_with_runner, agent_root, root_pid_value, tool_runner)
+            .with_process_context(procfs, agent_root, root_pid_value, tool_runner)
             .with_shared_services(InProcessTransport::new(srvfs), route_tree);
     let namespace_environment = if let Some(factory) = mount_grant_applicator_factory {
         namespace_environment.with_mount_grant_applicator_factory(factory, live_namespace)

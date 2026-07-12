@@ -314,7 +314,7 @@ where
     let parent_process_context = parent.namespace_environment().process_context();
     let launch_procfs = parent_process_context
         .as_ref()
-        .map(|context| context.procfs.clone())
+        .map(|context| context.launch_procfs.clone())
         .unwrap_or_default();
     let tool_runner = parent_process_context
         .as_ref()
@@ -1654,7 +1654,7 @@ async fn spawn_child_namespace_runtime_environment(
         format!("/agent/{pid}"),
         plan.llm_connection_name()?,
     )
-    .with_process_context(runtime_procfs.clone(), agent_root, child_pid, tool_runner)
+    .with_process_context(launch_procfs.clone(), agent_root, child_pid, tool_runner)
     .with_shared_services(handles.srv.clone(), handles.route.clone());
     let environment = if let Some(factory) = mount_grant_applicator_factory {
         environment.with_mount_grant_applicator_factory(factory, live_namespace)

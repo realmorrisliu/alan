@@ -686,7 +686,7 @@ impl alan_kernel::ProcessRunner for ToolProcessRunner {
             .process_bindings
             .lock()
             .expect("process binding mutex poisoned")
-            .get(&invocation.pid)
+            .get(&invocation.parent.unwrap_or(invocation.pid))
             .cloned();
         let binding = process_binding.unwrap_or_else(|| {
             self.inner
@@ -1194,7 +1194,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn process_server_uses_pid_specific_execution_binding() {
+    async fn process_server_uses_spawning_agent_execution_binding() {
         let mut registry = ToolRegistry::new();
         registry.register(CwdEchoTool);
         let runner = ToolProcessRunner::from_registry(&registry);
@@ -1212,8 +1212,8 @@ mod tests {
             alan_kernel::Access::ReadOnly,
         );
         let invocation = alan_kernel::ProcessInvocation {
-            pid: alan_kernel::Pid(7),
-            parent: None,
+            pid: alan_kernel::Pid(8),
+            parent: Some(alan_kernel::Pid(7)),
             credentials: alan_kernel::Credentials::user("agent"),
             namespace,
             exec: alan_kernel::ExecSpec {
