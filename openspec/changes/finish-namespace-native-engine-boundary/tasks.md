@@ -20,9 +20,9 @@
 
 ## 4. Direct AgentFS State Ownership
 
-- [ ] 4.1 Add narrow owner-specific AgentFS writers for output/tape, request trees, action trees, and `machine/ui` activity/plan/thinking/notice snapshots plus streams.
-- [ ] 4.2 Move assistant streaming/output and tape/checkpoint updates to direct writes by the turn/tape owners.
-- [ ] 4.3 Move yield/approval/interaction state to direct request-tree writes and Tool lifecycle/results to direct action-tree writes.
+- [x] 4.1 Add narrow owner-specific AgentFS writers for output/tape, request trees, action trees, and `machine/ui` activity/plan/thinking/notice snapshots plus streams.
+- [x] 4.2 Move assistant streaming/output and tape/checkpoint updates to direct writes by the turn/tape owners.
+- [x] 4.3 Move yield/approval/interaction state to direct request-tree writes and Tool lifecycle/results to direct action-tree writes.
 - [ ] 4.4 Move activity, plan, renderer-visible thinking, warnings, compaction, and memory notices to direct `machine/ui` writes without accepting a generic runtime event as input.
 - [ ] 4.5 Convert engine, host, and TUI integration tests to hydrate snapshots and resume AgentFS streams by offset rather than waiting on live runtime receivers.
 
