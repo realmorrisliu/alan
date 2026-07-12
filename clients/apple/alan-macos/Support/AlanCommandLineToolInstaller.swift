@@ -100,7 +100,7 @@ enum AlanInstallChannel: Equatable {
     var ownedAppBundleNames: [String] {
         switch self {
         case .stable:
-            return ["Alan.app", "alan.app"]
+            return ["Alan.app"]
         case .dev:
             return ["Alan Dev.app"]
         }

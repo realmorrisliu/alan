@@ -103,10 +103,7 @@ enum AlanMacAppStartup {
             Darwin.exit(0)
         }
 
-        let request = ManagedTerminalAccountRequest(
-            accountName: accountName,
-            guiUserName: normalized(environment["ALAN_PRIVILEGED_HELPER_SMOKE_GUI_USER"]) ?? NSUserName()
-        )
+        let request = ManagedTerminalAccountRequest(accountName: accountName)
         var diagnosis = client.diagnoseManagedUser(request)
         print("diagnose.readiness=\(diagnosis.readinessState.rawValue)")
         print("diagnose.ptySmokeVerified=\(diagnosis.ptySmokeVerified)")

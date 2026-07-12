@@ -1154,8 +1154,6 @@ pub fn should_capture_global_default_terminal_profile(profile: &TerminalProfileD
 pub struct ManagedTerminalAccountRequest {
     /// Managed account short name.
     pub account_name: String,
-    /// GUI user allowed to enter this account through sudo.
-    pub gui_user_name: String,
     /// Optional display name.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub full_name: Option<String>,
@@ -1165,8 +1163,6 @@ pub struct ManagedTerminalAccountRequest {
     pub home_directory: String,
     /// Whether the account should be hidden from login window lists.
     pub hide_from_login_window: bool,
-    /// Whether to bind the current Space after provisioning succeeds.
-    pub bind_current_space_after_success: bool,
 }
 
 impl ManagedTerminalAccountRequest {
@@ -1187,11 +1183,6 @@ impl ManagedTerminalAccountRequest {
 pub enum ManagedTerminalAccountValidationError {
     /// Managed account name is invalid.
     InvalidAccountName {
-        /// Invalid value.
-        value: String,
-    },
-    /// GUI user name is invalid.
-    InvalidGuiUserName {
         /// Invalid value.
         value: String,
     },
@@ -1227,11 +1218,6 @@ impl ManagedTerminalAccountIdentifierValidator {
         ) {
             errors.push(ManagedTerminalAccountValidationError::ReservedAccountName {
                 value: request.account_name.clone(),
-            });
-        }
-        if !matches_managed_account_identifier(&request.gui_user_name) {
-            errors.push(ManagedTerminalAccountValidationError::InvalidGuiUserName {
-                value: request.gui_user_name.clone(),
             });
         }
         if request.shell.trim().is_empty() || request.shell.contains('\n') {
@@ -1280,36 +1266,6 @@ impl ManagedTerminalAccountRecord {
     }
 }
 
-/// Discovered sudoers drop-in state supplied by a platform adapter.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "state", rename_all = "snake_case")]
-pub enum ManagedTerminalAccountSudoersState {
-    /// Drop-in is absent.
-    Missing,
-    /// Alan-owned drop-in is valid.
-    AlanOwnedValid {
-        /// Drop-in path.
-        path: String,
-    },
-    /// Alan-owned drop-in is present but invalid.
-    AlanOwnedInvalid {
-        /// Drop-in path.
-        path: String,
-        /// Redacted validation message.
-        message: String,
-    },
-    /// Drop-in path is occupied by unmanaged content.
-    Unmanaged {
-        /// Drop-in path.
-        path: String,
-    },
-    /// Drop-in path exists but could not be read.
-    ExistingUnreadable {
-        /// Drop-in path.
-        path: String,
-    },
-}
-
 /// Evidence that an existing account is owned by Alan.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
@@ -1317,11 +1273,6 @@ pub enum ManagedTerminalAccountOwnershipEvidence {
     /// Helper-owned marker file.
     HelperMarker {
         /// Marker path.
-        path: String,
-    },
-    /// Legacy Alan sudoers state.
-    LegacyAlanSudoers {
-        /// Sudoers path.
         path: String,
     },
 }
@@ -1388,10 +1339,8 @@ pub enum ManagedTerminalAccountVerificationStep {
     Shell,
     /// Alan ownership check.
     Ownership,
-    /// Sudoers syntax check.
-    SudoersValidation,
-    /// Non-interactive sudo check.
-    NonInteractiveSudo,
+    /// Helper-managed PTY startup check.
+    ManagedUserPty,
 }
 
 /// Readiness verification status.
@@ -1416,8 +1365,6 @@ pub enum ManagedTerminalAccountVerificationStatus {
 pub struct ManagedTerminalAccountState {
     /// Account record.
     pub account: ManagedTerminalAccountRecord,
-    /// Sudoers record.
-    pub sudoers: ManagedTerminalAccountSudoersState,
     /// Alan ownership evidence for existing accounts.
     #[serde(default)]
     pub ownership: ManagedTerminalAccountOwnershipState,
@@ -1444,18 +1391,8 @@ pub enum ManagedTerminalAccountPlanStepKind {
     RepairShell,
     /// Hide account from login window lists.
     HideAccount,
-    /// Write sudoers drop-in.
-    WriteSudoersDropIn,
-    /// Validate sudoers drop-in.
-    ValidateSudoers,
-    /// Verify terminal entry.
-    VerifyTerminalEntry,
     /// Create or update Terminal Profile handoff.
     CreateOrUpdateTerminalProfile,
-    /// Bind current Space to profile.
-    BindCurrentSpace,
-    /// Remove sudoers drop-in.
-    RemoveSudoersDropIn,
     /// Remove managed Terminal Profile.
     RemoveManagedTerminalProfile,
     /// Delete the account.
@@ -1466,8 +1403,6 @@ pub enum ManagedTerminalAccountPlanStepKind {
     WriteOwnershipMarker,
     /// Verify the helper-managed account state.
     VerifyAccount,
-    /// Clean up a verified legacy Alan sudoers file.
-    CleanupLegacySudoers,
     /// Verify helper-managed PTY startup.
     VerifyManagedUserPty,
     /// Remove helper-managed account integration.
@@ -1502,11 +1437,6 @@ pub enum ManagedTerminalAccountPlanStatus {
     },
     /// Destructive rollback requires confirmation.
     RequiresDestructiveConfirmation,
-    /// Sudoers path is occupied by unmanaged content.
-    SudoersConflict {
-        /// Conflicting path.
-        path: String,
-    },
     /// Terminal Profile id is occupied by unmanaged content.
     TerminalProfileConflict {
         /// Conflicting profile id.
@@ -1516,11 +1446,6 @@ pub enum ManagedTerminalAccountPlanStatus {
     HelperUnavailable,
     /// Account exists but is not Alan-managed.
     AccountNotAlanManaged,
-    /// A legacy Alan sudoers file needs cleanup.
-    LegacySudoersPresent {
-        /// Optional legacy sudoers path.
-        path: Option<String>,
-    },
     /// Helper-managed PTY smoke failed.
     PtySpawnFailed,
 }
@@ -1534,11 +1459,9 @@ impl ManagedTerminalAccountPlanStatus {
             Self::Repair => "repair",
             Self::Invalid { .. } => "invalid",
             Self::RequiresDestructiveConfirmation => "requires_destructive_confirmation",
-            Self::SudoersConflict { .. } => "sudoers_conflict",
             Self::TerminalProfileConflict { .. } => "terminal_profile_conflict",
             Self::HelperUnavailable => "helper_unavailable",
             Self::AccountNotAlanManaged => "account_not_alan_managed",
-            Self::LegacySudoersPresent { .. } => "legacy_sudoers_present",
             Self::PtySpawnFailed => "pty_spawn_failed",
         }
     }
@@ -1578,13 +1501,6 @@ impl ManagedTerminalAccountPlanner {
             return ManagedTerminalAccountPlan {
                 request,
                 status: ManagedTerminalAccountPlanStatus::AccountNotAlanManaged,
-                steps: Vec::new(),
-            };
-        }
-        if let ManagedTerminalAccountSudoersState::Unmanaged { path } = &state.sudoers {
-            return ManagedTerminalAccountPlan {
-                request,
-                status: ManagedTerminalAccountPlanStatus::SudoersConflict { path: path.clone() },
                 steps: Vec::new(),
             };
         }
@@ -1684,30 +1600,27 @@ impl ManagedTerminalAccountPlanner {
             }
         }
 
-        match &state.sudoers {
-            ManagedTerminalAccountSudoersState::Missing
-            | ManagedTerminalAccountSudoersState::AlanOwnedInvalid { .. } => {
-                if !needs_create {
-                    repair_needed = true;
-                }
-                append_sudoers_write_steps(&mut steps);
-            }
-            ManagedTerminalAccountSudoersState::AlanOwnedValid { .. }
-            | ManagedTerminalAccountSudoersState::ExistingUnreadable { .. }
-            | ManagedTerminalAccountSudoersState::Unmanaged { .. } => {}
+        if needs_create {
+            steps.push(managed_account_step(
+                ManagedTerminalAccountPlanStepKind::WriteOwnershipMarker,
+                "Write helper ownership marker",
+                true,
+            ));
         }
 
         if state.verification != ManagedTerminalAccountVerificationStatus::Passed {
             if !needs_create {
                 repair_needed = true;
             }
-            if should_repair_unreadable_sudoers(state) {
-                append_sudoers_write_steps(&mut steps);
-            }
             steps.push(managed_account_step(
-                ManagedTerminalAccountPlanStepKind::VerifyTerminalEntry,
-                "Verify passwordless terminal entry",
-                false,
+                ManagedTerminalAccountPlanStepKind::VerifyAccount,
+                "Verify helper-managed account state",
+                true,
+            ));
+            steps.push(managed_account_step(
+                ManagedTerminalAccountPlanStepKind::VerifyManagedUserPty,
+                "Verify helper-managed PTY startup",
+                true,
             ));
         }
 
@@ -1739,14 +1652,6 @@ impl ManagedTerminalAccountPlanner {
             ManagedTerminalAccountProfileState::ExistingUnmanaged { .. } => {}
         }
 
-        if request.bind_current_space_after_success {
-            steps.push(managed_account_step(
-                ManagedTerminalAccountPlanStepKind::BindCurrentSpace,
-                "Bind current Space after confirmation",
-                false,
-            ));
-        }
-
         let status = if steps.is_empty() {
             ManagedTerminalAccountPlanStatus::AlreadyReady
         } else if repair_needed {
@@ -1758,43 +1663,6 @@ impl ManagedTerminalAccountPlanner {
             request,
             status,
             steps,
-        }
-    }
-}
-
-/// Alan-owned sudoers drop-in projection.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ManagedTerminalAccountSudoersRule {
-    /// Sudoers drop-in file name.
-    pub file_name: String,
-    /// Sudoers drop-in absolute path.
-    pub file_path: String,
-    /// Sudoers drop-in contents.
-    pub contents: String,
-}
-
-impl ManagedTerminalAccountSudoersRule {
-    /// Marker used to identify Alan-owned sudoers content.
-    pub const MANAGED_MARKER: &'static str =
-        "# Managed by Alan for terminal account entry. Do not edit by hand.";
-
-    /// Builds the deterministic sudoers rule for a request.
-    pub fn new(request: &ManagedTerminalAccountRequest) -> Self {
-        let file_name = format!(
-            "alan-terminal-{}-to-{}",
-            request.gui_user_name, request.account_name
-        );
-        let file_path = format!("/etc/sudoers.d/{file_name}");
-        let contents = format!(
-            "{}\n{} ALL=({}) NOPASSWD: ALL",
-            Self::MANAGED_MARKER,
-            request.gui_user_name,
-            request.account_name
-        );
-        Self {
-            file_name,
-            file_path,
-            contents,
         }
     }
 }
@@ -1952,32 +1820,6 @@ fn managed_account_step(
 
 fn default_true() -> bool {
     true
-}
-
-fn append_sudoers_write_steps(steps: &mut Vec<ManagedTerminalAccountPlanStep>) {
-    steps.push(managed_account_step(
-        ManagedTerminalAccountPlanStepKind::WriteSudoersDropIn,
-        "Write Alan-owned sudoers drop-in",
-        true,
-    ));
-    steps.push(managed_account_step(
-        ManagedTerminalAccountPlanStepKind::ValidateSudoers,
-        "Validate sudoers syntax",
-        true,
-    ));
-}
-
-fn should_repair_unreadable_sudoers(state: &ManagedTerminalAccountState) -> bool {
-    matches!(
-        (&state.sudoers, &state.verification),
-        (
-            ManagedTerminalAccountSudoersState::ExistingUnreadable { .. },
-            ManagedTerminalAccountVerificationStatus::Failed {
-                step: ManagedTerminalAccountVerificationStep::NonInteractiveSudo,
-                ..
-            }
-        )
-    )
 }
 
 fn normalized_non_empty(value: Option<&str>) -> Option<String> {

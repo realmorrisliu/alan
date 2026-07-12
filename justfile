@@ -38,6 +38,10 @@ guard-daemon-era-absence:
     cargo build -p alan --bin alan
     ./scripts/check-daemon-era-absence.sh target/debug/alan
 
+# Reject retired macOS persistence, installer, and Managed User compatibility surfaces
+guard-legacy-macos-absence:
+    ./scripts/check-legacy-macos-absence.sh
+
 # Check macOS Sparkle auto-update project metadata
 guard-macos-auto-update:
     ./scripts/check-macos-auto-update-config.sh
@@ -97,6 +101,7 @@ dev-channel-smoke:
 
 # Run focused macOS shell tests that do not require real Ghostty artifacts
 apple-shell-focused-tests:
+    bash clients/apple/scripts/test-shell-workspace-manifest.sh
     bash clients/apple/scripts/test-shell-performance-diagnostics.sh
     bash clients/apple/scripts/test-terminal-runtime-service.sh
     bash clients/apple/scripts/test-terminal-surface-controller.sh

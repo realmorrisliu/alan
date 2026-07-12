@@ -24,7 +24,6 @@ private enum TerminalAccountDevDryRunSmoke {
 
         let request = ManagedTerminalAccountRequest(
             accountName: "alan_smoke",
-            guiUserName: "morris",
             fullName: "Alan Smoke",
             shell: "/bin/zsh",
             homeDirectory: "/Users/alan_smoke",
@@ -39,7 +38,6 @@ private enum TerminalAccountDevDryRunSmoke {
             homeDirectoryExists: false,
             shellMatches: false,
             hiddenFromLoginWindow: false,
-            legacySudoersPath: nil,
             terminalProfileID: nil,
             ptySmokeVerified: false,
             diagnostic: nil
@@ -64,11 +62,7 @@ private enum TerminalAccountDevDryRunSmoke {
             planKinds.contains(.helperStep(.verifyManagedUserPTY)),
             "dry run must include helper PTY readiness verification"
         )
-        expect(!planKinds.contains(.writeSudoersDropIn), "dry run must not include sudoers write")
-        expect(!planKinds.contains(.validateSudoers), "dry run must not include sudoers validation")
-        expect(!planKinds.contains(.verifyTerminalEntry), "dry run must not include sudo entry verification")
         expect(planKinds.contains(.createOrUpdateTerminalProfile), "dry run must include profile handoff")
-        expect(!planKinds.contains(.bindCurrentSpace), "dry run must not include Space binding")
 
         let cancelledExecutor = ManagedTerminalAccountFakeExecutor()
         cancelledExecutor.cancelBeforeApply = true
@@ -86,7 +80,6 @@ private enum TerminalAccountDevDryRunSmoke {
 
         let readyState = ManagedTerminalAccountState(
             account: .standard(homeDirectory: "/Users/alan_smoke", shell: "/bin/zsh", hidden: true),
-            sudoers: .missing,
             ownership: .alanManaged(.helperMarker(path: "/Library/Application Support/alan-macos-dev/privileged-helper/managed-users/alan_smoke/ownership.json")),
             terminalProfile: .missing,
             verification: .passed

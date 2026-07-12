@@ -129,12 +129,10 @@ bundles.
 The macOS app owns one primary shell context for the process. The default shell
 surface uses the stable `window_main` identity, so reopen, activation, and New
 Window commands focus the existing alan window instead of creating another
-control plane. Older fixed `shell-state-v0.1.json` files are not loaded; the
-current persisted state file is scoped as `shell-state-window_main.json`.
-During the rename, Alan for macOS reads existing shell state from the historical
-`Application Support/AlanNative` directory when the new
-`Application Support/alan-macos` file is missing, then writes future state only
-to `Application Support/alan-macos`. No destructive migration is performed.
+control plane. The durable restore authority is the channel-scoped
+`shell-workspace-window_main.json` manifest. Shell-state snapshots exist only
+inside the temporary CLI control-plane directory and are never persisted under
+Application Support.
 
 ### Window Capture Helper
 

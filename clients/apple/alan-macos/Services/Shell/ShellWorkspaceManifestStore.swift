@@ -7,7 +7,6 @@ struct ShellWorkspaceManifestLoadResult: Equatable {
 
 enum ShellWorkspaceManifestRecovery: Equatable {
     case loadedExisting
-    case migratedLegacyTerminalManifest
     case createdDefault
     case quarantinedCorruptFile(URL)
 }
@@ -44,13 +43,18 @@ final class DebouncedManifestFlushScheduler: ManifestFlushScheduling {
 struct ShellWorkspaceManifestStore {
     let fileManager: FileManager
     let manifestURL: URL
+    let validateManifest: (Data) throws -> Bool
 
     init(
         fileManager: FileManager = .default,
-        manifestURL: URL
+        manifestURL: URL,
+        validateManifest: @escaping (Data) throws -> Bool = {
+            try ShellCoreFFIAdapter.shared.validateContentWorkspaceManifest(data: $0)
+        }
     ) {
         self.fileManager = fileManager
         self.manifestURL = manifestURL
+        self.validateManifest = validateManifest
     }
 
     init(
@@ -83,10 +87,6 @@ struct ShellWorkspaceManifestStore {
             return ShellWorkspaceManifestLoadResult(manifest: manifest, recovery: .createdDefault)
         }
 
-        // Only a genuinely unreadable/corrupt manifest should be quarantined. A manifest that
-        // decodes cleanly but fails *migration* (e.g. the shell-core FFI dylib is missing or has
-        // an ABI mismatch) must not be moved aside; that would silently discard the user's valid
-        // saved workspace. Such failures propagate while the manifest stays in place.
         let data: Data
         do {
             data = try Data(contentsOf: manifestURL)
@@ -98,8 +98,10 @@ struct ShellWorkspaceManifestStore {
             )
         }
 
-        if let manifest = try? Self.decoder.decode(ShellContentWorkspaceManifest.self, from: data) {
-            guard manifest.schemaVersion == ShellWorkspaceManifest.currentSchemaVersion,
+        if try validateManifest(data),
+           let manifest = try? Self.decoder.decode(ShellContentWorkspaceManifest.self, from: data)
+        {
+            guard manifest.schemaVersion == ShellContentWorkspaceManifest.currentSchemaVersion,
                   manifest.contentContractVersion == ShellContentWorkspaceManifest.currentContentContractVersion
             else {
                 return try quarantineCorruptManifest(
@@ -111,25 +113,10 @@ struct ShellWorkspaceManifestStore {
             return ShellWorkspaceManifestLoadResult(manifest: manifest, recovery: .loadedExisting)
         }
 
-        guard let legacyManifest = try? Self.decoder.decode(ShellWorkspaceManifest.self, from: data),
-              legacyManifest.schemaVersion == ShellWorkspaceManifest.currentSchemaVersion
-        else {
-            return try quarantineCorruptManifest(
-                windowID: windowID,
-                defaultWorkingDirectory: defaultWorkingDirectory,
-                now: now
-            )
-        }
-
-        // Decoded a valid legacy manifest; migration failures here are infrastructure errors and
-        // propagate without quarantining the original file.
-        let migratedManifest = try ShellCoreFFIAdapter.shared.migrateLegacyTerminalManifest(
-            legacyManifest
-        )
-        try save(migratedManifest)
-        return ShellWorkspaceManifestLoadResult(
-            manifest: migratedManifest,
-            recovery: .migratedLegacyTerminalManifest
+        return try quarantineCorruptManifest(
+            windowID: windowID,
+            defaultWorkingDirectory: defaultWorkingDirectory,
+            now: now
         )
     }
 
@@ -157,16 +144,6 @@ struct ShellWorkspaceManifestStore {
     }
 
     func save(_ manifest: ShellContentWorkspaceManifest) throws {
-        let directoryURL = manifestURL.deletingLastPathComponent()
-        try fileManager.createDirectory(
-            at: directoryURL,
-            withIntermediateDirectories: true
-        )
-        let data = try Self.encoder.encode(manifest)
-        try data.write(to: manifestURL, options: .atomic)
-    }
-
-    func saveLegacyTerminalManifest(_ manifest: ShellWorkspaceManifest) throws {
         let directoryURL = manifestURL.deletingLastPathComponent()
         try fileManager.createDirectory(
             at: directoryURL,

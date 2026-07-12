@@ -360,10 +360,8 @@ fn terminal_account_system_name(plan: &ManagedTerminalAccountPlan) -> &'static s
         ManagedTerminalAccountPlanStatus::Repair => "wrench.and.screwdriver",
         ManagedTerminalAccountPlanStatus::RequiresDestructiveConfirmation
         | ManagedTerminalAccountPlanStatus::Invalid { .. }
-        | ManagedTerminalAccountPlanStatus::SudoersConflict { .. }
         | ManagedTerminalAccountPlanStatus::TerminalProfileConflict { .. }
         | ManagedTerminalAccountPlanStatus::AccountNotAlanManaged
-        | ManagedTerminalAccountPlanStatus::LegacySudoersPresent { .. }
         | ManagedTerminalAccountPlanStatus::PtySpawnFailed => "exclamationmark.triangle",
         ManagedTerminalAccountPlanStatus::HelperUnavailable => "puzzlepiece.extension",
         ManagedTerminalAccountPlanStatus::ReadyToApply => "person.crop.circle.badge.plus",
@@ -376,11 +374,9 @@ fn terminal_account_status_label(plan: &ManagedTerminalAccountPlan) -> &'static 
         ManagedTerminalAccountPlanStatus::Repair => "Repairable",
         ManagedTerminalAccountPlanStatus::Invalid { .. } => "Invalid",
         ManagedTerminalAccountPlanStatus::RequiresDestructiveConfirmation => "Confirm",
-        ManagedTerminalAccountPlanStatus::SudoersConflict { .. }
-        | ManagedTerminalAccountPlanStatus::TerminalProfileConflict { .. } => "Conflict",
+        ManagedTerminalAccountPlanStatus::TerminalProfileConflict { .. } => "Conflict",
         ManagedTerminalAccountPlanStatus::HelperUnavailable => "Unavailable",
         ManagedTerminalAccountPlanStatus::AccountNotAlanManaged => "Not managed",
-        ManagedTerminalAccountPlanStatus::LegacySudoersPresent { .. } => "Legacy",
         ManagedTerminalAccountPlanStatus::PtySpawnFailed => "PTY failed",
         ManagedTerminalAccountPlanStatus::ReadyToApply => "Preview",
     }
@@ -401,9 +397,6 @@ fn terminal_account_detail(plan: &ManagedTerminalAccountPlan) -> String {
         ManagedTerminalAccountPlanStatus::RequiresDestructiveConfirmation => {
             format!("{target} rollback needs separate destructive confirmation.")
         }
-        ManagedTerminalAccountPlanStatus::SudoersConflict { path } => {
-            format!("{target} has an existing non-Alan sudoers file at {path}.")
-        }
         ManagedTerminalAccountPlanStatus::TerminalProfileConflict { profile_id } => {
             format!("{target} has an existing non-Alan Terminal Profile named {profile_id}.")
         }
@@ -413,10 +406,6 @@ fn terminal_account_detail(plan: &ManagedTerminalAccountPlan) -> String {
         ManagedTerminalAccountPlanStatus::AccountNotAlanManaged => {
             format!("{target} is an existing local account outside Alan management.")
         }
-        ManagedTerminalAccountPlanStatus::LegacySudoersPresent { path } => match path {
-            Some(path) => format!("{target} has legacy Alan sudoers state at {path}."),
-            None => format!("{target} has legacy Alan sudoers state."),
-        },
         ManagedTerminalAccountPlanStatus::PtySpawnFailed => {
             format!("{target} account exists, but helper-managed PTY startup failed.")
         }

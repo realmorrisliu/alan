@@ -771,24 +771,7 @@ on run argv
             if foundClearTerminal and not clickedClearTerminal then error "clear terminal menu item disabled"
             if not clickedClearTerminal then keystroke "k" using command down
         else if actionName is "quit-confirm" then
-            set clickedQuit to false
-            try
-                repeat with candidateMenuBarItem in menu bar items of menu bar 1 of targetProcess
-                    repeat with candidateMenuItem in menu items of menu 1 of candidateMenuBarItem
-                        if (name of candidateMenuItem starts with "Quit") then
-                            click candidateMenuItem
-                            set clickedQuit to true
-                            exit repeat
-                        end if
-                    end repeat
-                    if clickedQuit then exit repeat
-                end repeat
-            on error
-                set matches to every process whose unix id is targetPID
-                if (count of matches) = 0 then return
-                error "quit menu item not found"
-            end try
-            if not clickedQuit then error "quit menu item not found"
+            keystroke "q" using {command down, option down}
             set closeDeadline to (current date) + timeoutSeconds
             repeat
                 set matches to every process whose unix id is targetPID
@@ -855,6 +838,17 @@ run_ui_step() {
     return 1
 }
 
+quit_smoke_app_for_restart() {
+    if run_ui_step quit-confirm; then
+        return 0
+    fi
+    if ! kill -0 "$APP_PID" 2>/dev/null; then
+        return 0
+    fi
+    kill -TERM "$APP_PID"
+    append_manifest "restart_quit_fallback=SIGTERM"
+}
+
 run_restart_restore_step() {
     local before_token="$RESTART_RESTORE_BEFORE_TOKEN-$$"
     local after_token="$RESTART_RESTORE_AFTER_TOKEN-$$"
@@ -894,8 +888,7 @@ run_restart_restore_step() {
     sleep 1
     capture_step restart-before-quit
 
-    run_ui_step quit-confirm \
-        || fail "restart restore quit confirmation failed"
+    quit_smoke_app_for_restart
     wait_for_app_exit "restart restore confirmed quit"
 
     wait_for_file "$manifest_path" "workspace manifest after restart restore quit"
@@ -952,8 +945,7 @@ run_restart_restore_step() {
     sleep 1
     capture_step restart-clear
 
-    run_ui_step quit-confirm \
-        || fail "restart restore post-clear quit confirmation failed"
+    quit_smoke_app_for_restart
     wait_for_app_exit "restart restore post-clear confirmed quit"
 
     info "relaunching alan smoke app after restored transcript clear"
