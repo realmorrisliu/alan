@@ -388,10 +388,18 @@ Recorded here per the change scope; none are implemented in this change.
 
 ## Migration Plan
 
-Additive change; no existing behavior is modified. Rollback is removing the
-`q` command family and the `provenance` block definition; materialized
-skill packages remain valid ordinary skill packages (unknown sidecar fields
-are tolerated by the existing contract), losing only lifecycle management.
+This is a non-additive discovery cutover. Before replacing
+`package_dirs_for_roots`, seed built-ins and register the existing AgentRoot,
+workspace, and channel-scoped public sources with Q; the parity regression in
+task 1.6 must show the same resolved skills. Then switch the engine to Q and
+remove the legacy enumeration in one change, without shipping a dual-resolver
+compatibility path.
+
+Rollback reverts that cutover and restores `package_dirs_for_roots` together
+with its built-in, AgentRoot, workspace, and channel-scoped source inputs. Only
+after legacy discovery is restored may the `q` command/provider wiring be
+removed. Existing store entries can remain inert on disk during rollback; they
+must not be treated as discovered skills by the restored legacy resolver.
 
 ## Open Questions
 

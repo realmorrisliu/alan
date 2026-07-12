@@ -44,8 +44,8 @@ ai-berkshire run.
   place. Q resolves only manifest-selected skill roots; the verbatim source
   tree remains package content, not an implicit recursive skill source. Shared
   helpers resolve at `/lib/pkg/<package-id>/...`, never a host path.
-- **Lifecycle** is exact: package provenance (source identity, revision token, converter
-  version) and a materialization manifest make `q upgrade` idempotent, protect
+- **Lifecycle** is exact: package provenance (source identity, revision token,
+  converter version) and a materialization manifest make `q upgrade` idempotent, protect
   local edits (warn, never silently overwrite), and make `q uninstall`
   complete. `q list` reports installed packages and unsatisfied capabilities.
 - **Honest failure**: recognized foreign vocabulary with no alan equivalent
