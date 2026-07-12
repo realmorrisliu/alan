@@ -6,22 +6,39 @@ authority, corrupt-manifest recovery, durable Spaces, pinned Tab snapshots,
 unpinned Tab lifecycle, active-task retention, and shell-state projection.
 ## Requirements
 ### Requirement: Workspace manifest is the restore authority
-The macOS shell SHALL use a versioned workspace manifest as the authoritative source for restoring Spaces, Tabs, pin snapshots, Tab lifecycle metadata, and the last selected Space/Tab across app restarts.
+The macOS shell SHALL use the current versioned content-container workspace
+manifest as the sole authoritative source for restoring Spaces, Tabs, pin
+snapshots, Tab lifecycle metadata, and the last selected Space/Tab across app
+restarts. It SHALL NOT restore from a persistent shell-state snapshot or migrate
+an earlier manifest shape.
 
 #### Scenario: Manifest is present
-- **WHEN** Alan for macOS starts and a valid workspace manifest exists for `window_main`
-- **THEN** alan loads Spaces, Tabs, pin snapshots, lifecycle metadata, and the last selected Space/Tab from that manifest
-- **AND** alan materializes the current shell state from the manifest rather than bootstrapping a fresh default state
+- **WHEN** Alan for macOS starts and a valid current workspace manifest exists
+  for `window_main`
+- **THEN** Alan loads Spaces, Tabs, pin snapshots, lifecycle metadata, and the
+  last selected Space/Tab from that manifest
+- **AND** Alan materializes the current shell state from the manifest rather
+  than another persisted snapshot
 
 #### Scenario: Manifest is missing
-- **WHEN** Alan for macOS starts and no workspace manifest exists for `window_main`
-- **THEN** alan creates a default manifest with one default Space and one default unpinned terminal Tab
-- **AND** alan uses that manifest as the restore authority for the launched shell state
+- **WHEN** Alan for macOS starts and no workspace manifest exists for
+  `window_main`
+- **THEN** Alan creates a default current manifest with one default Space and
+  one default unpinned terminal Tab
+- **AND** Alan uses that manifest as the restore authority for the launched
+  shell state
 
-#### Scenario: Legacy shell state exists without manifest
-- **WHEN** `shell-state-window_main.json` exists but no workspace manifest exists
-- **THEN** alan does not migrate that legacy shell state into the workspace manifest
-- **AND** alan creates a default manifest instead
+#### Scenario: Unsupported manifest schema exists
+- **WHEN** the manifest path contains a terminal-only, `quick_terminal`, or
+  otherwise unsupported schema
+- **THEN** Alan preserves it as corrupt or unsupported evidence and creates a
+  default current manifest
+- **AND** Alan does not invoke a legacy decoder, upgrade, or fallback
+
+#### Scenario: Obsolete shell-state file exists
+- **WHEN** an Application Support `shell-state-*.json` file remains on disk
+- **THEN** Alan does not discover or read it during startup
+- **AND** the file cannot become workspace restore authority
 
 ### Requirement: Corrupt workspace manifests fail open safely
 The macOS shell SHALL preserve evidence of a malformed workspace manifest and start with a default workspace rather than failing to launch or silently overwriting the only copy.
@@ -119,17 +136,33 @@ The macOS shell SHALL protect Unpinned Tabs from lifecycle retirement when termi
 - **AND** the Tab can be retired after TTL expiry
 
 ### Requirement: Shell state remains a runtime snapshot
-The macOS shell SHALL keep `ShellStateSnapshot` as the current UI/control-plane/runtime projection while using the workspace manifest as the durable restore authority.
+The macOS shell SHALL keep `ShellStateSnapshot` as an in-memory
+UI/control-plane/runtime projection while using the workspace manifest as the
+durable restore authority. It MAY publish current state to the temporary
+control-plane `state.json` mirror for current IPC clients, but SHALL NOT persist
+an Application Support `shell-state-*.json` snapshot.
 
 #### Scenario: Runtime metadata changes
-- **WHEN** terminal title, cwd, renderer state, attention, or alan binding metadata changes
-- **THEN** alan updates current shell state for UI and control-plane publication
-- **AND** alan writes only restorable workspace intent and lifecycle metadata back to the manifest
+- **WHEN** terminal title, cwd, renderer state, attention, or Alan binding
+  metadata changes
+- **THEN** Alan updates the in-memory shell state and current control-plane
+  publication
+- **AND** Alan writes only restorable workspace intent and lifecycle metadata
+  back to the manifest
 
 #### Scenario: App restarts
-- **WHEN** Alan for macOS restarts after publishing a shell state file in the previous process
-- **THEN** alan restores Spaces and Tabs from the workspace manifest
-- **AND** terminal runtimes are newly created rather than restored from the old shell state process snapshot
+- **WHEN** Alan for macOS restarts after publishing transient control-plane state
+  in the previous process
+- **THEN** Alan restores Spaces and Tabs from the workspace manifest
+- **AND** terminal runtimes and live projections are newly created rather than
+  restored from a prior process snapshot
+
+#### Scenario: Persistent shell-state path is inspected
+- **WHEN** repository validation inspects current Apple source and tests
+- **THEN** no `ShellStatePersistenceStore`, `restorePrevious`, or Application
+  Support `shell-state-*.json` writer or reader remains
+- **AND** the transient control-plane `state.json` path remains separately
+  identified as live IPC state
 
 ### Requirement: Tab Organization Mutations Persist Immediately
 The macOS shell SHALL persist Tab reorder, pin/unpin, and Move to Space
@@ -174,36 +207,46 @@ identity across reorder, pin/unpin, and Move to Space mutations.
   runtime handles, scrollback, metadata, and queued delivery state
 
 ### Requirement: Workspace manifest stores content-container restore snapshots
-After `generalize-macos-shell-content-containers`, the macOS shell workspace manifest SHALL
-remain the workspace restore authority and SHALL store restorable PaneSlot / ContentInstance
-snapshots instead of terminal-only pane snapshots.
+The macOS shell workspace manifest SHALL remain the workspace restore authority
+and SHALL store current restorable PaneSlot and ContentInstance snapshots. The
+loader SHALL accept only the current content-container schema and SHALL NOT
+upgrade terminal-only manifests.
 
-#### Scenario: Terminal-only manifest upgrades to content-container shape
-- **WHEN** alan 读取 `persist-macos-shell-workspaces` 产生的 terminal-only workspace manifest
-- **THEN** alan 将每个 terminal restore leaf 升级为 PaneSlot 加 `terminal` ContentInstance restore payload
-- **AND** Space/Tab IDs、ordering、selected Space/Tab、pin 状态、TTL anchor 和 active-task metadata 保持一致
-- **AND** 后续 manifest 写入只使用 content-container restore shape
+#### Scenario: Current content-container manifest is loaded
+- **WHEN** Alan reads a workspace manifest with the current schema and content
+  contract version
+- **THEN** it materializes Space, Tab, PaneSlot, ContentInstance, selection,
+  pin, lifecycle, and restore data directly from that manifest
+- **AND** no terminal-only conversion path runs
 
 #### Scenario: Pinned mixed tab snapshot is saved
-- **WHEN** 用户 pin 或 update-pin 一个包含 terminal、markdown 或 settings content 的 split tab
-- **THEN** workspace manifest 保存 split tree、PaneSlot restore identity、ContentInstance kind 和每个 content 的 restorable payload
-- **AND** terminal payload 保存 cwd、launch target 和用户可见 title
-- **AND** terminal payload MAY save a bounded terminal transcript snapshot as session-continuity metadata when one is available
-- **AND** markdown/settings payload 保存对应文件引用或 settings surface identity
-- **AND** manifest 不保存 terminal process、PTY、renderer object、Ghostty surface object、unbounded scrollback 或 delivery queue
+- **WHEN** the user pins or updates a pinned split Tab containing terminal,
+  markdown, or settings content
+- **THEN** the workspace manifest saves the split tree, PaneSlot restore
+  identity, ContentInstance kind, and each content's restorable payload
+- **AND** a terminal payload saves cwd, launch target, and user-visible title
+- **AND** a terminal payload MAY save a bounded transcript snapshot as
+  session-continuity metadata when one is available
+- **AND** markdown/settings payloads save the corresponding file reference or
+  settings surface identity
+- **AND** the manifest does not save a terminal process, PTY, renderer object,
+  Ghostty surface object, unbounded scrollback, or delivery queue
 
 #### Scenario: Unpinned mixed tab live snapshot is saved
-- **WHEN** 未 pin tab 包含 terminal、markdown 或 settings content 且仍在 TTL 内
-- **THEN** workspace manifest 的 live snapshot 保存 content-aware restore state
-- **AND** terminal content MAY include a bounded transcript snapshot with visible history, viewport, cwd, title, dimensions, process summary, and capture metadata
-- **AND** lifecycle pruning 继续使用原有 `max(lastActivatedAt, lastActivityAt)`、pin 状态和 active-task metadata
-- **AND** 非 terminal content 不会被误判为 terminal active task
+- **WHEN** an unpinned Tab contains terminal, markdown, or settings content and
+  remains inside its TTL
+- **THEN** the manifest's live snapshot saves content-aware restore state
+- **AND** terminal content MAY include a bounded transcript snapshot with
+  visible history, viewport, cwd, title, dimensions, process summary, and
+  capture metadata
+- **AND** lifecycle pruning continues to use
+  `max(lastActivatedAt, lastActivityAt)`, pin state, and active-task metadata
+- **AND** non-terminal content is not treated as a terminal active task
 
 #### Scenario: ShellStateSnapshot stays a runtime projection
-- **WHEN** content-container migration 已经完成且 app 重新启动
-- **THEN** alan 从 workspace manifest materialize v0.2 shell state
-- **AND** `ShellStateSnapshot` 只发布当前 UI、control-plane 和 runtime projection
-- **AND** `shell-state-window_main.json` 不重新成为 workspace restore authority
+- **WHEN** Alan materializes current shell state and publishes it to UI or IPC
+- **THEN** `ShellStateSnapshot` remains an in-memory/runtime projection
+- **AND** durable restart state remains only in the workspace manifest
 
 ### Requirement: Workspace Manifest Stores Terminal Profile References
 The macOS shell workspace manifest SHALL persist Terminal Profile references for
@@ -290,33 +333,6 @@ ownership.
   surfaces
 - **AND** changing one field does not silently rewrite the other
 
-### Requirement: Legacy Quick Terminal Restore Data Is Discarded
-The macOS shell workspace manifest loader SHALL tolerate old `quick_terminal`
-restore records while discarding them during materialization and omitting them
-from future manifest writes.
-
-#### Scenario: Manifest records visible quick terminal
-- **WHEN** Alan materializes shell state from a workspace manifest whose
-  `quick_terminal` record has visible presentation
-- **THEN** Alan discards the quick-terminal record
-- **AND** Alan does not create a hidden or visible quick-terminal slot
-- **AND** Alan does not create a terminal runtime, tab, pane, or detached panel
-  from that record
-
-#### Scenario: Manifest records hidden quick terminal
-- **WHEN** Alan materializes shell state from a workspace manifest whose
-  `quick_terminal` record has hidden presentation
-- **THEN** Alan discards the quick-terminal record
-- **AND** Alan restores only normal Spaces, Tabs, PaneSlots, ContentInstances,
-  selected Space, and selected Tab from the manifest
-
-#### Scenario: Manifest is written after legacy quick terminal data is read
-- **WHEN** Alan writes a workspace manifest after reading a manifest that
-  contained `quick_terminal`
-- **THEN** the new manifest omits `quick_terminal`
-- **AND** no quick-terminal transcript snapshot, last working directory, or
-  presentation state is preserved
-
 ### Requirement: Workspace Manifest Stores Space-Local Tab Selection
 The macOS shell workspace manifest SHALL persist each Space's remembered
 selected Tab in addition to the globally selected Space and active Tab. Manifest
@@ -398,47 +414,41 @@ without silently changing the pinned template.
 - **THEN** Alan preserves the pinned restore snapshot behavior and ignores the unmatched transcript for that restored tab
 
 ### Requirement: macOS delegates portable manifest semantics to shell core
-Alan for macOS SHALL delegate portable workspace manifest semantics to the Rust
-shell core after the manifest module has Rust contract tests and adapter tests.
+Alan for macOS SHALL delegate current portable workspace manifest validation,
+materialization, and pruning semantics to the Rust shell core after the manifest
+module has Rust contract tests and adapter tests. The live path SHALL NOT expose
+a legacy manifest-upgrade operation.
 
 The macOS platform layer SHALL continue to own Application Support path
 selection, file reads and writes, atomic persistence, corrupt-file evidence, and
 diagnostics presentation.
 
 #### Scenario: macOS loads a workspace manifest
-- **WHEN** Alan for macOS reads a workspace manifest from disk after shell core
-  manifest integration
-- **THEN** macOS passes the manifest bytes and platform context to the shell
-  core for decode, upgrade, materialization, and pruning semantics
+- **WHEN** Alan for macOS reads a current workspace manifest from disk after
+  shell-core manifest integration
+- **THEN** macOS passes the current manifest bytes and platform context to shell
+  core for validation, materialization, and pruning
 - **AND** macOS remains responsible for preserving corrupt evidence and choosing
-  the file path used for persistence
+  the persistence path
+
+#### Scenario: macOS loads an unsupported manifest
+- **WHEN** Alan for macOS reads bytes that do not match the current schema and
+  content contract version
+- **THEN** shell core rejects the manifest without upgrading it
+- **AND** macOS preserves evidence and requests a current default manifest
 
 #### Scenario: Manifest output is persisted
-- **WHEN** the shell core returns an updated manifest or manifest sync hint
+- **WHEN** shell core returns an updated current manifest or manifest sync hint
 - **THEN** the macOS platform layer writes the result through its persistence
   store
-- **AND** the shell core does not directly access the user's file system
-
-### Requirement: Manifest compatibility is preserved during migration
-Rust-backed manifest behavior SHALL preserve compatibility with existing macOS
-workspace manifest JSON unless a later spec explicitly changes the manifest
-schema.
-
-#### Scenario: Existing manifest is read by Rust-backed path
-- **WHEN** Alan for macOS reads a manifest written by the current Swift
-  implementation
-- **THEN** the Rust-backed path decodes or upgrades it according to the existing
-  manifest contract
-- **AND** Space, Tab, PaneSlot, ContentInstance, selection, pin/live snapshot,
-  lifecycle, Terminal Profile reference, and legacy `quick_terminal` discard
-  semantics remain intact
+- **AND** shell core does not directly access the user's file system
 
 ### Requirement: Workspace manifest algorithms are shell-core authoritative at runtime
-The macOS shell SHALL use Rust shell core for workspace manifest defaulting,
-legacy migration, lifecycle pruning, and materialization into current shell
-state. Swift SHALL own manifest file IO, corrupt-file preservation, and
-platform diagnostics, but SHALL NOT retain a runtime Swift implementation of
-the same portable manifest algorithms after shell core covers them.
+The macOS shell SHALL use Rust shell core for current workspace manifest
+defaulting, validation, lifecycle pruning, and materialization into current
+shell state. Swift SHALL own manifest file IO, corrupt-file preservation, and
+platform diagnostics, but SHALL NOT retain either a parallel current algorithm
+or a legacy migration implementation.
 
 #### Scenario: Missing manifest creates default through core
 - **WHEN** Alan for macOS starts and no workspace manifest exists
@@ -448,7 +458,7 @@ the same portable manifest algorithms after shell core covers them.
   defaulting algorithm as a fallback
 
 #### Scenario: Valid manifest materializes through core
-- **WHEN** Alan for macOS loads a valid workspace manifest
+- **WHEN** Alan for macOS loads a valid current workspace manifest
 - **THEN** Swift asks shell core to materialize the current shell state
 - **AND** the launched shell state is derived from the shell-core result
 - **AND** Swift does not materialize an alternate state through a platform
@@ -465,60 +475,65 @@ the same portable manifest algorithms after shell core covers them.
 - **WHEN** Alan for macOS detects an unreadable or unsupported manifest file
 - **THEN** Swift quarantines the corrupt file and records recovery diagnostics
 - **AND** Swift asks shell core for the replacement default manifest
-- **AND** Swift does not restore from legacy shell-state snapshots as a domain
-  fallback
+- **AND** Swift does not restore from or inspect shell-state snapshots as a
+  domain fallback
 
 #### Scenario: Core manifest authority fails
-- **WHEN** shell core cannot create, prune, migrate, or materialize a workspace
+- **WHEN** shell core cannot create, validate, prune, or materialize a workspace
   manifest
 - **THEN** Alan for macOS reports an explicit shell-core manifest failure
 - **AND** it does not silently launch from a Swift-computed workspace state for
   the same manifest
 
 ### Requirement: Shell persistence does not block the main thread
-The macOS shell SHALL NOT perform any synchronous main-thread disk write on the
-terminal metadata or runtime callback path. Every state file it persists on that
-path — the workspace manifest, the shell-state snapshot, the control-plane
-`state.json` mirror, and the control-plane change-event log — SHALL have its
-encode + write deferred to a debounced flush and/or run off the main thread.
+The macOS shell SHALL NOT perform a synchronous main-thread disk write on the
+terminal metadata or runtime callback path. Every current file persisted on
+that path—the workspace manifest, temporary control-plane `state.json` mirror,
+and control-plane change-event log—SHALL have its encode and write deferred to a
+debounced flush and/or run off the main thread. No Application Support
+shell-state snapshot SHALL be written.
 
 #### Scenario: High-output terminal does not stall the UI
 - **WHEN** one or more terminals produce sustained high-frequency output
-- **THEN** alan does not perform a synchronous main-thread disk write of the workspace manifest, the shell-state snapshot, or the control-plane state file on the terminal metadata or runtime callback path
+- **THEN** Alan does not perform a synchronous main-thread disk write of the
+  workspace manifest, control-plane state file, or event log on the terminal
+  metadata or runtime callback path
 
 #### Scenario: Encode and write run off the main thread
-- **WHEN** alan persists the workspace manifest or the control-plane shell-state file
-- **THEN** the JSON encode and atomic file write run on a background executor rather than blocking the main actor
+- **WHEN** Alan persists the workspace manifest or temporary control-plane state
+- **THEN** JSON encoding and atomic file writing run on a background executor
+  rather than blocking the main actor
 
 #### Scenario: Control-plane in-memory publication stays prompt
 - **WHEN** shell state changes on the terminal callback path
-- **THEN** alan publishes the in-memory control-plane state promptly without waiting on a disk write
+- **THEN** Alan publishes the in-memory control-plane state promptly without
+  waiting on a disk write
 
 ### Requirement: Workspace persistence cadence is separated by durability class
 The macOS shell SHALL persist workspace state on cadences matched to each class
-of state rather than rewriting and disk-writing every file on every runtime event:
-- **Structural state** (Spaces, Tabs, order, pin state, pin snapshots, selected
+of state rather than rewriting every file on every runtime event:
+
+- Structural state (Spaces, Tabs, order, pin state, pin snapshots, selected
   Space/Tab) SHALL be persisted when its mutation is accepted.
-- **Restore content and runtime snapshot** (per-Tab terminal transcript snapshots
-  in the manifest, and the control-plane shell-state file) driven by terminal
-  callbacks SHALL be persisted on a bounded debounced cadence and SHALL be
-  force-flushed on app background/resign-active and on quit.
-- A change to transient runtime state (such as a Tab's active-task state) SHALL
+- Restorable terminal transcript snapshots in the manifest and transient
+  control-plane state driven by terminal callbacks SHALL be persisted on a
+  bounded debounced cadence and force-flushed on app background/resign-active
+  and quit.
+- A change to transient runtime state such as a Tab's active-task state SHALL
   NOT by itself trigger a synchronous disk write.
+- No separate durable shell-state snapshot SHALL participate in any cadence.
 
 #### Scenario: Structural mutation persists promptly
-- **WHEN** the user creates, closes, reorders, pins, unpins, or moves a Tab or Space
-- **THEN** alan persists the structural change for that mutation
+- **WHEN** the user creates, closes, reorders, pins, unpins, or moves a Tab or
+  Space
+- **THEN** Alan persists the structural change for that mutation
 
 #### Scenario: Active-task change is not a write trigger
 - **WHEN** a Tab's terminal-aware active-task state changes
-- **THEN** alan does not write the workspace manifest solely because of that change
+- **THEN** Alan does not write the workspace manifest solely because of that
+  change
 
 #### Scenario: Transcript is flushed on background and quit
 - **WHEN** Alan for macOS resigns active, is backgrounded, or is asked to quit
-- **THEN** alan force-flushes pending transcript snapshots to disk before completing the transition
-
-#### Scenario: Recent transcript persists within the bounded window
-- **WHEN** a terminal's transcript changes and the app keeps running
-- **THEN** alan persists the latest transcript snapshot within the configured debounce window
-- **AND** a hard crash may lose at most that window of the most recent scrollback
+- **THEN** Alan force-flushes pending transcript snapshots and the transient
+  control-plane mirror before completing the transition
