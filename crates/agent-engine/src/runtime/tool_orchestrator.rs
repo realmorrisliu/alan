@@ -1210,8 +1210,9 @@ fn workspace_routing_preflight(
 ) -> Option<(Value, String, alan_agent_protocol::ToolDecisionAudit)> {
     let workspace_root = bound_workspace_root(state)?;
     let sandbox_spec = state
-        .tool_catalog
-        .default_sandbox_spec()
+        .namespace_environment()
+        .tool_execution_binding()
+        .and_then(|binding| binding.sandbox_spec)
         .unwrap_or_else(|| crate::tools::SandboxSpec::seed(workspace_root.clone()));
     let sandbox = crate::tools::Sandbox::from_spec(sandbox_spec);
     let current_cwd = state
@@ -1964,7 +1965,6 @@ mod tests {
             machine,
             current_submission_id: None,
             environment: NamespaceRuntimeEnvironment::new(root, "/agent/1", "default"),
-            tool_catalog: ToolRegistry::new(),
             core_config: config,
             runtime_config,
             workspace_persona_dirs: Vec::new(),
@@ -2015,7 +2015,6 @@ mod tests {
             machine: AgentMachine::new(),
             current_submission_id: None,
             environment: NamespaceRuntimeEnvironment::new(root, "/agent/1", "default"),
-            tool_catalog: ToolRegistry::new(),
             core_config: Config::default(),
             runtime_config: super::super::RuntimeConfig::default(),
             workspace_persona_dirs: Vec::new(),
@@ -2167,6 +2166,8 @@ mod tests {
         }
 
         let procfs = ProcFs::new().with_runner(Arc::new(RegistryToolRunner::new(tools.clone())));
+        let agent_root = Arc::new(alan_agentfs::AgentRootFs::new(Arc::new(procfs.clone())));
+        let tool_runner = crate::tools::ToolProcessRunner::from_registry(&tools);
         let spawner_procfs = Arc::new(procfs.for_spawner(
             None,
             process_namespace.clone(),
@@ -2187,14 +2188,29 @@ mod tests {
             workspace_root_dir: None,
             machine,
             current_submission_id: None,
-            environment: NamespaceRuntimeEnvironment::new(root, agent_path, "default"),
-            tool_catalog: tools,
+            environment: NamespaceRuntimeEnvironment::new(root, agent_path, "default")
+                .with_process_context(procfs, agent_root, alan_kernel::Pid(1), tool_runner),
             core_config: config,
             runtime_config: super::super::RuntimeConfig::default(),
             workspace_persona_dirs: Vec::new(),
             prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
             turn_state: TurnState::default(),
         }
+    }
+
+    fn bind_test_tool_workspace(
+        state: &mut RuntimeLoopState,
+        workspace_root: &std::path::Path,
+        cwd: &std::path::Path,
+    ) {
+        state.workspace_root_dir = Some(workspace_root.to_path_buf());
+        assert!(state.namespace_environment().set_tool_execution_binding(
+            crate::tools::ToolExecutionBinding::with_workspace(
+                workspace_root.to_path_buf(),
+                cwd.to_path_buf(),
+                workspace_root.join(".alan/runtime/test/tmp"),
+            ),
+        ));
     }
 
     async fn execute_single_tool_call(
@@ -3100,9 +3116,7 @@ mod tests {
         });
         let mut state = create_test_state_with_machine_and_tools(machine, tools);
         state.core_config.memory.workspace_dir = Some(workspace_root.path().join(".alan/memory"));
-        state
-            .tool_catalog_mut_for_test()
-            .set_default_cwd(workspace_root.path().to_path_buf());
+        bind_test_tool_workspace(&mut state, workspace_root.path(), workspace_root.path());
 
         let (_, events) = execute_single_tool_call(
             &mut state,
@@ -3167,13 +3181,7 @@ mod tests {
             workspace_local: true,
         });
         let mut state = create_test_state_with_machine_and_tools(machine, tools);
-        state.workspace_root_dir = Some(workspace_root.path().to_path_buf());
-        state
-            .tool_catalog_mut_for_test()
-            .set_default_workspace_binding(
-                workspace_root.path().to_path_buf(),
-                workspace_root.path().to_path_buf(),
-            );
+        bind_test_tool_workspace(&mut state, workspace_root.path(), workspace_root.path());
         let arguments = json!({
             "command": format!("cd {} && pwd", approved_root.path().display()),
             "timeout": 60
@@ -3187,8 +3195,8 @@ mod tests {
 
         assert!(
             state
-                .tool_catalog_mut_for_test()
-                .add_default_sandbox_writable_root(approved_root.path().to_path_buf())
+                .namespace_environment()
+                .add_tool_sandbox_writable_root(approved_root.path().to_path_buf())
         );
 
         let preflight =
@@ -3211,9 +3219,7 @@ mod tests {
         });
         let mut state = create_test_state_with_machine_and_tools(machine, tools);
         state.core_config.memory.workspace_dir = Some(workspace_root.path().join(".alan/memory"));
-        state
-            .tool_catalog_mut_for_test()
-            .set_default_cwd(workspace_root.path().to_path_buf());
+        bind_test_tool_workspace(&mut state, workspace_root.path(), workspace_root.path());
 
         let (_, events) = execute_single_tool_call(
             &mut state,
@@ -3290,9 +3296,7 @@ default_action: allow
         state.core_config.memory.workspace_dir = Some(workspace_alan.join("memory"));
         state.runtime_config.policy_engine =
             crate::policy::PolicyEngine::load_or_default(Some(&workspace_alan));
-        state
-            .tool_catalog_mut_for_test()
-            .set_default_cwd(workspace_root.join("src"));
+        bind_test_tool_workspace(&mut state, &workspace_root, &workspace_root.join("src"));
 
         let (_, events) = execute_single_tool_call(
             &mut state,
@@ -3341,11 +3345,8 @@ default_action: allow
             workspace_local: true,
         });
         let mut state = create_test_state_with_machine_and_tools(machine, tools);
-        state.workspace_root_dir = Some(workspace_root.path().to_path_buf());
         state.core_config.memory.workspace_dir = Some(custom_memory_root.path().join("memory"));
-        state
-            .tool_catalog_mut_for_test()
-            .set_default_cwd(workspace_root.path().to_path_buf());
+        bind_test_tool_workspace(&mut state, workspace_root.path(), workspace_root.path());
 
         let (_, events) = execute_single_tool_call(
             &mut state,
@@ -3406,9 +3407,7 @@ default_action: allow
         });
         let mut state = create_test_state_with_machine_and_tools(machine, tools);
         state.core_config.memory.workspace_dir = Some(workspace_root.join(".alan/memory"));
-        state
-            .tool_catalog_mut_for_test()
-            .set_default_cwd(workspace_root.clone());
+        bind_test_tool_workspace(&mut state, &workspace_root, &workspace_root);
 
         let (_, events) = execute_single_tool_call(
             &mut state,
@@ -3464,9 +3463,7 @@ default_action: allow
         });
         let mut state = create_test_state_with_machine_and_tools(machine, tools);
         state.core_config.memory.workspace_dir = Some(workspace_root.join(".alan/memory"));
-        state
-            .tool_catalog_mut_for_test()
-            .set_default_cwd(workspace_root.clone());
+        bind_test_tool_workspace(&mut state, &workspace_root, &workspace_root);
 
         let (_, events) = execute_single_tool_call(
             &mut state,
@@ -3519,9 +3516,7 @@ default_action: allow
         });
         let mut state = create_test_state_with_machine_and_tools(machine, tools);
         state.core_config.memory.workspace_dir = Some(workspace_root.path().join(".alan/memory"));
-        state
-            .tool_catalog_mut_for_test()
-            .set_default_cwd(workspace_root.path().to_path_buf());
+        bind_test_tool_workspace(&mut state, workspace_root.path(), workspace_root.path());
 
         let (_, events) = execute_single_tool_call(
             &mut state,

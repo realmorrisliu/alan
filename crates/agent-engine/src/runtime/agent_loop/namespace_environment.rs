@@ -316,6 +316,42 @@ impl NamespaceRuntimeEnvironment {
         self.process_context.clone()
     }
 
+    pub(crate) fn tool_execution_binding(&self) -> Option<crate::tools::ToolExecutionBinding> {
+        let context = self.process_context.as_ref()?;
+        context.tool_runner.process_binding(context.pid)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_tool_execution_binding(
+        &self,
+        binding: crate::tools::ToolExecutionBinding,
+    ) -> bool {
+        self.process_context.as_ref().is_some_and(|context| {
+            context
+                .tool_runner
+                .register_process_binding(context.pid, binding);
+            true
+        })
+    }
+
+    pub(crate) fn add_tool_sandbox_writable_root(&self, path: std::path::PathBuf) -> bool {
+        self.process_context.as_ref().is_some_and(|context| {
+            context
+                .tool_runner
+                .add_process_sandbox_writable_root(context.pid, path)
+        })
+    }
+
+    pub(crate) fn tool_sandbox_writable_roots(&self) -> Vec<std::path::PathBuf> {
+        let Some(binding) = self.tool_execution_binding() else {
+            return Vec::new();
+        };
+        binding
+            .sandbox_spec
+            .map(|spec| spec.writable_roots)
+            .unwrap_or_else(|| binding.workspace_root.into_iter().collect())
+    }
+
     pub(crate) fn with_shared_services(
         mut self,
         srv: InProcessTransport,
@@ -3051,7 +3087,6 @@ mod tests {
             machine: crate::AgentMachine::new(),
             current_submission_id: None,
             environment,
-            tool_catalog: crate::tools::ToolRegistry::new(),
             core_config: crate::Config::default(),
             runtime_config: super::super::super::RuntimeConfig::default(),
             workspace_persona_dirs: Vec::new(),

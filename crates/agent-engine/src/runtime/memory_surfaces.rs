@@ -971,7 +971,6 @@ mod tests {
             machine,
             current_submission_id: None,
             environment: namespace_environment_for_test(),
-            tool_catalog: crate::tools::ToolRegistry::new(),
             core_config: {
                 let mut config = crate::Config::default();
                 config.memory.workspace_dir = Some(memory_dir.clone());
@@ -1014,7 +1013,6 @@ mod tests {
             machine,
             current_submission_id: None,
             environment: namespace_environment_for_test(),
-            tool_catalog: crate::tools::ToolRegistry::new(),
             core_config: {
                 let mut config = crate::Config::default();
                 config.memory.workspace_dir = Some(memory_dir.clone());

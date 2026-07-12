@@ -8,7 +8,8 @@ use super::delegation_capabilities::{
 };
 use super::engine::{
     AgentConfig, RuntimeController, RuntimeEventEnvelope, RuntimeLivenessEnvelope,
-    RuntimeStartupMetadata, WorkspaceRuntimeConfig, spawn_with_namespace_environment,
+    RuntimeStartupMetadata, WorkspaceRuntimeConfig, runtime_host_capabilities,
+    spawn_with_namespace_environment,
 };
 use crate::llm::LlmClient;
 use crate::tape::{ContentPart, Message};
@@ -325,7 +326,7 @@ where
             .await
             .context("Failed to assemble child-agent namespace plan")?;
     let delegation_capability_decision =
-        evaluate_delegated_launch_capabilities(parent, &mut spec, &child_namespace_plan)?;
+        evaluate_delegated_launch_capabilities(parent, &mut spec, &child_namespace_plan).await?;
     // Transitional until task 6.1 removes ToolRegistry from RuntimeLoopState entirely.
     // Tool visibility and execution are owned by the child namespace and shared Process runner.
     let child_tools = ToolRegistry::with_config(Arc::new(effective_child_core_config.clone()));
@@ -392,10 +393,11 @@ where
     .await?;
     let generation_capabilities =
         crate::provider_capabilities_for_config(&effective_child_core_config);
+    let host_capabilities = runtime_host_capabilities(&child_config, &child_tools);
     let runtime = match spawn_with_namespace_environment(
         child_config,
         namespace_launch.environment,
-        child_tools,
+        host_capabilities,
         generation_capabilities,
     )
     .context("Failed to spawn child-agent namespace runtime")
@@ -480,7 +482,7 @@ where
     })
 }
 
-fn evaluate_delegated_launch_capabilities(
+async fn evaluate_delegated_launch_capabilities(
     parent: &RuntimeLoopState,
     spec: &mut SpawnSpec,
     plan: &ChildNamespaceAssemblyPlan,
@@ -490,7 +492,7 @@ fn evaluate_delegated_launch_capabilities(
     };
     let requirements = context.requirements.clone();
     let child_namespace = namespace_summary_from_child_plan(plan);
-    let parent_namespace = namespace_summary_from_parent(parent);
+    let parent_namespace = namespace_summary_from_parent(parent).await?;
     let decision = evaluate_delegated_namespace(
         &spec.launch.task,
         &requirements,
@@ -530,10 +532,10 @@ fn namespace_summary_from_child_plan(
     )
 }
 
-fn namespace_summary_from_parent(
+async fn namespace_summary_from_parent(
     parent: &RuntimeLoopState,
-) -> alan_agent_protocol::DelegatedNamespaceSummary {
-    namespace_summary_from_bindings(
+) -> Result<alan_agent_protocol::DelegatedNamespaceSummary> {
+    Ok(namespace_summary_from_bindings(
         vec![
             "/agent".to_string(),
             "/mnt/llm".to_string(),
@@ -542,6 +544,7 @@ fn namespace_summary_from_parent(
         ],
         parent
             .static_tool_names()
+            .await?
             .into_iter()
             .map(|tool| format!("/bin/{tool}"))
             .collect(),
@@ -553,7 +556,7 @@ fn namespace_summary_from_parent(
                 .clone()
                 .unwrap_or_else(|| "default".to_string()),
         ),
-    )
+    ))
 }
 
 async fn wait_for_child_runtime_startup(
@@ -2821,11 +2824,6 @@ mod tests {
             crate::InstallChannel::Stable,
         ));
         core_config.openai_responses_model = "gpt-5.4".to_string();
-        let mut tools = ToolRegistry::with_config(Arc::new(core_config.clone()));
-        tools.set_default_cwd(workspace_root.clone());
-        tools.register(NamedTestTool::new("alpha"));
-        tools.register(NamedTestTool::new("beta"));
-
         let mut machine = crate::AgentMachine::new();
         machine.add_user_message("Parent user asks for review");
         machine.add_assistant_message("Parent assistant explains the approach", None);
@@ -2847,7 +2845,6 @@ mod tests {
             machine,
             current_submission_id: None,
             environment: namespace_environment_for_parent_test(),
-            tool_catalog: tools,
             core_config,
             runtime_config: RuntimeConfig::default(),
             workspace_persona_dirs: Vec::new(),
@@ -2859,6 +2856,13 @@ mod tests {
                 ),
             turn_state,
         }
+    }
+
+    fn parent_test_tools(config: &crate::Config) -> ToolRegistry {
+        let mut tools = ToolRegistry::with_config(Arc::new(config.clone()));
+        tools.register(NamedTestTool::new("alpha"));
+        tools.register(NamedTestTool::new("beta"));
+        tools
     }
 
     fn launch_spec(root_dir: PathBuf) -> SpawnSpec {
@@ -2894,8 +2898,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn delegated_spawn_boundary_passes_satisfied_task_unchanged() {
+    #[tokio::test]
+    async fn delegated_spawn_boundary_passes_satisfied_task_unchanged() {
         let temp = TempDir::new().unwrap();
         let parent = make_parent_state(
             &temp,
@@ -2919,6 +2923,7 @@ mod tests {
             &mut spec,
             &capability_plan(Some(workspace_root), &["read_file"]),
         )
+        .await
         .unwrap()
         .unwrap();
 
@@ -2929,8 +2934,8 @@ mod tests {
         assert_eq!(spec.launch.task, "Inspect local files");
     }
 
-    #[test]
-    fn delegated_spawn_boundary_rewrites_narrowed_task_explicitly() {
+    #[tokio::test]
+    async fn delegated_spawn_boundary_rewrites_narrowed_task_explicitly() {
         let temp = TempDir::new().unwrap();
         let parent = make_parent_state(
             &temp,
@@ -2954,6 +2959,7 @@ mod tests {
             &mut spec,
             &capability_plan(Some(workspace_root), &["read_file"]),
         )
+        .await
         .unwrap()
         .unwrap();
 
@@ -2965,8 +2971,8 @@ mod tests {
         assert!(spec.launch.task.contains("Withheld capabilities: github"));
     }
 
-    #[test]
-    fn delegated_spawn_boundary_declines_unsatisfied_workspace() {
+    #[tokio::test]
+    async fn delegated_spawn_boundary_declines_unsatisfied_workspace() {
         let temp = TempDir::new().unwrap();
         let parent = make_parent_state(
             &temp,
@@ -2987,6 +2993,7 @@ mod tests {
             &mut spec,
             &capability_plan(None, &["read_file"]),
         )
+        .await
         .unwrap_err();
         let rejection = error.downcast_ref::<DelegatedSpawnRejected>().unwrap();
 
@@ -3527,7 +3534,8 @@ Body
             .await
             .unwrap();
         let launch_procfs = KernelProcFs::new();
-        let tool_runner = crate::tools::ToolProcessRunner::from_registry(parent.tool_catalog());
+        let tool_runner =
+            crate::tools::ToolProcessRunner::from_registry(&parent_test_tools(&parent.core_config));
         let runtime_procfs = launch_procfs
             .clone()
             .with_runner(Arc::new(tool_runner.clone()));
@@ -3752,7 +3760,8 @@ Body
             .await
             .unwrap();
         let launch_procfs = KernelProcFs::new();
-        let tool_runner = crate::tools::ToolProcessRunner::from_registry(parent.tool_catalog());
+        let tool_runner =
+            crate::tools::ToolProcessRunner::from_registry(&parent_test_tools(&parent.core_config));
         let runtime_procfs = launch_procfs
             .clone()
             .with_runner(Arc::new(tool_runner.clone()));
@@ -3840,7 +3849,8 @@ Body
             .await
             .unwrap();
         let launch_procfs = KernelProcFs::new();
-        let tool_runner = crate::tools::ToolProcessRunner::from_registry(parent.tool_catalog());
+        let tool_runner =
+            crate::tools::ToolProcessRunner::from_registry(&parent_test_tools(&parent.core_config));
         let runtime_procfs = launch_procfs
             .clone()
             .with_runner(Arc::new(tool_runner.clone()));
@@ -3932,7 +3942,7 @@ Body
             .unwrap();
         let launch_procfs = KernelProcFs::new();
         let runtime_procfs = launch_procfs.clone().with_runner(Arc::new(
-            crate::tools::ToolProcessRunner::from_registry(parent.tool_catalog()),
+            crate::tools::ToolProcessRunner::from_registry(&parent_test_tools(&parent.core_config)),
         ));
         let llmfs = Arc::new(alan_llmfs::LlmFs::new());
         llmfs.register_connection(
@@ -3966,7 +3976,7 @@ Body
             &plan,
             handles,
             None,
-            crate::tools::ToolProcessRunner::from_registry(parent.tool_catalog()),
+            crate::tools::ToolProcessRunner::from_registry(&parent_test_tools(&parent.core_config)),
             plan.execution_binding(),
             None,
             "/bin/alan-agent",
@@ -4297,14 +4307,8 @@ model_reasoning_effort = "high"
         let temp = TempDir::new().unwrap();
         let requests = RecordedRequests::default();
         let response = completed_response("Child finished cleanly.");
-        let mut parent = make_parent_state(&temp, requests, response);
+        let parent = make_parent_state(&temp, requests, response);
         let workspace_root = temp.path().join("repo");
-        let nested_cwd = workspace_root.join("nested/src");
-        std::fs::create_dir_all(&nested_cwd).unwrap();
-        parent
-            .tool_catalog_mut_for_test()
-            .set_default_cwd(nested_cwd);
-
         let mut spec = launch_spec(workspace_root.join(".alan/agents/grader"));
         spec.handles = vec![SpawnHandle::Workspace];
 

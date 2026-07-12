@@ -505,7 +505,6 @@ mod tests {
             machine: crate::AgentMachine::new(),
             current_submission_id: None,
             environment,
-            tool_catalog: crate::tools::ToolRegistry::new(),
             core_config: crate::Config::default(),
             runtime_config: super::super::RuntimeConfig::default(),
             workspace_persona_dirs: Vec::new(),

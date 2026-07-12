@@ -300,7 +300,7 @@ fn current_execution_backend() -> String {
     crate::tools::active_backend_name().to_string()
 }
 
-fn runtime_host_capabilities(
+pub(crate) fn runtime_host_capabilities(
     config: &WorkspaceRuntimeConfig,
     tools: &crate::tools::ToolRegistry,
 ) -> crate::skills::SkillHostCapabilities {
@@ -1432,7 +1432,7 @@ pub fn spawn_with_llm_client_and_tools(
     configure_runtime_tool_execution_binding(&config, &mut tools)?;
 
     let generation_capabilities = llm_client.capabilities();
-    let host_tools = tools.clone();
+    let host_capabilities = runtime_host_capabilities(&config, &tools);
     let mount_grant_applicator_factory = config.mount_grant_applicator_factory.clone();
     spawn_with_prepared_runtime_environment(
         config,
@@ -1441,7 +1441,7 @@ pub fn spawn_with_llm_client_and_tools(
             tools,
             mount_grant_applicator_factory,
         },
-        host_tools,
+        host_capabilities,
         generation_capabilities,
     )
 }
@@ -1454,7 +1454,7 @@ pub async fn spawn_with_llm_client_and_tools_and_namespace_surface(
     configure_runtime_tool_execution_binding(&config, &mut tools)?;
 
     let generation_capabilities = llm_client.capabilities();
-    let host_tools = tools.clone();
+    let host_capabilities = runtime_host_capabilities(&config, &tools);
     let environment = build_root_namespace_environment(
         llm_client,
         tools,
@@ -1468,7 +1468,7 @@ pub async fn spawn_with_llm_client_and_tools_and_namespace_surface(
     let controller = spawn_with_prepared_runtime_environment(
         config,
         RuntimeEnvironmentBootstrap::Ready(environment),
-        host_tools,
+        host_capabilities,
         generation_capabilities,
     )?;
     Ok(RuntimeNamespaceLaunch {
@@ -1481,13 +1481,13 @@ pub async fn spawn_with_llm_client_and_tools_and_namespace_surface(
 pub(crate) fn spawn_with_namespace_environment(
     config: WorkspaceRuntimeConfig,
     namespace: super::NamespaceRuntimeEnvironment,
-    host_tools: crate::tools::ToolRegistry,
+    host_capabilities: crate::skills::SkillHostCapabilities,
     generation_capabilities: crate::llm::ProviderCapabilities,
 ) -> Result<RuntimeController> {
     spawn_with_prepared_runtime_environment(
         config,
         RuntimeEnvironmentBootstrap::Ready(namespace),
-        host_tools,
+        host_capabilities,
         generation_capabilities,
     )
 }
@@ -1495,7 +1495,7 @@ pub(crate) fn spawn_with_namespace_environment(
 fn spawn_with_prepared_runtime_environment(
     config: WorkspaceRuntimeConfig,
     environment: RuntimeEnvironmentBootstrap,
-    host_tools: crate::tools::ToolRegistry,
+    host_capabilities: crate::skills::SkillHostCapabilities,
     _generation_capabilities: crate::llm::ProviderCapabilities,
 ) -> Result<RuntimeController> {
     let (sub_tx, mut sub_rx) = mpsc::channel::<Submission>(32);
@@ -1570,7 +1570,6 @@ fn spawn_with_prepared_runtime_environment(
     let runtime_workspace_root_dir = resolved_agent_definition.workspace_root_dir.clone();
     let recovery_rollout_path = config.recovery_rollout_path.clone();
     let generation_capabilities = crate::provider_capabilities_for_config(&core_config);
-    let host_capabilities = runtime_host_capabilities(&config, &host_tools);
     let mut prompt_cache =
         super::prompt_cache::PromptAssemblyCache::with_fixed_capability_view_and_overrides(
             resolved_agent_definition.capability_view.clone(),
@@ -1644,7 +1643,6 @@ fn spawn_with_prepared_runtime_environment(
             machine,
             current_submission_id: None,
             environment,
-            tool_catalog: host_tools.clone(),
             core_config,
             runtime_config,
             workspace_persona_dirs: prompt_cache_persona_dirs.clone(),
@@ -2165,7 +2163,6 @@ mod tests {
             machine,
             current_submission_id: None,
             environment: namespace_environment_for_test(),
-            tool_catalog: crate::tools::ToolRegistry::new(),
             core_config,
             runtime_config,
             workspace_persona_dirs: Vec::new(),
@@ -2839,7 +2836,7 @@ mod tests {
         let mut controller = spawn_with_namespace_environment(
             config,
             namespace_environment,
-            crate::tools::ToolRegistry::new(),
+            crate::skills::SkillHostCapabilities::default(),
             generation_capabilities,
         )
         .unwrap();
@@ -2896,7 +2893,7 @@ mod tests {
         let mut controller = spawn_with_namespace_environment(
             config,
             namespace_environment,
-            crate::tools::ToolRegistry::new(),
+            crate::skills::SkillHostCapabilities::default(),
             generation_capabilities,
         )
         .unwrap();
@@ -2950,7 +2947,6 @@ mod tests {
             machine: crate::AgentMachine::new(),
             current_submission_id: None,
             environment: namespace_environment,
-            tool_catalog: crate::tools::ToolRegistry::new(),
             core_config: crate::Config::default(),
             runtime_config: RuntimeConfig::default(),
             workspace_persona_dirs: Vec::new(),
@@ -3039,7 +3035,7 @@ mod tests {
         let mut controller = spawn_with_namespace_environment(
             config,
             namespace_environment,
-            crate::tools::ToolRegistry::new(),
+            crate::skills::SkillHostCapabilities::default(),
             generation_capabilities,
         )
         .unwrap();

@@ -1328,7 +1328,6 @@ mod tests {
             machine: AgentMachine::new(),
             current_submission_id: None,
             environment: NamespaceRuntimeEnvironment::new(root, "/agent/1", "default"),
-            tool_catalog: crate::tools::ToolRegistry::new(),
             core_config: Config::default(),
             runtime_config: RuntimeConfig {
                 compaction_trigger_messages: 1,

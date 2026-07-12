@@ -19,9 +19,7 @@ use anyhow::Result;
 use tokio_util::sync::CancellationToken;
 use tracing::warn;
 
-use crate::{
-    agent_machine::AgentMachine, config::Config, retry, runtime::RuntimeConfig, tools::ToolRegistry,
-};
+use crate::{agent_machine::AgentMachine, config::Config, retry, runtime::RuntimeConfig};
 
 use super::submission_handlers::{RuntimeOpAction, handle_runtime_op_with_cancel};
 use super::tool_orchestrator::{
@@ -62,7 +60,6 @@ pub struct RuntimeLoopState {
     pub machine: AgentMachine,
     pub current_submission_id: Option<String>,
     pub environment: NamespaceRuntimeEnvironment,
-    pub tool_catalog: ToolRegistry,
     pub core_config: Config,
     pub runtime_config: RuntimeConfig,
     pub workspace_persona_dirs: Vec<std::path::PathBuf>,
@@ -194,26 +191,20 @@ impl RuntimeLoopState {
         Err(last_error.unwrap_or_else(|| anyhow::anyhow!("Max retries exceeded")))
     }
 
-    #[cfg(test)]
-    pub(crate) fn tool_catalog(&self) -> &ToolRegistry {
-        &self.tool_catalog
-    }
-
-    pub(crate) fn static_tool_names(&self) -> Vec<String> {
-        self.tool_catalog
-            .list_tools()
+    pub(crate) async fn static_tool_names(&self) -> Result<Vec<String>> {
+        Ok(self
+            .namespace_environment()
+            .discover_tool_packages()
+            .await?
             .into_iter()
-            .map(str::to_string)
-            .collect()
+            .map(|manifest| manifest.name)
+            .collect())
     }
 
     pub(crate) fn default_tool_cwd(&self) -> Option<std::path::PathBuf> {
-        self.tool_catalog.default_cwd()
-    }
-
-    #[cfg(test)]
-    pub(crate) fn tool_catalog_mut_for_test(&mut self) -> &mut ToolRegistry {
-        &mut self.tool_catalog
+        self.namespace_environment()
+            .tool_execution_binding()
+            .map(|binding| binding.cwd)
     }
 }
 
@@ -622,7 +613,6 @@ mod tests {
             machine: AgentMachine::new(),
             current_submission_id: None,
             environment,
-            tool_catalog: ToolRegistry::new(),
             core_config: Config::default(),
             runtime_config: super::RuntimeConfig::default(),
             workspace_persona_dirs: Vec::new(),
@@ -825,7 +815,6 @@ mod tests {
                 tokio::time::Duration::from_millis(0),
                 "",
             )),
-            tool_catalog: ToolRegistry::new(),
             core_config: {
                 let mut config = Config::default();
                 config.memory.workspace_dir = Some(memory_dir);
@@ -1208,7 +1197,6 @@ mod tests {
                 tokio::time::Duration::from_millis(0),
                 "",
             )),
-            tool_catalog: ToolRegistry::new(),
             core_config: config,
             runtime_config,
             workspace_persona_dirs: Vec::new(),
@@ -1402,7 +1390,6 @@ mod tests {
                 tokio::time::Duration::from_millis(0),
                 "",
             )),
-            tool_catalog: ToolRegistry::new(),
             core_config: config,
             runtime_config,
             workspace_persona_dirs: Vec::new(),
@@ -1457,7 +1444,6 @@ mod tests {
                 tokio::time::Duration::from_millis(0),
                 "",
             )),
-            tool_catalog: ToolRegistry::new(),
             core_config: config,
             runtime_config,
             workspace_persona_dirs: Vec::new(),
@@ -1504,7 +1490,6 @@ mod tests {
                 tokio::time::Duration::from_millis(0),
                 "Summary",
             )),
-            tool_catalog: ToolRegistry::new(),
             core_config: config,
             runtime_config,
             workspace_persona_dirs: Vec::new(),
@@ -1552,7 +1537,6 @@ mod tests {
                 tokio::time::Duration::from_millis(0),
                 "Summary from token-triggered compaction",
             )),
-            tool_catalog: ToolRegistry::new(),
             core_config: config,
             runtime_config,
             workspace_persona_dirs: Vec::new(),
@@ -1605,7 +1589,6 @@ mod tests {
                 tokio::time::Duration::from_millis(0),
                 "Summary from zero-ratio compaction",
             )),
-            tool_catalog: ToolRegistry::new(),
             core_config: config,
             runtime_config,
             workspace_persona_dirs: Vec::new(),
@@ -1658,7 +1641,6 @@ mod tests {
                 tokio::time::Duration::from_millis(0),
                 "Should not compact",
             )),
-            tool_catalog: ToolRegistry::new(),
             core_config: config,
             runtime_config,
             workspace_persona_dirs: Vec::new(),
@@ -1718,7 +1700,6 @@ mod tests {
                 SequencedStep::Success(memory_flush_json_response()),
                 SequencedStep::Success("Summary after soft-threshold compaction".to_string()),
             ])),
-            tool_catalog: ToolRegistry::new(),
             core_config: config,
             runtime_config,
             workspace_persona_dirs: Vec::new(),
@@ -1814,7 +1795,6 @@ mod tests {
                 SequencedStep::Error("synthetic memory flush failure".to_string()),
                 SequencedStep::Success("Summary after failed memory flush".to_string()),
             ])),
-            tool_catalog: ToolRegistry::new(),
             core_config: config,
             runtime_config,
             workspace_persona_dirs: Vec::new(),
@@ -1916,7 +1896,6 @@ mod tests {
                 ),
                 SequencedStep::Success("Summary after noop memory flush".to_string()),
             ])),
-            tool_catalog: ToolRegistry::new(),
             core_config: config,
             runtime_config,
             workspace_persona_dirs: Vec::new(),
@@ -2015,7 +1994,6 @@ mod tests {
             environment: namespace_environment_with_provider(SequencedMockProvider::new(vec![
                 SequencedStep::Success("Summary after already-flushed-cycle skip".to_string()),
             ])),
-            tool_catalog: ToolRegistry::new(),
             core_config: config,
             runtime_config,
             workspace_persona_dirs: Vec::new(),
@@ -2111,7 +2089,6 @@ mod tests {
             environment: namespace_environment_with_provider(SequencedMockProvider::new(vec![
                 SequencedStep::Success("Summary at hard threshold".to_string()),
             ])),
-            tool_catalog: ToolRegistry::new(),
             core_config: config,
             runtime_config,
             workspace_persona_dirs: Vec::new(),
@@ -2178,7 +2155,6 @@ mod tests {
                 tokio::time::Duration::from_millis(0),
                 "Manual compaction below threshold",
             )),
-            tool_catalog: ToolRegistry::new(),
             core_config: config,
             runtime_config,
             workspace_persona_dirs: Vec::new(),
@@ -2236,7 +2212,6 @@ mod tests {
                 tokio::time::Duration::from_millis(0),
                 "Summary from emergency mid-turn compaction",
             )),
-            tool_catalog: ToolRegistry::new(),
             core_config: config,
             runtime_config,
             workspace_persona_dirs: Vec::new(),
@@ -2286,7 +2261,6 @@ mod tests {
                 tokio::time::Duration::from_millis(0),
                 "Manual compaction summary",
             )),
-            tool_catalog: ToolRegistry::new(),
             core_config: config,
             runtime_config,
             workspace_persona_dirs: Vec::new(),
@@ -2382,7 +2356,6 @@ mod tests {
                 1,
                 "Compaction summary after retry",
             )),
-            tool_catalog: ToolRegistry::new(),
             core_config: config,
             runtime_config,
             workspace_persona_dirs: Vec::new(),
@@ -2457,7 +2430,6 @@ mod tests {
             environment: namespace_environment_with_provider(ErrorMockProvider::new(
                 "synthetic compaction failure",
             )),
-            tool_catalog: ToolRegistry::new(),
             core_config: config,
             runtime_config,
             workspace_persona_dirs: Vec::new(),
@@ -2543,7 +2515,6 @@ mod tests {
             environment: namespace_environment_with_provider(ErrorMockProvider::new(
                 "synthetic compaction failure",
             )),
-            tool_catalog: ToolRegistry::new(),
             core_config: config,
             runtime_config,
             workspace_persona_dirs: Vec::new(),
@@ -2634,7 +2605,6 @@ mod tests {
             environment: namespace_environment_with_provider(ErrorMockProvider::new(
                 "synthetic compaction failure",
             )),
-            tool_catalog: ToolRegistry::new(),
             core_config: config,
             runtime_config,
             workspace_persona_dirs: Vec::new(),
@@ -2727,7 +2697,6 @@ mod tests {
                 "",
             ))
             .await,
-            tool_catalog: ToolRegistry::new(),
             core_config: config,
             runtime_config,
             workspace_persona_dirs: Vec::new(),
@@ -2782,7 +2751,6 @@ mod tests {
                 tokio::time::Duration::from_millis(0),
                 "",
             )),
-            tool_catalog: ToolRegistry::new(),
             core_config: config,
             runtime_config,
             workspace_persona_dirs: Vec::new(),

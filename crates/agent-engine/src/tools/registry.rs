@@ -134,25 +134,7 @@ impl ToolRegistry {
         let Some(binding) = default_binding.as_mut() else {
             return false;
         };
-        let Some(workspace_root) = binding.workspace_root.clone() else {
-            return false;
-        };
-
-        let normalized = normalize_sandbox_root(path);
-        if protected_path_component(&normalized).is_some() {
-            return false;
-        }
-        let mut spec = binding
-            .sandbox_spec
-            .clone()
-            .unwrap_or_else(|| SandboxSpec::seed(workspace_root));
-        if spec.writable_roots.iter().any(|root| root == &normalized) {
-            binding.sandbox_spec = Some(spec);
-            return false;
-        }
-        spec.writable_roots.push(normalized);
-        binding.sandbox_spec = Some(spec);
-        true
+        add_sandbox_writable_root(binding, path)
     }
 
     /// Set a default workspace binding using the provided workspace root and cwd.
@@ -579,6 +561,65 @@ impl ToolProcessRunner {
             .expect("process binding mutex poisoned")
             .insert(pid, binding);
     }
+
+    pub(crate) fn process_binding(&self, pid: alan_kernel::Pid) -> Option<ToolExecutionBinding> {
+        self.inner
+            .process_bindings
+            .lock()
+            .expect("process binding mutex poisoned")
+            .get(&pid)
+            .cloned()
+            .or_else(|| {
+                self.inner
+                    .default_binding
+                    .lock()
+                    .expect("default binding mutex poisoned")
+                    .clone()
+            })
+    }
+
+    pub(crate) fn add_process_sandbox_writable_root(
+        &self,
+        pid: alan_kernel::Pid,
+        path: std::path::PathBuf,
+    ) -> bool {
+        let mut bindings = self
+            .inner
+            .process_bindings
+            .lock()
+            .expect("process binding mutex poisoned");
+        if let Some(binding) = bindings.get_mut(&pid) {
+            return add_sandbox_writable_root(binding, path);
+        }
+        drop(bindings);
+        self.inner
+            .default_binding
+            .lock()
+            .expect("default binding mutex poisoned")
+            .as_mut()
+            .is_some_and(|binding| add_sandbox_writable_root(binding, path))
+    }
+}
+
+fn add_sandbox_writable_root(binding: &mut ToolExecutionBinding, path: std::path::PathBuf) -> bool {
+    let Some(workspace_root) = binding.workspace_root.clone() else {
+        return false;
+    };
+    let normalized = normalize_sandbox_root(path);
+    if protected_path_component(&normalized).is_some() {
+        return false;
+    }
+    let mut spec = binding
+        .sandbox_spec
+        .clone()
+        .unwrap_or_else(|| SandboxSpec::seed(workspace_root));
+    if spec.writable_roots.iter().any(|root| root == &normalized) {
+        binding.sandbox_spec = Some(spec);
+        return false;
+    }
+    spec.writable_roots.push(normalized);
+    binding.sandbox_spec = Some(spec);
+    true
 }
 
 #[async_trait::async_trait]

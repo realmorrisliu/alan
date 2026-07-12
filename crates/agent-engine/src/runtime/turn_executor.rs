@@ -2472,7 +2472,6 @@ mod tests {
             machine,
             current_submission_id: None,
             environment: NamespaceRuntimeEnvironment::new(root.clone(), "/agent/1", "default"),
-            tool_catalog: tools,
             core_config: config,
             runtime_config,
             workspace_persona_dirs: Vec::new(),
@@ -2558,9 +2557,8 @@ description: {description}
     }
 
     #[tokio::test]
-    async fn hidden_registry_tool_is_not_model_callable() {
-        let mut state = create_test_state_with_provider(ContentMockProvider::new("ok"));
-        state.tool_catalog.register(NetworkCapabilityTool);
+    async fn unmounted_tool_is_not_model_callable() {
+        let state = create_test_state_with_provider(ContentMockProvider::new("ok"));
 
         let (_, tools) = turn_tool_definitions(&state).await.unwrap();
         assert!(!tools.iter().any(|tool| tool.name == "network_probe"));

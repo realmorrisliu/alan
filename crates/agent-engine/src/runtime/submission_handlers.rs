@@ -519,16 +519,16 @@ fn handle_mount_escalation_resolution(
             .is_some_and(|grant| grant.access == ApprovedMountGrantAccess::ReadWrite)
         && grant.as_ref().is_some_and(|grant| {
             state
-                .tool_catalog
-                .add_default_sandbox_writable_root(grant.host_path.clone())
+                .namespace_environment()
+                .add_tool_sandbox_writable_root(grant.host_path.clone())
         });
     let tool_sandbox_applied = approved
         && grant
             .as_ref()
             .is_some_and(|grant| grant.access == ApprovedMountGrantAccess::ReadWrite)
         && state
-            .tool_catalog
-            .default_sandbox_writable_roots()
+            .namespace_environment()
+            .tool_sandbox_writable_roots()
             .iter()
             .any(|root| {
                 grant
@@ -748,7 +748,9 @@ mod tests {
             Access::ReadWrite,
         );
         let root = InProcessTransport::new(Arc::new(MountFs::new(namespace)));
-        NamespaceRuntimeEnvironment::new(root, "/agent/1", "default")
+        attach_test_process_context(NamespaceRuntimeEnvironment::new(
+            root, "/agent/1", "default",
+        ))
     }
 
     fn namespace_environment_with_mount_applicator_for_test(
@@ -761,8 +763,19 @@ mod tests {
             Access::ReadWrite,
         );
         let root = InProcessTransport::new(Arc::new(MountFs::new(namespace)));
-        NamespaceRuntimeEnvironment::new(root, "/agent/1", "default")
-            .with_mount_grant_applicator(applicator)
+        attach_test_process_context(
+            NamespaceRuntimeEnvironment::new(root, "/agent/1", "default")
+                .with_mount_grant_applicator(applicator),
+        )
+    }
+
+    fn attach_test_process_context(
+        environment: NamespaceRuntimeEnvironment,
+    ) -> NamespaceRuntimeEnvironment {
+        let procfs = ProcFs::new();
+        let agent_root = Arc::new(alan_agentfs::AgentRootFs::new(Arc::new(procfs.clone())));
+        let runner = crate::tools::ToolProcessRunner::from_registry(&ToolRegistry::new());
+        environment.with_process_context(procfs, agent_root, alan_kernel::Pid(1), runner)
     }
 
     async fn namespace_environment_with_live_process_for_test()
@@ -800,13 +813,23 @@ mod tests {
             machine,
             current_submission_id: None,
             environment: namespace_environment_for_test(),
-            tool_catalog: ToolRegistry::new(),
             core_config: config,
             runtime_config,
             workspace_persona_dirs: Vec::new(),
             prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
             turn_state: TurnState::default(),
         }
+    }
+
+    fn bind_test_workspace(state: &RuntimeLoopState, workspace: &std::path::Path) {
+        let workspace = workspace.to_path_buf();
+        assert!(state.namespace_environment().set_tool_execution_binding(
+            crate::tools::ToolExecutionBinding::with_workspace(
+                workspace.clone(),
+                workspace.clone(),
+                workspace.join(".alan/runtime/test/tmp"),
+            ),
+        ));
     }
 
     fn mount_escalation_pending_confirmation_with(
@@ -1273,9 +1296,7 @@ mod tests {
             AgentMachine::new_with_recorder_in_dir("mount-approve", "test-model", temp.path())
                 .await
                 .unwrap();
-        state
-            .tool_catalog
-            .set_default_workspace_root(workspace.path().to_path_buf());
+        bind_test_workspace(&state, workspace.path());
         state
             .turn_state
             .set_confirmation(mount_escalation_pending_confirmation_with(
@@ -1315,7 +1336,7 @@ mod tests {
             tool_result["mount_request"]["namespace_path"],
             "/mnt/project"
         );
-        let roots = state.tool_catalog.default_sandbox_writable_roots();
+        let roots = state.namespace_environment().tool_sandbox_writable_roots();
         assert_eq!(roots.len(), 2);
         assert_eq!(roots[0], workspace.path());
         assert_eq!(roots[1], dunce::canonicalize(approved_host.path()).unwrap());
@@ -1361,9 +1382,7 @@ mod tests {
         let mut state = create_test_state();
         state.environment =
             namespace_environment_with_mount_applicator_for_test(applicator.clone());
-        state
-            .tool_catalog
-            .set_default_workspace_root(workspace.path().to_path_buf());
+        bind_test_workspace(&state, workspace.path());
         state
             .turn_state
             .set_confirmation(mount_escalation_pending_confirmation_with(
@@ -1406,9 +1425,7 @@ mod tests {
         let mut state = create_test_state();
         state.environment =
             namespace_environment_with_mount_applicator_for_test(applicator.clone());
-        state
-            .tool_catalog
-            .set_default_workspace_root(workspace.path().to_path_buf());
+        bind_test_workspace(&state, workspace.path());
         state
             .turn_state
             .set_confirmation(mount_escalation_pending_confirmation_with(
@@ -1435,7 +1452,7 @@ mod tests {
         assert_eq!(tool_result["namespace_applied"], true);
         assert_eq!(tool_result["tool_sandbox_applied"], false);
         assert_eq!(
-            state.tool_catalog.default_sandbox_writable_roots(),
+            state.namespace_environment().tool_sandbox_writable_roots(),
             vec![workspace.path().to_path_buf()]
         );
         let grants = applicator.grants();
@@ -1451,9 +1468,7 @@ mod tests {
         let mut state = create_test_state();
         state.environment =
             namespace_environment_with_mount_applicator_for_test(applicator.clone());
-        state
-            .tool_catalog
-            .set_default_workspace_root(workspace.path().to_path_buf());
+        bind_test_workspace(&state, workspace.path());
         state
             .turn_state
             .set_confirmation(mount_escalation_pending_confirmation_with(
@@ -1489,9 +1504,7 @@ mod tests {
         let workspace = TempDir::new().unwrap();
         let approved_host = TempDir::new().unwrap();
         let mut state = create_test_state();
-        state
-            .tool_catalog
-            .set_default_workspace_root(workspace.path().to_path_buf());
+        bind_test_workspace(&state, workspace.path());
         let cancel = CancellationToken::new();
         let mut emit = |_event: Event| async {};
 
@@ -1516,7 +1529,7 @@ mod tests {
             .unwrap();
         }
 
-        let roots = state.tool_catalog.default_sandbox_writable_roots();
+        let roots = state.namespace_environment().tool_sandbox_writable_roots();
         assert_eq!(
             roots,
             vec![
@@ -1534,9 +1547,7 @@ mod tests {
         let workspace = TempDir::new().unwrap();
         let approved_host = TempDir::new().unwrap();
         let mut state = create_test_state();
-        state
-            .tool_catalog
-            .set_default_workspace_root(workspace.path().to_path_buf());
+        bind_test_workspace(&state, workspace.path());
         state
             .turn_state
             .set_confirmation(mount_escalation_pending_confirmation_with(
@@ -1564,7 +1575,7 @@ mod tests {
         assert_eq!(tool_result["tool_sandbox_applied"], false);
         assert_eq!(tool_result["tool_sandbox_projection_changed"], false);
         assert_eq!(
-            state.tool_catalog.default_sandbox_writable_roots(),
+            state.namespace_environment().tool_sandbox_writable_roots(),
             vec![workspace.path().to_path_buf()]
         );
     }
@@ -1579,9 +1590,7 @@ mod tests {
             AgentMachine::new_with_recorder_in_dir("mount-reject", "test-model", temp.path())
                 .await
                 .unwrap();
-        state
-            .tool_catalog
-            .set_default_workspace_root(workspace.path().to_path_buf());
+        bind_test_workspace(&state, workspace.path());
         state
             .turn_state
             .set_confirmation(mount_escalation_pending_confirmation_with(
@@ -1614,7 +1623,7 @@ mod tests {
         assert_eq!(tool_result["tool_sandbox_projection_changed"], false);
         assert_eq!(tool_result["live_applied"], false);
         assert_eq!(
-            state.tool_catalog.default_sandbox_writable_roots(),
+            state.namespace_environment().tool_sandbox_writable_roots(),
             vec![workspace.path().to_path_buf()]
         );
 
