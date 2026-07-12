@@ -92,12 +92,15 @@ when a second package type becomes real.
 
 Skill capabilities have exactly one owner: Quartermaster. There is no bypass
 source. Every skill an agent can reach — including alan's own first-party
-built-ins — is a Q package that lives in the store and projects through
-`/lib/pkg`; agents/agent-roots and workspaces contribute skills only by being
-Q packages, never through a separately-enumerated host directory. This retires
-the legacy multi-source enumeration (`package_dirs_for_roots`: built-in +
-`AgentRoot/skills/` + `.agents/skills/` scanned as independent sources) in
-favor of one authority that resolves the capability set for a given agent.
+built-ins — is a Q package projected through `/lib/pkg`. Pre-installed and
+distribution packages live in the channel-scoped store; AgentRoot, workspace,
+and public skills remain at their authored locations and are registered as Q
+local-source providers, never copied into the store. They contribute skills
+only through Q resolution, not through a separately enumerated host directory.
+This retires the legacy multi-source enumeration (`package_dirs_for_roots`:
+built-in + `AgentRoot/skills/` + `.agents/skills/` scanned as independent
+sources) in favor of one authority that resolves the capability set for a
+given agent.
 
 This is **physical unification**, chosen over interface-only unification (Q as
 a single façade that still aggregates untouched legacy source directories). The
@@ -117,9 +120,9 @@ Two concepts that "physical unification" must **not** be allowed to conflate:
   `refactor-engine-namespace-native` (ADR-0027 Ring 2, unfinished).
 
 Until Ring 2 lands, the engine obtains its resolved capability set through Q's
-host-side resolution interface (the "use Q to find skills" path), while the
-store and `/lib/pkg` projection are already the single physical home. When Ring
-2 lands, the resolution interface degrades into the agent walking the
+host-side resolution interface (the "use Q to find skills" path), while
+`/lib/pkg` is already the single namespace view over store-backed and
+local-source providers. When Ring 2 lands, the resolution interface degrades into the agent walking the
 manifest-selected roots under `/lib/pkg` directly — a presentation-layer
 finish, not a re-architecture.
 
