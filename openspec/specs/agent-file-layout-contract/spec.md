@@ -185,15 +185,19 @@ only when the consuming process spawns them under its own namespace and policy.
 
 ### Requirement: The request is assembled from the namespace
 Alan OS SHALL assemble the logical model request as a view over namespace files:
-`machine/tape`, `context/`, and visible Tool packages. Tape compaction SHALL be
-a view over `machine/tape` (tape is truth; the context-window view is what is
-sent), not a hidden runtime step. An agent's model-callable Tools SHALL be
-exactly the visible `/bin` entries that carry a valid Tool manifest at
-`/lib/exec/<tool>/manifest`. Agent Executables and ordinary commands in the
-`/bin` union are spawn targets, not model-callable Tools, and SHALL NOT appear in
-the request's Tool list. Tool definition, capability, locality, and execution
+`machine/tape`, `context/`, visible Tool packages, and the Agent Runtime
+Service's defined interaction/governance control operations. Tape compaction
+SHALL be a view over `machine/tape` (tape is truth; the context-window view is
+what is sent), not a hidden runtime step. An agent's executable model-callable
+Tools SHALL be exactly the visible `/bin` entries that carry a valid Tool
+manifest at `/lib/exec/<tool>/manifest`. Agent Executables and ordinary commands
+in the `/bin` union are spawn targets, not model-callable Tools, and SHALL NOT
+appear in the request's Tool list. Tool definition, capability, locality, and execution
 metadata SHALL come from the mounted package files, with no separate catalog or
-registry authority.
+registry authority. Runtime-owned request, mount, plan, and delegation controls
+MAY expose model-callable operation schemas without pretending to be executable
+Tool packages; their handlers SHALL write the corresponding AgentFS, namespace,
+or machine-control surfaces and SHALL NOT grant `/bin` execution authority.
 
 #### Scenario: Context is changed
 - **WHEN** a file is bound into or removed from an agent's `context/` or `/bin`
@@ -218,6 +222,14 @@ registry authority.
 - **THEN** request assembly does not expose that entry as a model-callable Tool
 - **AND** the failure identifies the incomplete mounted package rather than
   consulting process-global defaults
+
+#### Scenario: Runtime exposes an interaction control
+- **WHEN** the Agent Runtime Service exposes a request, mount, plan, or
+  delegation control to the model
+- **THEN** request assembly identifies it as a runtime-owned control operation,
+  not a mounted executable Tool package
+- **AND** invoking it writes its defined file/control surface without spawning
+  an arbitrary `/bin` executable
 
 ### Requirement: Referenced capability file servers have explicit mount boundaries
 Alan OS SHALL treat the LLM provider, Memory Store, Tool, and Skill capabilities

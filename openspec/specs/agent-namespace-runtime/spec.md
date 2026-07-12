@@ -51,8 +51,8 @@ generate. The `events` records are the source of truth for the model's output.
 - **AND** the engine cannot reach a model by any other means
 
 ### Requirement: Tools are executables invoked through the process namespace
-The engine SHALL discover a model-callable Tool only when a visible executable
-at `/bin/<tool>` has a valid mounted manifest at
+The engine SHALL discover an executable model-callable Tool only when a visible
+executable at `/bin/<tool>` has a valid mounted manifest at
 `/lib/exec/<tool>/manifest`. It SHALL derive the Tool's model definition,
 capability classification, locality, and execution hints from that package and
 invoke the Tool by spawning its executable via `/proc/clone`, then reading the
@@ -63,6 +63,10 @@ the current convention-enforced stage, host composition and Process-runner
 adapters MAY use in-process implementation registries to materialize and host
 mounted Tool packages, but they SHALL NOT make an unmounted Tool visible or
 executable and every invocation SHALL still cross `/proc/clone`.
+Runtime-owned interaction, governance, plan, and delegation controls MAY expose
+model-callable operation schemas without `/bin` packages, but they SHALL be
+handled as transition-local control operations that write their defined files
+or namespace state and SHALL NOT provide arbitrary executable dispatch.
 
 #### Scenario: The engine calls a Tool
 - **WHEN** a turn requires a Tool effect and the complete Tool package is
@@ -88,6 +92,14 @@ executable and every invocation SHALL still cross `/proc/clone`.
 - **WHEN** `/lib/exec/<tool>/manifest` exists but `/bin/<tool>` is absent from
   the Process namespace
 - **THEN** the manifest grants no Tool visibility or execution authority
+
+#### Scenario: Model calls a runtime control operation
+- **WHEN** the model calls a runtime-provided request, mount, plan, or
+  delegation control
+- **THEN** the transition loop handles the defined control operation and writes
+  its owning AgentFS, namespace, or machine-control surface
+- **AND** the absence of a `/bin` Tool package does not turn the control into an
+  executable Tool or permit arbitrary Process spawn
 
 ### Requirement: Agent state is written to the agent's files
 The engine SHALL have each state owner write directly to the Agent Process files:
