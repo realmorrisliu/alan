@@ -45,7 +45,7 @@
 - [ ] 6.1 Cover Q resolution: built-in pre-installed + agent-root local-source + distribution all resolve through one authority; no independent directory scan remains
 - [ ] 6.2 Build a synthetic fixture repo: command `.md` with `$ARGUMENTS` + foreign vocabulary, bare portable `SKILL.md`, shared repo-root helper referenced by both
 - [ ] 6.3 Cover conversion output: frontmatter, preamble placement, verbatim body, tool-vs-runtime-capability dependency emission, PATH cannot satisfy unsupported surfaces, unknown-token reporting, `/lib/pkg` helper addressing
-- [ ] 6.4 Cover install: package-id derivation and collision rejection, store layout (source/ + materialized/), provenance (git and non-git sources), manifest-selected skill roots, cross-owner collision rejection even with force, duplicate-source precedence
+- [ ] 6.4 Cover install: package-id derivation (including equivalent git URLs with/without terminal `.git`) and collision rejection, store layout (source/ + materialized/), provenance (git and non-git sources), manifest-selected skill roots, cross-owner collision rejection even with force, duplicate-source precedence
 - [ ] 6.5 Cover upgrade: unchanged no-op, upstream-change re-materialization, local-modification warn/skip/force
 - [ ] 6.6 Cover uninstall exactness (manifest-only deletion, diverged-file preservation) and list output
 - [ ] 6.7 Cover honest failure: resolved skill with an unsatisfied runtime-capability dependency produces availability issues visible through inspection

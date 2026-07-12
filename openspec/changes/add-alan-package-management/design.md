@@ -153,11 +153,13 @@ deliberately closed and forces loader changes for one workload.
 ### D2: The unit of distribution is an identified source tree pinned to a revision
 
 `q install <git-url|path>` places a checkout in the package store. Q derives a
-package id by lowercasing the source basename, replacing each run of non-ASCII
-alphanumeric characters with `-`, and trimming edge hyphens; an empty result is
-rejected. `--name <package-id>` overrides that default under the same syntax.
+package id by stripping a terminal `.git` suffix from the source basename,
+lowercasing it, replacing each run of non-ASCII alphanumeric characters with
+`-`, and trimming edge hyphens; an empty result is rejected.
+`--name <package-id>` overrides that default under the same syntax.
 The id MUST be unique within the active channel. Source identity is the
-canonical git URL for git sources or canonical absolute path for local sources.
+canonical git URL with an optional terminal `.git` suffix normalized away for
+git sources, or canonical absolute path for local sources.
 If an existing package with that id has different source identity, install
 fails before any write and tells the user to choose another `--name`; neither
 the store nor the projection is reused implicitly. The store's **canonical address is

@@ -56,8 +56,9 @@ exposure rules.
   existing skill package contract
 
 #### Scenario: Default package id is unique
-- **WHEN** `q install` lowercases the source basename, replaces each run of
-  non-ASCII alphanumeric characters with `-`, and trims edge hyphens
+- **WHEN** `q install` strips a terminal `.git` suffix from the source basename,
+  lowercases it, replaces each run of non-ASCII alphanumeric characters with
+  `-`, and trims edge hyphens
 - **THEN** that id identifies the store entry and `/lib/pkg/<package-id>/`
 - **AND** an empty result is rejected, while `--name <package-id>` may provide
   an id under the same syntax
@@ -66,8 +67,9 @@ exposure rules.
 
 #### Scenario: Package source identity is stable
 - **WHEN** Q compares an install with an existing package id
-- **THEN** source identity is the canonical git URL for a git source or the
-  canonical absolute path for a local source
+- **THEN** source identity is the canonical git URL with an optional terminal
+  `.git` suffix normalized away for a git source, or the canonical absolute
+  path for a local source
 
 #### Scenario: Store is channel-scoped
 - **WHEN** a package is installed under a given install channel
