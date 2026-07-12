@@ -620,6 +620,7 @@ mod manifest_pane_tree {
     }
 
     #[derive(Debug, Clone, Serialize, Deserialize)]
+    #[serde(deny_unknown_fields)]
     struct ManifestPaneTreeNode {
         node_id: String,
         kind: PaneTreeKind,

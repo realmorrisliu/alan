@@ -145,6 +145,28 @@ fn manifest_validate_rejects_unknown_nested_fields() {
         response.payload.expect("validation payload")["valid"],
         false
     );
+
+    let mut manifest = request(
+        "manifest.default_manifest",
+        json!({
+            "window_id": "window_main",
+            "default_working_directory": "/repo/app",
+            "now": "2026-06-17T12:00:00Z"
+        }),
+    )
+    .payload
+    .expect("default manifest payload")["manifest"]
+        .clone();
+    manifest["spaces"][0]["tabs"][0]["live_snapshot"]["pane_tree"]["future_field"] = json!(true);
+    let response = request(
+        "manifest.validate",
+        json!({ "manifest_json": manifest.to_string() }),
+    );
+    assert!(response.error.is_none());
+    assert_eq!(
+        response.payload.expect("validation payload")["valid"],
+        false
+    );
 }
 
 #[test]
