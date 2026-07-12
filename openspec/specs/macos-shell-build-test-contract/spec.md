@@ -514,7 +514,8 @@ the authoritative UI, interaction, build, lifecycle, or runtime contract.
 - **WHEN** macOS shell documentation or build/test metadata is updated
 - **THEN** focused validation checks for stale active references to retired
   macOS shell contract paths
-- **AND** any required compatibility bridge clearly states that OpenSpec wins
+- **AND** validation rejects any fallback authority that would keep a retired
+  contract path active beside OpenSpec
 
 ### Requirement: Split topology indicators have focused verification
 The Apple client SHALL include focused automated or documented verification for

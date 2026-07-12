@@ -3632,7 +3632,6 @@ description: {description}
         state.runtime_config.context_window_tokens = 1;
         state.runtime_config.compaction_soft_trigger_ratio = 0.0;
         state.runtime_config.compaction_hard_trigger_ratio = 0.0;
-        state.runtime_config.compaction_trigger_ratio = 0.0;
         state.machine.add_user_message("Earlier input");
         state.machine.add_assistant_message("Earlier output", None);
         let boundary_message_count = state.machine.tape.messages().len();
@@ -3684,7 +3683,6 @@ description: {description}
         state.runtime_config.context_window_tokens = 1;
         state.runtime_config.compaction_soft_trigger_ratio = 0.0;
         state.runtime_config.compaction_hard_trigger_ratio = 0.0;
-        state.runtime_config.compaction_trigger_ratio = 0.0;
         state.runtime_config.compaction_keep_last = 1;
         state.machine.add_user_message("Earlier input");
         let earlier_output = "Earlier output".repeat(20);
@@ -4429,7 +4427,7 @@ description: {description}
         state.runtime_config.compaction_trigger_messages = 1_000;
         state.runtime_config.compaction_keep_last = 1;
         state.runtime_config.context_window_tokens = 512;
-        state.runtime_config.compaction_trigger_ratio = 0.5;
+        state.runtime_config.compaction_hard_trigger_ratio = 0.5;
 
         let cancel = CancellationToken::new();
         let mut events = vec![];
@@ -4529,7 +4527,7 @@ description: {description}
         state.runtime_config.compaction_trigger_messages = 1_000;
         state.runtime_config.compaction_keep_last = 1;
         state.runtime_config.context_window_tokens = 512;
-        state.runtime_config.compaction_trigger_ratio = 0.5;
+        state.runtime_config.compaction_hard_trigger_ratio = 0.5;
         state.turn_state.record_auto_mid_turn_compaction(256);
         state.turn_state.record_auto_mid_turn_compaction(512);
 
@@ -5385,7 +5383,6 @@ runtime:
         state.runtime_config.compaction_trigger_messages = usize::MAX;
         state.runtime_config.compaction_soft_trigger_ratio = 1.0;
         state.runtime_config.compaction_hard_trigger_ratio = 1.0;
-        state.runtime_config.compaction_trigger_ratio = 1.0;
         for idx in 0..3 {
             state
                 .machine
@@ -5488,7 +5485,6 @@ runtime:
         state.runtime_config.compaction_trigger_messages = usize::MAX;
         state.runtime_config.compaction_soft_trigger_ratio = 1.0;
         state.runtime_config.compaction_hard_trigger_ratio = 1.0;
-        state.runtime_config.compaction_trigger_ratio = 1.0;
         for idx in 0..3 {
             state
                 .machine

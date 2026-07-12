@@ -1,7 +1,9 @@
 # sandbox-autonomy-invariants Specification
 
 ## Purpose
-TBD - created by archiving change add-autonomous-review-mode. Update Purpose after archive.
+Defines security invariants shared by autonomous review and OS sandboxing,
+including token-aware red lines, reviewer limitations, command-independent
+confinement, and resumable renderer file streams.
 ## Requirements
 ### Requirement: Red-line detection is token-aware, never substring
 

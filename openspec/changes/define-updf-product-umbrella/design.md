@@ -472,11 +472,10 @@ This likely maps to a new shell content kind such as `updfPreview`, parallel to
 the existing terminal, markdown, and settings content kinds. It should fit the
 current pane/split model rather than creating a separate application mode.
 
-While the macOS line is parked, a named `UPDFPreviewHostCompatibilityBridge` may
-translate the current content-kind action into opening the `.updf` package and
-rendering its files. The bridge owns no package, QA, comment, or review truth,
-adds no bridge-only behavior, and is deleted when the surface consumes the file
-contract directly.
+Entry criterion: Alan for macOS can open and read the `.updf` package file
+contract directly from the shell workspace. Until that host attachment exists,
+the macOS preview line remains parked rather than introducing an alternate
+content action or client-facing authority.
 
 The first preview is read-only. It should not edit source, mutate packages,
 invoke agent repair, or display raw build internals by default.

@@ -46,6 +46,16 @@ guard-macos-auto-update:
 guard-shell-design-tokens:
     ./scripts/check-shell-design-tokens.sh
 
+# Check canonical specs, active changes, and OpenSpec schema instructions
+guard-openspec-current-surfaces:
+    bash scripts/check-openspec-current-surfaces.sh
+
+# Run OpenSpec guard fixtures, current-surface checks, and strict validation
+openspec-check:
+    bash scripts/test-openspec-current-surfaces.sh
+    bash scripts/check-openspec-current-surfaces.sh
+    openspec validate --all --strict
+
 # Run focused macOS auto-update tests and release appcast guards
 apple-auto-update-tests:
     bash clients/apple/scripts/test-macos-auto-update-policy.sh

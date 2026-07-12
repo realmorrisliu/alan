@@ -52,39 +52,43 @@
   writes, concurrent selection/body changes, safe result append, materialization
   records, and blocking event reads.
 
-## 4. Native run Tool And Package Projection
+## 4. Native run Tool And Canonical Package Mount
 
-- [ ] 4.1 Implement the native Rust `run` Tool as an ordinary executable Process
+- [ ] 4.1 Confirm the canonical package/binfs mount can publish an executable,
+  Tool Manifest, and manual atomically into the caller Namespace; keep command
+  exposure and the end-to-end harness blocked until this entry criterion is met.
+- [ ] 4.2 Implement the native Rust `run` Tool as an ordinary executable Process
   that receives a buffer Path or bounded descriptors plus the expected body and
   address snapshot, reads the captured command, and validates through editfs
   before dispatch.
-- [ ] 4.2 Dispatch the shared Alan Shell command executor inside `run` under the
+- [ ] 4.3 Dispatch the shared Alan Shell command executor inside `run` under the
   inherited Process Namespace and credentials; ensure missing executables,
   mounts, descriptors, or policy approval cannot be supplied by editfs.
-- [ ] 4.3 Stream every command result to `/proc/<pid>/io/output`; for finite
+- [ ] 4.4 Stream every command result to `/proc/<pid>/io/output`; for finite
   bounded UTF-8 output, implement safe end-append materialization with bounded
   conflict retries and distinct command-vs-materialization status diagnostics.
-- [ ] 4.4 Keep `tail` running with its source Stream Descriptor, publish live
+- [ ] 4.5 Keep `tail` running with its source Stream Descriptor, publish live
   bytes only through Process output, close descriptors on exit/cancel, and prove
   explicit finite capture by running `cat` on retained Process output.
-- [ ] 4.5 Add `/bin/run`, `/lib/exec/run/manifest`, and `/man/1/run` through a
-  named namespace-bootstrap compatibility projection; document its deletion
-  gate when `alan-binfs`/normal package mounts land and do not expose `run` only
-  through the Agent Execution Engine-private Tool registry.
-- [ ] 4.6 Add Tool/process tests for manifest/manual discovery, successful and
+- [ ] 4.6 Publish `/bin/run`, `/lib/exec/run/manifest`, and `/man/1/run` only
+  through the canonical package/binfs mount, and do not expose `run` through a
+  startup helper, harness-only binding, or Agent Execution Engine-private Tool
+  registry.
+- [ ] 4.7 Add Tool/process tests for manifest/manual discovery, successful and
   stale selection, unknown command, finite output, non-UTF-8/oversized output,
   spawn denial, side-effect failure, materialization conflict, live tail,
   cancellation, and Process exit state.
-- [ ] 4.7 Add governance-parity tests: a Tool whose direct spawn requires policy
+- [ ] 4.8 Add governance-parity tests: a Tool whose direct spawn requires policy
   escalation or approval raises the identical escalation, approval, and audit
   records when spawned by the evaluator through `run`; `run` itself carries no
   pre-approved authority and the audit names the inner Tool identity.
 
 ## 5. Headless Programmable Client Harness
 
-- [ ] 5.1 Assemble a headless Namespace with `/proc`, `/srv/edit`, the single
-  `/mnt/edit` buffer, `/bin/run`, package metadata, and representative readable,
-  writable, and Stream files without adding a buffer manager or new root.
+- [ ] 5.1 After the canonical package/binfs entry criterion is met, assemble a
+  headless Namespace with `/proc`, `/srv/edit`, the single `/mnt/edit` buffer,
+  the mounted `run` package, and representative readable, writable, and Stream
+  files without adding a buffer manager or new root.
 - [ ] 5.2 Prove the complete loop: discover namespace files, edit/select a Shell
   command, spawn `run`, observe `/proc/<pid>`, validate through editfs, stream
   output, materialize a finite result, and inspect Process-linked buffer events.
@@ -110,7 +114,7 @@
 ## 7. Verification, Review, And Archive Readiness
 
 - [ ] 7.1 Run `cargo fmt --all` and focused tests for `alan-shell`, `alan-editfs`,
-  `alan-kernel`, the native runtime bootstrap/runner owner, and the new headless
+  `alan-kernel`, the canonical package/runner owner, and the new headless
   harness.
 - [ ] 7.2 Run focused Clippy with warnings denied for every materially changed
   Rust crate, then run the proportional workspace test/check gate required by
@@ -119,6 +123,6 @@
   --strict`, `openspec validate --all --strict`, and `git diff --check`.
 - [ ] 7.4 Review the final diff against ADR-0024 through ADR-0027, the Rust test
   placement contract, namespace amplification caveats, Process/file ownership,
-  and the named binfs compatibility-projection deletion gate.
+  and direct `run` exposure through the canonical package/binfs mount.
 - [ ] 7.5 After implementation review and merge, sync the four delta specs into
   `openspec/specs/`, verify the merged behavior, and archive the change.

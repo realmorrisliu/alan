@@ -1,7 +1,9 @@
 # live-mount-grant-namespace-projection Specification
 
 ## Purpose
-TBD - created by archiving change apply-mount-grants-to-live-namespace. Update Purpose after archive.
+Defines how approved mount grants update a running Agent Process namespace,
+preserve host/Kernel/engine layering, remain idempotent, and record application
+outcomes independently.
 ## Requirements
 ### Requirement: Approved mount grants update the live Agent Process namespace
 The runtime SHALL apply an approved `request_mount` grant to the running Agent
@@ -92,4 +94,3 @@ report `namespace_applied = false` with a concise `namespace_error`.
 - **WHEN** an approved read-only grant is mounted into the namespace
 - **THEN** the tool result reports `namespace_applied = true`
 - **AND** the tool result reports `tool_sandbox_applied = false`
-

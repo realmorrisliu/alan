@@ -5,7 +5,7 @@ nascent control library (`ShellFormControls`), but the library is adopted by exa
 one surface (the Space creation form). The project already has a design-token guard
 (`scripts/check-shell-design-tokens.sh`) that ratchets per-file raw-literal counts
 (`system(size:`, `Color(red:`, numeric `.padding(`); its shell-surface baseline is
-`TerminalPaneView.swift` 63, `ShellSidebarView.swift` 16, `MacShellRootView.swift` 1.
+`TerminalPaneView.swift` 58, `ShellSidebarView.swift` 16, `MacShellRootView.swift` 1.
 But two gaps remain. First, that guard is only a local `just` recipe — it is **not run
 in CI**, so the ratchet is a manual promise. Second, even where styling does use tokens
 correctly, the same presentational concepts are duplicated across giant view files —
@@ -42,7 +42,7 @@ existing raw-literal guard into CI — so duplication grows unchecked.
   (five at landing: terminal-pane SwiftUI chrome and settings surface in
   `TerminalPaneView.swift`; sidebar and space slider in `ShellSidebarView.swift`; root
   chrome in `MacShellRootView.swift`), with completeness verified against the
-  design-token guard's per-file baseline (63 / 16 / 1) so no surface is left unowned —
+  design-token guard's per-file baseline (58 / 16 / 1) so no surface is left unowned —
   replacing raw literals with tokens/primitives and verifying screenshot parity, rather
   than a single big-bang rewrite.
 - Consolidate the duplicated shell implementations (five row structs → `ShellRow`;
@@ -62,11 +62,10 @@ remain owned by their Kernel, file-server, Agent Runtime Service, or app-domain
 owners.
 
 Scope is the primary macOS **shell** SwiftUI presentation layer only. Ghostty/AppKit
-terminal-host internals (`TerminalHostView`, terminal surface input/attachment) and
-the legacy/mobile remote-control console (`Views/Console/`) are explicitly out of
-scope; both remain governed by `macos-app-architecture-maintainability` (the console
-surfaces must stay isolated from the primary shell), so neither is pulled through the
-shell design-system home.
+terminal-host internals (`TerminalHostView`, terminal surface input/attachment) are
+explicitly out of scope and remain governed by
+`macos-app-architecture-maintainability`, so they are not pulled through the shell
+design-system home.
 
 ## Capabilities
 
@@ -101,6 +100,4 @@ shell design-system home.
   `Components/` design-system home.
 - **No behavior change for users** is intended; each phase must hold screenshot
   parity. Out of scope: Rust crates, terminal-host AppKit bridges, non-macOS clients,
-  and the legacy/mobile remote-control console (`Views/Console/`), which
-  `macos-app-architecture-maintainability` requires to stay isolated from the primary
-  macOS shell — it is not pulled through the shell design-system home.
+  and non-shell Apple client surfaces.

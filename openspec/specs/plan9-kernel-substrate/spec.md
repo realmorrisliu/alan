@@ -1,7 +1,9 @@
 # plan9-kernel-substrate Specification
 
 ## Purpose
-TBD - created by archiving change define-plan9-kernel-substrate. Update Purpose after archive.
+Defines Alan Kernel as the ephemeral namespace, Process-table, `/proc`, and
+`/srv` substrate over aP, including file/stream semantics, Process creation,
+access rights, network transparency, and dependency isolation.
 ## Requirements
 ### Requirement: Kernel owns only namespace, process table, and synthetic devices
 Alan Kernel SHALL consist of exactly the namespace engine, the process table, and

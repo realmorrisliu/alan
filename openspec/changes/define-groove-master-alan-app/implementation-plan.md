@@ -1,8 +1,7 @@
 # Groove Master Alan App Implementation Plan
 
-This plan replaces the retired `ShellContentInstance`-centered implementation
-plan. The app-owned file tree lands before rich host UI so every later surface
-uses the same authority.
+The app-owned file tree lands before rich host UI so every later surface uses
+the same authority.
 
 ## Phase 1: Domain Core And In-Memory Tree
 
@@ -28,15 +27,16 @@ Exit evidence: restart test, handle visibility/access test, mounted-tree smoke.
 
 ## Phase 3: Alan For macOS Read-Only Client
 
-1. Render Today Plan, recent Groove Entries, marked moments, and loop metadata by
-   reading the mounted tree.
-2. If the parked host needs current shell content wiring, introduce the named
-   `GrooveMasterHostCompatibilityBridge` and translate only to file reads.
-3. Add visual and accessibility verification without moving domain state into
+Entry criterion: Alan for macOS can open, watch, and read the mounted Groove
+Master tree directly. Until that exists, this phase remains parked.
+
+1. Render Today Plan, recent Groove Entries, marked moments, and loop metadata
+   by reading the mounted tree.
+2. Add visual and accessibility verification without moving domain state into
    SwiftUI models.
 
-Exit evidence: Alan Dev screenshot/smoke, file-fixture renderer test, bridge
-deletion gate documented.
+Exit evidence: Alan Dev screenshot/smoke, file-fixture renderer test, and direct
+aP read/watch evidence.
 
 ## Phase 4: Live Session And Audio
 
@@ -58,9 +58,8 @@ capture session on Alan Dev.
 Exit evidence: namespace assertion, `/proc`/`/agent` visibility, no raw-audio or
 committed-journal write access, proposal accept/discard test.
 
-## Phase 6: Bridge Removal And Closure
+## Phase 6: Verification And Closure
 
-1. Move Alan for macOS to direct aP consumption.
-2. Delete `GrooveMasterHostCompatibilityBridge` and bridge-only tests.
-3. Run focused Rust/Swift verification, full OpenSpec validation, spec sync, and
+1. Confirm Alan for macOS uses only direct aP consumption for Groove Master.
+2. Run focused Rust/Swift verification, full OpenSpec validation, spec sync, and
    archive readiness review.

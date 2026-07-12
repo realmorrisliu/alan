@@ -1,7 +1,9 @@
 # message-routing Specification
 
 ## Purpose
-TBD - created by archiving change add-message-routing. Update Purpose after archive.
+Defines `routefs` typed-message routing by file-backed rules, clunk-committed
+message framing, auditable delivery, blocking receiver streams, and its role as
+a composition mechanism rather than a control path.
 ## Requirements
 ### Requirement: Routefs routes typed messages by rule, sender decoupled
 Alan OS SHALL provide `routefs`, a file server where a sender writes a typed
@@ -67,4 +69,3 @@ owned tree.
   ports, and the message log under `/mnt/route`
 - **AND** clients use that canonical path rather than choosing their own location
 - **AND** ports are blocking-read streams per the kernel stream model
-

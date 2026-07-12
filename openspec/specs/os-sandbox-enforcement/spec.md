@@ -1,7 +1,9 @@
 # os-sandbox-enforcement Specification
 
 ## Purpose
-TBD - created by archiving change add-os-sandbox-enforcement. Update Purpose after archive.
+Defines pluggable macOS and Linux Tool sandbox enforcement, safe degradation,
+projected confinement inputs, sensitive-read controls, and reified namespace
+behavior independent of command-text heuristics.
 ## Requirements
 ### Requirement: Pluggable OS sandbox backends
 Tool execution SHALL be constrained by a selectable sandbox backend behind a common abstraction, with macOS and Linux backends and a degraded path-guard fallback.

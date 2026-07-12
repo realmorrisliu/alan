@@ -1,7 +1,10 @@
 # agent-file-layout-contract Specification
 
 ## Purpose
-TBD - created by archiving change define-agent-file-layout-contract. Update Purpose after archive.
+Defines the generic Process layout and the `/agent` overlay convention,
+including namespace-derived capabilities, file-backed IO with explicit input
+routing, machine state, request/action trees, stream authority, access rights,
+and durability ownership.
 ## Requirements
 ### Requirement: An agent is a conforming process, not a kernel type
 Alan OS SHALL treat an agent as a `Process` whose `/agent/<pid>` overlay conforms
@@ -44,6 +47,27 @@ on top of this full layout.
   newest bytes
 - **AND** clipping of the newest output is a renderer concern, never a gap in the
   stream's data
+
+### Requirement: Agent input records declare routing explicitly
+An input operation written to an Agent Process SHALL use the canonical
+`type: "input"` record and SHALL include an explicit `mode`. Alan SHALL NOT
+accept the retired `type: "steer"` alias or infer a mode when the field is
+absent.
+
+#### Scenario: Explicit input is submitted
+- **WHEN** a caller submits `type: "input"` with a supported explicit mode and
+  valid parts
+- **THEN** the Agent Process routes the input according to that mode
+
+#### Scenario: Input mode is absent
+- **WHEN** a caller submits `type: "input"` without `mode`
+- **THEN** the record is rejected as malformed
+- **AND** Alan does not infer `steer` or any other routing behavior
+
+#### Scenario: Retired steer operation is submitted
+- **WHEN** a caller submits an operation with `type: "steer"`
+- **THEN** the record is rejected as an unsupported operation shape
+- **AND** the caller must resubmit canonical explicit input
 
 ### Requirement: An agent overlays agent files on the generic process layout
 Alan OS SHALL define the agent layout as the generic process layout plus an agent

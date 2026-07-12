@@ -1,7 +1,9 @@
 # editable-buffer-file-server Specification
 
 ## Purpose
-TBD - created by archiving change add-editable-buffer-file-server. Update Purpose after archive.
+Defines the headless `editfs` editable-buffer tree, clunk-committed body and tag
+edits, revision-bound addressing, explicit execution outcomes, and blocking
+event observation.
 ## Requirements
 ### Requirement: editfs exposes the editable buffer files
 
@@ -84,4 +86,3 @@ Alan SHALL expose `event` as a retained blocking-read stream.
 - **WHEN** a client reads `event` at the live edge before new activity exists
 - **THEN** the read remains pending until an edit, address change, or execution
   record is appended
-

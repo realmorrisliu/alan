@@ -36,13 +36,24 @@ script language expression, or side-effecting action.
 ### Requirement: The run Tool creates Alan Shell Evaluator Processes
 Alan Shell SHALL provide a first-party Tool named `run`, bound at `/bin/run`,
 with a Tool Manifest under `/lib/exec/run/manifest` and a manual under
-`/man/1/run`. Each selected-text execution SHALL spawn one ordinary Alan Shell
-Evaluator Process; `/proc/<pid>` SHALL be its execution identity, status,
-output, cancellation, and exit surface. Tool governance and policy escalation
-SHALL apply to every command the evaluator dispatches — including `spawn` of
-another Tool — identically to the same operation invoked directly by the
-caller; `run` SHALL NOT bypass, launder, or pre-approve a policy decision that
-direct invocation would raise.
+`/man/1/run`. These paths SHALL become visible only through the canonical
+package/binfs mount; command exposure SHALL remain blocked while that mount is
+unavailable, and Alan SHALL NOT create a startup or harness-only binding as an
+alternate installation path. Each selected-text execution SHALL spawn one
+ordinary Alan Shell Evaluator Process; `/proc/<pid>` SHALL be its execution
+identity, status, output, cancellation, and exit surface. Tool governance and
+policy escalation SHALL apply to every command the evaluator dispatches —
+including `spawn` of another Tool — identically to the same operation invoked
+directly by the caller; `run` SHALL NOT bypass, launder, or pre-approve a policy
+decision that direct invocation would raise.
+
+#### Scenario: Canonical package mount is unavailable
+- **WHEN** the package/binfs path cannot yet mount the `run` executable,
+  manifest, and manual into the caller Namespace
+- **THEN** `run` command exposure and the programmable-client integration
+  harness remain blocked
+- **AND** no bootstrap helper, renderer, or test fixture publishes a second
+  `/bin/run` authority
 
 #### Scenario: Selected text is executed
 - **WHEN** a client invokes `run` with an editable-buffer Path or bounded

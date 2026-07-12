@@ -1,0 +1,6 @@
+# rule|repo-relative file|literal substring|reason
+bridge-authorization|openspec/specs/alan-app-service-integration/spec.md|does not introduce a callback, DTO, ContentInstance, or host-action bridge|The canonical scenario prohibits interim client authority.
+bridge-authorization|openspec/specs/alan-app-service-integration/spec.md|does not synthesize a namespace-bootstrap compatibility projection|The canonical scenario prohibits an alternate package path.
+bridge-authorization|openspec/specs/documentation-governance/spec.md|Alan SHALL reject active OpenSpec work that authorizes|The canonical requirement rejects bridge authorization.
+bridge-authorization|openspec/specs/documentation-governance/spec.md|permits a named compatibility bridge|The canonical scenario defines a failing validation case.
+bridge-authorization|openspec/changes/finish-namespace-native-engine-boundary/design.md|Add a registry-backed or event-broadcast compatibility bridge|This line is in Non-Goals and rejects the listed fallback.

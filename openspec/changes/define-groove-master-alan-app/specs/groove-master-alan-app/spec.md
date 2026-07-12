@@ -145,16 +145,20 @@ snapshot files, dynamic events streams, and adjacent lifecycle `ctl` files.
 
 ### Requirement: Alan for macOS is a Groove Master file client
 Alan for macOS SHALL render and operate Groove Master from the mounted app tree.
-Any temporary shell-content bridge SHALL translate to canonical file operations,
-own no domain truth, add no bridge-only behavior, and document deletion when the
-surface reads aP directly.
+Native Groove Master surface work SHALL remain blocked until the host can open,
+watch, and write that tree directly.
+
+#### Scenario: Direct host attachment is unavailable
+- **WHEN** Alan for macOS cannot yet open and watch the mounted Groove Master
+  tree
+- **THEN** native Groove Master surface implementation remains blocked
+- **AND** no alternate client-facing authority is introduced
 
 #### Scenario: The first macOS surface opens
-- **WHEN** the parked macOS host still needs a compatibility bridge
-- **THEN** the implementation names the bridge and the file operations it
-  translates
-- **AND** the authoritative plan, session, journal, and producer state remains in
-  `/mnt/groove-master`
+- **WHEN** Alan for macOS renders the first Groove Master surface
+- **THEN** it reads snapshots and watches events from `/mnt/groove-master`
+- **AND** mutations use the same documents and owning `ctl` files available to
+  other authorized file clients
 
 ### Requirement: Product presentation is instrument-first
 The Groove Master app surface SHALL use a focused creative-instrument aesthetic

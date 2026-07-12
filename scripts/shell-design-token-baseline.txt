@@ -1,5 +1,3 @@
 clients/apple/alan-macos/MacShellRootView.swift:1
-clients/apple/alan-macos/TerminalPaneView.swift:63
-clients/apple/alan-macos/Views/Console/ConsoleSupportViews.swift:19
-clients/apple/alan-macos/Views/Console/ContentView.swift:86
+clients/apple/alan-macos/TerminalPaneView.swift:58
 clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift:16

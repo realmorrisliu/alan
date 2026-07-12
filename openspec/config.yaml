@@ -16,6 +16,5 @@ rules:
   tasks:
     - Mark implementation, verification, PR review, and archive-readiness tasks explicitly.
     - After a change is implemented and merged, sync its delta specs into openspec/specs/ before archiving it.
-  archive:
-    - Completed and merged changes should be moved to openspec/changes/archive/YYYY-MM-DD-change-name/.
-    - Active changes should represent only unmerged or intentionally ongoing work.
+    - Treat a change as archive-ready only after its implementation is merged and its delta specs are synced into canonical specs.
+    - Move archive-ready changes to openspec/changes/archive/YYYY-MM-DD-change-name/; active changes should represent only unmerged or intentionally ongoing work.

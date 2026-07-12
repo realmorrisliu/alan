@@ -9,10 +9,10 @@
 //! framing — *an LLM is a typed stream a process reads* — as files, wrapping
 //! `alan-llm` providers and speaking aP.
 //!
-//! This slice is deliberately minimal (the rest of add-llm-file-server —
-//! provider introspection, connection management, the versioned wire DTO,
-//! metering/rate-limiting/cost — stays deferred so the "core" does not absorb a
-//! whole product surface).
+//! This file-server boundary owns provider introspection, mounted Connections,
+//! its versioned request/event DTOs, and connection-local metering and limits.
+//! Provider-specific request construction remains behind `alan-llm`; callers
+//! interact only through the mounted file tree.
 //!
 //! A Generation moves through a small lifecycle: `open` (allocated, awaiting the
 //! request) → `running` (provider streaming) → a terminal state (`done`,
@@ -43,23 +43,8 @@ const RETAIN_TERMINAL_GENERATIONS_PER_CONNECTION: usize = 16;
 /// The neutral request document written to a Generation's `data` file.
 ///
 /// The versioned DTO is owned by llmfs and mapped into `alan-llm` at the file
-/// server boundary. The unversioned `{system,user}` shape is retained only so
-/// the original M2 skeleton and old callers keep working while Slice A migrates.
-#[derive(Deserialize)]
-#[serde(untagged)]
-enum RequestDoc {
-    V1(WireRequestDocV1),
-    Legacy(LegacyRequestDoc),
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct LegacyRequestDoc {
-    #[serde(default)]
-    system: Option<String>,
-    user: String,
-}
-
+/// server boundary. The version discriminator is required and only version 1
+/// is currently supported.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct WireRequestDocV1 {
@@ -186,21 +171,6 @@ struct WireToolCallDelta {
     arguments_delta: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     arguments: Option<String>,
-}
-
-impl RequestDoc {
-    fn into_generation_request(self) -> Result<GenerationRequest, ()> {
-        match self {
-            RequestDoc::Legacy(doc) => {
-                let mut request = GenerationRequest::new().with_user_message(doc.user);
-                if let Some(system) = doc.system {
-                    request = request.with_system_prompt(system);
-                }
-                Ok(request)
-            }
-            RequestDoc::V1(doc) => doc.into_generation_request(),
-        }
-    }
 }
 
 impl WireRequestDocV1 {
@@ -1166,7 +1136,7 @@ impl FileServer for LlmFs {
         };
 
         // Parse the request first (pure): an empty or invalid document is malformed.
-        let doc: Result<RequestDoc, ()> = if buf.is_empty() {
+        let doc: Result<WireRequestDocV1, ()> = if buf.is_empty() {
             Err(())
         } else {
             serde_json::from_slice(&buf).map_err(|_| ())

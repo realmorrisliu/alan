@@ -17,10 +17,11 @@
 
 ## 3. Alan For macOS Client
 
-- [ ] 3.1 Render Today Plan, journal, marked moments, and loops from app-tree
-  fixtures.
-- [ ] 3.2 If required, add `GrooveMasterHostCompatibilityBridge` for current shell
-  content wiring with no bridge-owned state or bridge-only behavior.
+- [ ] 3.1 Confirm Alan for macOS can open, watch, and write the mounted Groove
+  Master tree directly; keep this section blocked until that entry criterion is
+  met.
+- [ ] 3.2 Render Today Plan, journal, marked moments, and loops from app-tree
+  fixtures through the direct file client.
 - [ ] 3.3 Add Alan Dev visual, keyboard, accessibility, and terminal-first host
   verification.
 
@@ -41,7 +42,8 @@
 
 ## 6. Verification And Archive Readiness
 
-- [ ] 6.1 Remove the host compatibility bridge after direct aP consumption lands.
+- [ ] 6.1 Confirm the host surface has no alternate Groove Master authority and
+  consumes only the mounted aP tree.
 - [ ] 6.2 Run focused Rust/Swift tests, Alan Dev UI verification, and relevant
   workspace checks.
 - [ ] 6.3 Run strict validation for this change and the full OpenSpec tree.

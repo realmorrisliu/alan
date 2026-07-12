@@ -27,11 +27,12 @@
 
 ## 4. Alan For macOS Experience
 
-- [ ] 4.1 Implement Hold to Talk shortcut, compact feedback, keyboard
+- [ ] 4.1 Confirm the Voice Service tree and direct Alan for macOS file client can
+  open, watch, and control capture files; keep native Hold to Talk work blocked
+  until that entry criterion is met.
+- [ ] 4.2 Implement Hold to Talk shortcut, compact feedback, keyboard
   cancellation, permission repair, mode/provider disclosure, and canonical
-  `Alan Voice` copy.
-- [ ] 4.2 If required, add `AlanVoiceHostCompatibilityBridge` with no bridge-owned
-  state or behavior and a direct-aP deletion gate.
+  `Alan Voice` copy through the direct Voice Service file client.
 - [ ] 4.3 Remove the old fixed-command `NSSpeechRecognizer` controller.
 
 ## 5. Verification And Archive Readiness
@@ -40,6 +41,7 @@
   cancellation, permission, and legacy-retirement tests.
 - [ ] 5.2 Run focused Apple/Alan service tests and Alan Dev visual verification.
 - [ ] 5.3 Run strict validation for this change and the full OpenSpec tree.
-- [ ] 5.4 Delete the host bridge after direct aP consumption lands.
+- [ ] 5.4 Confirm Alan for macOS has no alternate Voice callback authority and
+  every capture/intent interaction uses the Voice Service tree.
 - [ ] 5.5 After merge, sync `alan-voice-input` into canonical specs before
   archiving.

@@ -1,7 +1,9 @@
 # autonomous-review-mode Specification
 
 ## Purpose
-TBD - created by archiving change add-autonomous-review-mode. Update Purpose after archive.
+Defines deterministic escalation classification, the no-tools reviewer decision
+boundary, prompt-injection resistance, denial-driven self-correction, reviewer
+policy data, and visible reviewer activity.
 ## Requirements
 ### Requirement: Escalations are classified into four outcomes
 The deterministic policy SHALL classify each escalation into exactly one of: auto-allow, deny, always-human, or reviewer-judged. Deny and always-human SHALL be resolved before the reviewer runs, so the reviewer only ever sees reviewer-judged actions.
@@ -72,4 +74,3 @@ The TUI SHALL surface reviewer activity and denial rationale so autonomous decis
 #### Scenario: Review and denial are shown
 - **WHEN** the reviewer reviews an escalation and denies it
 - **THEN** the TUI shows that a review occurred and the denial rationale
-

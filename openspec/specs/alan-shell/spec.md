@@ -1,7 +1,9 @@
 # alan-shell Specification
 
 ## Purpose
-TBD - created by archiving change introduce-alan-shell. Update Purpose after archive.
+Defines Alan Shell as a protocol-only, application-agnostic namespace client
+with generic file/process builtins, concurrent stream tailing, composable Agent
+Process interaction, and a line-oriented stdio driver.
 ## Requirements
 ### Requirement: Alan Shell is a general namespace client over aP
 Alan OS SHALL provide `alan-shell`, a client that operates the namespace only
@@ -80,4 +82,3 @@ read-eval-print loop. Rich terminal rendering SHALL remain the responsibility of
 - **THEN** a user can list, read, write, tail, and spawn over the namespace
 - **AND** Ratatui rendering is provided later by `alan-terminal-ui`, not by this
   change
-

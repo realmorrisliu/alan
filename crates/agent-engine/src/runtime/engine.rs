@@ -556,7 +556,6 @@ struct ExplicitRuntimeOverrides {
     prompt_snapshot_enabled: bool,
     prompt_snapshot_max_chars: bool,
     context_window_tokens: bool,
-    compaction_trigger_ratio: bool,
     compaction_soft_trigger_ratio: bool,
     compaction_hard_trigger_ratio: bool,
     request_control_intent: bool,
@@ -722,12 +721,8 @@ impl AgentConfig {
         if let Some(max_tokens) = persisted.max_tokens {
             self.runtime_config.max_tokens = max_tokens;
         }
-        let effective_hard_trigger_ratio = persisted
-            .compaction_hard_trigger_ratio
-            .or(persisted.compaction_trigger_ratio);
-        if let Some(compaction_hard_trigger_ratio) = effective_hard_trigger_ratio {
+        if let Some(compaction_hard_trigger_ratio) = persisted.compaction_hard_trigger_ratio {
             self.runtime_config.compaction_hard_trigger_ratio = compaction_hard_trigger_ratio;
-            self.runtime_config.compaction_trigger_ratio = compaction_hard_trigger_ratio;
         }
         if let Some(compaction_soft_trigger_ratio) = persisted.compaction_soft_trigger_ratio {
             if compaction_soft_trigger_ratio < self.runtime_config.compaction_hard_trigger_ratio {
@@ -738,12 +733,11 @@ impl AgentConfig {
                 warn!(
                     persisted_soft_trigger_ratio = compaction_soft_trigger_ratio,
                     persisted_hard_trigger_ratio = ?persisted.compaction_hard_trigger_ratio,
-                    persisted_legacy_trigger_ratio = ?persisted.compaction_trigger_ratio,
                     effective_hard_trigger_ratio = self.runtime_config.compaction_hard_trigger_ratio,
                     "Ignoring invalid persisted soft compaction threshold and deriving it from the hard threshold"
                 );
             }
-        } else if effective_hard_trigger_ratio.is_some() {
+        } else if persisted.compaction_hard_trigger_ratio.is_some() {
             self.runtime_config.compaction_soft_trigger_ratio =
                 derived_soft_trigger_ratio(self.runtime_config.compaction_hard_trigger_ratio);
         }
@@ -843,7 +837,6 @@ fn merge_runtime_config_from_core_overlay(
     sync_if_unmodified!(prompt_snapshot_enabled);
     sync_if_unmodified!(prompt_snapshot_max_chars);
     sync_if_unmodified!(context_window_tokens);
-    sync_if_unmodified!(compaction_trigger_ratio);
     sync_if_unmodified!(compaction_soft_trigger_ratio);
     sync_if_unmodified!(compaction_hard_trigger_ratio);
     sync_if_unmodified!(request_control_intent);
@@ -3158,7 +3151,6 @@ mod tests {
             temperature: None,
             max_tokens: None,
             context_window_tokens: None,
-            compaction_trigger_ratio: None,
             compaction_soft_trigger_ratio: None,
             compaction_hard_trigger_ratio: None,
             streaming_mode: None,
@@ -3421,7 +3413,6 @@ required = true
             temperature: None,
             max_tokens: None,
             context_window_tokens: None,
-            compaction_trigger_ratio: None,
             compaction_soft_trigger_ratio: None,
             compaction_hard_trigger_ratio: None,
             streaming_mode: None,
@@ -3478,7 +3469,6 @@ required = true
             temperature: None,
             max_tokens: None,
             context_window_tokens: None,
-            compaction_trigger_ratio: None,
             compaction_soft_trigger_ratio: None,
             compaction_hard_trigger_ratio: None,
             streaming_mode: None,
@@ -3528,9 +3518,8 @@ required = true
             temperature: Some(0.7),
             max_tokens: Some(4096),
             context_window_tokens: Some(32_768),
-            compaction_trigger_ratio: Some(0.7),
             compaction_soft_trigger_ratio: None,
-            compaction_hard_trigger_ratio: None,
+            compaction_hard_trigger_ratio: Some(0.7),
             streaming_mode: None,
             partial_stream_recovery_mode: None,
             governance: None,
@@ -3543,10 +3532,6 @@ required = true
         assert_eq!(
             config.agent_config.runtime_config.context_window_tokens,
             32_768
-        );
-        assert_eq!(
-            config.agent_config.runtime_config.compaction_trigger_ratio,
-            0.7
         );
         assert_eq!(
             config
@@ -3567,7 +3552,7 @@ required = true
     }
 
     #[test]
-    fn test_apply_persisted_state_derives_soft_threshold_from_legacy_ratio_when_invalid() {
+    fn test_apply_persisted_state_derives_soft_threshold_when_persisted_pair_is_invalid() {
         use crate::WorkspaceConfigState;
 
         let mut config = WorkspaceRuntimeConfig::default();
@@ -3581,9 +3566,8 @@ required = true
             temperature: None,
             max_tokens: None,
             context_window_tokens: None,
-            compaction_trigger_ratio: Some(0.7),
             compaction_soft_trigger_ratio: Some(0.75),
-            compaction_hard_trigger_ratio: None,
+            compaction_hard_trigger_ratio: Some(0.7),
             streaming_mode: None,
             partial_stream_recovery_mode: None,
             governance: None,
@@ -3591,10 +3575,6 @@ required = true
 
         config.apply_persisted_state(&persisted);
 
-        assert_eq!(
-            config.agent_config.runtime_config.compaction_trigger_ratio,
-            0.7
-        );
         assert_eq!(
             config
                 .agent_config
@@ -3629,7 +3609,6 @@ required = true
             temperature: None,
             max_tokens: None,
             context_window_tokens: None,
-            compaction_trigger_ratio: None,
             compaction_soft_trigger_ratio: None,
             compaction_hard_trigger_ratio: None,
             streaming_mode: None,
@@ -3668,7 +3647,6 @@ required = true
             temperature: None,
             max_tokens: None,
             context_window_tokens: None,
-            compaction_trigger_ratio: None,
             compaction_soft_trigger_ratio: None,
             compaction_hard_trigger_ratio: None,
             streaming_mode: None,
@@ -3704,7 +3682,6 @@ required = true
             temperature: None,
             max_tokens: None,
             context_window_tokens: None,
-            compaction_trigger_ratio: None,
             compaction_soft_trigger_ratio: None,
             compaction_hard_trigger_ratio: None,
             streaming_mode: None,
@@ -3743,7 +3720,6 @@ required = true
             temperature: None,
             max_tokens: None,
             context_window_tokens: None,
-            compaction_trigger_ratio: None,
             compaction_soft_trigger_ratio: None,
             compaction_hard_trigger_ratio: None,
             streaming_mode: None,
@@ -3782,7 +3758,6 @@ required = true
             temperature: None,
             max_tokens: None,
             context_window_tokens: None,
-            compaction_trigger_ratio: None,
             compaction_soft_trigger_ratio: None,
             compaction_hard_trigger_ratio: None,
             streaming_mode: None,
@@ -3821,7 +3796,6 @@ required = true
             temperature: None,
             max_tokens: None,
             context_window_tokens: None,
-            compaction_trigger_ratio: None,
             compaction_soft_trigger_ratio: None,
             compaction_hard_trigger_ratio: None,
             streaming_mode: None,
@@ -3859,7 +3833,6 @@ required = true
             temperature: None,
             max_tokens: None,
             context_window_tokens: None,
-            compaction_trigger_ratio: None,
             compaction_soft_trigger_ratio: None,
             compaction_hard_trigger_ratio: None,
             streaming_mode: None,
@@ -3993,7 +3966,6 @@ required = true
             temperature: None,
             max_tokens: None,
             context_window_tokens: None,
-            compaction_trigger_ratio: None,
             compaction_soft_trigger_ratio: None,
             compaction_hard_trigger_ratio: None,
             streaming_mode: None,
@@ -4202,7 +4174,6 @@ required = true
             temperature: None,
             max_tokens: None,
             context_window_tokens: None,
-            compaction_trigger_ratio: None,
             compaction_soft_trigger_ratio: None,
             compaction_hard_trigger_ratio: None,
             streaming_mode: None,

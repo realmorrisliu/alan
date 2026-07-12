@@ -11,6 +11,9 @@ use alan_ap::{ErrorCode, Fid, FileServer, OpenMode};
 use alan_llm::mock::MockLlmProvider;
 use alan_llmfs::{ConnectionLimits, ConnectionProfile, LlmFs};
 
+const SIMPLE_REQUEST: &[u8] = br#"{"version":1,"messages":[{"role":"user","content":"hi"}]}"#;
+const AGAIN_REQUEST: &[u8] = br#"{"version":1,"messages":[{"role":"user","content":"again"}]}"#;
+
 fn llmfs() -> LlmFs {
     let fs = LlmFs::new();
     fs.register_connection("default", Box::new(MockLlmProvider::new()));
@@ -348,7 +351,7 @@ async fn writing_the_request_streams_tokens_to_events() {
     .await
     .unwrap();
     fs.open(Fid(2), OpenMode::Write).await.unwrap();
-    fs.write(Fid(2), 0, br#"{"user":"hi"}"#).await.unwrap();
+    fs.write(Fid(2), 0, SIMPLE_REQUEST).await.unwrap();
     fs.clunk(Fid(2)).await.unwrap();
 
     // events carries the streamed tokens, ending with a done record
@@ -712,7 +715,7 @@ async fn a_non_write_data_fid_clunk_does_not_reject_the_generation() {
     fs.clunk(Fid(2)).await.unwrap();
     assert_eq!(status_of(&fs, &g, Fid(3)).await, "open");
     // The real writer can still start it.
-    commit_request(&fs, &g, Fid(4), br#"{"user":"hi"}"#)
+    commit_request(&fs, &g, Fid(4), SIMPLE_REQUEST)
         .await
         .unwrap();
 }
@@ -737,7 +740,7 @@ async fn only_one_of_two_concurrent_data_commits_starts_the_generation() {
         .await
         .unwrap();
         fs.open(fid, OpenMode::Write).await.unwrap();
-        fs.write(fid, 0, br#"{"user":"hi"}"#).await.unwrap();
+        fs.write(fid, 0, SIMPLE_REQUEST).await.unwrap();
     }
     // The first commit reserves the Generation; the second is refused, so only one
     // request reaches the provider.
@@ -856,11 +859,59 @@ async fn invalid_v1_request_is_rejected_before_running() {
 }
 
 #[tokio::test]
+async fn retired_or_invalid_request_documents_never_reach_the_provider() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let fs = llmfs_with(RecordingProvider {
+        requests: Arc::clone(&requests),
+    });
+    let rejected: [(&str, &[u8]); 4] = [
+        (
+            "retired unversioned shape",
+            br#"{"system":"system prompt","user":"hello"}"#,
+        ),
+        (
+            "missing version discriminator",
+            br#"{"messages":[{"role":"user","content":"hello"}]}"#,
+        ),
+        ("malformed JSON", br#"{"version":1,"messages":["#),
+        (
+            "unknown version",
+            br#"{"version":2,"messages":[{"role":"user","content":"hello"}]}"#,
+        ),
+    ];
+
+    for (index, (case, body)) in rejected.into_iter().enumerate() {
+        let base = 10 + index as u64 * 3;
+        let generation = clone_gen(&fs, Fid(base)).await;
+        assert_eq!(
+            commit_request(&fs, &generation, Fid(base + 1), body).await,
+            Err(ErrorCode::BadRequest),
+            "{case} must fail at commit"
+        );
+        assert_eq!(
+            status_of(&fs, &generation, Fid(base + 2)).await,
+            "rejected",
+            "{case} must leave a terminal rejected generation"
+        );
+        assert!(
+            requests.lock().unwrap().is_empty(),
+            "{case} must fail before provider dispatch"
+        );
+    }
+}
+
+#[tokio::test]
 async fn unknown_request_fields_are_rejected() {
     let fs = llmfs();
     let g = clone_gen(&fs, Fid(1)).await;
     assert_eq!(
-        commit_request(&fs, &g, Fid(2), br#"{"user":"hi","temperature":1}"#).await,
+        commit_request(
+            &fs,
+            &g,
+            Fid(2),
+            br#"{"version":1,"messages":[{"role":"user","content":"hi"}],"unknown":true}"#,
+        )
+        .await,
         Err(ErrorCode::BadRequest)
     );
 }
@@ -869,12 +920,12 @@ async fn unknown_request_fields_are_rejected() {
 async fn a_started_generation_cannot_be_restarted() {
     let fs = llmfs();
     let g = clone_gen(&fs, Fid(1)).await;
-    commit_request(&fs, &g, Fid(2), br#"{"user":"hi"}"#)
+    commit_request(&fs, &g, Fid(2), SIMPLE_REQUEST)
         .await
         .unwrap();
     // A second request document into the same Generation is refused.
     assert_eq!(
-        commit_request(&fs, &g, Fid(3), br#"{"user":"again"}"#).await,
+        commit_request(&fs, &g, Fid(3), AGAIN_REQUEST).await,
         Err(ErrorCode::BadRequest)
     );
 }
@@ -936,7 +987,7 @@ async fn status_qid_version_bumps_as_the_generation_advances() {
     .await
     .unwrap();
     let v0 = fs.stat(Fid(2)).await.unwrap().qid.version;
-    commit_request(&fs, &g, Fid(3), br#"{"user":"hi"}"#)
+    commit_request(&fs, &g, Fid(3), SIMPLE_REQUEST)
         .await
         .unwrap();
     drain_events(&fs, &g, Fid(4)).await;
@@ -991,7 +1042,7 @@ async fn status_exposes_progress_tokens_and_cost() {
     .unwrap();
     let meter_v0 = fs.stat(Fid(5)).await.unwrap().qid.version;
 
-    commit_request(&fs, &g, Fid(2), br#"{"user":"hi"}"#)
+    commit_request(&fs, &g, Fid(2), SIMPLE_REQUEST)
         .await
         .unwrap();
     drain_events(&fs, &g, Fid(3)).await;
@@ -1031,7 +1082,7 @@ async fn terminal_generations_are_reaped_by_retention_policy() {
     let mut ids = Vec::new();
     for i in 0..17 {
         let gen_id = clone_gen(&fs, Fid(10 + i * 3)).await;
-        commit_request(&fs, &gen_id, Fid(11 + i * 3), br#"{"user":"hi"}"#)
+        commit_request(&fs, &gen_id, Fid(11 + i * 3), SIMPLE_REQUEST)
             .await
             .unwrap();
         drain_events(&fs, &gen_id, Fid(12 + i * 3)).await;
@@ -1078,7 +1129,7 @@ async fn opened_events_stat_survives_retention_reap() {
 
     for i in 0..17 {
         let gen_id = clone_gen(&fs, Fid(10 + i * 3)).await;
-        commit_request(&fs, &gen_id, Fid(11 + i * 3), br#"{"user":"hi"}"#)
+        commit_request(&fs, &gen_id, Fid(11 + i * 3), SIMPLE_REQUEST)
             .await
             .unwrap();
         drain_events(&fs, &gen_id, Fid(12 + i * 3)).await;
@@ -1191,7 +1242,7 @@ async fn abort_before_commit_makes_the_later_commit_fail() {
     fs.clunk(Fid(2)).await.unwrap();
     // The aborted Generation cannot then be started by committing a request.
     assert_eq!(
-        commit_request(&fs, &g, Fid(3), br#"{"user":"hi"}"#).await,
+        commit_request(&fs, &g, Fid(3), SIMPLE_REQUEST).await,
         Err(ErrorCode::BadRequest)
     );
     // And a watcher sees a terminal record rather than blocking forever.
@@ -1208,7 +1259,7 @@ async fn abort_before_commit_makes_the_later_commit_fail() {
 async fn abort_after_done_is_rejected() {
     let fs = llmfs();
     let g = clone_gen(&fs, Fid(1)).await;
-    commit_request(&fs, &g, Fid(2), br#"{"user":"hi"}"#)
+    commit_request(&fs, &g, Fid(2), SIMPLE_REQUEST)
         .await
         .unwrap();
     drain_events(&fs, &g, Fid(3)).await; // runs to done
@@ -1230,7 +1281,7 @@ async fn abort_after_done_is_rejected() {
 async fn a_running_generation_can_be_aborted() {
     let fs = llmfs_with(HangingProvider);
     let g = clone_gen(&fs, Fid(1)).await;
-    commit_request(&fs, &g, Fid(2), br#"{"user":"hi"}"#)
+    commit_request(&fs, &g, Fid(2), SIMPLE_REQUEST)
         .await
         .unwrap();
     // The provider never finishes; abort settles the Generation and records it.
@@ -1255,7 +1306,7 @@ async fn a_running_generation_can_be_aborted() {
 async fn unregister_connection_aborts_active_generations() {
     let fs = llmfs_with(HangingProvider);
     let g = clone_gen(&fs, Fid(1)).await;
-    commit_request(&fs, &g, Fid(2), br#"{"user":"hi"}"#)
+    commit_request(&fs, &g, Fid(2), SIMPLE_REQUEST)
         .await
         .unwrap();
 
@@ -1313,7 +1364,7 @@ async fn unregister_connection_makes_in_flight_data_commit_fail() {
     .await
     .unwrap();
     fs.open(Fid(2), OpenMode::Write).await.unwrap();
-    fs.write(Fid(2), 0, br#"{"user":"hi"}"#).await.unwrap();
+    fs.write(Fid(2), 0, SIMPLE_REQUEST).await.unwrap();
 
     fs.unregister_connection("default").await;
 
@@ -1328,7 +1379,7 @@ async fn unregister_connection_makes_in_flight_data_commit_fail() {
 async fn an_early_closed_stream_ends_with_a_terminal_error() {
     let fs = llmfs_with(EarlyCloseProvider);
     let g = clone_gen(&fs, Fid(1)).await;
-    commit_request(&fs, &g, Fid(2), br#"{"user":"hi"}"#)
+    commit_request(&fs, &g, Fid(2), SIMPLE_REQUEST)
         .await
         .unwrap();
     // Tail events: a stream that closes without a finished chunk must still reach a
@@ -1374,7 +1425,7 @@ async fn a_startup_failure_is_terminal() {
     // generate_stream errors before a receiver: the commit fails and the
     // Generation is left in a terminal error state (not stuck open).
     assert_eq!(
-        commit_request(&fs, &g, Fid(2), br#"{"user":"hi"}"#).await,
+        commit_request(&fs, &g, Fid(2), SIMPLE_REQUEST).await,
         Err(ErrorCode::Io)
     );
     assert_eq!(status_of(&fs, &g, Fid(3)).await, "error");
@@ -1425,7 +1476,7 @@ async fn abort_during_provider_startup_cancels_it() {
     .await
     .unwrap();
     fs.open(Fid(2), OpenMode::Write).await.unwrap();
-    fs.write(Fid(2), 0, br#"{"user":"hi"}"#).await.unwrap();
+    fs.write(Fid(2), 0, SIMPLE_REQUEST).await.unwrap();
 
     // Commit in a task: it parks awaiting the slow provider startup.
     let committer = fs.clone();
@@ -1493,7 +1544,7 @@ impl LlmProvider for StreamErrorProvider {
 async fn a_stream_error_finish_reason_is_terminal_error_not_done() {
     let fs = llmfs_with(StreamErrorProvider);
     let g = clone_gen(&fs, Fid(1)).await;
-    commit_request(&fs, &g, Fid(2), br#"{"user":"hi"}"#)
+    commit_request(&fs, &g, Fid(2), SIMPLE_REQUEST)
         .await
         .unwrap();
     // Tail events to a terminal record.
