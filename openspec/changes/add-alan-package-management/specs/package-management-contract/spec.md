@@ -69,9 +69,11 @@ exposure rules.
 
 #### Scenario: Package source identity is stable
 - **WHEN** Q compares an install with an existing package id
-- **THEN** source identity is the canonical git URL with an optional terminal
-  `.git` suffix normalized away for a git source, or the canonical absolute
-  path for a local source
+- **THEN** source identity is the canonical git URL with userinfo, query,
+  fragment, and an optional terminal `.git` suffix removed for a git source,
+  or the canonical absolute path for a local source
+- **AND** fetch credentials are transient inputs that never enter provenance,
+  reports, logs, or store files
 
 #### Scenario: VCS metadata is not package content
 - **WHEN** Q installs or upgrades a git source
@@ -179,6 +181,12 @@ directories and clone-local configuration SHALL never be projected.
 - **THEN** the execution backend resolves the path through the store
   projection and the helper runs against the installed package content
 
+#### Scenario: Symlink escape is denied
+- **WHEN** a package helper path is a symlink whose canonical target is outside
+  that package's canonical store entry
+- **THEN** install rejects the escaping link or execution denies the target
+- **AND** the runtime does not grant the store-path guard exception
+
 #### Scenario: Host backing stays out of content
 - **WHEN** conversion generates a preamble or a report references package
   content
@@ -267,6 +275,10 @@ provider registry and manifest are authoritative for ownership; a materialized
 skill package's `package.yaml` MAY additionally carry a `provenance` block
 naming the owning distribution package. Provenance and manifest are management
 metadata and SHALL NOT alter runtime skill behavior.
+
+Persisted and displayed git provenance SHALL use only the sanitized source
+identity; credentials, URL userinfo, query strings, and fragments SHALL NOT be
+stored or rendered.
 
 #### Scenario: Provenance is written on install
 - **WHEN** any install completes

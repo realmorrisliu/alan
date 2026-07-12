@@ -160,8 +160,10 @@ edge hyphens. The result must match `[a-z0-9]+(?:-[a-z0-9]+)*`.
 against that same path-safe slug grammar; separators, `.`, `..`, and empty
 values are rejected.
 The id MUST be unique within the active channel. Source identity is the
-canonical git URL with an optional terminal `.git` suffix normalized away for
-git sources, or canonical absolute path for local sources.
+sanitized canonical git URL with userinfo, query, fragment, and an optional
+terminal `.git` suffix removed for git sources, or canonical absolute path for
+local sources. Fetch credentials are transient inputs owned by the credential
+provider; they never enter source identity, provenance, reports, or store files.
 If an existing package with that id has different source identity, install
 fails before any write and tells the user to choose another `--name`; neither
 the store nor the projection is reused implicitly. The store's **canonical address is
@@ -300,6 +302,12 @@ contracts and content. Uninstall removes the store entry *and* the
 materialized skills together (manifest-driven), so no skill outlives the
 helpers it points at. Helpers are not copied per-skill (duplication) and not
 left pointing at the user's original clone (breaks when the clone moves).
+
+Prefix resolution alone is insufficient for symlinks. Install rejects package
+symlinks whose resolved target escapes the package entry. Immediately before
+spawn, the exec resolver canonicalizes the helper target and verifies that it
+is still a descendant of the canonical package entry; an absolute or relative
+escape is denied and never receives the guard exception.
 
 ### D7: Provenance and manifest make the lifecycle exact
 

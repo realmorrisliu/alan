@@ -65,6 +65,8 @@ ai-berkshire run.
   fixture repositories.
 - Git clone metadata and clone-local credentials never enter package content;
   `/lib/pkg` exposes an exported working tree without VCS control directories.
+- Persisted source identity is credential-free, and helper execution rejects
+  symlink targets that escape the canonical package entry.
 
 ## Capabilities
 
