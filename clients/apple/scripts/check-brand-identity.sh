@@ -16,7 +16,7 @@ is_allowed_occurrence() {
         openspec/changes/capitalize-alan-macos-app-brand/*)
             return 0
             ;;
-        openspec/specs/alan-app-distribution/spec.md:*)
+        openspec/specs/alan-app-distribution/spec.md:*"alan.app"*)
             return 0
             ;;
         openspec/specs/product-brand-identity/spec.md:*)
