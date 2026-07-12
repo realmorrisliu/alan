@@ -365,9 +365,10 @@ where
         .environment
         .process_context()
         .expect("child namespace launch installs process context");
+    let child_agent_root = process_context.agent_root.clone();
     let child_process_environment = child_observation_environment(
         &runtime_procfs,
-        process_context.agent_root,
+        child_agent_root.clone(),
         &child_process_pid,
         &child_namespace_plan,
     )
@@ -393,7 +394,7 @@ where
         Err(err) => {
             record_child_launch_failure_process(
                 &launch_procfs,
-                &child_process_environment,
+                &child_agent_root,
                 &child_process_pid,
                 &err,
             )
@@ -406,7 +407,7 @@ where
         Err(err) => {
             record_child_launch_failure_process(
                 &launch_procfs,
-                &child_process_environment,
+                &child_agent_root,
                 &child_process_pid,
                 &err,
             )
@@ -441,7 +442,7 @@ where
             let status = child_run_status_for_launch_error(&err);
             record_child_launch_failure_process(
                 &launch_procfs,
-                &child_process_environment,
+                &child_agent_root,
                 &child_process_pid,
                 &err,
             )
@@ -1253,7 +1254,7 @@ fn child_run_status_for_launch_error(error: &anyhow::Error) -> ChildRunStatus {
 
 async fn record_child_launch_failure_process(
     procfs: &alan_kernel::ProcFs,
-    environment: &super::NamespaceRuntimeEnvironment,
+    agent_root: &alan_agentfs::AgentRootFs,
     pid: &str,
     error: &anyhow::Error,
 ) {
@@ -1265,9 +1266,7 @@ async fn record_child_launch_failure_process(
         _ => 1,
     };
     procfs.record_exit(alan_kernel::Pid(pid), exit_code).await;
-    if let Some(context) = environment.process_context() {
-        context.agent_root.unbind_process(&pid.to_string()).await;
-    }
+    agent_root.unbind_process(&pid.to_string()).await;
 }
 
 async fn read_latest_assistant_text_from_rollout(rollout_path: Option<&Path>) -> Option<String> {
@@ -3261,7 +3260,7 @@ Body
         );
         record_child_launch_failure_process(
             &launch_procfs,
-            &nested.environment,
+            &nested.environment.process_context().unwrap().agent_root,
             &nested.pid,
             &anyhow::anyhow!("simulated child runtime startup failure"),
         )
