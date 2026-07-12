@@ -12,7 +12,7 @@
 ## 2. Package store and lifecycle model (library, in the agent-engine skills module space)
 
 - [ ] 2.1 Define the data model: distribution package with a channel-unique package id (normalized source basename or explicit `--name`), store backing under the channel alan home (`~/.alan/pkg/`, dev `~/.alan-dev/pkg/`), provider registry entry, provenance record, materialization manifest with content hashes and selected skill roots, operation report types
-- [ ] 2.2 Implement source fetch: git URL clone / local directory copy into the store; compute the source revision token (git commit, or content fingerprint of the source tree for non-git sources)
+- [ ] 2.2 Implement source fetch: resolve git revisions in a private staging clone and export the tracked working tree without VCS control metadata, or copy a local directory while excluding VCS control metadata; compute the source revision token (git commit, or content fingerprint of the exported source tree for non-git sources)
 - [ ] 2.3 Implement materializable-skill scanning by convention (command-style `*.md`, portable `*/SKILL.md`) with include/exclude flags
 
 ## 3. Materialization primitives
@@ -21,7 +21,7 @@
 - [ ] 3.2 Implement the known foreign-vocabulary table (converter data, versioned) and the scan that emits `capabilities.required_tools` for real tool equivalents, typed `runtime_capability` dependencies for unsupported Alan surfaces, and unknown-token report entries
 - [ ] 3.3 Emit canonical `/lib/pkg/<package-id>/...` namespace paths in the adapter preamble for upstream-relative helper references (e.g. repo-root `tools/*.py`); no host paths in generated content
 - [ ] 3.4 Implement portable-package adoption: validate via existing loader rules, register in place without content edits
-- [ ] 3.5 Store the store entry in two layers (`source/` verbatim checkout, `materialized/` generated packages + manifest); project the merged content view while resolving only manifest-selected skill roots
+- [ ] 3.5 Store the store entry in two layers (`source/` exported working tree without VCS metadata, `materialized/` generated packages + manifest); project the merged content view while resolving only manifest-selected skill roots
 - [ ] 3.6 Implement skill-id collision detection against provider ownership: warn-and-skip even with `--force`; never transfer another package's ownership implicitly
 - [ ] 3.7 Implement duplicate-source precedence: same skill id from command file and portable package → convert the command file, omit the portable duplicate from manifest-selected skill roots, record the choice in the report
 
@@ -45,7 +45,7 @@
 - [ ] 6.1 Cover Q resolution: built-in pre-installed + agent-root local-source + distribution all resolve through one authority; no independent directory scan remains
 - [ ] 6.2 Build a synthetic fixture repo: command `.md` with `$ARGUMENTS` + foreign vocabulary, bare portable `SKILL.md`, shared repo-root helper referenced by both
 - [ ] 6.3 Cover conversion output: frontmatter, preamble placement, verbatim body, tool-vs-runtime-capability dependency emission, PATH cannot satisfy unsupported surfaces, unknown-token reporting, `/lib/pkg` helper addressing
-- [ ] 6.4 Cover install: package-id derivation (including equivalent git URLs with/without terminal `.git`) and collision rejection, store layout (source/ + materialized/), provenance (git and non-git sources), manifest-selected skill roots, cross-owner collision rejection even with force, duplicate-source precedence
+- [ ] 6.4 Cover install: path-safe package-id derivation and explicit-name rejection (separators, `.`, `..`, empty), equivalent git URLs with/without terminal `.git`, package-id collision rejection, no VCS metadata or clone credentials in `source/` or `/lib/pkg`, store layout, provenance, manifest-selected skill roots, cross-owner collision rejection even with force, duplicate-source precedence
 - [ ] 6.5 Cover upgrade: unchanged no-op, upstream-change re-materialization, local-modification warn/skip/force
 - [ ] 6.6 Cover uninstall exactness (manifest-only deletion, diverged-file preservation) and list output
 - [ ] 6.7 Cover honest failure: resolved skill with an unsatisfied runtime-capability dependency produces availability issues visible through inspection

@@ -57,11 +57,13 @@ exposure rules.
 
 #### Scenario: Default package id is unique
 - **WHEN** `q install` strips a terminal `.git` suffix from the source basename,
-  lowercases it, replaces each run of non-ASCII alphanumeric characters with
-  `-`, and trims edge hyphens
+  lowercases it, replaces each run outside `[A-Za-z0-9]` with `-`, and trims
+  edge hyphens
 - **THEN** that id identifies the store entry and `/lib/pkg/<package-id>/`
-- **AND** an empty result is rejected, while `--name <package-id>` may provide
-  an id under the same syntax
+- **AND** the result matches `[a-z0-9]+(?:-[a-z0-9]+)*`
+- **AND** `--name <package-id>` is rejected unless it already matches that
+  grammar; it is not normalized, and path separators, `.`, `..`, and empty
+  values are invalid
 - **AND** if the id is already owned by a different source, install writes
   nothing and requires an explicit non-conflicting `--name <package-id>`
 
@@ -70,6 +72,13 @@ exposure rules.
 - **THEN** source identity is the canonical git URL with an optional terminal
   `.git` suffix normalized away for a git source, or the canonical absolute
   path for a local source
+
+#### Scenario: VCS metadata is not package content
+- **WHEN** Q installs or upgrades a git source
+- **THEN** it resolves the revision in a private staging clone and stores an
+  exported working tree without `.git` or other VCS control metadata
+- **AND** clone-local config, credentials, and remote URLs are not readable
+  under `/lib/pkg/<package-id>/`
 
 #### Scenario: Store is channel-scoped
 - **WHEN** a package is installed under a given install channel
@@ -156,6 +165,9 @@ contracts, generated skill content, and reports SHALL reference package
 content by namespace path, never by host backing path. When a tool execution
 references a path under `/lib/pkg`, the execution backend SHALL resolve it
 through the store projection to the backing content.
+
+Package content SHALL exclude VCS control metadata. In particular, `.git`
+directories and clone-local configuration SHALL never be projected.
 
 #### Scenario: Package content is readable through the namespace
 - **WHEN** a package is installed

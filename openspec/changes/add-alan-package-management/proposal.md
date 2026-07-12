@@ -63,6 +63,8 @@ ai-berkshire run.
   stay compiled-in `Box<dyn Tool>` — kernel, not Q packages.
 - Third-party skill content does not enter this repository; CI uses synthetic
   fixture repositories.
+- Git clone metadata and clone-local credentials never enter package content;
+  `/lib/pkg` exposes an exported working tree without VCS control directories.
 
 ## Capabilities
 

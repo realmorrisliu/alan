@@ -154,9 +154,11 @@ deliberately closed and forces loader changes for one workload.
 
 `q install <git-url|path>` places a checkout in the package store. Q derives a
 package id by stripping a terminal `.git` suffix from the source basename,
-lowercasing it, replacing each run of non-ASCII alphanumeric characters with
-`-`, and trimming edge hyphens; an empty result is rejected.
-`--name <package-id>` overrides that default under the same syntax.
+lowercasing it, replacing each run outside `[A-Za-z0-9]` with `-`, and trimming
+edge hyphens. The result must match `[a-z0-9]+(?:-[a-z0-9]+)*`.
+`--name <package-id>` overrides the default but is validated, not normalized,
+against that same path-safe slug grammar; separators, `.`, `..`, and empty
+values are rejected.
 The id MUST be unique within the active channel. Source identity is the
 canonical git URL with an optional terminal `.git` suffix normalized away for
 git sources, or canonical absolute path for local sources.
@@ -179,6 +181,12 @@ revision token (git commit, or a content fingerprint for non-git local
 sources); upgrade = fetch + re-materialize. Alternatives rejected: per-skill import (wrong unit —
 severs shared helpers; superseded draft) and registry-based packaging (no
 registry exists and v0 needs none).
+
+Git fetch uses a private staging clone only to resolve the revision and export
+its tracked working tree. The stored `source/` tree never contains `.git` or
+other VCS control metadata; clone-local config and credentialed remote URLs
+therefore cannot enter `/lib/pkg`. Upgrade repeats the staged fetch/export
+rather than retaining repository metadata in the projected store entry.
 
 ### D3: Skills are discovered in place from `/lib/pkg`, never copied out
 
@@ -223,8 +231,8 @@ else's adapter. The include/exclude scan flags remain the escape hatch.
 `/lib/pkg` is a read-only projection and the backing holds a verbatim upstream
 checkout, so conversion output cannot be written back into the checkout. The
 store entry therefore has two layers under its channel-scoped backing
-(`~/.alan/pkg/<package-id>/`): `source/` (the upstream checkout,
-byte-for-byte) and
+(`~/.alan/pkg/<package-id>/`): `source/` (the exported upstream working tree,
+byte-for-byte except excluded VCS control metadata) and
 `materialized/` (generated skill packages plus the manifest).
 `/lib/pkg/<package-id>/` projects a merged content view — original helpers
 (`tools/*.py`) from `source/`, skill packages from `materialized/` — so a
