@@ -47,6 +47,9 @@ progress source.
 
 #### Scenario: Supervisor restarts observation
 - **WHEN** the parent supervisor reattaches after missing live time
-- **THEN** it resumes from recorded file offsets and current `/proc` state
+- **THEN** it reconstructs current lifecycle and compact progress state from
+  `/proc`, current AgentFS snapshots, and the durable child-run projection
+- **AND** it establishes new observation-local stream offsets from the current
+  stream state without promising replay of records missed while detached
 - **AND** progress reconstruction does not depend on replaying an engine
   broadcast channel
