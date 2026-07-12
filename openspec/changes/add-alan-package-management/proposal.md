@@ -55,8 +55,9 @@ ai-berkshire run.
   `runtime_capability` dependency and is surfaced through
   the existing `skill_availability_issues` machinery, never silently degraded.
 - **Out of scope** (later slices, ADR-0030 D7): agent runtime self-discovery
-  from manifest-selected roots under `/lib/pkg` (gated on
-  `refactor-engine-namespace-native`); additional
+  from manifest-selected roots under `/lib/pkg` (gated on the
+  `agent-namespace-runtime` boundary currently tracked by
+  `finish-namespace-native-engine-boundary`); additional
   package types (MCP, tools/binaries, workflows, models, knowledge packs);
   permission-to-policy wiring; `q` in `/bin`; user-configurable package
   profiles beyond the baseline per-Process resolved-set isolation;

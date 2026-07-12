@@ -116,13 +116,14 @@ Two concepts that "physical unification" must **not** be allowed to conflate:
   without a namespace-native engine.
 - **"Discovered by the agent via `ls /lib/pkg`" (runtime self-discovery)** —
   the agent reading manifest-selected capability roots as files, without
-  recursively treating all package content as skills. This is gated on
-  `refactor-engine-namespace-native` (ADR-0027 Ring 2, unfinished).
+  recursively treating all package content as skills. This is gated on the
+  `agent-namespace-runtime` boundary, currently tracked by
+  `finish-namespace-native-engine-boundary`.
 
-Until Ring 2 lands, the engine obtains its resolved capability set through Q's
+Until that boundary lands, the engine obtains its resolved capability set through Q's
 host-side resolution interface (the "use Q to find skills" path), while
 `/lib/pkg` is already the single namespace view over store-backed and
-local-source providers. When Ring 2 lands, the resolution interface degrades into the agent walking the
+local-source providers. When the boundary lands, the resolution interface degrades into the agent walking the
 manifest-selected roots under `/lib/pkg` directly — a presentation-layer
 finish, not a re-architecture.
 
@@ -146,7 +147,8 @@ uninstall, honest failure on missing capabilities, and the ai-berkshire
 dogfooding validation.
 
 Explicitly deferred to later slices, in rough order of expected pressure:
-agent runtime self-discovery via `ls /lib/pkg` (gated on Ring 2), additional
+agent runtime self-discovery via `ls /lib/pkg` (gated on
+`finish-namespace-native-engine-boundary`), additional
 package types (MCP servers, tools/binaries, workflows, models, knowledge
 packs), permission declarations wired to policy, `q` registered in `/bin`,
 user-configurable package profiles beyond the baseline rule that each Agent

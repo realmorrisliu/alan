@@ -94,8 +94,9 @@ unchanged as materialization rules.
 - Changing the one-skill-per-package rule, loading, or exposure — only the
   discovery *source* changes (to Q resolution).
 - Agent runtime self-discovery from manifest-selected roots under `/lib/pkg` —
-  gated on Ring 2; slice 1 feeds the engine through Q's host-side resolution
-  interface.
+  gated on the `agent-namespace-runtime` boundary currently tracked by
+  `finish-namespace-native-engine-boundary`; slice 1 feeds the engine through
+  Q's host-side resolution interface.
 - Force-migrating agent-root/workspace skills into the global store — they
   stay local-source providers at their existing location.
 - Tool resolution or packaging. Core Tool execution remains owned by the
@@ -133,10 +134,11 @@ namespace view. Two things this must not conflate (ADR-0030 D6):
 - **Managed by Q** (install/register/upgrade/uninstall all flow through Q, no
   escape) — done in slice 1, not gated on anything.
 - **Discovered by the agent via `ls /lib/pkg`** (the agent reading its own
-  capabilities as files) — gated on `refactor-engine-namespace-native`
-  (Ring 2). Until it lands, the engine takes its resolved set from Q's
+  capabilities as files) — gated on the `agent-namespace-runtime` boundary
+  currently tracked by `finish-namespace-native-engine-boundary`. Until it
+  lands, the engine takes its resolved set from Q's
   host-side resolution interface — the "use Q to find skills" path the user
-  named. When Ring 2 lands, that interface degrades into walking the
+  named. When that boundary lands, the interface degrades into walking the
   manifest-selected roots under `/lib/pkg`, never recursively scanning the
   whole projection.
 
@@ -376,7 +378,8 @@ providers replace enumerated sources, built-ins reseed as pre-installed
 packages, agent-root/workspace become local-source providers, distribution
 packages install from git/local, and the `/lib/pkg` projection is the single
 physical home. Deferred to later slices: agent runtime self-discovery from
-manifest-selected roots under `/lib/pkg` (gated on Ring 2), further package types, permission-to-
+manifest-selected roots under `/lib/pkg` (gated on
+`finish-namespace-native-engine-boundary`), further package types, permission-to-
 policy wiring, user-configurable package profiles,
 reproducibility, registry/signing, `q` in `/bin`. The prior non-goal warning
 against turning `/mnt` into a package manager

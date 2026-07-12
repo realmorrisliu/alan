@@ -67,11 +67,15 @@ exposure rules.
   nothing and requires an explicit non-conflicting `--name <package-id>`
 
 #### Scenario: Package identity is distinct from skill identity
-- **WHEN** two providers export the same skill id
+- **WHEN** a local-source provider intentionally overlays a built-in, global,
+  or distribution provider's skill id
 - **THEN** each provider retains a distinct, stable, provider-scoped, path-safe
   Q package id and therefore a distinct `/lib/pkg/<package-id>/` projection
 - **AND** the exported skill id remains unchanged for precedence resolution
 - **AND** the Q package id contains no raw host path or credential material
+- **AND** this coexistence rule does not override distribution-install
+  collision handling: a colliding skill from a second distribution manifest
+  is still skipped
 
 #### Scenario: Package source identity is stable
 - **WHEN** Q compares an install with an existing package id
