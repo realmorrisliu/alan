@@ -35,4 +35,4 @@
 - [x] 6.3 Run `cargo metadata` and repository searches to prove removed fields, aliases, palette tokens, dependency declarations, and Axum WebSocket features have no current owner.
 - [x] 6.4 Update affected canonical Purpose text during spec sync so it describes only current reasoning, compaction, governance, and input contracts rather than removed compatibility.
 - [x] 6.5 Open a narrowly scoped PR and keep the current HEAD under Codex review until every thread is resolved, required CI is green, and a delayed refresh shows no new findings before merge.
-- [ ] 6.6 After merge, sync all five capability deltas into canonical specs and mark the change archive-ready only when main rejects every retired form and `remove-legacy-macos-persistence` is either merged or independently green.
+- [x] 6.6 After merge, sync all five capability deltas into canonical specs and mark the change archive-ready only when main rejects every retired form and `remove-legacy-macos-persistence` is either merged or independently green.
