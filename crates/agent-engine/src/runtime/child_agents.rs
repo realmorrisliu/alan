@@ -684,6 +684,15 @@ impl ChildRuntimeController {
         let process_registry = &self.process_registry;
         let pid = self.process_pid.as_str();
         let timeout = Duration::from_secs(1);
+        let pid = alan_kernel::Pid(pid.parse().context("parse observed child pid")?);
+        let (process_status, process_exit_code) = process_registry
+            .try_observe_process_lifecycle(pid)
+            .unwrap_or((alan_kernel::Status::Running, None));
+        let process = if process_status == alan_kernel::Status::Exited {
+            process_registry.observe_process_files(pid).await
+        } else {
+            None
+        };
         let activity = tokio::time::timeout(timeout, environment.read_ui_activity_snapshot())
             .await
             .context("observe child activity timed out")??;
@@ -693,19 +702,6 @@ impl ChildRuntimeController {
         let ui_events_offset = tokio::time::timeout(timeout, environment.ui_events_offset())
             .await
             .context("observe child UI events offset timed out")??;
-        let process_exit_code = if ui_events_offset > 0 {
-            tokio::time::timeout(timeout, environment.read_process_exit_code(pid))
-                .await
-                .context("observe child Process exit timed out")??
-        } else {
-            None
-        };
-        let process = if process_exit_code.is_some() {
-            let pid = alan_kernel::Pid(pid.parse().context("parse observed child pid")?);
-            process_registry.observe_process_files(pid).await
-        } else {
-            None
-        };
         let notice = tokio::time::timeout(timeout, environment.read_ui_notice_snapshot())
             .await
             .context("observe child notice timed out")??;
@@ -728,11 +724,7 @@ impl ChildRuntimeController {
                 .await
                 .context("observe child action stream offset timed out")??;
         Ok(Some(ChildFileObservation {
-            process_status: Some(if process_exit_code.is_some() {
-                alan_kernel::Status::Exited
-            } else {
-                alan_kernel::Status::Running
-            }),
+            process_status: Some(process_status),
             process_exit_code,
             output_text,
             process_output_offset: process
@@ -3416,17 +3408,9 @@ Body
             process_pid: process_pid.clone(),
         };
 
-        crate::runtime::ui_surfaces::initialize(&process_environment)
-            .await
-            .unwrap();
-        crate::runtime::ui_surfaces::turn_started(&process_environment)
-            .await
-            .unwrap();
+        assert_eq!(process_environment.ui_events_offset().await.unwrap(), 0);
         process_environment
             .write_process_control_for_pid(&process_pid, "cancel")
-            .await
-            .unwrap();
-        crate::runtime::ui_surfaces::heartbeat(&process_environment)
             .await
             .unwrap();
         let result = tokio::time::timeout(Duration::from_secs(2), controller.join())

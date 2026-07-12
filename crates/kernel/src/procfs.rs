@@ -422,6 +422,13 @@ impl ProcFs {
         })
     }
 
+    /// Observe Process lifecycle without waiting on retained IO work.
+    pub fn try_observe_process_lifecycle(&self, pid: Pid) -> Option<(Status, Option<i32>)> {
+        let state = self.state.try_lock().ok()?;
+        let process = state.table.get(pid)?;
+        Some((process.status, process.exit_code))
+    }
+
     fn child_namespace_for_spawn(&self, pid: Pid) -> Namespace {
         let mut child_namespace = self
             .spawn_context
