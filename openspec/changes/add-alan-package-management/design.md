@@ -378,10 +378,12 @@ under `/lib`, and Plan 9's `/lib` is precisely where data files belong.
 - [Install report warnings ignored, silent degradation returns at runtime] →
   availability issues also surface through existing exposure/inspection paths,
   not only at install time.
-- [Skill-id collision between packages or with hand-authored skills] → warn
-  and skip; `--force` never steals another provider's ownership. The operator
-  must uninstall the owner or choose a non-colliding package/skill id, keeping
-  upgrade and uninstall exact without cross-manifest mutation.
+- [Distribution install collides with another distribution manifest's skill]
+  → warn and skip; `--force` never steals ownership. This does not apply to
+  local-source overlay resolution: Q retains existing workspace/AgentRoot
+  overlays and their established scope/ordering precedence. The operator must
+  uninstall the distribution owner or choose a non-colliding id, keeping
+  lifecycle exact without cross-manifest mutation.
 - [Two unrelated sources normalize to the same package id] → fail before any
   write and require an explicit alternate `--name`; never alias store entries.
 - [User edits a materialized skill, upgrade wants to replace it] → manifest

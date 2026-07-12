@@ -22,7 +22,7 @@
 - [ ] 3.3 Emit canonical `/lib/pkg/<package-id>/...` namespace paths in the adapter preamble for upstream-relative helper references (e.g. repo-root `tools/*.py`); no host paths in generated content
 - [ ] 3.4 Implement portable-package adoption: validate via existing loader rules, register in place without content edits
 - [ ] 3.5 Store the store entry in two layers (`source/` exported working tree without VCS metadata, `materialized/` generated packages + manifest); project the merged content view while resolving only manifest-selected skill roots
-- [ ] 3.6 Implement skill-id collision detection against provider ownership: warn-and-skip even with `--force`; never transfer another package's ownership implicitly
+- [ ] 3.6 Implement distribution-install skill-id collision detection against other distribution manifests: warn-and-skip even with `--force`; never transfer ownership implicitly; preserve existing local-source overlay scope/ordering precedence
 - [ ] 3.7 Implement duplicate-source precedence: same skill id from command file and portable package → convert the command file, omit the portable duplicate from manifest-selected skill roots, record the choice in the report
 
 ## 4. Lifecycle operations and projection
@@ -42,7 +42,7 @@
 
 ## 6. Tests (per rust-test-placement-contract, synthetic fixtures only)
 
-- [ ] 6.1 Cover Q resolution and projection: built-in pre-installed + agent-root/workspace/public local-source + distribution all resolve through one authority and appear read-only under `/lib/pkg`; no independent directory scan or local-source store copy remains
+- [ ] 6.1 Cover Q resolution and projection: built-in pre-installed + agent-root/workspace/public local-source + distribution all resolve through one authority and appear read-only under `/lib/pkg`; existing local-source same-id overlays retain precedence; no independent directory scan or local-source store copy remains
 - [ ] 6.2 Build a synthetic fixture repo: command `.md` with `$ARGUMENTS` + foreign vocabulary, bare portable `SKILL.md`, shared repo-root helper referenced by both
 - [ ] 6.3 Cover conversion output: frontmatter, preamble placement, verbatim body, tool-vs-runtime-capability dependency emission, PATH cannot satisfy unsupported surfaces, unknown-token reporting, `/lib/pkg` helper addressing
 - [ ] 6.4 Cover install: path-safe package ids, equivalent git URLs with/without `.git`, sanitized source identity with credentialed URL userinfo/query/fragment removed from provenance/reports/logs/store, package-id collisions, no VCS metadata in `/lib/pkg`, escaping-symlink rejection, store layout, manifest-selected roots, cross-owner collision rejection, duplicate-source precedence
@@ -65,4 +65,4 @@
 
 ## 9. Verification
 
-- [ ] 9.1 `just verify` (fmt + lint + test + mock smoke) passes
+- [ ] 9.1 `just check` (fmt + lint + test) passes

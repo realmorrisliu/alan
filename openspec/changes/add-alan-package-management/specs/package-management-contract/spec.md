@@ -114,8 +114,12 @@ Materialization SHALL NOT modify the source location. Q SHALL record the
 accepted skill package roots in the materialization manifest and SHALL resolve
 only those roots through the distribution provider; it SHALL NOT recursively
 scan the package's merged `/lib/pkg` content view for skills. A skill-id
-collision with a package the manifest does not own SHALL warn and skip rather
-than overwrite, including when `--force` is present. When both source forms in
+collision encountered while installing a distribution package, where the
+destination is owned by another distribution manifest, SHALL warn and skip
+rather than overwrite, including when `--force` is present. This install-time
+ownership rule SHALL NOT suppress local-source overlays: existing scope and
+ordering precedence for AgentRoot/workspace/public skills with the same skill
+id remains unchanged. When both source forms in
 one distribution package yield the same skill id, conversion from the
 command-style file SHALL win and the duplicate portable package SHALL be
 skipped with a report entry.
@@ -139,6 +143,13 @@ skipped with a report entry.
 - **THEN** the skill is skipped with a warning naming both parties
 - **AND** `--force` does not transfer ownership or mutate the other package's
   provider entry or manifest
+
+#### Scenario: Local-source overlay remains compatible
+- **WHEN** a workspace or AgentRoot local-source skill intentionally reuses a
+  built-in, global, or distribution skill id
+- **THEN** Q retains both packages in the resolved view
+- **AND** existing scope and ordering precedence selects the local overlay as
+  it did before the Q cutover
 
 #### Scenario: Same skill in both source forms
 - **WHEN** one distribution package contains a command-style file and a
