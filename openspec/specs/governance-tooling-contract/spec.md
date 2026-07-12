@@ -6,9 +6,9 @@ identity, runtime binding, capability routing, extension points, and workspace
 scoping.
 ## Requirements
 ### Requirement: Governance and tooling contracts live in OpenSpec
-alan SHALL specify HITE governance, policy decisions, tool catalog identity,
-runtime tool binding, capability routing, extension points, and workspace
-routing in OpenSpec.
+Alan SHALL specify HITE governance, mounted Tool package identity, Process
+execution binding, capability routing, extension points, and workspace routing
+in OpenSpec.
 
 #### Scenario: Governance behavior changes
 - **WHEN** a change modifies policy `allow`, `deny`, or `escalate` semantics,
@@ -20,26 +20,32 @@ routing in OpenSpec.
   active OpenSpec owner
 
 #### Scenario: Tool binding behavior changes
-- **WHEN** a change modifies tool catalog entries, runtime binding, locality,
-  workspace scoping, child-runtime tool materialization, or extension routing
+- **WHEN** a change modifies Tool package manifests, namespace composition,
+  locality, workspace scoping, child Process mounts, or extension routing
 - **THEN** the behavior is specified in OpenSpec before it is documented as
   current guidance
 
 ### Requirement: Tool identity is separate from execution binding
-alan SHALL keep stable tool catalog definitions separate from per-runtime
-execution binding such as workspace root, current directory, profile exposure,
-and policy decisions.
+Alan SHALL keep stable Tool identity and schema in mounted package manifests
+separate from per-Process execution binding such as workspace root, current
+directory, credentials, namespace reachability, and policy decisions. The live
+engine SHALL derive both through the Process namespace and SHALL NOT merge them
+inside an in-process Tool registry.
 
-#### Scenario: Runtime exposes a tool
-- **WHEN** a runtime registers or exposes a tool to an agent
-- **THEN** the tool's identity, schema, and locality come from the catalog
-- **AND** workspace-specific execution facts come from runtime context and
-  policy
+#### Scenario: Runtime exposes a Tool
+- **WHEN** a Tool package executable and manifest are mounted for an Agent
+  Process
+- **THEN** the Tool's identity, schema, capability, and locality come from the
+  package manifest
+- **AND** workspace-specific execution facts come from the Tool Process exec
+  context, descriptors, namespace, and policy
 
 #### Scenario: Delegated capability is selected
-- **WHEN** alan routes work to a delegated skill or child target
-- **THEN** capability matching and mismatch recovery are observable through the
-  OpenSpec-defined routing surface
+- **WHEN** Alan routes work to a delegated child target
+- **THEN** the parent/spawner resolves allowed Tool packages into the child's
+  namespace before launch
+- **AND** capability matching and mismatch recovery are observable through the
+  OpenSpec-defined routing and Process/file surfaces
 
 ### Requirement: Governance boundary classes and risk dimensions are explicit
 alan SHALL classify governance boundaries by routine, sensitive, and owner
@@ -127,41 +133,6 @@ Every governance decision is traceable through rollout/events with:
 - **THEN** the rollout records the request, resolver, resolution, constraints,
   and effective backend context
 
-### Requirement: Tool catalog identity is workspace-agnostic
-alan SHALL define tool identity in a stable catalog separate from execution
-binding, exposure profile, and workspace-local context.
-
-Stable terms:
-
-- **Tool catalog**: stable set of tool definitions available to a runtime or
-  host. A catalog entry defines name, description, parameter schema, capability
-  classification, timeout hint, and locality.
-- **Materialized tool instance**: executable implementation for one catalog
-  entry.
-- **Tool locality**: whether semantics are global or tied to the runtime's
-  bound local workspace.
-- **Tool execution binding**: runtime-owned binding supplied at execution time,
-  including current `cwd`, scratch area, and optional `workspace_root`.
-- **Tool context**: per-call execution object passed to tool implementations.
-- **Exposure profile**: allowlisted subset of catalog entries visible to a
-  runtime.
-
-Rules:
-
-- Catalog entries are workspace-agnostic.
-- Built-in tool constructors do not require a workspace path to define the
-  tool.
-- Workspace roots, working directories, and scratch directories belong to
-  execution binding, not catalog identity.
-- Tool visibility answers which tools may be called, not which workspace those
-  tools are bound to.
-
-#### Scenario: Runtime exposes a built-in tool in two workspaces
-- **WHEN** two runtimes bound to different workspaces expose the same built-in
-  tool
-- **THEN** the catalog identity is the same
-- **AND** workspace-specific facts come from execution binding and policy
-
 ### Requirement: Workspace-local tools require explicit runtime binding
 alan SHALL execute workspace-local tools only with explicit workspace binding
 and SHALL keep workspace routing failures distinct from policy escalation.
@@ -205,31 +176,6 @@ Workspace-routing rules:
 - **AND** it does not treat user approval alone as making the current runtime
   the correct execution site
 
-### Requirement: Child runtimes derive tools from catalog, profile, and binding
-alan SHALL materialize child-runtime tool surfaces from the shared catalog,
-child exposure profile, and child execution binding rather than inheriting
-parent-bound tool instances.
-
-Rules:
-
-- Child runtimes use the same tool catalog identity as parents.
-- Exposure profile controls which tools are visible.
-- Child execution binding controls workspace root, current directory, and
-  scratch state.
-- Parent and child runtime differences are expressed through exposure profiles
-  and execution bindings.
-- Persisted launch metadata must match the resolved execution binding the child
-  will use.
-- Unresolved relative workspace fields must not be persisted and later executed
-  through process-local defaults.
-
-#### Scenario: Child runtime launches with repo-local tools
-- **WHEN** alan launches a repo-scoped child runtime
-- **THEN** the child materializes tools from catalog plus exposure profile plus
-  explicit workspace binding
-- **AND** it does not inherit parent tool instances carrying workspace-specific
-  state
-
 ### Requirement: Governance is scoped to Process and capability execution
 Alan SHALL resolve governance for Agent Process, Tool Process, and capability execution from the
 owning policy files, namespace, credentials, executable identity, requested effect, and explicit
@@ -251,3 +197,50 @@ or durable record.
 - **WHEN** governance records a capability decision
 - **THEN** the audit resolves to concrete Process and capability-call evidence
 - **AND** a renderer or reviewer can inspect the decision through the owning files
+
+### Requirement: Tool package identity is namespace-discovered
+Alan SHALL define a Tool's stable model and governance identity in its mounted
+package files. A complete Tool package SHALL include a visible executable and a
+validated manifest containing name, description, parameter schema, capability
+classification, timeout hint, and locality. Tool visibility SHALL be determined
+by namespace reachability, not an ambient host catalog or exposure list inside
+the engine.
+
+#### Scenario: Same Tool package is mounted in two workspaces
+- **WHEN** two Agent Processes with different workspace bindings mount the same
+  Tool package version
+- **THEN** the Tool identity and schema are the same
+- **AND** workspace root, cwd, credentials, and scratch state come from each
+  Process execution context
+
+#### Scenario: Policy withholds a Tool
+- **WHEN** namespace composition excludes a Tool package from a child Process
+- **THEN** the child cannot discover, describe, or execute that Tool
+- **AND** no process-global catalog can restore visibility
+
+#### Scenario: Package metadata is incomplete
+- **WHEN** a visible executable lacks required manifest identity or governance
+  fields
+- **THEN** it is not exposed as a model-callable Tool
+- **AND** capability classification does not fall back to an in-process table
+
+### Requirement: Child Process Tools are selected by namespace composition
+Alan SHALL select child Tool access before spawn by mounting complete permitted
+Tool packages into the child's namespace. Parent and child differences SHALL be
+expressed by their mounted packages and Process execution contexts, not by
+cloning parent Tool instances or constructing child registries.
+
+#### Scenario: Child launches with repo-local Tools
+- **WHEN** Alan launches a repo-scoped child Agent Process
+- **THEN** the child namespace contains only the permitted complete Tool
+  packages plus explicit workspace binding
+- **AND** the child discovers those Tools by walking its own namespace
+- **AND** it does not inherit parent Tool objects carrying workspace-specific
+  state
+
+#### Scenario: Persisted launch metadata is inspected
+- **WHEN** child launch metadata records workspace and Tool selection
+- **THEN** it matches the namespace and Process execution binding committed at
+  `/proc/clone`
+- **AND** unresolved relative workspace fields are not later resolved through
+  process-global defaults

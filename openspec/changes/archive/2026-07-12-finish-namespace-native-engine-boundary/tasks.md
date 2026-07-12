@@ -46,5 +46,5 @@
 - [x] 7.2 Run `cargo fmt --all --check`, workspace Clippy with all targets/features and warnings denied, `cargo test --workspace`, `just smoke`, the new absence guard, and `git diff --check`.
 - [x] 7.3 Measure streaming, Tool-call, and child-supervision hot paths and confirm file-native ownership does not introduce unbounded polling, duplicate writes, or a second cache authority.
 - [x] 7.4 Review implementation evidence against ADR-0024's convention-enforced boundary and avoid claiming hard multi-process isolation before the later Kernel transport/enforcement slice.
-- [ ] 7.5 Open the engine-boundary PR and keep the current HEAD under Codex review until every thread is resolved, required CI is green, and a delayed refresh shows no new findings before merge.
-- [ ] 7.6 After merge, sync all five capability deltas into canonical specs, verify the TUI and integration tests use only file observation, and mark the change archive-ready.
+- [x] 7.5 Open the engine-boundary PR and keep the current HEAD under Codex review until every thread is resolved, required CI is green, and a delayed refresh shows no new findings before merge.
+- [x] 7.6 After merge, sync all five capability deltas into canonical specs, verify the TUI and integration tests use only file observation, and mark the change archive-ready.
