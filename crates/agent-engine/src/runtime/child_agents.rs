@@ -40,6 +40,7 @@ const MAX_CHILD_TOOL_RESULTS: usize = 6;
 const MAX_CHILD_TOOL_RESULT_CHARS: usize = 1_200;
 const MAX_OBSERVED_CHILD_WARNINGS: usize = 32;
 const MAX_OBSERVED_CHILD_WARNING_CHARS: usize = 512;
+const MAX_CHILD_FILE_OBSERVATION_POLL_INTERVAL: Duration = Duration::from_millis(250);
 static NEXT_CHILD_NAMESPACE_FID: AtomicU64 = AtomicU64::new(80_000);
 
 struct ChildLlmProvider {
@@ -131,6 +132,22 @@ enum ChildLivenessObservation {
     Progress,
     Ignored,
     Closed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ChildFileObservation {
+    process_status: Option<alan_kernel::Status>,
+    process_exit_code: Option<i32>,
+    output_text: String,
+    process_output_offset: u64,
+    process_io_events_offset: u64,
+    request_ids: Vec<String>,
+    request_events_offset: u64,
+    action_ids: Vec<String>,
+    action_events_offset: u64,
+    ui_events_offset: u64,
+    activity: alan_agent_protocol::UiActivitySnapshot,
+    notice: alan_agent_protocol::UiNoticeSnapshot,
 }
 
 fn push_bounded_child_warning(warnings: &mut Vec<String>, warning: String) {
@@ -360,8 +377,18 @@ where
     )
     .await
     .context("Failed to spawn child-agent process namespace")?;
-    let child_process_environment = namespace_launch.environment.clone();
     let child_process_pid = namespace_launch.pid.clone();
+    let process_context = namespace_launch
+        .environment
+        .process_context()
+        .expect("child namespace launch installs process context");
+    let child_process_environment = child_observation_environment(
+        &runtime_procfs,
+        process_context.agent_root,
+        &child_process_pid,
+        &child_namespace_plan,
+    )
+    .await?;
     let generation_capabilities =
         crate::provider_capabilities_for_config(&effective_child_core_config);
     let runtime = match spawn_with_namespace_environment(
@@ -664,6 +691,68 @@ fn resolve_launch_root_dir(
 
 #[allow(dead_code)]
 impl ChildRuntimeController {
+    async fn observe_files(&self) -> Result<Option<ChildFileObservation>> {
+        let (Some(environment), Some(process_registry), Some(pid)) = (
+            self.process_environment.as_ref(),
+            self.process_registry.as_ref(),
+            self.process_pid.as_deref(),
+        ) else {
+            return Ok(None);
+        };
+        let pid = alan_kernel::Pid(pid.parse().context("parse observed child pid")?);
+        let process = tokio::time::timeout(
+            Duration::from_millis(1),
+            process_registry.observe_process_files(pid),
+        )
+        .await
+        .ok()
+        .flatten();
+        let timeout = Duration::from_secs(1);
+        Ok(Some(ChildFileObservation {
+            process_status: process.as_ref().map(|snapshot| snapshot.status),
+            process_exit_code: process.as_ref().and_then(|snapshot| snapshot.exit_code),
+            output_text: String::from_utf8(
+                process
+                    .as_ref()
+                    .map(|snapshot| snapshot.output.clone())
+                    .unwrap_or_default(),
+            )
+            .context("child process output is utf8")?,
+            process_output_offset: process
+                .as_ref()
+                .map(|snapshot| snapshot.output_offset)
+                .unwrap_or(0),
+            process_io_events_offset: process
+                .as_ref()
+                .map(|snapshot| snapshot.io_events_offset)
+                .unwrap_or(0),
+            request_ids: tokio::time::timeout(timeout, environment.request_ids())
+                .await
+                .context("observe child requests timed out")??,
+            request_events_offset: tokio::time::timeout(
+                timeout,
+                environment.request_events_offset(),
+            )
+            .await
+            .context("observe child request stream offset timed out")??,
+            action_ids: tokio::time::timeout(timeout, environment.action_ids())
+                .await
+                .context("observe child actions timed out")??,
+            action_events_offset: tokio::time::timeout(timeout, environment.action_events_offset())
+                .await
+                .context("observe child action stream offset timed out")??,
+            ui_events_offset: tokio::time::timeout(timeout, environment.ui_events_offset())
+                .await
+                .context("observe child UI events offset timed out")??,
+            activity: tokio::time::timeout(timeout, environment.read_ui_activity_snapshot())
+                .await
+                .context("observe child activity timed out")??,
+            notice: tokio::time::timeout(timeout, environment.read_ui_notice_snapshot())
+                .await
+                .context("observe child notice timed out")??,
+        }))
+    }
+
     pub(crate) fn startup_metadata(&self) -> &RuntimeStartupMetadata {
         &self.startup_metadata
     }
@@ -790,10 +879,68 @@ impl ChildRuntimeController {
         let mut latest_liveness_at = Instant::now();
         let started_at = Instant::now();
         let wall_clock_cap = self.timeout.map(|timeout| timeout.saturating_mul(4));
+        let file_poll_interval = self
+            .timeout
+            .map(|timeout| (timeout / 4).min(MAX_CHILD_FILE_OBSERVATION_POLL_INTERVAL))
+            .unwrap_or(MAX_CHILD_FILE_OBSERVATION_POLL_INTERVAL)
+            .max(Duration::from_millis(10));
         let mut liveness_closed = false;
         let mut check_process_stop = false;
+        let mut last_file_observation = None;
 
         loop {
+            if let Some(observed) = self.observe_buffered_child_events(
+                &mut output_text,
+                &mut warnings,
+                &mut latest_liveness_at,
+            ) {
+                if self.external_process_stop_observed().await {
+                    self.abort_runtime().await;
+                    return Ok(ChildRuntimeWaitOutcome::Observed(
+                        self.externally_stopped_observed_event(
+                            &observed.output_text,
+                            &observed.warnings,
+                        ),
+                    ));
+                }
+                return Ok(ChildRuntimeWaitOutcome::Observed(observed));
+            }
+
+            if let Some(observation) = self.observe_files().await? {
+                if last_file_observation.as_ref() != Some(&observation) {
+                    latest_liveness_at = Instant::now();
+                    self.child_run_registry.observe_progress(
+                        &self.child_run_id,
+                        "agentfs",
+                        Some(format!(
+                            "process={:?} exit={:?} activity={:?} output={} output_offset={} io_offset={} requests={} request_offset={} actions={} action_offset={} ui_offset={}",
+                            observation.process_status,
+                            observation.process_exit_code,
+                            observation.activity.state,
+                            observation.output_text.len(),
+                            observation.process_output_offset,
+                            observation.process_io_events_offset,
+                            observation.request_ids.len(),
+                            observation.request_events_offset,
+                            observation.action_ids.len(),
+                            observation.action_events_offset,
+                            observation.ui_events_offset,
+                        )),
+                    );
+                    if last_file_observation.as_ref().is_none_or(
+                        |previous: &ChildFileObservation| previous.notice != observation.notice,
+                    ) && observation.notice.kind == alan_agent_protocol::UiNoticeKind::Warning
+                        && !observation.notice.message.is_empty()
+                    {
+                        push_bounded_child_warning(
+                            &mut warnings,
+                            observation.notice.message.clone(),
+                        );
+                    }
+                }
+                last_file_observation = Some(observation);
+            }
+
             if let Some(observed) = self.observe_buffered_child_events(
                 &mut output_text,
                 &mut warnings,
@@ -864,7 +1011,7 @@ impl ChildRuntimeController {
                                 self.timed_out_observed_event("Child-agent turn idle timed out"),
                             ));
                         }
-                        _ = tokio::time::sleep(Duration::from_millis(250)) => {
+                        _ = tokio::time::sleep(file_poll_interval) => {
                             check_process_stop = true;
                             continue;
                         }
@@ -886,7 +1033,7 @@ impl ChildRuntimeController {
                                 self.timed_out_observed_event("Child-agent turn idle timed out"),
                             ));
                         }
-                        _ = tokio::time::sleep(Duration::from_millis(250)) => {
+                        _ = tokio::time::sleep(file_poll_interval) => {
                             check_process_stop = true;
                             continue;
                         }
@@ -915,7 +1062,7 @@ impl ChildRuntimeController {
                         );
                         continue;
                     }
-                    _ = tokio::time::sleep(Duration::from_millis(250)) => {
+                    _ = tokio::time::sleep(file_poll_interval) => {
                         check_process_stop = true;
                         continue;
                     }
@@ -931,7 +1078,7 @@ impl ChildRuntimeController {
                         );
                         continue;
                     }
-                    _ = tokio::time::sleep(Duration::from_millis(250)) => {
+                    _ = tokio::time::sleep(file_poll_interval) => {
                         check_process_stop = true;
                         continue;
                     }
@@ -1885,6 +2032,35 @@ fn child_namespace_from_launch_handles(
         namespace.mount(mount, tree.clone(), alan_kernel::Access::ReadOnly);
     }
     namespace
+}
+
+async fn child_observation_environment(
+    procfs: &alan_kernel::ProcFs,
+    agent_root: Arc<alan_agentfs::AgentRootFs>,
+    pid: &str,
+    plan: &ChildNamespaceAssemblyPlan,
+) -> Result<super::NamespaceRuntimeEnvironment> {
+    let agent_path = format!("/agent/{pid}");
+    let agent_tree = agent_root
+        .process_tree(pid)
+        .await
+        .with_context(|| format!("attach observer to child AgentFS {agent_path}"))?;
+    let mut namespace = alan_kernel::Namespace::new();
+    namespace.mount(
+        &agent_path,
+        InProcessTransport::new(agent_tree),
+        alan_kernel::Access::ReadWrite,
+    );
+    namespace.mount(
+        "/proc",
+        InProcessTransport::new(Arc::new(procfs.clone())),
+        alan_kernel::Access::ReadWrite,
+    );
+    Ok(super::NamespaceRuntimeEnvironment::new(
+        InProcessTransport::new(Arc::new(alan_kernel::MountFs::new(namespace))),
+        agent_path,
+        plan.llm_connection_name.clone(),
+    ))
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -4532,6 +4708,37 @@ model_reasoning_effort = "high"
         let result = controller.join().await.unwrap();
         assert_eq!(result.status, ChildRuntimeStatus::Completed);
         assert_eq!(result.output_text, "finished after heartbeat");
+    }
+
+    #[tokio::test]
+    async fn child_runtime_join_keeps_running_while_activity_file_is_fresh() {
+        let temp = TempDir::new().unwrap();
+        let requests = RecordedRequests::default();
+        let response = completed_response("finished after file heartbeat");
+        let parent = make_parent_state(&temp, requests.clone(), response.clone());
+        let spec = launch_spec(temp.path().join("repo/.alan/agents/grader"));
+        let mut child = spawn_child_runtime_with_client_factory(&parent, spec, |_| {
+            Ok(LlmClient::new(
+                RecordingProvider::new(requests.clone(), response.clone())
+                    .with_delay(Duration::from_millis(180)),
+            ))
+        })
+        .await
+        .unwrap();
+        child.timeout = Some(Duration::from_millis(80));
+        let environment = child.process_environment.as_ref().unwrap().clone();
+        tokio::spawn(async move {
+            for _ in 0..5 {
+                crate::runtime::ui_surfaces::heartbeat(&environment)
+                    .await
+                    .unwrap();
+                tokio::time::sleep(Duration::from_millis(35)).await;
+            }
+        });
+
+        let result = child.join().await.unwrap();
+        assert_eq!(result.status, ChildRuntimeStatus::Completed);
+        assert_eq!(result.output_text, "finished after file heartbeat");
     }
 
     #[tokio::test]

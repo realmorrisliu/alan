@@ -737,6 +737,73 @@ impl NamespaceRuntimeEnvironment {
         write_action_record(&client, &self.agent_path, record).await
     }
 
+    pub(crate) async fn read_ui_activity_snapshot(
+        &self,
+    ) -> Result<alan_agent_protocol::UiActivitySnapshot> {
+        serde_json::from_slice(
+            &self
+                .client()
+                .read_file(&ui_activity_path(&self.agent_path))
+                .await?,
+        )
+        .context("parse agent activity snapshot")
+    }
+
+    pub(crate) async fn read_ui_notice_snapshot(
+        &self,
+    ) -> Result<alan_agent_protocol::UiNoticeSnapshot> {
+        serde_json::from_slice(
+            &self
+                .client()
+                .read_file(&ui_notice_path(&self.agent_path))
+                .await?,
+        )
+        .context("parse agent notice snapshot")
+    }
+
+    pub(crate) async fn ui_events_offset(&self) -> Result<u64> {
+        Ok(self
+            .client()
+            .stat_path(&ui_events_path(&self.agent_path))
+            .await?
+            .length)
+    }
+
+    pub(crate) async fn request_ids(&self) -> Result<Vec<String>> {
+        self.child_tree_ids("requests").await
+    }
+
+    pub(crate) async fn action_ids(&self) -> Result<Vec<String>> {
+        self.child_tree_ids("actions").await
+    }
+
+    pub(crate) async fn request_events_offset(&self) -> Result<u64> {
+        self.child_tree_events_offset("requests").await
+    }
+
+    pub(crate) async fn action_events_offset(&self) -> Result<u64> {
+        self.child_tree_events_offset("actions").await
+    }
+
+    async fn child_tree_events_offset(&self, tree: &str) -> Result<u64> {
+        Ok(self
+            .client()
+            .stat_path(&format!("{}/{tree}/events", self.agent_path))
+            .await?
+            .length)
+    }
+
+    async fn child_tree_ids(&self, tree: &str) -> Result<Vec<String>> {
+        let mut ids = self
+            .client()
+            .try_read_directory_names(&format!("{}/{tree}", self.agent_path))
+            .await?
+            .unwrap_or_default();
+        ids.retain(|name| !matches!(name.as_str(), "clone" | "events" | "help"));
+        ids.sort();
+        Ok(ids)
+    }
+
     /// Build a bounded reference only when the path currently resolves in this
     /// Agent Process namespace.
     pub(crate) async fn evidence_reference(
