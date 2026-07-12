@@ -1,9 +1,10 @@
 # agent-namespace-runtime Specification
 
 ## Purpose
-Defines the namespace-native Agent Execution Engine boundary: model generation,
-Tool execution, AgentFS state, Process spawn, and shell conversation all flow
-through mounted files rather than injected providers or side-channel state.
+Defines the namespace-native Agent Execution Engine transition-loop boundary:
+model generation, Tool execution, AgentFS state, Process spawn, and shell
+conversation all flow through mounted files rather than injected providers or
+side-channel state.
 ## Requirements
 ### Requirement: The engine's environment is its namespace
 The Agent Execution Engine SHALL store and use exactly one environment value: a
@@ -56,8 +57,12 @@ at `/bin/<tool>` has a valid mounted manifest at
 capability classification, locality, and execution hints from that package and
 invoke the Tool by spawning its executable via `/proc/clone`, then reading the
 Tool Process output/result files and projecting them into
-`actions/<id>/`. The engine SHALL NOT use or reconstruct an in-process Tool
-registry to grant, describe, or execute a Tool effect.
+`actions/<id>/`. The transition loop SHALL NOT use or reconstruct an in-process
+Tool registry as Tool visibility, description, or execution authority. During
+the current convention-enforced stage, host composition and Process-runner
+adapters MAY use in-process implementation registries to materialize and host
+mounted Tool packages, but they SHALL NOT make an unmounted Tool visible or
+executable and every invocation SHALL still cross `/proc/clone`.
 
 #### Scenario: The engine calls a Tool
 - **WHEN** a turn requires a Tool effect and the complete Tool package is
@@ -65,7 +70,8 @@ registry to grant, describe, or execute a Tool effect.
 - **THEN** the engine resolves `/bin/<tool>`, spawns it via `/proc/clone`, and
   reads its Process output/result files
 - **AND** `actions/<id>` references that concrete Tool Process
-- **AND** no in-process Tool implementation call is on the effect path
+- **AND** the transition loop does not call an in-process Tool implementation
+  directly; any in-process hosting remains behind the Process runner adapter
 
 #### Scenario: A Tool is not mounted
 - **WHEN** the Tool executable is not bound into the Agent Process namespace
