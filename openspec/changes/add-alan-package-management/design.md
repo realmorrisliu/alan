@@ -200,8 +200,9 @@ rather than retaining repository metadata in the projected store entry.
 For a local git worktree, the default export is its tracked files plus tracked
 working-tree modifications; ignored and untracked files require explicit,
 validated include paths. For a non-git local directory, the default allowlist
-is the detected skill package roots, and helpers or resources require the same
-explicit include mechanism. Symlink confinement applies after include
+contains command-style `skills/*.md` files and portable roots detected through
+`**/SKILL.md`; helpers or resources require the same explicit include
+mechanism. Symlink confinement applies after include
 resolution. The local revision token fingerprints the actual allowlisted
 export, so excluded incidental files cannot affect or leak into a package.
 
@@ -335,11 +336,14 @@ Alan home remains denied. If the active backend cannot enforce that boundary
 (including a backend that ignores read deny rules), package helper execution is
 unavailable and fails closed; Q never falls back to an ordinary host spawn.
 
-### D7: Provenance and manifest make the lifecycle exact
+### D7: Provenance and managed-content manifest make the lifecycle exact
 
 The store keeps, per package: provenance (source repository, commit, source
-path, converter version) and a manifest of every materialized file with a
-content hash. Ownership is decided by Q's provider registry and this manifest,
+path, converter version) and a manifest inventorying every exported source file
+and generated materialized file with a content hash, the selected skill roots,
+and the fixed Q-owned metadata set. The manifest itself and provenance are
+enumerated metadata rather than self-hashed content. Ownership is decided by
+Q's provider registry and this manifest,
 not by a back-pointer inside each skill — the earlier draft's per-skill
 `package.yaml` provenance block is now optional metadata, not a discovery
 requirement, since Q already knows which provider owns what. Semantics:
@@ -347,7 +351,7 @@ requirement, since Q already knows which provider owns what. Semantics:
 - **upgrade**, unchanged source revision token (commit for remote git, content
   fingerprint for every local directory) + converter → no-op; changed →
   re-materialize;
-- materialized files diverging from manifest hashes (local edits) → warn and
+- exported or generated files diverging from manifest hashes (local edits) → warn and
   skip unless `--force`;
 - **uninstall** → walk the complete entry, delete manifest-owned files, preserve
   and report both hash-diverged and unmanifested files, and remove the entry

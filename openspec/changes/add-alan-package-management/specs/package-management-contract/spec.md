@@ -97,7 +97,8 @@ exposure rules.
 
 #### Scenario: Non-git local export is allowlisted
 - **WHEN** Q installs a local directory outside version control
-- **THEN** the default export contains detected skill package roots only
+- **THEN** the default export contains command-style `skills/*.md` files and
+  portable package roots detected through `**/SKILL.md`
 - **AND** additional helpers or resources enter the export only through an
   explicit include that passes path and symlink validation
 
@@ -331,12 +332,14 @@ reporting instead of degrading silently at runtime.
 - **THEN** they are listed in the install report for human review and produce
   no frontmatter entries
 
-### Requirement: Packages record provenance and a materialization manifest
+### Requirement: Packages record provenance and a managed-content manifest
 The package store SHALL record, per distribution package: provenance (source
 repository when resolvable, the source revision token — commit for remote git
 sources, content fingerprint for every local path source — and converter
-version) and a manifest listing
-every materialized file with a content hash. The store's
+version) and a manifest listing every exported source file and every generated
+materialized file with a content hash, plus the selected skill roots. The
+manifest SHALL also identify the fixed Q-owned metadata files (including the
+manifest itself and provenance) that are managed but cannot self-hash. The store's
 provider registry and manifest are authoritative for ownership; a materialized
 skill package's `package.yaml` MAY additionally carry a `provenance` block
 naming the owning distribution package. Provenance and manifest are management
@@ -348,8 +351,8 @@ stored or rendered.
 
 #### Scenario: Provenance is written on install
 - **WHEN** any install completes
-- **THEN** the store entry contains provenance and a manifest recording which
-  package owns each materialized skill
+- **THEN** the store entry contains provenance and a manifest inventorying all
+  exported and generated content, Q-owned metadata, and selected skill roots
 
 #### Scenario: Source outside version control
 - **WHEN** the source is not inside a git repository
@@ -367,7 +370,7 @@ even when that directory is inside a git repository. `q upgrade` SHALL:
 - re-fetch and re-materialize when the source revision token or converter
   version changed — for any local directory this means a re-computed
   content fingerprint that differs from the recorded one;
-- warn and skip files whose destination no longer matches the manifest content
+- warn and skip managed files whose destination no longer matches the manifest content
   hash (local edits), preserving the edits unless the user passes an explicit
   force flag.
 
@@ -388,15 +391,17 @@ even when that directory is inside a git repository. `q upgrade` SHALL:
 - **THEN** the re-computed content fingerprint differs from the recorded one
 - **AND** upgrade re-materializes rather than reporting the package up to date
 
-#### Scenario: Locally modified skill
-- **WHEN** a materialized file differs from its manifest hash
+#### Scenario: Locally modified managed content
+- **WHEN** an exported source file or generated materialized file differs from
+  its manifest hash
 - **THEN** upgrade warns, skips that file, and preserves the local edits
 - **AND** an explicit force flag is required to overwrite
 
 ### Requirement: Uninstall is exact and complete
-`q uninstall` SHALL remove exactly the files listed in the package's manifest
-plus the package's store entry, and nothing else. Because materialized files
-live inside the store entry, uninstall SHALL check for divergence **before**
+`q uninstall` SHALL remove exactly the exported and generated files listed in
+the package's manifest, the fixed Q-owned metadata set, and the package's store
+entry, and nothing else. Because managed files live inside the store entry,
+uninstall SHALL check for divergence **before**
 removing the entry: it SHALL walk the complete entry and compare it with the
 manifest and Q-owned metadata set. Any manifest-listed file diverging from its
 hash and any unmanifested file SHALL be reported and preserved by relocating
@@ -406,9 +411,11 @@ flag. Without force, Q removes the entry directory only after it is empty.
 With force, the entire entry is removed.
 
 #### Scenario: Clean uninstall
-- **WHEN** uninstall runs for an installed package with no diverged files
-- **THEN** all manifest-listed files and the store entry are removed
-- **AND** skill packages not owned by the manifest are untouched
+- **WHEN** uninstall runs for an installed package with no diverged or
+  unmanifested files
+- **THEN** all exported source files, generated files, Q-owned metadata, and
+  the store entry are removed
+- **AND** files not owned by the managed-content inventory are untouched
 
 #### Scenario: Locally modified file at uninstall
 - **WHEN** a manifest-listed file inside the store entry diverges from its

@@ -46,7 +46,8 @@ ai-berkshire run.
   tree remains package content, not an implicit recursive skill source. Shared
   helpers resolve at `/lib/pkg/<package-id>/...`, never a host path.
 - **Lifecycle** is exact: package provenance (source identity, revision token,
-  converter version) and a materialization manifest make `q upgrade` idempotent, protect
+  converter version) and a managed-content manifest covering exported source
+  plus generated files make `q upgrade` idempotent, protect
   local edits (warn, never silently overwrite), and make `q uninstall`
   complete. `q list` reports installed packages and unsatisfied capabilities.
 - **Honest failure**: recognized foreign vocabulary with no Alan equivalent
