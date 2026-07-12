@@ -16,7 +16,7 @@ the real Managed User PTY smoke until a later session.
 **Non-Goals:**
 
 - Automatically adopt, repair, create, or delete any local account.
-- Reintroduce sudoers, daemon-era persistence, migration, or compatibility behavior.
+- Reintroduce sudoers, retired host-service persistence, migration, or compatibility behavior.
 - Change the Managed User product contract or implement a new verification path.
 
 ## Decisions

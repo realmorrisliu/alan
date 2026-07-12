@@ -12,7 +12,7 @@ truthful and its final runtime evidence is not lost during archival.
 - Keep account selection, provisioning authorization, and any local account mutation under the
   operator's control; do not auto-adopt or modify an existing unmarked account.
 - Capture sanitized pass/fail evidence and any narrowly scoped follow-up without restoring
-  daemon-era, sudoers, migration, or compatibility behavior.
+  retired host-service, sudoers, migration, or compatibility behavior.
 
 ## Capabilities
 
