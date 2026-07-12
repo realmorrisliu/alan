@@ -70,11 +70,10 @@ exposure rules.
   `/lib/pkg/<package>/`
 
 ### Requirement: Install materializes skills from the store
-`q install` SHALL fetch the source into the package store and
-materialize skill packages into the selected skill source, defaulting to the
-channel-selected global public skill source (stable `~/.agents/skills/`, dev
-`~/.agents-dev/skills/`) keyed by normalized skill id, preserving the
-install-channel isolation defined by `skill-system-contract`. Two
+`q install` SHALL fetch the source into the package store and materialize skill
+packages **inside the store entry** (never into `~/.agents/skills/` or any
+other public skill source), where they are resolved as a distribution provider.
+Channel isolation is inherited from the channel-scoped store backing. Two
 materialization forms are supported in v1:
 
 - **Conversion**: a Claude Code command-style single `.md` file (body text,
@@ -254,20 +253,25 @@ metadata and SHALL NOT alter runtime skill behavior.
 - **AND** an explicit force flag is required to overwrite
 
 ### Requirement: Uninstall is exact and complete
-`q uninstall` SHALL remove exactly the files listed in the package's
-manifest plus the package's store entry, and nothing else. Files diverging
-from their manifest hash SHALL be reported and preserved unless the user
-passes an explicit force flag.
+`q uninstall` SHALL remove exactly the files listed in the package's manifest
+plus the package's store entry, and nothing else. Because materialized files
+live inside the store entry, uninstall SHALL check for divergence **before**
+removing the entry: any file diverging from its manifest hash SHALL be reported
+and preserved by relocating it out of the store entry (or by leaving the entry
+in place around the diverged files), never deleted with the entry, unless the
+user passes an explicit force flag. With force, the entire entry is removed.
 
 #### Scenario: Clean uninstall
-- **WHEN** uninstall runs for an installed package
+- **WHEN** uninstall runs for an installed package with no diverged files
 - **THEN** all manifest-listed files and the store entry are removed
 - **AND** skill packages not owned by the manifest are untouched
 
 #### Scenario: Locally modified file at uninstall
-- **WHEN** a manifest-listed file diverges from its recorded hash
-- **THEN** uninstall preserves it, reports it, and requires an explicit force
-  flag to delete it
+- **WHEN** a manifest-listed file inside the store entry diverges from its
+  recorded hash
+- **THEN** uninstall preserves that file by moving it out of the entry before
+  removing the rest, reports it, and does not delete it
+- **AND** removing it anyway requires an explicit force flag
 
 ### Requirement: List reports installed packages
 `q list` SHALL report each installed distribution package with its

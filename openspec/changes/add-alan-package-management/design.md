@@ -106,7 +106,7 @@ The engine no longer enumerates host directories for skills. Today
 `package_dirs_for_roots` (`agent_definition.rs`) scans built-in +
 `AgentRoot/skills/` + `.agents/skills/` as independent sources; slice 1 retires
 that and makes **Quartermaster the one authority that resolves an agent's skill
-set** (ADR-0029 D6). Every skill reaches an agent as a **Q package**, through
+set** (ADR-0030 D6). Every skill reaches an agent as a **Q package**, through
 one of three provider kinds:
 
 - **Pre-installed provider** — alan's first-party built-in skills, reseeded
@@ -119,7 +119,7 @@ one of three provider kinds:
 
 Physical unification means **no bypass source**: the engine sees skills only
 through Q's resolution, and every skill is reachable at one `/lib/pkg`
-namespace view. Two things this must not conflate (ADR-0029 D6):
+namespace view. Two things this must not conflate (ADR-0030 D6):
 
 - **Managed by Q** (install/register/upgrade/uninstall all flow through Q, no
   escape) — done in slice 1, not gated on anything.
@@ -276,7 +276,7 @@ requirement, since Q already knows which provider owns what. Semantics:
 ### D8: The surface is Quartermaster's `q` command family, implemented in Rust
 
 Identity and naming are settled by
-[ADR-0029](../../../docs/adr/0029-quartermaster-package-management.md):
+[ADR-0030](../../../docs/adr/0030-quartermaster-package-management.md):
 package management is an Alan OS organ named **Quartermaster**, command `q`
 ("Q equips agents"), verbs deliberately boring (`q install|list|upgrade|
 uninstall`). In v0, before the shell command namespace lands, the family is
@@ -284,9 +284,9 @@ hosted by the alan CLI; materialization logic is library code in the existing
 skills module space so tests drive it without the CLI, per the skill-authoring
 tooling preference.
 
-### D9: This change is slice 1 of the ADR-0029 authority model
+### D9: This change is slice 1 of the ADR-0030 authority model
 
-Slice 1 (ADR-0029 D7) establishes Q as the sole skill-resolution authority:
+Slice 1 (ADR-0030 D7) establishes Q as the sole skill-resolution authority:
 providers replace enumerated sources, built-ins reseed as pre-installed
 packages, agent-root/workspace become local-source providers, distribution
 packages install from git/local, and the `/lib/pkg` projection is the single
@@ -334,7 +334,7 @@ under `/lib`, and Plan 9's `/lib` is precisely where data files belong.
   distribution as a packaging detail), so only the *source* of the same skills
   moves.
 - [Large blast radius: slice 1 MODIFYs core discovery contract] → accepted per
-  ADR-0029 D6 (physical unification cannot be a façade); mitigated by keeping
+  ADR-0030 D6 (physical unification cannot be a façade); mitigated by keeping
   loading/exposure/one-skill-per-package untouched and changing only the
   discovery source.
 

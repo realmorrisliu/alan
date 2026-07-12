@@ -29,7 +29,7 @@
 
 - [ ] 4.1 Implement install: fetch + materialize + provider/provenance/manifest write, atomic enough that a failed install leaves no partial skills
 - [ ] 4.2 Implement upgrade: no-op on unchanged commit+converter, re-materialize on change, manifest-hash divergence warn/skip/force
-- [ ] 4.3 Implement uninstall: delete exactly manifest-listed files plus the store entry and provider registration; preserve and report diverged files unless forced
+- [ ] 4.3 Implement uninstall: check divergence before removing the store entry — relocate diverged files out of the entry (never delete with it) unless forced — then delete manifest-listed files, the store entry, and provider registration
 - [ ] 4.4 Project the store read-only at `/lib/pkg` via the host-directory mount machinery on install/boot; verify Agent Processes read package content through the namespace
 - [ ] 4.5 Implement execution-backend resolution of `/lib/pkg/...` paths to store backing for spawned helper processes (deterministic prefix mapping via the mount table), with the narrow guard exception for runtime-resolved store paths; verify direct agent references to the backing stay denied
 - [ ] 4.6 Implement list: installed packages with provenance and resolved-skill summary including unsatisfied required tools

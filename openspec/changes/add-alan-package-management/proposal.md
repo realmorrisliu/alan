@@ -13,7 +13,7 @@ made the gap concrete: alan cannot adopt an external skill *repository* at all,
 and the natural adoption unit is the repository, not the individual skill.
 
 This change establishes **Quartermaster (`q`) as the sole resolution authority
-for skill capabilities** (ADR-0029 D6): every skill an agent can reach —
+for skill capabilities** (ADR-0030 D6): every skill an agent can reach —
 including alan's own built-ins — is a Q package with one owner and one
 lifecycle. It is **slice 1** of that authority model, validated by making
 ai-berkshire run.
@@ -30,7 +30,7 @@ ai-berkshire run.
   **package store** (`~/.alan/pkg/`, dev `~/.alan-dev/pkg/`), projected
   read-only at **`/lib/pkg/<name>`** in the Alan OS namespace.
 - **All skill sources become Q packages / providers**, physical unification
-  (ADR-0029 D6):
+  (ADR-0030 D6):
   - built-in first-party skills are reseeded as Q **pre-installed packages**;
   - `AgentRoot` and workspace skills are registered as Q **local-source
     packages**;
@@ -48,7 +48,7 @@ ai-berkshire run.
 - **Honest failure**: recognized foreign vocabulary with no alan equivalent
   (web search, Team orchestration) is declared unavailable and surfaced through
   the existing `skill_availability_issues` machinery, never silently degraded.
-- **Out of scope** (later slices, ADR-0029 D7): agent runtime self-discovery by
+- **Out of scope** (later slices, ADR-0030 D7): agent runtime self-discovery by
   walking `/lib/pkg` (gated on `refactor-engine-namespace-native`); additional
   package types (MCP, tools/binaries, workflows, models, knowledge packs);
   permission-to-policy wiring; `q` in `/bin`; per-agent namespace binds
