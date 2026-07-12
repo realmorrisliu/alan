@@ -833,6 +833,18 @@ impl NamespaceRuntimeEnvironment {
         self.child_tree_ids("requests").await
     }
 
+    pub(crate) async fn pending_request_id(&self, ids: &[String]) -> Result<Option<String>> {
+        for id in ids {
+            let path = format!("{}/requests/{id}/status", self.agent_path);
+            let status = String::from_utf8(self.client().read_file(&path).await?)
+                .context("request status is utf8")?;
+            if status.trim() == "pending" {
+                return Ok(Some(id.clone()));
+            }
+        }
+        Ok(None)
+    }
+
     pub(crate) async fn action_ids(&self) -> Result<Vec<String>> {
         self.child_tree_ids("actions").await
     }
@@ -3148,6 +3160,40 @@ mod tests {
         assert_eq!(
             messages[0].tool_responses()[0].text_content(),
             r#"{"answers":[{"question_id":"q1","value":"answer from request file"}]}"#
+        );
+    }
+
+    #[tokio::test]
+    async fn pending_request_selection_ignores_lexicographic_id_order() {
+        let agentfs = Arc::new(AgentFs::new());
+        let mut ns = Namespace::new();
+        ns.mount(
+            "/agent/1",
+            InProcessTransport::new(agentfs),
+            Access::ReadWrite,
+        );
+        let root = InProcessTransport::new(Arc::new(MountFs::new(ns)));
+        let shell = Shell::new(root.clone());
+        let environment = NamespaceRuntimeEnvironment::new(root, "/agent/1", "default");
+
+        for index in 0..11 {
+            let id = environment
+                .write_request(NamespaceRequestRecord::new("confirmation", "approve?"))
+                .await
+                .unwrap();
+            assert_eq!(id, format!("r{index}"));
+            if index < 10 {
+                shell
+                    .write(&format!("/agent/1/requests/{id}/response"), b"approved")
+                    .await
+                    .unwrap();
+            }
+        }
+
+        let ids = environment.request_ids().await.unwrap();
+        assert_eq!(
+            environment.pending_request_id(&ids).await.unwrap(),
+            Some("r10".into())
         );
     }
 

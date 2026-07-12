@@ -1,8 +1,8 @@
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use alan_agent_protocol::{
-    CompactionAttemptSnapshot, MemoryFlushAttemptSnapshot, UiActivitySnapshot, UiEvent,
-    UiNoticeKind, UiNoticeSnapshot, UiPlanSnapshot, UiThinkingSnapshot,
+    CompactionAttemptSnapshot, MemoryFlushAttemptSnapshot, UiActivitySnapshot, UiActivityState,
+    UiEvent, UiNoticeKind, UiNoticeSnapshot, UiPlanSnapshot, UiThinkingSnapshot,
 };
 use anyhow::Result;
 
@@ -97,6 +97,9 @@ pub(crate) async fn resumed(namespace: &NamespaceRuntimeEnvironment) -> Result<(
 }
 
 pub(crate) async fn heartbeat(namespace: &NamespaceRuntimeEnvironment) -> Result<()> {
+    if namespace.read_ui_activity_snapshot().await?.state != UiActivityState::Running {
+        return Ok(());
+    }
     namespace
         .write_ui_activity_snapshot(&UiActivitySnapshot::running(now_unix_ms()))
         .await
@@ -339,5 +342,19 @@ mod tests {
         let notice = environment.read_ui_notice_snapshot().await.unwrap();
         assert_eq!(notice.kind, UiNoticeKind::Error);
         assert_eq!(notice.message, "provider failed");
+    }
+
+    #[tokio::test]
+    async fn heartbeat_preserves_paused_activity() {
+        let (environment, _) = namespace_environment();
+        initialize(&environment).await.unwrap();
+        paused(&environment).await.unwrap();
+
+        heartbeat(&environment).await.unwrap();
+
+        assert_eq!(
+            environment.read_ui_activity_snapshot().await.unwrap().state,
+            UiActivityState::Paused
+        );
     }
 }

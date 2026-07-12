@@ -128,6 +128,7 @@ struct ChildFileObservation {
     process_output_offset: u64,
     process_io_events_offset: u64,
     request_ids: Vec<String>,
+    pending_request_id: Option<String>,
     request_events_offset: u64,
     action_ids: Vec<String>,
     action_events_offset: u64,
@@ -711,6 +712,10 @@ impl ChildRuntimeController {
         let request_ids = tokio::time::timeout(timeout, environment.request_ids())
             .await
             .context("observe child requests timed out")??;
+        let pending_request_id =
+            tokio::time::timeout(timeout, environment.pending_request_id(&request_ids))
+                .await
+                .context("observe child pending request timed out")??;
         let request_events_offset =
             tokio::time::timeout(timeout, environment.request_events_offset())
                 .await
@@ -739,6 +744,7 @@ impl ChildRuntimeController {
                 .map(|snapshot| snapshot.io_events_offset)
                 .unwrap_or(0),
             request_ids,
+            pending_request_id,
             request_events_offset,
             action_ids,
             action_events_offset,
@@ -947,7 +953,7 @@ impl ChildRuntimeController {
                     ));
                 }
                 if observation.activity.state == alan_agent_protocol::UiActivityState::Paused
-                    && let Some(request_id) = observation.request_ids.last()
+                    && let Some(request_id) = observation.pending_request_id.as_ref()
                 {
                     let kind = self
                         .process_environment
