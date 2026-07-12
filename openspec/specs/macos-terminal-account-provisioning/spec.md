@@ -182,6 +182,7 @@ sudoers state.
 - **THEN** steady-state rollback neither claims ownership from that entry nor
   removes it
 - **AND** removal of that historical entry remains outside steady-state Alan
+  and requires a separately authorized bounded cleanup
 
 ### Requirement: Managed Terminal User Catalog Is User Facing
 Alan for macOS SHALL present Managed Terminal Accounts as a user-facing catalog
