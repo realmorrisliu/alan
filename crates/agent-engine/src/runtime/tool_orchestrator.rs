@@ -329,17 +329,6 @@ fn maybe_allow_approved_tool_escalation_replay(
     }
 }
 
-fn namespace_builtin_tool_capability(tool_name: &str) -> ToolCapability {
-    match tool_name {
-        "read_file" | "grep" | "glob" | "list_dir" => ToolCapability::Read,
-        "write_file" | "edit_file" => ToolCapability::Write,
-        // Until bash is converted with command classification behind `/bin/bash`,
-        // keep it conservative so policy routes it through escalation.
-        "bash" => ToolCapability::Unknown,
-        _ => ToolCapability::Unknown,
-    }
-}
-
 fn namespace_tool_payload(
     tool: crate::runtime::NamespaceToolActionOutput,
 ) -> Result<serde_json::Value> {
@@ -493,17 +482,47 @@ where
         .await?
         .into_iter()
         .find(|package| package.name == tool_call.name);
-    let tool_capability = tool_package
-        .as_ref()
-        .map(|package| {
-            state
-                .namespace_environment()
-                .resolve_tool_capability(package, &tool_arguments)
+    let Some(tool_package) = tool_package else {
+        let payload = json!({
+            "success": false,
+            "error": format!(
+                "Tool '{}' is unavailable because its executable and valid manifest are not both mounted",
+                tool_call.name
+            )
+        });
+        emit(Event::ToolCallStarted {
+            title: None,
+            id: tool_call.id.clone(),
+            name: tool_call.name.clone(),
+            audit: None,
         })
-        .unwrap_or_else(|| namespace_builtin_tool_capability(&tool_call.name));
-    if tool_package
-        .as_ref()
-        .is_some_and(|package| package.is_workspace_local())
+        .await;
+        emit(Event::ToolCallCompleted {
+            presentation: None,
+            id: tool_call.id.clone(),
+            name: Some(tool_call.name.clone()),
+            success: Some(false),
+            result_preview: tool_result_preview(&payload),
+            audit: None,
+        })
+        .await;
+        state.machine.record_tool_call(
+            &tool_call.name,
+            tool_arguments.clone(),
+            payload.clone(),
+            false,
+        );
+        state
+            .machine
+            .add_tool_message(&tool_call.id, &tool_call.name, payload);
+        return Ok(ToolOrchestratorOutcome::ContinueToolBatch {
+            refresh_context: false,
+        });
+    };
+    let tool_capability = state
+        .namespace_environment()
+        .resolve_tool_capability(&tool_package, &tool_arguments);
+    if tool_package.is_workspace_local()
         && (tool_call.name == "bash" || tool_capability != ToolCapability::Network)
         && let Some((routing_payload, routing_preview, routing_audit)) =
             workspace_routing_preflight(state, &tool_call.name, &tool_arguments, tool_capability)
@@ -1053,10 +1072,7 @@ where
 
     let execution_target = state.namespace_environment().clone();
     let tool_start = Instant::now();
-    let tool_timeout_secs = tool_package
-        .as_ref()
-        .map(|package| package.timeout_secs)
-        .unwrap_or(state.core_config.tool_timeout_secs);
+    let tool_timeout_secs = tool_package.timeout_secs;
     let tool_result = execute_tool_effect(
         execution_target,
         &tool_call.name,
@@ -1975,9 +1991,17 @@ mod tests {
     fn create_namespace_test_state_and_shell_with_bin(
         mount_bin: bool,
     ) -> (RuntimeLoopState, Shell) {
+        create_namespace_test_state_and_shell_with_package(mount_bin, mount_bin)
+    }
+
+    fn create_namespace_test_state_and_shell_with_package(
+        mount_bin: bool,
+        mount_manifests: bool,
+    ) -> (RuntimeLoopState, Shell) {
         let procfs = ProcFs::new().with_runner(Arc::new(JsonToolRunner));
         let agentfs = Arc::new(AgentFs::new());
-        let binfs = Arc::new(StaticBinFs::new());
+        let bin = InProcessTransport::new(Arc::new(StaticBinFs::new()));
+        let mut manifests = Vec::new();
 
         let mut child_namespace = Namespace::new();
         child_namespace.mount(
@@ -1986,7 +2010,34 @@ mod tests {
             Access::ReadWrite,
         );
         if mount_bin {
-            child_namespace.mount("/bin", InProcessTransport::new(binfs), Access::ReadOnly);
+            child_namespace.mount("/bin", bin.clone(), Access::ReadOnly);
+        }
+        if mount_manifests {
+            for tool_name in BUILTIN_BIN_TOOLS {
+                let manifest = crate::runtime::ToolPackageManifest {
+                    version: 1,
+                    name: tool_name.to_string(),
+                    description: format!("Test {tool_name} Tool"),
+                    parameters: json!({"type": "object"}),
+                    capability: ToolCapability::Read,
+                    capability_is_argument_dependent: false,
+                    locality: super::super::tool_packages::ToolPackageLocality::Global,
+                    timeout_secs: 30,
+                    execution: super::super::tool_packages::ToolExecutionHints {
+                        arguments: "json_first_arg".to_string(),
+                        result: "stdout_json".to_string(),
+                    },
+                };
+                let path = format!("/lib/exec/{tool_name}");
+                let transport = InProcessTransport::new(Arc::new(
+                    alan_ap::reference::MemFs::with_read_only_file(
+                        "manifest",
+                        serde_json::to_vec(&manifest).unwrap(),
+                    ),
+                ));
+                child_namespace.mount(&path, transport.clone(), Access::ReadOnly);
+                manifests.push((path, transport));
+            }
         }
 
         let spawner_procfs =
@@ -2002,6 +2053,12 @@ mod tests {
             InProcessTransport::new(agentfs),
             Access::ReadWrite,
         );
+        if mount_bin {
+            root_namespace.mount("/bin", bin, Access::ReadOnly);
+        }
+        for (path, transport) in manifests {
+            root_namespace.mount(&path, transport, Access::ReadOnly);
+        }
         let root = InProcessTransport::new(Arc::new(MountFs::new(root_namespace)));
         let shell = Shell::new(root.clone());
         let state = RuntimeLoopState {
@@ -2479,37 +2536,57 @@ mod tests {
             .tool_payload_by_call_id("call-read")
             .expect("failed tool response payload should be recorded on tape");
         assert_eq!(payload["success"], json!(false));
-        assert_eq!(payload["exit_code"], json!(127));
-        assert_eq!(payload["process"], json!("/proc/1"));
-        assert_eq!(payload["action_id"], json!("a0"));
         assert!(
             payload["error"]
                 .as_str()
-                .is_some_and(|error| error.contains("executable is not mounted")),
+                .is_some_and(|error| error.contains("not both mounted")),
             "payload should explain the withheld executable: {payload}"
         );
-
-        assert_eq!(
-            String::from_utf8(shell.cat("/proc/1/status").await.unwrap()).unwrap(),
-            "exited\n"
-        );
-        assert_eq!(
-            String::from_utf8(shell.cat("/proc/1/exit").await.unwrap()).unwrap(),
-            "127"
-        );
-        assert_eq!(
-            String::from_utf8(shell.cat("/agent/1/actions/a0/status").await.unwrap()).unwrap(),
-            "failed"
-        );
-        let action_output =
-            String::from_utf8(shell.cat("/agent/1/actions/a0/output").await.unwrap()).unwrap();
-        let action_payload: Value = serde_json::from_str(action_output.trim()).unwrap();
-        assert_eq!(action_payload["success"], json!(false));
         assert!(
-            action_payload["error"]
+            shell.cat("/proc/1/status").await.is_err(),
+            "a withheld executable must not spawn"
+        );
+    }
+
+    #[tokio::test]
+    async fn namespace_tool_call_does_not_spawn_executable_without_manifest() {
+        let (mut state, shell) = create_namespace_test_state_and_shell_with_package(true, false);
+
+        let (outcome, events) = execute_single_tool_call(
+            &mut state,
+            "call-read",
+            "read_file",
+            json!({ "path": "sample.txt" }),
+        )
+        .await;
+
+        assert!(matches!(
+            outcome,
+            ToolBatchOrchestratorOutcome::ContinueTurnLoop {
+                refresh_context: false
+            }
+        ));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::ToolCallCompleted {
+                id,
+                success: Some(false),
+                ..
+            } if id == "call-read"
+        )));
+        let payload = state
+            .machine
+            .tool_payload_by_call_id("call-read")
+            .expect("failed Tool response should be recorded on tape");
+        assert_eq!(payload["success"], json!(false));
+        assert!(
+            payload["error"]
                 .as_str()
-                .is_some_and(|error| error.contains("executable is not mounted")),
-            "action output should explain the withheld executable: {action_payload}"
+                .is_some_and(|error| error.contains("valid manifest"))
+        );
+        assert!(
+            shell.cat("/proc/1/status").await.is_err(),
+            "an executable without a valid Tool manifest must not spawn"
         );
     }
 
