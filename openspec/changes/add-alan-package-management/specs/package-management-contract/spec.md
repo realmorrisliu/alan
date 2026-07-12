@@ -392,10 +392,13 @@ even when that directory is inside a git repository. `q upgrade` SHALL:
 `q uninstall` SHALL remove exactly the files listed in the package's manifest
 plus the package's store entry, and nothing else. Because materialized files
 live inside the store entry, uninstall SHALL check for divergence **before**
-removing the entry: any file diverging from its manifest hash SHALL be reported
-and preserved by relocating it out of the store entry (or by leaving the entry
-in place around the diverged files), never deleted with the entry, unless the
-user passes an explicit force flag. With force, the entire entry is removed.
+removing the entry: it SHALL walk the complete entry and compare it with the
+manifest and Q-owned metadata set. Any manifest-listed file diverging from its
+hash and any unmanifested file SHALL be reported and preserved by relocating
+it out of the store entry (or by leaving the entry in place around preserved
+files), never deleted with the entry, unless the user passes an explicit force
+flag. Without force, Q removes the entry directory only after it is empty.
+With force, the entire entry is removed.
 
 #### Scenario: Clean uninstall
 - **WHEN** uninstall runs for an installed package with no diverged files
@@ -408,6 +411,13 @@ user passes an explicit force flag. With force, the entire entry is removed.
 - **THEN** uninstall preserves that file by moving it out of the entry before
   removing the rest, reports it, and does not delete it
 - **AND** removing it anyway requires an explicit force flag
+
+#### Scenario: Unmanifested file at uninstall
+- **WHEN** the store entry contains a file absent from the manifest and the
+  known Q-owned metadata set
+- **THEN** uninstall preserves that file outside the entry or leaves it in
+  place, reports it, and does not remove a non-empty entry directory
+- **AND** deleting it requires an explicit force flag
 
 ### Requirement: List reports installed packages
 `q list` SHALL report each installed distribution package with its

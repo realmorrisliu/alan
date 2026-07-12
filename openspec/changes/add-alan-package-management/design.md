@@ -348,7 +348,9 @@ requirement, since Q already knows which provider owns what. Semantics:
   re-materialize;
 - materialized files diverging from manifest hashes (local edits) → warn and
   skip unless `--force`;
-- **uninstall** → delete exactly the manifest's files plus the store entry;
+- **uninstall** → walk the complete entry, delete manifest-owned files, preserve
+  and report both hash-diverged and unmanifested files, and remove the entry
+  directory only when empty; `--force` explicitly permits whole-entry removal;
 - **list** → packages with provenance and materialized-skill summary.
 
 ### D8: The surface is Quartermaster's `q` command family, implemented in Rust
