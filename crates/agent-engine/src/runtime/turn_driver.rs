@@ -111,23 +111,20 @@ fn is_brokered_input(op: &Op) -> bool {
     )
 }
 
-pub(super) async fn drive_turn_submission_with_cancel<E, F, S>(
+pub(super) async fn drive_turn_submission_with_cancel<E, F>(
     state: &mut RuntimeLoopState,
     initial_submission: Submission,
     broker: &TurnInputBroker,
     emit: &mut E,
-    set_active_submission_id: &mut S,
     cancel: &CancellationToken,
 ) -> Result<()>
 where
     E: FnMut(Event) -> F,
     F: std::future::Future<Output = ()>,
-    S: FnMut(&str),
 {
     broker.clear().await;
     let _ = state.turn_state.clear_buffered_inband_submissions();
     state.current_submission_id = Some(initial_submission.id.clone());
-    set_active_submission_id(&initial_submission.id);
 
     handle_submission_with_cancel_and_steering(
         state,
@@ -151,7 +148,6 @@ where
             break;
         };
         state.current_submission_id = Some(next_submission.id.clone());
-        set_active_submission_id(&next_submission.id);
 
         handle_submission_with_cancel_and_steering(
             state,

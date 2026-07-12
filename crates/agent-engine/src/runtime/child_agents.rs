@@ -7,9 +7,8 @@ use super::delegation_capabilities::{
     DelegatedSpawnRejected, evaluate_delegated_namespace, namespace_summary_from_bindings,
 };
 use super::engine::{
-    AgentConfig, RuntimeController, RuntimeEventEnvelope, RuntimeLivenessEnvelope,
-    RuntimeStartupMetadata, WorkspaceRuntimeConfig, runtime_host_capabilities_for_tools,
-    spawn_with_namespace_environment,
+    AgentConfig, RuntimeController, RuntimeStartupMetadata, WorkspaceRuntimeConfig,
+    runtime_host_capabilities_for_tools, spawn_with_namespace_environment,
 };
 use crate::llm::LlmClient;
 use crate::tape::{ContentPart, Message};
@@ -28,7 +27,6 @@ use std::sync::{
     atomic::{AtomicU64, Ordering},
 };
 use std::time::{Duration, Instant};
-use tokio::sync::broadcast::error::{RecvError, TryRecvError};
 use tokio_util::sync::CancellationToken;
 
 const CHILD_AGENT_LAUNCH_CANCELLED_MESSAGE: &str = "Child-agent launch cancelled";
@@ -122,18 +120,6 @@ enum ChildRuntimeWaitOutcome {
     Cancelled,
 }
 
-enum ChildEventObservation {
-    Terminal(ObservedChildTerminalEvent),
-    Progress,
-    Ignored,
-}
-
-enum ChildLivenessObservation {
-    Progress,
-    Ignored,
-    Closed,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ChildFileObservation {
     process_status: Option<alan_kernel::Status>,
@@ -184,15 +170,12 @@ fn truncate_child_text_with_suffix(text: &str, max_chars: usize, suffix: &str) -
 pub(crate) struct ChildRuntimeController {
     runtime: Option<RuntimeController>,
     startup_metadata: RuntimeStartupMetadata,
-    event_rx: tokio::sync::broadcast::Receiver<RuntimeEventEnvelope>,
-    liveness_rx: tokio::sync::broadcast::Receiver<RuntimeLivenessEnvelope>,
-    submission_id: String,
     child_run_id: String,
     child_run_registry: ChildRunRegistry,
     timeout: Option<Duration>,
-    process_registry: Option<alan_kernel::ProcFs>,
-    process_environment: Option<super::NamespaceRuntimeEnvironment>,
-    process_pid: Option<String>,
+    process_registry: alan_kernel::ProcFs,
+    process_environment: super::NamespaceRuntimeEnvironment,
+    process_pid: String,
 }
 
 #[allow(dead_code)]
@@ -448,8 +431,6 @@ where
         child_run_record = child_run_record.with_delegation_capability_decision(decision);
     }
     child_run_registry.register(child_run_record);
-    let event_rx = runtime.handle.event_sender.subscribe();
-    let liveness_rx = runtime.handle.liveness_sender.subscribe();
     let submission = Submission::new(Op::Turn {
         parts: vec![ContentPart::text(build_child_task_text(parent, &spec))],
         context: None,
@@ -474,15 +455,12 @@ where
     Ok(ChildRuntimeController {
         runtime: Some(runtime),
         startup_metadata,
-        event_rx,
-        liveness_rx,
-        submission_id: submission.id,
         child_run_id,
         child_run_registry,
         timeout: spec.launch.timeout_secs.map(Duration::from_secs),
-        process_registry: Some(launch_procfs),
-        process_environment: Some(child_process_environment),
-        process_pid: Some(child_process_pid),
+        process_registry: launch_procfs,
+        process_environment: child_process_environment,
+        process_pid: child_process_pid,
     })
 }
 
@@ -700,13 +678,9 @@ fn resolve_launch_root_dir(
 #[allow(dead_code)]
 impl ChildRuntimeController {
     async fn observe_files(&self) -> Result<Option<ChildFileObservation>> {
-        let (Some(environment), Some(process_registry), Some(pid)) = (
-            self.process_environment.as_ref(),
-            self.process_registry.as_ref(),
-            self.process_pid.as_deref(),
-        ) else {
-            return Ok(None);
-        };
+        let environment = &self.process_environment;
+        let process_registry = &self.process_registry;
+        let pid = self.process_pid.as_str();
         let timeout = Duration::from_secs(1);
         let activity = tokio::time::timeout(timeout, environment.read_ui_activity_snapshot())
             .await
@@ -918,31 +892,9 @@ impl ChildRuntimeController {
             .map(|timeout| (timeout / 4).min(MAX_CHILD_FILE_OBSERVATION_POLL_INTERVAL))
             .unwrap_or(MAX_CHILD_FILE_OBSERVATION_POLL_INTERVAL)
             .max(Duration::from_millis(10));
-        let mut liveness_closed = false;
-        let mut check_process_stop = false;
         let mut last_file_observation = None;
-        let uses_file_observation = self.process_registry.is_some();
 
         loop {
-            if !uses_file_observation
-                && let Some(observed) = self.observe_buffered_child_events(
-                    &mut output_text,
-                    &mut warnings,
-                    &mut latest_liveness_at,
-                )
-            {
-                if self.external_process_stop_observed().await {
-                    self.abort_runtime().await;
-                    return Ok(ChildRuntimeWaitOutcome::Observed(
-                        self.externally_stopped_observed_event(
-                            &observed.output_text,
-                            &observed.warnings,
-                        ),
-                    ));
-                }
-                return Ok(ChildRuntimeWaitOutcome::Observed(observed));
-            }
-
             if let Some(observation) = self.observe_files().await? {
                 if last_file_observation.as_ref() != Some(&observation) {
                     latest_liveness_at = Instant::now();
@@ -1006,8 +958,6 @@ impl ChildRuntimeController {
                 {
                     let kind = self
                         .process_environment
-                        .as_ref()
-                        .expect("file observation requires process environment")
                         .read_request_kind(request_id)
                         .await?;
                     let kind = match kind.as_str() {
@@ -1049,38 +999,10 @@ impl ChildRuntimeController {
                 last_file_observation = Some(observation);
             }
 
-            if !uses_file_observation
-                && let Some(observed) = self.observe_buffered_child_events(
-                    &mut output_text,
-                    &mut warnings,
-                    &mut latest_liveness_at,
-                )
-            {
-                if self.external_process_stop_observed().await {
-                    self.abort_runtime().await;
-                    return Ok(ChildRuntimeWaitOutcome::Observed(
-                        self.externally_stopped_observed_event(
-                            &observed.output_text,
-                            &observed.warnings,
-                        ),
-                    ));
-                }
-                return Ok(ChildRuntimeWaitOutcome::Observed(observed));
-            }
-
             if let Some(request) = self
                 .child_run_registry
                 .termination_request(&self.child_run_id)
             {
-                if !uses_file_observation
-                    && let Some(observed) = self.observe_buffered_child_events(
-                        &mut output_text,
-                        &mut warnings,
-                        &mut latest_liveness_at,
-                    )
-                {
-                    return Ok(ChildRuntimeWaitOutcome::Observed(observed));
-                }
                 match request.mode {
                     ChildRunTerminationMode::Graceful => self.terminate_runtime().await,
                     ChildRunTerminationMode::Forceful => self.abort_runtime().await,
@@ -1089,14 +1011,6 @@ impl ChildRuntimeController {
                     self.terminated_observed_event(request),
                 ));
             }
-
-            if check_process_stop && self.external_process_stop_observed().await {
-                self.abort_runtime().await;
-                return Ok(ChildRuntimeWaitOutcome::Observed(
-                    self.externally_stopped_observed_event(&output_text, &warnings),
-                ));
-            }
-            check_process_stop = false;
 
             if let Some(cap) = wall_clock_cap
                 && started_at.elapsed() >= cap
@@ -1108,7 +1022,7 @@ impl ChildRuntimeController {
                 ));
             }
 
-            let recv = if let Some(timeout) = self.timeout {
+            if let Some(timeout) = self.timeout {
                 let deadline = latest_liveness_at + timeout;
                 let idle_remaining = deadline.saturating_duration_since(Instant::now());
                 if let Some(cancel) = cancel {
@@ -1124,18 +1038,8 @@ impl ChildRuntimeController {
                             ));
                         }
                         _ = tokio::time::sleep(file_poll_interval) => {
-                            check_process_stop = true;
                             continue;
                         }
-                        liveness = self.liveness_rx.recv(), if !liveness_closed && !uses_file_observation => {
-                            self.apply_liveness_observation(
-                                liveness,
-                                &mut latest_liveness_at,
-                                &mut liveness_closed,
-                            );
-                            continue;
-                        }
-                        recv = self.event_rx.recv(), if !uses_file_observation => recv,
                     }
                 } else {
                     tokio::select! {
@@ -1146,18 +1050,8 @@ impl ChildRuntimeController {
                             ));
                         }
                         _ = tokio::time::sleep(file_poll_interval) => {
-                            check_process_stop = true;
                             continue;
                         }
-                        liveness = self.liveness_rx.recv(), if !liveness_closed && !uses_file_observation => {
-                            self.apply_liveness_observation(
-                                liveness,
-                                &mut latest_liveness_at,
-                                &mut liveness_closed,
-                            );
-                            continue;
-                        }
-                        recv = self.event_rx.recv(), if !uses_file_observation => recv,
                     }
                 }
             } else if let Some(cancel) = cancel {
@@ -1166,289 +1060,13 @@ impl ChildRuntimeController {
                         self.terminate_runtime().await;
                         return Ok(ChildRuntimeWaitOutcome::Cancelled);
                     }
-                    liveness = self.liveness_rx.recv(), if !liveness_closed && !uses_file_observation => {
-                        self.apply_liveness_observation(
-                            liveness,
-                            &mut latest_liveness_at,
-                            &mut liveness_closed,
-                        );
-                        continue;
-                    }
                     _ = tokio::time::sleep(file_poll_interval) => {
-                        check_process_stop = true;
                         continue;
                     }
-                    recv = self.event_rx.recv(), if !uses_file_observation => recv,
                 }
             } else {
-                tokio::select! {
-                    liveness = self.liveness_rx.recv(), if !liveness_closed && !uses_file_observation => {
-                        self.apply_liveness_observation(
-                            liveness,
-                            &mut latest_liveness_at,
-                            &mut liveness_closed,
-                        );
-                        continue;
-                    }
-                    _ = tokio::time::sleep(file_poll_interval) => {
-                        check_process_stop = true;
-                        continue;
-                    }
-                    recv = self.event_rx.recv(), if !uses_file_observation => recv,
-                }
-            };
-
-            match self.observe_child_event(recv, &mut output_text, &mut warnings) {
-                ChildEventObservation::Terminal(observed) => {
-                    if self.external_process_stop_observed().await {
-                        self.abort_runtime().await;
-                        return Ok(ChildRuntimeWaitOutcome::Observed(
-                            self.externally_stopped_observed_event(
-                                &observed.output_text,
-                                &observed.warnings,
-                            ),
-                        ));
-                    }
-                    return Ok(ChildRuntimeWaitOutcome::Observed(observed));
-                }
-                ChildEventObservation::Progress => {
-                    latest_liveness_at = Instant::now();
-                    continue;
-                }
-                ChildEventObservation::Ignored => continue,
+                tokio::time::sleep(file_poll_interval).await;
             }
-        }
-    }
-
-    fn observe_buffered_child_events(
-        &mut self,
-        output_text: &mut String,
-        warnings: &mut Vec<String>,
-        latest_liveness_at: &mut Instant,
-    ) -> Option<ObservedChildTerminalEvent> {
-        loop {
-            let recv = match self.event_rx.try_recv() {
-                Ok(envelope) => Ok(envelope),
-                Err(TryRecvError::Empty) => return None,
-                Err(TryRecvError::Lagged(skipped)) => Err(RecvError::Lagged(skipped)),
-                Err(TryRecvError::Closed) => Err(RecvError::Closed),
-            };
-            match self.observe_child_event(recv, output_text, warnings) {
-                ChildEventObservation::Terminal(observed) => return Some(observed),
-                ChildEventObservation::Progress => {
-                    *latest_liveness_at = Instant::now();
-                }
-                ChildEventObservation::Ignored => {}
-            }
-        }
-    }
-
-    fn apply_liveness_observation(
-        &self,
-        recv: std::result::Result<RuntimeLivenessEnvelope, RecvError>,
-        latest_liveness_at: &mut Instant,
-        liveness_closed: &mut bool,
-    ) {
-        match self.observe_liveness_event(recv) {
-            ChildLivenessObservation::Progress => {
-                *latest_liveness_at = Instant::now();
-            }
-            ChildLivenessObservation::Closed => {
-                *liveness_closed = true;
-            }
-            ChildLivenessObservation::Ignored => {}
-        }
-    }
-
-    fn observe_liveness_event(
-        &self,
-        recv: std::result::Result<RuntimeLivenessEnvelope, RecvError>,
-    ) -> ChildLivenessObservation {
-        match recv {
-            Ok(envelope) => {
-                if envelope.submission_id.as_deref() != Some(self.submission_id.as_str()) {
-                    return ChildLivenessObservation::Ignored;
-                }
-                self.child_run_registry
-                    .observe_heartbeat(&self.child_run_id, envelope.status.clone());
-                self.child_run_registry.observe_progress(
-                    &self.child_run_id,
-                    "runtime_heartbeat",
-                    envelope.status,
-                );
-                ChildLivenessObservation::Progress
-            }
-            Err(RecvError::Lagged(_)) => {
-                let status = Some("active_submission".to_string());
-                self.child_run_registry
-                    .observe_heartbeat(&self.child_run_id, status.clone());
-                self.child_run_registry.observe_progress(
-                    &self.child_run_id,
-                    "runtime_heartbeat",
-                    status,
-                );
-                ChildLivenessObservation::Progress
-            }
-            Err(RecvError::Closed) => ChildLivenessObservation::Closed,
-        }
-    }
-
-    fn observe_child_event(
-        &self,
-        recv: std::result::Result<RuntimeEventEnvelope, RecvError>,
-        output_text: &mut String,
-        warnings: &mut Vec<String>,
-    ) -> ChildEventObservation {
-        match recv {
-            Ok(envelope) => {
-                if envelope.submission_id.as_deref() != Some(self.submission_id.as_str()) {
-                    return ChildEventObservation::Ignored;
-                }
-
-                match envelope.event {
-                    alan_agent_protocol::Event::TextDelta { chunk, .. } => {
-                        if !chunk.is_empty() {
-                            output_text.push_str(&chunk);
-                            self.child_run_registry.observe_progress(
-                                &self.child_run_id,
-                                "text_delta",
-                                Some("child emitted text".to_string()),
-                            );
-                        }
-                        ChildEventObservation::Progress
-                    }
-                    alan_agent_protocol::Event::Warning { message } => {
-                        self.child_run_registry
-                            .observe_warning(&self.child_run_id, message.clone());
-                        self.child_run_registry.observe_progress(
-                            &self.child_run_id,
-                            "warning",
-                            Some(message.clone()),
-                        );
-                        push_bounded_child_warning(warnings, message);
-                        ChildEventObservation::Progress
-                    }
-                    alan_agent_protocol::Event::TurnCompleted { summary } => {
-                        self.child_run_registry.observe_progress(
-                            &self.child_run_id,
-                            "turn_completed",
-                            summary.clone(),
-                        );
-                        let structured_output = parse_child_structured_output(output_text.as_str());
-                        ChildEventObservation::Terminal(ObservedChildTerminalEvent {
-                            output_text: output_text.clone(),
-                            turn_summary: summary,
-                            structured_output,
-                            warnings: warnings.clone(),
-                            error_message: None,
-                            pause: None,
-                            status: ChildRuntimeStatus::Completed,
-                        })
-                    }
-                    alan_agent_protocol::Event::Yield {
-                        request_id, kind, ..
-                    } => {
-                        self.child_run_registry.observe_progress(
-                            &self.child_run_id,
-                            "yield",
-                            Some(format!("child yielded for {}", yield_kind_label(&kind))),
-                        );
-                        let structured_output = parse_child_structured_output(output_text.as_str());
-                        ChildEventObservation::Terminal(ObservedChildTerminalEvent {
-                            output_text: output_text.clone(),
-                            turn_summary: None,
-                            structured_output,
-                            warnings: warnings.clone(),
-                            error_message: None,
-                            pause: Some(ChildRuntimePause { request_id, kind }),
-                            status: ChildRuntimeStatus::Paused,
-                        })
-                    }
-                    alan_agent_protocol::Event::Error {
-                        message,
-                        recoverable,
-                    } if !recoverable => {
-                        self.child_run_registry.observe_progress(
-                            &self.child_run_id,
-                            "error",
-                            Some(message.clone()),
-                        );
-                        let structured_output = parse_child_structured_output(output_text.as_str());
-                        ChildEventObservation::Terminal(ObservedChildTerminalEvent {
-                            output_text: output_text.clone(),
-                            turn_summary: None,
-                            structured_output,
-                            warnings: warnings.clone(),
-                            error_message: Some(message),
-                            pause: None,
-                            status: ChildRuntimeStatus::Failed,
-                        })
-                    }
-                    alan_agent_protocol::Event::Error { message, .. } => {
-                        self.child_run_registry
-                            .observe_warning(&self.child_run_id, message.clone());
-                        self.child_run_registry.observe_progress(
-                            &self.child_run_id,
-                            "recoverable_error",
-                            Some(message.clone()),
-                        );
-                        push_bounded_child_warning(warnings, message);
-                        ChildEventObservation::Progress
-                    }
-                    alan_agent_protocol::Event::ToolCallStarted { name, .. } => {
-                        self.child_run_registry.observe_progress(
-                            &self.child_run_id,
-                            "tool_call_started",
-                            Some(format!("tool {name} started")),
-                        );
-                        ChildEventObservation::Progress
-                    }
-                    alan_agent_protocol::Event::ToolCallCompleted { name, success, .. } => {
-                        let tool = name.unwrap_or_else(|| "<unknown>".to_string());
-                        self.child_run_registry.observe_progress(
-                            &self.child_run_id,
-                            "tool_call_completed",
-                            Some(format!("tool {tool} completed success={success:?}")),
-                        );
-                        ChildEventObservation::Progress
-                    }
-                    alan_agent_protocol::Event::PlanUpdated { explanation, .. } => {
-                        self.child_run_registry.observe_progress(
-                            &self.child_run_id,
-                            "plan_updated",
-                            explanation,
-                        );
-                        ChildEventObservation::Progress
-                    }
-                    _ => ChildEventObservation::Progress,
-                }
-            }
-            Err(RecvError::Lagged(skipped)) => {
-                let message = format!(
-                    "Child-agent runtime event stream lagged by {skipped} event(s) before a terminal event could be observed"
-                );
-                push_bounded_child_warning(warnings, message.clone());
-                ChildEventObservation::Terminal(ObservedChildTerminalEvent {
-                    output_text: output_text.clone(),
-                    turn_summary: None,
-                    structured_output: parse_child_structured_output(output_text.as_str()),
-                    warnings: warnings.clone(),
-                    error_message: Some(message),
-                    pause: None,
-                    status: ChildRuntimeStatus::Failed,
-                })
-            }
-            Err(RecvError::Closed) => ChildEventObservation::Terminal(ObservedChildTerminalEvent {
-                output_text: output_text.clone(),
-                turn_summary: None,
-                structured_output: parse_child_structured_output(output_text.as_str()),
-                warnings: warnings.clone(),
-                error_message: Some(
-                    "Child-agent runtime stopped before producing a terminal event".to_string(),
-                ),
-                pause: None,
-                status: ChildRuntimeStatus::Failed,
-            }),
         }
     }
 
@@ -1463,15 +1081,10 @@ impl ChildRuntimeController {
         if let Some(runtime) = self.runtime.take() {
             let _ = runtime.shutdown().await;
         }
-        let (Some(process_registry), Some(pid)) =
-            (self.process_registry.as_ref(), self.process_pid.as_deref())
-        else {
+        let Ok(pid) = self.process_pid.parse::<u64>() else {
             return;
         };
-        let Ok(pid) = pid.parse::<u64>() else {
-            return;
-        };
-        process_registry
+        self.process_registry
             .record_exit(
                 alan_kernel::Pid(pid),
                 child_runtime_process_exit_code(status),
@@ -1481,9 +1094,14 @@ impl ChildRuntimeController {
     }
 
     async fn retained_process_output(&self) -> Option<String> {
-        let process_registry = self.process_registry.as_ref()?;
-        let pid = alan_kernel::Pid(self.process_pid.as_deref()?.parse().ok()?);
-        String::from_utf8(process_registry.observe_process_files(pid).await?.output).ok()
+        let pid = alan_kernel::Pid(self.process_pid.parse().ok()?);
+        String::from_utf8(
+            self.process_registry
+                .observe_process_files(pid)
+                .await?
+                .output,
+        )
+        .ok()
     }
 
     async fn abort_runtime(&mut self) {
@@ -1497,15 +1115,10 @@ impl ChildRuntimeController {
         if let Some(runtime) = self.runtime.take() {
             runtime.abort().await;
         }
-        let (Some(process_registry), Some(pid)) =
-            (self.process_registry.as_ref(), self.process_pid.as_deref())
-        else {
+        let Ok(pid) = self.process_pid.parse::<u64>() else {
             return;
         };
-        let Ok(pid) = pid.parse::<u64>() else {
-            return;
-        };
-        process_registry
+        self.process_registry
             .record_exit(
                 alan_kernel::Pid(pid),
                 child_runtime_process_exit_code(status),
@@ -1515,12 +1128,8 @@ impl ChildRuntimeController {
     }
 
     async fn terminate_process_and_reconcile(&self) {
-        let (Some(environment), Some(pid)) = (
-            self.process_environment.as_ref(),
-            self.process_pid.as_deref(),
-        ) else {
-            return;
-        };
+        let environment = &self.process_environment;
+        let pid = self.process_pid.as_str();
         if let Ok(Some(exit_code)) = environment.read_process_exit_code(pid).await {
             self.child_run_registry
                 .reconcile_process_exit(&self.child_run_id, exit_code);
@@ -1536,12 +1145,8 @@ impl ChildRuntimeController {
     }
 
     async fn reconcile_exited_process(&self) {
-        let (Some(environment), Some(pid)) = (
-            self.process_environment.as_ref(),
-            self.process_pid.as_deref(),
-        ) else {
-            return;
-        };
+        let environment = &self.process_environment;
+        let pid = self.process_pid.as_str();
         if let Ok(Some(exit_code)) = environment.read_process_exit_code(pid).await {
             self.child_run_registry
                 .reconcile_process_exit(&self.child_run_id, exit_code);
@@ -1549,12 +1154,8 @@ impl ChildRuntimeController {
     }
 
     async fn external_process_stop_observed(&self) -> bool {
-        let (Some(environment), Some(pid)) = (
-            self.process_environment.as_ref(),
-            self.process_pid.as_deref(),
-        ) else {
-            return false;
-        };
+        let environment = &self.process_environment;
+        let pid = self.process_pid.as_str();
         matches!(environment.read_process_exit_code(pid).await, Ok(Some(130)))
     }
 
@@ -1685,14 +1286,6 @@ async fn record_child_launch_failure_process(
     procfs.record_exit(alan_kernel::Pid(pid), exit_code).await;
     if let Some(context) = environment.process_context() {
         context.agent_root.unbind_process(&pid.to_string()).await;
-    }
-}
-
-fn yield_kind_label(kind: &YieldKind) -> String {
-    match kind {
-        YieldKind::Confirmation => "confirmation".to_string(),
-        YieldKind::StructuredInput => "structured_input".to_string(),
-        YieldKind::Custom(value) => value.clone(),
     }
 }
 
@@ -2527,10 +2120,6 @@ mod tests {
     use serde_json::json;
     use std::sync::{Arc, Mutex};
     use tempfile::TempDir;
-
-    fn test_liveness_rx() -> tokio::sync::broadcast::Receiver<RuntimeLivenessEnvelope> {
-        tokio::sync::broadcast::channel(8).0.subscribe()
-    }
 
     fn test_startup_metadata(
         process_path: impl Into<String>,
@@ -3718,23 +3307,18 @@ Body
 
         let process_reader = launch.environment.clone();
         let process_pid = launch.pid.clone();
-        let (_tx, event_rx) = tokio::sync::broadcast::channel(4);
-        let submission_id = "completed-child-process".to_string();
         crate::runtime::ui_surfaces::turn_completed(&launch.environment, false)
             .await
             .unwrap();
         let controller = ChildRuntimeController {
             runtime: None,
             startup_metadata: test_startup_metadata("child-machine", None, false),
-            event_rx,
-            liveness_rx: test_liveness_rx(),
-            submission_id,
             child_run_id: format!("test-child-run-{}", uuid::Uuid::new_v4()),
             child_run_registry: ChildRunRegistry::default(),
             timeout: None,
-            process_registry: Some(launch_procfs),
-            process_environment: Some(launch.environment),
-            process_pid: Some(process_pid.clone()),
+            process_registry: launch_procfs,
+            process_environment: launch.environment,
+            process_pid: process_pid.clone(),
         };
 
         let result = controller.join().await.unwrap();
@@ -3797,22 +3381,23 @@ Body
         .unwrap();
         let process_pid = launch.pid.clone();
         let process_environment = launch.environment.clone();
-        let (_event_tx, event_rx) = tokio::sync::broadcast::channel(4);
-        let submission_id = "externally-stopped-child".to_string();
         let controller = ChildRuntimeController {
             runtime: None,
             startup_metadata: test_startup_metadata("child-machine", None, false),
-            event_rx,
-            liveness_rx: test_liveness_rx(),
-            submission_id: submission_id.clone(),
             child_run_id: format!("test-child-run-{}", uuid::Uuid::new_v4()),
             child_run_registry: ChildRunRegistry::default(),
             timeout: None,
-            process_registry: Some(launch_procfs),
-            process_environment: Some(launch.environment),
-            process_pid: Some(process_pid.clone()),
+            process_registry: launch_procfs,
+            process_environment: launch.environment,
+            process_pid: process_pid.clone(),
         };
 
+        crate::runtime::ui_surfaces::initialize(&process_environment)
+            .await
+            .unwrap();
+        crate::runtime::ui_surfaces::turn_started(&process_environment)
+            .await
+            .unwrap();
         process_environment
             .write_process_control_for_pid(&process_pid, "cancel")
             .await
@@ -4376,155 +3961,6 @@ model_reasoning_effort = "high"
         );
     }
 
-    #[tokio::test]
-    async fn child_runtime_join_captures_non_empty_final_text_delta() {
-        let (tx, rx) = tokio::sync::broadcast::channel(8);
-        let submission_id = "sub-123".to_string();
-        let _ = tx.send(RuntimeEventEnvelope {
-            submission_id: Some(submission_id.clone()),
-            event: alan_agent_protocol::Event::TextDelta {
-                chunk: "final child output".to_string(),
-                is_final: true,
-            },
-        });
-        let _ = tx.send(RuntimeEventEnvelope {
-            submission_id: Some(submission_id.clone()),
-            event: alan_agent_protocol::Event::TurnCompleted { summary: None },
-        });
-
-        let controller = ChildRuntimeController {
-            runtime: None,
-            startup_metadata: test_startup_metadata("child-machine", None, false),
-            event_rx: rx,
-            liveness_rx: test_liveness_rx(),
-            submission_id,
-            child_run_id: format!("test-child-run-{}", uuid::Uuid::new_v4()),
-            child_run_registry: ChildRunRegistry::default(),
-            timeout: None,
-            process_registry: None,
-            process_environment: None,
-            process_pid: None,
-        };
-
-        let result = controller.join().await.unwrap();
-        assert_eq!(result.status, ChildRuntimeStatus::Completed);
-        assert_eq!(result.output_text, "final child output");
-        assert!(result.structured_output.is_none());
-    }
-
-    #[tokio::test]
-    async fn child_runtime_join_extracts_structured_output_from_json_body() {
-        let (tx, rx) = tokio::sync::broadcast::channel(8);
-        let submission_id = "sub-json".to_string();
-        let _ = tx.send(RuntimeEventEnvelope {
-            submission_id: Some(submission_id.clone()),
-            event: alan_agent_protocol::Event::TextDelta {
-                chunk: "{\"status\":\"completed\",\"summary\":\"done\"}".to_string(),
-                is_final: true,
-            },
-        });
-        let _ = tx.send(RuntimeEventEnvelope {
-            submission_id: Some(submission_id.clone()),
-            event: alan_agent_protocol::Event::TurnCompleted { summary: None },
-        });
-
-        let controller = ChildRuntimeController {
-            runtime: None,
-            startup_metadata: test_startup_metadata("child-machine", None, false),
-            event_rx: rx,
-            liveness_rx: test_liveness_rx(),
-            submission_id,
-            child_run_id: format!("test-child-run-{}", uuid::Uuid::new_v4()),
-            child_run_registry: ChildRunRegistry::default(),
-            timeout: None,
-            process_registry: None,
-            process_environment: None,
-            process_pid: None,
-        };
-
-        let result = controller.join().await.unwrap();
-        assert_eq!(result.status, ChildRuntimeStatus::Completed);
-        assert_eq!(
-            result
-                .structured_output
-                .as_ref()
-                .and_then(|v| v.get("summary")),
-            Some(&serde_json::json!("done"))
-        );
-    }
-
-    #[tokio::test]
-    async fn child_runtime_join_backfills_output_from_rollout_without_text_deltas() {
-        let rollout = tempfile::NamedTempFile::new().unwrap();
-        let answer = "{\"status\":\"completed\",\"summary\":\"done\"}";
-        let items = [
-            crate::rollout::RolloutItem::AgentMachineMeta(crate::rollout::AgentMachineMeta {
-                rollout_id: "rollout-child".to_string(),
-                process_path: "/proc/42".to_string(),
-                started_at: "2026-04-22T13:08:19Z".to_string(),
-                cwd: "/tmp".to_string(),
-                model: "gpt-5.4".to_string(),
-                reasoning_effort: None,
-            }),
-            crate::rollout::RolloutItem::Message(crate::rollout::MessageRecord {
-                role: "assistant".to_string(),
-                content: Some(answer.to_string()),
-                tool_name: None,
-                message: Some(Message::assistant(answer)),
-                timestamp: "2026-04-22T13:08:20Z".to_string(),
-            }),
-        ];
-        let content = items
-            .iter()
-            .map(serde_json::to_string)
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap()
-            .join("\n")
-            + "\n";
-        std::fs::write(rollout.path(), content).unwrap();
-
-        let (tx, rx) = tokio::sync::broadcast::channel(8);
-        let submission_id = "sub-rollout".to_string();
-        let _ = tx.send(RuntimeEventEnvelope {
-            submission_id: Some(submission_id.clone()),
-            event: alan_agent_protocol::Event::TurnCompleted {
-                summary: Some("Task completed".to_string()),
-            },
-        });
-
-        let controller = ChildRuntimeController {
-            runtime: None,
-            startup_metadata: test_startup_metadata(
-                "child-machine",
-                Some(rollout.path().to_path_buf()),
-                true,
-            ),
-            event_rx: rx,
-            liveness_rx: test_liveness_rx(),
-            submission_id,
-            child_run_id: format!("test-child-run-{}", uuid::Uuid::new_v4()),
-            child_run_registry: ChildRunRegistry::default(),
-            timeout: None,
-            process_registry: None,
-            process_environment: None,
-            process_pid: None,
-        };
-
-        let result = controller.join().await.unwrap();
-        assert_eq!(result.status, ChildRuntimeStatus::Completed);
-        assert_eq!(
-            result.output_text,
-            "{\"status\":\"completed\",\"summary\":\"done\"}"
-        );
-        assert_eq!(
-            result
-                .structured_output
-                .as_ref()
-                .and_then(|value| value.get("summary")),
-            Some(&serde_json::json!("done"))
-        );
-    }
-
     #[test]
     fn parse_child_structured_output_reads_last_json_fence() {
         let text = "Notes before\n```json\n{\"status\":\"completed\",\"summary\":\"first\"}\n```\nMore notes\n```json\n{\"status\":\"completed\",\"summary\":\"second\"}\n```";
@@ -4545,306 +3981,6 @@ model_reasoning_effort = "high"
     }
 
     #[tokio::test]
-    async fn child_runtime_join_fails_when_event_stream_lags() {
-        let (tx, rx) = tokio::sync::broadcast::channel(1);
-        let submission_id = "sub-456".to_string();
-        let _ = tx.send(RuntimeEventEnvelope {
-            submission_id: Some(submission_id.clone()),
-            event: alan_agent_protocol::Event::TextDelta {
-                chunk: "partial child output".to_string(),
-                is_final: false,
-            },
-        });
-        let _ = tx.send(RuntimeEventEnvelope {
-            submission_id: Some(submission_id.clone()),
-            event: alan_agent_protocol::Event::TurnCompleted {
-                summary: Some("done".to_string()),
-            },
-        });
-
-        let controller = ChildRuntimeController {
-            runtime: None,
-            startup_metadata: test_startup_metadata("child-machine", None, false),
-            event_rx: rx,
-            liveness_rx: test_liveness_rx(),
-            submission_id,
-            child_run_id: format!("test-child-run-{}", uuid::Uuid::new_v4()),
-            child_run_registry: ChildRunRegistry::default(),
-            timeout: None,
-            process_registry: None,
-            process_environment: None,
-            process_pid: None,
-        };
-
-        let result = controller.join().await.unwrap();
-        assert_eq!(result.status, ChildRuntimeStatus::Failed);
-        assert_eq!(
-            result.error_message.as_deref(),
-            Some(
-                "Child-agent runtime event stream lagged by 1 event(s) before a terminal event could be observed"
-            )
-        );
-        assert_eq!(
-            result.warnings,
-            vec![
-                "Child-agent runtime event stream lagged by 1 event(s) before a terminal event could be observed"
-                    .to_string()
-            ]
-        );
-    }
-
-    #[tokio::test]
-    async fn child_runtime_join_until_cancelled_handles_none_timeout_without_panicking() {
-        let (tx, rx) = tokio::sync::broadcast::channel(8);
-        let submission_id = "sub-789".to_string();
-        let submission_id_for_task = submission_id.clone();
-        tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_millis(10)).await;
-            let _ = tx.send(RuntimeEventEnvelope {
-                submission_id: Some(submission_id_for_task),
-                event: alan_agent_protocol::Event::TurnCompleted {
-                    summary: Some("done".to_string()),
-                },
-            });
-        });
-
-        let controller = ChildRuntimeController {
-            runtime: None,
-            startup_metadata: test_startup_metadata("child-machine", None, false),
-            event_rx: rx,
-            liveness_rx: test_liveness_rx(),
-            submission_id,
-            child_run_id: format!("test-child-run-{}", uuid::Uuid::new_v4()),
-            child_run_registry: ChildRunRegistry::default(),
-            timeout: None,
-            process_registry: None,
-            process_environment: None,
-            process_pid: None,
-        };
-        let cancel = CancellationToken::new();
-
-        let result = controller.join_until_cancelled(&cancel).await.unwrap();
-        assert_eq!(result.status, ChildRuntimeStatus::Completed);
-        assert_eq!(result.turn_summary.as_deref(), Some("done"));
-    }
-
-    #[tokio::test]
-    async fn child_runtime_join_prefers_buffered_terminal_event_over_termination_request() {
-        let (tx, rx) = tokio::sync::broadcast::channel(8);
-        let submission_id = "sub-terminal-before-termination".to_string();
-        let child_run_id = format!("test-child-run-{}", uuid::Uuid::new_v4());
-        let child_run_registry = ChildRunRegistry::default();
-        child_run_registry.register(ChildRunRecord::new(
-            child_run_id.clone(),
-            "parent-machine".to_string(),
-            "child-machine".to_string(),
-            None,
-            None,
-            None,
-        ));
-        let _ = tx.send(RuntimeEventEnvelope {
-            submission_id: Some(submission_id.clone()),
-            event: alan_agent_protocol::Event::TextDelta {
-                chunk: "finished".to_string(),
-                is_final: true,
-            },
-        });
-        let _ = tx.send(RuntimeEventEnvelope {
-            submission_id: Some(submission_id.clone()),
-            event: alan_agent_protocol::Event::TurnCompleted {
-                summary: Some("done".to_string()),
-            },
-        });
-        child_run_registry
-            .request_termination(
-                "parent-machine",
-                &child_run_id,
-                "operator",
-                ChildRunTerminationMode::Forceful,
-                "late stop",
-            )
-            .unwrap();
-
-        let controller = ChildRuntimeController {
-            runtime: None,
-            startup_metadata: test_startup_metadata("child-machine", None, false),
-            event_rx: rx,
-            liveness_rx: test_liveness_rx(),
-            submission_id,
-            child_run_id: child_run_id.clone(),
-            child_run_registry: child_run_registry.clone(),
-            timeout: None,
-            process_registry: None,
-            process_environment: None,
-            process_pid: None,
-        };
-
-        let result = controller.join().await.unwrap();
-        assert_eq!(result.status, ChildRuntimeStatus::Completed);
-        assert_eq!(result.output_text, "finished");
-        assert_eq!(
-            child_run_registry.get(&child_run_id).unwrap().status,
-            ChildRunStatus::Completed
-        );
-    }
-
-    #[tokio::test]
-    async fn child_runtime_join_marks_paused_child_run_terminal_after_shutdown() {
-        let (tx, rx) = tokio::sync::broadcast::channel(8);
-        let submission_id = "sub-yield".to_string();
-        let child_run_id = format!("test-child-run-{}", uuid::Uuid::new_v4());
-        let child_run_registry = ChildRunRegistry::default();
-        child_run_registry.register(ChildRunRecord::new(
-            child_run_id.clone(),
-            "parent-machine".to_string(),
-            "child-machine".to_string(),
-            None,
-            None,
-            None,
-        ));
-        let _ = tx.send(RuntimeEventEnvelope {
-            submission_id: Some(submission_id.clone()),
-            event: alan_agent_protocol::Event::Yield {
-                request_id: "yield-1".to_string(),
-                kind: YieldKind::Confirmation,
-                payload: serde_json::json!({}),
-            },
-        });
-
-        let controller = ChildRuntimeController {
-            runtime: None,
-            startup_metadata: test_startup_metadata("child-machine", None, false),
-            event_rx: rx,
-            liveness_rx: test_liveness_rx(),
-            submission_id,
-            child_run_id: child_run_id.clone(),
-            child_run_registry: child_run_registry.clone(),
-            timeout: None,
-            process_registry: None,
-            process_environment: None,
-            process_pid: None,
-        };
-
-        let result = controller.join().await.unwrap();
-        assert_eq!(result.status, ChildRuntimeStatus::Paused);
-        let child_run = child_run_registry.get(&child_run_id).unwrap();
-        assert_eq!(child_run.status, ChildRunStatus::Failed);
-        assert!(child_run.status.is_terminal());
-    }
-
-    #[tokio::test]
-    async fn cancel_child_runtime_returns_cancelled_status() {
-        let temp = TempDir::new().unwrap();
-        let requests = RecordedRequests::default();
-        let response = completed_response("This should not finish before cancellation.");
-        let parent = make_parent_state_with_capability_view(
-            &temp,
-            requests.clone(),
-            response.clone(),
-            crate::skills::ResolvedCapabilityView::default(),
-        );
-        let root_dir = temp.path().join("repo/.alan/agents/grader");
-        let spec = launch_spec(root_dir);
-
-        let child = spawn_child_runtime_with_client_factory(&parent, spec, |_| {
-            Ok(LlmClient::new(
-                RecordingProvider::new(requests.clone(), response.clone())
-                    .with_delay(Duration::from_secs(5)),
-            ))
-        })
-        .await
-        .unwrap();
-        let result = child.cancel().await.unwrap();
-
-        assert_eq!(result.status, ChildRuntimeStatus::Cancelled);
-    }
-
-    #[tokio::test]
-    async fn child_runtime_join_until_cancelled_returns_cancelled_status() {
-        let temp = TempDir::new().unwrap();
-        let requests = RecordedRequests::default();
-        let response = completed_response("This should not finish before cancellation.");
-        let parent = make_parent_state_with_capability_view(
-            &temp,
-            requests.clone(),
-            response.clone(),
-            crate::skills::ResolvedCapabilityView::default(),
-        );
-        let root_dir = temp.path().join("repo/.alan/agents/grader");
-        let spec = launch_spec(root_dir);
-
-        let child = spawn_child_runtime_with_client_factory(&parent, spec, |_| {
-            Ok(LlmClient::new(
-                RecordingProvider::new(requests.clone(), response.clone())
-                    .with_delay(Duration::from_secs(5)),
-            ))
-        })
-        .await
-        .unwrap();
-
-        let cancel = CancellationToken::new();
-        let cancel_for_task = cancel.clone();
-        tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_millis(10)).await;
-            cancel_for_task.cancel();
-        });
-
-        let result = child.join_until_cancelled(&cancel).await.unwrap();
-        assert_eq!(result.status, ChildRuntimeStatus::Cancelled);
-    }
-
-    #[tokio::test]
-    async fn child_runtime_join_keeps_running_while_heartbeat_is_fresh() {
-        let (tx, rx) = tokio::sync::broadcast::channel(16);
-        let (liveness_tx, liveness_rx) = tokio::sync::broadcast::channel(16);
-        let submission_id = "sub-heartbeat".to_string();
-        let submission_id_for_task = submission_id.clone();
-        let liveness_submission_id_for_task = submission_id.clone();
-        tokio::spawn(async move {
-            let _ = liveness_tx.send(RuntimeLivenessEnvelope {
-                submission_id: Some(liveness_submission_id_for_task.clone()),
-                status: Some("still running".to_string()),
-            });
-            for _ in 0..4 {
-                tokio::time::sleep(Duration::from_millis(35)).await;
-                let _ = liveness_tx.send(RuntimeLivenessEnvelope {
-                    submission_id: Some(liveness_submission_id_for_task.clone()),
-                    status: Some("still running".to_string()),
-                });
-            }
-            let _ = tx.send(RuntimeEventEnvelope {
-                submission_id: Some(submission_id_for_task.clone()),
-                event: alan_agent_protocol::Event::TextDelta {
-                    chunk: "finished after heartbeat".to_string(),
-                    is_final: true,
-                },
-            });
-            let _ = tx.send(RuntimeEventEnvelope {
-                submission_id: Some(submission_id_for_task),
-                event: alan_agent_protocol::Event::TurnCompleted { summary: None },
-            });
-        });
-
-        let controller = ChildRuntimeController {
-            runtime: None,
-            startup_metadata: test_startup_metadata("child-machine", None, false),
-            event_rx: rx,
-            liveness_rx,
-            submission_id,
-            child_run_id: format!("test-child-run-{}", uuid::Uuid::new_v4()),
-            child_run_registry: ChildRunRegistry::default(),
-            timeout: Some(Duration::from_millis(80)),
-            process_registry: None,
-            process_environment: None,
-            process_pid: None,
-        };
-
-        let result = controller.join().await.unwrap();
-        assert_eq!(result.status, ChildRuntimeStatus::Completed);
-        assert_eq!(result.output_text, "finished after heartbeat");
-    }
-
-    #[tokio::test]
     async fn child_runtime_join_keeps_running_while_activity_file_is_fresh() {
         let temp = TempDir::new().unwrap();
         let requests = RecordedRequests::default();
@@ -4860,7 +3996,7 @@ model_reasoning_effort = "high"
         .await
         .unwrap();
         child.timeout = Some(Duration::from_millis(200));
-        let environment = child.process_environment.as_ref().unwrap().clone();
+        let environment = child.process_environment.clone();
         tokio::spawn(async move {
             for _ in 0..5 {
                 crate::runtime::ui_surfaces::heartbeat(&environment)
@@ -4929,8 +4065,8 @@ model_reasoning_effort = "high"
         })
         .await
         .unwrap();
-        let process_environment = child.process_environment.clone().unwrap();
-        let process_pid = child.process_pid.clone().unwrap();
+        let process_environment = child.process_environment.clone();
+        let process_pid = child.process_pid.clone();
 
         let started_at = std::time::Instant::now();
         let result = child.join().await.unwrap();

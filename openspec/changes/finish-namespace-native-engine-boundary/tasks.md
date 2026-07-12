@@ -24,7 +24,7 @@
 - [x] 4.2 Move assistant streaming/output and tape/checkpoint updates to direct writes by the turn/tape owners.
 - [x] 4.3 Move yield/approval/interaction state to direct request-tree writes and Tool lifecycle/results to direct action-tree writes.
 - [x] 4.4 Move activity, plan, renderer-visible thinking, warnings, compaction, and memory notices to direct `machine/ui` writes without accepting a generic runtime event as input.
-- [ ] 4.5 Convert engine, host, and TUI integration tests to hydrate snapshots and resume AgentFS streams by offset rather than waiting on live runtime receivers.
+- [x] 4.5 Convert engine, host, and TUI integration tests to hydrate snapshots and resume AgentFS streams by offset rather than waiting on live runtime receivers.
 
 ## 5. File-Based Child Supervision
 
@@ -35,7 +35,7 @@
 ## 6. Delete Parallel Engine Authorities
 
 - [x] 6.1 Remove `ToolRegistry` from `RuntimeLoopState`, runtime construction, child launch, Tool policy/orchestration, and tests; delete registry-only helpers and materializers.
-- [ ] 6.2 Remove `RuntimeEventEnvelope`, `RuntimeHandle.event_sender`, broadcast channel setup, internal forwarding tasks, subscription helpers, host forwarding, and event-to-AgentFS/UI projectors.
+- [x] 6.2 Remove `RuntimeEventEnvelope`, `RuntimeHandle.event_sender`, broadcast channel setup, internal forwarding tasks, subscription helpers, host forwarding, and event-to-AgentFS/UI projectors.
 - [ ] 6.3 Audit remaining semantic `Event` and `Op` uses; retain only file-record schemas or transition-local values and delete broadcast-only variants/metadata.
 - [x] 6.4 Replace the single-variant `RuntimeEnvironment` wrapper with the concrete namespace handle throughout public/internal APIs and tests.
 - [ ] 6.5 Add an absence guard proving the engine live path has no injected provider, Tool registry, event sink, broadcast sender/receiver, or generic event projector.

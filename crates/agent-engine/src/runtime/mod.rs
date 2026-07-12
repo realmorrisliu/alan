@@ -39,8 +39,8 @@ pub use child_runs::{
     ChildRunTerminationRequest,
 };
 pub use engine::{
-    AgentConfig, AgentMachineDurabilityState, RuntimeController, RuntimeEventEnvelope,
-    RuntimeHandle, RuntimeNamespaceLaunch, RuntimeNamespaceSurface, RuntimeStartupMetadata,
+    AgentConfig, AgentMachineDurabilityState, RuntimeController, RuntimeHandle,
+    RuntimeNamespaceLaunch, RuntimeNamespaceSurface, RuntimeStartupMetadata,
     WorkspaceRuntimeConfig, effective_core_config_for_runtime, spawn, spawn_with_llm_client,
     spawn_with_llm_client_and_namespace_surface, spawn_with_llm_client_and_tools,
     spawn_with_llm_client_and_tools_and_namespace_surface, spawn_with_namespace_surface,

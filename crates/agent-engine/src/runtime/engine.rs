@@ -18,7 +18,7 @@ use anyhow::{Context, Result};
 use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::{
-    Arc, Mutex,
+    Arc,
     atomic::{AtomicU64, Ordering},
 };
 use std::time::Duration;
@@ -211,44 +211,6 @@ impl RuntimeSubmissionQueues {
     }
 }
 
-/// Internal runtime event metadata preserved when forwarding events to hosts.
-#[derive(Debug, Clone)]
-pub struct RuntimeEventEnvelope {
-    /// Submission id that produced this event, if any.
-    pub submission_id: Option<String>,
-    /// Actual protocol event payload.
-    pub event: Event,
-}
-
-/// Internal runtime liveness metadata for supervision-only consumers.
-#[derive(Debug, Clone)]
-pub(crate) struct RuntimeLivenessEnvelope {
-    /// Submission id that is still active, if any.
-    pub submission_id: Option<String>,
-    /// Compact runtime status suitable for operator child-run records.
-    pub status: Option<String>,
-}
-
-#[derive(Debug, Clone, Default)]
-struct SubmissionEventContext {
-    current_submission_id: Arc<Mutex<Option<String>>>,
-}
-
-impl SubmissionEventContext {
-    fn set_submission_id(&self, submission_id: impl Into<String>) {
-        if let Ok(mut guard) = self.current_submission_id.lock() {
-            *guard = Some(submission_id.into());
-        }
-    }
-
-    fn get_submission_id(&self) -> Option<String> {
-        self.current_submission_id
-            .lock()
-            .ok()
-            .and_then(|guard| guard.clone())
-    }
-}
-
 /// Effective durability state for a runtime machine.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AgentMachineDurabilityState {
@@ -277,19 +239,6 @@ pub struct RuntimeStartupMetadata {
 struct AgentMachineStartupOutcome {
     machine: AgentMachine,
     metadata: RuntimeStartupMetadata,
-}
-
-async fn emit_runtime_event(
-    tx: &mpsc::Sender<RuntimeEventEnvelope>,
-    submission_id: Option<String>,
-    event: Event,
-) {
-    let _ = tx
-        .send(RuntimeEventEnvelope {
-            submission_id,
-            event,
-        })
-        .await;
 }
 
 fn best_effort_durability_warning(err: &anyhow::Error) -> String {
@@ -471,9 +420,6 @@ async fn initialize_agent_machine(
 #[derive(Clone)]
 pub struct RuntimeHandle {
     pub submission_tx: mpsc::Sender<Submission>,
-    /// Broadcast sender for events - create a receiver by calling subscribe()
-    pub event_sender: tokio::sync::broadcast::Sender<RuntimeEventEnvelope>,
-    pub(crate) liveness_sender: tokio::sync::broadcast::Sender<RuntimeLivenessEnvelope>,
     /// Shutdown signal sender for graceful shutdown
     shutdown_tx: Option<mpsc::Sender<()>>,
 }
@@ -908,8 +854,6 @@ pub struct RuntimeController {
     pub handle: RuntimeHandle,
     /// Join handle for the main runtime task (Option to allow take on abort)
     task_handle: Option<JoinHandle<()>>,
-    /// Join handle for the event forwarding task
-    event_task_handle: Option<JoinHandle<()>>,
     /// Runtime readiness channel
     ready_rx: Option<oneshot::Receiver<std::result::Result<RuntimeStartupMetadata, String>>>,
     /// Cached startup metadata for repeated readiness checks and child-launch introspection.
@@ -1010,13 +954,6 @@ impl RuntimeController {
             Err(anyhow::anyhow!("Task handle not available"))
         };
 
-        // Always abort event task
-        if let Some(ref mut handle) = self.event_task_handle {
-            handle.abort();
-            // Wait a bit for the event task to actually stop
-            let _ = tokio::time::timeout(Duration::from_secs(1), handle).await;
-        }
-
         result
     }
 
@@ -1033,16 +970,11 @@ impl RuntimeController {
             let _ = tx.try_send(());
         }
 
-        // Take and abort both task handles
+        // Take and abort the runtime task.
         if let Some(handle) = self.task_handle.take() {
             handle.abort();
             // Wait for the task to actually stop
             let _ = tokio::time::timeout(Duration::from_secs(5), handle).await;
-        }
-
-        if let Some(handle) = self.event_task_handle.take() {
-            handle.abort();
-            let _ = tokio::time::timeout(Duration::from_secs(1), handle).await;
         }
     }
 }
@@ -1477,10 +1409,7 @@ fn spawn_with_prepared_runtime_environment(
     _generation_capabilities: crate::llm::ProviderCapabilities,
 ) -> Result<RuntimeController> {
     let (sub_tx, mut sub_rx) = mpsc::channel::<Submission>(32);
-    let (evt_tx, mut evt_rx) = mpsc::channel::<RuntimeEventEnvelope>(256);
     let (shutdown_tx, mut shutdown_rx) = mpsc::channel::<()>(1);
-    let (liveness_tx, _) = tokio::sync::broadcast::channel::<RuntimeLivenessEnvelope>(256);
-    let liveness_tx_for_task = liveness_tx.clone();
     let (ready_tx, ready_rx) =
         oneshot::channel::<std::result::Result<RuntimeStartupMetadata, String>>();
 
@@ -1748,26 +1677,12 @@ fn spawn_with_prepared_runtime_environment(
                 QueuedRuntimeItem::Submission(submission) => {
                     debug!(?submission.id, "Received submission");
                     let drive_as_turn_submission = should_drive_turn_submission(&submission.op);
-                    let submission_event_ctx = SubmissionEventContext::default();
-                    submission_event_ctx.set_submission_id(submission.id.clone());
                     state.current_submission_id = Some(submission.id.clone());
 
                     let cancel = CancellationToken::new();
-                    let event_tx_clone = evt_tx.clone();
-                    let submission_event_ctx_for_emit = submission_event_ctx.clone();
-                    let mut emit = |event: Event| {
-                        let tx = event_tx_clone.clone();
-                        let submission_id = submission_event_ctx_for_emit.get_submission_id();
-                        async move {
-                            emit_runtime_event(&tx, submission_id, event).await;
-                        }
-                    };
+                    let mut emit = |_event: Event| async {};
 
                     let broker_for_submission = queues.active_turn_broker.clone();
-                    let submission_event_ctx_for_turn = submission_event_ctx.clone();
-                    let mut set_active_submission_id = |submission_id: &str| {
-                        submission_event_ctx_for_turn.set_submission_id(submission_id.to_string());
-                    };
                     let namespace_input = state.namespace_environment().clone();
                     let namespace_control = state.namespace_environment().clone();
                     let namespace_heartbeat = state.namespace_environment().clone();
@@ -1779,7 +1694,6 @@ fn spawn_with_prepared_runtime_environment(
                             submission,
                             &broker_for_submission,
                             &mut emit,
-                            &mut set_active_submission_id,
                             &cancel,
                         ))
                     } else {
@@ -1817,15 +1731,6 @@ fn spawn_with_prepared_runtime_environment(
                                 if let Err(e) = result {
                                     let error_msg = format!("Error handling submission: {}", e);
                                     error!(error = %error_msg);
-                                    emit_runtime_event(
-                                        &evt_tx,
-                                        submission_event_ctx.get_submission_id(),
-                                        Event::Error {
-                                            message: error_msg,
-                                            recoverable: true,
-                                        },
-                                    )
-                                    .await;
                                 }
                                 queues.outer_queue.extend(
                                     state
@@ -1872,15 +1777,10 @@ fn spawn_with_prepared_runtime_environment(
                                     Some(Err(err)) => {
                                         let error_msg = format!("Failed to read namespace io/input frame: {err:#}");
                                         error!(error = %error_msg);
-                                        emit_runtime_event(
-                                            &evt_tx,
-                                            submission_event_ctx.get_submission_id(),
-                                            Event::Error {
-                                                message: error_msg,
-                                                recoverable: true,
-                                            },
-                                        )
-                                        .await;
+                                        let _ = super::ui_surfaces::warning(
+                                            &namespace_heartbeat,
+                                            error_msg,
+                                        ).await;
                                     }
                                     None => {}
                                 }
@@ -1904,15 +1804,10 @@ fn spawn_with_prepared_runtime_environment(
                                     Some(Err(err)) => {
                                         let error_msg = format!("Failed to read namespace machine/ctl command: {err:#}");
                                         error!(error = %error_msg);
-                                        emit_runtime_event(
-                                            &evt_tx,
-                                            submission_event_ctx.get_submission_id(),
-                                            Event::Error {
-                                                message: error_msg,
-                                                recoverable: true,
-                                            },
-                                        )
-                                        .await;
+                                        let _ = super::ui_surfaces::warning(
+                                            &namespace_heartbeat,
+                                            error_msg,
+                                        ).await;
                                     }
                                     None => {}
                                 }
@@ -1921,10 +1816,6 @@ fn spawn_with_prepared_runtime_environment(
                                 if let Err(err) = super::ui_surfaces::heartbeat(&namespace_heartbeat).await {
                                     warn!(error = %err, "Failed to write runtime activity heartbeat");
                                 }
-                                let _ = liveness_tx_for_task.send(RuntimeLivenessEnvelope {
-                                    submission_id: submission_event_ctx.get_submission_id(),
-                                    status: Some("active_submission".to_string()),
-                                });
                             }
                             _ = shutdown_rx.recv() => {
                                 shutdown_requested = true;
@@ -2030,24 +1921,12 @@ fn spawn_with_prepared_runtime_environment(
         state.machine.flush().await;
     });
 
-    // Spawn a task to forward events to a broadcast channel
-    let (broadcast_tx, _) = tokio::sync::broadcast::channel::<RuntimeEventEnvelope>(256);
-    let broadcast_tx_clone = broadcast_tx.clone();
-    let event_task_handle = tokio::spawn(async move {
-        while let Some(runtime_event) = evt_rx.recv().await {
-            let _ = broadcast_tx_clone.send(runtime_event);
-        }
-    });
-
     Ok(RuntimeController {
         handle: RuntimeHandle {
             submission_tx: sub_tx,
-            event_sender: broadcast_tx,
-            liveness_sender: liveness_tx,
             shutdown_tx: Some(shutdown_tx),
         },
         task_handle: Some(task_handle),
-        event_task_handle: Some(event_task_handle),
         ready_rx: Some(ready_rx),
         startup_metadata: None,
     })
@@ -3150,12 +3029,9 @@ mod tests {
     #[test]
     fn test_agent_runtime_handle_clone() {
         let (sub_tx, _sub_rx) = mpsc::channel(10);
-        let (evt_tx, _) = mpsc::channel::<RuntimeEventEnvelope>(10);
 
         let handle = RuntimeHandle {
             submission_tx: sub_tx,
-            event_sender: tokio::sync::broadcast::channel(10).0,
-            liveness_sender: tokio::sync::broadcast::channel(10).0,
             shutdown_tx: None,
         };
 
@@ -3163,7 +3039,6 @@ mod tests {
         // Both handles should share the same channels
         drop(cloned);
         drop(handle);
-        drop(evt_tx); // Clean up
     }
 
     #[test]
@@ -3172,8 +3047,6 @@ mod tests {
 
         let handle = RuntimeHandle {
             submission_tx: sub_tx,
-            event_sender: tokio::sync::broadcast::channel(10).0,
-            liveness_sender: tokio::sync::broadcast::channel(10).0,
             shutdown_tx: None,
         };
 
@@ -3181,25 +3054,11 @@ mod tests {
         assert!(!handle.submission_tx.is_closed());
     }
 
-    #[test]
-    fn test_submission_event_context_tracks_latest_submission_id() {
-        let ctx = SubmissionEventContext::default();
-        assert_eq!(ctx.get_submission_id(), None);
-
-        ctx.set_submission_id("sub-1");
-        assert_eq!(ctx.get_submission_id().as_deref(), Some("sub-1"));
-
-        ctx.set_submission_id("sub-2");
-        assert_eq!(ctx.get_submission_id().as_deref(), Some("sub-2"));
-    }
-
     #[tokio::test]
     async fn test_agent_runtime_handle_shutdown_without_channel() {
         let (sub_tx, _sub_rx) = mpsc::channel::<Submission>(10);
         let handle = RuntimeHandle {
             submission_tx: sub_tx,
-            event_sender: tokio::sync::broadcast::channel(10).0,
-            liveness_sender: tokio::sync::broadcast::channel(10).0,
             shutdown_tx: None,
         };
 
@@ -4070,8 +3929,6 @@ required = true
 
         let handle = RuntimeHandle {
             submission_tx: sub_tx,
-            event_sender: tokio::sync::broadcast::channel(10).0,
-            liveness_sender: tokio::sync::broadcast::channel(10).0,
             shutdown_tx: Some(shutdown_tx),
         };
 
@@ -4082,17 +3939,6 @@ required = true
         // Verify shutdown signal was sent
         let signal = shutdown_rx.recv().await;
         assert!(signal.is_some());
-    }
-
-    #[test]
-    fn test_runtime_event_envelope_creation() {
-        let envelope = RuntimeEventEnvelope {
-            submission_id: Some("sub-123".to_string()),
-            event: Event::TurnStarted {},
-        };
-
-        assert_eq!(envelope.submission_id, Some("sub-123".to_string()));
-        assert!(matches!(envelope.event, Event::TurnStarted {}));
     }
 
     #[test]

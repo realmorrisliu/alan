@@ -80,8 +80,8 @@ pub use rollout::{
     ToolCallRecord, process_storage_key,
 };
 pub use runtime::{
-    AgentConfig, RuntimeController, RuntimeEventEnvelope, RuntimeHandle, RuntimeNamespaceLaunch,
-    RuntimeNamespaceSurface, WorkspaceRuntimeConfig, spawn, spawn_with_llm_client,
+    AgentConfig, RuntimeController, RuntimeHandle, RuntimeNamespaceLaunch, RuntimeNamespaceSurface,
+    WorkspaceRuntimeConfig, spawn, spawn_with_llm_client,
     spawn_with_llm_client_and_namespace_surface,
     spawn_with_llm_client_and_tools_and_namespace_surface, spawn_with_namespace_surface,
 };

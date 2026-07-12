@@ -4,8 +4,6 @@ use std::sync::{Arc, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const MAX_TERMINAL_CHILD_RUN_RECORDS: usize = 256;
-const MAX_CHILD_RUN_WARNINGS: usize = 32;
-const MAX_CHILD_RUN_WARNING_CHARS: usize = 512;
 const MAX_CHILD_RUN_STATUS_SUMMARY_CHARS: usize = 512;
 const MAX_CHILD_RUN_ERROR_MESSAGE_CHARS: usize = 1_000;
 const MAX_CHILD_RUN_TERMINATION_ACTOR_CHARS: usize = 120;
@@ -201,21 +199,6 @@ impl ChildRunRegistry {
         }
     }
 
-    pub fn observe_heartbeat(&self, child_run_id: &str, summary: Option<String>) {
-        self.update(child_run_id, |record, now| {
-            if !record.status.is_terminal() {
-                record.latest_heartbeat_at_ms = Some(now);
-                if let Some(summary) = summary {
-                    record.latest_status_summary = Some(truncate_text_with_suffix(
-                        &summary,
-                        MAX_CHILD_RUN_STATUS_SUMMARY_CHARS,
-                        "...",
-                    ));
-                }
-            }
-        });
-    }
-
     pub fn observe_progress(
         &self,
         child_run_id: &str,
@@ -234,12 +217,6 @@ impl ChildRunRegistry {
                     ));
                 }
             }
-        });
-    }
-
-    pub fn observe_warning(&self, child_run_id: &str, warning: String) {
-        self.update(child_run_id, |record, _| {
-            push_bounded_warning(&mut record.warnings, warning);
         });
     }
 
@@ -319,17 +296,6 @@ impl ChildRunRegistry {
             record.updated_at_ms = now;
         }
     }
-}
-
-fn push_bounded_warning(warnings: &mut Vec<String>, warning: String) {
-    while warnings.len() >= MAX_CHILD_RUN_WARNINGS {
-        warnings.remove(0);
-    }
-    warnings.push(truncate_text_with_suffix(
-        &warning,
-        MAX_CHILD_RUN_WARNING_CHARS,
-        "...",
-    ));
 }
 
 fn truncate_text_with_suffix(text: &str, max_chars: usize, suffix: &str) -> String {
@@ -437,19 +403,17 @@ mod tests {
     }
 
     #[test]
-    fn registry_tracks_liveness_progress_and_terminal_state() {
+    fn registry_tracks_file_progress_and_terminal_state() {
         let registry = ChildRunRegistry::default();
         registry.register(test_record("run-1", "parent-1"));
         registry.register(test_record("run-2", "parent-2"));
 
         registry.mark_running("run-1");
-        registry.observe_heartbeat("run-1", Some("alive".to_string()));
         registry.observe_progress(
             "run-1",
             "tool_call_started",
             Some("running bash".to_string()),
         );
-        registry.observe_warning("run-1", "first warning".to_string());
 
         let running = registry.get("run-1").unwrap();
         assert_eq!(running.parent_process_path, "parent-1");
@@ -462,8 +426,6 @@ mod tests {
             running.latest_status_summary.as_deref(),
             Some("running bash")
         );
-        assert_eq!(running.warnings, vec!["first warning"]);
-        assert!(running.latest_heartbeat_at_ms.is_some());
         assert!(running.latest_progress_at_ms.is_some());
 
         registry.mark_terminal("run-1", ChildRunStatus::Completed, None);
@@ -479,33 +441,6 @@ mod tests {
             after_late_progress.latest_status_summary,
             terminal.latest_status_summary
         );
-    }
-
-    #[test]
-    fn registry_caps_warning_retention_per_run() {
-        let registry = ChildRunRegistry::default();
-        registry.register(test_record("run-1", "parent-1"));
-
-        for index in 0..(MAX_CHILD_RUN_WARNINGS + 2) {
-            registry.observe_warning(
-                "run-1",
-                format!(
-                    "warning-{index:03}-{}",
-                    "x".repeat(MAX_CHILD_RUN_WARNING_CHARS)
-                ),
-            );
-        }
-
-        let record = registry.get("run-1").unwrap();
-        assert_eq!(record.warnings.len(), MAX_CHILD_RUN_WARNINGS);
-        assert!(record.warnings[0].starts_with("warning-002-"));
-        assert!(
-            record
-                .warnings
-                .iter()
-                .all(|warning| warning.chars().count() <= MAX_CHILD_RUN_WARNING_CHARS)
-        );
-        assert!(record.warnings.last().unwrap().ends_with("..."));
     }
 
     #[test]
