@@ -77,10 +77,20 @@ Verification date: 2026-07-12 (Asia/Shanghai)
   `/private/tmp/alan-legacy-ui-smoke-5/manifest.txt` and screenshots
   `09-restart-restore.png`, `10-restart-clear.png`, and
   `12-restart-after-input.png`.
-- The dev privileged helper was unavailable, so a real helper-owned Managed User
-  PTY launch was not performed. Installing a persistent system helper remains
-  outside this bounded cleanup without explicit operator authorization; focused
-  helper and fake-client tests cover the current code path meanwhile.
+- The operator explicitly authorized installing the Alan Dev privileged helper
+  and running the real helper-owned Managed User PTY smoke. The current Dev app
+  and embedded helper were installed, but the helper could not launch: the local
+  build is ad-hoc signed, macOS rejected it with a launch-constraint code-signing
+  violation, and the submitted job remained at `EX_CONFIG`. A retry through the
+  supported `SMAppService` registration path returned
+  `SMAppServiceErrorDomain Code=57` (`Socket is not connected`).
+- The repository supports a non-ad-hoc identity through
+  `ALAN_SIGNING_IDENTITY` / `ALAN_DEVELOPER_ID_APPLICATION`, but
+  `security find-identity -v -p codesigning` reported zero valid identities in
+  the current keychain. Therefore a real helper-owned Managed User PTY launch
+  remains unverified in this environment. No AMFI, SIP, `launchctl`, or manual
+  helper-launch bypass was used; focused helper and fake-client tests cover the
+  current code path meanwhile.
 - The running pre-hard-cut stable Alan instance remains open by explicit operator
   instruction. Verification and smoke shutdown targeted only isolated Alan Dev
   PIDs and did not signal, restart, or replace stable Alan.

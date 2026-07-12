@@ -21,6 +21,35 @@ extension AlanPrivilegedHelperIdentity {
     }
 }
 
+extension AlanPrivilegedHelperStatus {
+    static func fromXPCStatus(
+        _ response: AlanPrivilegedHelperXPCResponse,
+        identity: AlanPrivilegedHelperIdentity
+    ) -> AlanPrivilegedHelperStatus {
+        guard response.accepted else {
+            return AlanPrivilegedHelperStatus(
+                state: .unavailable,
+                identity: identity,
+                installedVersion: nil,
+                expectedVersion: String(AlanPrivilegedHelperProtocolStatus.currentVersion),
+                sanitizedMessage: response.sanitizedMessage
+            )
+        }
+        let protocolStatus = response.payload.flatMap {
+            try? JSONDecoder().decode(AlanPrivilegedHelperProtocolStatus.self, from: $0)
+        }
+        let isCurrent = protocolStatus?.protocolVersion
+            == AlanPrivilegedHelperProtocolStatus.currentVersion
+        return AlanPrivilegedHelperStatus(
+            state: isCurrent ? .healthy : .outdated,
+            identity: identity,
+            installedVersion: protocolStatus.map { String($0.protocolVersion) },
+            expectedVersion: String(AlanPrivilegedHelperProtocolStatus.currentVersion),
+            sanitizedMessage: isCurrent ? nil : "Privileged helper update required."
+        )
+    }
+}
+
 struct AlanPrivilegedHelperLifecycleResult: Codable, Equatable {
     let action: AlanPrivilegedHelperLifecycleAction
     let status: AlanPrivilegedHelperStatus
