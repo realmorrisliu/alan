@@ -1,5 +1,45 @@
 ## MODIFIED Requirements
 
+### Requirement: Content container model has focused tests
+Apple client SHALL 为 v0.2 content-container model、current-schema restore、mixed split、
+content-aware command validation 和 content-keyed terminal runtime continuity 提供 focused
+自动化测试或明确的人工验证记录。
+
+#### Scenario: Current content state restores
+- **WHEN** 测试加载包含 terminal、markdown 和 settings ContentInstances 的 current-schema
+  workspace manifest
+- **THEN** shell model 恢复 PaneSlots、ContentInstances、focused space、focused tab、focused
+  PaneSlot、pin/live snapshot 和 terminal metadata projection
+
+#### Scenario: Historical persistence input is rejected
+- **WHEN** 测试提供 terminal-only workspace manifest 或 persistent
+  `shell-state-window_main.json`
+- **THEN** app restore 不调用旧 decoder、upgrade 或 ContentInstance conversion path
+- **AND** unsupported workspace-manifest bytes 由 current corrupt-evidence path 保留
+
+#### Scenario: Mixed split mutates safely
+- **WHEN** 测试创建 terminal + markdown + settings 的 mixed split tab
+- **THEN** split、focus、move、close 和 equalize 操作保持 split tree 有效
+- **AND** terminal runtime identity 不因非 terminal PaneSlot 操作重建
+
+#### Scenario: Non-terminal command rejection tested
+- **WHEN** control-plane 测试向 markdown 或 settings PaneSlot 发送 `terminal.send_text`
+- **THEN** response 使用 stable unsupported-content error
+- **AND** fake terminal runtime service 没有收到 delivery
+
+#### Scenario: Terminal content identity survives movement
+- **WHEN** 测试将 terminal ContentInstance 所在 PaneSlot 移动到另一个 tab 或重新 attach 视图
+- **THEN** terminal runtime handle、scrollback、metadata 和 pending delivery 仍绑定到同一个 `content_id`
+
+#### Scenario: Retired unpinned tab finalizes terminal content
+- **WHEN** workspace lifecycle pruning retires an inactive unpinned Tab that contains terminal ContentInstances
+- **THEN** focused tests verify those terminal runtimes are finalized through the runtime service
+- **AND** retired PaneSlots and terminal ContentInstances cannot receive later `terminal.send_text` delivery
+
+#### Scenario: Content rendering registry verified
+- **WHEN** renderer registry 收到 terminal、markdown 和 settings content descriptor
+- **THEN** 测试或 review checklist 确认每个 kind 路由到对应 renderer 或 bounded unavailable surface
+
 ### Requirement: Managed Terminal Account Provisioning Has Focused Verification
 Alan for macOS SHALL require focused verification for current Managed Terminal
 Account planning, helper ownership, execution boundaries, repair, rollback,

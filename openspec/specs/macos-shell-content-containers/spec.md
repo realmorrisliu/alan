@@ -85,8 +85,10 @@ content-specific cleanup 破坏通用 shell layout。
 - **AND** 目标 tab split tree 保持有效
 
 ### Requirement: Content state persists across app restore
-alan SHALL 通过 workspace manifest 持久化通用 container state、PaneSlots 和 ContentInstances，
-使 app restore 后能恢复 tab、split 和 content kind，而不会把非 terminal content 误恢复为 terminal。
+alan SHALL 通过 current-schema workspace manifest 持久化通用 container state、PaneSlots 和
+ContentInstances，使 app restore 后能恢复 tab、split 和 content kind，而不会把非 terminal
+content 误恢复为 terminal。Content restore SHALL NOT decode or convert historical terminal-only
+workspace manifests or persistent shell-state files.
 
 #### Scenario: App restores mixed content tab
 - **WHEN** alan 重新打开之前包含 terminal、markdown 和 settings pane 的窗口
@@ -94,16 +96,11 @@ alan SHALL 通过 workspace manifest 持久化通用 container state、PaneSlots
 - **AND** terminal content 从 manifest 中的 terminal restore payload 创建新的 terminal runtime，而不是恢复上一轮 app 进程中的 OS process
 - **AND** markdown/settings content 恢复为各自的 viewer/settings surface
 
-#### Scenario: Terminal-only workspace manifest is migrated
-- **WHEN** alan 读取 `persist-macos-shell-workspaces` 产生的 terminal-only workspace manifest
-- **THEN** alan 将每个 terminal restore leaf 迁移为 PaneSlot 加 `terminal` ContentInstance
-- **AND** Space/Tab identity、ordering、selected state、pin 状态、TTL anchor 和 active-task metadata 保持一致
-- **AND** 如果迁移失败，alan 记录可诊断错误而不是静默丢失 tab、pane slot 或 content
-
-#### Scenario: Legacy shell state remains non-authoritative
-- **WHEN** `shell-state-window_main.json` 仍以旧 terminal-only shell-state shape 存在
-- **THEN** alan MAY decode it for diagnostics or compatibility checks
-- **AND** alan MUST NOT use it as the workspace restore authority once a workspace manifest exists
+#### Scenario: Historical persistence input does not materialize content
+- **WHEN** restore encounters a terminal-only workspace manifest or persistent
+  `shell-state-window_main.json`
+- **THEN** alan does not decode or convert that input into PaneSlots or ContentInstances
+- **AND** unsupported workspace-manifest bytes follow the current corrupt-evidence path
 
 ### Requirement: V1 non-terminal surfaces are bounded
 V1 content-container implementation SHALL 支持 terminal、read-only markdown viewer、alan settings

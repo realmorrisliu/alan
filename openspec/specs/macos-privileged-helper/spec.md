@@ -43,25 +43,32 @@ administrator credentials for later Managed User operations.
   the helper without presenting per-step administrator password prompts
 
 ### Requirement: Helper API Is Declarative
-The privileged helper SHALL expose a narrow typed API for Alan-owned privileged
-operations and MUST NOT expose arbitrary command execution, raw shell scripts,
-raw sudoers content, or arbitrary executable launch.
+The privileged helper SHALL expose a narrow typed API for current Alan-owned
+privileged operations and MUST NOT expose arbitrary command execution, raw shell
+scripts, raw sudoers content, arbitrary executable launch, or legacy-sudoers
+diagnosis and cleanup operations.
 
 #### Scenario: Managed User diagnosis is requested
 - **WHEN** Alan requests `diagnoseManagedUser` for a structured account
   identifier
-- **THEN** the helper returns typed account, home, shell, ownership, legacy
-  sudoers, Terminal Profile handoff, and managed PTY readiness state
-- **AND** the response does not include raw privileged command payloads
+- **THEN** the helper returns typed account, home, shell, ownership-marker,
+  Terminal Profile handoff, and managed PTY readiness state
+- **AND** the response contains no sudoers state, legacy path, or raw privileged
+  command payload
 
 #### Scenario: Managed User repair is requested
 - **WHEN** Alan requests `applyManagedUserPlan` with a helper-authored
   declarative plan
-- **THEN** the helper applies only the account, home, hidden-login,
-  ownership-marker, legacy cleanup, and verification operations represented in
-  that plan
-- **AND** the helper rejects any operation that is not represented by a known
+- **THEN** the helper applies only current account, home, hidden-login,
+  ownership-marker, and verification operations represented in that plan
+- **AND** the helper rejects any operation not represented by a known current
   typed plan step
+
+#### Scenario: Legacy cleanup operation is requested
+- **WHEN** a client sends a retired legacy-sudoers diagnosis, cleanup, or
+  rollback step after the hard cut
+- **THEN** the helper rejects the operation as unsupported
+- **AND** it does not inspect or mutate the retired sudoers path
 
 #### Scenario: Arbitrary command is requested
 - **WHEN** a client attempts to send raw shell text, a raw sudoers fragment, or
@@ -115,14 +122,15 @@ sessions.
 - **AND** the helper reports the final session state when possible
 
 ### Requirement: Helper Observability Is Sanitized
-The privileged helper SHALL log and report privileged operation results with
-sanitized identifiers and error codes without recording credentials, terminal
-transcripts, raw command payloads, or full privileged scripts.
+The privileged helper SHALL log and report current privileged operation results
+with sanitized identifiers and error codes without recording credentials,
+terminal transcripts, raw command payloads, full privileged scripts, or sudoers
+content and paths.
 
 #### Scenario: Helper operation fails
-- **WHEN** a helper operation fails during account repair, legacy cleanup, or
-  managed-user PTY launch
+- **WHEN** a helper operation fails during account repair, ownership-marker
+  maintenance, verification, or managed-user PTY launch
 - **THEN** logs and app-facing diagnostics include operation id, channel,
   account identifier, high-level step, and sanitized error status
 - **AND** logs do not include terminal transcript content, passwords, raw shell
-  scripts, or full sudoers contents
+  scripts, sudoers paths, or sudoers contents

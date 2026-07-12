@@ -77,20 +77,19 @@ Verification date: 2026-07-12 (Asia/Shanghai)
   `/private/tmp/alan-legacy-ui-smoke-5/manifest.txt` and screenshots
   `09-restart-restore.png`, `10-restart-clear.png`, and
   `12-restart-after-input.png`.
-- The operator explicitly authorized installing the Alan Dev privileged helper
-  and running the real helper-owned Managed User PTY smoke. The current Dev app
-  and embedded helper were installed, but the helper could not launch: the local
-  build is ad-hoc signed, macOS rejected it with a launch-constraint code-signing
-  violation, and the submitted job remained at `EX_CONFIG`. A retry through the
-  supported `SMAppService` registration path returned
-  `SMAppServiceErrorDomain Code=57` (`Socket is not connected`).
-- The repository supports a non-ad-hoc identity through
-  `ALAN_SIGNING_IDENTITY` / `ALAN_DEVELOPER_ID_APPLICATION`, but
-  `security find-identity -v -p codesigning` reported zero valid identities in
-  the current keychain. Therefore a real helper-owned Managed User PTY launch
-  remains unverified in this environment. No AMFI, SIP, `launchctl`, or manual
-  helper-launch bypass was used; focused helper and fake-client tests cover the
-  current code path meanwhile.
+- The operator explicitly authorized installing the Alan Dev privileged helper.
+  The initial sandboxed keychain query incorrectly reported zero identities;
+  an unrestricted query found the existing Developer ID identity, and loading
+  the primary checkout's private release env produced a Developer ID-signed
+  Alan Dev app and embedded helper with Team ID `SK7DN68V4V`.
+- After the operator enabled the Alan Dev background item, the supported
+  `SMAppService` update path reported `state=healthy`. Live diagnosis reached
+  the existing `univer` account and correctly rejected it as
+  `account_not_alan_managed` because it has no current ownership marker. The
+  safety contract did not adopt or mutate that account. The operator chose to
+  perform Managed User account and real PTY testing later, so no live PTY pass
+  is claimed by this change; focused helper and fake-client PTY tests remain the
+  automated evidence.
 - The running pre-hard-cut stable Alan instance remains open by explicit operator
   instruction. Verification and smoke shutdown targeted only isolated Alan Dev
   PIDs and did not signal, restart, or replace stable Alan.
