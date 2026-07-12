@@ -88,6 +88,15 @@ pub(crate) async fn plan_updated(
     namespace.append_ui_event(&UiEvent::Plan { snapshot }).await
 }
 
+pub(crate) async fn rollback(namespace: &NamespaceRuntimeEnvironment, turns: u32) -> Result<()> {
+    let snapshot =
+        UiNoticeSnapshot::new(UiNoticeKind::Rollback, format!("rolled back {turns} turns"));
+    namespace.write_ui_notice_snapshot(&snapshot).await?;
+    namespace
+        .append_ui_event(&UiEvent::Notice { snapshot })
+        .await
+}
+
 pub(crate) async fn thinking(namespace: &NamespaceRuntimeEnvironment, text: &str) -> Result<()> {
     let started = Instant::now();
     let mut visible = String::new();

@@ -1144,6 +1144,16 @@ pub fn spawn_with_llm_client(
     spawn_with_llm_client_and_tools(config, llm_client, tools)
 }
 
+/// Spawn a namespace-native runtime with an externally provided LLM client.
+pub async fn spawn_with_llm_client_and_namespace_surface(
+    config: WorkspaceRuntimeConfig,
+    llm_client: LlmClient,
+) -> Result<RuntimeNamespaceLaunch> {
+    let core_config = effective_core_config_for_runtime(&config)?;
+    let tools = crate::tools::ToolRegistry::with_config(Arc::new(core_config));
+    spawn_with_llm_client_and_tools_and_namespace_surface(config, llm_client, tools).await
+}
+
 fn configure_runtime_tool_execution_binding(
     config: &WorkspaceRuntimeConfig,
     tools: &mut crate::tools::ToolRegistry,
@@ -1436,7 +1446,7 @@ pub fn spawn_with_llm_client_and_tools(
     )
 }
 
-async fn spawn_with_llm_client_and_tools_and_namespace_surface(
+pub async fn spawn_with_llm_client_and_tools_and_namespace_surface(
     config: WorkspaceRuntimeConfig,
     llm_client: LlmClient,
     mut tools: crate::tools::ToolRegistry,
@@ -2384,6 +2394,40 @@ mod tests {
         }
     }
 
+    async fn wait_for_ui_turn_completion(
+        tail: &mut alan_shell::Tail,
+        timeout: Duration,
+    ) -> Vec<alan_agent_protocol::UiEvent> {
+        tokio::time::timeout(timeout, async {
+            let mut pending = String::new();
+            let mut events = Vec::new();
+            let mut saw_running = false;
+            loop {
+                pending.push_str(&String::from_utf8(tail.read(4096).await.unwrap()).unwrap());
+                while let Some(newline) = pending.find('\n') {
+                    let line = pending[..newline].to_string();
+                    pending.drain(..=newline);
+                    let event: alan_agent_protocol::UiEvent = serde_json::from_str(&line).unwrap();
+                    if let alan_agent_protocol::UiEvent::Activity { snapshot } = &event {
+                        saw_running |= matches!(
+                            snapshot.state,
+                            alan_agent_protocol::UiActivityState::Running
+                        );
+                        if saw_running
+                            && matches!(snapshot.state, alan_agent_protocol::UiActivityState::Idle)
+                        {
+                            events.push(event);
+                            return events;
+                        }
+                    }
+                    events.push(event);
+                }
+            }
+        })
+        .await
+        .expect("turn UI stream did not reach idle")
+    }
+
     fn response_stream(response: GenerationResponse) -> tokio::sync::mpsc::Receiver<StreamChunk> {
         let (tx, rx) = tokio::sync::mpsc::channel(16);
         tokio::spawn(async move {
@@ -2492,15 +2536,24 @@ mod tests {
             MockLlmProvider::new()
                 .with_response(mock_generation_response("hello from namespace bootstrap")),
         );
-        let mut controller = spawn_with_llm_client_and_tools(
+        let launch = spawn_with_llm_client_and_tools_and_namespace_surface(
             WorkspaceRuntimeConfig::default(),
             llm_client,
             crate::tools::ToolRegistry::new(),
         )
+        .await
         .unwrap();
+        let shell = alan_shell::Shell::new(launch.surface.root_transport());
+        let mut ui_events = shell
+            .tail(&format!(
+                "{}/machine/ui/events",
+                launch.surface.agent_path()
+            ))
+            .await
+            .unwrap();
+        let mut controller = launch.controller;
         controller.wait_until_ready().await.unwrap();
 
-        let mut events = controller.handle.event_sender.subscribe();
         controller
             .handle
             .submission_tx
@@ -2511,27 +2564,19 @@ mod tests {
             .await
             .unwrap();
 
-        let mut text = String::new();
-        let mut completed = false;
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
-        while tokio::time::Instant::now() < deadline {
-            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-            let envelope = tokio::time::timeout(remaining, events.recv())
+        let observed = wait_for_ui_turn_completion(&mut ui_events, Duration::from_secs(5)).await;
+        assert!(observed.iter().any(|event| matches!(
+            event,
+            alan_agent_protocol::UiEvent::Activity { snapshot }
+                if snapshot.state == alan_agent_protocol::UiActivityState::Running
+        )));
+        let text = String::from_utf8(
+            shell
+                .cat(&format!("{}/io/output", launch.surface.agent_path()))
                 .await
-                .unwrap()
-                .unwrap();
-            match envelope.event {
-                Event::TextDelta { chunk, .. } => text.push_str(&chunk),
-                Event::TurnCompleted { .. } => {
-                    completed = true;
-                    break;
-                }
-                Event::Error { message, .. } => panic!("runtime emitted error: {message}"),
-                _ => {}
-            }
-        }
-
-        assert!(completed, "turn did not complete; text so far: {text:?}");
+                .unwrap(),
+        )
+        .unwrap();
         assert_eq!(text, "hello from namespace bootstrap");
         controller.shutdown().await.unwrap();
     }
@@ -2723,10 +2768,20 @@ mod tests {
             deferred_delay: Duration::from_millis(100),
         });
 
-        let mut controller = spawn_with_llm_client(config, llm_client).unwrap();
+        let launch = spawn_with_llm_client_and_namespace_surface(config, llm_client)
+            .await
+            .unwrap();
+        let shell = alan_shell::Shell::new(launch.surface.root_transport());
+        let mut ui_events = shell
+            .tail(&format!(
+                "{}/machine/ui/events",
+                launch.surface.agent_path()
+            ))
+            .await
+            .unwrap();
+        let mut controller = launch.controller;
         controller.wait_until_ready().await.unwrap();
 
-        let mut event_rx = controller.handle.event_sender.subscribe();
         let submission = Submission::new(Op::Turn {
             parts: vec![alan_agent_protocol::ContentPart::text("My name is Morris.")],
             context: None,
@@ -2738,33 +2793,7 @@ mod tests {
             .await
             .unwrap();
 
-        let mut observed_events = Vec::new();
-        let wait_result = tokio::time::timeout(Duration::from_secs(15), async {
-            loop {
-                let envelope = event_rx
-                    .recv()
-                    .await
-                    .expect("runtime event stream closed before turn completion");
-                observed_events.push(format!(
-                    "{:?} submission_id={:?}",
-                    envelope.event, envelope.submission_id
-                ));
-                match &envelope.event {
-                    Event::TurnCompleted { .. } => break,
-                    Event::Error { message, .. } => {
-                        panic!(
-                            "runtime emitted error before shutdown drain: {message}; \
-                             observed_events={observed_events:?}"
-                        );
-                    }
-                    _ => {}
-                }
-            }
-        })
-        .await;
-        if wait_result.is_err() {
-            panic!("wait for turn completion; observed_events={observed_events:?}");
-        }
+        wait_for_ui_turn_completion(&mut ui_events, Duration::from_secs(15)).await;
 
         controller.shutdown().await.unwrap();
 
@@ -2863,22 +2892,13 @@ mod tests {
         .unwrap();
         controller.wait_until_ready().await.unwrap();
 
-        let mut event_rx = controller.handle.event_sender.subscribe();
+        let mut ui_events = shell.tail("/agent/1/machine/ui/events").await.unwrap();
         shell
             .write("/agent/1/io/input", b"hello through files")
             .await
             .unwrap();
 
-        tokio::time::timeout(Duration::from_secs(5), async {
-            loop {
-                let envelope = event_rx.recv().await.unwrap();
-                if matches!(envelope.event, Event::TurnCompleted { .. }) {
-                    break;
-                }
-            }
-        })
-        .await
-        .expect("namespace io/input should drive a turn to completion");
+        wait_for_ui_turn_completion(&mut ui_events, Duration::from_secs(5)).await;
 
         let output = String::from_utf8(shell.cat("/agent/1/io/output").await.unwrap()).unwrap();
         assert_eq!(output, "hello from namespace runtime");
@@ -3015,43 +3035,38 @@ mod tests {
         .unwrap();
         controller.wait_until_ready().await.unwrap();
 
-        let mut event_rx = controller.handle.event_sender.subscribe();
+        let mut ui_events = shell.tail("/agent/1/machine/ui/events").await.unwrap();
         shell
             .write("/agent/1/io/input", b"hello through files")
             .await
             .unwrap();
 
-        tokio::time::timeout(Duration::from_secs(5), async {
-            loop {
-                let envelope = event_rx.recv().await.unwrap();
-                if matches!(envelope.event, Event::TurnCompleted { .. }) {
-                    break;
-                }
-            }
-        })
-        .await
-        .expect("namespace io/input should drive a turn to completion");
+        wait_for_ui_turn_completion(&mut ui_events, Duration::from_secs(5)).await;
 
         shell
             .write("/agent/1/machine/ctl", b"rollback")
             .await
             .unwrap();
 
-        let rollback = tokio::time::timeout(Duration::from_secs(5), async {
-            loop {
-                let envelope = event_rx.recv().await.unwrap();
-                if let Event::MachineRolledBack {
-                    turns,
-                    removed_messages,
-                } = envelope.event
-                {
-                    break (turns, removed_messages);
+        let rollback_notice = tokio::time::timeout(Duration::from_secs(5), async {
+            let mut pending = String::new();
+            'events: loop {
+                pending.push_str(&String::from_utf8(ui_events.read(4096).await.unwrap()).unwrap());
+                while let Some(newline) = pending.find('\n') {
+                    let line = pending[..newline].to_string();
+                    pending.drain(..=newline);
+                    let event: alan_agent_protocol::UiEvent = serde_json::from_str(&line).unwrap();
+                    if let alan_agent_protocol::UiEvent::Notice { snapshot } = event
+                        && snapshot.kind == alan_agent_protocol::UiNoticeKind::Rollback
+                    {
+                        break 'events snapshot.message;
+                    }
                 }
             }
         })
         .await
         .expect("namespace machine/ctl should drive rollback submission");
-        assert_eq!(rollback, (1, 2));
+        assert_eq!(rollback_notice, "rolled back 1 turns");
 
         controller.shutdown().await.unwrap();
     }

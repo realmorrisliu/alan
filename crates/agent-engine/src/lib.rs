@@ -82,6 +82,7 @@ pub use rollout::{
 pub use runtime::{
     AgentConfig, RuntimeController, RuntimeEventEnvelope, RuntimeHandle, RuntimeNamespaceLaunch,
     RuntimeNamespaceSurface, WorkspaceRuntimeConfig, spawn, spawn_with_llm_client,
-    spawn_with_namespace_surface,
+    spawn_with_llm_client_and_namespace_surface,
+    spawn_with_llm_client_and_tools_and_namespace_surface, spawn_with_namespace_surface,
 };
 pub use tools::ToolRegistry;

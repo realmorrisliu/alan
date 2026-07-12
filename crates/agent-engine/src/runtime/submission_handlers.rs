@@ -68,6 +68,8 @@ where
             state.turn_state.clear_plan_snapshot();
             super::ui_surfaces::plan_updated(state.namespace_environment(), None, Vec::new())
                 .await?;
+            super::ui_surfaces::rollback(state.namespace_environment(), rollback.removed_turns)
+                .await?;
             emit(Event::MachineRolledBack {
                 turns: rollback.removed_turns,
                 removed_messages: rollback.removed_messages,
