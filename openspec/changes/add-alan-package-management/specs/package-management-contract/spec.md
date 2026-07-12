@@ -377,13 +377,16 @@ user passes an explicit force flag. With force, the entire entry is removed.
 
 ### Requirement: List reports installed packages
 `q list` SHALL report each installed distribution package with its
-provenance and a summary of materialized skills, including any with
-unsatisfied required tools.
+provenance and a summary of materialized skills, including every availability
+issue from required tools, typed runtime capabilities, environment dependencies,
+version gates, or unresolved execution.
 
 #### Scenario: Packages are listed
 - **WHEN** `q list` runs
 - **THEN** each installed package appears with source, commit, and
   materialized-skill summary
+- **AND** every unavailable skill includes the same typed availability issues
+  surfaced by `skill_availability_issues`
 
 ### Requirement: Package operations produce a human-readable report
 Every install/upgrade/uninstall run SHALL produce a report covering: skills

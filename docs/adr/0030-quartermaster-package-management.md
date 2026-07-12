@@ -127,7 +127,7 @@ manifest-selected roots under `/lib/pkg` directly — a presentation-layer
 finish, not a re-architecture.
 
 Scope note: this concerns **skill** capabilities. Core **tools**
-(`read`/`write`/`edit`/`bash`/`grep`/`glob`/`list_dir`) are compiled-in
+(`read_file`/`write_file`/`edit_file`/`bash`/`grep`/`glob`/`list_dir`) are compiled-in
 `Box<dyn Tool>` registered on the `ToolRegistry` — kernel, not packages — and
 stay outside Q's ownership in this model. `tools = /bin` (ADR-0027) is
 `refactor-engine-namespace-native`'s concern, not Q's.

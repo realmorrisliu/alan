@@ -32,7 +32,7 @@
 - [ ] 4.3 Implement uninstall: check divergence before removing the store entry — relocate diverged files out of the entry (never delete with it) unless forced — then delete manifest-listed files, the store entry, and provider registration
 - [ ] 4.4 Assemble each Agent Process's `/lib/pkg` from only its Q resolved set: host-directory mounts for resolved store-backed packages and read-only binds for resolved local-source authored roots; verify unrelated workspace/AgentRoot providers are absent and local sources are not copied
 - [ ] 4.5 Implement execution-backend resolution of `/lib/pkg/...` paths to store backing for spawned helpers; canonicalize the target and require it under the package entry; require a sandbox backend that enforces reads from only that entry while denying the rest of the channel Alan home; fail closed as unavailable when unsupported; verify direct backing references, symlink escapes, and non-enforcing Linux backends never receive an ordinary host spawn
-- [ ] 4.6 Implement list: installed packages with provenance and resolved-skill summary including unsatisfied required tools
+- [ ] 4.6 Implement list: installed packages with provenance and resolved-skill summary including every typed issue from `skill_availability_issues`, not only required tools
 
 ## 5. CLI surface
 
@@ -47,7 +47,7 @@
 - [ ] 6.3 Cover conversion output: frontmatter, preamble placement, verbatim body, tool-vs-runtime-capability dependency emission, PATH cannot satisfy unsupported surfaces, unknown-token reporting, `/lib/pkg` helper addressing
 - [ ] 6.4 Cover install: path-safe package ids, equivalent git URLs with/without `.git`, sanitized source identity with credentialed URL userinfo/query/fragment removed from provenance/reports/logs/store, package-id collisions, no VCS metadata in `/lib/pkg`, escaping-symlink rejection, store layout, manifest-selected roots, cross-owner collision rejection, duplicate-source precedence
 - [ ] 6.5 Cover upgrade: unchanged no-op, remote commit change, and local tracked/uncommitted/untracked content changes with unchanged git HEAD all trigger the correct re-materialization; local destination divergence still warns/skips/forces
-- [ ] 6.6 Cover uninstall exactness (manifest-only deletion, diverged-file preservation) and list output
+- [ ] 6.6 Cover uninstall exactness (manifest-only deletion, diverged-file preservation) and list output for missing tools, runtime capabilities, environment dependencies, version gates, and unresolved execution
 - [ ] 6.7 Cover honest failure: unsatisfied runtime-capability dependencies and unavailable package-helper read confinement both produce availability issues visible through inspection, with no host-spawn fallback
 
 ## 7. Docs, glossary, and spec sync
