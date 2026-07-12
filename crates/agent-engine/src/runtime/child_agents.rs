@@ -1811,10 +1811,19 @@ async fn build_child_namespace_assembly_plan(
         return Ok(plan);
     }
 
+    let shares_parent_workspace = workspace_root
+        .as_ref()
+        .zip(bound_workspace_root(parent).as_ref())
+        .is_some_and(|(child, parent)| {
+            lexically_normalize_path(child) == lexically_normalize_path(parent)
+        });
     let packages = parent
         .namespace_environment()
         .discover_tool_packages()
-        .await?;
+        .await?
+        .into_iter()
+        .filter(|package| !package.is_workspace_local() || shares_parent_workspace)
+        .collect::<Vec<_>>();
     plan.tool_packages = if let Some(profile) = spec.runtime_overrides.tool_profile.as_ref() {
         let available = packages
             .iter()
@@ -2268,6 +2277,10 @@ mod tests {
             _ctx: &crate::tools::ToolContext,
         ) -> crate::tools::ToolResult {
             Box::pin(async { Ok(json!({"ok": true})) })
+        }
+
+        fn locality(&self) -> crate::tools::ToolLocality {
+            crate::tools::ToolLocality::WorkspaceLocal
         }
     }
 
@@ -2968,6 +2981,26 @@ Body
         assert_eq!(plan.workspace_root, Some(temp.path().join("repo")));
         assert_eq!(plan.cwd, Some(temp.path().join("repo")));
         assert_eq!(plan.bin_tool_mounts, vec!["/bin/alpha"]);
+    }
+
+    #[tokio::test]
+    async fn child_namespace_plan_with_different_root_withholds_parent_workspace_tools() {
+        let temp = TempDir::new().unwrap();
+        let parent = make_parent_state(
+            &temp,
+            RecordedRequests::default(),
+            completed_response("unused"),
+        );
+        let mut spec = launch_spec(temp.path().join("other/.alan/agents/grader"));
+        spec.handles = vec![SpawnHandle::Workspace];
+        spec.launch.workspace_root = Some(temp.path().join("other"));
+
+        let plan = build_child_namespace_assembly_plan(&parent, &spec, &parent.core_config)
+            .await
+            .unwrap();
+
+        assert!(plan.tool_packages.is_empty());
+        assert!(plan.bin_tool_mounts.is_empty());
     }
 
     #[tokio::test]

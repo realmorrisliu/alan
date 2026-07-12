@@ -50,14 +50,6 @@ impl ToolPackageManifest {
         }
     }
 
-    pub(crate) fn policy_capability(&self) -> ToolCapability {
-        if self.capability_is_argument_dependent {
-            ToolCapability::Unknown
-        } else {
-            self.capability
-        }
-    }
-
     pub(crate) fn from_tool(tool: &dyn Tool, timeout_secs: usize) -> Result<Self> {
         let manifest = Self {
             version: TOOL_MANIFEST_VERSION,
@@ -154,6 +146,6 @@ mod tests {
     #[test]
     fn argument_dependent_manifest_never_reuses_null_argument_capability() {
         let manifest = ToolPackageManifest::from_tool(&ArgumentDependentTool, 30).unwrap();
-        assert_eq!(manifest.policy_capability(), ToolCapability::Unknown);
+        assert!(manifest.capability_is_argument_dependent);
     }
 }

@@ -594,6 +594,17 @@ impl ToolProcessRunner {
             })
     }
 
+    pub(crate) fn capability_for_tool(
+        &self,
+        name: &str,
+        arguments: &Value,
+    ) -> Option<alan_agent_protocol::ToolCapability> {
+        self.inner
+            .tools
+            .get(name)
+            .map(|tool| tool.capability(arguments))
+    }
+
     pub(crate) fn add_process_sandbox_writable_root(
         &self,
         pid: alan_kernel::Pid,
@@ -927,6 +938,38 @@ mod tests {
         }
     }
 
+    struct ArgumentCapabilityTool;
+
+    impl Tool for ArgumentCapabilityTool {
+        fn name(&self) -> &str {
+            "argument_capability"
+        }
+
+        fn description(&self) -> &str {
+            "Argument capability tool"
+        }
+
+        fn parameters_schema(&self) -> Value {
+            serde_json::json!({"type": "object"})
+        }
+
+        fn capability(&self, arguments: &Value) -> alan_agent_protocol::ToolCapability {
+            if arguments["network"].as_bool() == Some(true) {
+                alan_agent_protocol::ToolCapability::Network
+            } else {
+                alan_agent_protocol::ToolCapability::Read
+            }
+        }
+
+        fn capability_is_argument_dependent(&self) -> bool {
+            true
+        }
+
+        fn execute(&self, _args: Value, _ctx: &ToolContext) -> ToolResult {
+            Box::pin(async move { Ok(serde_json::json!({"status": "ok"})) })
+        }
+    }
+
     struct WorkspaceLocalTool;
 
     impl Tool for WorkspaceLocalTool {
@@ -1015,6 +1058,26 @@ mod tests {
             Some(alan_agent_protocol::ToolCapability::Network)
         );
         assert_eq!(registry.capability_for_tool("nonexistent", &args), None);
+    }
+
+    #[test]
+    fn process_runner_resolves_capability_from_concrete_arguments() {
+        let mut registry = ToolRegistry::new();
+        registry.register(ArgumentCapabilityTool);
+        let runner = ToolProcessRunner::from_registry(&registry);
+
+        assert_eq!(
+            runner
+                .capability_for_tool("argument_capability", &serde_json::json!({"network": true})),
+            Some(alan_agent_protocol::ToolCapability::Network)
+        );
+        assert_eq!(
+            runner.capability_for_tool(
+                "argument_capability",
+                &serde_json::json!({"network": false})
+            ),
+            Some(alan_agent_protocol::ToolCapability::Read)
+        );
     }
 
     #[test]

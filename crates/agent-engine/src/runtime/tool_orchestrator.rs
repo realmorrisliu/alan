@@ -495,7 +495,11 @@ where
         .find(|package| package.name == tool_call.name);
     let tool_capability = tool_package
         .as_ref()
-        .map(|package| package.policy_capability())
+        .map(|package| {
+            state
+                .namespace_environment()
+                .resolve_tool_capability(package, &tool_arguments)
+        })
         .unwrap_or_else(|| namespace_builtin_tool_capability(&tool_call.name));
     if tool_package
         .as_ref()

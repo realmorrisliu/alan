@@ -148,7 +148,7 @@ fn current_turn_tool_failures(
 ) -> RecentToolFailureContext {
     let messages = state.machine.tape.messages();
     let current_turn = active_turn_messages(messages, state.turn_state.active_turn_message_start());
-    let tool_capabilities = current_turn_tool_capabilities(tool_packages, current_turn);
+    let tool_capabilities = current_turn_tool_capabilities(state, tool_packages, current_turn);
     let mut failures = RecentToolFailureContext::default();
 
     for message in current_turn.iter().rev() {
@@ -183,6 +183,7 @@ fn active_turn_messages(messages: &[Message], active_turn_start: Option<usize>) 
 }
 
 fn current_turn_tool_capabilities(
+    state: &RuntimeLoopState,
     tool_packages: &[super::ToolPackageManifest],
     messages: &[Message],
 ) -> HashMap<String, ToolCapability> {
@@ -194,7 +195,7 @@ fn current_turn_tool_capabilities(
         };
 
         for request in tool_requests {
-            if let Some(capability) = capability_for_tool_request(tool_packages, request) {
+            if let Some(capability) = capability_for_tool_request(state, tool_packages, request) {
                 capabilities.insert(request.id.clone(), capability);
             }
         }
@@ -204,13 +205,18 @@ fn current_turn_tool_capabilities(
 }
 
 fn capability_for_tool_request(
+    state: &RuntimeLoopState,
     tool_packages: &[super::ToolPackageManifest],
     request: &ToolRequest,
 ) -> Option<ToolCapability> {
     tool_packages
         .iter()
         .find(|package| package.name == request.name)
-        .map(super::ToolPackageManifest::policy_capability)
+        .map(|package| {
+            state
+                .namespace_environment()
+                .resolve_tool_capability(package, &request.arguments)
+        })
 }
 
 fn tool_response_has_failure(response: &ToolResponse) -> bool {

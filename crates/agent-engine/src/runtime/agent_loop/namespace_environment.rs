@@ -321,6 +321,24 @@ impl NamespaceRuntimeEnvironment {
         context.tool_runner.process_binding(context.pid)
     }
 
+    pub(crate) fn resolve_tool_capability(
+        &self,
+        package: &super::super::ToolPackageManifest,
+        arguments: &serde_json::Value,
+    ) -> alan_agent_protocol::ToolCapability {
+        if !package.capability_is_argument_dependent {
+            return package.capability;
+        }
+        self.process_context
+            .as_ref()
+            .and_then(|context| {
+                context
+                    .tool_runner
+                    .capability_for_tool(&package.name, arguments)
+            })
+            .unwrap_or(alan_agent_protocol::ToolCapability::Unknown)
+    }
+
     #[cfg(test)]
     pub(crate) fn set_tool_execution_binding(
         &self,
