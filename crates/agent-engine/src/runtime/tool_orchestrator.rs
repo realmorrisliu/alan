@@ -26,11 +26,6 @@ use super::turn_driver::{MAX_BUFFERED_INBAND_USER_INPUTS, TurnInputBroker};
 use super::turn_support::{check_turn_cancelled, tool_result_preview};
 use super::virtual_tools::{VirtualToolOutcome, try_handle_virtual_tool_call};
 
-#[derive(Clone)]
-enum ToolExecutionTarget {
-    Namespace(crate::runtime::NamespaceRuntimeEnvironment),
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum EffectCategory {
     File,
@@ -424,29 +419,25 @@ async fn tool_payload_for_tape(state: &RuntimeLoopState, payload: &Value) -> Val
 }
 
 async fn execute_tool_effect(
-    target: ToolExecutionTarget,
+    namespace: crate::runtime::NamespaceRuntimeEnvironment,
     tool_name: &str,
     tool_arguments: Value,
     cancel: &CancellationToken,
     timeout_secs: usize,
 ) -> Result<Value> {
-    match target {
-        ToolExecutionTarget::Namespace(namespace) => {
-            let executable = format!("/bin/{tool_name}");
-            let arguments_doc =
-                serde_json::to_string(&tool_arguments).context("serialize tool arguments")?;
-            let tool = namespace
-                .run_tool_action_with_cancel_and_timeout(
-                    tool_name,
-                    &executable,
-                    [arguments_doc],
-                    cancel,
-                    timeout_secs,
-                )
-                .await?;
-            namespace_tool_payload(tool)
-        }
-    }
+    let executable = format!("/bin/{tool_name}");
+    let arguments_doc =
+        serde_json::to_string(&tool_arguments).context("serialize tool arguments")?;
+    let tool = namespace
+        .run_tool_action_with_cancel_and_timeout(
+            tool_name,
+            &executable,
+            [arguments_doc],
+            cancel,
+            timeout_secs,
+        )
+        .await?;
+    namespace_tool_payload(tool)
 }
 
 async fn orchestrate_tool_call_with_guard<E, F>(
@@ -1056,7 +1047,7 @@ where
         });
     }
 
-    let execution_target = ToolExecutionTarget::Namespace(state.namespace_environment().clone());
+    let execution_target = state.namespace_environment().clone();
     let tool_start = Instant::now();
     let tool_timeout_secs = tool_package
         .as_ref()
@@ -2526,7 +2517,7 @@ mod tests {
 
         for (idx, tool_name) in BUILTIN_BIN_TOOLS.iter().enumerate() {
             let payload = execute_tool_effect(
-                ToolExecutionTarget::Namespace(namespace.clone()),
+                namespace.clone(),
                 tool_name,
                 json!({ "tool": tool_name, "call_index": idx }),
                 &cancel,

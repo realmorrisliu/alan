@@ -1562,6 +1562,7 @@ struct ChildNamespaceRuntimeLaunch {
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
+#[allow(clippy::too_many_arguments)]
 async fn spawn_child_namespace_runtime_environment(
     launch_procfs: &alan_kernel::ProcFs,
     runtime_procfs: &alan_kernel::ProcFs,
@@ -2168,10 +2169,8 @@ mod tests {
             );
         }
         let root = InProcessTransport::new(Arc::new(alan_kernel::MountFs::new(mounts)));
-        let namespace =
-            crate::runtime::NamespaceRuntimeEnvironment::new(root, "/agent/1", "default")
-                .with_shared_services(memfs_transport(), InProcessTransport::new(routefs));
-        namespace
+        crate::runtime::NamespaceRuntimeEnvironment::new(root, "/agent/1", "default")
+            .with_shared_services(memfs_transport(), InProcessTransport::new(routefs))
     }
 
     #[derive(Clone, Default)]

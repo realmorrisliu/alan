@@ -689,8 +689,7 @@ impl alan_kernel::ProcessRunner for ToolProcessRunner {
             .get(&invocation.pid)
             .cloned();
         let binding = process_binding.unwrap_or_else(|| {
-            let binding = self
-                .inner
+            self.inner
                 .default_binding
                 .lock()
                 .expect("default binding mutex poisoned")
@@ -702,8 +701,7 @@ impl alan_kernel::ProcessRunner for ToolProcessRunner {
                         cwd.clone(),
                         default_scratch_dir_for_cwd(&cwd),
                     )
-                });
-            binding
+                })
         });
         let context = ToolContext::from_binding(binding, Arc::clone(&self.inner.config));
         let timeout_secs = if self.inner.config.tool_timeout_secs != 30 {

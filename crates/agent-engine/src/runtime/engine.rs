@@ -926,7 +926,7 @@ impl RuntimeController {
         let timeout = tokio::time::Duration::from_secs(10);
 
         // Use &mut handle so we don't consume it on timeout
-        let result = if let Some(ref mut handle) = self.task_handle {
+        if let Some(ref mut handle) = self.task_handle {
             match tokio::time::timeout(timeout, &mut *handle).await {
                 Ok(Ok(())) => {
                     info!("Runtime task completed gracefully");
@@ -952,9 +952,7 @@ impl RuntimeController {
             }
         } else {
             Err(anyhow::anyhow!("Task handle not available"))
-        };
-
-        result
+        }
     }
 
     /// Abort the runtime immediately without waiting for graceful shutdown

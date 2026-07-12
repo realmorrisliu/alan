@@ -60,6 +60,7 @@ fn runtime_state_and_handles_have_no_parallel_capability_or_event_authority() {
     }
     assert!(!loop_source.contains("pub enum RuntimeEnvironment"));
     assert!(!loop_source.contains("pub environment: RuntimeEnvironment"));
+    assert!(!read_runtime_source("tool_orchestrator.rs").contains("ToolExecutionTarget"));
 
     for forbidden in [
         "RuntimeEventEnvelope",
