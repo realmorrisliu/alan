@@ -2115,6 +2115,10 @@ impl Tool for BashTool {
         classify_bash_command(command)
     }
 
+    fn capability_is_argument_dependent(&self) -> bool {
+        true
+    }
+
     fn timeout_secs(&self) -> usize {
         300 // Must be >= user-configurable timeout upper bound in schema
     }

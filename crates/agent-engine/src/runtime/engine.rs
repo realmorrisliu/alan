@@ -140,6 +140,10 @@ fn should_requeue_deferred_action(
     requeue_requested && matches!(exit, DeferredRuntimeActionExit::Cancelled)
 }
 
+fn preserves_paused_terminal_state(result: &Result<()>, has_pending_interaction: bool) -> bool {
+    result.is_ok() && has_pending_interaction
+}
+
 async fn read_namespace_input_submission(
     namespace: super::NamespaceRuntimeEnvironment,
     mode: InputMode,
@@ -1707,6 +1711,10 @@ fn spawn_with_prepared_runtime_environment(
                             result = &mut submission_fut => {
                                 drop(submission_fut);
                                 let terminal_ui_result = match &result {
+                                    Ok(()) if preserves_paused_terminal_state(
+                                        &result,
+                                        state.turn_state.has_pending_interaction(),
+                                    ) => Ok(()),
                                     Ok(()) => super::ui_surfaces::turn_completed(
                                         &namespace_heartbeat,
                                         false,
@@ -2232,6 +2240,16 @@ mod tests {
         assert!(!should_requeue_deferred_action(
             false,
             DeferredRuntimeActionExit::Cancelled
+        ));
+    }
+
+    #[test]
+    fn paused_submission_keeps_its_terminal_ui_state() {
+        assert!(preserves_paused_terminal_state(&Ok(()), true));
+        assert!(!preserves_paused_terminal_state(&Ok(()), false));
+        assert!(!preserves_paused_terminal_state(
+            &Err(anyhow!("failed")),
+            true
         ));
     }
 

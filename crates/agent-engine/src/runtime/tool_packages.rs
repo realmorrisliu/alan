@@ -15,6 +15,9 @@ pub(crate) struct ToolPackageManifest {
     pub description: String,
     pub parameters: serde_json::Value,
     pub capability: ToolCapability,
+    /// Dynamic Tools classify concrete arguments inside their execution adapter.
+    #[serde(default)]
+    pub capability_is_argument_dependent: bool,
     pub locality: ToolPackageLocality,
     pub timeout_secs: usize,
     pub execution: ToolExecutionHints,
@@ -47,6 +50,14 @@ impl ToolPackageManifest {
         }
     }
 
+    pub(crate) fn policy_capability(&self) -> ToolCapability {
+        if self.capability_is_argument_dependent {
+            ToolCapability::Unknown
+        } else {
+            self.capability
+        }
+    }
+
     pub(crate) fn from_tool(tool: &dyn Tool, timeout_secs: usize) -> Result<Self> {
         let manifest = Self {
             version: TOOL_MANIFEST_VERSION,
@@ -54,6 +65,7 @@ impl ToolPackageManifest {
             description: tool.description().to_string(),
             parameters: tool.parameters_schema(),
             capability: tool.capability(&serde_json::Value::Null),
+            capability_is_argument_dependent: tool.capability_is_argument_dependent(),
             locality: match tool.locality() {
                 ToolLocality::Global => ToolPackageLocality::Global,
                 ToolLocality::WorkspaceLocal => ToolPackageLocality::WorkspaceLocal,
@@ -110,6 +122,26 @@ mod tests {
         }
     }
 
+    struct ArgumentDependentTool;
+
+    impl Tool for ArgumentDependentTool {
+        fn name(&self) -> &str {
+            "dynamic"
+        }
+        fn description(&self) -> &str {
+            "Dynamic Tool"
+        }
+        fn parameters_schema(&self) -> serde_json::Value {
+            serde_json::json!({"type": "object"})
+        }
+        fn execute(&self, _: serde_json::Value, _: &ToolContext) -> ToolResult {
+            Box::pin(async { Ok(serde_json::Value::Null) })
+        }
+        fn capability_is_argument_dependent(&self) -> bool {
+            true
+        }
+    }
+
     #[test]
     fn manifest_round_trips_and_validates_against_mount_name() {
         let manifest = ToolPackageManifest::from_tool(&ExampleTool, 30).unwrap();
@@ -117,5 +149,11 @@ mod tests {
         let decoded: ToolPackageManifest = serde_json::from_slice(&bytes).unwrap();
         decoded.validate_for_name("example").unwrap();
         assert!(decoded.validate_for_name("other").is_err());
+    }
+
+    #[test]
+    fn argument_dependent_manifest_never_reuses_null_argument_capability() {
+        let manifest = ToolPackageManifest::from_tool(&ArgumentDependentTool, 30).unwrap();
+        assert_eq!(manifest.policy_capability(), ToolCapability::Unknown);
     }
 }

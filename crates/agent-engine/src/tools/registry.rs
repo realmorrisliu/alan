@@ -48,6 +48,11 @@ pub trait Tool: Send + Sync {
         alan_agent_protocol::ToolCapability::Read
     }
 
+    /// Whether capability depends on the concrete invocation arguments.
+    fn capability_is_argument_dependent(&self) -> bool {
+        false
+    }
+
     /// Get the recommended timeout for this tool in seconds.
     fn timeout_secs(&self) -> usize {
         30

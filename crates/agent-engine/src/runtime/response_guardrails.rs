@@ -210,7 +210,7 @@ fn capability_for_tool_request(
     tool_packages
         .iter()
         .find(|package| package.name == request.name)
-        .map(|package| package.capability)
+        .map(super::ToolPackageManifest::policy_capability)
 }
 
 fn tool_response_has_failure(response: &ToolResponse) -> bool {
