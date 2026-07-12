@@ -28,9 +28,13 @@ in OpenSpec.
 ### Requirement: Tool identity is separate from execution binding
 Alan SHALL keep stable Tool identity and schema in mounted package manifests
 separate from per-Process execution binding such as workspace root, current
-directory, credentials, namespace reachability, and policy decisions. The live
-engine SHALL derive both through the Process namespace and SHALL NOT merge them
-inside an in-process Tool registry.
+directory, credentials, namespace reachability, and policy decisions. The
+transition loop SHALL derive both through the Process namespace and SHALL NOT
+use an in-process Tool registry as their authority. During the current
+convention-enforced stage, a host Process-runner adapter MAY co-locate an
+implementation entry with its default execution binding, but Tool identity and
+schema SHALL still come from the mounted manifest and reachability SHALL still
+come from the Process namespace.
 
 #### Scenario: Runtime exposes a Tool
 - **WHEN** a Tool package executable and manifest are mounted for an Agent
@@ -39,6 +43,8 @@ inside an in-process Tool registry.
   package manifest
 - **AND** workspace-specific execution facts come from the Tool Process exec
   context, descriptors, namespace, and policy
+- **AND** any host-adapter implementation registry cannot expose or execute a
+  Tool that is not mounted for that Process
 
 #### Scenario: Delegated capability is selected
 - **WHEN** Alan routes work to a delegated child target

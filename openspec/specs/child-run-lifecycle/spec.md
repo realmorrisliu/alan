@@ -40,8 +40,8 @@ receiver.
 - **WHEN** `/proc/<pid>` remains non-terminal but no child-owned heartbeat or
   progress file advances inside the idle timeout window
 - **THEN** the child-run record is updated to `timed_out`
-- **AND** the handoff includes the latest observed file path, offset or
-  timestamp, and compact status
+- **AND** the handoff includes the latest observed event kind and compact
+  status summary when available
 
 #### Scenario: Child Process exits
 - **WHEN** `/proc/<pid>/status` records a terminal exit
@@ -51,7 +51,9 @@ receiver.
 ### Requirement: Child Progress Metadata
 The system SHALL update child-run progress metadata by observing monotonic
 offsets, timestamps, and current snapshots on the child AgentFS and by reading
-generic Process state from `/proc`. Progress sources SHALL include relevant
+generic Process state from `/proc`. The child-run record SHALL retain the latest
+progress time, event kind, and compact status summary; structured per-source
+offsets MAY remain observation-local. Progress sources SHALL include relevant
 `io/output`, request/action streams, `machine/ui/events`, and
 `machine/ui/activity`; an in-process child runtime event receiver SHALL NOT be a
 progress source.
@@ -59,8 +61,8 @@ progress source.
 #### Scenario: Child file stream advances
 - **WHEN** the parent observes a new record for the active child on an owned
   AgentFS stream
-- **THEN** the child-run record updates latest progress time, source path,
-  latest offset or sequence, and compact status when derivable
+- **THEN** the child-run record updates latest progress time, event kind, and a
+  compact status summary derived from the observed offsets or sequence
 
 #### Scenario: Child is active but quiet
 - **WHEN** a child Agent Process remains active but produces no user-visible
