@@ -12,7 +12,7 @@
 ## 2. Package store and lifecycle model (library, in the agent-engine skills module space)
 
 - [ ] 2.1 Define the data model: distribution package with a channel-unique package id (normalized source basename or explicit `--name`), sanitized credential-free source identity, store backing under the channel alan home (`~/.alan/pkg/`, dev `~/.alan-dev/pkg/`), provider registry entry, provenance record, materialization manifest with content hashes and selected skill roots, operation report types
-- [ ] 2.2 Implement source fetch: accept credentials only as transient credential-provider inputs; persist a sanitized URL without userinfo/query/fragment; resolve git revisions in a private staging clone and export the tracked working tree without VCS control metadata, or copy a local directory while excluding VCS control metadata; reject symlinks escaping the package tree; compute the source revision token (git commit, or content fingerprint of the exported source tree for non-git sources)
+- [ ] 2.2 Implement source fetch: accept credentials only as transient credential-provider inputs; persist a sanitized URL; resolve remote git revisions in a private staging clone, or export every local directory including tracked/uncommitted/untracked content while excluding VCS metadata; reject escaping symlinks; use git commit tokens only for remote git sources and content fingerprints for every local path source
 - [ ] 2.3 Implement materializable-skill scanning by convention (command-style `*.md`, portable `*/SKILL.md`) with include/exclude flags
 
 ## 3. Materialization primitives
@@ -28,9 +28,9 @@
 ## 4. Lifecycle operations and projection
 
 - [ ] 4.1 Implement install: fetch + materialize + provider/provenance/manifest write, atomic enough that a failed install leaves no partial skills
-- [ ] 4.2 Implement upgrade: no-op only on unchanged source revision token (git commit, or re-computed content fingerprint for non-git local sources) + converter; re-materialize on change; manifest-hash divergence warn/skip/force
+- [ ] 4.2 Implement upgrade: no-op only on unchanged source revision token (git commit for remote git, re-computed exported-tree fingerprint for every local path, including git worktrees) + converter; re-materialize on change; manifest-hash divergence warn/skip/force
 - [ ] 4.3 Implement uninstall: check divergence before removing the store entry — relocate diverged files out of the entry (never delete with it) unless forced — then delete manifest-listed files, the store entry, and provider registration
-- [ ] 4.4 Project every Q provider read-only at `/lib/pkg/<package-id>` on install/boot: host-directory mounts for store-backed packages and read-only binds for local-source authored roots; verify Agent Processes read both kinds through the namespace without copying local sources
+- [ ] 4.4 Assemble each Agent Process's `/lib/pkg` from only its Q resolved set: host-directory mounts for resolved store-backed packages and read-only binds for resolved local-source authored roots; verify unrelated workspace/AgentRoot providers are absent and local sources are not copied
 - [ ] 4.5 Implement execution-backend resolution of `/lib/pkg/...` paths to store backing for spawned helper processes; canonicalize the target immediately before spawn and require it to remain under the canonical package entry before granting the narrow guard exception; verify direct backing references and absolute/relative symlink escapes stay denied
 - [ ] 4.6 Implement list: installed packages with provenance and resolved-skill summary including unsatisfied required tools
 
@@ -46,7 +46,7 @@
 - [ ] 6.2 Build a synthetic fixture repo: command `.md` with `$ARGUMENTS` + foreign vocabulary, bare portable `SKILL.md`, shared repo-root helper referenced by both
 - [ ] 6.3 Cover conversion output: frontmatter, preamble placement, verbatim body, tool-vs-runtime-capability dependency emission, PATH cannot satisfy unsupported surfaces, unknown-token reporting, `/lib/pkg` helper addressing
 - [ ] 6.4 Cover install: path-safe package ids, equivalent git URLs with/without `.git`, sanitized source identity with credentialed URL userinfo/query/fragment removed from provenance/reports/logs/store, package-id collisions, no VCS metadata in `/lib/pkg`, escaping-symlink rejection, store layout, manifest-selected roots, cross-owner collision rejection, duplicate-source precedence
-- [ ] 6.5 Cover upgrade: unchanged no-op, upstream-change re-materialization, local-modification warn/skip/force
+- [ ] 6.5 Cover upgrade: unchanged no-op, remote commit change, and local tracked/uncommitted/untracked content changes with unchanged git HEAD all trigger the correct re-materialization; local destination divergence still warns/skips/forces
 - [ ] 6.6 Cover uninstall exactness (manifest-only deletion, diverged-file preservation) and list output
 - [ ] 6.7 Cover honest failure: resolved skill with an unsatisfied runtime-capability dependency produces availability issues visible through inspection
 

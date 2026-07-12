@@ -40,7 +40,8 @@ resolved set through Q's host-side resolution interface.
 ### Requirement: Distribution packages are the unit of external adoption
 alan SHALL define a distribution package as an external source tree (git
 repository or local directory) pinned to a source revision token (git commit
-or non-git content fingerprint), held in a per-install-channel package store, from which alan
+for a remote git source, content fingerprint for every local directory), held
+in a per-install-channel package store, from which alan
 materializes skill packages that Q resolves. Distribution packages sit above
 the skill package contract: every materialized unit is an ordinary
 single-skill package, and this contract SHALL NOT alter skill loading or
@@ -158,12 +159,15 @@ skipped with a report entry.
 - **THEN** the install fails with a diagnostic and writes nothing to the store
   or skill sources
 
-### Requirement: All Q providers are projected into the Alan OS namespace
-alan SHALL project every Q package read-only at `/lib/pkg/<package-id>` in the
-Alan OS namespace. Store-backed pre-installed and distribution providers SHALL
-use the host-directory mount machinery over their store entries. Local-source
+### Requirement: Resolved Q providers are projected per Agent Process
+alan SHALL project only the Q packages resolved for the current Agent Process
+read-only at `/lib/pkg/<package-id>` in that Process's Alan OS namespace.
+Store-backed pre-installed and distribution providers SHALL use the
+host-directory mount machinery over their store entries. Resolved local-source
 providers SHALL use read-only namespace binds to their authored package roots
-without copying them into the store. `/lib/pkg/<package-id>/` is the canonical
+without copying them into the store. Packages outside the current Q resolved
+set SHALL NOT be readable through that Process's `/lib/pkg` view.
+`/lib/pkg/<package-id>/` is the canonical
 address for package content: contracts, generated skill content, and reports
 SHALL reference package content by namespace path, never by host backing path.
 When a tool execution references a path under `/lib/pkg`, the execution backend
@@ -180,6 +184,11 @@ directories and clone-local configuration SHALL never be projected.
 - **WHEN** Q resolves an AgentRoot, workspace, or public local-source package
 - **THEN** `/lib/pkg/<package-id>/` is a read-only bind of its authored root
 - **AND** no package content is copied into the channel store
+
+#### Scenario: Unresolved local source is not visible
+- **WHEN** a workspace or AgentRoot package is outside an Agent Process's Q
+  resolved set
+- **THEN** that Process has no `/lib/pkg` bind for the package
 
 #### Scenario: Helper executes via the canonical path
 - **WHEN** a materialized skill invokes an interpreter on
@@ -274,8 +283,9 @@ reporting instead of degrading silently at runtime.
 
 ### Requirement: Packages record provenance and a materialization manifest
 The package store SHALL record, per distribution package: provenance (source
-repository when resolvable, the source revision token — commit for git sources,
-content fingerprint otherwise — and converter version) and a manifest listing
+repository when resolvable, the source revision token — commit for remote git
+sources, content fingerprint for every local path source — and converter
+version) and a manifest listing
 every materialized file with a content hash. The store's
 provider registry and manifest are authoritative for ownership; a materialized
 skill package's `package.yaml` MAY additionally carry a `provenance` block
@@ -298,13 +308,14 @@ stored or rendered.
 
 ### Requirement: Upgrade is idempotent and protects local modifications
 `q upgrade` SHALL detect source change by a **source revision token**: the
-source commit for git sources, and a content fingerprint (hash of the source
-tree) for sources with no resolvable commit. `q upgrade` SHALL:
+source commit for a remote git source, and a content fingerprint (hash of the
+exported source tree) for every local directory source, even when that
+directory is inside a git repository. `q upgrade` SHALL:
 
 - be a no-op only when the recorded source revision token and converter version
   are both unchanged;
 - re-fetch and re-materialize when the source revision token or converter
-  version changed — for a non-git local directory this means a re-computed
+  version changed — for any local directory this means a re-computed
   content fingerprint that differs from the recorded one;
 - warn and skip files whose destination no longer matches the manifest content
   hash (local edits), preserving the edits unless the user passes an explicit
@@ -320,9 +331,9 @@ tree) for sources with no resolvable commit. `q upgrade` SHALL:
 - **THEN** upgrade re-materializes the package and updates provenance and
   manifest
 
-#### Scenario: Non-git local source is edited
-- **WHEN** a package installed from a non-git local directory is upgraded after
-  its source files changed
+#### Scenario: Local source is edited without a commit change
+- **WHEN** a package installed from a local directory is upgraded after tracked,
+  uncommitted, or untracked source files changed, regardless of git HEAD
 - **THEN** the re-computed content fingerprint differs from the recorded one
 - **AND** upgrade re-materializes rather than reporting the package up to date
 

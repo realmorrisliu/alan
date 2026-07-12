@@ -57,8 +57,9 @@ ai-berkshire run.
   from manifest-selected roots under `/lib/pkg` (gated on
   `refactor-engine-namespace-native`); additional
   package types (MCP, tools/binaries, workflows, models, knowledge packs);
-  permission-to-policy wiring; `q` in `/bin`; per-agent namespace binds
-  ("profiles"); lockfile/registry/signing; web-capability and multi-agent gaps
+  permission-to-policy wiring; `q` in `/bin`; user-configurable package
+  profiles beyond the baseline per-Process resolved-set isolation;
+  lockfile/registry/signing; web-capability and multi-agent gaps
   (seeded in the design doc). Core **tools** (`read`/`write`/`edit`/`bash`/…)
   stay compiled-in `Box<dyn Tool>` — kernel, not Q packages.
 - Third-party skill content does not enter this repository; CI uses synthetic

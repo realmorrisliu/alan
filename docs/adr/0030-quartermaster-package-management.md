@@ -149,8 +149,8 @@ Explicitly deferred to later slices, in rough order of expected pressure:
 agent runtime self-discovery via `ls /lib/pkg` (gated on Ring 2), additional
 package types (MCP servers, tools/binaries, workflows, models, knowledge
 packs), permission declarations wired to policy, `q` registered in `/bin`,
-per-agent package visibility via namespace binds (different agents see
-different `/lib/pkg` contents — the real "profiles"), reproducibility
+user-configurable package profiles beyond the baseline rule that each Agent
+Process sees only its Q resolved set under `/lib/pkg`, reproducibility
 (lockfile-equivalent), registry/signing/trust, Homebrew-as-migration-source.
 None are promised by slice 1's contract; each needs its own change with its
 own contract delta.

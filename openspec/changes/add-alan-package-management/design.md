@@ -100,8 +100,9 @@ unchanged as materialization rules.
   stay local-source providers at their existing location.
 - Tool resolution. Core tools stay compiled-in `Box<dyn Tool>`; `tools=/bin`
   is `refactor-engine-namespace-native`'s concern.
-- Per-agent package visibility via namespace binds (the real "profiles") —
-  a later slice.
+- User-configurable package profiles that further narrow the Q resolved set —
+  a later slice. Baseline Process isolation is not deferred: `/lib/pkg` shows
+  only packages Q resolved for that Agent Process.
 
 ## Decisions
 
@@ -180,8 +181,8 @@ self-enforced by the alan home's presence on the execution guard's
 sensitive-read denylist: only the runtime's projection and exec resolver
 reach the backing, so a host path leaking into agent-visible content fails at
 the guard instead of silently working (see Context). "Version" = a source
-revision token (git commit, or a content fingerprint for non-git local
-sources); upgrade = fetch + re-materialize. Alternatives rejected: per-skill import (wrong unit —
+revision token (git commit for a remote git source, or a content fingerprint
+for every local directory source); upgrade = fetch + re-materialize. Alternatives rejected: per-skill import (wrong unit —
 severs shared helpers; superseded draft) and registry-based packaging (no
 registry exists and v0 needs none).
 
@@ -231,9 +232,11 @@ else's adapter. The include/exclude scan flags remain the escape hatch.
 
 ### D3a: The store entry is layered; `/lib/pkg` projects a merged view
 
-`/lib/pkg` is the read-only namespace view of every Q provider. Store-backed
-packages use the layered projection below; local-source providers use read-only
-binds of their authored package roots and are never copied into the store.
+`/lib/pkg` is the read-only namespace view of the providers Q resolved for the
+current Agent Process, never a global view of every registered provider.
+Store-backed packages use the layered projection below; resolved local-source
+providers use read-only binds of their authored package roots and are never
+copied into the store.
 The distribution backing holds an exported upstream working tree, so
 conversion output cannot be written back into the source layer. The
 store entry therefore has two layers under its channel-scoped backing
@@ -322,8 +325,9 @@ not by a back-pointer inside each skill — the earlier draft's per-skill
 `package.yaml` provenance block is now optional metadata, not a discovery
 requirement, since Q already knows which provider owns what. Semantics:
 
-- **upgrade**, unchanged source revision token (commit, or content fingerprint
-  for non-git sources) + converter → no-op; changed → re-materialize;
+- **upgrade**, unchanged source revision token (commit for remote git, content
+  fingerprint for every local directory) + converter → no-op; changed →
+  re-materialize;
 - materialized files diverging from manifest hashes (local edits) → warn and
   skip unless `--force`;
 - **uninstall** → delete exactly the manifest's files plus the store entry;
@@ -348,7 +352,7 @@ packages, agent-root/workspace become local-source providers, distribution
 packages install from git/local, and the `/lib/pkg` projection is the single
 physical home. Deferred to later slices: agent runtime self-discovery from
 manifest-selected roots under `/lib/pkg` (gated on Ring 2), further package types, permission-to-
-policy wiring, per-agent namespace binds (the real "profiles"),
+policy wiring, user-configurable package profiles,
 reproducibility, registry/signing, `q` in `/bin`. The prior non-goal warning
 against turning `/mnt` into a package manager
 (define-alan-app-service-integration) is respected — the projection lives
