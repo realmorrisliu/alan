@@ -4,8 +4,8 @@ use crate::{
     config::Config,
     rollout::{RolloutItem, RolloutRecorder},
     runtime::{
-        ChildRunRecord, ChildRunStatus, NamespaceRuntimeEnvironment, RuntimeConfig,
-        RuntimeEnvironment, TurnState, turn_state::TurnActivityState,
+        ChildRunRecord, ChildRunStatus, NamespaceRuntimeEnvironment, RuntimeConfig, TurnState,
+        turn_state::TurnActivityState,
     },
     skills::{
         ActiveSkillEnvelope, ResolvedCapabilityView, ResolvedSkillExecution, ScopedPackageDir,
@@ -23,7 +23,7 @@ use std::sync::{Arc, Mutex};
 use tempfile::TempDir;
 use tokio_util::sync::CancellationToken;
 
-fn namespace_environment_for_virtual_tool_test() -> RuntimeEnvironment {
+fn namespace_environment_for_virtual_tool_test() -> NamespaceRuntimeEnvironment {
     let agentfs = Arc::new(AgentFs::new());
     let mut namespace = Namespace::new();
     namespace.mount(
@@ -32,9 +32,7 @@ fn namespace_environment_for_virtual_tool_test() -> RuntimeEnvironment {
         Access::ReadWrite,
     );
     let root = InProcessTransport::new(Arc::new(MountFs::new(namespace)));
-    RuntimeEnvironment::namespace(NamespaceRuntimeEnvironment::new(
-        root, "/agent/1", "default",
-    ))
+    NamespaceRuntimeEnvironment::new(root, "/agent/1", "default")
 }
 
 fn create_test_agent_loop_state() -> super::super::agent_loop::RuntimeLoopState {
@@ -77,9 +75,7 @@ fn create_namespace_agent_loop_state_and_shell()
     let root = InProcessTransport::new(Arc::new(MountFs::new(namespace)));
     let shell = Shell::new(root.clone());
     let mut state = create_test_agent_loop_state();
-    state.environment = RuntimeEnvironment::namespace(NamespaceRuntimeEnvironment::new(
-        root, "/agent/1", "default",
-    ));
+    state.environment = NamespaceRuntimeEnvironment::new(root, "/agent/1", "default");
     (state, shell)
 }
 

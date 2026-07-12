@@ -9,7 +9,7 @@ use super::turn_driver::{
     is_turn_inband_submission, namespace_pending_resume_submission, should_drive_turn_submission,
 };
 use super::turn_state::TurnState;
-use super::{RuntimeConfig, RuntimeEnvironment, RuntimeLoopState};
+use super::{NamespaceRuntimeEnvironment, RuntimeConfig, RuntimeLoopState};
 use crate::{agent_machine::AgentMachine, llm::LlmClient};
 use alan_agent_protocol::{Event, InputMode, Submission};
 use alan_ap::{Fid, FileServer, InProcessTransport, OpenMode};
@@ -66,7 +66,7 @@ impl LlmProvider for RuntimeLlmProvider {
 }
 
 enum RuntimeEnvironmentBootstrap {
-    Ready(RuntimeEnvironment),
+    Ready(NamespaceRuntimeEnvironment),
     NamespaceRoot {
         llm_client: LlmClient,
         tools: crate::tools::ToolRegistry,
@@ -75,7 +75,7 @@ enum RuntimeEnvironmentBootstrap {
 }
 
 impl RuntimeEnvironmentBootstrap {
-    async fn into_environment(self) -> Result<RuntimeEnvironment> {
+    async fn into_environment(self) -> Result<NamespaceRuntimeEnvironment> {
         match self {
             Self::Ready(environment) => Ok(environment),
             Self::NamespaceRoot {
@@ -1232,7 +1232,7 @@ async fn build_root_namespace_environment(
     llm_client: LlmClient,
     tools: crate::tools::ToolRegistry,
     mount_grant_applicator_factory: Option<Arc<dyn super::MountGrantApplicatorFactory>>,
-) -> Result<RuntimeEnvironment> {
+) -> Result<NamespaceRuntimeEnvironment> {
     let tool_names = tools
         .list_tools()
         .into_iter()
@@ -1323,7 +1323,7 @@ async fn build_root_namespace_environment(
     } else {
         namespace_environment
     };
-    Ok(RuntimeEnvironment::namespace(namespace_environment))
+    Ok(namespace_environment)
 }
 
 async fn mount_llmfs_standard_handles(
@@ -1461,10 +1461,9 @@ pub async fn spawn_with_llm_client_and_tools_and_namespace_surface(
         config.mount_grant_applicator_factory.clone(),
     )
     .await?;
-    let RuntimeEnvironment::Namespace { namespace, .. } = &environment;
     let surface = RuntimeNamespaceSurface::new(
-        namespace.root_transport(),
-        namespace.agent_path().to_string(),
+        environment.root_transport(),
+        environment.agent_path().to_string(),
     );
     let controller = spawn_with_prepared_runtime_environment(
         config,
@@ -1487,7 +1486,7 @@ pub(crate) fn spawn_with_namespace_environment(
 ) -> Result<RuntimeController> {
     spawn_with_prepared_runtime_environment(
         config,
-        RuntimeEnvironmentBootstrap::Ready(RuntimeEnvironment::namespace(namespace)),
+        RuntimeEnvironmentBootstrap::Ready(namespace),
         host_tools,
         generation_capabilities,
     )
@@ -1596,18 +1595,14 @@ fn spawn_with_prepared_runtime_environment(
                 return;
             }
         };
-        let (process_path, agent_path) = match &environment {
-            RuntimeEnvironment::Namespace { namespace, .. } => {
-                let process_path = match namespace.process_path() {
-                    Ok(path) => path,
-                    Err(err) => {
-                        let _ = ready_tx.send(Err(format!("{:#}", err)));
-                        return;
-                    }
-                };
-                (process_path, namespace.agent_path().to_string())
+        let process_path = match environment.process_path() {
+            Ok(path) => path,
+            Err(err) => {
+                let _ = ready_tx.send(Err(format!("{:#}", err)));
+                return;
             }
         };
+        let agent_path = environment.agent_path().to_string();
         let model = core_config.effective_model().to_string();
         let machine_request_controls = match crate::resolve_runtime_request_controls(
             &core_config,
@@ -2136,13 +2131,11 @@ mod tests {
         Arc::new(alan_ap::reference::MemFs::with_read_only_file(name, bytes))
     }
 
-    fn namespace_environment_for_test() -> RuntimeEnvironment {
+    fn namespace_environment_for_test() -> NamespaceRuntimeEnvironment {
         let root = InProcessTransport::new(Arc::new(alan_kernel::MountFs::new(
             alan_kernel::Namespace::new(),
         )));
-        RuntimeEnvironment::namespace(crate::runtime::NamespaceRuntimeEnvironment::new(
-            root, "/agent/1", "default",
-        ))
+        crate::runtime::NamespaceRuntimeEnvironment::new(root, "/agent/1", "default")
     }
 
     fn write_agent_overlay(path: &Path, body: &str) {
@@ -2233,8 +2226,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let RuntimeEnvironment::Namespace { namespace, .. } = environment;
-        let shell = alan_shell::Shell::new(namespace.root_transport());
+        let shell = alan_shell::Shell::new(environment.root_transport());
 
         let srv_entries = shell.ls("/srv").await.unwrap();
         assert!(srv_entries.iter().any(|entry| entry == "llm"));
@@ -2281,8 +2273,7 @@ mod tests {
             build_root_namespace_environment(LlmClient::new(MockLlmProvider::new()), tools, None)
                 .await
                 .unwrap();
-        let RuntimeEnvironment::Namespace { namespace, .. } = environment;
-        let shell = alan_shell::Shell::new(namespace.root_transport());
+        let shell = alan_shell::Shell::new(environment.root_transport());
 
         assert!(
             shell
@@ -2295,7 +2286,7 @@ mod tests {
             serde_json::from_slice(&shell.cat("/lib/exec/example/manifest").await.unwrap())
                 .unwrap();
         manifest.validate_for_name("example").unwrap();
-        let discovered = namespace.discover_tool_packages().await.unwrap();
+        let discovered = environment.discover_tool_packages().await.unwrap();
         assert_eq!(discovered, vec![manifest]);
     }
 
@@ -2958,7 +2949,7 @@ mod tests {
             workspace_root_dir: None,
             machine: crate::AgentMachine::new(),
             current_submission_id: None,
-            environment: RuntimeEnvironment::namespace(namespace_environment),
+            environment: namespace_environment,
             tool_catalog: crate::tools::ToolRegistry::new(),
             core_config: crate::Config::default(),
             runtime_config: RuntimeConfig::default(),

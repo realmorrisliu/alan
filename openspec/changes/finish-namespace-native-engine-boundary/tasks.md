@@ -37,7 +37,7 @@
 - [ ] 6.1 Remove `ToolRegistry` from `RuntimeLoopState`, runtime construction, child launch, Tool policy/orchestration, and tests; delete registry-only helpers and materializers.
 - [ ] 6.2 Remove `RuntimeEventEnvelope`, `RuntimeHandle.event_sender`, broadcast channel setup, internal forwarding tasks, subscription helpers, host forwarding, and event-to-AgentFS/UI projectors.
 - [ ] 6.3 Audit remaining semantic `Event` and `Op` uses; retain only file-record schemas or transition-local values and delete broadcast-only variants/metadata.
-- [ ] 6.4 Replace the single-variant `RuntimeEnvironment` wrapper with the concrete namespace handle throughout public/internal APIs and tests.
+- [x] 6.4 Replace the single-variant `RuntimeEnvironment` wrapper with the concrete namespace handle throughout public/internal APIs and tests.
 - [ ] 6.5 Add an absence guard proving the engine live path has no injected provider, Tool registry, event sink, broadcast sender/receiver, or generic event projector.
 
 ## 7. Verification And Delivery

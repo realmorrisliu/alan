@@ -702,10 +702,7 @@ mod tests {
         agent_machine::AgentMachine,
         config::Config,
         rollout::{RolloutItem, RolloutRecorder},
-        runtime::{
-            MountGrantApplicator, NamespaceRuntimeEnvironment, RuntimeConfig, RuntimeEnvironment,
-            TurnState,
-        },
+        runtime::{MountGrantApplicator, NamespaceRuntimeEnvironment, RuntimeConfig, TurnState},
         tape::ContentPart,
         tools::ToolRegistry,
     };
@@ -743,7 +740,7 @@ mod tests {
         }
     }
 
-    fn namespace_environment_for_test() -> RuntimeEnvironment {
+    fn namespace_environment_for_test() -> NamespaceRuntimeEnvironment {
         let mut namespace = Namespace::new();
         namespace.mount(
             "/agent/1",
@@ -751,14 +748,12 @@ mod tests {
             Access::ReadWrite,
         );
         let root = InProcessTransport::new(Arc::new(MountFs::new(namespace)));
-        RuntimeEnvironment::namespace(NamespaceRuntimeEnvironment::new(
-            root, "/agent/1", "default",
-        ))
+        NamespaceRuntimeEnvironment::new(root, "/agent/1", "default")
     }
 
     fn namespace_environment_with_mount_applicator_for_test(
         applicator: Arc<dyn MountGrantApplicator>,
-    ) -> RuntimeEnvironment {
+    ) -> NamespaceRuntimeEnvironment {
         let mut namespace = Namespace::new();
         namespace.mount(
             "/agent/1",
@@ -766,13 +761,12 @@ mod tests {
             Access::ReadWrite,
         );
         let root = InProcessTransport::new(Arc::new(MountFs::new(namespace)));
-        RuntimeEnvironment::namespace(
-            NamespaceRuntimeEnvironment::new(root, "/agent/1", "default")
-                .with_mount_grant_applicator(applicator),
-        )
+        NamespaceRuntimeEnvironment::new(root, "/agent/1", "default")
+            .with_mount_grant_applicator(applicator)
     }
 
-    async fn namespace_environment_with_live_process_for_test() -> (RuntimeEnvironment, Shell) {
+    async fn namespace_environment_with_live_process_for_test()
+    -> (NamespaceRuntimeEnvironment, Shell) {
         let procfs = Arc::new(ProcFs::new());
         let agentfs = Arc::new(alan_agentfs::AgentFs::new());
         let mut namespace = Namespace::new();
@@ -790,9 +784,7 @@ mod tests {
             .unwrap();
         assert_eq!(pid, "1");
         (
-            RuntimeEnvironment::namespace(NamespaceRuntimeEnvironment::new(
-                root, "/agent/1", "default",
-            )),
+            NamespaceRuntimeEnvironment::new(root, "/agent/1", "default"),
             shell,
         )
     }
@@ -1225,9 +1217,7 @@ mod tests {
         .await
         .unwrap();
         let root = InProcessTransport::new(Arc::new(MountFs::new(Namespace::new())));
-        state.environment = RuntimeEnvironment::namespace(NamespaceRuntimeEnvironment::new(
-            root, "/agent/1", "default",
-        ));
+        state.environment = NamespaceRuntimeEnvironment::new(root, "/agent/1", "default");
         state
             .turn_state
             .set_confirmation(crate::approval::PendingConfirmation {

@@ -1529,7 +1529,7 @@ mod tests {
         agent_machine::AgentMachine,
         config::Config,
         rollout::{RolloutItem, RolloutRecorder},
-        runtime::{RuntimeConfig, RuntimeEnvironment, TurnState},
+        runtime::{NamespaceRuntimeEnvironment, RuntimeConfig, TurnState},
         skills::{ResolvedCapabilityView, ScopedPackageDir, SkillScope},
         tape::{ContentPart, Message, ToolRequest, ToolResponse},
         tools::{Tool, ToolContext, ToolRegistry, ToolResult},
@@ -2471,13 +2471,7 @@ mod tests {
             workspace_root_dir: None,
             machine,
             current_submission_id: None,
-            environment: RuntimeEnvironment::namespace(
-                crate::runtime::NamespaceRuntimeEnvironment::new(
-                    root.clone(),
-                    "/agent/1",
-                    "default",
-                ),
-            ),
+            environment: NamespaceRuntimeEnvironment::new(root.clone(), "/agent/1", "default"),
             tool_catalog: tools,
             core_config: config,
             runtime_config,
@@ -2734,9 +2728,7 @@ description: {description}
         let mut output_tail = shell.tail("/agent/1/io/output").await.unwrap();
 
         let mut state = create_test_state_with_provider(PanicIfGeneratedProvider);
-        state.environment = RuntimeEnvironment::namespace(
-            crate::runtime::NamespaceRuntimeEnvironment::new(root, "/agent/1", "default"),
-        );
+        state.environment = NamespaceRuntimeEnvironment::new(root, "/agent/1", "default");
 
         let cancel = CancellationToken::new();
         let mut events = vec![];
@@ -2889,9 +2881,7 @@ description: {description}
         let shell = alan_shell::Shell::new(root.clone());
 
         let mut state = create_test_state_with_provider(PanicIfGeneratedProvider);
-        state.environment = RuntimeEnvironment::namespace(
-            crate::runtime::NamespaceRuntimeEnvironment::new(root, "/agent/1", "default"),
-        );
+        state.environment = NamespaceRuntimeEnvironment::new(root, "/agent/1", "default");
         let cancel = CancellationToken::new();
         let mut events = Vec::new();
         let mut emit = |event: Event| {
@@ -2952,9 +2942,7 @@ description: {description}
             .unwrap();
 
         let mut state = create_test_state_with_provider(PanicIfGeneratedProvider);
-        state.environment = RuntimeEnvironment::namespace(
-            crate::runtime::NamespaceRuntimeEnvironment::new(root, "/agent/1", "missing"),
-        );
+        state.environment = NamespaceRuntimeEnvironment::new(root, "/agent/1", "missing");
 
         let cancel = CancellationToken::new();
         let mut events = vec![];
@@ -3039,9 +3027,7 @@ description: {description}
         let mut output_tail = shell.tail("/agent/1/io/output").await.unwrap();
 
         let mut state = create_test_state_with_provider(PanicIfGeneratedProvider);
-        state.environment = RuntimeEnvironment::namespace(
-            crate::runtime::NamespaceRuntimeEnvironment::new(root, "/agent/1", "live"),
-        );
+        state.environment = NamespaceRuntimeEnvironment::new(root, "/agent/1", "live");
 
         let cancel = CancellationToken::new();
         let mut emit = |_event: Event| async {};

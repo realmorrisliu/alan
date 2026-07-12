@@ -55,30 +55,13 @@ pub(super) enum DeferredRuntimeActionExit {
     Cancelled,
 }
 
-/// Runtime environment available to the Agent Execution Engine.
-///
-/// Generation, tools, and state are reached by walking files under one aP root.
-pub enum RuntimeEnvironment {
-    #[allow(dead_code)]
-    Namespace {
-        namespace: NamespaceRuntimeEnvironment,
-    },
-}
-
-impl RuntimeEnvironment {
-    #[allow(dead_code)]
-    pub fn namespace(namespace: NamespaceRuntimeEnvironment) -> Self {
-        Self::Namespace { namespace }
-    }
-}
-
 /// Agent state for the execution loop
 pub struct RuntimeLoopState {
     pub workspace_id: String,
     pub workspace_root_dir: Option<std::path::PathBuf>,
     pub machine: AgentMachine,
     pub current_submission_id: Option<String>,
-    pub environment: RuntimeEnvironment,
+    pub environment: NamespaceRuntimeEnvironment,
     pub tool_catalog: ToolRegistry,
     pub core_config: Config,
     pub runtime_config: RuntimeConfig,
@@ -105,9 +88,7 @@ impl RuntimeLoopState {
     }
 
     pub(crate) fn namespace_environment(&self) -> &NamespaceRuntimeEnvironment {
-        match &self.environment {
-            RuntimeEnvironment::Namespace { namespace, .. } => namespace,
-        }
+        &self.environment
     }
 
     pub(crate) async fn write_namespace_confirmation_request(
@@ -623,18 +604,18 @@ mod tests {
 
     fn namespace_environment_with_provider(
         provider: impl LlmProvider + 'static,
-    ) -> RuntimeEnvironment {
+    ) -> NamespaceRuntimeEnvironment {
         let (root, _procfs) = namespace_root_with_provider(provider);
-        RuntimeEnvironment::namespace(NamespaceRuntimeEnvironment::new(
-            root, "/agent/1", "default",
-        ))
+        NamespaceRuntimeEnvironment::new(root, "/agent/1", "default")
     }
 
     fn runtime_state_with_provider(provider: impl LlmProvider + 'static) -> RuntimeLoopState {
         runtime_state_with_environment(namespace_environment_with_provider(provider))
     }
 
-    fn runtime_state_with_environment(environment: RuntimeEnvironment) -> RuntimeLoopState {
+    fn runtime_state_with_environment(
+        environment: NamespaceRuntimeEnvironment,
+    ) -> RuntimeLoopState {
         RuntimeLoopState {
             workspace_id: "test-workspace".to_string(),
             workspace_root_dir: None,
@@ -652,13 +633,11 @@ mod tests {
 
     async fn namespace_environment_with_live_process(
         provider: impl LlmProvider + 'static,
-    ) -> RuntimeEnvironment {
+    ) -> NamespaceRuntimeEnvironment {
         let (root, procfs) = namespace_root_with_provider(provider);
         let pid = spawn_test_process(&procfs).await;
         assert_eq!(pid, "1");
-        RuntimeEnvironment::namespace(NamespaceRuntimeEnvironment::new(
-            root, "/agent/1", "default",
-        ))
+        NamespaceRuntimeEnvironment::new(root, "/agent/1", "default")
     }
 
     fn namespace_root_with_provider(
@@ -1036,8 +1015,8 @@ mod tests {
             Arc::clone(&attempts),
         ));
         let shell = Shell::new(root.clone());
-        let mut state = runtime_state_with_environment(RuntimeEnvironment::namespace(
-            NamespaceRuntimeEnvironment::new(root, "/agent/1", "default"),
+        let mut state = runtime_state_with_environment(NamespaceRuntimeEnvironment::new(
+            root, "/agent/1", "default",
         ));
         let cancel = CancellationToken::new();
 

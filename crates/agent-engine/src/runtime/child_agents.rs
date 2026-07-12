@@ -2506,7 +2506,7 @@ mod tests {
     use crate::llm::{GenerationRequest, GenerationResponse, StreamChunk, TokenUsage};
     use crate::runtime::{
         ApprovedMountGrant, ApprovedMountGrantAccess, MountGrantApplicator,
-        MountGrantApplicatorFactory, RuntimeConfig, RuntimeEnvironment,
+        MountGrantApplicatorFactory, NamespaceRuntimeEnvironment, RuntimeConfig,
     };
     use crate::skills::SkillHostCapabilities;
     use crate::tools::Tool;
@@ -2544,13 +2544,13 @@ mod tests {
         }
     }
 
-    fn namespace_environment_for_parent_test() -> RuntimeEnvironment {
+    fn namespace_environment_for_parent_test() -> NamespaceRuntimeEnvironment {
         namespace_environment_for_parent_test_with_route(Arc::new(alan_routefs::RouteFs::new()))
     }
 
     fn namespace_environment_for_parent_test_with_route(
         routefs: Arc<alan_routefs::RouteFs>,
-    ) -> RuntimeEnvironment {
+    ) -> NamespaceRuntimeEnvironment {
         let mut mounts = KernelNamespace::new();
         for name in ["alpha", "beta"] {
             let manifest =
@@ -2574,7 +2574,7 @@ mod tests {
         let namespace =
             crate::runtime::NamespaceRuntimeEnvironment::new(root, "/agent/1", "default")
                 .with_shared_services(memfs_transport(), InProcessTransport::new(routefs));
-        RuntimeEnvironment::namespace(namespace)
+        namespace
     }
 
     #[derive(Clone, Default)]

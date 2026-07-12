@@ -1551,7 +1551,7 @@ mod tests {
     use crate::{
         agent_machine::AgentMachine,
         config::Config,
-        runtime::{NamespaceRuntimeEnvironment, RuntimeEnvironment, TurnState},
+        runtime::{NamespaceRuntimeEnvironment, TurnState},
         tools::{Tool, ToolContext, ToolRegistry, ToolResult},
     };
     use alan_agent_protocol::ToolCapability;
@@ -1963,9 +1963,7 @@ mod tests {
             workspace_root_dir: None,
             machine,
             current_submission_id: None,
-            environment: RuntimeEnvironment::namespace(NamespaceRuntimeEnvironment::new(
-                root, "/agent/1", "default",
-            )),
+            environment: NamespaceRuntimeEnvironment::new(root, "/agent/1", "default"),
             tool_catalog: ToolRegistry::new(),
             core_config: config,
             runtime_config,
@@ -2016,9 +2014,7 @@ mod tests {
             workspace_root_dir: None,
             machine: AgentMachine::new(),
             current_submission_id: None,
-            environment: RuntimeEnvironment::namespace(NamespaceRuntimeEnvironment::new(
-                root, "/agent/1", "default",
-            )),
+            environment: NamespaceRuntimeEnvironment::new(root, "/agent/1", "default"),
             tool_catalog: ToolRegistry::new(),
             core_config: Config::default(),
             runtime_config: super::super::RuntimeConfig::default(),
@@ -2191,9 +2187,7 @@ mod tests {
             workspace_root_dir: None,
             machine,
             current_submission_id: None,
-            environment: RuntimeEnvironment::namespace(NamespaceRuntimeEnvironment::new(
-                root, agent_path, "default",
-            )),
+            environment: NamespaceRuntimeEnvironment::new(root, agent_path, "default"),
             tool_catalog: tools,
             core_config: config,
             runtime_config: super::super::RuntimeConfig::default(),

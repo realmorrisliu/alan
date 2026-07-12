@@ -583,17 +583,14 @@ fn truncate_text_with_suffix(text: &str, max_chars: usize, suffix: &str) -> Stri
 mod tests {
     use super::*;
     use crate::agent_machine::AgentMachine;
-    use crate::runtime::RuntimeEnvironment;
     use crate::runtime::turn_state::TurnState;
     use std::sync::Arc;
 
-    fn namespace_environment_for_test() -> RuntimeEnvironment {
+    fn namespace_environment_for_test() -> crate::runtime::NamespaceRuntimeEnvironment {
         let root = alan_ap::InProcessTransport::new(Arc::new(alan_kernel::MountFs::new(
             alan_kernel::Namespace::new(),
         )));
-        RuntimeEnvironment::namespace(crate::runtime::NamespaceRuntimeEnvironment::new(
-            root, "/agent/1", "default",
-        ))
+        crate::runtime::NamespaceRuntimeEnvironment::new(root, "/agent/1", "default")
     }
 
     #[test]

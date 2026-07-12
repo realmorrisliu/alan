@@ -3050,7 +3050,7 @@ mod tests {
             workspace_root_dir: None,
             machine: crate::AgentMachine::new(),
             current_submission_id: None,
-            environment: super::super::RuntimeEnvironment::namespace(environment),
+            environment,
             tool_catalog: crate::tools::ToolRegistry::new(),
             core_config: crate::Config::default(),
             runtime_config: super::super::super::RuntimeConfig::default(),

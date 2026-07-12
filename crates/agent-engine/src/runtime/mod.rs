@@ -48,7 +48,7 @@ pub use engine::{
 };
 
 // Re-export agent loop types for internal use
-pub(crate) use agent_loop::{RuntimeEnvironment, RuntimeLoopState};
+pub(crate) use agent_loop::RuntimeLoopState;
 pub(crate) use tool_packages::ToolPackageManifest;
 pub(crate) use turn_state::TurnState;
 
