@@ -60,8 +60,9 @@ ai-berkshire run.
   permission-to-policy wiring; `q` in `/bin`; user-configurable package
   profiles beyond the baseline per-Process resolved-set isolation;
   lockfile/registry/signing; web-capability and multi-agent gaps
-  (seeded in the design doc). Core **tools** (`read`/`write`/`edit`/`bash`/…)
-  stay compiled-in `Box<dyn Tool>` — kernel, not Q packages.
+  (seeded in the design doc). Core **Tool** execution remains owned by the
+  namespace-native `/bin/<tool>` contract; Q v0 owns skill packages only and
+  does not introduce Tool package ownership or a parallel execution path.
 - Third-party skill content does not enter this repository; CI uses synthetic
   fixture repositories.
 - Git clone metadata and clone-local credentials never enter package content;

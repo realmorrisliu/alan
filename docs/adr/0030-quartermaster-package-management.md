@@ -126,11 +126,11 @@ local-source providers. When Ring 2 lands, the resolution interface degrades int
 manifest-selected roots under `/lib/pkg` directly — a presentation-layer
 finish, not a re-architecture.
 
-Scope note: this concerns **skill** capabilities. Core **tools**
-(`read_file`/`write_file`/`edit_file`/`bash`/`grep`/`glob`/`list_dir`) are compiled-in
-`Box<dyn Tool>` registered on the `ToolRegistry` — kernel, not packages — and
-stay outside Q's ownership in this model. `tools = /bin` (ADR-0027) is
-`refactor-engine-namespace-native`'s concern, not Q's.
+Scope note: this concerns **Skill** capabilities. Core **Tool** execution is
+owned by the namespace-native `/bin/<tool>` contract. Tools stay outside Q's
+v0 package ownership, and Q introduces neither an in-process registry bypass
+nor a parallel Tool execution path. Future Tool package distribution must
+extend that canonical namespace contract rather than replace it.
 
 ### D7. Roadmap is sliced; the change is the first slice of D6
 

@@ -98,8 +98,9 @@ unchanged as materialization rules.
   interface.
 - Force-migrating agent-root/workspace skills into the global store — they
   stay local-source providers at their existing location.
-- Tool resolution. Core tools stay compiled-in `Box<dyn Tool>`; `tools=/bin`
-  is `refactor-engine-namespace-native`'s concern.
+- Tool resolution or packaging. Core Tool execution remains owned by the
+  namespace-native `/bin/<tool>` contract; Q v0 owns Skill packages only and
+  adds no registry bypass or parallel execution path.
 - User-configurable package profiles that further narrow the Q resolved set —
   a later slice. Baseline Process isolation is not deferred: `/lib/pkg` shows
   only packages Q resolved for that Agent Process.
