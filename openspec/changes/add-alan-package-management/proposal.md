@@ -2,7 +2,7 @@
 
 ## Why
 
-alan discovers skill capabilities through two host-side paths:
+Alan discovers skill capabilities through two host-side paths:
 `package_dirs_for_roots` enumerates `AgentRoot/skills/` and `.agents/skills/`,
 then `ResolvedCapabilityView::from_package_dirs` appends built-in first-party
 packages directly. Those bypasses are the legacy of a world without a
@@ -10,12 +10,12 @@ capability manager: no single owner, no lifecycle, no provenance, no
 reproducible agent environment. Dogfooding the
 first real external workload (ai-berkshire, a 19-skill Claude Code / Codex
 investment-research repository whose skills also share repo-root `tools/*.py`)
-made the gap concrete: alan cannot adopt an external skill *repository* at all,
+made the gap concrete: Alan cannot adopt an external skill *repository* at all,
 and the natural adoption unit is the repository, not the individual skill.
 
 This change establishes **Quartermaster (`q`) as the sole resolution authority
 for skill capabilities** (ADR-0030 D6): every skill an agent can reach —
-including alan's own built-ins — is a Q package with one owner and one
+including Alan's own built-ins — is a Q package with one owner and one
 lifecycle. It is **slice 1** of that authority model, validated by making
 ai-berkshire run.
 
@@ -49,7 +49,7 @@ ai-berkshire run.
   converter version) and a materialization manifest make `q upgrade` idempotent, protect
   local edits (warn, never silently overwrite), and make `q uninstall`
   complete. `q list` reports installed packages and unsatisfied capabilities.
-- **Honest failure**: recognized foreign vocabulary with no alan equivalent
+- **Honest failure**: recognized foreign vocabulary with no Alan equivalent
   (web search, Team orchestration) becomes an unsatisfied typed
   `runtime_capability` dependency and is surfaced through
   the existing `skill_availability_issues` machinery, never silently degraded.
@@ -99,7 +99,7 @@ ai-berkshire run.
   (`parse_skill_metadata`, `validate_capabilities`) and availability reporting
   (`skill_availability_issues`).
 - `crates/alan` CLI: new Quartermaster (`q`) command family; store backing under
-  the channel alan home; materialization logic as library code so tests drive
+  the channel Alan home; materialization logic as library code so tests drive
   it without the CLI.
 - Execution backend: resolve tool-execution paths under `/lib/pkg` through the
   store projection (deterministic prefix mapping), with one narrow guard

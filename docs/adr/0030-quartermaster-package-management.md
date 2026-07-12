@@ -10,9 +10,9 @@ vision draft into the Alan OS model.
 
 ## Context
 
-Dogfooding alan's skill system against its first real external workload
+Dogfooding Alan's skill system against its first real external workload
 (ai-berkshire, a 19-skill Claude Code / Codex investment-research repository)
-exposed that alan has no supported way to adopt external content, and that the
+exposed that Alan has no supported way to adopt external content, and that the
 natural unit of adoption is the repository, not the individual skill. In
 parallel, a standalone product vision ("APM — a package manager for the Agent
 Era") argued that an agent environment consists of far more than software —
@@ -21,14 +21,14 @@ these are today managed by fragmented per-ecosystem installers with no unified
 store, permission model, or reproducibility story.
 
 Both pressures point at the same missing organ. The question this ADR settles
-is what that organ *is*: a standalone universal product that treats alan as
+is what that organ *is*: a standalone universal product that treats Alan as
 one adapter target, or a subsystem of Alan OS.
 
 ## Decisions
 
 ### D1. Package management is an Alan OS organ, not a standalone product
 
-The package manager is a subsystem of Alan OS. It reuses alan's existing
+The package manager is a subsystem of Alan OS. It reuses Alan's existing
 mechanisms instead of shipping parallel ones. The standalone-product framing
 (own store root such as `/opt/apm`, own profile system, own trust model,
 first-class adapters for foreign agent stacks) is rejected for now: it would
@@ -38,15 +38,15 @@ possible if it earns it; designing for that spin-out now is not a goal.
 
 ### D2. The subsystem is named Quartermaster; the command is `q`
 
-The command surfaced in the alan shell command namespace is `q`; the
+The command surfaced in the Alan Shell command namespace is `q`; the
 subsystem's formal name is **Quartermaster**. The name works because "agent"
 means the same thing in both worlds: the intelligence-service Quartermaster
-outfits agents with equipment, and alan's `q` outfits agents with
+outfits agents with equipment, and Alan's `q` outfits agents with
 capabilities. The lineage (British intelligence, Turing's world) matches
-alan's own naming heritage, and the verbs under the name stay deliberately
+Alan's own naming heritage, and the verbs under the name stay deliberately
 boring (`q install`, `q list`, `q upgrade`, `q uninstall`) in the acme
 tradition: a good name over a plain interface. In v0, before the shell command
-namespace lands, the surface is hosted by the alan CLI; registering `q` into
+namespace lands, the surface is hosted by the `alan` CLI; registering `q` into
 `/bin` follows the shell contract when available.
 
 ### D3. Fusion table: vision concepts map to existing Alan OS mechanisms
@@ -54,7 +54,7 @@ namespace lands, the surface is hosted by the alan CLI; registering `q` into
 The standalone draft's concepts translate as follows; the left side is
 vocabulary from the draft, the right side is what Alan OS already owns:
 
-All namespace concepts below are Alan OS (alan-kernel, aP) namespaces — pure
+All namespace concepts below are Alan OS (`alan-kernel`, aP) namespaces — pure
 userspace constructs identical on every host — never host-OS mount
 namespaces. Agent Processes execute inside Alan OS and see only its file
 system; host paths are runtime implementation detail.
@@ -62,7 +62,7 @@ system; host paths are runtime implementation detail.
 | Vision concept | Alan OS mechanism |
 |---|---|
 | Profiles (`default`, `work`, per-project) | Namespaces — a profile is a set of packages bound into a process's namespace, not a parallel switcher |
-| `/opt/apm/store` content-addressed store | alan-owned store projected read-only at `/lib/pkg/<package-id>` in the namespace (host-directory-mounts); backing location is implementation detail; content-addressing aligns with `content-addressed-knowledge` |
+| `/opt/apm/store` content-addressed store | Alan-owned store projected read-only at `/lib/pkg/<package-id>` in the namespace (host-directory-mounts); backing location is implementation detail; content-addressing aligns with `content-addressed-knowledge` |
 | Per-package permission declarations | PolicyEngine / policy chain — declarations map into policy when that slice lands, never a parallel permission system |
 | App packages | `alan-app-distribution` and app/service integration contracts own app semantics |
 | Service packages | Service Manager owns service lifecycle |
@@ -91,7 +91,7 @@ when a second package type becomes real.
 ### D6. Q is the sole capability-resolution authority (physical unification)
 
 Skill capabilities have exactly one owner: Quartermaster. There is no bypass
-source. Every skill an agent can reach — including alan's own first-party
+source. Every skill an agent can reach — including Alan's own first-party
 built-ins — is a Q package projected through `/lib/pkg`. Pre-installed and
 distribution packages live in the channel-scoped store; AgentRoot, workspace,
 and public skills remain at their authored locations and are registered as Q
@@ -166,6 +166,6 @@ own contract delta.
   installer, model downloader) that would recreate the fragmentation the
   vision criticizes.
 - Rejecting profiles/store/permission parallels binds Quartermaster's fate to
-  alan's namespace and policy mechanisms — intentionally: if those mechanisms
+  Alan's namespace and policy mechanisms — intentionally: if those mechanisms
   are not good enough for a package manager, that is a kernel problem to fix,
   not to route around.

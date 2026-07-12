@@ -1,12 +1,12 @@
 ## ADDED Requirements
 
 ### Requirement: Quartermaster is the sole skill-resolution authority
-alan SHALL resolve an agent's skill capability set through Quartermaster and
+Alan SHALL resolve an agent's skill capability set through Quartermaster and
 SHALL NOT enumerate skill source directories independently of it. Every skill
 reachable by an agent SHALL be a Q package supplied by one of three provider
 kinds:
 
-- **Pre-installed provider**: alan's first-party built-in skills, reseeded into
+- **Pre-installed provider**: Alan's first-party built-in skills, reseeded into
   the package store.
 - **Local-source provider**: `AgentRoot`, workspace, and user `.agents/skills/`
   skills, registered with Q at their existing location without being copied
@@ -26,7 +26,7 @@ resolved set through Q's host-side resolution interface.
   directories as independent sources
 
 #### Scenario: Built-in skills are pre-installed packages
-- **WHEN** alan starts with no external packages installed
+- **WHEN** Alan starts with no external packages installed
 - **THEN** its first-party built-in skills are present as Q pre-installed
   packages
 - **AND** they are resolved through Q like any other package
@@ -38,10 +38,10 @@ resolved set through Q's host-side resolution interface.
 - **AND** they are not copied into the global store
 
 ### Requirement: Distribution packages are the unit of external adoption
-alan SHALL define a distribution package as an external source tree (git
+Alan SHALL define a distribution package as an external source tree (git
 repository or local directory) pinned to a source revision token (git commit
 for a remote git source, content fingerprint for every local directory), held
-in a per-install-channel package store, from which alan
+in a per-install-channel package store, from which Alan
 materializes skill packages that Q resolves. Distribution packages sit above
 the skill package contract: every materialized unit is an ordinary
 single-skill package, and this contract SHALL NOT alter skill loading or
@@ -49,7 +49,7 @@ exposure rules.
 
 #### Scenario: Repository installed as one package
 - **WHEN** `q install` is given a git URL or local directory
-- **THEN** alan records one distribution package backed by a checkout in the
+- **THEN** Alan records one distribution package backed by a checkout in the
   package store
 - **AND** each materialized skill is a valid single-skill package under the
   existing skill package contract
@@ -103,7 +103,7 @@ exposure rules.
 
 #### Scenario: Store is channel-scoped
 - **WHEN** a package is installed under a given install channel
-- **THEN** its store backing lives under that channel's alan home — the
+- **THEN** its store backing lives under that channel's Alan home — the
   stable channel SHALL use `~/.alan/pkg/`, the dev channel
   `~/.alan-dev/pkg/` — and does not affect other channels
 - **AND** channel isolation of resolved skills is inherited from the
@@ -111,7 +111,7 @@ exposure rules.
 
 #### Scenario: Backing is reachable only through the runtime
 - **WHEN** an agent-authored command references the store backing by host path
-- **THEN** the execution guard denies it as it denies any alan-home read,
+- **THEN** the execution guard denies it as it denies any Alan-home read,
   while the same content remains readable and executable through
   `/lib/pkg/<package>/`
 
@@ -124,7 +124,7 @@ materialization forms are supported in v0 / slice 1:
 
 - **Conversion**: a Claude Code command-style single `skills/*.md` file (body
   text, optionally using `$ARGUMENTS`, without portable `SKILL.md` frontmatter)
-  becomes a directory-backed alan skill package. Markdown outside that default
+  becomes a directory-backed Alan skill package. Markdown outside that default
   root is considered only through an explicit include; README and docs content
   is never converted by a recursive Markdown scan.
 - **Adoption**: a directory matched by the portable `**/SKILL.md` convention
@@ -181,7 +181,7 @@ skipped with a report entry.
 #### Scenario: Same skill in both source forms
 - **WHEN** one distribution package contains a command-style file and a
   portable package that resolve to the same skill id
-- **THEN** the command-style file is converted with alan's adapter preamble,
+- **THEN** the command-style file is converted with Alan's adapter preamble,
   the portable duplicate is skipped, and the report records the choice
 
 #### Scenario: Skipped source package is not discovered
@@ -198,7 +198,7 @@ skipped with a report entry.
   or skill sources
 
 ### Requirement: Resolved Q providers are projected per Agent Process
-alan SHALL project only the Q packages resolved for the current Agent Process
+Alan SHALL project only the Q packages resolved for the current Agent Process
 read-only at `/lib/pkg/<package-id>` in that Process's Alan OS namespace.
 Store-backed pre-installed and distribution providers SHALL use the
 host-directory mount machinery over their store entries. Resolved local-source
@@ -273,9 +273,9 @@ Conversion SHALL inject one standard, versioned adapter preamble between the
 generated frontmatter and the verbatim body. The preamble SHALL:
 
 - define `$ARGUMENTS` as the user's current request in the conversation;
-- map known foreign tool vocabulary to the closest alan surface when an
+- map known foreign tool vocabulary to the closest Alan surface when an
   equivalent exists;
-- explicitly declare foreign vocabulary with no alan equivalent as unavailable
+- explicitly declare foreign vocabulary with no Alan equivalent as unavailable
   and instruct the skill to state that limitation to the user instead of
   improvising a substitute;
 - resolve upstream-relative helper references (for example repository-root
@@ -285,13 +285,13 @@ generated frontmatter and the verbatim body. The preamble SHALL:
 The known-vocabulary mapping SHALL be converter data versioned with the
 converter. Unknown tool-like tokens SHALL NOT be silently mapped.
 
-#### Scenario: Foreign vocabulary with an alan equivalent
-- **WHEN** the source references a foreign surface with an alan equivalent
+#### Scenario: Foreign vocabulary with an Alan equivalent
+- **WHEN** the source references a foreign surface with an Alan equivalent
   (for example file tools or shell execution)
-- **THEN** the preamble names the alan surface to use
+- **THEN** the preamble names the Alan surface to use
 
-#### Scenario: Foreign vocabulary without an alan equivalent
-- **WHEN** the source references a foreign surface with no alan equivalent
+#### Scenario: Foreign vocabulary without an Alan equivalent
+- **WHEN** the source references a foreign surface with no Alan equivalent
   (for example web search or Team orchestration tools)
 - **THEN** the preamble declares the capability unavailable rather than
   mapping it to an unrelated surface

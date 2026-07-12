@@ -3,7 +3,7 @@
 ## Context
 
 ai-berkshire (`github.com/xbtlin/ai-berkshire`) is the first real external
-workload pointed at alan's skill system. It ships the same content in two
+workload pointed at Alan's skill system. It ships the same content in two
 forms:
 
 - `skills/*.md` — canonical Claude Code command-style single files: body text
@@ -18,7 +18,7 @@ Critically, all 19 skills invoke shared repo-root helpers
 (`python3 tools/financial_rigor.py ...`). The repository, not the individual
 skill, is the unit of distribution.
 
-Current alan state (verified in-code):
+Current Alan state (verified in-code):
 
 - The loader (`crates/agent-engine/src/skills/loader.rs`) accepts any
   `SKILL.md` with `name` + `description` frontmatter, so the generated packages
@@ -29,7 +29,7 @@ Current alan state (verified in-code):
   detection needs no new runtime mechanism. Required tools may fall back to a
   same-named PATH executable; unsupported Alan surfaces therefore must use a
   runtime-capability dependency, whose unknown names remain unsatisfied.
-- There is no `$ARGUMENTS` substitution in the engine; alan's model is implicit
+- There is no `$ARGUMENTS` substitution in the engine; Alan's model is implicit
   invocation / force-select, not slash-commands-with-args.
 - skill-system-contract fixes one exported skill per skill package and already
   speaks install vocabulary (install sources, install channels).
@@ -43,7 +43,7 @@ Current alan state (verified in-code):
   installable packages; making them Q packages is a reseed, not a rewrite of
   the skill package contract (skill-system-contract already says built-in
   distribution is "a packaging detail, not a different contract").
-- The execution guard's sensitive-read denylist covers the channel alan home
+- The execution guard's sensitive-read denylist covers the channel Alan home
   directories (`~/.alan`, `~/.alan-dev`; `sandbox.rs`
   `sensitive_read_denylist_for_home`) because they hold operator configuration
   and managed credentials. Under canonical `/lib/pkg` addressing this is a
@@ -52,7 +52,7 @@ Current alan state (verified in-code):
   guard.
 - The two upstream source forms overlap completely: all 19 command-style
   skills also exist as generated `codex-skills/*/SKILL.md` packages (whose
-  hand-written preamble targets *Codex* vocabulary, not alan's). Naive
+  hand-written preamble targets *Codex* vocabulary, not Alan's). Naive
   convention-scan would materialize every skill twice under colliding ids.
 - The upstream package's documented worst failure (issue #58) is a background
   agent silently losing web access and producing training-data pseudo-research.
@@ -74,7 +74,7 @@ unchanged as materialization rules.
 - A supported, repeatable way to adopt an external repository of skill content
   as one **distribution package**, preserving upstream as the source of truth.
 - Conversion of Claude Code command-style `.md` files into directory-backed
-  alan skill packages during materialization.
+  Alan skill packages during materialization.
 - Shared in-repo helpers remain resolvable after install via the store's
   canonical `/lib/pkg` projection in the Alan OS namespace.
 - Honest failure: foreign capability requirements become machine-readable
@@ -116,7 +116,7 @@ and makes **Quartermaster the one authority that resolves an agent's skill
 set** (ADR-0030 D6). Every skill reaches an agent as a **Q package**, through
 one of three provider kinds:
 
-- **Pre-installed provider** — alan's first-party built-in skills, reseeded
+- **Pre-installed provider** — Alan's first-party built-in skills, reseeded
   into the store (seeded on first run) and projected like any other package.
 - **Local-source provider** — `AgentRoot`, workspace, and user
   `.agents/skills/` skills, *registered* with Q at their existing location
@@ -175,14 +175,14 @@ If an existing package with that id has different source identity, install
 fails before any write and tells the user to choose another `--name`; neither
 the store nor the projection is reused implicitly. The store's **canonical address is
 `/lib/pkg/<package-id>` in the Alan OS namespace** — the
-alan-kernel (aP) namespace, a host-agnostic userspace construct, not a host-OS
+`alan-kernel` (aP) namespace, a host-agnostic userspace construct, not a host-OS
 mount namespace — projected read-only through the existing
 host-directory-mounts machinery. Its host backing lives in the
-per-install-channel alan home (`~/.alan/pkg/<package-id>/` stable,
-`~/.alan-dev/pkg/` dev): alan-owned state belongs under alan-controlled
+per-install-channel Alan home (`~/.alan/pkg/<package-id>/` stable,
+`~/.alan-dev/pkg/` dev): Alan-owned state belongs under Alan-controlled
 directories, and channel isolation is inherited for free. Backing is an
 implementation detail that never appears in contracts or generated content —
-self-enforced by the alan home's presence on the execution guard's
+self-enforced by the Alan home's presence on the execution guard's
 sensitive-read denylist: only the runtime's projection and exec resolver
 reach the backing, so a host path leaking into agent-visible content fails at
 the guard instead of silently working (see Context). "Version" = a source
@@ -238,7 +238,7 @@ same skill id from both source forms (ai-berkshire
 ships all 19 skills both ways), **conversion from the canonical command file
 wins** and the duplicate portable package is skipped with a report entry. The
 counterintuitive-looking choice is deliberate: the portable duplicates carry a
-preamble hand-written for *Codex* surfaces, while conversion applies alan's
+preamble hand-written for *Codex* surfaces, while conversion applies Alan's
 own adapter preamble — the canonical body plus our adapter beats someone
 else's adapter. The include/exclude scan flags remain the escape hatch.
 
@@ -271,9 +271,9 @@ The source body stays verbatim. The injected preamble (one standard, versioned
 block after frontmatter):
 
 - defines `$ARGUMENTS` as the user's current request;
-- maps known foreign tool vocabulary to alan surfaces where an equivalent
+- maps known foreign tool vocabulary to Alan surfaces where an equivalent
   exists;
-- explicitly declares vocabulary with no alan equivalent (web search, Team
+- explicitly declares vocabulary with no Alan equivalent (web search, Team
   orchestration) **unavailable**, instructing the skill to state the limitation
   instead of improvising;
 - resolves upstream-relative helper invocations (e.g. `tools/*.py`) to the
@@ -360,7 +360,7 @@ Identity and naming are settled by
 package management is an Alan OS organ named **Quartermaster**, command `q`
 ("Q equips agents"), verbs deliberately boring (`q install|list|upgrade|
 uninstall`). In v0, before the shell command namespace lands, the family is
-hosted by the alan CLI; materialization logic is library code in the existing
+hosted by the `alan` CLI; materialization logic is library code in the existing
 skills module space so tests drive it without the CLI, per the skill-authoring
 tooling preference.
 
@@ -430,24 +430,24 @@ under `/lib`, and Plan 9's `/lib` is precisely where data files belong.
 
 Recorded here per the change scope; none are implemented in this change.
 
-1. **Web access capability.** alan has no web search/fetch tool; every
+1. **Web access capability.** Alan has no web search/fetch tool; every
    research-grade skill in the workload requires it. Recommended shape per the
-   alan worldview: a mountable search/fetch file server (a `searchfs` analog
+   Alan worldview: a mountable search/fetch file server (a `searchfs` analog
    to `llmfs`), not a bolted-on host tool. Blocking for layer-2 dogfooding
    (actually producing a research report).
 2. **Multi-agent orchestration.** `/investment-team` spawns four parallel
-   background analysts plus a coordinating lead. alan's natural expression is
+   background analysts plus a coordinating lead. Alan's natural expression is
    child Agent Processes with file-based handoff (`child_runs` / delegated
    launch targets exist), but there is no contract for parallel fan-out, join,
    and result aggregation equivalent to Team/TaskCreate.
 3. **Background escalation surfacing.** The workload's documented failure mode
    (background agent cannot prompt for permission, degrades silently) maps to
-   alan's PolicyEngine `escalate` → Yield path for child processes; how child
+   Alan's PolicyEngine `escalate` → Yield path for child processes; how child
    Yields bubble to the user is untested and needs a dedicated pass once
    multi-agent lands.
-4. **`$ARGUMENTS` / parameterized invocation.** alan has no argument
+4. **`$ARGUMENTS` / parameterized invocation.** Alan has no argument
    substitution for force-selected skills. The adapter preamble works for
-   implicit invocation; whether alan wants first-class skill arguments is an
+   implicit invocation; whether Alan wants first-class skill arguments is an
    open product question, deliberately not answered here.
 
 ## Migration Plan

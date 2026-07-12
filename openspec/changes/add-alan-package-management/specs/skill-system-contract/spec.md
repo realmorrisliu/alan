@@ -1,7 +1,7 @@
 ## MODIFIED Requirements
 
 ### Requirement: Discovery is separate from exposure
-alan SHALL resolve discovered skill packages through Quartermaster — the sole
+Alan SHALL resolve discovered skill packages through Quartermaster — the sole
 skill-resolution authority — rather than by independently enumerating skill
 source directories. Providers supply packages to Q (pre-installed built-in,
 local-source `AgentRoot`/workspace/`.agents/skills`, and distribution), and Q
@@ -30,7 +30,7 @@ Rules:
 - **AND** no skill enters the view from a directory enumerated outside Q
 
 ### Requirement: First-party packages are ordinary skill packages
-alan SHALL ship first-party packages as ordinary directory-backed skill
+Alan SHALL ship first-party packages as ordinary directory-backed skill
 packages, reseeded into the Quartermaster store as pre-installed packages, not
 as privileged always-active instruction blobs.
 
@@ -43,7 +43,7 @@ Rules:
   external package.
 - First-party package source does not imply implicit listing or explicit
   enablement overrides.
-- Any behavior that alan needs unconditionally lives in the base prompt, tool
+- Any behavior that Alan needs unconditionally lives in the base prompt, tool
   descriptions, or dedicated runtime policy rather than in always-active skills.
 
 #### Scenario: First-party package is rendered in prompt context
@@ -55,7 +55,7 @@ Rules:
   instructions
 
 #### Scenario: Built-ins reseed as pre-installed packages
-- **WHEN** alan starts with an empty store
+- **WHEN** Alan starts with an empty store
 - **THEN** its first-party packages are present as Q pre-installed packages
 - **AND** they are resolved through Q identically to installed packages
 
@@ -98,12 +98,12 @@ providers registered at the workspace source, not copied into the global store.
 ## ADDED Requirements
 
 ### Requirement: Package provenance is a stable sidecar block
-alan SHALL treat `provenance` as a stable, optional `package.yaml` sidecar
+Alan SHALL treat `provenance` as a stable, optional `package.yaml` sidecar
 block identifying where the skill package's content came from and, when the
 package was materialized by a distribution package, which one owns it. Field
 semantics are owned by `package-management-contract`. Ownership resolution does
 not depend on this block — Quartermaster's provider registry is authoritative —
-so it is optional metadata. Provenance is management metadata: alan SHALL
+so it is optional metadata. Provenance is management metadata: Alan SHALL
 exclude it from runtime behavior resolution, exposure decisions, and prompt
 rendering, and its absence SHALL NOT affect discovery.
 

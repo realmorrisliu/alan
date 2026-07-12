@@ -11,7 +11,7 @@
 
 ## 2. Package store and lifecycle model (library, in the agent-engine skills module space)
 
-- [ ] 2.1 Define the data model: distribution package with a channel-unique package id (normalized source basename or explicit `--name`), stable provider-scoped path-safe Q package ids distinct from exported skill ids, sanitized credential-free source identity, store backing under the channel alan home (`~/.alan/pkg/`, dev `~/.alan-dev/pkg/`), provider registry entry, provenance record, materialization manifest with content hashes and selected skill roots, operation report types
+- [ ] 2.1 Define the data model: distribution package with a channel-unique package id (normalized source basename or explicit `--name`), stable provider-scoped path-safe Q package ids distinct from exported skill ids, sanitized credential-free source identity, store backing under the channel Alan home (`~/.alan/pkg/`, dev `~/.alan-dev/pkg/`), provider registry entry, provenance record, materialization manifest with content hashes and selected skill roots, operation report types
 - [ ] 2.2 Implement source fetch: accept credentials only as transient credential-provider inputs; persist a sanitized URL; resolve remote git revisions in a private staging clone; for local git export tracked files plus tracked modifications by default, and for non-git local sources export detected skill roots by default; admit untracked, ignored, helper, or resource paths only through explicit validated includes; reject escaping symlinks; use git commit tokens only for remote git sources and content fingerprints of the actual allowlisted export for every local path source
 - [ ] 2.3 Implement bounded materializable-skill scanning by convention (command-style `skills/*.md`, portable `**/SKILL.md`) with explicit include/exclude flags; never recursively convert arbitrary README/docs Markdown
 
@@ -36,7 +36,7 @@
 
 ## 5. CLI surface
 
-- [ ] 5.1 Add the Quartermaster `q` command family (install/list/upgrade/uninstall), hosted by the alan CLI in slice 1, with `--name` for package-id disambiguation and `--force` for package-owned divergence only
+- [ ] 5.1 Add the Quartermaster `q` command family (install/list/upgrade/uninstall), hosted by the `alan` CLI in slice 1, with `--name` for package-id disambiguation and `--force` for package-owned divergence only
 - [ ] 5.2 Render the operation report (materialized/updated/skipped with reasons, required tools, missing host capabilities, unknown vocabulary, collisions)
 - [ ] 5.3 Wire missing tool and runtime-capability dependency detection at install time through `skill_availability_issues` so the report and existing inspection surfaces agree
 
@@ -59,7 +59,7 @@
 ## 8. Dogfooding run (manual, outside CI)
 
 - [ ] 8.1 Run `q install ~/Developer/github.com/xbtlin/ai-berkshire`; verify the 19 skills resolve through Q, `tools/financial_rigor.py` runs via `/lib/pkg/ai-berkshire/...`, and the report flags unsatisfied `web_access` and `multi_agent_orchestration` runtime capabilities
-- [ ] 8.2 Execute a resolved layer-1 skill end-to-end in alan; verify the missing `web_access` runtime capability surfaces visibly instead of silently degrading
+- [ ] 8.2 Execute a resolved layer-1 skill end-to-end in Alan; verify the missing `web_access` runtime capability surfaces visibly instead of silently degrading
 - [ ] 8.3 Exercise upgrade after an upstream `git pull` and uninstall; verify manifest exactness
 - [ ] 8.4 Record run results and any new gap findings in design.md (Gap findings section) as seeds for the web-access and multi-agent follow-up changes
 
