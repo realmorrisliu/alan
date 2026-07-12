@@ -213,6 +213,7 @@ impl RuntimeLoopState {
         Err(last_error.unwrap_or_else(|| anyhow::anyhow!("Max retries exceeded")))
     }
 
+    #[cfg(test)]
     pub(crate) fn tool_catalog(&self) -> &ToolRegistry {
         &self.tool_catalog
     }

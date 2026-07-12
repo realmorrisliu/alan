@@ -693,7 +693,7 @@ fn process_json_outcome(exit_code: i32, value: Value) -> alan_kernel::ProcessOut
     alan_kernel::ProcessOutcome::exited(exit_code, bytes)
 }
 
-fn default_scratch_dir_for_cwd(cwd: &std::path::Path) -> std::path::PathBuf {
+pub(crate) fn default_scratch_dir_for_cwd(cwd: &std::path::Path) -> std::path::PathBuf {
     if cwd
         .file_name()
         .map(|name| name == std::ffi::OsStr::new(".alan"))

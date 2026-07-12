@@ -7,7 +7,7 @@ use crate::tools::{Tool, ToolLocality};
 const TOOL_MANIFEST_VERSION: u16 = 1;
 
 /// Namespace-owned model and execution metadata for one Tool package.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ToolPackageManifest {
     pub version: u16,

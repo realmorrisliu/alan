@@ -16,7 +16,7 @@
 - [x] 3.1 Implement the namespace Tool launcher that resolves `/bin/<tool>`, commits the exec spec through `/proc/clone`, passes arguments through the defined Process/file contract, and reads output/result files.
 - [x] 3.2 Switch Tool orchestration and `actions/<id>` ownership from registry-backed materialization to the concrete Tool Process reference and result.
 - [x] 3.3 Delete direct in-process Tool implementation calls from the Agent Execution Engine effect path and add tests proving unmounted Tools cannot execute.
-- [ ] 3.4 Replace child Tool registry construction with pre-spawn complete-package mounts and make child request assembly walk its own namespace.
+- [x] 3.4 Replace child Tool registry construction with pre-spawn complete-package mounts and make child request assembly walk its own namespace.
 
 ## 4. Direct AgentFS State Ownership
 

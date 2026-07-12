@@ -304,16 +304,13 @@ where
     child_config.core_config_source = crate::ConfigSourceKind::EnvOverride;
     let child_namespace_plan =
         build_child_namespace_assembly_plan(parent, &spec, &effective_child_core_config)
+            .await
             .context("Failed to assemble child-agent namespace plan")?;
     let delegation_capability_decision =
         evaluate_delegated_launch_capabilities(parent, &mut spec, &child_namespace_plan)?;
-    let child_tools = build_child_tool_registry_from_namespace_plan(
-        parent,
-        &spec,
-        &effective_child_core_config,
-        &child_namespace_plan,
-    )
-    .context("Failed to build child-agent tool registry")?;
+    // Transitional until task 6.1 removes ToolRegistry from RuntimeLoopState entirely.
+    // Tool visibility and execution are owned by the child namespace and shared Process runner.
+    let child_tools = ToolRegistry::with_config(Arc::new(effective_child_core_config.clone()));
     let llm_client = llm_client_factory(&effective_child_core_config)
         .context("Failed to create child-agent LLM client")?;
     let parent_process_context = parent.namespace_environment().process_context();
@@ -328,7 +325,7 @@ where
     let runtime_procfs = launch_procfs
         .clone()
         .with_runner(Arc::new(tool_runner.clone()));
-    let child_tool_binding = child_tools.default_execution_binding();
+    let child_tool_binding = child_namespace_plan.execution_binding();
     let agentfs = Arc::new(alan_agentfs::AgentFs::new());
     let llmfs = Arc::new(alan_llmfs::LlmFs::new());
     llmfs.register_connection(
@@ -337,21 +334,14 @@ where
     );
     let mut handles = child_namespace_launch_handles_from_parent(parent, agentfs, llmfs)
         .context("Failed to assemble child-agent shared namespace handles")?;
-    for mount in &child_namespace_plan.bin_tool_mounts {
-        let name = mount.trim_start_matches("/bin/");
-        let tool = child_tools
-            .get(name)
-            .with_context(|| format!("missing child Tool host for {mount}"))?;
-        let manifest = super::ToolPackageManifest::from_tool(
-            tool.as_ref(),
-            child_tools.execution_timeout_secs(name).unwrap_or(30),
-        )?;
+    for manifest in &child_namespace_plan.tool_packages {
+        let name = &manifest.name;
         let manifest_fs = Arc::new(alan_ap::reference::MemFs::with_read_only_file(
             "manifest",
             serde_json::to_vec(&manifest)?,
         ));
         handles = handles.with_tool_package(
-            mount.clone(),
+            format!("/bin/{name}"),
             InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::new())),
             format!("/lib/exec/{name}"),
             InProcessTransport::new(manifest_fs),
@@ -1545,16 +1535,6 @@ fn build_child_agent_config(parent: &RuntimeLoopState, spec: &SpawnSpec) -> Agen
     child_agent_config
 }
 
-#[cfg(test)]
-fn build_child_tool_registry(
-    parent: &RuntimeLoopState,
-    spec: &SpawnSpec,
-    child_core_config: &crate::Config,
-) -> Result<ToolRegistry> {
-    let namespace_plan = build_child_namespace_assembly_plan(parent, spec, child_core_config)?;
-    build_child_tool_registry_from_namespace_plan(parent, spec, child_core_config, &namespace_plan)
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ChildNamespaceAssemblyPlan {
     agent_mount: String,
@@ -1563,11 +1543,20 @@ struct ChildNamespaceAssemblyPlan {
     srv_mount: String,
     route_mount: String,
     bin_tool_mounts: Vec<String>,
+    tool_packages: Vec<super::ToolPackageManifest>,
     workspace_root: Option<PathBuf>,
     cwd: Option<PathBuf>,
 }
 
 impl ChildNamespaceAssemblyPlan {
+    fn execution_binding(&self) -> Option<crate::tools::ToolExecutionBinding> {
+        let cwd = self.cwd.clone()?;
+        let scratch = crate::tools::default_scratch_dir_for_cwd(&cwd);
+        Some(match self.workspace_root.clone() {
+            Some(root) => crate::tools::ToolExecutionBinding::with_workspace(root, cwd, scratch),
+            None => crate::tools::ToolExecutionBinding::without_workspace(cwd, scratch),
+        })
+    }
     fn bin_tool_names(&self) -> impl Iterator<Item = &str> {
         self.bin_tool_mounts
             .iter()
@@ -1903,7 +1892,7 @@ fn next_child_namespace_fid() -> Fid {
     Fid(NEXT_CHILD_NAMESPACE_FID.fetch_add(1, Ordering::Relaxed))
 }
 
-fn build_child_namespace_assembly_plan(
+async fn build_child_namespace_assembly_plan(
     parent: &RuntimeLoopState,
     spec: &SpawnSpec,
     child_core_config: &crate::Config,
@@ -1926,6 +1915,7 @@ fn build_child_namespace_assembly_plan(
         srv_mount: "/srv".to_string(),
         route_mount: alan_routefs::MOUNT_PATH.to_string(),
         bin_tool_mounts: Vec::new(),
+        tool_packages: Vec::new(),
         workspace_root: workspace_root.clone(),
         cwd,
     };
@@ -1934,148 +1924,40 @@ fn build_child_namespace_assembly_plan(
         return Ok(plan);
     }
 
-    let selected_tool_names = selected_child_tool_names(parent, spec);
-    let normalized_requested_workspace_root =
-        workspace_root.as_deref().map(lexically_normalize_path);
-    let normalized_parent_workspace_root =
-        bound_workspace_root(parent).map(|root| lexically_normalize_path(&root));
-
-    plan.bin_tool_mounts = selected_tool_names
-        .into_iter()
-        .filter(|tool_name| {
-            child_tool_is_mountable(
-                parent,
-                tool_name,
-                normalized_requested_workspace_root.as_ref(),
-                normalized_parent_workspace_root.as_ref(),
-            )
-        })
-        .map(|tool_name| format!("/bin/{tool_name}"))
+    let packages = parent
+        .namespace_environment()
+        .discover_tool_packages()
+        .await?;
+    plan.tool_packages = if let Some(profile) = spec.runtime_overrides.tool_profile.as_ref() {
+        let available = packages
+            .iter()
+            .map(|package| package.name.as_str())
+            .collect::<BTreeSet<_>>();
+        let missing = profile
+            .allowed_tools
+            .iter()
+            .filter(|name| !available.contains(name.as_str()))
+            .cloned()
+            .collect::<Vec<_>>();
+        if !missing.is_empty() {
+            bail!(
+                "Child-agent launch requested unavailable tools: {}",
+                missing.join(", ")
+            );
+        }
+        packages
+            .into_iter()
+            .filter(|package| profile.allowed_tools.contains(&package.name))
+            .collect()
+    } else {
+        packages
+    };
+    plan.bin_tool_mounts = plan
+        .tool_packages
+        .iter()
+        .map(|package| format!("/bin/{}", package.name))
         .collect();
     Ok(plan)
-}
-
-fn selected_child_tool_names(parent: &RuntimeLoopState, spec: &SpawnSpec) -> Vec<String> {
-    spec.runtime_overrides
-        .tool_profile
-        .as_ref()
-        .map(|tool_profile| tool_profile.allowed_tools.clone())
-        .unwrap_or_else(|| parent.static_tool_names())
-}
-
-fn child_tool_is_mountable(
-    parent: &RuntimeLoopState,
-    tool_name: &str,
-    normalized_requested_workspace_root: Option<&PathBuf>,
-    normalized_parent_workspace_root: Option<&PathBuf>,
-) -> bool {
-    child_tool_can_share_existing_binding(
-        parent,
-        tool_name,
-        normalized_requested_workspace_root,
-        normalized_parent_workspace_root,
-    ) || parent.tool_catalog().has_tool_factory(tool_name)
-}
-
-fn child_tool_can_share_existing_binding(
-    parent: &RuntimeLoopState,
-    tool_name: &str,
-    normalized_requested_workspace_root: Option<&PathBuf>,
-    normalized_parent_workspace_root: Option<&PathBuf>,
-) -> bool {
-    let Some(tool) = parent.tool_catalog().get(tool_name) else {
-        return false;
-    };
-    tool.locality() == crate::tools::ToolLocality::Global
-        || (normalized_parent_workspace_root.is_some()
-            && normalized_requested_workspace_root == normalized_parent_workspace_root)
-}
-
-fn build_child_tool_registry_from_namespace_plan(
-    parent: &RuntimeLoopState,
-    spec: &SpawnSpec,
-    child_core_config: &crate::Config,
-    namespace_plan: &ChildNamespaceAssemblyPlan,
-) -> Result<ToolRegistry> {
-    let child_config = Arc::new(child_core_config.clone());
-    if !spec.has_handle(SpawnHandle::Workspace) {
-        return Ok(ToolRegistry::with_config(child_config));
-    }
-
-    let mut tools = if let Some(workspace_root) = spec.launch.workspace_root.as_deref() {
-        let mut rebound = ToolRegistry::with_config(Arc::clone(&child_config));
-        let normalized_requested_workspace_root = lexically_normalize_path(workspace_root);
-        let normalized_parent_workspace_root =
-            bound_workspace_root(parent).map(|root| lexically_normalize_path(&root));
-
-        for tool_name in namespace_plan.bin_tool_names() {
-            if child_tool_can_share_existing_binding(
-                parent,
-                tool_name,
-                Some(&normalized_requested_workspace_root),
-                normalized_parent_workspace_root.as_ref(),
-            ) && let Some(tool) = parent.tool_catalog().get(tool_name)
-            {
-                rebound.register_shared(tool);
-                continue;
-            }
-
-            if let Some(materialized_tool) = parent.tool_catalog().materialize(tool_name) {
-                rebound.register_boxed(materialized_tool);
-            }
-        }
-        validate_child_tool_profile_allowlist(
-            &rebound,
-            spec.runtime_overrides.tool_profile.as_ref(),
-            spec.launch.workspace_root.as_deref(),
-        )?;
-        rebound
-    } else if let Some(tool_profile) = spec.runtime_overrides.tool_profile.as_ref() {
-        let filtered = parent
-            .tool_catalog()
-            .catalog_filtered_clone_with_config(namespace_plan.bin_tool_names(), child_config);
-        validate_child_tool_profile_allowlist(&filtered, Some(tool_profile), None)?;
-        filtered
-    } else {
-        parent.tool_catalog().clone_with_config(child_config)
-    };
-
-    if let Some(cwd) = namespace_plan.cwd.clone() {
-        if let Some(workspace_root) = namespace_plan.workspace_root.clone() {
-            tools.set_default_workspace_binding(workspace_root, cwd);
-        } else {
-            tools.set_default_cwd(cwd);
-        }
-    }
-    Ok(tools)
-}
-
-fn validate_child_tool_profile_allowlist(
-    tools: &ToolRegistry,
-    tool_profile: Option<&alan_agent_protocol::SpawnToolProfileOverride>,
-    workspace_root: Option<&Path>,
-) -> Result<()> {
-    let Some(tool_profile) = tool_profile else {
-        return Ok(());
-    };
-
-    let missing_tools = tools.validate_required_tools(&tool_profile.allowed_tools)?;
-    if missing_tools.is_empty() {
-        return Ok(());
-    }
-
-    if let Some(workspace_root) = workspace_root {
-        bail!(
-            "Child-agent launch requested tools that cannot be bound for workspace '{}': {}",
-            workspace_root.display(),
-            missing_tools.join(", ")
-        );
-    }
-
-    bail!(
-        "Child-agent launch requested unavailable tools: {}",
-        missing_tools.join(", ")
-    );
 }
 
 fn resolve_child_workspace_root(parent: &RuntimeLoopState, spec: &SpawnSpec) -> Option<PathBuf> {
@@ -2364,8 +2246,26 @@ mod tests {
     fn namespace_environment_for_parent_test_with_route(
         routefs: Arc<alan_routefs::RouteFs>,
     ) -> RuntimeEnvironment {
-        let root =
-            InProcessTransport::new(Arc::new(alan_kernel::MountFs::new(KernelNamespace::new())));
+        let mut mounts = KernelNamespace::new();
+        for name in ["alpha", "beta"] {
+            let manifest =
+                crate::runtime::ToolPackageManifest::from_tool(&NamedTestTool::new(name), 30)
+                    .unwrap();
+            mounts.mount(
+                &format!("/bin/{name}"),
+                memfs_transport(),
+                KernelAccess::ReadOnly,
+            );
+            mounts.mount(
+                &format!("/lib/exec/{name}"),
+                InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::with_read_only_file(
+                    "manifest",
+                    serde_json::to_vec(&manifest).unwrap(),
+                ))),
+                KernelAccess::ReadOnly,
+            );
+        }
+        let root = InProcessTransport::new(Arc::new(alan_kernel::MountFs::new(mounts)));
         let namespace =
             crate::runtime::NamespaceRuntimeEnvironment::new(root, "/agent/1", "default")
                 .with_shared_services(memfs_transport(), InProcessTransport::new(routefs));
@@ -2533,70 +2433,6 @@ mod tests {
         }
     }
 
-    struct WorkspaceBoundTestTool {
-        name: String,
-        workspace_root: PathBuf,
-    }
-
-    impl WorkspaceBoundTestTool {
-        fn new(name: &str, workspace_root: PathBuf) -> Self {
-            Self {
-                name: name.to_string(),
-                workspace_root,
-            }
-        }
-    }
-
-    impl Tool for WorkspaceBoundTestTool {
-        fn name(&self) -> &str {
-            &self.name
-        }
-
-        fn description(&self) -> &str {
-            "workspace-bound test tool"
-        }
-
-        fn parameters_schema(&self) -> serde_json::Value {
-            json!({
-                "type": "object",
-                "required": ["path"],
-                "properties": {
-                    "path": {
-                        "type": "string"
-                    }
-                }
-            })
-        }
-
-        fn execute(
-            &self,
-            arguments: serde_json::Value,
-            ctx: &crate::tools::ToolContext,
-        ) -> crate::tools::ToolResult {
-            let workspace_root = self.workspace_root.clone();
-            let path = ctx.resolve_path(arguments["path"].as_str().unwrap_or(""));
-            Box::pin(async move {
-                if !path.starts_with(&workspace_root) {
-                    anyhow::bail!(
-                        "outside workspace: '{}' not within '{}'",
-                        path.display(),
-                        workspace_root.display()
-                    );
-                }
-
-                let content = tokio::fs::read_to_string(&path).await?;
-                Ok(json!({
-                    "path": path.to_string_lossy(),
-                    "content": content
-                }))
-            })
-        }
-
-        fn locality(&self) -> crate::tools::ToolLocality {
-            crate::tools::ToolLocality::WorkspaceLocal
-        }
-    }
-
     struct MarkerTool {
         name: String,
         marker: String,
@@ -2747,6 +2583,7 @@ mod tests {
             srv_mount: "/srv".to_string(),
             route_mount: alan_routefs::MOUNT_PATH.to_string(),
             bin_tool_mounts: tools.iter().map(|tool| format!("/bin/{tool}")).collect(),
+            tool_packages: Vec::new(),
             cwd: workspace_root.clone(),
             workspace_root,
         }
@@ -3197,8 +3034,8 @@ Body
         assert!(!tool_names.contains(&"beta"));
     }
 
-    #[test]
-    fn child_namespace_plan_without_workspace_handle_mounts_no_bin_tools() {
+    #[tokio::test]
+    async fn child_namespace_plan_without_workspace_handle_mounts_no_bin_tools() {
         let temp = TempDir::new().unwrap();
         let requests = RecordedRequests::default();
         let response = completed_response("Child finished cleanly.");
@@ -3208,7 +3045,9 @@ Body
         child_core_config.connection_profile = Some("child-main".to_string());
         let spec = launch_spec(root_dir);
 
-        let plan = build_child_namespace_assembly_plan(&parent, &spec, &child_core_config).unwrap();
+        let plan = build_child_namespace_assembly_plan(&parent, &spec, &child_core_config)
+            .await
+            .unwrap();
 
         assert_eq!(plan.agent_mount, "/agent");
         assert_eq!(plan.llm_mount, "/mnt/llm");
@@ -3219,8 +3058,8 @@ Body
         assert_eq!(plan.workspace_root, None);
     }
 
-    #[test]
-    fn child_namespace_plan_mounts_only_allowed_workspace_tools() {
+    #[tokio::test]
+    async fn child_namespace_plan_mounts_only_allowed_workspace_tools() {
         let temp = TempDir::new().unwrap();
         let requests = RecordedRequests::default();
         let response = completed_response("Child finished cleanly.");
@@ -3232,8 +3071,9 @@ Body
             allowed_tools: vec!["alpha".to_string()],
         });
 
-        let plan =
-            build_child_namespace_assembly_plan(&parent, &spec, &parent.core_config).unwrap();
+        let plan = build_child_namespace_assembly_plan(&parent, &spec, &parent.core_config)
+            .await
+            .unwrap();
 
         assert_eq!(plan.llm_mount, "/mnt/llm");
         assert_eq!(plan.llm_connection_name().unwrap(), "default");
@@ -3244,8 +3084,8 @@ Body
         assert_eq!(plan.bin_tool_mounts, vec!["/bin/alpha"]);
     }
 
-    #[test]
-    fn child_clone_exec_spec_declares_agent_and_llm_mounts_for_pid() {
+    #[tokio::test]
+    async fn child_clone_exec_spec_declares_agent_and_llm_mounts_for_pid() {
         let temp = TempDir::new().unwrap();
         let requests = RecordedRequests::default();
         let response = completed_response("Child finished cleanly.");
@@ -3255,7 +3095,9 @@ Body
         child_core_config.connection_profile = Some("child-main".to_string());
         let spec = launch_spec(root_dir);
 
-        let plan = build_child_namespace_assembly_plan(&parent, &spec, &child_core_config).unwrap();
+        let plan = build_child_namespace_assembly_plan(&parent, &spec, &child_core_config)
+            .await
+            .unwrap();
         let exec = plan.clone_exec_spec_for_pid("42", "/bin/alan-agent", ["--boot"]);
 
         assert_eq!(
@@ -3278,8 +3120,8 @@ Body
         assert_eq!(decoded, exec);
     }
 
-    #[test]
-    fn child_clone_exec_spec_declares_only_allowed_bin_mounts() {
+    #[tokio::test]
+    async fn child_clone_exec_spec_declares_only_allowed_bin_mounts() {
         let temp = TempDir::new().unwrap();
         let requests = RecordedRequests::default();
         let response = completed_response("Child finished cleanly.");
@@ -3291,8 +3133,9 @@ Body
             allowed_tools: vec!["alpha".to_string()],
         });
 
-        let plan =
-            build_child_namespace_assembly_plan(&parent, &spec, &parent.core_config).unwrap();
+        let plan = build_child_namespace_assembly_plan(&parent, &spec, &parent.core_config)
+            .await
+            .unwrap();
         let manifest = plan.namespace_manifest_for_pid("99");
 
         assert_eq!(
@@ -3322,8 +3165,9 @@ Body
         spec.runtime_overrides.tool_profile = Some(alan_agent_protocol::SpawnToolProfileOverride {
             allowed_tools: vec!["alpha".to_string()],
         });
-        let plan =
-            build_child_namespace_assembly_plan(&parent, &spec, &parent.core_config).unwrap();
+        let plan = build_child_namespace_assembly_plan(&parent, &spec, &parent.core_config)
+            .await
+            .unwrap();
         let procfs = KernelProcFs::new();
         let spawner = procfs.for_spawner(
             None,
@@ -3374,17 +3218,11 @@ Body
         spec.runtime_overrides.tool_profile = Some(alan_agent_protocol::SpawnToolProfileOverride {
             allowed_tools: vec!["alpha".to_string()],
         });
-        let plan =
-            build_child_namespace_assembly_plan(&parent, &spec, &parent.core_config).unwrap();
-        let child_tools = build_child_tool_registry_from_namespace_plan(
-            &parent,
-            &spec,
-            &parent.core_config,
-            &plan,
-        )
-        .unwrap();
+        let plan = build_child_namespace_assembly_plan(&parent, &spec, &parent.core_config)
+            .await
+            .unwrap();
         let launch_procfs = KernelProcFs::new();
-        let tool_runner = crate::tools::ToolProcessRunner::from_registry(&child_tools);
+        let tool_runner = crate::tools::ToolProcessRunner::from_registry(parent.tool_catalog());
         let runtime_procfs = launch_procfs
             .clone()
             .with_runner(Arc::new(tool_runner.clone()));
@@ -3408,7 +3246,7 @@ Body
             handles,
             None,
             tool_runner.clone(),
-            child_tools.default_execution_binding(),
+            plan.execution_binding(),
             None,
             "/bin/alan-agent",
         )
@@ -3479,7 +3317,7 @@ Body
             child_handles,
             launch.environment.process_context(),
             tool_runner.clone(),
-            child_tools.default_execution_binding(),
+            plan.execution_binding(),
             None,
             "/bin/alan-agent",
         )
@@ -3606,17 +3444,11 @@ Body
         spec.runtime_overrides.tool_profile = Some(alan_agent_protocol::SpawnToolProfileOverride {
             allowed_tools: vec!["alpha".to_string()],
         });
-        let plan =
-            build_child_namespace_assembly_plan(&parent, &spec, &parent.core_config).unwrap();
-        let child_tools = build_child_tool_registry_from_namespace_plan(
-            &parent,
-            &spec,
-            &parent.core_config,
-            &plan,
-        )
-        .unwrap();
+        let plan = build_child_namespace_assembly_plan(&parent, &spec, &parent.core_config)
+            .await
+            .unwrap();
         let launch_procfs = KernelProcFs::new();
-        let tool_runner = crate::tools::ToolProcessRunner::from_registry(&child_tools);
+        let tool_runner = crate::tools::ToolProcessRunner::from_registry(parent.tool_catalog());
         let runtime_procfs = launch_procfs
             .clone()
             .with_runner(Arc::new(tool_runner.clone()));
@@ -3639,7 +3471,7 @@ Body
             handles,
             None,
             tool_runner,
-            child_tools.default_execution_binding(),
+            plan.execution_binding(),
             None,
             "/bin/alan-agent",
         )
@@ -3703,17 +3535,11 @@ Body
         let root_dir = temp.path().join("repo/.alan/agents/grader");
         let mut spec = launch_spec(root_dir);
         spec.handles = vec![SpawnHandle::Workspace];
-        let plan =
-            build_child_namespace_assembly_plan(&parent, &spec, &parent.core_config).unwrap();
-        let child_tools = build_child_tool_registry_from_namespace_plan(
-            &parent,
-            &spec,
-            &parent.core_config,
-            &plan,
-        )
-        .unwrap();
+        let plan = build_child_namespace_assembly_plan(&parent, &spec, &parent.core_config)
+            .await
+            .unwrap();
         let launch_procfs = KernelProcFs::new();
-        let tool_runner = crate::tools::ToolProcessRunner::from_registry(&child_tools);
+        let tool_runner = crate::tools::ToolProcessRunner::from_registry(parent.tool_catalog());
         let runtime_procfs = launch_procfs
             .clone()
             .with_runner(Arc::new(tool_runner.clone()));
@@ -3744,7 +3570,7 @@ Body
             handles,
             None,
             tool_runner,
-            child_tools.default_execution_binding(),
+            plan.execution_binding(),
             Some(factory.clone()),
             "/bin/alan-agent",
         )
@@ -3800,18 +3626,12 @@ Body
         let root_dir = temp.path().join("repo/.alan/agents/grader");
         let mut spec = launch_spec(root_dir);
         spec.handles = vec![SpawnHandle::Workspace];
-        let plan =
-            build_child_namespace_assembly_plan(&parent, &spec, &parent.core_config).unwrap();
-        let child_tools = build_child_tool_registry_from_namespace_plan(
-            &parent,
-            &spec,
-            &parent.core_config,
-            &plan,
-        )
-        .unwrap();
+        let plan = build_child_namespace_assembly_plan(&parent, &spec, &parent.core_config)
+            .await
+            .unwrap();
         let launch_procfs = KernelProcFs::new();
         let runtime_procfs = launch_procfs.clone().with_runner(Arc::new(
-            crate::tools::ToolProcessRunner::from_registry(&child_tools),
+            crate::tools::ToolProcessRunner::from_registry(parent.tool_catalog()),
         ));
         let llmfs = Arc::new(alan_llmfs::LlmFs::new());
         llmfs.register_connection(
@@ -3845,8 +3665,8 @@ Body
             &plan,
             handles,
             None,
-            crate::tools::ToolProcessRunner::from_registry(&child_tools),
-            child_tools.default_execution_binding(),
+            crate::tools::ToolProcessRunner::from_registry(parent.tool_catalog()),
+            plan.execution_binding(),
             None,
             "/bin/alan-agent",
         )
@@ -3897,270 +3717,6 @@ Body
 
         assert_eq!(outcome.exit_code, 127);
         assert_eq!(outcome.output, b"executable is not mounted\n");
-    }
-
-    #[test]
-    fn child_namespace_plan_omits_unbindable_workspace_local_tool_for_other_workspace() {
-        let temp = TempDir::new().unwrap();
-        let parent_root = temp.path().join("repo");
-        let child_root = temp.path().join("other-repo");
-        std::fs::create_dir_all(&child_root).unwrap();
-
-        let requests = RecordedRequests::default();
-        let response = completed_response("Child finished cleanly.");
-        let mut parent = make_parent_state(&temp, requests, response);
-        let mut parent_tools = ToolRegistry::new();
-        parent_tools.set_default_cwd(parent_root);
-        parent_tools.register(WorkspaceBoundTestTool::new(
-            "workspace_read",
-            temp.path().join("repo"),
-        ));
-        *parent.tool_catalog_mut_for_test() = parent_tools;
-
-        let mut spec = launch_spec(temp.path().join("repo/.alan/agents/grader"));
-        spec.handles = vec![SpawnHandle::Workspace];
-        spec.launch.workspace_root = Some(child_root.clone());
-        spec.launch.cwd = Some(child_root.clone());
-
-        let plan =
-            build_child_namespace_assembly_plan(&parent, &spec, &parent.core_config).unwrap();
-
-        assert_eq!(plan.workspace_root, Some(child_root.clone()));
-        assert_eq!(plan.cwd, Some(child_root));
-        assert!(plan.bin_tool_mounts.is_empty());
-    }
-
-    #[tokio::test]
-    async fn build_child_tool_registry_skips_workspace_local_tools_without_catalog_factory() {
-        let temp = TempDir::new().unwrap();
-        let parent_root = temp.path().join("repo");
-        let child_root = temp.path().join("other-repo");
-        std::fs::create_dir_all(&child_root).unwrap();
-        std::fs::write(child_root.join("target.txt"), "child workspace contents\n").unwrap();
-
-        let requests = RecordedRequests::default();
-        let response = completed_response("Child finished cleanly.");
-        let mut parent = make_parent_state(&temp, requests, response);
-        let mut parent_tools = ToolRegistry::new();
-        parent_tools.set_default_cwd(parent_root.clone());
-        parent_tools.register(WorkspaceBoundTestTool::new("workspace_read", parent_root));
-        *parent.tool_catalog_mut_for_test() = parent_tools;
-
-        let mut spec = launch_spec(temp.path().join("repo/.alan/agents/grader"));
-        spec.handles = vec![SpawnHandle::Workspace];
-        spec.launch.workspace_root = Some(child_root.clone());
-        spec.launch.cwd = Some(child_root.clone());
-
-        let child_tools = build_child_tool_registry(&parent, &spec, &parent.core_config).unwrap();
-        assert!(child_tools.get("workspace_read").is_none());
-    }
-
-    #[tokio::test]
-    async fn build_child_tool_registry_rejects_missing_requested_workspace_tool_without_factory() {
-        let temp = TempDir::new().unwrap();
-        let parent_root = temp.path().join("repo");
-        let child_root = temp.path().join("other-repo");
-        std::fs::create_dir_all(&child_root).unwrap();
-
-        let requests = RecordedRequests::default();
-        let response = completed_response("Child finished cleanly.");
-        let mut parent = make_parent_state(&temp, requests, response);
-        let mut parent_tools = ToolRegistry::new();
-        parent_tools.set_default_cwd(parent_root.clone());
-        parent_tools.register(WorkspaceBoundTestTool::new("workspace_read", parent_root));
-        *parent.tool_catalog_mut_for_test() = parent_tools;
-
-        let mut spec = launch_spec(temp.path().join("repo/.alan/agents/grader"));
-        spec.handles = vec![SpawnHandle::Workspace];
-        spec.launch.workspace_root = Some(child_root.clone());
-        spec.launch.cwd = Some(child_root);
-        spec.runtime_overrides.tool_profile = Some(alan_agent_protocol::SpawnToolProfileOverride {
-            allowed_tools: vec!["workspace_read".to_string()],
-        });
-
-        let err = match build_child_tool_registry(&parent, &spec, &parent.core_config) {
-            Ok(_) => panic!("expected missing requested workspace tool to fail"),
-            Err(err) => err,
-        };
-        assert!(
-            err.to_string()
-                .contains("requested tools that cannot be bound for workspace")
-        );
-        assert!(err.to_string().contains("workspace_read"));
-    }
-
-    #[tokio::test]
-    async fn build_child_tool_registry_materializes_workspace_tools_from_parent_factories() {
-        let temp = TempDir::new().unwrap();
-        let parent_root = temp.path().join("repo");
-        let child_root = temp.path().join("other-repo");
-        std::fs::create_dir_all(&child_root).unwrap();
-        std::fs::write(child_root.join("target.txt"), "child workspace contents\n").unwrap();
-
-        let requests = RecordedRequests::default();
-        let response = completed_response("Child finished cleanly.");
-        let mut parent = make_parent_state(&temp, requests, response);
-        let mut parent_tools = ToolRegistry::new();
-        parent_tools.set_default_cwd(parent_root);
-        let child_root_for_factory = child_root.clone();
-        parent_tools.register_tool_factory("workspace_read", move || {
-            Box::new(WorkspaceBoundTestTool::new(
-                "workspace_read",
-                child_root_for_factory.clone(),
-            ))
-        });
-        *parent.tool_catalog_mut_for_test() = parent_tools;
-
-        let mut spec = launch_spec(temp.path().join("repo/.alan/agents/grader"));
-        spec.handles = vec![SpawnHandle::Workspace];
-        spec.launch.workspace_root = Some(child_root.clone());
-        spec.launch.cwd = Some(child_root.clone());
-        spec.runtime_overrides.tool_profile = Some(alan_agent_protocol::SpawnToolProfileOverride {
-            allowed_tools: vec!["workspace_read".to_string()],
-        });
-
-        let child_tools = build_child_tool_registry(&parent, &spec, &parent.core_config).unwrap();
-        let result = child_tools
-            .execute("workspace_read", json!({ "path": "target.txt" }))
-            .await
-            .unwrap();
-
-        assert_eq!(result["content"], json!("child workspace contents\n"));
-        assert_eq!(
-            result["path"],
-            json!(child_root.join("target.txt").to_string_lossy().to_string())
-        );
-    }
-
-    #[tokio::test]
-    async fn build_child_tool_registry_preserves_global_override_before_factory() {
-        let temp = TempDir::new().unwrap();
-        let parent_root = temp.path().join("repo");
-        let child_root = temp.path().join("other-repo");
-        std::fs::create_dir_all(&child_root).unwrap();
-
-        let requests = RecordedRequests::default();
-        let response = completed_response("Child finished cleanly.");
-        let mut parent = make_parent_state(&temp, requests, response);
-        let mut parent_tools = ToolRegistry::new();
-        parent_tools.set_default_cwd(parent_root);
-        parent_tools.register(MarkerTool::new(
-            "override_tool",
-            "override",
-            crate::tools::ToolLocality::Global,
-        ));
-        parent_tools.register_tool_factory("override_tool", || {
-            Box::new(MarkerTool::new(
-                "override_tool",
-                "factory",
-                crate::tools::ToolLocality::Global,
-            ))
-        });
-        *parent.tool_catalog_mut_for_test() = parent_tools;
-
-        let mut spec = launch_spec(temp.path().join("repo/.alan/agents/grader"));
-        spec.handles = vec![SpawnHandle::Workspace];
-        spec.launch.workspace_root = Some(child_root.clone());
-        spec.launch.cwd = Some(child_root);
-        spec.runtime_overrides.tool_profile = Some(alan_agent_protocol::SpawnToolProfileOverride {
-            allowed_tools: vec!["override_tool".to_string()],
-        });
-
-        let child_tools = build_child_tool_registry(&parent, &spec, &parent.core_config).unwrap();
-        let result = child_tools
-            .execute("override_tool", json!({}))
-            .await
-            .unwrap();
-
-        assert_eq!(result["marker"], json!("override"));
-    }
-
-    #[tokio::test]
-    async fn build_child_tool_registry_preserves_same_workspace_local_override_before_factory() {
-        let temp = TempDir::new().unwrap();
-        let workspace_root = temp.path().join("repo");
-        std::fs::create_dir_all(&workspace_root).unwrap();
-
-        let requests = RecordedRequests::default();
-        let response = completed_response("Child finished cleanly.");
-        let mut parent = make_parent_state(&temp, requests, response);
-        let mut parent_tools = ToolRegistry::new();
-        parent_tools.set_default_workspace_root(workspace_root.clone());
-        parent_tools.register(MarkerTool::new(
-            "workspace_override",
-            "override",
-            crate::tools::ToolLocality::WorkspaceLocal,
-        ));
-        parent_tools.register_tool_factory("workspace_override", || {
-            Box::new(MarkerTool::new(
-                "workspace_override",
-                "factory",
-                crate::tools::ToolLocality::WorkspaceLocal,
-            ))
-        });
-        *parent.tool_catalog_mut_for_test() = parent_tools;
-
-        let mut spec = launch_spec(temp.path().join("repo/.alan/agents/grader"));
-        spec.handles = vec![SpawnHandle::Workspace];
-        spec.launch.workspace_root = Some(workspace_root.clone());
-        spec.launch.cwd = Some(workspace_root);
-        spec.runtime_overrides.tool_profile = Some(alan_agent_protocol::SpawnToolProfileOverride {
-            allowed_tools: vec!["workspace_override".to_string()],
-        });
-
-        let child_tools = build_child_tool_registry(&parent, &spec, &parent.core_config).unwrap();
-        let result = child_tools
-            .execute("workspace_override", json!({}))
-            .await
-            .unwrap();
-
-        assert_eq!(result["marker"], json!("override"));
-    }
-
-    #[tokio::test]
-    async fn build_child_tool_registry_preserves_inherited_sandbox_grants() {
-        let temp = TempDir::new().unwrap();
-        let approved = TempDir::new().unwrap();
-        let requests = RecordedRequests::default();
-        let response = completed_response("Child finished cleanly.");
-        let mut parent = make_parent_state(&temp, requests, response);
-        let workspace_root = parent.workspace_root_dir.clone().unwrap();
-        {
-            let parent_tools = parent.tool_catalog_mut_for_test();
-            parent_tools.set_default_workspace_root(workspace_root.clone());
-            assert!(parent_tools.add_default_sandbox_writable_root(approved.path().to_path_buf()));
-        }
-
-        let mut spec = launch_spec(workspace_root.join(".alan/agents/grader"));
-        spec.handles = vec![SpawnHandle::Workspace];
-
-        let child_tools = build_child_tool_registry(&parent, &spec, &parent.core_config).unwrap();
-        let roots = child_tools.default_sandbox_writable_roots();
-
-        assert_eq!(roots.len(), 2);
-        assert_eq!(roots[0], workspace_root);
-        assert_eq!(roots[1], dunce::canonicalize(approved.path()).unwrap());
-    }
-
-    #[tokio::test]
-    async fn build_child_tool_registry_rejects_unavailable_requested_tool_profile_entries() {
-        let temp = TempDir::new().unwrap();
-        let requests = RecordedRequests::default();
-        let response = completed_response("Child finished cleanly.");
-        let parent = make_parent_state(&temp, requests, response);
-
-        let mut spec = launch_spec(temp.path().join("repo/.alan/agents/grader"));
-        spec.handles = vec![SpawnHandle::Workspace];
-        spec.runtime_overrides.tool_profile = Some(alan_agent_protocol::SpawnToolProfileOverride {
-            allowed_tools: vec!["alpha".to_string(), "missing".to_string()],
-        });
-
-        let err = match build_child_tool_registry(&parent, &spec, &parent.core_config) {
-            Ok(_) => panic!("expected unavailable requested tool profile entry to fail"),
-            Err(err) => err,
-        };
-        assert!(err.to_string().contains("requested unavailable tools"));
-        assert!(err.to_string().contains("missing"));
     }
 
     #[tokio::test]
