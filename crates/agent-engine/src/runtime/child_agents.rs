@@ -700,18 +700,50 @@ impl ChildRuntimeController {
         ) else {
             return Ok(None);
         };
-        let pid = alan_kernel::Pid(pid.parse().context("parse observed child pid")?);
         let timeout = Duration::from_secs(1);
         let activity = tokio::time::timeout(timeout, environment.read_ui_activity_snapshot())
             .await
             .context("observe child activity timed out")??;
-        let process = process_registry.observe_process_files(pid).await;
+        let ui_events_offset = tokio::time::timeout(timeout, environment.ui_events_offset())
+            .await
+            .context("observe child UI events offset timed out")??;
+        let process_exit_code = if ui_events_offset > 0 {
+            tokio::time::timeout(timeout, environment.read_process_exit_code(pid))
+                .await
+                .context("observe child Process exit timed out")??
+        } else {
+            None
+        };
+        let process = if process_exit_code.is_some() {
+            let pid = alan_kernel::Pid(pid.parse().context("parse observed child pid")?);
+            process_registry.observe_process_files(pid).await
+        } else {
+            None
+        };
         let notice = tokio::time::timeout(timeout, environment.read_ui_notice_snapshot())
             .await
             .context("observe child notice timed out")??;
+        let request_ids = tokio::time::timeout(timeout, environment.request_ids())
+            .await
+            .context("observe child requests timed out")??;
+        let request_events_offset =
+            tokio::time::timeout(timeout, environment.request_events_offset())
+                .await
+                .context("observe child request stream offset timed out")??;
+        let action_ids = tokio::time::timeout(timeout, environment.action_ids())
+            .await
+            .context("observe child actions timed out")??;
+        let action_events_offset =
+            tokio::time::timeout(timeout, environment.action_events_offset())
+                .await
+                .context("observe child action stream offset timed out")??;
         Ok(Some(ChildFileObservation {
-            process_status: process.as_ref().map(|snapshot| snapshot.status),
-            process_exit_code: process.as_ref().and_then(|snapshot| snapshot.exit_code),
+            process_status: Some(if process_exit_code.is_some() {
+                alan_kernel::Status::Exited
+            } else {
+                alan_kernel::Status::Running
+            }),
+            process_exit_code,
             output_text: String::from_utf8(
                 process
                     .as_ref()
@@ -727,24 +759,11 @@ impl ChildRuntimeController {
                 .as_ref()
                 .map(|snapshot| snapshot.io_events_offset)
                 .unwrap_or(0),
-            request_ids: tokio::time::timeout(timeout, environment.request_ids())
-                .await
-                .context("observe child requests timed out")??,
-            request_events_offset: tokio::time::timeout(
-                timeout,
-                environment.request_events_offset(),
-            )
-            .await
-            .context("observe child request stream offset timed out")??,
-            action_ids: tokio::time::timeout(timeout, environment.action_ids())
-                .await
-                .context("observe child actions timed out")??,
-            action_events_offset: tokio::time::timeout(timeout, environment.action_events_offset())
-                .await
-                .context("observe child action stream offset timed out")??,
-            ui_events_offset: tokio::time::timeout(timeout, environment.ui_events_offset())
-                .await
-                .context("observe child UI events offset timed out")??,
+            request_ids,
+            request_events_offset,
+            action_ids,
+            action_events_offset,
+            ui_events_offset,
             terminal_error: if notice.kind == alan_agent_protocol::UiNoticeKind::Error {
                 Some(notice.message.clone())
             } else {
@@ -803,16 +822,22 @@ impl ChildRuntimeController {
             push_bounded_child_warning(&mut warnings, warning);
         }
         self.finish_runtime_and_process(&observed.status).await;
-        let rollout_fallback_text = if observed.output_text.trim().is_empty() {
+        let process_output = if observed.output_text.trim().is_empty() {
+            self.retained_process_output().await
+        } else {
+            None
+        };
+        let output_text = process_output.unwrap_or(observed.output_text);
+        let rollout_fallback_text = if output_text.trim().is_empty() {
             read_latest_assistant_text_from_rollout(self.startup_metadata.rollout_path.as_deref())
                 .await
         } else {
             None
         };
-        let output_text = if observed.output_text.trim().is_empty() {
-            rollout_fallback_text.unwrap_or(observed.output_text)
+        let output_text = if output_text.trim().is_empty() {
+            rollout_fallback_text.unwrap_or(output_text)
         } else {
-            observed.output_text
+            output_text
         };
         let structured_output = observed
             .structured_output
@@ -1446,6 +1471,12 @@ impl ChildRuntimeController {
             )
             .await;
         self.reconcile_exited_process().await;
+    }
+
+    async fn retained_process_output(&self) -> Option<String> {
+        let process_registry = self.process_registry.as_ref()?;
+        let pid = alan_kernel::Pid(self.process_pid.as_deref()?.parse().ok()?);
+        String::from_utf8(process_registry.observe_process_files(pid).await?.output).ok()
     }
 
     async fn abort_runtime(&mut self) {
@@ -3481,7 +3512,7 @@ Body
     }
 
     #[tokio::test]
-    async fn child_namespace_launch_helper_returns_runtime_environment_for_proc_pid() {
+    async fn child_namespace_launch_and_supervisor_reattachment_use_proc_pid_files() {
         let temp = TempDir::new().unwrap();
         let requests = RecordedRequests::default();
         let response = completed_response("Child finished cleanly.");
@@ -3770,6 +3801,9 @@ Body
 
         process_environment
             .write_process_control_for_pid(&process_pid, "cancel")
+            .await
+            .unwrap();
+        crate::runtime::ui_surfaces::heartbeat(&process_environment)
             .await
             .unwrap();
         let result = tokio::time::timeout(Duration::from_secs(2), controller.join())
