@@ -146,6 +146,7 @@ struct ChildFileObservation {
     action_ids: Vec<String>,
     action_events_offset: u64,
     ui_events_offset: u64,
+    terminal_error: Option<String>,
     activity: alan_agent_protocol::UiActivitySnapshot,
     notice: alan_agent_protocol::UiNoticeSnapshot,
 }
@@ -700,14 +701,14 @@ impl ChildRuntimeController {
             return Ok(None);
         };
         let pid = alan_kernel::Pid(pid.parse().context("parse observed child pid")?);
-        let process = tokio::time::timeout(
-            Duration::from_millis(1),
-            process_registry.observe_process_files(pid),
-        )
-        .await
-        .ok()
-        .flatten();
         let timeout = Duration::from_secs(1);
+        let activity = tokio::time::timeout(timeout, environment.read_ui_activity_snapshot())
+            .await
+            .context("observe child activity timed out")??;
+        let process = process_registry.observe_process_files(pid).await;
+        let notice = tokio::time::timeout(timeout, environment.read_ui_notice_snapshot())
+            .await
+            .context("observe child notice timed out")??;
         Ok(Some(ChildFileObservation {
             process_status: process.as_ref().map(|snapshot| snapshot.status),
             process_exit_code: process.as_ref().and_then(|snapshot| snapshot.exit_code),
@@ -744,12 +745,13 @@ impl ChildRuntimeController {
             ui_events_offset: tokio::time::timeout(timeout, environment.ui_events_offset())
                 .await
                 .context("observe child UI events offset timed out")??,
-            activity: tokio::time::timeout(timeout, environment.read_ui_activity_snapshot())
-                .await
-                .context("observe child activity timed out")??,
-            notice: tokio::time::timeout(timeout, environment.read_ui_notice_snapshot())
-                .await
-                .context("observe child notice timed out")??,
+            terminal_error: if notice.kind == alan_agent_protocol::UiNoticeKind::Error {
+                Some(notice.message.clone())
+            } else {
+                None
+            },
+            activity,
+            notice,
         }))
     }
 
@@ -887,13 +889,16 @@ impl ChildRuntimeController {
         let mut liveness_closed = false;
         let mut check_process_stop = false;
         let mut last_file_observation = None;
+        let uses_file_observation = self.process_registry.is_some();
 
         loop {
-            if let Some(observed) = self.observe_buffered_child_events(
-                &mut output_text,
-                &mut warnings,
-                &mut latest_liveness_at,
-            ) {
+            if !uses_file_observation
+                && let Some(observed) = self.observe_buffered_child_events(
+                    &mut output_text,
+                    &mut warnings,
+                    &mut latest_liveness_at,
+                )
+            {
                 if self.external_process_stop_observed().await {
                     self.abort_runtime().await;
                     return Ok(ChildRuntimeWaitOutcome::Observed(
@@ -938,14 +943,87 @@ impl ChildRuntimeController {
                         );
                     }
                 }
+                output_text.clone_from(&observation.output_text);
+                if observation.process_status == Some(alan_kernel::Status::Exited) {
+                    let exit_code = observation.process_exit_code.unwrap_or(1);
+                    if exit_code == 130 {
+                        return Ok(ChildRuntimeWaitOutcome::Observed(
+                            self.externally_stopped_observed_event(
+                                &observation.output_text,
+                                &warnings,
+                            ),
+                        ));
+                    }
+                    return Ok(ChildRuntimeWaitOutcome::Observed(
+                        file_terminal_observation(
+                            observation.output_text,
+                            warnings,
+                            if exit_code == 0 {
+                                ChildRuntimeStatus::Completed
+                            } else {
+                                ChildRuntimeStatus::Failed
+                            },
+                            (exit_code != 0)
+                                .then(|| format!("Child Process exited with code {exit_code}")),
+                            None,
+                        ),
+                    ));
+                }
+                if observation.activity.state == alan_agent_protocol::UiActivityState::Paused
+                    && let Some(request_id) = observation.request_ids.last()
+                {
+                    let kind = self
+                        .process_environment
+                        .as_ref()
+                        .expect("file observation requires process environment")
+                        .read_request_kind(request_id)
+                        .await?;
+                    let kind = match kind.as_str() {
+                        "confirmation" => YieldKind::Confirmation,
+                        "structured_input" => YieldKind::StructuredInput,
+                        other => YieldKind::Custom(other.to_string()),
+                    };
+                    return Ok(ChildRuntimeWaitOutcome::Observed(
+                        file_terminal_observation(
+                            observation.output_text,
+                            warnings,
+                            ChildRuntimeStatus::Paused,
+                            None,
+                            Some(ChildRuntimePause {
+                                request_id: request_id.clone(),
+                                kind,
+                            }),
+                        ),
+                    ));
+                }
+                if observation.activity.state == alan_agent_protocol::UiActivityState::Idle
+                    && observation.ui_events_offset > 0
+                {
+                    let status = if observation.terminal_error.is_some() {
+                        ChildRuntimeStatus::Failed
+                    } else {
+                        ChildRuntimeStatus::Completed
+                    };
+                    return Ok(ChildRuntimeWaitOutcome::Observed(
+                        file_terminal_observation(
+                            observation.output_text,
+                            warnings,
+                            status,
+                            observation.terminal_error,
+                            None,
+                        ),
+                    ));
+                }
                 last_file_observation = Some(observation);
             }
 
-            if let Some(observed) = self.observe_buffered_child_events(
-                &mut output_text,
-                &mut warnings,
-                &mut latest_liveness_at,
-            ) {
+            if !uses_file_observation
+                && let Some(observed) = self.observe_buffered_child_events(
+                    &mut output_text,
+                    &mut warnings,
+                    &mut latest_liveness_at,
+                )
+            {
                 if self.external_process_stop_observed().await {
                     self.abort_runtime().await;
                     return Ok(ChildRuntimeWaitOutcome::Observed(
@@ -962,11 +1040,13 @@ impl ChildRuntimeController {
                 .child_run_registry
                 .termination_request(&self.child_run_id)
             {
-                if let Some(observed) = self.observe_buffered_child_events(
-                    &mut output_text,
-                    &mut warnings,
-                    &mut latest_liveness_at,
-                ) {
+                if !uses_file_observation
+                    && let Some(observed) = self.observe_buffered_child_events(
+                        &mut output_text,
+                        &mut warnings,
+                        &mut latest_liveness_at,
+                    )
+                {
                     return Ok(ChildRuntimeWaitOutcome::Observed(observed));
                 }
                 match request.mode {
@@ -1015,7 +1095,7 @@ impl ChildRuntimeController {
                             check_process_stop = true;
                             continue;
                         }
-                        liveness = self.liveness_rx.recv(), if !liveness_closed => {
+                        liveness = self.liveness_rx.recv(), if !liveness_closed && !uses_file_observation => {
                             self.apply_liveness_observation(
                                 liveness,
                                 &mut latest_liveness_at,
@@ -1023,7 +1103,7 @@ impl ChildRuntimeController {
                             );
                             continue;
                         }
-                        recv = self.event_rx.recv() => recv,
+                        recv = self.event_rx.recv(), if !uses_file_observation => recv,
                     }
                 } else {
                     tokio::select! {
@@ -1037,7 +1117,7 @@ impl ChildRuntimeController {
                             check_process_stop = true;
                             continue;
                         }
-                        liveness = self.liveness_rx.recv(), if !liveness_closed => {
+                        liveness = self.liveness_rx.recv(), if !liveness_closed && !uses_file_observation => {
                             self.apply_liveness_observation(
                                 liveness,
                                 &mut latest_liveness_at,
@@ -1045,7 +1125,7 @@ impl ChildRuntimeController {
                             );
                             continue;
                         }
-                        recv = self.event_rx.recv() => recv,
+                        recv = self.event_rx.recv(), if !uses_file_observation => recv,
                     }
                 }
             } else if let Some(cancel) = cancel {
@@ -1054,7 +1134,7 @@ impl ChildRuntimeController {
                         self.terminate_runtime().await;
                         return Ok(ChildRuntimeWaitOutcome::Cancelled);
                     }
-                    liveness = self.liveness_rx.recv(), if !liveness_closed => {
+                    liveness = self.liveness_rx.recv(), if !liveness_closed && !uses_file_observation => {
                         self.apply_liveness_observation(
                             liveness,
                             &mut latest_liveness_at,
@@ -1066,11 +1146,11 @@ impl ChildRuntimeController {
                         check_process_stop = true;
                         continue;
                     }
-                    recv = self.event_rx.recv() => recv,
+                    recv = self.event_rx.recv(), if !uses_file_observation => recv,
                 }
             } else {
                 tokio::select! {
-                    liveness = self.liveness_rx.recv(), if !liveness_closed => {
+                    liveness = self.liveness_rx.recv(), if !liveness_closed && !uses_file_observation => {
                         self.apply_liveness_observation(
                             liveness,
                             &mut latest_liveness_at,
@@ -1082,7 +1162,7 @@ impl ChildRuntimeController {
                         check_process_stop = true;
                         continue;
                     }
-                    recv = self.event_rx.recv() => recv,
+                    recv = self.event_rx.recv(), if !uses_file_observation => recv,
                 }
             };
 
@@ -1499,6 +1579,24 @@ fn parse_child_structured_output(text: &str) -> Option<serde_json::Value> {
     serde_json::from_str::<serde_json::Value>(trimmed)
         .ok()
         .or_else(|| parse_last_json_fenced_block(trimmed))
+}
+
+fn file_terminal_observation(
+    output_text: String,
+    warnings: Vec<String>,
+    status: ChildRuntimeStatus,
+    error_message: Option<String>,
+    pause: Option<ChildRuntimePause>,
+) -> ObservedChildTerminalEvent {
+    ObservedChildTerminalEvent {
+        structured_output: parse_child_structured_output(&output_text),
+        output_text,
+        turn_summary: None,
+        warnings,
+        error_message,
+        pause,
+        status,
+    }
 }
 
 fn child_run_status_for_runtime_status(status: ChildRuntimeStatus) -> ChildRunStatus {
@@ -3576,12 +3674,11 @@ Body
 
         let process_reader = launch.environment.clone();
         let process_pid = launch.pid.clone();
-        let (tx, event_rx) = tokio::sync::broadcast::channel(4);
+        let (_tx, event_rx) = tokio::sync::broadcast::channel(4);
         let submission_id = "completed-child-process".to_string();
-        let _ = tx.send(RuntimeEventEnvelope {
-            submission_id: Some(submission_id.clone()),
-            event: alan_agent_protocol::Event::TurnCompleted { summary: None },
-        });
+        crate::runtime::ui_surfaces::turn_completed(&launch.environment, false)
+            .await
+            .unwrap();
         let controller = ChildRuntimeController {
             runtime: None,
             startup_metadata: test_startup_metadata("child-machine", None, false),
@@ -3655,7 +3752,7 @@ Body
         .unwrap();
         let process_pid = launch.pid.clone();
         let process_environment = launch.environment.clone();
-        let (event_tx, event_rx) = tokio::sync::broadcast::channel(4);
+        let (_event_tx, event_rx) = tokio::sync::broadcast::channel(4);
         let submission_id = "externally-stopped-child".to_string();
         let controller = ChildRuntimeController {
             runtime: None,
@@ -3674,12 +3771,6 @@ Body
         process_environment
             .write_process_control_for_pid(&process_pid, "cancel")
             .await
-            .unwrap();
-        event_tx
-            .send(RuntimeEventEnvelope {
-                submission_id: Some(submission_id),
-                event: alan_agent_protocol::Event::TurnCompleted { summary: None },
-            })
             .unwrap();
         let result = tokio::time::timeout(Duration::from_secs(2), controller.join())
             .await
@@ -4720,12 +4811,12 @@ model_reasoning_effort = "high"
         let mut child = spawn_child_runtime_with_client_factory(&parent, spec, |_| {
             Ok(LlmClient::new(
                 RecordingProvider::new(requests.clone(), response.clone())
-                    .with_delay(Duration::from_millis(180)),
+                    .with_delay(Duration::from_millis(250)),
             ))
         })
         .await
         .unwrap();
-        child.timeout = Some(Duration::from_millis(80));
+        child.timeout = Some(Duration::from_millis(200));
         let environment = child.process_environment.as_ref().unwrap().clone();
         tokio::spawn(async move {
             for _ in 0..5 {

@@ -29,7 +29,7 @@
 ## 5. File-Based Child Supervision
 
 - [x] 5.1 Implement child observation over `/proc/<pid>/status`, `io/output`, request/action streams, `machine/ui/events`, and `machine/ui/activity` freshness with resumable offsets/timestamps.
-- [ ] 5.2 Switch child progress, heartbeat, timeout, output collection, and terminal-state reconciliation from `RuntimeEventEnvelope` subscription to Process/file observation.
+- [x] 5.2 Switch child progress, heartbeat, timeout, output collection, and terminal-state reconciliation from `RuntimeEventEnvelope` subscription to Process/file observation.
 - [ ] 5.3 Add tests for quiet-but-fresh child activity, stale-file timeout, Process exit winning over stale projection, supervisor reattachment, and parent/child namespace differences.
 
 ## 6. Delete Parallel Engine Authorities

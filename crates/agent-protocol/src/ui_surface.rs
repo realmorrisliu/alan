@@ -146,6 +146,7 @@ pub enum UiNoticeKind {
     #[default]
     None,
     Warning,
+    Error,
     Rollback,
     Compaction,
     MemoryFlush,

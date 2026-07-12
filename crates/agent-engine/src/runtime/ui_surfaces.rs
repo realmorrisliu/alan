@@ -62,6 +62,24 @@ pub(crate) async fn turn_completed(
         .await
 }
 
+pub(crate) async fn turn_failed(
+    namespace: &NamespaceRuntimeEnvironment,
+    message: &str,
+) -> Result<()> {
+    let notice = UiNoticeSnapshot::new(UiNoticeKind::Error, message);
+    namespace.write_ui_notice_snapshot(&notice).await?;
+    namespace
+        .append_ui_event(&UiEvent::Notice { snapshot: notice })
+        .await?;
+    namespace
+        .append_ui_event(&UiEvent::Error {
+            message: message.to_string(),
+            recoverable: true,
+        })
+        .await?;
+    turn_completed(namespace, false).await
+}
+
 pub(crate) async fn paused(namespace: &NamespaceRuntimeEnvironment) -> Result<()> {
     let activity = UiActivitySnapshot::paused(None);
     namespace.write_ui_activity_snapshot(&activity).await?;
@@ -309,5 +327,17 @@ mod tests {
         let plan: Value =
             serde_json::from_slice(&shell.cat("/agent/1/machine/ui/plan").await.unwrap()).unwrap();
         assert_eq!(plan["items"], Value::Array(Vec::new()));
+    }
+
+    #[tokio::test]
+    async fn failed_turn_records_file_terminal_error() {
+        let (environment, _) = namespace_environment();
+        initialize(&environment).await.unwrap();
+        turn_started(&environment).await.unwrap();
+        turn_failed(&environment, "provider failed").await.unwrap();
+
+        let notice = environment.read_ui_notice_snapshot().await.unwrap();
+        assert_eq!(notice.kind, UiNoticeKind::Error);
+        assert_eq!(notice.message, "provider failed");
     }
 }

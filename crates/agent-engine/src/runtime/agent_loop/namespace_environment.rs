@@ -777,6 +777,11 @@ impl NamespaceRuntimeEnvironment {
         self.child_tree_ids("actions").await
     }
 
+    pub(crate) async fn read_request_kind(&self, id: &str) -> Result<String> {
+        let path = format!("{}/requests/{id}/kind", self.agent_path);
+        String::from_utf8(self.client().read_file(&path).await?).context("request kind is utf8")
+    }
+
     pub(crate) async fn request_events_offset(&self) -> Result<u64> {
         self.child_tree_events_offset("requests").await
     }

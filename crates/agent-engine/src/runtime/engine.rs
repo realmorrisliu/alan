@@ -1823,6 +1823,21 @@ fn spawn_with_prepared_runtime_environment(
                         tokio::select! {
                             result = &mut submission_fut => {
                                 drop(submission_fut);
+                                let terminal_ui_result = match &result {
+                                    Ok(()) => super::ui_surfaces::turn_completed(
+                                        &namespace_heartbeat,
+                                        false,
+                                    )
+                                    .await,
+                                    Err(err) => super::ui_surfaces::turn_failed(
+                                        &namespace_heartbeat,
+                                        &format!("Error handling submission: {err}"),
+                                    )
+                                    .await,
+                                };
+                                if let Err(err) = terminal_ui_result {
+                                    warn!(error = %err, "Failed to write terminal runtime state");
+                                }
                                 if drive_as_turn_submission {
                                     let _ = queues
                                         .requeue_active_turn_leftovers(&mut state.turn_state)
