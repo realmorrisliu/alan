@@ -23,18 +23,22 @@ Current alan state (verified in-code):
 - The loader (`crates/agent-engine/src/skills/loader.rs`) accepts any
   `SKILL.md` with `name` + `description` frontmatter, so the generated packages
   are already discoverable if hand-copied. Command-style single files are not.
-- `capabilities.required_tools` exists in frontmatter and flows into
+- `capabilities.required_tools` and typed
+  `compatibility.dependencies.runtime_capability` entries flow into
   `skill_availability_issues` (`skills/types.rs`), so missing-capability
-  detection needs no new runtime mechanism.
+  detection needs no new runtime mechanism. Required tools may fall back to a
+  same-named PATH executable; unsupported Alan surfaces therefore must use a
+  runtime-capability dependency, whose unknown names remain unsatisfied.
 - There is no `$ARGUMENTS` substitution in the engine; alan's model is implicit
   invocation / force-select, not slash-commands-with-args.
 - skill-system-contract fixes one exported skill per skill package and already
   speaks install vocabulary (install sources, install channels).
-- Discovery today is multi-source host enumeration: `package_dirs_for_roots`
-  (`agent_definition.rs`) builds a `Vec<ScopedPackageDir>` from built-in +
-  `AgentRoot/skills/` + workspace/user `.agents/skills/` and hands it to the
-  scanner. There is no single owner of an agent's capability set — the legacy
-  this change replaces.
+- Discovery today has two bypass paths: `package_dirs_for_roots`
+  (`agent_definition.rs`) builds a `Vec<ScopedPackageDir>` from AgentRoot and
+  workspace/user `.agents/skills/`, then
+  `ResolvedCapabilityView::from_package_dirs` appends
+  `builtin_capability_packages()` directly. There is no single owner of an
+  agent's capability set — both paths are retired by this change.
 - Built-in skills are distributed by compiled-in registration, not as
   installable packages; making them Q packages is a reseed, not a rewrite of
   the skill package contract (skill-system-contract already says built-in
@@ -104,9 +108,10 @@ unchanged as materialization rules.
 ### D1: Q is the sole skill-resolution authority; providers replace enumerated sources
 
 The engine no longer enumerates host directories for skills. Today
-`package_dirs_for_roots` (`agent_definition.rs`) scans built-in +
-`AgentRoot/skills/` + `.agents/skills/` as independent sources; slice 1 retires
-that and makes **Quartermaster the one authority that resolves an agent's skill
+`package_dirs_for_roots` (`agent_definition.rs`) scans AgentRoot and
+`.agents/skills/` sources, while `ResolvedCapabilityView::from_package_dirs`
+injects `builtin_capability_packages()` afterward; slice 1 retires both paths
+and makes **Quartermaster the one authority that resolves an agent's skill
 set** (ADR-0030 D6). Every skill reaches an agent as a **Q package**, through
 one of three provider kinds:
 
@@ -229,7 +234,7 @@ a second discovered skill. This confines the only real added complexity
 of in-place discovery to one place (the store entry), instead of spreading a
 double-write across the public skill source.
 
-### D4: Adapter preamble + `required_tools`, never mechanical rewrite
+### D4: Adapter preamble + typed dependencies, never mechanical rewrite
 
 The source body stays verbatim. The injected preamble (one standard, versioned
 block after frontmatter):
@@ -244,19 +249,27 @@ block after frontmatter):
   package's canonical namespace path under `/lib/pkg/<package-id>/` — never to a
   host path.
 
-Known vocabulary is converter data, versioned with the converter. Unknown
-tool-like tokens are never silently mapped; they go to the install report.
+Known vocabulary is converter data, versioned with the converter. Vocabulary
+with an Alan tool equivalent emits `capabilities.required_tools`; vocabulary
+for an unsupported Alan surface emits a typed
+`compatibility.dependencies.runtime_capability` entry (for example
+`web_access` or `multi_agent_orchestration`), which cannot be satisfied by an
+unrelated same-named PATH executable. Unknown tool-like tokens are never
+silently mapped; they go to the install report.
 Alternatives rejected: mechanical token rewriting (prompt surgery, untraceable
 upstream diffs) and verbatim import (reproduces the silent-degradation
 failure). Mirrors the adapter-note pattern upstream already validated.
 
 ### D5: Missing capabilities fail honestly through existing machinery
 
-Conversion emits `capabilities.required_tools` for recognized vocabulary (e.g.
-`web_search`). Missing tools surface as `skill_availability_issues`, which the
-runtime already computes; the contract requires visibility at install time
-(report) and at exposure time (existing inspection surfaces). No new
-enforcement mechanism.
+Conversion emits the existing typed dependency appropriate to each recognized
+surface: `capabilities.required_tools` for real tool/executable requirements,
+and `compatibility.dependencies.runtime_capability` for Alan runtime surfaces.
+Unsupported surfaces such as web access therefore remain unavailable until the
+host explicitly implements that runtime capability. Missing dependencies
+surface as `skill_availability_issues`, which the runtime already computes; the
+contract requires visibility at install time (report) and at exposure time
+(existing inspection surfaces). No new enforcement mechanism.
 
 ### D6: The `/lib/pkg` projection is the fix for shared helpers
 
@@ -327,9 +340,9 @@ under `/lib`, and Plan 9's `/lib` is precisely where data files belong.
   re-materialization on next upgrade.
 - [Adapter preamble subtly changes prompt behavior] → preamble is standard,
   minimal, versioned; body stays verbatim so upstream diffs remain meaningful.
-- [`required_tools` names correspond to no alan tool (e.g. `web_search`)] →
-  intended honest-failure signal, not an error; loader validation constrains
-  token syntax only.
+- [Foreign vocabulary names collide with unrelated PATH executables] → only
+  actual tool requirements use `required_tools`; unsupported Alan surfaces use
+  typed runtime-capability dependencies, which PATH cannot satisfy.
 - [Install report warnings ignored, silent degradation returns at runtime] →
   availability issues also surface through existing exposure/inspection paths,
   not only at install time.
@@ -392,12 +405,13 @@ This is a non-additive discovery cutover. Before replacing
 `package_dirs_for_roots`, seed built-ins and register the existing AgentRoot,
 workspace, and channel-scoped public sources with Q; the parity regression in
 task 1.6 must show the same resolved skills. Then switch the engine to Q and
-remove the legacy enumeration in one change, without shipping a dual-resolver
-compatibility path.
+remove both the legacy directory enumeration and the
+`builtin_capability_packages()` injection in one change, without shipping a
+dual-resolver compatibility path.
 
-Rollback reverts that cutover and restores `package_dirs_for_roots` together
-with its built-in, AgentRoot, workspace, and channel-scoped source inputs. Only
-after legacy discovery is restored may the `q` command/provider wiring be
+Rollback reverts that cutover and restores `package_dirs_for_roots` plus the
+`builtin_capability_packages()` injection, together with the AgentRoot,
+workspace, and channel-scoped source inputs. Only after legacy discovery is restored may the `q` command/provider wiring be
 removed. Existing store entries can remain inert on disk during rollback; they
 must not be treated as discovered skills by the restored legacy resolver.
 

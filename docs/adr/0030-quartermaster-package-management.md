@@ -97,10 +97,10 @@ distribution packages live in the channel-scoped store; AgentRoot, workspace,
 and public skills remain at their authored locations and are registered as Q
 local-source providers, never copied into the store. They contribute skills
 only through Q resolution, not through a separately enumerated host directory.
-This retires the legacy multi-source enumeration (`package_dirs_for_roots`:
-built-in + `AgentRoot/skills/` + `.agents/skills/` scanned as independent
-sources) in favor of one authority that resolves the capability set for a
-given agent.
+This retires both legacy bypasses: directory enumeration
+(`package_dirs_for_roots`) and the later `builtin_capability_packages()` append
+inside `ResolvedCapabilityView::from_package_dirs`. Q becomes the sole
+authority that resolves the capability set for a given agent.
 
 This is **physical unification**, chosen over interface-only unification (Q as
 a single façade that still aggregates untouched legacy source directories). The
@@ -136,8 +136,8 @@ stay outside Q's ownership in this model. `tools = /bin` (ADR-0027) is
 
 The `add-alan-package-management` change is **slice 1** of the D6 authority
 model, not a standalone package manager. Slice 1 establishes: Q as the sole
-skill-resolution authority (legacy `package_dirs_for_roots` enumeration
-retired), distribution packages from git/local sources
+skill-resolution authority (legacy `package_dirs_for_roots` enumeration and
+direct `builtin_capability_packages()` injection retired), distribution packages from git/local sources
 (source-revision-token-as-version),
 built-in first-party skills reseeded as Q pre-installed packages, agent-root /
 workspace skills registered as Q local-source packages, the read-only

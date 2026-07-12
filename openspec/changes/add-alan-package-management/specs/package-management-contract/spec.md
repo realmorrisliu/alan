@@ -215,18 +215,29 @@ converter. Unknown tool-like tokens SHALL NOT be silently mapped.
 - **THEN** the materialized skill can invoke that helper at
   `/lib/pkg/<package>/...` without the user's original clone present
 
-### Requirement: Recognized capability needs become required-tool declarations
-Conversion SHALL scan the source for known foreign tool vocabulary and emit
-corresponding `capabilities.required_tools` entries in the generated
-frontmatter, so that missing host capabilities surface through the existing
-skill availability reporting instead of degrading silently at runtime.
+### Requirement: Recognized capability needs become typed dependencies
+Conversion SHALL scan the source for known foreign vocabulary. A vocabulary
+item with a real Alan tool or executable equivalent SHALL emit a corresponding
+`capabilities.required_tools` entry. A foreign surface with no Alan equivalent
+SHALL emit a `compatibility.dependencies` entry of kind `runtime_capability`;
+the dependency name SHALL describe the Alan capability needed (for example
+`web_access` or `multi_agent_orchestration`), not a foreign executable name.
+Missing dependencies SHALL surface through the existing skill availability
+reporting instead of degrading silently at runtime.
 
 #### Scenario: Missing capability is visible, not silent
-- **WHEN** a materialized skill declares a required tool the host does not
-  provide
+- **WHEN** a materialized skill declares a required tool or runtime capability
+  the host does not provide
 - **THEN** the install report lists the missing capability
 - **AND** the runtime's existing availability reporting surfaces the same
   issue for the materialized skill
+
+#### Scenario: Unsupported surface cannot be satisfied by PATH
+- **WHEN** source vocabulary requires web access but Alan has no `web_access`
+  runtime capability
+- **THEN** conversion emits an unsatisfied `runtime_capability` dependency
+- **AND** an unrelated executable named `web_search` or `web_access` on PATH
+  does not make the skill available
 
 #### Scenario: Unknown vocabulary is reported
 - **WHEN** the scan finds tool-like tokens outside the known-vocabulary table

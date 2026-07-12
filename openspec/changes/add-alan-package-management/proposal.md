@@ -2,11 +2,12 @@
 
 ## Why
 
-alan discovers skill capabilities by enumerating several host directories as
-independent sources — built-in first-party packages, `AgentRoot/skills/`, and
-`.agents/skills/` — in `package_dirs_for_roots`. That multi-source enumeration
-is the legacy of a world without a capability manager: no single owner, no
-lifecycle, no provenance, no reproducible agent environment. Dogfooding the
+alan discovers skill capabilities through two host-side paths:
+`package_dirs_for_roots` enumerates `AgentRoot/skills/` and `.agents/skills/`,
+then `ResolvedCapabilityView::from_package_dirs` appends built-in first-party
+packages directly. Those bypasses are the legacy of a world without a
+capability manager: no single owner, no lifecycle, no provenance, no
+reproducible agent environment. Dogfooding the
 first real external workload (ai-berkshire, a 19-skill Claude Code / Codex
 investment-research repository whose skills also share repo-root `tools/*.py`)
 made the gap concrete: alan cannot adopt an external skill *repository* at all,
@@ -21,10 +22,10 @@ ai-berkshire run.
 ## What Changes
 
 - **Q becomes the single skill-resolution authority.** The legacy
-  `package_dirs_for_roots` multi-source enumeration is retired; the engine
-  obtains its resolved skill set for an agent from Q, not by scanning host
-  directories itself. **BREAKING** for the internal discovery path (no stable
-  external API depended on it).
+  `package_dirs_for_roots` enumeration and direct
+  `builtin_capability_packages()` injection are retired; the engine obtains
+  its resolved skill set for an agent from Q. **BREAKING** for the internal
+  discovery path (no stable external API depended on it).
 - **Distribution packages** are introduced: an external source tree (git repo
   or local directory) pinned to a source revision token, assigned a unique
   package id, and held in a per-install-channel
@@ -39,8 +40,8 @@ ai-berkshire run.
   No skill reaches an agent through a bypass source.
 - **Materialization** turns external content into skill packages inside the
   store: Claude Code command-style `.md` files convert to directory-backed
-  packages (verbatim body + versioned **adapter preamble** + emitted
-  `capabilities.required_tools`); portable `SKILL.md` packages are adopted in
+  packages (verbatim body + versioned **adapter preamble** + emitted tool or
+  runtime-capability dependencies); portable `SKILL.md` packages are adopted in
   place. Q resolves only manifest-selected skill roots; the verbatim source
   tree remains package content, not an implicit recursive skill source. Shared
   helpers resolve at `/lib/pkg/<package-id>/...`, never a host path.
@@ -49,7 +50,8 @@ ai-berkshire run.
   local edits (warn, never silently overwrite), and make `q uninstall`
   complete. `q list` reports installed packages and unsatisfied capabilities.
 - **Honest failure**: recognized foreign vocabulary with no alan equivalent
-  (web search, Team orchestration) is declared unavailable and surfaced through
+  (web search, Team orchestration) becomes an unsatisfied typed
+  `runtime_capability` dependency and is surfaced through
   the existing `skill_availability_issues` machinery, never silently degraded.
 - **Out of scope** (later slices, ADR-0030 D7): agent runtime self-discovery
   from manifest-selected roots under `/lib/pkg` (gated on
@@ -70,7 +72,7 @@ ai-berkshire run.
   authority — distribution packages, the package store and `/lib/pkg`
   projection, the provider model (pre-installed / local-source / distribution),
   materialization rules (conversion, adoption, adapter preamble,
-  `required_tools` emission, `/lib/pkg` helper addressing), provenance,
+  typed dependency emission, `/lib/pkg` helper addressing), provenance,
   manifest, install/list/upgrade/uninstall, and honest failure.
 
 ### Modified Capabilities
@@ -83,9 +85,10 @@ ai-berkshire run.
 
 ## Impact
 
-- `crates/agent-engine`: `package_dirs_for_roots` (`agent_definition.rs`)
-  retired; the resolved capability view is fed by Q resolution. Built-in skill
-  distribution reseeds into the store. Reuses existing frontmatter validation
+- `crates/agent-engine`: `package_dirs_for_roots` (`agent_definition.rs`) and
+  the later `builtin_capability_packages()` injection (`capability_view.rs`)
+  are retired; the resolved capability view is fed only by Q resolution.
+  Built-in skill distribution reseeds into the store. Reuses existing frontmatter validation
   (`parse_skill_metadata`, `validate_capabilities`) and availability reporting
   (`skill_availability_issues`).
 - `crates/alan` CLI: new Quartermaster (`q`) command family; store backing under
