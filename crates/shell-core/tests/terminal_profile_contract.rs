@@ -4,7 +4,6 @@ use alan_shell_core::{
     ManagedTerminalAccountPlanStepKind, ManagedTerminalAccountPlanner,
     ManagedTerminalAccountProfileHandoff, ManagedTerminalAccountProfileState,
     ManagedTerminalAccountRecord, ManagedTerminalAccountRequest, ManagedTerminalAccountState,
-    ManagedTerminalAccountSudoersRule, ManagedTerminalAccountSudoersState,
     ManagedTerminalAccountVerificationStatus, ManagedTerminalAccountVerificationStep,
     TerminalExecutableAvailability, TerminalLaunchEnvironment, TerminalLaunchIntent,
     TerminalLaunchStrategy, TerminalProfileDefinition, TerminalProfileDocument,
@@ -364,11 +363,10 @@ fn global_default_capture_matches_swift_policy() {
 }
 
 #[test]
-fn managed_terminal_account_dry_run_plans_handoff_without_broad_sudoers() {
+fn managed_terminal_account_dry_run_uses_helper_owned_steps() {
     let request = managed_account_request();
     let missing_state = ManagedTerminalAccountState {
         account: ManagedTerminalAccountRecord::Missing,
-        sudoers: ManagedTerminalAccountSudoersState::Missing,
         ownership: ManagedTerminalAccountOwnershipState::Missing,
         terminal_profile: ManagedTerminalAccountProfileState::Missing,
         verification: ManagedTerminalAccountVerificationStatus::NotRun,
@@ -384,11 +382,10 @@ fn managed_terminal_account_dry_run_plans_handoff_without_broad_sudoers() {
         vec![
             ManagedTerminalAccountPlanStepKind::CreateStandardAccount,
             ManagedTerminalAccountPlanStepKind::HideAccount,
-            ManagedTerminalAccountPlanStepKind::WriteSudoersDropIn,
-            ManagedTerminalAccountPlanStepKind::ValidateSudoers,
-            ManagedTerminalAccountPlanStepKind::VerifyTerminalEntry,
+            ManagedTerminalAccountPlanStepKind::WriteOwnershipMarker,
+            ManagedTerminalAccountPlanStepKind::VerifyAccount,
+            ManagedTerminalAccountPlanStepKind::VerifyManagedUserPty,
             ManagedTerminalAccountPlanStepKind::CreateOrUpdateTerminalProfile,
-            ManagedTerminalAccountPlanStepKind::BindCurrentSpace,
         ]
     );
 
@@ -396,7 +393,6 @@ fn managed_terminal_account_dry_run_plans_handoff_without_broad_sudoers() {
         account: ManagedTerminalAccountRecord::Invalid {
             reason: "Local account record is incomplete.".to_string(),
         },
-        sudoers: ManagedTerminalAccountSudoersState::Missing,
         ownership: ManagedTerminalAccountOwnershipState::Missing,
         terminal_profile: ManagedTerminalAccountProfileState::Missing,
         verification: ManagedTerminalAccountVerificationStatus::NotRun,
@@ -414,7 +410,6 @@ fn managed_terminal_account_dry_run_plans_handoff_without_broad_sudoers() {
             shell: "/bin/zsh".to_string(),
             hidden: false,
         },
-        sudoers: ManagedTerminalAccountSudoersState::Missing,
         ownership: ManagedTerminalAccountOwnershipState::Missing,
         terminal_profile: ManagedTerminalAccountProfileState::Missing,
         verification: ManagedTerminalAccountVerificationStatus::NotRun,
@@ -434,12 +429,9 @@ fn managed_terminal_account_dry_run_plans_handoff_without_broad_sudoers() {
             shell: "/bin/zsh".to_string(),
             hidden: true,
         },
-        sudoers: ManagedTerminalAccountSudoersState::AlanOwnedValid {
-            path: "/etc/sudoers.d/alan-terminal-morris-to-alan_smoke".to_string(),
-        },
         ownership: ManagedTerminalAccountOwnershipState::AlanManaged {
-            evidence: ManagedTerminalAccountOwnershipEvidence::LegacyAlanSudoers {
-                path: "/etc/sudoers.d/alan-terminal-morris-to-alan_smoke".to_string(),
+            evidence: ManagedTerminalAccountOwnershipEvidence::HelperMarker {
+                path: "/Library/Application Support/alan-macos-dev/managed-users/alan_smoke/ownership.json".to_string(),
             },
         },
         terminal_profile: ManagedTerminalAccountProfileState::Missing,
@@ -458,18 +450,6 @@ fn managed_terminal_account_dry_run_plans_handoff_without_broad_sudoers() {
             .any(|step| step.kind == ManagedTerminalAccountPlanStepKind::RepairHomeDirectory)
     );
 
-    let rule = ManagedTerminalAccountSudoersRule::new(&request);
-    assert_eq!(
-        rule.file_path,
-        "/etc/sudoers.d/alan-terminal-morris-to-alan_smoke"
-    );
-    assert!(
-        rule.contents
-            .contains("morris ALL=(alan_smoke) NOPASSWD: ALL")
-    );
-    assert!(!rule.contents.contains("ALL=(ALL)"));
-    assert!(!rule.contents.contains("morris ALL=(root)"));
-
     let cancelled = ManagedTerminalAccountFakeExecutor::apply(&plan, true, None);
     assert!(cancelled.cancelled);
     assert!(cancelled.completed_steps.is_empty());
@@ -484,12 +464,9 @@ fn managed_terminal_account_dry_run_plans_handoff_without_broad_sudoers() {
             shell: "/bin/zsh".to_string(),
             hidden: true,
         },
-        sudoers: ManagedTerminalAccountSudoersState::AlanOwnedValid {
-            path: rule.file_path,
-        },
         ownership: ManagedTerminalAccountOwnershipState::AlanManaged {
-            evidence: ManagedTerminalAccountOwnershipEvidence::LegacyAlanSudoers {
-                path: "/etc/sudoers.d/alan-terminal-morris-to-alan_smoke".to_string(),
+            evidence: ManagedTerminalAccountOwnershipEvidence::HelperMarker {
+                path: "/Library/Application Support/alan-macos-dev/managed-users/alan_smoke/ownership.json".to_string(),
             },
         },
         terminal_profile: ManagedTerminalAccountProfileState::Missing,
@@ -543,12 +520,10 @@ fn profile_document() -> TerminalProfileDocument {
 fn managed_account_request() -> ManagedTerminalAccountRequest {
     ManagedTerminalAccountRequest {
         account_name: "alan_smoke".to_string(),
-        gui_user_name: "morris".to_string(),
         full_name: Some("Alan Smoke".to_string()),
         shell: "/bin/zsh".to_string(),
         home_directory: "/Users/alan_smoke".to_string(),
         hide_from_login_window: true,
-        bind_current_space_after_success: true,
     }
 }
 

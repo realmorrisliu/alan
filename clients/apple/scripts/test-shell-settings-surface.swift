@@ -36,23 +36,10 @@ struct ShellSettingsSurfaceTestRunner {
             try testPrivilegedHelperManagedUserApplyUsesLongTimeout()
             try testPrivilegedHelperRevalidatesOwnershipBeforeDestructiveDeletes()
             try testPrivilegedHelperRequestValidationIsNarrowAndSanitized()
-            try testManagedUserHelperBackedPathForbidsLegacyExecutorFallback()
             try testLocalFolderOpenerRequiresExistingDirectory()
-            try testTerminalProfilesAndManagedUsersStayLocalAndRedacted()
-            try testManagedUserTerminalProfilesUseHelperLaunchIdentity()
-            try testManagedUserRowsExposeStateAppropriateActions()
-            try testManagedUserRowsExposeHelperBackedStates()
-            try testManagedUserCatalogIncludesPersistedAndIncompleteUsers()
-            try testManagedUserExistingOrdinaryAccountReportsNotAlanManaged()
-            try testManagedUserSummaryUsesHelperDiagnosisStates()
-            try testManagedUserReviewPreviewUsesHelperOperationRows()
-            try testManagedUserCreationPreviewDerivesDefaultsAndRejectsConflicts()
-            try testManagedUserSummaryRunsReadinessVerificationBeforePlanning()
-            try testManagedUserApplyUsesPrivilegedExecutorAndRefreshesStatus()
-            try testManagedUserApplyUsesHelperDeclarativePlanAndRejectsLegacySteps()
-            try testFakeHelperCoversManagedUserRemovalPtyAndDenialStates()
-            try testManagedUserRollbackRequiresAlanOwnershipForDestructiveDeletion()
-            try testManagedProfileReadinessFiltersSpaceIdentityChoices()
+            try testManagedUsersUseCurrentHelperContract()
+            try testRetiredManagedProfileRequiresExplicitRepair()
+            try testManagedUserRollbackAndProfileSelectionStayBounded()
             try testPerformanceDiagnosticsRowsAreCompactAndLocal()
             try testNavigationGroupsMapTaskOrientedRows()
             try testNavigationGroupsPlaceSystemRows()
@@ -349,7 +336,6 @@ private func testPrivilegedHelperXPCBoundaryIsTypedAndChannelScoped() throws {
 
     let invalidManagedUser = ManagedTerminalAccountRequest(
         accountName: "bad user",
-        guiUserName: "morris",
         fullName: "Bad User",
         shell: "/bin/bash",
         homeDirectory: "/tmp/bad user"
@@ -523,7 +509,6 @@ private func testPrivilegedHelperRevalidatesOwnershipBeforeDestructiveDeletes() 
 private func testPrivilegedHelperRequestValidationIsNarrowAndSanitized() throws {
     let valid = ManagedTerminalAccountRequest(
         accountName: "lab",
-        guiUserName: "morris",
         fullName: "Lab User"
     )
     try expect(
@@ -533,7 +518,6 @@ private func testPrivilegedHelperRequestValidationIsNarrowAndSanitized() throws 
 
     let invalid = ManagedTerminalAccountRequest(
         accountName: "bad user",
-        guiUserName: "morris",
         fullName: "Bad User",
         shell: "/bin/bash",
         homeDirectory: "/tmp/bad user"
@@ -593,41 +577,6 @@ private func testPrivilegedHelperRequestValidationIsNarrowAndSanitized() throws 
     )
 }
 
-private func testManagedUserHelperBackedPathForbidsLegacyExecutorFallback() throws {
-    let terminalPane = try readRepositoryFile("clients/apple/alan-macos/TerminalPaneView.swift")
-    let shellValues = try readRepositoryFile("clients/apple/alan-macos/Models/Shell/ShellValueTypes.swift")
-    let helperExecutor = try sourceSlice(
-        named: "struct ManagedTerminalAccountHelperExecutor",
-        in: shellValues,
-        endingBefore: "enum ShellTabActiveTaskState"
-    )
-
-    try expect(
-        !terminalPane.contains("ManagedTerminalAccountAuthorizedScriptExecutor"),
-        "Settings Managed User apply must not instantiate the legacy authorized script executor"
-    )
-    try expect(
-        !shellValues.contains("ManagedTerminalAccountAuthorizedScriptExecutor")
-            && !shellValues.contains("ManagedTerminalAccountAppleScriptPrivilegeRunner")
-            && !shellValues.contains("with administrator privileges")
-            && !shellValues.contains("/usr/bin/osascript"),
-        "production Managed User code must not define the old osascript privileged executor"
-    )
-    for forbidden in [
-        "writeSudoersDropIn",
-        "validateSudoers",
-        "verifyTerminalEntry",
-        "sudo -n -iu",
-        "do shell script",
-        "/etc/sudoers.d/",
-    ] {
-        try expect(
-            !helperExecutor.contains(forbidden),
-            "helper-backed Managed User executor must not reference \(forbidden)"
-        )
-    }
-}
-
 private func testLocalFolderOpenerRequiresExistingDirectory() throws {
     let homeDirectory = try makeTemporaryDirectory()
     defer { try? FileManager.default.removeItem(at: homeDirectory) }
@@ -660,586 +609,105 @@ private func testLocalFolderOpenerRequiresExistingDirectory() throws {
     )
 }
 
-private func testTerminalProfilesAndManagedUsersStayLocalAndRedacted() throws {
-    let accountPlans = [
-        ManagedTerminalAccountPlanner.plan(
-            request: ManagedTerminalAccountRequest(
-                accountName: "alan",
-                guiUserName: "morris",
-                fullName: "Alan Terminal"
-            ),
-            state: ManagedTerminalAccountState(
-                account: .standard(homeDirectory: "/Users/alan", shell: "/bin/zsh", hidden: true),
-                sudoers: .alanOwnedValid(path: "/etc/sudoers.d/alan-terminal-morris-to-alan"),
-                ownership: alanManagedOwnership("alan"),
-                terminalProfile: .existingManaged(profileID: "alan"),
-                verification: .passed
-            )
-        ),
-        ManagedTerminalAccountPlanner.plan(
-            request: ManagedTerminalAccountRequest(
-                accountName: "lab",
-                guiUserName: "morris",
-                fullName: "Lab User"
-            ),
-            state: ManagedTerminalAccountState(
-                account: .standard(homeDirectory: "/Users/lab", shell: "/bin/zsh", hidden: true),
-                sudoers: .alanOwnedValid(path: "/etc/sudoers.d/alan-terminal-morris-to-lab"),
-                ownership: alanManagedOwnership("lab"),
-                terminalProfile: .existingUnmanaged(profileID: "lab"),
-                verification: .passed
-            )
-        ),
-    ]
-    let snapshot = ShellSettingsSurfaceSnapshot.make(
-        local: stableLocalSummary(),
-        terminalProfiles: testTerminalProfiles(),
-        managedTerminalAccounts: ManagedTerminalAccountSettingsSummary(plans: accountPlans)
-    )
-    let profileSection = try requireSection(.terminalProfiles, in: snapshot)
-    let accountSection = try requireSection(.terminalAccounts, in: snapshot)
-    let visibleText = snapshot.visibleText.joined(separator: "\n")
-
-    try expect(
-        profileSection.visibleText.contains("Terminal Profiles"),
-        "Terminal Profiles must render as local startup configuration"
-    )
-    try expect(
-        accountSection.title == "Managed Users",
-        "Settings must present managed terminal accounts as Managed Users"
-    )
-    try expect(
-        profileSection.rows.first { $0.id == "terminalProfilesDefault" }?.title == "Default profile",
-        "Terminal Profiles must expose the shell-core default profile control row"
-    )
-    try expect(
-        profileSection.rows.first { $0.id == "terminalProfile.login_shell" }?.value == "login_shell",
-        "Login shell profile row must preserve the shell-core launch kind value when it is not default"
-    )
-    try expect(
-        accountSection.rows.contains { $0.title == "Alan Terminal" && $0.detail?.contains("alan") == true },
-        "Managed Users must list each user by display label and Unix user name"
-    )
-    try expect(
-        accountSection.rows.contains { $0.title == "Lab User" && $0.value == "Conflict" },
-        "Managed Users must show independent conflict state for each user"
-    )
-    try expect(
-        !visibleText.contains("echo hidden-secret"),
-        "Settings must not expose full custom command text in normal rows"
-    )
-    try expect(
-        !visibleText.lowercased().contains("autologin"),
-        "Settings copy must not use autologin wording"
-    )
-    try expect(
-        accountSection.visibleText.joined(separator: " ").contains("terminal entry"),
-        "Managed Terminal Account rows must describe terminal entry"
-    )
-}
-
-private func testManagedUserTerminalProfilesUseHelperLaunchIdentity() throws {
-    let request = ManagedTerminalAccountRequest(
-        accountName: "lab",
-        guiUserName: "morris",
-        fullName: "Lab User"
-    )
-    let profile = ManagedTerminalAccountProfileHandoff.profileDefinition(
-        for: request,
-        state: ManagedTerminalAccountState(
-            account: .standard(homeDirectory: "/Users/lab", shell: "/bin/zsh", hidden: true),
-            sudoers: .missing,
-            ownership: alanManagedOwnership("lab"),
-            terminalProfile: .missing,
-            verification: .passed
-        )
-    )
-    try expect(
-        profile?.launch == .managedUser(unixUser: "lab")
-            && profile?.managedTerminalAccountID == "lab",
-        "Managed User profile handoff must create managed_user profiles with ownership evidence"
-    )
-
-    let managedDocument = TerminalProfileDocument(
-        defaultProfileID: "lab",
+private func testManagedUsersUseCurrentHelperContract() throws {
+    let request = ManagedTerminalAccountRequest(accountName: "lab", fullName: "Lab User")
+    let profiles = TerminalProfileSettingsSummary(
         profiles: [
-            TerminalProfileDefinition.loginShellFallback,
+            .loginShellFallback,
             TerminalProfileDefinition(
-                id: "lab",
-                title: "Lab User",
-                launch: .managedUser(unixUser: "lab"),
-                defaultWorkingDirectory: "/Users/lab",
-                presentation: nil,
-                managedTerminalAccountID: "lab"
-            ),
-        ]
-    )
-    try expect(
-        TerminalProfileValidator.validate(managedDocument).isValid,
-        "managed_user profiles with matching Managed User ownership must validate"
-    )
-    let managedProfileRows = try requireSection(
-        .terminalProfiles,
-        in: ShellSettingsSurfaceSnapshot.make(
-            local: stableLocalSummary(),
-            terminalProfiles: TerminalProfileSettingsSummary(
-                profiles: managedDocument.profiles,
-                defaultProfileID: managedDocument.defaultProfileID,
-                recoveryMessage: nil
-            ),
-            managedTerminalAccounts: ManagedTerminalAccountSettingsSummary(
-                plans: [
-                    ManagedTerminalAccountPlanner.plan(
-                        request: request,
-                        state: ManagedTerminalAccountState(
-                            account: .standard(
-                                homeDirectory: "/Users/lab",
-                                shell: "/bin/zsh",
-                                hidden: true
-                            ),
-                            sudoers: .missing,
-                            ownership: alanManagedOwnership("lab"),
-                            terminalProfile: .existingManaged(profileID: "lab"),
-                            verification: .passed
-                        )
-                    ),
-                ]
-            )
-        )
-    ).rows
-    let managedProfileRow = managedProfileRows.first { $0.id == "terminalProfile.lab" }
-    try expect(
-        managedProfileRow?.mutability == .readOnly
-            && managedProfileRow?.actions.isEmpty == true
-            && managedProfileRow?.value == "Managed",
-        "managed Terminal Profiles must stay read-only in the profile editor"
-    )
-
-    let missingManagedAccount = TerminalProfileValidator.validate(
-        TerminalProfileDocument(
-            defaultProfileID: "lab",
-            profiles: [
-                TerminalProfileDefinition(
-                    id: "lab",
-                    title: "Lab User",
-                    launch: .managedUser(unixUser: "lab"),
-                    defaultWorkingDirectory: "/Users/lab",
-                    presentation: nil
-                ),
-            ]
-        )
-    )
-    try expect(
-        missingManagedAccount.errors.contains(.missingManagedAccount("lab")),
-        "managed_user profiles must require Managed User ownership evidence"
-    )
-
-    let mismatchedManagedAccount = TerminalProfileValidator.validate(
-        TerminalProfileDocument(
-            defaultProfileID: "lab",
-            profiles: [
-                TerminalProfileDefinition(
-                    id: "lab",
-                    title: "Lab User",
-                    launch: .managedUser(unixUser: "lab"),
-                    defaultWorkingDirectory: "/Users/lab",
-                    presentation: nil,
-                    managedTerminalAccountID: "other"
-                ),
-            ]
-        )
-    )
-    try expect(
-        mismatchedManagedAccount.errors.contains(
-            .managedAccountMismatch(profileID: "lab", accountID: "other", unixUser: "lab")
-        ),
-        "managed_user profiles must launch the same Unix account that owns the profile"
-    )
-
-    let legacyMigrationPlan = ManagedTerminalAccountPlanner.plan(
-        request: request,
-        state: ManagedTerminalAccountState(
-            account: .standard(homeDirectory: "/Users/lab", shell: "/bin/zsh", hidden: true),
-            sudoers: .missing,
-            ownership: alanManagedOwnership("lab"),
-            terminalProfile: .existingManagedOutdated(profileID: "lab"),
-            verification: .passed
-        )
-    )
-    try expect(
-        legacyMigrationPlan.steps.contains { $0.kind == .createOrUpdateTerminalProfile },
-        "legacy Alan-managed sudo_user profiles must be planned for managed_user handoff"
-    )
-
-    let manualSudoDocument = TerminalProfileDocument(
-        defaultProfileID: "ops",
-        profiles: [
-            TerminalProfileDefinition(
-                id: "ops",
-                title: "Operator",
-                launch: .sudoUser(unixUser: "ops"),
+                id: "manual",
+                title: "Manual sudo profile",
+                launch: .sudoUser(unixUser: "operator"),
                 defaultWorkingDirectory: nil,
                 presentation: nil
             ),
-        ]
-    )
-    try expect(
-        TerminalProfileValidator.validate(manualSudoDocument).isValid,
-        "manual sudo_user profiles must remain operator managed and valid"
-    )
-}
-
-private func testManagedUserRowsExposeStateAppropriateActions() throws {
-    let readyPlan = ManagedTerminalAccountPlanner.plan(
-        request: ManagedTerminalAccountRequest(
-            accountName: "alan",
-            guiUserName: "morris",
-            fullName: "Alan Terminal"
-        ),
-        state: ManagedTerminalAccountState(
-            account: .standard(homeDirectory: "/Users/alan", shell: "/bin/zsh", hidden: true),
-            sudoers: .alanOwnedValid(path: "/etc/sudoers.d/alan-terminal-morris-to-alan"),
-            ownership: alanManagedOwnership("alan"),
-            terminalProfile: .existingManaged(profileID: "alan"),
-            verification: .passed
-        )
-    )
-    let repairPlan = ManagedTerminalAccountPlanner.plan(
-        request: ManagedTerminalAccountRequest(
-            accountName: "lab",
-            guiUserName: "morris",
-            fullName: "Lab User"
-        ),
-        state: ManagedTerminalAccountState(
-            account: .standard(homeDirectory: "/Users/lab", shell: "/bin/zsh", hidden: true),
-            sudoers: .missing,
-            ownership: alanManagedOwnership("lab"),
-            terminalProfile: .existingManaged(profileID: "lab"),
-            verification: .passed
-        )
-    )
-    let conflictPlan = ManagedTerminalAccountPlanner.plan(
-        request: ManagedTerminalAccountRequest(
-            accountName: "ops",
-            guiUserName: "morris",
-            fullName: "Ops User"
-        ),
-        state: ManagedTerminalAccountState(
-            account: .standard(homeDirectory: "/Users/ops", shell: "/bin/zsh", hidden: true),
-            sudoers: .alanOwnedValid(path: "/etc/sudoers.d/alan-terminal-morris-to-ops"),
-            ownership: alanManagedOwnership("ops"),
-            terminalProfile: .existingUnmanaged(profileID: "ops"),
-            verification: .passed
-        )
-    )
-    let snapshot = ShellSettingsSurfaceSnapshot.make(
-        local: stableLocalSummary(),
-        terminalProfiles: testTerminalProfiles(),
-        managedTerminalAccounts: ManagedTerminalAccountSettingsSummary(
-            plans: [readyPlan, repairPlan, conflictPlan]
-        )
-    )
-    let accountSection = try requireSection(.terminalAccounts, in: snapshot)
-    let rowsByID = Dictionary(uniqueKeysWithValues: accountSection.rows.map { ($0.id, $0) })
-    let visibleText = accountSection.visibleText.joined(separator: "\n")
-
-    try expect(
-        accountSection.rows.map(\.id).contains("terminalAccountProvision"),
-        "Managed Users must keep the create action available when users already exist"
-    )
-    try expect(
-        rowsByID["terminalAccountProvision"]?.actions.map(\.id) == [.create],
-        "Managed Users create row must expose an explicit Create action"
-    )
-    try expect(
-        rowsByID["terminalAccount.alan"]?.actions.map(\.id) == [.review, .verify, .remove],
-        "Ready Managed Users must expose Review, Verify, and Remove actions"
-    )
-    try expect(
-        rowsByID["terminalAccount.lab"]?.actions.map(\.id) == [.review, .repair],
-        "Repairable Managed Users must expose Review and Repair actions"
-    )
-    try expect(
-        rowsByID["terminalAccount.ops"]?.actions.map(\.id) == [.review],
-        "Conflicting Managed Users must route through Review instead of direct repair"
-    )
-    try expect(
-        !visibleText.contains("NOPASSWD") && !visibleText.contains("/usr/bin/dscl")
-            && !visibleText.contains("do shell script"),
-        "Managed Users rows must not expose raw sudoers or privileged script bodies"
-    )
-}
-
-private func testManagedUserRowsExposeHelperBackedStates() throws {
-    func request(_ accountName: String) -> ManagedTerminalAccountRequest {
-        ManagedTerminalAccountRequest(
-            accountName: accountName,
-            guiUserName: "morris",
-            fullName: "\(accountName) user"
-        )
-    }
-
-    func plan(
-        _ accountName: String,
-        status: ManagedTerminalAccountPlanStatus,
-        steps: [ManagedTerminalAccountPlanStep] = []
-    ) -> ManagedTerminalAccountPlan {
-        ManagedTerminalAccountPlan(
-            request: request(accountName),
-            status: status,
-            steps: steps
-        )
-    }
-
-    let helperVerifyStep = ManagedTerminalAccountPlanStep(
-        kind: .helperStep(.verifyManagedUserPTY),
-        summary: "Verify helper PTY",
-        requiresPrivilege: true
-    )
-    let plans = [
-        plan("ready", status: .alreadyReady),
-        plan("repair", status: .repair, steps: [helperVerifyStep]),
-        plan("manual", status: .accountNotAlanManaged),
-        plan(
-            "legacy",
-            status: .legacySudoersPresent(path: "/etc/sudoers.d/alan-terminal-morris-to-legacy"),
-            steps: [
-                ManagedTerminalAccountPlanStep(
-                    kind: .helperStep(.cleanupLegacySudoers),
-                    summary: "Clean up legacy sudoers",
-                    requiresPrivilege: true
-                ),
-            ]
-        ),
-        plan("ptyfail", status: .ptySpawnFailed, steps: [helperVerifyStep]),
-        plan("delete", status: .requiresDestructiveConfirmation),
-    ]
-    let snapshot = ShellSettingsSurfaceSnapshot.make(
-        local: stableLocalSummary(),
-        terminalProfiles: testTerminalProfiles(),
-        managedTerminalAccounts: ManagedTerminalAccountSettingsSummary(plans: plans)
-    )
-    let accountSection = try requireSection(.terminalAccounts, in: snapshot)
-    let rowsByID = Dictionary(uniqueKeysWithValues: accountSection.rows.map { ($0.id, $0) })
-
-    try expect(
-        rowsByID["terminalAccount.ready"]?.value == "Ready"
-            && rowsByID["terminalAccount.ready"]?.actions.map(\.id) == [.review, .verify, .remove],
-        "ready Managed User rows must remain selectable and removable"
-    )
-    try expect(
-        rowsByID["terminalAccount.repair"]?.value == "Repairable"
-            && rowsByID["terminalAccount.repair"]?.actions.map(\.id) == [.review, .repair],
-        "repairable Managed User rows must expose repair"
-    )
-    try expect(
-        rowsByID["terminalAccount.manual"]?.value == "Not managed"
-            && rowsByID["terminalAccount.manual"]?.actions.map(\.id) == [.review],
-        "ordinary macOS accounts must render as not Alan managed"
-    )
-    try expect(
-        rowsByID["terminalAccount.legacy"]?.value == "Legacy"
-            && rowsByID["terminalAccount.legacy"]?.actions.map(\.id) == [.review, .repair]
-            && rowsByID["terminalAccount.legacy"]?.detail?.contains("legacy Alan sudoers state") == true,
-        "legacy Alan sudoers state must render as a repairable cleanup row"
-    )
-    try expect(
-        rowsByID["terminalAccount.ptyfail"]?.value == "PTY failed"
-            && rowsByID["terminalAccount.ptyfail"]?.actions.map(\.id) == [.review, .repair],
-        "helper PTY spawn failure must render as repairable helper state"
-    )
-    try expect(
-        rowsByID["terminalAccount.delete"]?.value == "Confirm"
-            && rowsByID["terminalAccount.delete"]?.actions.map(\.id) == [.review],
-        "destructive Managed User rollback must render as confirmation-only"
-    )
-}
-
-private func testManagedUserCatalogIncludesPersistedAndIncompleteUsers() throws {
-    let terminalProfiles = TerminalProfileSettingsSummary(
-        profiles: [.loginShellFallback],
-        defaultProfileID: TerminalProfileDefinition.loginShellFallback.id,
+        ],
+        defaultProfileID: "login_shell",
         recoveryMessage: nil
     )
-    let commandRunner = StubManagedTerminalAccountCommandRunner(
-        responses: [
-            "/usr/bin/dscl . -read /Users/liuyimeng1994 UniqueID PrimaryGroupID NFSHomeDirectory UserShell IsHidden AuthenticationAuthority":
-                ManagedTerminalAccountCommandResult(
-                    exitCode: 0,
-                    standardOutput: """
-                    No such key: IsHidden
-                    No such key: AuthenticationAuthority
-                    NFSHomeDirectory: /Users/liuyimeng1994
-                    PrimaryGroupID: 20
-                    UniqueID: 504
-                    UserShell: /bin/zsh
-                    """,
-                    standardError: ""
-                ),
-            "/usr/sbin/dseditgroup -o checkmember -m liuyimeng1994 admin":
-                ManagedTerminalAccountCommandResult(
-                    exitCode: 0,
-                    standardOutput: "yes liuyimeng1994 is a member of admin",
-                    standardError: ""
-                ),
-            "/usr/bin/dscl . -read /Users/realmorrisliu UniqueID PrimaryGroupID NFSHomeDirectory UserShell IsHidden AuthenticationAuthority":
-                ManagedTerminalAccountCommandResult(
-                    exitCode: 0,
-                    standardOutput: """
-                    No such key: IsHidden
-                    No such key: AuthenticationAuthority
-                    NFSHomeDirectory: /Users/realmorrisliu
-                    PrimaryGroupID: 20
-                    UniqueID: 505
-                    UserShell: /bin/zsh
-                    """,
-                    standardError: ""
-                ),
-            "/usr/sbin/dseditgroup -o checkmember -m realmorrisliu admin":
-                ManagedTerminalAccountCommandResult(
-                    exitCode: 0,
-                    standardOutput: "yes realmorrisliu is a member of admin",
-                    standardError: ""
-                ),
-            "/usr/bin/dscl . -read /Users/univer UniqueID PrimaryGroupID NFSHomeDirectory UserShell IsHidden AuthenticationAuthority":
-                ManagedTerminalAccountCommandResult(
-                    exitCode: 0,
-                    standardOutput: """
-                    No such key: IsHidden
-                    No such key: AuthenticationAuthority
-                    No such key: UniqueID
-                    NFSHomeDirectory: /Users/univer
-                    PrimaryGroupID: 20
-                    UserShell: /bin/zsh
-                    """,
-                    standardError: ""
-                ),
-            "/usr/sbin/dseditgroup -o checkmember -m univer admin":
-                ManagedTerminalAccountCommandResult(
-                    exitCode: 1,
-                    standardOutput: "no univer is not a member of admin",
-                    standardError: ""
-                ),
-        ]
+    let diagnosis = helperDiagnosis(
+        accountName: request.accountName,
+        readiness: .accountMissing,
+        ownership: .missing,
+        homeDirectoryExists: false,
+        shellMatches: false,
+        hiddenFromLoginWindow: false
     )
-    let discoverer = ManagedTerminalAccountLocalStateDiscoverer(
-        commandRunner: commandRunner,
-        sudoersSyntaxChecker: StubSudoersSyntaxChecker(result: .passed)
+    let plan = ManagedTerminalAccountPlanner.plan(
+        request: request,
+        diagnosis: diagnosis,
+        terminalProfiles: profiles.document
     )
-    let summary = ManagedTerminalAccountSettingsSummary.current(
-        terminalProfiles: terminalProfiles,
-        guiUserName: "morris",
-        discoverer: discoverer,
-        catalog: ManagedTerminalAccountCatalog(
-            entries: [
-                ManagedTerminalAccountCatalogEntry(accountName: "lab", displayLabel: "Lab User"),
-            ]
-        )
-    )
-    let usersByName = Dictionary(uniqueKeysWithValues: summary.users.map { ($0.unixUserName, $0) })
 
+    try expect(plan.status == .readyToApply, "a missing Managed User must be ready to apply")
     try expect(
-        summary.users.map(\.unixUserName) == ["lab"],
-        "Managed Users must include persisted intents without importing ordinary local accounts"
+        plan.steps.map(\.kind) == [
+            .helperStep(.createStandardAccount),
+            .helperStep(.hideAccount),
+            .helperStep(.writeOwnershipMarker),
+            .helperStep(.verifyAccount),
+            .helperStep(.verifyManagedUserPTY),
+            .createOrUpdateTerminalProfile,
+        ],
+        "Managed User creation must use only current helper and profile handoff steps"
     )
-    try expect(
-        usersByName["lab"]?.displayLabel == "Lab User"
-            && usersByName["lab"]?.readinessState == .readyToApply,
-        "persisted Managed User intents must remain manageable even before a Terminal Profile exists"
-    )
-    try expect(
-        usersByName["liuyimeng1994"] == nil
-            && usersByName["realmorrisliu"] == nil
-            && usersByName["morris"] == nil
-            && usersByName["root"] == nil
-            && usersByName["univer"] == nil,
-        "Managed Users must not import normal or reserved local accounts as managed identities"
-    )
-}
 
-private func testManagedUserExistingOrdinaryAccountReportsNotAlanManaged() throws {
-    let request = ManagedTerminalAccountRequest(
-        accountName: "univer",
-        guiUserName: "morris",
-        fullName: "Univer"
-    )
-    let commandRunner = StubManagedTerminalAccountCommandRunner(
-        responses: [
-            "/usr/bin/dscl . -read /Users/univer UniqueID PrimaryGroupID NFSHomeDirectory UserShell IsHidden AuthenticationAuthority":
-                ManagedTerminalAccountCommandResult(
-                    exitCode: 0,
-                    standardOutput: """
-                    No such key: AuthenticationAuthority
-                    NFSHomeDirectory: /Users/univer
-                    PrimaryGroupID: 20
-                    UniqueID: 507
-                    UserShell: /bin/zsh
-                    """,
-                    standardError: ""
-                ),
-            "/usr/sbin/dseditgroup -o checkmember -m univer admin":
-                ManagedTerminalAccountCommandResult(
-                    exitCode: 1,
-                    standardOutput: "no univer is not a member of admin",
-                    standardError: ""
-                ),
-        ]
-    )
-    let discoverer = ManagedTerminalAccountLocalStateDiscoverer(
-        fileManager: SudoersFixtureFileManager(existingPaths: [request.homeDirectory]),
-        commandRunner: commandRunner,
-        sudoersSyntaxChecker: StubSudoersSyntaxChecker(result: .passed)
-    )
-    let summary = ManagedTerminalAccountSettingsSummary.current(
-        terminalProfiles: TerminalProfileSettingsSummary(
-            profiles: [.loginShellFallback],
-            defaultProfileID: TerminalProfileDefinition.loginShellFallback.id,
-            recoveryMessage: nil
-        ),
-        guiUserName: request.guiUserName,
-        discoverer: discoverer,
-        entryVerifier: StubTerminalEntryVerifier(result: .passed),
-        catalog: ManagedTerminalAccountCatalog(
-            entries: [
-                ManagedTerminalAccountCatalogEntry(
-                    accountName: request.accountName,
-                    displayLabel: request.fullName ?? request.accountName
-                ),
-            ]
-        )
-    )
-    guard let plan = summary.plans.first, let user = summary.users.first else {
-        throw TestFailure.message("ordinary requested account must remain visible as not Alan managed")
-    }
     let snapshot = ShellSettingsSurfaceSnapshot.make(
-        local: stableLocalSummary(),
-        terminalProfiles: testTerminalProfiles(),
-        managedTerminalAccounts: summary
+        local: devLocalSummary(),
+        terminalProfiles: profiles,
+        managedTerminalAccounts: ManagedTerminalAccountSettingsSummary(plans: [plan])
     )
-    let accountSection = try requireSection(.terminalAccounts, in: snapshot)
-    let ordinaryRow = accountSection.rows.first { $0.id == "terminalAccount.univer" }
-
+    let visibleText = snapshot.visibleText.joined(separator: "\n").lowercased()
     try expect(
-        plan.status == .accountNotAlanManaged,
-        "ordinary account plan must not be repairable, got \(plan.status)"
-    )
-    try expect(plan.steps.isEmpty, "ordinary accounts must not produce privileged repair steps")
-    try expect(
-        user.readinessState == .accountNotAlanManaged,
-        "ordinary account summaries must report accountNotAlanManaged"
+        !visibleText.contains("sudoers") && !visibleText.contains("legacy cleanup"),
+        "Settings must not expose retired Managed User compatibility state"
     )
     try expect(
-        ordinaryRow?.value == "Not managed"
-            && ordinaryRow?.actions.map(\.id) == [.review],
-        "ordinary account rows must be review-only and not expose repair/remove"
-    )
-    try expect(
-        ordinaryRow?.detail?.contains("existing local account") == true,
-        "ordinary account rows must explain that Alan will not take over the user"
+        profiles.profiles.first(where: { $0.id == "manual" })?.launch == .sudoUser(unixUser: "operator"),
+        "manually authored sudo_user profiles must remain operator-owned"
     )
 }
 
-private func testManagedUserSummaryUsesHelperDiagnosisStates() throws {
+private func testRetiredManagedProfileRequiresExplicitRepair() throws {
+    let request = ManagedTerminalAccountRequest(accountName: "lab", fullName: "Lab User")
+    let retiredProfile = TerminalProfileDefinition(
+        id: "lab",
+        title: "Lab User",
+        launch: .sudoUser(unixUser: "lab"),
+        defaultWorkingDirectory: "/Users/lab",
+        presentation: nil,
+        managedTerminalAccountID: "lab"
+    )
+    let profiles = TerminalProfileSettingsSummary(
+        profiles: [.loginShellFallback, retiredProfile],
+        defaultProfileID: "login_shell",
+        recoveryMessage: nil
+    )
+    let plan = ManagedTerminalAccountPlanner.plan(
+        request: request,
+        diagnosis: helperDiagnosis(
+            accountName: request.accountName,
+            readiness: .ready,
+            ownership: .alanManaged,
+            terminalProfileID: request.terminalProfileID,
+            ptySmokeVerified: true
+        ),
+        terminalProfiles: profiles.document
+    )
+
+    try expect(
+        plan.status == .readyToApply && plan.steps.map(\.kind) == [.createOrUpdateTerminalProfile],
+        "a retired managed sudo_user profile must require explicit profile repair"
+    )
+    try expect(
+        profiles.document.profile(id: "lab")?.launch == .sudoUser(unixUser: "lab"),
+        "planning must not migrate a retired profile while loading it"
+    )
+}
+
+private func testManagedUserRollbackAndProfileSelectionStayBounded() throws {
+    let readyRequest = ManagedTerminalAccountRequest(accountName: "ready", fullName: "Ready User")
+    let repairRequest = ManagedTerminalAccountRequest(accountName: "repair", fullName: "Repair User")
     let profiles = TerminalProfileSettingsSummary(
         profiles: [
             .loginShellFallback,
@@ -1252,835 +720,77 @@ private func testManagedUserSummaryUsesHelperDiagnosisStates() throws {
                 managedTerminalAccountID: "ready"
             ),
             TerminalProfileDefinition(
-                id: "stale",
-                title: "Stale User",
-                launch: .managedUser(unixUser: "stale"),
-                defaultWorkingDirectory: "/tmp/stale",
-                presentation: nil,
-                managedTerminalAccountID: "stale"
-            ),
-            TerminalProfileDefinition(
-                id: "conflict",
-                title: "Manual Conflict",
-                launch: .customCommand("/bin/zsh"),
-                defaultWorkingDirectory: "/Users/conflict",
-                presentation: nil
-            ),
-        ],
-        defaultProfileID: "ready",
-        recoveryMessage: nil
-    )
-    let helper = AlanPrivilegedHelperFakeClient(
-        channel: .dev,
-        diagnosesByAccount: [
-            "ready": helperDiagnosis(
-                accountName: "ready",
-                readiness: .ready,
-                ownership: .alanManaged,
-                ptySmokeVerified: true
-            ),
-            "stale": helperDiagnosis(
-                accountName: "stale",
-                readiness: .ready,
-                ownership: .alanManaged,
-                ptySmokeVerified: true
-            ),
-            "conflict": helperDiagnosis(
-                accountName: "conflict",
-                readiness: .ready,
-                ownership: .alanManaged,
-                ptySmokeVerified: true
-            ),
-            "manual": helperDiagnosis(
-                accountName: "manual",
-                readiness: .accountNotAlanManaged,
-                ownership: .notAlanManaged
-            ),
-            "legacy": helperDiagnosis(
-                accountName: "legacy",
-                readiness: .legacySudoersPresent,
-                ownership: .alanManaged,
-                legacySudoersPath: "/etc/sudoers.d/alan-terminal-morris-to-legacy"
-            ),
-            "foreign": helperDiagnosis(
-                accountName: "foreign",
-                readiness: .legacySudoersPresent,
-                ownership: .alanManaged,
-                legacySudoersPath: "/etc/sudoers.d/operator-owned-foreign"
-            ),
-            "ptyfail": helperDiagnosis(
-                accountName: "ptyfail",
-                readiness: .ptySpawnFailed,
-                ownership: .alanManaged,
-                ptySmokeVerified: false
-            ),
-            "adminrepair": helperDiagnosis(
-                accountName: "adminrepair",
-                readiness: .repairable,
-                ownership: .alanManaged,
-                isAdmin: true
-            ),
-        ]
-    )
-    let summary = ManagedTerminalAccountSettingsSummary.current(
-        terminalProfiles: profiles,
-        guiUserName: "morris",
-        helperClient: helper,
-        catalog: ManagedTerminalAccountCatalog(
-            entries: ["ready", "stale", "conflict", "manual", "legacy", "foreign", "ptyfail", "adminrepair"].map {
-                ManagedTerminalAccountCatalogEntry(accountName: $0, displayLabel: $0)
-            }
-        )
-    )
-    let plans = Dictionary(uniqueKeysWithValues: summary.plans.map { ($0.request.accountName, $0) })
-    let users = Dictionary(uniqueKeysWithValues: summary.users.map { ($0.unixUserName, $0) })
-
-    try expect(plans["ready"]?.status == .alreadyReady, "helper-ready diagnosis must produce ready state")
-    try expect(
-        plans["stale"]?.status == .readyToApply
-            && plans["stale"]?.steps.contains { $0.kind == .createOrUpdateTerminalProfile } == true,
-        "helper-ready diagnosis must refresh stale local Terminal Profiles"
-    )
-    try expect(
-        plans["conflict"]?.status == .terminalProfileConflict(profileID: "conflict")
-            && plans["conflict"]?.steps.isEmpty == true,
-        "helper-ready diagnosis must not overwrite unmanaged local Terminal Profiles"
-    )
-    try expect(
-        plans["manual"]?.status == .accountNotAlanManaged
-            && plans["manual"]?.steps.isEmpty == true,
-        "helper accountNotAlanManaged diagnosis must not produce repair steps"
-    )
-    try expect(
-        plans["legacy"]?.status
-            == .legacySudoersPresent(path: "/etc/sudoers.d/alan-terminal-morris-to-legacy"),
-        "helper legacy sudoers diagnosis must preserve sanitized cleanup state"
-    )
-    try expect(
-        plans["legacy"]?.steps.contains { $0.kind == .helperStep(.cleanupLegacySudoers) } == true,
-        "legacy helper diagnosis must plan helper-owned sudoers cleanup"
-    )
-    let legacyStepKinds = plans["legacy"]?.steps.map(\.kind) ?? []
-    guard let legacyMarkerIndex = legacyStepKinds.firstIndex(of: .helperStep(.writeOwnershipMarker)),
-        let legacyCleanupIndex = legacyStepKinds.firstIndex(of: .helperStep(.cleanupLegacySudoers))
-    else {
-        throw TestFailure.message("legacy helper cleanup must include marker and sudoers cleanup steps")
-    }
-    try expect(
-        legacyMarkerIndex < legacyCleanupIndex,
-        "legacy helper cleanup must write the helper ownership marker before removing sudoers evidence"
-    )
-    try expect(
-        plans["foreign"]?.status == .sudoersConflict(path: "/etc/sudoers.d/operator-owned-foreign")
-            && plans["foreign"]?.steps.contains { $0.kind == .helperStep(.cleanupLegacySudoers) } != true,
-        "non-Alan sudoers paths must be preserved and reported as conflict"
-    )
-    try expect(
-        plans["ptyfail"]?.status == .ptySpawnFailed
-            && plans["ptyfail"]?.steps.contains { $0.kind == .helperStep(.verifyManagedUserPTY) } == true,
-        "helper PTY failure diagnosis must plan helper-owned PTY verification"
-    )
-    try expect(
-        plans["adminrepair"]?.status == .repair
-            && plans["adminrepair"]?.steps.contains { $0.kind == .helperStep(.repairAccountType) } == true,
-        "helper repairable admin diagnosis must plan helper-owned account-type repair"
-    )
-    for plan in summary.plans {
-        try expect(
-            !plan.steps.contains {
-                $0.kind == .writeSudoersDropIn
-                    || $0.kind == .validateSudoers
-                    || $0.kind == .verifyTerminalEntry
-            },
-            "helper-backed diagnosis must not schedule sudoers or sudo readiness fallback"
-        )
-    }
-    try expect(
-        users["legacy"]?.readinessState == .legacySudoersPresent
-            && users["ptyfail"]?.readinessState == .ptySpawnFailed,
-        "Managed User summaries must expose helper diagnosis states"
-    )
-
-    let unavailableSummary = ManagedTerminalAccountSettingsSummary.current(
-        terminalProfiles: profiles,
-        guiUserName: "morris",
-        helperClient: AlanPrivilegedHelperFakeClient(channel: .dev, statusState: .invalidSignature),
-        catalog: ManagedTerminalAccountCatalog(
-            entries: [
-                ManagedTerminalAccountCatalogEntry(accountName: "ready", displayLabel: "Ready User"),
-            ]
-        )
-    )
-    try expect(
-        unavailableSummary.plans.first?.status == .helperUnavailable,
-        "unhealthy helper status must short-circuit helper diagnosis as unavailable"
-    )
-}
-
-private func testManagedUserReviewPreviewUsesHelperOperationRows() throws {
-    let request = ManagedTerminalAccountRequest(
-        accountName: "legacy",
-        guiUserName: "morris",
-        fullName: "Legacy User"
-    )
-    let plan = ManagedTerminalAccountPlanner.plan(
-        request: request,
-        diagnosis: helperDiagnosis(
-            accountName: "legacy",
-            readiness: .legacySudoersPresent,
-            ownership: .alanManaged,
-            legacySudoersPath: "/etc/sudoers.d/alan-terminal-morris-to-legacy",
-            ptySmokeVerified: false
-        )
-    )
-    let preview = ManagedTerminalUserCreationPreview(request: request, plan: plan)
-    let rows = preview.visiblePlanRows.joined(separator: "\n")
-
-    try expect(
-        rows.contains("Privileged helper managed"),
-        "Managed User review sheets must identify helper-backed privilege ownership"
-    )
-    try expect(
-        rows.contains("Clean up verified legacy Alan sudoers"),
-        "Managed User review sheets must show helper-owned legacy cleanup"
-    )
-    try expect(
-        rows.contains("Verify helper-managed PTY startup"),
-        "Managed User review sheets must show helper PTY verification"
-    )
-    try expect(
-        !rows.contains("Write Alan-owned sudoers drop-in")
-            && !rows.contains("Validate sudoers syntax")
-            && !rows.contains("sudo -n -iu"),
-        "Managed User review sheets must not describe sudoers setup or sudo readiness fallback"
-    )
-}
-
-private func testManagedUserCreationPreviewDerivesDefaultsAndRejectsConflicts() throws {
-    let draft = ManagedTerminalUserCreationDraft(
-        unixUserName: "lab",
-        displayLabel: "Lab User",
-        guiUserName: "morris"
-    )
-    let result = ManagedTerminalUserCreationPreviewBuilder.make(
-        draft: draft,
-        existingUsers: [],
-        terminalProfiles: testTerminalProfiles(),
-        diagnosis: helperDiagnosis(
-            accountName: "lab",
-            readiness: .accountMissing,
-            ownership: .missing,
-            homeDirectoryExists: false,
-            hiddenFromLoginWindow: false
-        )
-    )
-    guard let preview = result.preview else {
-        throw TestFailure.message("Managed User creation preview must be available for valid input")
-    }
-
-    try expect(result.isValid, "valid Managed User draft must produce a valid preview")
-    try expect(preview.request.accountName == "lab", "preview must derive the Unix account name")
-    try expect(preview.request.fullName == "Lab User", "preview must preserve the display label")
-    try expect(preview.request.guiUserName == "morris", "preview must preserve the GUI user")
-    try expect(preview.request.homeDirectory == "/Users/lab", "preview must derive the home directory")
-    try expect(preview.request.shell == "/bin/zsh", "preview must use the Login shell-compatible zsh")
-    try expect(preview.request.hideFromLoginWindow, "preview must keep the Managed User hidden from login")
-    try expect(
-        !preview.request.bindCurrentSpaceAfterSuccess,
-        "preview must not bind the current Space as a side effect"
-    )
-    try expect(
-        preview.plan.steps.map(\.kind) == [
-            .helperStep(.createStandardAccount),
-            .helperStep(.hideAccount),
-            .helperStep(.writeOwnershipMarker),
-            .helperStep(.verifyAccount),
-            .helperStep(.verifyManagedUserPTY),
-            .createOrUpdateTerminalProfile,
-        ],
-        "creation preview must show the helper-backed plan in execution order"
-    )
-
-    let previewText = preview.visiblePlanRows.joined(separator: "\n")
-    for expected in [
-        "Account lab",
-        "Home /Users/lab",
-        "Shell /bin/zsh",
-        "Hidden from login window",
-        "Privileged helper managed",
-        "Create standard local terminal account",
-        "Hide terminal account from login window lists",
-        "Write Alan-managed ownership marker",
-        "Verify helper-managed account state",
-        "Verify helper-managed PTY startup",
-        "Terminal Profile lab",
-    ] {
-        try expect(previewText.contains(expected), "preview must include \(expected)")
-    }
-    try expect(
-        !previewText.contains("NOPASSWD") && !previewText.contains("password")
-            && !previewText.contains("/usr/bin/dscl"),
-        "creation preview must stay compact and avoid raw scripts or secrets"
-    )
-
-    let duplicateUser = ManagedTerminalUserSummary(plan: preview.plan)
-    let duplicateResult = ManagedTerminalUserCreationPreviewBuilder.make(
-        draft: draft,
-        existingUsers: [duplicateUser],
-        terminalProfiles: testTerminalProfiles(),
-        diagnosis: helperDiagnosis(
-            accountName: "lab",
-            readiness: .accountMissing,
-            ownership: .missing,
-            homeDirectoryExists: false,
-            hiddenFromLoginWindow: false
-        )
-    )
-    try expect(
-        duplicateResult.errors.contains(.duplicateUnixUser("lab")),
-        "creation preview must reject duplicate Managed User Unix names"
-    )
-
-    let baseProfiles = testTerminalProfiles()
-    let conflictingProfiles = TerminalProfileSettingsSummary(
-        profiles: baseProfiles.profiles + [
-            TerminalProfileDefinition(
-                id: "lab",
-                title: "Lab",
-                launch: .sudoUser(unixUser: "lab"),
-                defaultWorkingDirectory: "/Users/lab",
-                presentation: nil
-            )
-        ],
-        defaultProfileID: baseProfiles.defaultProfileID,
-        recoveryMessage: baseProfiles.recoveryMessage
-    )
-    let conflictResult = ManagedTerminalUserCreationPreviewBuilder.make(
-        draft: draft,
-        existingUsers: [],
-        terminalProfiles: conflictingProfiles,
-        diagnosis: helperDiagnosis(
-            accountName: "lab",
-            readiness: .accountMissing,
-            ownership: .missing,
-            homeDirectoryExists: false,
-            hiddenFromLoginWindow: false
-        )
-    )
-    try expect(
-        conflictResult.errors.contains(.terminalProfileConflict("lab")),
-        "creation preview must reject conflicting unmanaged Terminal Profiles"
-    )
-
-    let incompleteResult = ManagedTerminalUserCreationPreviewBuilder.make(
-        draft: ManagedTerminalUserCreationDraft(
-            unixUserName: "univer",
-            displayLabel: "Univer",
-            guiUserName: "morris"
-        ),
-        existingUsers: [],
-        terminalProfiles: baseProfiles,
-        diagnosis: helperDiagnosis(
-            accountName: "univer",
-            readiness: .repairable,
-            ownership: .alanManaged,
-            ptySmokeVerified: false
-        )
-    )
-    try expect(
-        incompleteResult.isValid,
-        "creation preview must allow repairing incomplete local account records"
-    )
-    try expect(
-        incompleteResult.preview?.plan.steps.contains {
-            $0.kind == .helperStep(.verifyManagedUserPTY)
-        } == true,
-        "repairable account creation preview must route through helper repair operations"
-    )
-}
-
-private func testManagedUserSummaryRunsReadinessVerificationBeforePlanning() throws {
-    let request = ManagedTerminalAccountRequest(
-        accountName: "lab",
-        guiUserName: "morris",
-        fullName: "Lab User"
-    )
-    let rule = ManagedTerminalAccountSudoersRule(request: request)
-    let terminalProfiles = TerminalProfileSettingsSummary(
-        profiles: [
-            TerminalProfileDefinition(
-                id: request.terminalProfileID,
-                title: "Lab User",
-                launch: .managedUser(unixUser: request.accountName),
-                defaultWorkingDirectory: request.homeDirectory,
-                presentation: nil,
-                managedTerminalAccountID: request.accountName
-            ),
-        ],
-        defaultProfileID: request.terminalProfileID,
-        recoveryMessage: nil
-    )
-    let commandRunner = StubManagedTerminalAccountCommandRunner(
-        responses: [
-            "/usr/bin/dscl . -read /Users/lab UniqueID PrimaryGroupID NFSHomeDirectory UserShell IsHidden AuthenticationAuthority":
-                ManagedTerminalAccountCommandResult(
-                    exitCode: 0,
-                    standardOutput: """
-                    dsAttrTypeNative:IsHidden: 1
-                    NFSHomeDirectory: /Users/lab
-                    PrimaryGroupID: 20
-                    UniqueID: 507
-                    UserShell: /bin/zsh
-                    """,
-                    standardError: "No such key: AuthenticationAuthority"
-                ),
-            "/usr/sbin/dseditgroup -o checkmember -m lab admin":
-                ManagedTerminalAccountCommandResult(
-                    exitCode: 1,
-                    standardOutput: "no lab is not a member of admin",
-                    standardError: ""
-                ),
-        ]
-    )
-    let discoverer = ManagedTerminalAccountLocalStateDiscoverer(
-        fileManager: SudoersFixtureFileManager(
-            files: [rule.filePath: rule.contents],
-            existingPaths: [request.homeDirectory]
-        ),
-        commandRunner: commandRunner,
-        sudoersSyntaxChecker: StubSudoersSyntaxChecker(result: .passed)
-    )
-
-    let summary = ManagedTerminalAccountSettingsSummary.current(
-        terminalProfiles: terminalProfiles,
-        guiUserName: request.guiUserName,
-        discoverer: discoverer,
-        entryVerifier: StubTerminalEntryVerifier(result: .passed),
-        catalog: ManagedTerminalAccountCatalog(
-            entries: [
-                ManagedTerminalAccountCatalogEntry(
-                    accountName: request.accountName,
-                    displayLabel: request.fullName ?? request.accountName
-                ),
-            ]
-        )
-    )
-
-    try expect(
-        summary.users.first?.readinessState == .ready,
-        "Managed User summaries must run terminal-entry verification before planning readiness"
-    )
-    try expect(
-        summary.plans.first?.steps.contains {
-            $0.kind == ManagedTerminalAccountPlanStepKind.verifyTerminalEntry
-        } != true,
-        "verified Managed User summaries must not keep scheduling no-op repair verification"
-    )
-}
-
-private func testManagedUserApplyUsesPrivilegedExecutorAndRefreshesStatus() throws {
-    let request = ManagedTerminalAccountRequest(
-        accountName: "lab",
-        guiUserName: "morris",
-        fullName: "Lab User"
-    )
-    let plan = ManagedTerminalAccountPlanner.plan(
-        request: request,
-        state: ManagedTerminalAccountState(
-            account: .missing,
-            sudoers: .missing,
-            terminalProfile: .missing,
-            verification: .notRun
-        )
-    )
-    let refreshedPlan = ManagedTerminalAccountPlanner.plan(
-        request: request,
-        state: ManagedTerminalAccountState(
-            account: .standard(homeDirectory: "/Users/lab", shell: "/bin/zsh", hidden: true),
-            sudoers: .alanOwnedValid(path: "/etc/sudoers.d/alan-terminal-morris-to-lab"),
-            ownership: alanManagedOwnership("lab"),
-            terminalProfile: .existingManaged(profileID: "lab"),
-            verification: .passed
-        )
-    )
-    let executor = ManagedTerminalAccountFakeExecutor()
-    var refreshCount = 0
-
-    let result = ManagedTerminalUserProvisioningFlow.applyApproved(
-        plan: plan,
-        executor: executor
-    ) {
-        refreshCount += 1
-        return ManagedTerminalAccountSettingsSummary(plans: [refreshedPlan])
-    }
-
-    try expect(
-        result.applyResult.completedSteps == plan.steps.map(\.kind),
-        "apply flow must execute the approved plan through the privileged executor"
-    )
-    try expect(refreshCount == 1, "apply flow must refresh Managed User status after apply")
-    try expect(
-        result.refreshedSummary.users.first?.readinessState == .ready,
-        "apply flow must return the refreshed readiness summary"
-    )
-    try expect(
-        !result.applyResult.visibleDiagnostics.joined(separator: "\n").contains("NOPASSWD"),
-        "apply diagnostics must stay redacted"
-    )
-}
-
-private func testManagedUserApplyUsesHelperDeclarativePlanAndRejectsLegacySteps() throws {
-    let request = ManagedTerminalAccountRequest(
-        accountName: "helper",
-        guiUserName: "morris",
-        fullName: "Helper User"
-    )
-    let helperPlan = ManagedTerminalAccountPlanner.plan(
-        request: request,
-        diagnosis: helperDiagnosis(
-            accountName: request.accountName,
-            readiness: .accountMissing,
-            ownership: .missing
-        )
-    )
-    let helper = AlanPrivilegedHelperFakeClient(channel: .dev)
-    let storeDirectory = try makeTemporaryDirectory()
-    defer { try? FileManager.default.removeItem(at: storeDirectory) }
-    let storeURL = storeDirectory.appendingPathComponent("terminal-profiles.json", isDirectory: false)
-    let executor = ManagedTerminalAccountHelperExecutor(
-        channel: .dev,
-        helperClient: helper,
-        localEffectExecutor: ManagedTerminalAccountTerminalProfileEffectExecutor(
-            store: TerminalProfileStore(storeURL: storeURL)
-        )
-    )
-    let result = executor.apply(helperPlan)
-    let savedProfiles = TerminalProfileStore(storeURL: storeURL).load().document
-
-    try expect(result.failedStep == nil, "helper-authored Managed User plan must apply")
-    try expect(helper.appliedPlans.count == 1, "helper executor must send one typed helper plan")
-    try expect(
-        helper.appliedPlans.first?.steps.map(\.kind).contains(.createStandardAccount) == true
-            && helper.appliedPlans.first?.steps.map(\.kind).contains(.writeOwnershipMarker) == true
-            && helper.appliedPlans.first?.steps.map(\.kind).contains(.verifyManagedUserPTY) == true,
-        "helper executor must preserve typed helper operations"
-    )
-    try expect(
-        helper.appliedPlans.first?.steps.map(\.kind).contains(.cleanupLegacySudoers) == false,
-        "helper apply must not invent legacy cleanup without helper diagnosis"
-    )
-    try expect(
-        result.completedSteps.contains(.createOrUpdateTerminalProfile),
-        "helper-backed apply must still perform local Terminal Profile handoff"
-    )
-    try expect(
-        savedProfiles.profile(id: request.terminalProfileID)?.launch == .managedUser(unixUser: request.accountName),
-        "helper-backed apply must create managed_user Terminal Profiles"
-    )
-
-    let legacySudoersPlan = ManagedTerminalAccountPlanner.plan(
-        request: request,
-        state: ManagedTerminalAccountState(
-            account: .missing,
-            sudoers: .missing,
-            terminalProfile: .missing,
-            verification: .notRun
-        )
-    )
-    let rejected = executor.apply(legacySudoersPlan)
-    try expect(
-        rejected.failedStep == .createStandardAccount,
-        "helper executor must reject legacy privileged account steps before helper apply"
-    )
-    try expect(
-        helper.appliedPlans.count == 1,
-        "helper executor must not send rejected legacy plans to the helper"
-    )
-    try expect(
-        !rejected.visibleDiagnostics.joined(separator: "\n").contains("NOPASSWD")
-            && !rejected.visibleDiagnostics.joined(separator: "\n").contains("do shell script")
-            && !rejected.visibleDiagnostics.joined(separator: "\n").contains("/etc/sudoers"),
-        "helper executor rejection diagnostics must stay sanitized"
-    )
-}
-
-private func testFakeHelperCoversManagedUserRemovalPtyAndDenialStates() throws {
-    let request = ManagedTerminalAccountRequest(
-        accountName: "helper",
-        guiUserName: "morris",
-        fullName: "Helper User"
-    )
-    let helper = AlanPrivilegedHelperFakeClient(channel: .dev)
-    let removal = helper.removeManagedUserIntegration(request)
-    try expect(
-        removal.failedStep == nil
-            && removal.completedSteps.contains(.removeManagedTerminalProfile),
-        "fake helper must cover Managed User integration removal"
-    )
-
-    let ptyStart = helper.startManagedUserPTY(
-        AlanManagedUserPTYStartRequest(
-            operationID: "op-start",
-            channelID: "dev",
-            accountName: request.accountName,
-            homeDirectory: request.homeDirectory,
-            workingDirectory: "/Users/lab/project",
-            shell: request.shell,
-            contentID: "content_fake_helper",
-            columns: 80,
-            rows: 24
-        )
-    )
-    let session: AlanManagedUserPTYSession
-    switch ptyStart {
-    case .success(let started):
-        session = started
-    case .failure(let diagnostic):
-        throw TestFailure.message("fake helper PTY start must succeed: \(diagnostic.sanitizedMessage)")
-    }
-
-    let terminateDiagnostic = helper.terminatePTY(sessionID: session.sessionID)
-    try expect(
-        helper.terminatedPTYSessionIDs == [session.sessionID]
-            && terminateDiagnostic.operation == .terminatePTY
-            && helper.observeManagedUserPTYExit(sessionID: session.sessionID)?.final == true,
-        "fake helper must record PTY termination and final exit observation"
-    )
-
-    let denied = AlanPrivilegedHelperFakeClient(channel: .dev)
-    denied.deniedOperation = .startManagedUserPTY
-    let deniedStart = denied.startManagedUserPTY(
-        AlanManagedUserPTYStartRequest(
-            operationID: "op-denied",
-            channelID: "dev",
-            accountName: request.accountName,
-            homeDirectory: request.homeDirectory,
-            workingDirectory: request.homeDirectory,
-            shell: request.shell,
-            contentID: "content_denied",
-            columns: 80,
-            rows: 24
-        )
-    )
-    if case .failure(let diagnostic) = deniedStart {
-        try expect(
-            diagnostic.code == .ptySpawnFailed
-                && !diagnostic.sanitizedMessage.contains("sudo -n -iu")
-                && !diagnostic.sanitizedMessage.contains("/etc/sudoers"),
-            "fake helper PTY denial must stay typed and sanitized"
-        )
-    } else {
-        throw TestFailure.message("fake helper PTY denial must fail")
-    }
-}
-
-private func testManagedUserRollbackRequiresAlanOwnershipForDestructiveDeletion() throws {
-    let request = ManagedTerminalAccountRequest(
-        accountName: "lab",
-        guiUserName: "morris",
-        fullName: "Lab User"
-    )
-    let alanManagedState = ManagedTerminalAccountState(
-        account: .standard(homeDirectory: "/Users/lab", shell: "/bin/zsh", hidden: true),
-        sudoers: .alanOwnedValid(path: "/etc/sudoers.d/alan-terminal-morris-to-lab"),
-        ownership: alanManagedOwnership("lab"),
-        terminalProfile: .existingManaged(profileID: "lab"),
-        verification: .passed
-    )
-    let integrationOnly = ManagedTerminalAccountPlanner.rollbackPlan(
-        request: request,
-        state: alanManagedState,
-        scope: .alanIntegrationOnly
-    )
-    let unconfirmed = ManagedTerminalAccountPlanner.rollbackPlan(
-        request: request,
-        state: alanManagedState,
-        scope: .deleteAccountAndHome(confirmation: nil)
-    )
-    let confirmed = ManagedTerminalAccountPlanner.rollbackPlan(
-        request: request,
-        state: alanManagedState,
-        scope: .deleteAccountAndHome(confirmation: "lab")
-    )
-
-    try expect(
-        integrationOnly.steps.contains { $0.kind == .deleteAccount || $0.kind == .deleteHomeDirectory } == false,
-        "integration-only rollback must not delete accounts or homes"
-    )
-    try expect(
-        unconfirmed.status == .requiresDestructiveConfirmation
-            && unconfirmed.steps.contains { $0.kind == .deleteAccount || $0.kind == .deleteHomeDirectory } == false,
-        "destructive rollback must require a separate account-name confirmation"
-    )
-    try expect(
-        confirmed.steps.contains { $0.kind == .deleteAccount }
-            && confirmed.steps.contains { $0.kind == .deleteHomeDirectory },
-        "confirmed destructive rollback may delete only Alan-managed account and canonical home"
-    )
-
-    let ordinaryState = ManagedTerminalAccountState(
-        account: .standard(homeDirectory: "/Users/manual", shell: "/bin/zsh", hidden: false),
-        sudoers: .missing,
-        terminalProfile: .missing,
-        verification: .notRun
-    )
-    let ordinaryRequest = ManagedTerminalAccountRequest(
-        accountName: "manual",
-        guiUserName: "morris",
-        fullName: "Manual"
-    )
-    let ordinaryDelete = ManagedTerminalAccountPlanner.rollbackPlan(
-        request: ordinaryRequest,
-        state: ordinaryState,
-        scope: .deleteAccountAndHome(confirmation: "manual")
-    )
-    try expect(
-        ordinaryDelete.status == .accountNotAlanManaged
-            && ordinaryDelete.steps.contains { $0.kind == .deleteAccount || $0.kind == .deleteHomeDirectory } == false,
-        "ordinary local accounts must not be deleted through Managed User rollback"
-    )
-
-    let helperDiagnosis = helperDiagnosis(
-        accountName: "lab",
-        readiness: .ready,
-        ownership: .alanManaged
-    )
-    let helperUnconfirmed = ManagedTerminalAccountPlanner.rollbackPlan(
-        request: request,
-        diagnosis: helperDiagnosis,
-        scope: .deleteAccountAndHome(confirmation: nil)
-    )
-    let helperConfirmed = ManagedTerminalAccountPlanner.rollbackPlan(
-        request: request,
-        diagnosis: helperDiagnosis,
-        scope: .deleteAccountAndHome(confirmation: "lab")
-    )
-    let helperConfirmedKinds = helperConfirmed.steps.map(\.kind)
-
-    try expect(
-        helperUnconfirmed.status == .requiresDestructiveConfirmation
-            && !helperUnconfirmed.steps.contains {
-                $0.kind == .helperStep(.removeManagedUserIntegration)
-            },
-        "unconfirmed helper destructive rollback must keep ownership evidence intact"
-    )
-    try expect(
-        helperConfirmedKinds == [
-            .helperStep(.deleteAccount),
-            .helperStep(.deleteHomeDirectory),
-            .helperStep(.removeManagedUserIntegration),
-        ],
-        "confirmed helper destructive rollback must remove integration only after deletes succeed"
-    )
-}
-
-private func testManagedProfileReadinessFiltersSpaceIdentityChoices() throws {
-    let readyPlan = ManagedTerminalAccountPlanner.plan(
-        request: ManagedTerminalAccountRequest(
-            accountName: "alan",
-            guiUserName: "morris",
-            fullName: "Alan Terminal"
-        ),
-        state: ManagedTerminalAccountState(
-            account: .standard(homeDirectory: "/Users/alan", shell: "/bin/zsh", hidden: true),
-            sudoers: .alanOwnedValid(path: "/etc/sudoers.d/alan-terminal-morris-to-alan"),
-            ownership: alanManagedOwnership("alan"),
-            terminalProfile: .existingManaged(profileID: "alan"),
-            verification: .passed
-        )
-    )
-    let repairPlan = ManagedTerminalAccountPlanner.plan(
-        request: ManagedTerminalAccountRequest(
-            accountName: "lab",
-            guiUserName: "morris",
-            fullName: "Lab User"
-        ),
-        state: ManagedTerminalAccountState(
-            account: .standard(homeDirectory: "/Users/lab", shell: "/bin/zsh", hidden: true),
-            sudoers: .missing,
-            ownership: alanManagedOwnership("lab"),
-            terminalProfile: .existingManaged(profileID: "lab"),
-            verification: .passed
-        )
-    )
-    let helperUnavailablePlan = ManagedTerminalAccountPlan(
-        request: ManagedTerminalAccountRequest(
-            accountName: "broken",
-            guiUserName: "morris",
-            fullName: "Broken User"
-        ),
-        status: .helperUnavailable,
-        steps: []
-    )
-    let profiles = TerminalProfileSettingsSummary(
-        profiles: [
-            TerminalProfileDefinition.loginShellFallback,
-            TerminalProfileDefinition(
-                id: "alan",
-                title: "Alan Terminal",
-                launch: .managedUser(unixUser: "alan"),
-                defaultWorkingDirectory: "/Users/alan",
-                presentation: nil,
-                managedTerminalAccountID: "alan"
-            ),
-            TerminalProfileDefinition(
-                id: "lab",
-                title: "Lab User",
-                launch: .managedUser(unixUser: "lab"),
-                defaultWorkingDirectory: "/Users/lab",
-                presentation: nil,
-                managedTerminalAccountID: "lab"
-            ),
-            TerminalProfileDefinition(
-                id: "broken",
-                title: "Broken User",
-                launch: .managedUser(unixUser: "broken"),
-                defaultWorkingDirectory: "/Users/broken",
-                presentation: nil,
-                managedTerminalAccountID: "broken"
-            ),
-            TerminalProfileDefinition(
-                id: "custom",
-                title: "Bootstrap",
-                launch: .customCommand("echo redacted"),
+                id: "manual",
+                title: "Manual",
+                launch: .sudoRoot,
                 defaultWorkingDirectory: nil,
                 presentation: nil
             ),
+            TerminalProfileDefinition(
+                id: "repair",
+                title: "Repair User",
+                launch: .managedUser(unixUser: "repair"),
+                defaultWorkingDirectory: "/Users/repair",
+                presentation: nil,
+                managedTerminalAccountID: "repair"
+            ),
         ],
-        defaultProfileID: "alan",
+        defaultProfileID: "login_shell",
         recoveryMessage: nil
     )
-    let managedAccounts = ManagedTerminalAccountSettingsSummary(
-        plans: [readyPlan, repairPlan, helperUnavailablePlan]
+    let readyDiagnosis = helperDiagnosis(
+        accountName: readyRequest.accountName,
+        readiness: .ready,
+        ownership: .alanManaged,
+        terminalProfileID: readyRequest.terminalProfileID,
+        ptySmokeVerified: true
     )
-    let selectableProfileIDs = TerminalProfileSpaceIdentityFilter.selectableProfiles(
-        terminalProfiles: profiles,
-        managedTerminalAccounts: managedAccounts
-    ).map(\.id)
+    let managed = ManagedTerminalAccountSettingsSummary(plans: [
+        ManagedTerminalAccountPlanner.plan(
+            request: readyRequest,
+            diagnosis: readyDiagnosis,
+            terminalProfiles: profiles.document
+        ),
+        ManagedTerminalAccountPlanner.plan(
+            request: repairRequest,
+            diagnosis: helperDiagnosis(
+                accountName: repairRequest.accountName,
+                readiness: .repairable,
+                ownership: .alanManaged
+            ),
+            terminalProfiles: profiles.document
+        ),
+    ])
+    try expect(
+        TerminalProfileSpaceIdentityFilter.selectableProfiles(
+            terminalProfiles: profiles,
+            managedTerminalAccounts: managed
+        ).map(\.id) == ["ready", "manual"],
+        "Space identity choices must include ready Managed Users and manual profiles only"
+    )
 
-    try expect(
-        selectableProfileIDs == ["alan", "custom"],
-        "Space identity choices must include unmanaged profiles and ready Managed Users only"
+    let integrationOnly = ManagedTerminalAccountPlanner.rollbackPlan(
+        request: readyRequest,
+        diagnosis: readyDiagnosis,
+        scope: .alanIntegrationOnly,
+        terminalProfiles: profiles.document
     )
     try expect(
-        !selectableProfileIDs.contains(TerminalProfileDefinition.loginShellFallback.id),
-        "Space identity choices must preserve Login shell as the nil-profile fallback"
+        integrationOnly.steps.map(\.kind) == [
+            .removeManagedTerminalProfile,
+            .helperStep(.removeManagedUserIntegration),
+        ],
+        "ordinary rollback must remove only current Alan integration"
+    )
+    let destructive = ManagedTerminalAccountPlanner.rollbackPlan(
+        request: readyRequest,
+        diagnosis: readyDiagnosis,
+        scope: .deleteAccountAndHome(confirmation: nil),
+        terminalProfiles: profiles.document
     )
     try expect(
-        TerminalProfileSpaceIdentityFilter.repairGuidance(
-            profileID: "lab",
-            terminalProfiles: profiles,
-            managedTerminalAccounts: managedAccounts
-        )?.contains("Repair") == true,
-        "not-ready managed profiles must expose repair guidance"
-    )
-    try expect(
-        TerminalProfileSpaceIdentityFilter.repairGuidance(
-            profileID: "broken",
-            terminalProfiles: profiles,
-            managedTerminalAccounts: managedAccounts
-        )?.contains("Privileged helper") == true,
-        "helper-unready managed profiles must expose helper repair guidance"
+        destructive.status == .requiresDestructiveConfirmation,
+        "account and home deletion must remain separately confirmed"
     )
 }
 
@@ -2340,7 +1050,7 @@ private enum ShellSettingsFixtureExporter {
                 TerminalProfileDefinition(
                     id: "alan",
                     title: "Alan",
-                    launch: .sudoUser(unixUser: "alan"),
+                    launch: .managedUser(unixUser: "alan"),
                     defaultWorkingDirectory: "/Users/alan",
                     presentation: TerminalProfilePresentation(
                         symbolName: "person.crop.circle",
@@ -2356,19 +1066,20 @@ private enum ShellSettingsFixtureExporter {
         let accountPlan = ManagedTerminalAccountPlanner.plan(
             request: ManagedTerminalAccountRequest(
                 accountName: "alan_smoke",
-                guiUserName: "morris",
                 fullName: "Alan Smoke",
                 shell: "/bin/zsh",
                 homeDirectory: "/Users/alan_smoke",
-                hideFromLoginWindow: true,
-                bindCurrentSpaceAfterSuccess: true
+                hideFromLoginWindow: true
             ),
-            state: ManagedTerminalAccountState(
-                account: .missing,
-                sudoers: .missing,
-                terminalProfile: .missing,
-                verification: .notRun
-            )
+            diagnosis: helperDiagnosis(
+                accountName: "alan_smoke",
+                readiness: .accountMissing,
+                ownership: .missing,
+                homeDirectoryExists: false,
+                shellMatches: false,
+                hiddenFromLoginWindow: false
+            ),
+            terminalProfiles: terminalProfiles.document
         )
         let managedAccounts = ManagedTerminalAccountSettingsSummary(plans: [accountPlan])
         let local = devLocalSummary()
@@ -2567,31 +1278,25 @@ private struct PortableManagedTerminalAccountPlan: Encodable {
 
 private struct PortableManagedTerminalAccountRequest: Encodable {
     let accountName: String
-    let guiUserName: String
     let fullName: String?
     let shell: String
     let homeDirectory: String
     let hideFromLoginWindow: Bool
-    let bindCurrentSpaceAfterSuccess: Bool
 
     init(_ request: ManagedTerminalAccountRequest) {
         accountName = request.accountName
-        guiUserName = request.guiUserName
         fullName = request.fullName
         shell = request.shell
         homeDirectory = request.homeDirectory
         hideFromLoginWindow = request.hideFromLoginWindow
-        bindCurrentSpaceAfterSuccess = request.bindCurrentSpaceAfterSuccess
     }
 
     private enum CodingKeys: String, CodingKey {
         case accountName = "account_name"
-        case guiUserName = "gui_user_name"
         case fullName = "full_name"
         case shell
         case homeDirectory = "home_directory"
         case hideFromLoginWindow = "hide_from_login_window"
-        case bindCurrentSpaceAfterSuccess = "bind_current_space_after_success"
     }
 }
 
@@ -2626,10 +1331,6 @@ private struct PortableManagedTerminalAccountPlanStatus: Encodable {
             type = "account_not_alan_managed"
             path = nil
             profileID = nil
-        case let .legacySudoersPresent(path):
-            type = "legacy_sudoers_present"
-            self.path = path
-            profileID = nil
         case .ptySpawnFailed:
             type = "pty_spawn_failed"
             path = nil
@@ -2637,10 +1338,6 @@ private struct PortableManagedTerminalAccountPlanStatus: Encodable {
         case .requiresDestructiveConfirmation:
             type = "requires_destructive_confirmation"
             path = nil
-            profileID = nil
-        case let .sudoersConflict(path):
-            type = "sudoers_conflict"
-            self.path = path
             profileID = nil
         case let .terminalProfileConflict(profileID):
             type = "terminal_profile_conflict"
@@ -2778,18 +1475,8 @@ private func stepKindID(_ kind: ManagedTerminalAccountPlanStepKind) -> String {
         return "repair_shell"
     case .hideAccount:
         return "hide_account"
-    case .writeSudoersDropIn:
-        return "write_sudoers_drop_in"
-    case .validateSudoers:
-        return "validate_sudoers"
-    case .verifyTerminalEntry:
-        return "verify_terminal_entry"
     case .createOrUpdateTerminalProfile:
         return "create_or_update_terminal_profile"
-    case .bindCurrentSpace:
-        return "bind_current_space"
-    case .removeSudoersDropIn:
-        return "remove_sudoers_drop_in"
     case .removeManagedTerminalProfile:
         return "remove_managed_terminal_profile"
     case .deleteAccount:
@@ -2844,19 +1531,10 @@ private func decodedPayload<T: Decodable>(
     return try JSONDecoder().decode(T.self, from: payload)
 }
 
-private func alanManagedOwnership(_ accountName: String) -> ManagedTerminalAccountOwnershipState {
-    .alanManaged(
-        .helperMarker(
-            path: "/Library/Application Support/alan-macos/privileged-helper/managed-users/\(accountName)/ownership.json"
-        )
-    )
-}
-
 private func helperDiagnosis(
     accountName: String,
     readiness: AlanManagedUserReadinessState,
     ownership: AlanManagedUserOwnershipState,
-    legacySudoersPath: String? = nil,
     terminalProfileID: String? = nil,
     ptySmokeVerified: Bool = false,
     isAdmin: Bool = false,
@@ -2866,7 +1544,6 @@ private func helperDiagnosis(
 ) -> AlanManagedUserDiagnosis {
     let request = ManagedTerminalAccountRequest(
         accountName: accountName,
-        guiUserName: "morris",
         fullName: accountName
     )
     return AlanManagedUserDiagnosis(
@@ -2878,7 +1555,6 @@ private func helperDiagnosis(
         homeDirectoryExists: homeDirectoryExists,
         shellMatches: shellMatches,
         hiddenFromLoginWindow: hiddenFromLoginWindow,
-        legacySudoersPath: legacySudoersPath,
         terminalProfileID: terminalProfileID,
         ptySmokeVerified: ptySmokeVerified,
         diagnostic: nil
@@ -2902,56 +1578,4 @@ private func sourceSlice(
     return String(source[startRange.lowerBound..<endRange.lowerBound])
 }
 
-private struct StubManagedTerminalAccountCommandRunner: ManagedTerminalAccountCommandRunning {
-    let responses: [String: ManagedTerminalAccountCommandResult]
-
-    func run(
-        executablePath: String,
-        arguments: [String]
-    ) -> ManagedTerminalAccountCommandResult {
-        responses[([executablePath] + arguments).joined(separator: " ")]
-            ?? ManagedTerminalAccountCommandResult(
-                exitCode: 1,
-                standardOutput: "",
-                standardError: "stubbed command not found"
-            )
-    }
-}
-
-private struct StubSudoersSyntaxChecker: ManagedTerminalAccountSudoersSyntaxChecking {
-    let result: ManagedTerminalAccountSudoersValidationResult
-
-    func validateSudoersFile(atPath path: String) -> ManagedTerminalAccountSudoersValidationResult {
-        result
-    }
-}
-
-private struct StubTerminalEntryVerifier: ManagedTerminalAccountEntryVerifying {
-    let result: ManagedTerminalAccountSudoersValidationResult
-
-    func verifyTerminalEntry(
-        request: ManagedTerminalAccountRequest
-    ) -> ManagedTerminalAccountSudoersValidationResult {
-        result
-    }
-}
-
-private final class SudoersFixtureFileManager: FileManager {
-    private let files: [String: String]
-    private let existingPaths: Set<String>
-
-    init(files: [String: String] = [:], existingPaths: Set<String> = []) {
-        self.files = files
-        self.existingPaths = existingPaths
-        super.init()
-    }
-
-    override func fileExists(atPath path: String) -> Bool {
-        files[path] != nil || existingPaths.contains(path)
-    }
-
-    override func contents(atPath path: String) -> Data? {
-        files[path]?.data(using: .utf8)
-    }
-}
 #endif

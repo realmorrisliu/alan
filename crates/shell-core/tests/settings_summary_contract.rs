@@ -2,11 +2,10 @@ use alan_shell_core::{
     ManagedTerminalAccountPlan, ManagedTerminalAccountPlanStatus, ManagedTerminalAccountPlanner,
     ManagedTerminalAccountProfileState, ManagedTerminalAccountRecord,
     ManagedTerminalAccountRequest, ManagedTerminalAccountSettingsSummary,
-    ManagedTerminalAccountState, ManagedTerminalAccountSudoersState,
-    ManagedTerminalAccountVerificationStatus, ShellSettingsDiagnosticsSummary,
-    ShellSettingsLocalSummary, ShellSettingsRowMutability, ShellSettingsSummaryRows,
-    TerminalProfileDefinition, TerminalProfileLaunch, TerminalProfilePresentation,
-    TerminalProfileSettingsSummary,
+    ManagedTerminalAccountState, ManagedTerminalAccountVerificationStatus,
+    ShellSettingsDiagnosticsSummary, ShellSettingsLocalSummary, ShellSettingsRowMutability,
+    ShellSettingsSummaryRows, TerminalProfileDefinition, TerminalProfileLaunch,
+    TerminalProfilePresentation, TerminalProfileSettingsSummary,
 };
 
 #[test]
@@ -53,7 +52,6 @@ fn managed_account_rows_project_plan_status_and_detail() {
     let request = managed_account_request();
     let state = ManagedTerminalAccountState {
         account: ManagedTerminalAccountRecord::Missing,
-        sudoers: ManagedTerminalAccountSudoersState::Missing,
         ownership: Default::default(),
         terminal_profile: ManagedTerminalAccountProfileState::Missing,
         verification: ManagedTerminalAccountVerificationStatus::NotRun,
@@ -101,23 +99,19 @@ fn managed_account_rows_project_plan_status_and_detail() {
         Some("alan_smoke is an existing local account outside Alan management.")
     );
 
-    let legacy_rows = ShellSettingsSummaryRows::managed_terminal_account_rows(
+    let pty_failure_rows = ShellSettingsSummaryRows::managed_terminal_account_rows(
         &ManagedTerminalAccountSettingsSummary {
             plans: vec![ManagedTerminalAccountPlan {
                 request: managed_account_request(),
-                status: ManagedTerminalAccountPlanStatus::LegacySudoersPresent {
-                    path: Some("/etc/sudoers.d/alan-terminal-morris-to-alan_smoke".to_string()),
-                },
+                status: ManagedTerminalAccountPlanStatus::PtySpawnFailed,
                 steps: vec![],
             }],
         },
     );
-    assert_eq!(legacy_rows[0].value.as_deref(), Some("Legacy"));
+    assert_eq!(pty_failure_rows[0].value.as_deref(), Some("PTY failed"));
     assert_eq!(
-        legacy_rows[0].detail.as_deref(),
-        Some(
-            "alan_smoke has legacy Alan sudoers state at /etc/sudoers.d/alan-terminal-morris-to-alan_smoke."
-        )
+        pty_failure_rows[0].detail.as_deref(),
+        Some("alan_smoke account exists, but helper-managed PTY startup failed.")
     );
 }
 
@@ -160,11 +154,9 @@ fn local_rows_match_compact_settings_copy() {
 fn managed_account_request() -> ManagedTerminalAccountRequest {
     ManagedTerminalAccountRequest {
         account_name: "alan_smoke".to_string(),
-        gui_user_name: "morris".to_string(),
         full_name: Some("Alan Smoke".to_string()),
         shell: "/bin/zsh".to_string(),
         home_directory: "/Users/alan_smoke".to_string(),
         hide_from_login_window: true,
-        bind_current_space_after_success: true,
     }
 }

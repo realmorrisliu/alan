@@ -38,12 +38,6 @@ private func pruneManifestWithShellCore(
     )
 }
 
-private func migrateLegacyManifestWithShellCore(
-    _ manifest: ShellWorkspaceManifest
-) throws -> ShellContentWorkspaceManifest {
-    try ShellCoreFFIAdapter().migrateLegacyTerminalManifest(manifest)
-}
-
 @main
 struct ShellWorkspaceManifestTestRunner {
     static func main() throws {
@@ -56,8 +50,9 @@ private enum ShellWorkspaceManifestTests {
     private static let twelveHours: TimeInterval = 12 * 60 * 60
 
     static func run() throws {
-        try verifiesMissingManifestCreatesDefaultWithoutMigratingShellState()
+        try verifiesMissingManifestCreatesCurrentDefault()
         try verifiesCorruptManifestIsQuarantined()
+        try verifiesUnsupportedManifestIsQuarantined()
         try verifiesUnknownActiveTaskDoesNotQuarantineWorkspace()
         try verifiesOldManifestDecodesWithoutSpaceLocalSelection()
         try verifiesOldManifestWithoutSpaceIconUsesDefaultWithoutRewriteEvidence()
@@ -70,25 +65,15 @@ private enum ShellWorkspaceManifestTests {
         try verifiesManifestRoundTripPreservesSpaceLocalSelection()
         try verifiesPinnedSnapshotWinsOverLaterLiveSnapshot()
         try verifiesPinnedSplitSnapshotRestoresSplitTree()
-        try verifiesTerminalOnlySnapshotMigratesToContentContainerShape()
-        try verifiesContentContainerMigrationPreservesWorkspaceMetadata()
-        try verifiesContentContainerMigrationPreservesNilRestoreCwd()
         try verifiesUnpinnedTabPruningUsesTtlAndActiveTask()
         try verifiesSelectedTabPruningCanLeaveSelectedSpaceEmpty()
         print("Shell workspace manifest tests passed.")
     }
 
-    private static func verifiesMissingManifestCreatesDefaultWithoutMigratingShellState() throws {
+    private static func verifiesMissingManifestCreatesCurrentDefault() throws {
         let fileManager = FileManager.default
         let tempDirectory = try makeTempDirectory()
         let manifestURL = tempDirectory.appendingPathComponent("shell-workspace-window_main.json")
-        let legacyStateURL = tempDirectory.appendingPathComponent("shell-state-window_main.json")
-        let legacyState = ShellStateSnapshot.bootstrapDefault(
-            windowID: "window_main",
-            workingDirectory: "/legacy/project"
-        )
-
-        try JSONEncoder().encode(legacyState).write(to: legacyStateURL)
 
         let store = ShellWorkspaceManifestStore(fileManager: fileManager, manifestURL: manifestURL)
         let result = try store.loadOrCreateDefault(
@@ -109,12 +94,8 @@ private enum ShellWorkspaceManifestTests {
 
         let persistedManifestText = try String(contentsOf: manifestURL, encoding: .utf8)
         expect(
-            !persistedManifestText.contains("/legacy/project"),
-            "workspace manifest startup must not migrate legacy ShellStateSnapshot data"
-        )
-        expect(
             !persistedManifestText.contains("\"panes\""),
-            "default workspace manifest must not dual-write terminal-only panes"
+            "default workspace manifest must contain only current content records"
         )
     }
 
@@ -147,6 +128,47 @@ private enum ShellWorkspaceManifestTests {
         _ = try decoder.decode(
             ShellContentWorkspaceManifest.self,
             from: Data(contentsOf: manifestURL)
+        )
+    }
+
+    private static func verifiesUnsupportedManifestIsQuarantined() throws {
+        let fileManager = FileManager.default
+        let tempDirectory = try makeTempDirectory()
+        let manifestURL = tempDirectory.appendingPathComponent("shell-workspace-window_main.json")
+        let manifest = try defaultManifestWithShellCore(
+            windowID: "window_main",
+            defaultWorkingDirectory: "/unsupported/project",
+            now: referenceDate
+        )
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        var object = try JSONSerialization.jsonObject(with: encoder.encode(manifest)) as? [String: Any]
+            ?? [:]
+        object["quick_terminal"] = ["presentation": "hidden"]
+        let unsupportedData = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+        try unsupportedData.write(to: manifestURL)
+
+        let result = try ShellWorkspaceManifestStore(
+            fileManager: fileManager,
+            manifestURL: manifestURL
+        ).loadOrCreateDefault(
+            windowID: "window_main",
+            defaultWorkingDirectory: "/fresh/project",
+            now: referenceDate
+        )
+
+        guard case .quarantinedCorruptFile(let corruptURL) = result.recovery else {
+            throw TestFailure("unsupported manifest must be quarantined")
+        }
+        let quarantinedData = try Data(contentsOf: corruptURL)
+        expect(
+            quarantinedData == unsupportedData,
+            "unsupported manifest bytes must be preserved as corrupt evidence"
+        )
+        let content = try requireOnlyTerminalContent(in: try requireOnlyContentTab(in: result.manifest).liveSnapshot)
+        expect(
+            content.payload.terminal?.cwd == "/fresh/project",
+            "unsupported manifest recovery must create a current default"
         )
     }
 
@@ -308,7 +330,7 @@ private enum ShellWorkspaceManifestTests {
             activeTask: .inactive
         )
         let manifest = ShellContentWorkspaceManifest(
-            schemaVersion: ShellWorkspaceManifest.currentSchemaVersion,
+            schemaVersion: ShellContentWorkspaceManifest.currentSchemaVersion,
             contentContractVersion: ShellContentWorkspaceManifest.currentContentContractVersion,
             windowID: "window_main",
             selectedSpaceID: "space_main",
@@ -409,7 +431,7 @@ private enum ShellWorkspaceManifestTests {
             ]
         )
         let manifest = ShellContentWorkspaceManifest(
-            schemaVersion: ShellWorkspaceManifest.currentSchemaVersion,
+            schemaVersion: ShellContentWorkspaceManifest.currentSchemaVersion,
             contentContractVersion: ShellContentWorkspaceManifest.currentContentContractVersion,
             windowID: "window_main",
             selectedSpaceID: "space_main",
@@ -482,7 +504,7 @@ private enum ShellWorkspaceManifestTests {
             activeTask: .inactive
         )
         let manifest = ShellContentWorkspaceManifest(
-            schemaVersion: ShellWorkspaceManifest.currentSchemaVersion,
+            schemaVersion: ShellContentWorkspaceManifest.currentSchemaVersion,
             contentContractVersion: ShellContentWorkspaceManifest.currentContentContractVersion,
             windowID: "window_main",
             selectedSpaceID: "space_main",
@@ -528,7 +550,7 @@ private enum ShellWorkspaceManifestTests {
 
     private static func verifiesMaterializerPreservesEmptySelectedSpace() throws {
         let manifest = ShellContentWorkspaceManifest(
-            schemaVersion: ShellWorkspaceManifest.currentSchemaVersion,
+            schemaVersion: ShellContentWorkspaceManifest.currentSchemaVersion,
             contentContractVersion: ShellContentWorkspaceManifest.currentContentContractVersion,
             windowID: "window_main",
             selectedSpaceID: "space_empty",
@@ -570,7 +592,7 @@ private enum ShellWorkspaceManifestTests {
             activeTask: .inactive
         )
         let manifest = ShellContentWorkspaceManifest(
-            schemaVersion: ShellWorkspaceManifest.currentSchemaVersion,
+            schemaVersion: ShellContentWorkspaceManifest.currentSchemaVersion,
             contentContractVersion: ShellContentWorkspaceManifest.currentContentContractVersion,
             windowID: "window_main",
             selectedSpaceID: "space_empty",
@@ -640,7 +662,7 @@ private enum ShellWorkspaceManifestTests {
             activeTask: .inactive
         )
         let manifest = ShellContentWorkspaceManifest(
-            schemaVersion: ShellWorkspaceManifest.currentSchemaVersion,
+            schemaVersion: ShellContentWorkspaceManifest.currentSchemaVersion,
             contentContractVersion: ShellContentWorkspaceManifest.currentContentContractVersion,
             windowID: "window_main",
             selectedSpaceID: "space_other",
@@ -723,7 +745,7 @@ private enum ShellWorkspaceManifestTests {
             activeTask: .inactive
         )
         let manifest = ShellContentWorkspaceManifest(
-            schemaVersion: ShellWorkspaceManifest.currentSchemaVersion,
+            schemaVersion: ShellContentWorkspaceManifest.currentSchemaVersion,
             contentContractVersion: ShellContentWorkspaceManifest.currentContentContractVersion,
             windowID: "window_main",
             selectedSpaceID: "space_other",
@@ -828,138 +850,6 @@ private enum ShellWorkspaceManifestTests {
         )
     }
 
-    private static func verifiesTerminalOnlySnapshotMigratesToContentContainerShape() throws {
-        var tab = makeTab(
-            tabID: "tab_split",
-            title: "Pinned Split",
-            isPinned: true,
-            pinCwd: nil,
-            liveCwd: "/live/single",
-            lastActivatedAt: referenceDate,
-            lastActivityAt: referenceDate,
-            activeTask: .inactive
-        )
-        tab.pinSnapshot = makeSplitSnapshot(tabID: tab.tabID)
-        let manifest = makeManifest(selectedTabID: tab.tabID, tabs: [tab])
-
-        let migrated = try migrateLegacyManifestWithShellCore(manifest)
-        let migratedTab = try requireContentTab("tab_split", in: migrated)
-        let snapshot = try requireSnapshot(migratedTab.pinSnapshot)
-
-        expect(
-            migrated.contentContractVersion == ShellContentStateSnapshot.currentContractVersion,
-            "content manifest migration must use the v0.2 content contract"
-        )
-        expect(
-            snapshot.paneTree.paneSlotIDs == ["pane_tab_split_left", "pane_tab_split_right"],
-            "content migration must preserve terminal pane IDs as PaneSlot IDs"
-        )
-        expect(
-            snapshot.paneSlots.map(\.paneSlotID) == ["pane_tab_split_left", "pane_tab_split_right"],
-            "content migration must create one PaneSlot per terminal restore pane"
-        )
-        expect(
-            snapshot.paneSlots.map(\.contentID) == [
-                "content_pane_tab_split_left",
-                "content_pane_tab_split_right",
-            ],
-            "content migration must assign stable ContentInstance IDs"
-        )
-        expect(
-            snapshot.contents.map(\.kind) == [.terminal, .terminal],
-            "terminal-only restore panes must migrate to terminal ContentInstances"
-        )
-        expect(
-            snapshot.contents.map(\.title) == ["Shell", "Shell"],
-            "terminal ContentInstances must keep user-facing terminal titles"
-        )
-        expect(
-            snapshot.contents.compactMap(\.payload.terminal?.cwd) == [
-                "/pinned/left",
-                "/pinned/right",
-            ],
-            "terminal content payloads must preserve per-pane cwd"
-        )
-        expect(
-            snapshot.contents.allSatisfy { $0.payload.markdown == nil && $0.payload.settings == nil },
-            "terminal migration must not fabricate non-terminal payloads"
-        )
-    }
-
-    private static func verifiesContentContainerMigrationPreservesWorkspaceMetadata() throws {
-        let activatedAt = referenceDate.addingTimeInterval(-120)
-        let activityAt = referenceDate.addingTimeInterval(-30)
-        let tab = makeTab(
-            tabID: "tab_active",
-            title: "Active",
-            isPinned: false,
-            pinCwd: nil,
-            liveCwd: "/fallback",
-            lastActivatedAt: activatedAt,
-            lastActivityAt: activityAt,
-            activeTask: .alanPendingYield
-        )
-        let manifest = makeManifest(selectedTabID: tab.tabID, tabs: [tab])
-
-        let migrated = try migrateLegacyManifestWithShellCore(manifest)
-        let migratedSpace = try requireOnlySpace(in: migrated)
-        let migratedTab = try requireOnlyContentTab(in: migrated)
-
-        expect(migrated.selectedSpaceID == manifest.selectedSpaceID, "migration must preserve selected Space")
-        expect(migrated.selectedTabID == manifest.selectedTabID, "migration must preserve selected Tab")
-        expect(migratedSpace.spaceID == "space_main", "migration must preserve Space identity")
-        expect(migratedSpace.order == 0, "migration must preserve Space ordering")
-        expect(migratedTab.tabID == tab.tabID, "migration must preserve Tab identity")
-        expect(migratedTab.isPinned == tab.isPinned, "migration must preserve pin state")
-        expect(
-            migratedTab.lastActivatedAt == activatedAt && migratedTab.lastActivityAt == activityAt,
-            "migration must preserve TTL anchor timestamps"
-        )
-        expect(
-            migratedTab.activeTask == .alanPendingYield,
-            "migration must preserve active-task metadata"
-        )
-        let snapshot = try requireSnapshot(migratedTab.liveSnapshot)
-        expect(
-            snapshot.contents.first?.payload.terminal?.cwd == "/fallback",
-            "migration must preserve terminal restore payload cwd"
-        )
-    }
-
-    private static func verifiesContentContainerMigrationPreservesNilRestoreCwd() throws {
-        var tab = makeTab(
-            tabID: "tab_nil_cwd",
-            title: "Nil Cwd",
-            isPinned: false,
-            pinCwd: nil,
-            liveCwd: "/will-be-replaced",
-            lastActivatedAt: referenceDate,
-            lastActivityAt: referenceDate,
-            activeTask: .inactive
-        )
-        tab.liveSnapshot = makeSnapshot(tabID: tab.tabID, cwd: nil)
-        let manifest = makeManifest(selectedTabID: tab.tabID, tabs: [tab])
-
-        let migrated = try migrateLegacyManifestWithShellCore(manifest)
-        let snapshot = try requireSnapshot(try requireOnlyContentTab(in: migrated).liveSnapshot)
-
-        expect(
-            snapshot.contents.first?.payload.terminal?.cwd == nil,
-            "migration must preserve nil cwd so restore can resolve the default directory later"
-        )
-
-        let state = try materializeManifestWithShellCore(
-            manifest: migrated,
-            defaultWorkingDirectory: "/default/project",
-            now: referenceDate
-        )
-        let pane = try requirePane("pane_tab_nil_cwd", in: state)
-        expect(
-            pane.cwd == "/default/project",
-            "content manifest restore must resolve nil terminal cwd to the workspace default directory"
-        )
-    }
-
     private static func verifiesUnpinnedTabPruningUsesTtlAndActiveTask() throws {
         let expiredAt = referenceDate.addingTimeInterval(-(twelveHours + 60))
         let recentAt = referenceDate.addingTimeInterval(-60)
@@ -1034,34 +924,12 @@ private enum ShellWorkspaceManifestTests {
         expect(state.focusedTabID == nil, "materializer must keep empty selected space tabless")
     }
 
-    private static func makeManifest(
-        selectedTabID: String?,
-        tabs: [ShellWorkspaceTabRecord]
-    ) -> ShellWorkspaceManifest {
-        ShellWorkspaceManifest(
-            schemaVersion: ShellWorkspaceManifest.currentSchemaVersion,
-            windowID: "window_main",
-            selectedSpaceID: "space_main",
-            selectedTabID: selectedTabID,
-            spaces: [
-                ShellWorkspaceSpaceRecord(
-                    spaceID: "space_main",
-                    title: "Main",
-                    order: 0,
-                    createdAt: referenceDate,
-                    updatedAt: referenceDate,
-                    tabs: tabs
-                )
-            ]
-        )
-    }
-
-    private static func makeContentManifest(
+     private static func makeContentManifest(
         selectedTabID: String?,
         tabs: [ShellContentWorkspaceTabRecord]
     ) -> ShellContentWorkspaceManifest {
         ShellContentWorkspaceManifest(
-            schemaVersion: ShellWorkspaceManifest.currentSchemaVersion,
+            schemaVersion: ShellContentWorkspaceManifest.currentSchemaVersion,
             contentContractVersion: ShellContentWorkspaceManifest.currentContentContractVersion,
             windowID: "window_main",
             selectedSpaceID: "space_main",
@@ -1079,31 +947,7 @@ private enum ShellWorkspaceManifestTests {
         )
     }
 
-    private static func makeTab(
-        tabID: String,
-        title: String,
-        isPinned: Bool,
-        pinCwd: String?,
-        liveCwd: String?,
-        lastActivatedAt: Date,
-        lastActivityAt: Date,
-        activeTask: ShellTabActiveTaskState
-    ) -> ShellWorkspaceTabRecord {
-        ShellWorkspaceTabRecord(
-            tabID: tabID,
-            title: title,
-            kind: .terminal,
-            createdAt: referenceDate,
-            lastActivatedAt: lastActivatedAt,
-            lastActivityAt: lastActivityAt,
-            isPinned: isPinned,
-            pinSnapshot: pinCwd.map { makeSnapshot(tabID: tabID, cwd: $0) },
-            liveSnapshot: liveCwd.map { makeSnapshot(tabID: tabID, cwd: $0) },
-            activeTask: activeTask
-        )
-    }
-
-    private static func makeContentTab(
+     private static func makeContentTab(
         tabID: String,
         title: String,
         isPinned: Bool,
@@ -1127,28 +971,7 @@ private enum ShellWorkspaceManifestTests {
         )
     }
 
-    private static func makeSnapshot(tabID: String, cwd: String?) -> ShellTabRestoreSnapshot {
-        let paneID = "pane_\(tabID)"
-        return ShellTabRestoreSnapshot(
-            paneTree: ShellPaneTreeNode(
-                nodeID: "node_\(paneID)",
-                kind: .pane,
-                direction: nil,
-                paneID: paneID,
-                children: nil
-            ),
-            panes: [
-                ShellPaneRestoreRecord(
-                    paneID: paneID,
-                    launchTarget: .shell,
-                    cwd: cwd,
-                    title: nil
-                )
-            ]
-        )
-    }
-
-    private static func makeContentSnapshot(
+     private static func makeContentSnapshot(
         tabID: String,
         cwd: String?
     ) -> ShellContentTabRestoreSnapshot {
@@ -1185,51 +1008,7 @@ private enum ShellWorkspaceManifestTests {
         )
     }
 
-    private static func makeSplitSnapshot(tabID: String) -> ShellTabRestoreSnapshot {
-        let leftPaneID = "pane_\(tabID)_left"
-        let rightPaneID = "pane_\(tabID)_right"
-        return ShellTabRestoreSnapshot(
-            paneTree: ShellPaneTreeNode(
-                nodeID: "node_\(tabID)_split",
-                kind: .split,
-                direction: .vertical,
-                ratio: 0.5,
-                paneID: nil,
-                children: [
-                    ShellPaneTreeNode(
-                        nodeID: "node_\(leftPaneID)",
-                        kind: .pane,
-                        direction: nil,
-                        paneID: leftPaneID,
-                        children: nil
-                    ),
-                    ShellPaneTreeNode(
-                        nodeID: "node_\(rightPaneID)",
-                        kind: .pane,
-                        direction: nil,
-                        paneID: rightPaneID,
-                        children: nil
-                    ),
-                ]
-            ),
-            panes: [
-                ShellPaneRestoreRecord(
-                    paneID: leftPaneID,
-                    launchTarget: .shell,
-                    cwd: "/pinned/left",
-                    title: nil
-                ),
-                ShellPaneRestoreRecord(
-                    paneID: rightPaneID,
-                    launchTarget: .shell,
-                    cwd: "/pinned/right",
-                    title: nil
-                ),
-            ]
-        )
-    }
-
-    private static func makeContentSplitSnapshot(tabID: String) -> ShellContentTabRestoreSnapshot {
+     private static func makeContentSplitSnapshot(tabID: String) -> ShellContentTabRestoreSnapshot {
         let leftPaneID = "pane_\(tabID)_left"
         let rightPaneID = "pane_\(tabID)_right"
         let leftContentID = "content_\(leftPaneID)"
@@ -1298,31 +1077,12 @@ private enum ShellWorkspaceManifestTests {
         manifest.spaces.flatMap(\.tabs).first { $0.tabID == tabID }
     }
 
-    private static func requireOnlySpace(
-        in manifest: ShellContentWorkspaceManifest
-    ) throws -> ShellContentWorkspaceSpaceRecord {
-        guard manifest.spaces.count == 1, let space = manifest.spaces.first else {
-            throw TestFailure("expected exactly one content space")
-        }
-        return space
-    }
-
     private static func requireOnlyContentTab(
         in manifest: ShellContentWorkspaceManifest
     ) throws -> ShellContentWorkspaceTabRecord {
         let tabs = manifest.spaces.flatMap(\.tabs)
         guard tabs.count == 1, let tab = tabs.first else {
             throw TestFailure("expected exactly one content tab")
-        }
-        return tab
-    }
-
-    private static func requireContentTab(
-        _ tabID: String,
-        in manifest: ShellContentWorkspaceManifest
-    ) throws -> ShellContentWorkspaceTabRecord {
-        guard let tab = manifest.spaces.flatMap(\.tabs).first(where: { $0.tabID == tabID }) else {
-            throw TestFailure("missing content tab \(tabID)")
         }
         return tab
     }

@@ -5,17 +5,15 @@
 //! adapters without shaping the core API around binding-generator constraints.
 
 use alan_shell_core::{
-    EnvelopeVersion, ManagedTerminalAccountIdentifierValidator, ManagedTerminalAccountPlanner,
-    ManagedTerminalAccountRequest, ManagedTerminalAccountSettingsSummary,
-    ManagedTerminalAccountState, ReducerError, ReducerOperation, ShellActionId,
+    EnvelopeVersion, ManagedTerminalAccountIdentifierValidator, ManagedTerminalAccountRequest,
+    ManagedTerminalAccountSettingsSummary, ReducerError, ReducerOperation, ShellActionId,
     ShellActionRegistry, ShellActionShortcut, ShellActionTarget, ShellContentWorkspaceManifest,
     ShellControlCommand, ShellCoreErrorCode, ShellCoreErrorEnvelope, ShellCoreRequestEnvelope,
     ShellCoreResponseEnvelope, ShellSettingsDiagnosticsSummary, ShellSettingsLocalSummary,
-    ShellSettingsSummaryRows, ShellWorkspaceManifest, TerminalExecutableAvailability,
-    TerminalLaunchEnvironment, TerminalLaunchIntent, TerminalProfileDefinition,
-    TerminalProfileDocument, TerminalProfileEditor, TerminalProfileEditorDraft,
-    TerminalProfileSettingsSummary, TerminalProfileValidator, WorkspaceState,
-    should_capture_global_default_terminal_profile,
+    ShellSettingsSummaryRows, TerminalExecutableAvailability, TerminalLaunchEnvironment,
+    TerminalLaunchIntent, TerminalProfileDefinition, TerminalProfileDocument,
+    TerminalProfileEditor, TerminalProfileEditorDraft, TerminalProfileSettingsSummary,
+    TerminalProfileValidator, WorkspaceState, should_capture_global_default_terminal_profile,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -158,9 +156,6 @@ fn dispatch_request(request: ShellCoreRequestEnvelope) -> ShellCoreResponseEnvel
         "manifest.default_manifest" => default_manifest(request.payload),
         "manifest.materialize" => materialize_manifest(request.payload),
         "manifest.pruning_expired_tabs" => pruning_expired_tabs(request.payload),
-        "manifest.migrate_legacy_terminal_manifest" => {
-            migrate_legacy_terminal_manifest(request.payload)
-        }
         "reducer.apply" => apply_reducer(request.payload),
         "control.handle" => handle_control(request.payload),
         "actions.standard_descriptors" => standard_action_descriptors(request.payload),
@@ -177,7 +172,6 @@ fn dispatch_request(request: ShellCoreRequestEnvelope) -> ShellCoreResponseEnvel
         "managed_terminal_account.validate_request" => {
             validate_managed_terminal_account_request(request.payload)
         }
-        "managed_terminal_account.plan" => managed_terminal_account_plan(request.payload),
         "settings.terminal_profile_rows" => terminal_profile_rows(request.payload),
         "settings.managed_terminal_account_rows" => managed_terminal_account_rows(request.payload),
         "settings.local_rows" => local_rows(request.payload),
@@ -198,7 +192,6 @@ fn supported_operations() -> &'static [&'static str] {
         "manifest.default_manifest",
         "manifest.materialize",
         "manifest.pruning_expired_tabs",
-        "manifest.migrate_legacy_terminal_manifest",
         "reducer.apply",
         "control.handle",
         "actions.standard_descriptors",
@@ -211,7 +204,6 @@ fn supported_operations() -> &'static [&'static str] {
         "terminal_profile.should_capture_global_default",
         "terminal_profile.resolve_launch_intent",
         "managed_terminal_account.validate_request",
-        "managed_terminal_account.plan",
         "settings.terminal_profile_rows",
         "settings.managed_terminal_account_rows",
         "settings.local_rows",
@@ -242,16 +234,6 @@ fn pruning_expired_tabs(payload: Value) -> Result<Value, ShellCoreErrorEnvelope>
     let input: PruningExpiredTabsInput = decode_payload(payload, "manifest.pruning_expired_tabs")?;
     Ok(json!({
         "manifest": input.manifest.pruning_expired_tabs(&input.now, input.ttl_seconds),
-    }))
-}
-
-fn migrate_legacy_terminal_manifest(payload: Value) -> Result<Value, ShellCoreErrorEnvelope> {
-    let input: LegacyManifestInput =
-        decode_payload(payload, "manifest.migrate_legacy_terminal_manifest")?;
-    Ok(json!({
-        "manifest": input
-            .manifest
-            .migrating_terminal_restore_snapshots_to_content_containers(),
     }))
 }
 
@@ -367,14 +349,6 @@ fn validate_managed_terminal_account_request(
     }))
 }
 
-fn managed_terminal_account_plan(payload: Value) -> Result<Value, ShellCoreErrorEnvelope> {
-    let input: ManagedTerminalAccountPlanInput =
-        decode_payload(payload, "managed_terminal_account.plan")?;
-    Ok(json!({
-        "plan": ManagedTerminalAccountPlanner::plan(input.request, &input.state),
-    }))
-}
-
 fn terminal_profile_rows(payload: Value) -> Result<Value, ShellCoreErrorEnvelope> {
     let summary: TerminalProfileSettingsSummary =
         decode_payload(payload, "settings.terminal_profile_rows")?;
@@ -470,11 +444,6 @@ struct PruningExpiredTabsInput {
 }
 
 #[derive(Debug, Deserialize)]
-struct LegacyManifestInput {
-    manifest: ShellWorkspaceManifest,
-}
-
-#[derive(Debug, Deserialize)]
 struct ReducerApplyInput {
     state: WorkspaceState,
     operation: ReducerOperation,
@@ -539,12 +508,6 @@ struct TerminalLaunchIntentInput {
     terminal_profiles: Option<TerminalProfileDocument>,
     availability: TerminalExecutableAvailability,
     environment: TerminalLaunchEnvironment,
-}
-
-#[derive(Debug, Deserialize)]
-struct ManagedTerminalAccountPlanInput {
-    request: ManagedTerminalAccountRequest,
-    state: ManagedTerminalAccountState,
 }
 
 #[derive(Debug, Deserialize)]

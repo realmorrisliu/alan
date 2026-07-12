@@ -18,16 +18,6 @@ extension ShellCoreFFIAdapter {
         return response.manifest
     }
 
-    func migrateLegacyTerminalManifest(
-        _ manifest: ShellWorkspaceManifest
-    ) throws -> ShellContentWorkspaceManifest {
-        let response: ManifestPayload = try send(
-            operation: "manifest.migrate_legacy_terminal_manifest",
-            payload: LegacyManifestPayload(manifest: manifest)
-        )
-        return response.manifest
-    }
-
     func pruningExpiredTabs(
         manifest: ShellContentWorkspaceManifest,
         now: Date,
@@ -72,10 +62,6 @@ private struct DefaultManifestPayload: Encodable {
         case defaultWorkingDirectory = "default_working_directory"
         case now
     }
-}
-
-private struct LegacyManifestPayload: Encodable {
-    let manifest: ShellWorkspaceManifest
 }
 
 private struct PruningExpiredTabsPayload: Encodable {

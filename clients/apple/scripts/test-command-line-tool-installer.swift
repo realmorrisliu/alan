@@ -201,7 +201,7 @@ private func testDirectAppLinkInHomebrewPrefixDoesNotSkipInstall() throws {
     }
 }
 
-private func testReplacesLegacyLowercaseAppLinks() throws {
+private func testLeavesLowercaseAppLinksUntouched() throws {
     let resourceRoot = try makeResourceRoot()
     let targetDirectory = try temporaryDirectory("target")
     try FileManager.default.createDirectory(at: targetDirectory, withIntermediateDirectories: true)
@@ -222,12 +222,17 @@ private func testReplacesLegacyLowercaseAppLinks() throws {
     )
 
     try require(records.count == 1, "installer must report alan")
+    for record in records {
+        guard case .skipped = record.status else {
+            throw TestFailure.message("lowercase app link must not be treated as Alan-owned")
+        }
+    }
     for tool in AlanCommandLineToolInstaller.toolNames {
         let target = targetDirectory.appendingPathComponent(tool)
         let destination = try FileManager.default.destinationOfSymbolicLink(atPath: target.path)
         try require(
-            destination.contains("/Alan.app/Contents/Resources/bin/\(tool)"),
-            "installer must replace legacy lowercase app links for \(tool)"
+            destination.contains("/alan.app/Contents/Resources/bin/\(tool)"),
+            "installer must leave an unrelated lowercase app link untouched for \(tool)"
         )
     }
 }
@@ -324,7 +329,7 @@ private enum TestRunner {
         try testRejectsHomebrewPrefixTarget()
         try testSkipsWhenHomebrewAlreadyManagesLinks()
         try testDirectAppLinkInHomebrewPrefixDoesNotSkipInstall()
-        try testReplacesLegacyLowercaseAppLinks()
+        try testLeavesLowercaseAppLinksUntouched()
         try testRejectsAlanHomeBinTarget()
         try testRejectsDevAlanHomeBinTarget()
         try testChannelResolvesFromBundleIdentifier()

@@ -1273,8 +1273,7 @@ private struct ShellSettingsContentView: View {
     @State private var isManagedUserCreationPresented = false
     @State private var managedUserCreationDraft = ManagedTerminalUserCreationDraft(
         unixUserName: "",
-        displayLabel: "",
-        guiUserName: NSUserName()
+        displayLabel: ""
     )
     @State private var managedUserCreationPreviewResult: ManagedTerminalUserCreationPreviewResult?
     @State private var managedUserActionSheet: ShellManagedUserActionSheetState?
@@ -1444,8 +1443,7 @@ private struct ShellSettingsContentView: View {
         case .create:
             managedUserCreationDraft = ManagedTerminalUserCreationDraft(
                 unixUserName: "",
-                displayLabel: "",
-                guiUserName: NSUserName()
+                displayLabel: ""
             )
             managedUserCreationPreviewResult = nil
             isManagedUserCreationPresented = true
@@ -1631,7 +1629,7 @@ private struct ShellSettingsContentView: View {
         let catalogStore = ManagedTerminalAccountCatalogStore.defaultStore()
         let isRemovalPlan = plan.steps.contains {
             switch $0.kind {
-            case .removeSudoersDropIn, .removeManagedTerminalProfile, .deleteAccount, .deleteHomeDirectory:
+            case .removeManagedTerminalProfile, .deleteAccount, .deleteHomeDirectory:
                 return true
             case .helperStep(let helperKind):
                 return helperKind == .removeManagedUserIntegration
@@ -1647,8 +1645,7 @@ private struct ShellSettingsContentView: View {
                  .repairHomeDirectory,
                  .repairShell,
                  .hideAccount,
-                 .createOrUpdateTerminalProfile,
-                 .bindCurrentSpace:
+                 .createOrUpdateTerminalProfile:
                 return true
             case .helperStep(let helperKind):
                 switch helperKind {
@@ -1661,13 +1658,10 @@ private struct ShellSettingsContentView: View {
                      .hideAccount,
                      .writeOwnershipMarker,
                      .verifyAccount,
-                     .cleanupLegacySudoers,
                      .verifyManagedUserPTY:
                     return true
                 }
-            case .removeSudoersDropIn, .removeManagedTerminalProfile, .deleteAccount, .deleteHomeDirectory:
-                return false
-            default:
+            case .removeManagedTerminalProfile, .deleteAccount, .deleteHomeDirectory:
                 return false
             }
         }
@@ -2498,16 +2492,12 @@ private struct ShellManagedUserPlanSheet: View {
             return "Helper unavailable"
         case .accountNotAlanManaged:
             return "Not managed"
-        case .legacySudoersPresent:
-            return "Legacy sudoers"
         case .ptySpawnFailed:
             return "PTY failed"
         case .invalid:
             return "Invalid"
         case .requiresDestructiveConfirmation:
             return "Needs confirmation"
-        case .sudoersConflict:
-            return "Sudoers conflict"
         case .terminalProfileConflict:
             return "Terminal Profile conflict"
         }

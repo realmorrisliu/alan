@@ -7,7 +7,6 @@ struct ShellWorkspaceManifestLoadResult: Equatable {
 
 enum ShellWorkspaceManifestRecovery: Equatable {
     case loadedExisting
-    case migratedLegacyTerminalManifest
     case createdDefault
     case quarantinedCorruptFile(URL)
 }
@@ -83,10 +82,6 @@ struct ShellWorkspaceManifestStore {
             return ShellWorkspaceManifestLoadResult(manifest: manifest, recovery: .createdDefault)
         }
 
-        // Only a genuinely unreadable/corrupt manifest should be quarantined. A manifest that
-        // decodes cleanly but fails *migration* (e.g. the shell-core FFI dylib is missing or has
-        // an ABI mismatch) must not be moved aside; that would silently discard the user's valid
-        // saved workspace. Such failures propagate while the manifest stays in place.
         let data: Data
         do {
             data = try Data(contentsOf: manifestURL)
@@ -98,8 +93,10 @@ struct ShellWorkspaceManifestStore {
             )
         }
 
-        if let manifest = try? Self.decoder.decode(ShellContentWorkspaceManifest.self, from: data) {
-            guard manifest.schemaVersion == ShellWorkspaceManifest.currentSchemaVersion,
+        if Self.hasOnlyCurrentRootKeys(data),
+           let manifest = try? Self.decoder.decode(ShellContentWorkspaceManifest.self, from: data)
+        {
+            guard manifest.schemaVersion == ShellContentWorkspaceManifest.currentSchemaVersion,
                   manifest.contentContractVersion == ShellContentWorkspaceManifest.currentContentContractVersion
             else {
                 return try quarantineCorruptManifest(
@@ -111,25 +108,10 @@ struct ShellWorkspaceManifestStore {
             return ShellWorkspaceManifestLoadResult(manifest: manifest, recovery: .loadedExisting)
         }
 
-        guard let legacyManifest = try? Self.decoder.decode(ShellWorkspaceManifest.self, from: data),
-              legacyManifest.schemaVersion == ShellWorkspaceManifest.currentSchemaVersion
-        else {
-            return try quarantineCorruptManifest(
-                windowID: windowID,
-                defaultWorkingDirectory: defaultWorkingDirectory,
-                now: now
-            )
-        }
-
-        // Decoded a valid legacy manifest; migration failures here are infrastructure errors and
-        // propagate without quarantining the original file.
-        let migratedManifest = try ShellCoreFFIAdapter.shared.migrateLegacyTerminalManifest(
-            legacyManifest
-        )
-        try save(migratedManifest)
-        return ShellWorkspaceManifestLoadResult(
-            manifest: migratedManifest,
-            recovery: .migratedLegacyTerminalManifest
+        return try quarantineCorruptManifest(
+            windowID: windowID,
+            defaultWorkingDirectory: defaultWorkingDirectory,
+            now: now
         )
     }
 
@@ -166,16 +148,6 @@ struct ShellWorkspaceManifestStore {
         try data.write(to: manifestURL, options: .atomic)
     }
 
-    func saveLegacyTerminalManifest(_ manifest: ShellWorkspaceManifest) throws {
-        let directoryURL = manifestURL.deletingLastPathComponent()
-        try fileManager.createDirectory(
-            at: directoryURL,
-            withIntermediateDirectories: true
-        )
-        let data = try Self.encoder.encode(manifest)
-        try data.write(to: manifestURL, options: .atomic)
-    }
-
     static func defaultManifestURL(
         windowID: String,
         fileManager: FileManager = .default,
@@ -199,6 +171,23 @@ struct ShellWorkspaceManifestStore {
         decoder.dateDecodingStrategy = .iso8601
         return decoder
     }()
+
+    private static func hasOnlyCurrentRootKeys(_ data: Data) -> Bool {
+        guard let object = try? JSONSerialization.jsonObject(with: data),
+              let document = object as? [String: Any]
+        else {
+            return false
+        }
+        let allowedKeys: Set<String> = [
+            "schema_version",
+            "content_contract_version",
+            "window_id",
+            "selected_space_id",
+            "selected_tab_id",
+            "spaces",
+        ]
+        return Set(document.keys).isSubset(of: allowedKeys)
+    }
 
     private static func sanitizedWindowID(_ windowID: String) -> String {
         let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "_-"))

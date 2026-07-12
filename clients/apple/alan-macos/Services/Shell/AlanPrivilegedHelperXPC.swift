@@ -804,12 +804,10 @@ final class AlanPrivilegedHelperXPCClient {
 
 private struct AlanXPCManagedTerminalAccountRequest: Codable, Equatable {
     let accountName: String
-    let guiUserName: String
     let fullName: String?
     let shell: String
     let homeDirectory: String
     let hideFromLoginWindow: Bool
-    let bindCurrentSpaceAfterSuccess: Bool
 
     var terminalProfileID: String { accountName }
     var canonicalHomeDirectory: String { "/Users/\(accountName)" }
@@ -827,7 +825,6 @@ private enum AlanXPCManagedUserReadinessState: String, Codable, Equatable {
     case ready
     case accountNotAlanManaged = "account_not_alan_managed"
     case helperUnavailable = "helper_unavailable"
-    case legacySudoersPresent = "legacy_sudoers_present"
     case ptySpawnFailed = "pty_spawn_failed"
     case destructiveConfirmationRequired = "destructive_confirmation_required"
 }
@@ -840,7 +837,6 @@ private enum AlanXPCManagedUserHelperPlanStepKind: String, Codable, Equatable, C
     case hideAccount = "hide_account"
     case writeOwnershipMarker = "write_ownership_marker"
     case verifyAccount = "verify_account"
-    case cleanupLegacySudoers = "cleanup_legacy_sudoers"
     case verifyManagedUserPTY = "verify_managed_user_pty"
     case removeManagedUserIntegration = "remove_managed_user_integration"
     case deleteAccount = "delete_account"
@@ -885,7 +881,6 @@ private struct AlanXPCManagedUserDiagnosis: Codable, Equatable {
     let homeDirectoryExists: Bool
     let shellMatches: Bool
     let hiddenFromLoginWindow: Bool
-    let legacySudoersPath: String?
     let terminalProfileID: String?
     let ptySmokeVerified: Bool
     let diagnostic: AlanXPCPrivilegedHelperDiagnostic?
@@ -981,7 +976,6 @@ private final class AlanPrivilegedHelperManagedUserService {
                 ownershipState: .missing,
                 readinessState: .repairable,
                 account: nil,
-                legacySudoersPath: nil,
                 ptySmokeVerified: false,
                 diagnostic: diagnostic(
                     operation: .diagnoseManagedUser,
@@ -993,14 +987,12 @@ private final class AlanPrivilegedHelperManagedUserService {
         }
 
         let account = accountRecord(for: request.accountName)
-        let legacySudoersPath = verifiedLegacySudoersPath(for: request)
         guard let account else {
             return diagnosis(
                 request: request,
                 ownershipState: .missing,
                 readinessState: .accountMissing,
                 account: nil,
-                legacySudoersPath: legacySudoersPath,
                 ptySmokeVerified: false,
                 diagnostic: nil
             )
@@ -1008,7 +1000,7 @@ private final class AlanPrivilegedHelperManagedUserService {
 
         let markerExists = fileManager.fileExists(atPath: ownershipMarkerPath(for: request))
         let ownershipState: AlanXPCManagedUserOwnershipState
-        if markerExists || legacySudoersPath != nil {
+        if markerExists {
             ownershipState = .alanManaged
         } else {
             ownershipState = .notAlanManaged
@@ -1020,7 +1012,6 @@ private final class AlanPrivilegedHelperManagedUserService {
                 ownershipState: ownershipState,
                 readinessState: .accountNotAlanManaged,
                 account: account,
-                legacySudoersPath: nil,
                 ptySmokeVerified: false,
                 diagnostic: diagnostic(
                     operation: .diagnoseManagedUser,
@@ -1028,18 +1019,6 @@ private final class AlanPrivilegedHelperManagedUserService {
                     code: .accountNotAlanManaged,
                     message: "Existing account is not Alan managed."
                 )
-            )
-        }
-
-        if legacySudoersPath != nil {
-            return diagnosis(
-                request: request,
-                ownershipState: ownershipState,
-                readinessState: .legacySudoersPresent,
-                account: account,
-                legacySudoersPath: legacySudoersPath,
-                ptySmokeVerified: false,
-                diagnostic: nil
             )
         }
 
@@ -1054,7 +1033,6 @@ private final class AlanPrivilegedHelperManagedUserService {
                 ownershipState: ownershipState,
                 readinessState: .repairable,
                 account: account,
-                legacySudoersPath: nil,
                 ptySmokeVerified: false,
                 diagnostic: nil
             )
@@ -1066,7 +1044,6 @@ private final class AlanPrivilegedHelperManagedUserService {
             ownershipState: ownershipState,
             readinessState: ptySmokeVerified ? .ready : .ptySpawnFailed,
             account: account,
-            legacySudoersPath: nil,
             ptySmokeVerified: ptySmokeVerified,
             diagnostic: ptySmokeVerified
                 ? nil
@@ -1126,7 +1103,7 @@ private final class AlanPrivilegedHelperManagedUserService {
                     )
                 }
             case .createStandardAccount, .repairAccountType, .repairHomeDirectory, .repairShell,
-                    .hideAccount, .writeOwnershipMarker, .verifyAccount, .cleanupLegacySudoers,
+                    .hideAccount, .writeOwnershipMarker, .verifyAccount,
                     .verifyManagedUserPTY, .removeManagedUserIntegration:
                 break
             }
@@ -1190,7 +1167,6 @@ private final class AlanPrivilegedHelperManagedUserService {
         for request: AlanXPCManagedTerminalAccountRequest
     ) -> Bool {
         fileManager.fileExists(atPath: ownershipMarkerPath(for: request))
-            || verifiedLegacySudoersPath(for: request) != nil
     }
 
     func removeIntegration(
@@ -1216,12 +1192,10 @@ private final class AlanPrivilegedHelperManagedUserService {
     ) -> Result<AlanManagedUserAccountRecord, AlanXPCPrivilegedHelperDiagnostic> {
         let request = AlanXPCManagedTerminalAccountRequest(
             accountName: accountName,
-            guiUserName: "root",
             fullName: nil,
             shell: shell,
             homeDirectory: homeDirectory,
-            hideFromLoginWindow: true,
-            bindCurrentSpaceAfterSuccess: false
+            hideFromLoginWindow: true
         )
         guard channelID == identity.channelID else {
             return .failure(
@@ -1281,8 +1255,6 @@ private final class AlanPrivilegedHelperManagedUserService {
             return diagnosis.readinessState == .ready || diagnosis.readinessState == .ptySpawnFailed
                 ? (true, "Managed User account state verified. Credentials redacted.")
                 : (false, diagnosis.diagnostic?.sanitizedMessage ?? "Managed User verification failed.")
-        case .cleanupLegacySudoers:
-            return cleanupLegacySudoers(request)
         case .verifyManagedUserPTY:
             return verifyManagedUserPTY(request: request)
                 ? (true, "Managed User PTY smoke verified. Credentials redacted.")
@@ -1396,20 +1368,6 @@ private final class AlanPrivilegedHelperManagedUserService {
         }
     }
 
-    private func cleanupLegacySudoers(
-        _ request: AlanXPCManagedTerminalAccountRequest
-    ) -> (succeeded: Bool, message: String) {
-        guard let path = verifiedLegacySudoersPath(for: request) else {
-            return (true, "No verified legacy Alan sudoers file was present. Credentials redacted.")
-        }
-        do {
-            try fileManager.removeItem(atPath: path)
-            return (true, "Verified legacy Alan sudoers file removed. Credentials redacted.")
-        } catch {
-            return (false, "Verified legacy Alan sudoers cleanup failed. Credentials redacted.")
-        }
-    }
-
     private func verifyManagedUserPTY(request: AlanXPCManagedTerminalAccountRequest) -> Bool {
         guard let account = accountRecord(for: request.accountName) else { return false }
         var master: Int32 = -1
@@ -1463,7 +1421,6 @@ private final class AlanPrivilegedHelperManagedUserService {
         var errors: [AlanPrivilegedHelperXPCErrorCode] = []
         let pattern = #"^[A-Za-z_][A-Za-z0-9_-]{0,31}$"#
         if request.accountName.range(of: pattern, options: .regularExpression) == nil
-            || request.guiUserName.range(of: pattern, options: .regularExpression) == nil
             || ["root", "daemon", "nobody"].contains(request.accountName.lowercased())
         {
             errors.append(.invalidAccountIdentifier)
@@ -1482,7 +1439,6 @@ private final class AlanPrivilegedHelperManagedUserService {
         ownershipState: AlanXPCManagedUserOwnershipState,
         readinessState: AlanXPCManagedUserReadinessState,
         account: AlanManagedUserAccountRecord?,
-        legacySudoersPath: String?,
         ptySmokeVerified: Bool,
         diagnostic: AlanXPCPrivilegedHelperDiagnostic?
     ) -> AlanXPCManagedUserDiagnosis {
@@ -1495,7 +1451,6 @@ private final class AlanPrivilegedHelperManagedUserService {
             homeDirectoryExists: fileManager.fileExists(atPath: request.homeDirectory),
             shellMatches: account?.shell == request.shell,
             hiddenFromLoginWindow: account?.hidden == true,
-            legacySudoersPath: legacySudoersPath,
             terminalProfileID: nil,
             ptySmokeVerified: ptySmokeVerified,
             diagnostic: diagnostic
@@ -1562,31 +1517,6 @@ private final class AlanPrivilegedHelperManagedUserService {
 
     private func ownershipMarkerPath(for request: AlanXPCManagedTerminalAccountRequest) -> String {
         "\(identity.dataRootPath)/managed-users/\(request.accountName)/ownership.json"
-    }
-
-    private func legacySudoersPath(for request: AlanXPCManagedTerminalAccountRequest) -> String {
-        "/etc/sudoers.d/alan-terminal-\(request.guiUserName)-to-\(request.accountName)"
-    }
-
-    private func verifiedLegacySudoersPath(
-        for request: AlanXPCManagedTerminalAccountRequest
-    ) -> String? {
-        let path = legacySudoersPath(for: request)
-        guard let data = fileManager.contents(atPath: path),
-              let contents = String(data: data, encoding: .utf8)
-        else {
-            return nil
-        }
-        let expected = """
-        # Managed by Alan for terminal account entry. Do not edit by hand.
-        \(request.guiUserName) ALL=(\(request.accountName)) NOPASSWD: ALL
-        """
-        guard contents.trimmingCharacters(in: .whitespacesAndNewlines)
-            == expected.trimmingCharacters(in: .whitespacesAndNewlines)
-        else {
-            return nil
-        }
-        return path
     }
 
     private func diagnostic(

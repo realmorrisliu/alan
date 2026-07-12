@@ -373,11 +373,6 @@ require_single_owner_pattern \
     "shell-core workspace manifest defaulting"
 
 require_single_owner_pattern \
-    "ShellCoreFFIAdapter.shared.migrateLegacyTerminalManifest" \
-    "Services/Shell/ShellWorkspaceManifestStore.swift" \
-    "shell-core legacy terminal manifest migration"
-
-require_single_owner_pattern \
     "ShellCoreFFIAdapter.shared.pruningExpiredTabs" \
     "Services/Shell/ShellWorkspaceManifestStartupCoordinator.swift" \
     "shell-core workspace manifest pruning"

@@ -1,11 +1,5 @@
 import Foundation
 
-enum ShellWorkspaceStartupMode {
-    case fresh
-    case restorePrevious
-    case workspaceManifest
-}
-
 @MainActor
 struct ShellWorkspaceManifestStartupResult {
     let shellState: ShellStateSnapshot
@@ -14,7 +8,6 @@ struct ShellWorkspaceManifestStartupResult {
     let manifestRecovery: ShellWorkspaceManifestRecovery?
     let retiredTabCount: Int
     let diagnostics: [String]
-    let shouldPersistInitialShellState: Bool
 }
 
 @MainActor
@@ -28,48 +21,17 @@ struct ShellWorkspaceManifestStartupCoordinator {
     }
 
     func prepare(
-        mode: ShellWorkspaceStartupMode,
         windowContext: ShellWindowContext,
         workspaceManifestURL: URL?,
         defaultWorkingDirectory: String?,
         now: Date
     ) -> ShellWorkspaceManifestStartupResult {
-        switch mode {
-        case .fresh:
-            return ShellWorkspaceManifestStartupResult(
-                shellState: .bootstrapDefault(windowID: windowContext.windowID),
-                manifestStore: nil,
-                workspaceManifest: nil,
-                manifestRecovery: nil,
-                retiredTabCount: 0,
-                diagnostics: [],
-                shouldPersistInitialShellState: true
-            )
-        case .restorePrevious:
-            let shellState =
-                ShellStatePersistenceStore.restoreShellState(
-                    fileManager: fileManager,
-                    persistenceURL: windowContext.persistenceURL,
-                    channel: windowContext.installChannel
-                )
-                ?? .bootstrapDefault(windowID: windowContext.windowID)
-            return ShellWorkspaceManifestStartupResult(
-                shellState: shellState,
-                manifestStore: nil,
-                workspaceManifest: nil,
-                manifestRecovery: nil,
-                retiredTabCount: 0,
-                diagnostics: [],
-                shouldPersistInitialShellState: false
-            )
-        case .workspaceManifest:
-            return prepareWorkspaceManifestStartup(
-                windowContext: windowContext,
-                workspaceManifestURL: workspaceManifestURL,
-                defaultWorkingDirectory: defaultWorkingDirectory,
-                now: now
-            )
-        }
+        prepareWorkspaceManifestStartup(
+            windowContext: windowContext,
+            workspaceManifestURL: workspaceManifestURL,
+            defaultWorkingDirectory: defaultWorkingDirectory,
+            now: now
+        )
     }
 
     private func prepareWorkspaceManifestStartup(
@@ -127,8 +89,7 @@ struct ShellWorkspaceManifestStartupCoordinator {
                 workspaceManifest: retainedManifest,
                 manifestRecovery: loadResult.recovery,
                 retiredTabCount: prunedRetiredTabCount,
-                diagnostics: diagnostics,
-                shouldPersistInitialShellState: false
+                diagnostics: diagnostics
             )
         } catch {
             // Shell-core authority failures must leave any decoded valid manifest untouched.
@@ -143,8 +104,7 @@ struct ShellWorkspaceManifestStartupCoordinator {
                 workspaceManifest: nil,
                 manifestRecovery: nil,
                 retiredTabCount: 0,
-                diagnostics: ["workspace manifest shell-core startup failed: \(error)"],
-                shouldPersistInitialShellState: false
+                diagnostics: ["workspace manifest shell-core startup failed: \(error)"]
             )
         }
     }

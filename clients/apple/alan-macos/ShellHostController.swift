@@ -111,7 +111,6 @@ struct ShellPaneMovementInteractionPolicy: Equatable {
 @MainActor
 struct ShellWindowContext {
     let windowID: String
-    let persistenceURL: URL
     let installChannel: AlanInstallChannel
     let terminalRuntimeRegistry: TerminalRuntimeRegistry
 
@@ -132,18 +131,13 @@ struct ShellWindowContext {
     }
 
     static func make(
-        fileManager: FileManager = .default,
+        fileManager _: FileManager = .default,
         windowID: String = "window_\(UUID().uuidString.lowercased())",
         installChannel: AlanInstallChannel = .current(),
         terminalRuntimeRegistry: TerminalRuntimeRegistry? = nil
     ) -> ShellWindowContext {
         ShellWindowContext(
             windowID: windowID,
-            persistenceURL: ShellStatePersistenceStore.defaultPersistenceURL(
-                windowID: windowID,
-                fileManager: fileManager,
-                channel: installChannel
-            ),
             installChannel: installChannel,
             terminalRuntimeRegistry: terminalRuntimeRegistry ?? TerminalRuntimeRegistry()
         )
@@ -152,23 +146,6 @@ struct ShellWindowContext {
 
 @MainActor
 final class ShellHostController: ObservableObject, TerminalHostActivationDelegate {
-    enum StartupMode {
-        case fresh
-        case restorePrevious
-        case workspaceManifest
-
-        var workspaceStartupMode: ShellWorkspaceStartupMode {
-            switch self {
-            case .fresh:
-                return .fresh
-            case .restorePrevious:
-                return .restorePrevious
-            case .workspaceManifest:
-                return .workspaceManifest
-            }
-        }
-    }
-
     private static let gracefulShutdownPollInterval: TimeInterval = 0.05
     private static let iso8601Formatter = ISO8601DateFormatter()
     private let fileManager: FileManager
@@ -298,7 +275,6 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         shellState: ShellStateSnapshot,
         fileManager: FileManager = .default,
         windowContext: ShellWindowContext? = nil,
-        persistenceURL: URL? = nil,
         terminalRuntimeRegistry: TerminalRuntimeRegistry? = nil,
         workspaceManifestStore: ShellWorkspaceManifestStore? = nil,
         workspaceManifest: ShellContentWorkspaceManifest? = nil,
@@ -324,14 +300,8 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         )
         let resolvedContext = windowContext ?? ShellWindowContext.make(fileManager: fileManager)
         self.windowContext = resolvedContext
-        let resolvedPersistenceURL = persistenceURL ?? resolvedContext.persistenceURL
-        let persistenceStore = ShellStatePersistenceStore(
-            fileManager: fileManager,
-            persistenceURL: resolvedPersistenceURL
-        )
         self.persistenceCoordinator = ShellWorkspacePersistenceCoordinator(
             manifestStore: workspaceManifestStore,
-            stateStore: persistenceStore,
             workspaceManifest: workspaceManifest,
             persistenceWriter: persistenceWriter,
             manifestFlushScheduler: manifestFlushScheduler
@@ -378,27 +348,19 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     static func live(
         fileManager: FileManager = .default,
         windowContext: ShellWindowContext? = nil,
-        startupMode: StartupMode = .fresh,
         workspaceManifestURL: URL? = nil,
         defaultWorkingDirectory: String? = nil,
         now: Date = .now
     ) -> ShellHostController {
         let installChannel = AlanInstallChannel.current()
-        let usesRestorableWindowContext = startupMode == .restorePrevious || startupMode == .workspaceManifest
         let resolvedWindowContext =
             windowContext
-            ?? ShellStatePersistenceStore.restoredWindowContext(
+            ?? ShellWindowContext.make(
                 fileManager: fileManager,
-                restorePrevious: startupMode == .restorePrevious,
-                channel: installChannel
-            )
-            ?? ShellStatePersistenceStore.defaultWindowContext(
-                fileManager: fileManager,
-                restorePrevious: usesRestorableWindowContext,
-                channel: installChannel
+                windowID: "window_main",
+                installChannel: installChannel
             )
         let startup = ShellWorkspaceManifestStartupCoordinator(fileManager: fileManager).prepare(
-            mode: startupMode.workspaceStartupMode,
             windowContext: resolvedWindowContext,
             workspaceManifestURL: workspaceManifestURL,
             defaultWorkingDirectory: defaultWorkingDirectory,
@@ -409,13 +371,9 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             shellState: startup.shellState,
             fileManager: fileManager,
             windowContext: resolvedWindowContext,
-            persistenceURL: resolvedWindowContext.persistenceURL,
             workspaceManifestStore: startup.manifestStore,
             workspaceManifest: startup.workspaceManifest
         )
-        if startup.shouldPersistInitialShellState {
-            controller.persistShellState()
-        }
         if let manifestRecovery = startup.manifestRecovery {
             controller.recordWorkspaceManifestRecovery(manifestRecovery)
         }
@@ -2727,10 +2685,6 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         }
     }
 
-    private func persistShellState(coalesced: Bool = false) {
-        persistenceCoordinator.persistShellState(shellState, coalesced: coalesced)
-    }
-
     /// Forces pending debounced persistence to disk synchronously. Wired to app
     /// background/resign-active and quit so a clean exit never loses pending
     /// restore content; also a deterministic flush point for tests.
@@ -2853,7 +2807,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         }
 
         var manifest = ShellContentWorkspaceManifest(
-            schemaVersion: ShellWorkspaceManifest.currentSchemaVersion,
+            schemaVersion: ShellContentWorkspaceManifest.currentSchemaVersion,
             contentContractVersion: ShellContentWorkspaceManifest.currentContentContractVersion,
             windowID: shellState.windowID,
             selectedSpaceID: shellState.focusedSpaceID ?? selectedSpaceID,
@@ -3046,8 +3000,6 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         switch recovery {
         case .loadedExisting:
             return
-        case .migratedLegacyTerminalManifest:
-            recordControlPlaneDiagnostic("workspace manifest migrated terminal snapshots to content containers")
         case .createdDefault:
             recordControlPlaneDiagnostic("workspace manifest created default")
         case .quarantinedCorruptFile(let url):
