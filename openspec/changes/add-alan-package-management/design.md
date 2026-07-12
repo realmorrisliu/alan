@@ -212,9 +212,9 @@ entry and are discovered in place through the `/lib/pkg` projection (D3a).
 Conversion and adoption produce the skill package content; the store, not a
 public directory, is where it lives:
 
-- **Convert**: command-style `.md` without portable frontmatter → generated
-  skill package (derived `name`/`description` frontmatter, versioned adapter
-  preamble, body preserved byte-for-byte) written into the store entry's
+- **Convert**: command-style `skills/*.md` without portable frontmatter →
+  generated skill package (derived `name`/`description` frontmatter, versioned
+  adapter preamble, body preserved byte-for-byte) written into the store entry's
   materialized layer.
 - **Adopt**: directory with a valid `SKILL.md` → validated with existing
   loader rules and left in place; no copy, since it is already discoverable
@@ -470,8 +470,7 @@ must not be treated as discovered skills by the restored legacy resolver.
 
 - Exact wording of the standard adapter preamble (finalized during
   implementation; versioned so it can evolve).
-- How a package names its materializable skills in v0: convention-scan
-  (`skills/*.md` command-style, `*/SKILL.md` portable) versus an optional
-  package manifest file in the source repo. Default assumption:
-  convention-scan with explicit include/exclude flags; a source-side manifest
-  can come later without breaking the contract.
+- A source-side package manifest can later supplement the v0 convention scan
+  (`skills/*.md` command-style, `**/SKILL.md` portable). v0 uses those bounded
+  roots plus explicit include/exclude flags; it never recursively treats
+  arbitrary Markdown such as README or docs as commands.

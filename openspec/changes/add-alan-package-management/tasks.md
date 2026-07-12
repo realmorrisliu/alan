@@ -13,7 +13,7 @@
 
 - [ ] 2.1 Define the data model: distribution package with a channel-unique package id (normalized source basename or explicit `--name`), stable provider-scoped path-safe Q package ids distinct from exported skill ids, sanitized credential-free source identity, store backing under the channel alan home (`~/.alan/pkg/`, dev `~/.alan-dev/pkg/`), provider registry entry, provenance record, materialization manifest with content hashes and selected skill roots, operation report types
 - [ ] 2.2 Implement source fetch: accept credentials only as transient credential-provider inputs; persist a sanitized URL; resolve remote git revisions in a private staging clone; for local git export tracked files plus tracked modifications by default, and for non-git local sources export detected skill roots by default; admit untracked, ignored, helper, or resource paths only through explicit validated includes; reject escaping symlinks; use git commit tokens only for remote git sources and content fingerprints of the actual allowlisted export for every local path source
-- [ ] 2.3 Implement materializable-skill scanning by convention (command-style `*.md`, portable `*/SKILL.md`) with include/exclude flags
+- [ ] 2.3 Implement bounded materializable-skill scanning by convention (command-style `skills/*.md`, portable `**/SKILL.md`) with explicit include/exclude flags; never recursively convert arbitrary README/docs Markdown
 
 ## 3. Materialization primitives
 

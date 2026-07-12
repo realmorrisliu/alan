@@ -122,10 +122,13 @@ other public skill source), where they are resolved as a distribution provider.
 Channel isolation is inherited from the channel-scoped store backing. Two
 materialization forms are supported in v0 / slice 1:
 
-- **Conversion**: a Claude Code command-style single `.md` file (body text,
-  optionally using `$ARGUMENTS`, without portable `SKILL.md` frontmatter)
-  becomes a directory-backed alan skill package.
-- **Adoption**: a directory containing a valid portable `SKILL.md` is
+- **Conversion**: a Claude Code command-style single `skills/*.md` file (body
+  text, optionally using `$ARGUMENTS`, without portable `SKILL.md` frontmatter)
+  becomes a directory-backed alan skill package. Markdown outside that default
+  root is considered only through an explicit include; README and docs content
+  is never converted by a recursive Markdown scan.
+- **Adoption**: a directory matched by the portable `**/SKILL.md` convention
+  and containing a valid `SKILL.md` is
   validated against the existing skill package contract and registered in
   place as a manifest-selected root inside the exported `source/` tree, without
   content edits or a second copy.
@@ -145,14 +148,16 @@ command-style file SHALL win and the duplicate portable package SHALL be
 skipped with a report entry.
 
 #### Scenario: Command-style file is converted
-- **WHEN** the package source contains a command-style `.md` skill file
+- **WHEN** the package source contains a command-style `skills/*.md` skill file
+  or an explicitly included command-style file
 - **THEN** materialization creates a skill package whose `SKILL.md` carries
   derived `name` and `description` frontmatter
 - **AND** the package is resolvable through Quartermaster as a distribution
   provider
 
 #### Scenario: Portable package is adopted
-- **WHEN** the package source contains a directory with a valid `SKILL.md`
+- **WHEN** the package source contains a directory matched by `**/SKILL.md`
+  with a valid `SKILL.md`
 - **THEN** materialization validates it with the same rules used for discovery
 - **AND** registers that directory in place as a manifest-selected skill root
   without copying or modifying its body
