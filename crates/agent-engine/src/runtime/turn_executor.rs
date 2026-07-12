@@ -887,7 +887,14 @@ where
 {
     if matches!(turn_kind, TurnRunKind::NewTurn) {
         state.turn_state.reset_auto_mid_turn_compaction_state();
+        super::ui_surfaces::turn_started(state.namespace_environment())
+            .await
+            .context("write turn-start UI state")?;
         emit(Event::TurnStarted {}).await;
+    } else {
+        super::ui_surfaces::resumed(state.namespace_environment())
+            .await
+            .context("write resumed turn UI state")?;
     }
 
     let namespace_generation = state.namespace_environment().clone();
@@ -1203,6 +1210,9 @@ where
         }
 
         for warning in &response.warnings {
+            super::ui_surfaces::warning(state.namespace_environment(), warning.clone())
+                .await
+                .context("write provider warning UI state")?;
             emit(Event::Warning {
                 message: warning.clone(),
             })
@@ -1227,12 +1237,12 @@ where
                     reason = %reason,
                     "Response guardrail triggered for assistant output"
                 );
-                emit(Event::Warning {
-                    message: format!(
-                        "Guardrail recovered ({rule_id}): {reason}. Retrying before output."
-                    ),
-                })
-                .await;
+                let message =
+                    format!("Guardrail recovered ({rule_id}): {reason}. Retrying before output.");
+                super::ui_surfaces::warning(state.namespace_environment(), message.clone())
+                    .await
+                    .context("write guardrail warning UI state")?;
+                emit(Event::Warning { message }).await;
                 pending_guardrail_instruction = Some(instruction);
                 maybe_compact_mid_turn_if_needed(
                     state,
@@ -1254,6 +1264,9 @@ where
         if let Some(ref thinking) = response.thinking
             && !thinking.is_empty()
         {
+            super::ui_surfaces::thinking(state.namespace_environment(), thinking)
+                .await
+                .context("write thinking UI state")?;
             emit_thinking_chunks(emit, thinking).await;
         }
 
@@ -1436,12 +1449,15 @@ where
                 summary: Some("Turn completed with empty response fallback".to_string()),
             })
             .await;
+            super::ui_surfaces::turn_completed(state.namespace_environment(), false)
+                .await
+                .context("write fallback turn completion UI state")?;
             return Ok(TurnExecutionOutcome::Finished);
         }
 
         finalize_turn_memory_best_effort(state, false, "turn-completed", "after completed turn")
             .await;
-        emit_task_completed_success(emit, "Task completed").await;
+        emit_task_completed_success(state, emit, "Task completed").await?;
         return Ok(TurnExecutionOutcome::Finished);
     }
 }

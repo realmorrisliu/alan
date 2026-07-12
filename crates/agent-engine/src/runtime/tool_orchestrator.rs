@@ -639,16 +639,19 @@ where
                     }
                     super::guardian::ReviewOutcome::Deny { rationale } => {
                         let tripped = state.turn_state.record_guardian_review(true);
-                        emit(Event::Warning {
-                            message: format!("auto-review denied: {rationale}"),
-                        })
-                        .await;
+                        let message = format!("auto-review denied: {rationale}");
+                        super::ui_surfaces::warning(state.namespace_environment(), message.clone())
+                            .await?;
+                        emit(Event::Warning { message }).await;
                         if tripped {
-                            emit(Event::Warning {
-                                message: "auto-review circuit breaker tripped; pausing for you"
-                                    .to_string(),
-                            })
-                            .await;
+                            let message =
+                                "auto-review circuit breaker tripped; pausing for you".to_string();
+                            super::ui_surfaces::warning(
+                                state.namespace_environment(),
+                                message.clone(),
+                            )
+                            .await?;
+                            emit(Event::Warning { message }).await;
                             true
                         } else {
                             // Self-correction: feed the denial back to the agent.
@@ -716,6 +719,7 @@ where
                 state
                     .turn_state
                     .set_confirmation_for_request(request_id.clone(), pending.clone());
+                super::ui_surfaces::paused(state.namespace_environment()).await?;
                 emit(Event::Yield {
                     request_id,
                     kind: alan_agent_protocol::YieldKind::Confirmation,
@@ -849,6 +853,7 @@ where
         state
             .turn_state
             .set_confirmation_for_request(request_id.clone(), pending.clone());
+        super::ui_surfaces::paused(state.namespace_environment()).await?;
         emit(Event::Yield {
             request_id,
             kind: alan_agent_protocol::YieldKind::Confirmation,

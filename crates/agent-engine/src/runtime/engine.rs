@@ -281,15 +281,9 @@ struct AgentMachineStartupOutcome {
 
 async fn emit_runtime_event(
     tx: &mpsc::Sender<RuntimeEventEnvelope>,
-    ui_projector: &tokio::sync::Mutex<super::ui_surfaces::RuntimeUiProjector>,
     submission_id: Option<String>,
     event: Event,
 ) {
-    let mut projector = ui_projector.lock().await;
-    if let Err(err) = projector.apply_event(&event).await {
-        warn!(error = %err, "Failed to project runtime ui surface event");
-    }
-    drop(projector);
     let _ = tx
         .send(RuntimeEventEnvelope {
             submission_id,
@@ -1652,12 +1646,8 @@ fn spawn_with_prepared_runtime_environment(
             prompt_cache,
             turn_state: super::TurnState::default(),
         };
-        let ui_projector = match super::ui_surfaces::RuntimeUiProjector::initialize(
-            state.namespace_environment().clone(),
-        )
-        .await
-        {
-            Ok(projector) => Arc::new(tokio::sync::Mutex::new(projector)),
+        match super::ui_surfaces::initialize(state.namespace_environment()).await {
+            Ok(()) => {}
             Err(err) => {
                 let _ = ready_tx.send(Err(format!("{:#}", err)));
                 return;
@@ -1784,14 +1774,11 @@ fn spawn_with_prepared_runtime_environment(
                     let cancel = CancellationToken::new();
                     let event_tx_clone = evt_tx.clone();
                     let submission_event_ctx_for_emit = submission_event_ctx.clone();
-                    let ui_projector_for_emit = ui_projector.clone();
                     let mut emit = |event: Event| {
                         let tx = event_tx_clone.clone();
-                        let ui_projector = ui_projector_for_emit.clone();
                         let submission_id = submission_event_ctx_for_emit.get_submission_id();
                         async move {
-                            emit_runtime_event(&tx, ui_projector.as_ref(), submission_id, event)
-                                .await;
+                            emit_runtime_event(&tx, submission_id, event).await;
                         }
                     };
 
@@ -1835,7 +1822,6 @@ fn spawn_with_prepared_runtime_environment(
                                     error!(error = %error_msg);
                                     emit_runtime_event(
                                         &evt_tx,
-                                        ui_projector.as_ref(),
                                         submission_event_ctx.get_submission_id(),
                                         Event::Error {
                                             message: error_msg,
@@ -1891,7 +1877,6 @@ fn spawn_with_prepared_runtime_environment(
                                         error!(error = %error_msg);
                                         emit_runtime_event(
                                             &evt_tx,
-                                            ui_projector.as_ref(),
                                             submission_event_ctx.get_submission_id(),
                                             Event::Error {
                                                 message: error_msg,
@@ -1924,7 +1909,6 @@ fn spawn_with_prepared_runtime_environment(
                                         error!(error = %error_msg);
                                         emit_runtime_event(
                                             &evt_tx,
-                                            ui_projector.as_ref(),
                                             submission_event_ctx.get_submission_id(),
                                             Event::Error {
                                                 message: error_msg,

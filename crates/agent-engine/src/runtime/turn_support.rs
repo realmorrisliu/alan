@@ -20,6 +20,7 @@ where
     state.turn_state.clear();
     state.turn_state.clear_plan_snapshot();
     state.machine.has_active_task = false;
+    super::ui_surfaces::turn_completed(state.namespace_environment(), true).await?;
     emit(Event::TurnCompleted {
         summary: Some("Task cancelled by user".to_string()),
     })
@@ -27,16 +28,22 @@ where
     Ok(())
 }
 
-pub(super) async fn emit_task_completed_success<E, F>(emit: &mut E, summary: impl Into<String>)
+pub(super) async fn emit_task_completed_success<E, F>(
+    state: &RuntimeLoopState,
+    emit: &mut E,
+    summary: impl Into<String>,
+) -> Result<()>
 where
     E: FnMut(Event) -> F,
     F: std::future::Future<Output = ()>,
 {
     let summary = summary.into();
+    super::ui_surfaces::turn_completed(state.namespace_environment(), false).await?;
     emit(Event::TurnCompleted {
         summary: Some(summary),
     })
     .await;
+    Ok(())
 }
 
 pub(super) fn normalize_tool_calls(

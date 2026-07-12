@@ -66,6 +66,8 @@ where
             }
             let rollback = state.machine.rollback_last_turns(turns);
             state.turn_state.clear_plan_snapshot();
+            super::ui_surfaces::plan_updated(state.namespace_environment(), None, Vec::new())
+                .await?;
             emit(Event::MachineRolledBack {
                 turns: rollback.removed_turns,
                 removed_messages: rollback.removed_messages,
@@ -87,6 +89,11 @@ where
                 is_final: true,
             })
             .await;
+            super::ui_surfaces::warning(
+                state.namespace_environment(),
+                ROLLBACK_NON_DURABLE_WARNING,
+            )
+            .await?;
             emit(Event::Warning {
                 message: ROLLBACK_NON_DURABLE_WARNING.to_string(),
             })
@@ -131,12 +138,11 @@ where
             );
 
             if queued_next_turn_count > 0 {
-                emit(Event::Warning {
-                    message: format!(
-                        "Applied {queued_next_turn_count} queued next_turn input(s) to this turn."
-                    ),
-                })
-                .await;
+                let message = format!(
+                    "Applied {queued_next_turn_count} queued next_turn input(s) to this turn."
+                );
+                super::ui_surfaces::warning(state.namespace_environment(), message.clone()).await?;
+                emit(Event::Warning { message }).await;
             }
 
             return Ok(RuntimeOpAction::RunTurn {
@@ -178,11 +184,11 @@ where
                                 parts,
                                 mode: InputMode::FollowUp,
                             }));
-                        emit(Event::Warning {
-                            message: "Queued follow_up input for execution after current turn."
-                                .to_string(),
-                        })
-                        .await;
+                        let message =
+                            "Queued follow_up input for execution after current turn.".to_string();
+                        super::ui_surfaces::warning(state.namespace_environment(), message.clone())
+                            .await?;
+                        emit(Event::Warning { message }).await;
                         return Ok(RuntimeOpAction::NoTurn);
                     }
 
@@ -197,12 +203,15 @@ where
                     let queued_size = state.turn_state.queue_next_turn_input(parts);
                     match queued_size {
                         Some(size) => {
-                            emit(Event::Warning {
-                                message: format!(
-                                    "Queued next_turn input (queue_size={size}); it will apply to the next explicit turn."
-                                ),
-                            })
-                            .await;
+                            let message = format!(
+                                "Queued next_turn input (queue_size={size}); it will apply to the next explicit turn."
+                            );
+                            super::ui_surfaces::warning(
+                                state.namespace_environment(),
+                                message.clone(),
+                            )
+                            .await?;
+                            emit(Event::Warning { message }).await;
                         }
                         None => {
                             emit(Event::Error {

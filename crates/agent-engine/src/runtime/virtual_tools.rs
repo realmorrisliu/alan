@@ -130,6 +130,7 @@ where
                 state
                     .turn_state
                     .set_confirmation_for_request(request_id.clone(), pending.clone());
+                super::ui_surfaces::paused(state.namespace_environment()).await?;
                 emit(Event::Yield {
                     request_id,
                     kind: alan_agent_protocol::YieldKind::Confirmation,
@@ -215,6 +216,7 @@ where
                 state
                     .turn_state
                     .set_structured_input_for_request(request_id.clone(), request.clone());
+                super::ui_surfaces::paused(state.namespace_environment()).await?;
                 emit(Event::Yield {
                     request_id,
                     kind: alan_agent_protocol::YieldKind::StructuredInput,
@@ -270,6 +272,12 @@ where
                         items.clone(),
                         state.machine.tape.messages().len(),
                     );
+                    super::ui_surfaces::plan_updated(
+                        state.namespace_environment(),
+                        explanation.clone(),
+                        items.clone(),
+                    )
+                    .await?;
                     let payload = json!({
                         "status": "plan_updated",
                         "explanation": explanation,
@@ -618,6 +626,7 @@ where
     state
         .turn_state
         .set_confirmation_for_request(request_id.clone(), pending.clone());
+    super::ui_surfaces::paused(state.namespace_environment()).await?;
     emit(Event::Yield {
         request_id,
         kind: YieldKind::Confirmation,
@@ -997,6 +1006,7 @@ where
             state
                 .turn_state
                 .set_confirmation_for_request(request_id.clone(), pending.clone());
+            super::ui_surfaces::paused(state.namespace_environment()).await?;
             emit(Event::Yield {
                 request_id,
                 kind: YieldKind::Confirmation,
