@@ -99,7 +99,7 @@ exposure rules.
 packages **inside the store entry** (never into `~/.agents/skills/` or any
 other public skill source), where they are resolved as a distribution provider.
 Channel isolation is inherited from the channel-scoped store backing. Two
-materialization forms are supported in v1:
+materialization forms are supported in v0 / slice 1:
 
 - **Conversion**: a Claude Code command-style single `.md` file (body text,
   optionally using `$ARGUMENTS`, without portable `SKILL.md` frontmatter)
