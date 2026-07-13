@@ -248,7 +248,7 @@ where
         bail!(CHILD_AGENT_LAUNCH_CANCELLED_MESSAGE);
     }
 
-    validate_child_launch_contract(&spec)?;
+    let child_cwd = validate_child_launch_contract(&spec)?;
     let launch_root_dir = resolve_launch_root_dir(parent, &spec.target)?;
     let child_agent_config = build_child_agent_config(parent, &spec);
     let mut launch_context = parent
@@ -257,8 +257,8 @@ where
         .cloned()
         .unwrap_or_else(crate::ProcessLaunchContext::root)
         .child();
-    if let Some(cwd) = spec.launch.cwd.as_ref() {
-        launch_context.cwd = cwd.to_string_lossy().to_string();
+    if let Some(cwd) = child_cwd {
+        launch_context.cwd = cwd;
     }
     if !spec.has_handle(SpawnHandle::Memory) {
         launch_context.namespace.unmount("/memory");
@@ -649,7 +649,7 @@ async fn send_initial_child_submission(
     Ok(runtime)
 }
 
-fn validate_child_launch_contract(spec: &SpawnSpec) -> Result<()> {
+fn validate_child_launch_contract(spec: &SpawnSpec) -> Result<Option<String>> {
     if spec.has_handle(SpawnHandle::Artifacts) || spec.launch.output_dir.is_some() {
         bail!(
             "Child-agent launches do not support artifact routing yet; omit SpawnHandle::Artifacts and launch.output_dir."
@@ -665,7 +665,23 @@ fn validate_child_launch_contract(spec: &SpawnSpec) -> Result<()> {
         );
     }
 
-    Ok(())
+    let cwd = spec
+        .launch
+        .cwd
+        .as_deref()
+        .map(|cwd| {
+            let cwd = cwd.to_str().with_context(|| {
+                format!(
+                    "Child-agent launch cwd '{}' must be valid Unicode.",
+                    cwd.display()
+                )
+            })?;
+            crate::process_launch::normalize_namespace_path(cwd)
+                .with_context(|| format!("Invalid child-agent launch cwd '{}'.", cwd))
+        })
+        .transpose()?;
+
+    Ok(cwd)
 }
 
 fn resolve_launch_root_dir(
@@ -3927,8 +3943,33 @@ model_reasoning_effort = "high"
 
         let err = validate_child_launch_contract(&spec).unwrap_err();
         assert!(
-            err.to_string().contains("absolute"),
+            format!("{err:#}").contains("absolute"),
             "expected absolute-path validation error, got {err:#}"
+        );
+    }
+
+    #[test]
+    fn child_launch_contract_rejects_non_normal_namespace_cwd() {
+        for cwd in ["/mnt/source/../other", "/mnt/./source"] {
+            let mut spec = launch_spec(PathBuf::from("/tmp/definition"));
+            spec.launch.cwd = Some(PathBuf::from(cwd));
+
+            let err = validate_child_launch_contract(&spec).unwrap_err();
+            assert!(
+                err.to_string().contains("Invalid child-agent launch cwd"),
+                "expected normal-path validation error for {cwd}, got {err:#}"
+            );
+        }
+    }
+
+    #[test]
+    fn child_launch_contract_normalizes_repeated_namespace_separators() {
+        let mut spec = launch_spec(PathBuf::from("/tmp/definition"));
+        spec.launch.cwd = Some(PathBuf::from("/mnt//source///docs"));
+
+        assert_eq!(
+            validate_child_launch_contract(&spec).unwrap().as_deref(),
+            Some("/mnt/source/docs")
         );
     }
 

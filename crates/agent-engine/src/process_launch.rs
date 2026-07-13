@@ -204,7 +204,7 @@ impl ProcessLaunchContext {
     }
 }
 
-fn normalize_namespace_path(path: &str) -> Result<String> {
+pub(crate) fn normalize_namespace_path(path: &str) -> Result<String> {
     let components = namespace_components(path)?;
     if components.is_empty() {
         Ok("/".to_string())

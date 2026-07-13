@@ -11,6 +11,11 @@ initial namespace cwd. It MUST NOT assign a workspace id or Host root identity.
 - **THEN** the child receives that namespace context without a workspace field
 - **AND** no raw Host OS path is required by the Agent Process
 
+#### Scenario: Child launch requests a non-normal namespace cwd
+- **WHEN** a child launch requests a cwd containing `.` or `..` path components
+- **THEN** the Agent Runtime Service rejects the launch before storing the cwd
+- **AND** Tool Process binding cannot fall back to a different Host Mount
+
 ### Requirement: Child context follows namespace inheritance
 A child Process SHALL inherit a snapshot of its parent's namespace and SHALL
 gain additional authority only through explicitly passed mounts or descriptors.
