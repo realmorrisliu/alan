@@ -6,7 +6,7 @@ The old change predated the current Alan OS ownership model. It treated package
 management as a Host-side resolver named Quartermaster, stored content under
 Alan home directories, registered workspace and AgentRoot directories as
 providers, and fed resolved paths directly into Agent Execution Engine. That
-would recreate the daemon-era split between Host paths and Alan OS authority.
+would recreate the obsolete split between Host paths and Alan OS authority.
 
 The accepted architecture now has the necessary owners:
 
