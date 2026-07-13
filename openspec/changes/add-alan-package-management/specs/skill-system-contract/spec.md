@@ -94,3 +94,32 @@ a Process that lacks a reference.
 - **THEN** alan may resolve the confined Skill roots from that descriptor
 - **AND** descriptor resolution does not register the Host directory as a
   package source
+
+### Requirement: Non-goals remain outside the stable contract
+
+alan SHALL keep explicitly removed or deferred skill-system concepts outside
+the stable contract unless a later OpenSpec change adds them.
+
+Explicit non-goals:
+
+- `package.toml` manifests
+- a single directory-backed Skill Package containing multiple Skills; an Alan
+  OS distribution package MAY export multiple ordinary single-Skill packages
+- structured trigger metadata
+- runtime mount policies
+- `viewers/` as a capability export or runtime contract
+- `runtime.ui` as stable behavior
+- nested delegated execution in V1
+
+#### Scenario: Distribution package exports several Skills
+
+- **WHEN** Package Service materializes several Skill roots from one explicitly
+  referenced distribution package
+- **THEN** each root remains an ordinary single-Skill directory-backed package
+- **AND** the distribution package does not become a multi-Skill Skill Package
+
+#### Scenario: Deferred skill-system concept is proposed
+
+- **WHEN** a change proposes one of the explicit non-goals as stable behavior
+- **THEN** the change updates this capability through OpenSpec before relying
+  on the behavior in implementation or documentation
