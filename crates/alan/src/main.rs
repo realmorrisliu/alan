@@ -1217,7 +1217,7 @@ async fn request_platform_host_stop(
     let attachment = alan_os_host::LocalAttachment::new(paths.clone())
         .connect()
         .await?;
-    let status = attachment.status;
+    let mut status = attachment.status;
     let label = os_host_launch_label(channel);
     let result = std::process::Command::new("/bin/launchctl")
         .arg("remove")
@@ -1228,6 +1228,7 @@ async fn request_platform_host_stop(
         result.success(),
         "launchd failed to remove Host {label}: {result}"
     );
+    status.readiness = alan_os_host::HostReadiness::Stopping;
     Ok(status)
 }
 

@@ -234,11 +234,11 @@ impl AlanOsHost {
         let _ = write_status(&self.paths.status, &self.status);
         connections.abort_all();
         while connections.join_next().await.is_some() {}
+        let shutdown = self.composition.shutdown().await;
         remove_owned_file(&self.paths.socket);
         remove_owned_file(&self.paths.status);
-        self.composition.shutdown().await?;
         drop(self.singleton);
-        Ok(())
+        shutdown
     }
 }
 
@@ -519,7 +519,7 @@ pub async fn run_host_process(channel_id: &str) -> Result<()> {
 /// Request whole-system shutdown after proving the status file and namespace
 /// describe the same live boot.
 pub async fn request_host_stop(paths: &HostEndpointPaths) -> Result<HostStatus> {
-    let status = paths.read_status()?;
+    let mut status = paths.read_status()?;
     let attachment = LocalAttachment::new(paths.clone()).connect().await?;
     ensure!(
         attachment.boot_id == status.boot_id,
@@ -531,6 +531,7 @@ pub async fn request_host_stop(paths: &HostEndpointPaths) -> Result<HostStatus> 
     if result != 0 {
         return Err(std::io::Error::last_os_error()).context("request Alan OS Host shutdown");
     }
+    status.readiness = HostReadiness::Stopping;
     Ok(status)
 }
 
