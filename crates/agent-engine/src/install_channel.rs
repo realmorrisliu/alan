@@ -31,6 +31,8 @@ pub struct InstallChannelDescriptor {
     pub bundle_identifier: &'static str,
     /// CLI executable/link name.
     pub cli_name: &'static str,
+    /// Dedicated Alan OS Host executable name.
+    pub os_host_name: &'static str,
     /// Shell-control namespace.
     pub shell_control_namespace: &'static str,
 }
@@ -82,8 +84,8 @@ impl InstallChannel {
             .unwrap_or(name);
         let name = name.strip_suffix(".exe").unwrap_or(name);
         match name {
-            "alan" => Some(Self::Stable),
-            "alan-dev" => Some(Self::Dev),
+            "alan" | "alan-os-host" => Some(Self::Stable),
+            "alan-dev" | "alan-os-host-dev" => Some(Self::Dev),
             _ => None,
         }
     }
@@ -97,6 +99,7 @@ impl InstallChannel {
                 display_name: "Alan",
                 bundle_identifier: "app.alanworks.macos",
                 cli_name: "alan",
+                os_host_name: "alan-os-host",
                 shell_control_namespace: "alan-shell-control",
             },
             Self::Dev => InstallChannelDescriptor {
@@ -105,6 +108,7 @@ impl InstallChannel {
                 display_name: "Alan Dev",
                 bundle_identifier: "app.alanworks.macos.dev",
                 cli_name: "alan-dev",
+                os_host_name: "alan-os-host-dev",
                 shell_control_namespace: "alan-dev-shell-control",
             },
         }
@@ -129,6 +133,7 @@ mod tests {
                 display_name: "Alan",
                 bundle_identifier: "app.alanworks.macos",
                 cli_name: "alan",
+                os_host_name: "alan-os-host",
                 shell_control_namespace: "alan-shell-control",
             }
         );
@@ -144,6 +149,7 @@ mod tests {
                 display_name: "Alan Dev",
                 bundle_identifier: "app.alanworks.macos.dev",
                 cli_name: "alan-dev",
+                os_host_name: "alan-os-host-dev",
                 shell_control_namespace: "alan-dev-shell-control",
             }
         );

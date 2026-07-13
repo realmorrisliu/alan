@@ -243,6 +243,9 @@ fn validate_live_mount_grant_path(
 
     for (existing_path, _) in live_namespace.describe() {
         let existing_path = canonical_namespace_path(&existing_path)?;
+        if existing_path == "/mnt" {
+            continue;
+        }
         let existing_components = normalized_namespace_components(&existing_path)?;
         let exact_previously_granted =
             existing_path == namespace_path && granted_paths.contains(namespace_path);
@@ -333,7 +336,13 @@ mod tests {
     async fn live_namespace_applicator_mounts_read_write_grant() {
         let host = tempfile::tempdir().unwrap();
         std::fs::write(host.path().join("notes.txt"), "hello").unwrap();
-        let live_namespace = LiveNamespace::new(Namespace::new());
+        let mut namespace = Namespace::new();
+        namespace.mount(
+            "/mnt",
+            InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::empty())),
+            Access::ReadOnly,
+        );
+        let live_namespace = LiveNamespace::new(namespace);
         let applicator = LiveNamespaceMountGrantApplicatorFactory.create(live_namespace.clone());
 
         applicator
@@ -347,7 +356,10 @@ mod tests {
 
         assert_eq!(
             live_namespace.describe(),
-            vec![("/mnt/project".to_string(), Access::ReadWrite)]
+            vec![
+                ("/mnt".to_string(), Access::ReadOnly),
+                ("/mnt/project".to_string(), Access::ReadWrite),
+            ]
         );
         let root = InProcessTransport::new(Arc::new(MountFs::from_live_namespace(live_namespace)));
         assert_file_bytes(&root, Fid(1), &["mnt", "project", "notes.txt"], b"hello").await;

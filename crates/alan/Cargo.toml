@@ -1,6 +1,6 @@
 [package]
 name = "alan"
-description = "Alan command-line host and file-backed terminal UI"
+description = "Alan command-line Host client and file-native Shell"
 version.workspace = true
 edition.workspace = true
 
@@ -17,18 +17,17 @@ alan-auth.workspace = true
 alan-ap = { path = "../ap" }
 alan-agent-protocol.workspace = true
 alan-agent-engine.workspace = true
-alan-hostfs.workspace = true
 alan-kernel = { path = "../kernel" }
+alan-os-host.workspace = true
+alan-shell = { path = "../shell" }
 alan-swebench-tooling.workspace = true
 alan-tools.workspace = true
-alan-terminal-ui.workspace = true
 tokio.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
-tracing-subscriber.workspace = true
 uuid.workspace = true
 dirs.workspace = true
 chrono.workspace = true
@@ -41,7 +40,6 @@ urlencoding.workspace = true
 [dev-dependencies]
 alan-llm = { workspace = true, features = ["mock"] }
 alan-agent-engine = { workspace = true, features = ["mock"] }
-alan-shell = { path = "../shell" }
 async-trait.workspace = true
 base64.workspace = true
 tempfile.workspace = true

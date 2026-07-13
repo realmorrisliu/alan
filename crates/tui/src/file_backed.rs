@@ -2272,7 +2272,7 @@ mod tests {
 
         let echoed =
             String::from_utf8(shell.cat(&format!("{agent_path}/io/input")).await.unwrap()).unwrap();
-        assert_eq!(echoed, "hello through files");
+        assert_eq!(echoed, "19\nhello through files");
 
         // Esc interrupts through the agent-runtime surface (machine/ctl), not
         // kernel process lifecycle: /proc/<pid>/ctl interrupt would terminate

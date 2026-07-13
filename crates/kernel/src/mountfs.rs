@@ -186,6 +186,28 @@ impl MountFs {
         self.ns.clone()
     }
 
+    /// Release every backing fid owned by this namespace view.
+    ///
+    /// Local wire connections call this when they disconnect so connection
+    /// lifetime and fid lifetime remain identical even though the mounted file
+    /// servers outlive the connection.
+    pub async fn clunk_all(&self) {
+        let backings = {
+            let mut state = self.state.lock().await;
+            std::mem::take(&mut state.fids)
+                .into_values()
+                .filter_map(|entry| {
+                    entry
+                        .backing
+                        .map(|backing| (backing.resolved, backing.backing_fid))
+                })
+                .collect::<Vec<_>>()
+        };
+        for (resolved, fid) in backings {
+            let _ = resolved.call(Request::Clunk { fid }).await;
+        }
+    }
+
     /// The mount prefixes of the namespace, as component vectors.
     fn mount_prefixes(&self) -> Vec<Vec<String>> {
         self.ns

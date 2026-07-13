@@ -47,8 +47,14 @@ fn connection_command_migrates_legacy_metadata_and_host_secrets_once() {
 
     assert!(output.status.success(), "{output:?}");
     let data = detected_data_dir(&home, &xdg_data);
-    let system = alan::SystemStorePaths::from_data_dir(&data, InstallChannel::Stable).unwrap();
-    let host_store = alan::HostStorePaths::from_data_dir(&data, InstallChannel::Stable).unwrap();
+    let system = alan_os_host::SystemStorePaths::from_data_dir(
+        &data,
+        InstallChannel::Stable.descriptor().id,
+    )
+    .unwrap();
+    let host_store =
+        alan_os_host::HostStorePaths::from_data_dir(&data, InstallChannel::Stable.descriptor().id)
+            .unwrap();
     let connection_metadata = system.connections_metadata().unwrap();
     assert!(connection_metadata.is_file());
     assert!(
@@ -128,7 +134,11 @@ fn host_import_installs_verified_skill_before_deleting_source() {
 
     assert!(output.status.success(), "{output:?}");
     let data = detected_data_dir(&home, &xdg_data);
-    let system = alan::SystemStorePaths::from_data_dir(&data, InstallChannel::Stable).unwrap();
+    let system = alan_os_host::SystemStorePaths::from_data_dir(
+        &data,
+        InstallChannel::Stable.descriptor().id,
+    )
+    .unwrap();
     assert!(
         system
             .imported_skills()
@@ -178,7 +188,11 @@ fn host_import_never_follows_a_symlinked_source_for_deletion() {
             .is_symlink()
     );
     let data = detected_data_dir(&home, &xdg_data);
-    let system = alan::SystemStorePaths::from_data_dir(&data, InstallChannel::Stable).unwrap();
+    let system = alan_os_host::SystemStorePaths::from_data_dir(
+        &data,
+        InstallChannel::Stable.descriptor().id,
+    )
+    .unwrap();
     assert!(
         !system
             .imported_skills()
@@ -227,7 +241,11 @@ fn host_import_never_follows_a_symlinked_source_ancestor_for_deletion() {
             .is_symlink()
     );
     let data = detected_data_dir(&home, &xdg_data);
-    let system = alan::SystemStorePaths::from_data_dir(&data, InstallChannel::Stable).unwrap();
+    let system = alan_os_host::SystemStorePaths::from_data_dir(
+        &data,
+        InstallChannel::Stable.descriptor().id,
+    )
+    .unwrap();
     assert!(
         !system
             .imported_skills()

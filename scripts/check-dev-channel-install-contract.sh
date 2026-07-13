@@ -59,6 +59,7 @@ require_pattern "scripts/assemble-release-app.sh" 'args\+=\(--options runtime --
 reject_pattern "scripts/assemble-release-app.sh" "ALAN_TUI_NAME|clients/tui|\\bbun\\b" "assembly must not build a standalone TUI"
 require_pattern "scripts/assemble-release-app.sh" "Dev channel builds are local-only" "assembly must block dev public release artifacts"
 require_pattern "scripts/install.sh" "ALAN_CLI_NAME" "install script must link channel CLI name"
+require_pattern "scripts/install-channel.sh" "ALAN_OS_HOST_NAME" "install channel must name the dedicated Alan OS Host"
 reject_pattern "scripts/install.sh" "ALAN_TUI_NAME|alan-tui" "install script must not link standalone TUI name"
 require_pattern "scripts/uninstall.sh" "ALAN_CLI_NAME" "uninstall script must remove channel CLI name"
 reject_pattern "scripts/uninstall.sh" "ALAN_TUI_NAME|alan-tui" "uninstall script must not remove standalone TUI name"

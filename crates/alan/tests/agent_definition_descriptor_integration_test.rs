@@ -7,7 +7,7 @@ use alan_kernel::{Access, Credentials, Namespace};
 
 fn launch_context_with_mounts(mounts: Vec<HostMountGrant>, cwd: &str) -> ProcessLaunchContext {
     let mut namespace = Namespace::new();
-    alan::host_mounts::apply_host_mount_declarations(&mut namespace, &mounts).unwrap();
+    alan_os_host::host_mounts::apply_host_mount_declarations(&mut namespace, &mounts).unwrap();
     let mut context =
         ProcessLaunchContext::new(namespace, Credentials::user("integration-agent"), cwd).unwrap();
     context.host_mounts = mounts;

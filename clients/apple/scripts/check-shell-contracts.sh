@@ -2595,6 +2595,11 @@ require_pattern \
 
 require_pattern \
     "scripts/assemble-release-app.sh" \
+    "thin_macho_to_arm64 \"\\\$EMBEDDED_BIN_DIR/\\\$ALAN_OS_HOST_NAME\"" \
+    "release assembly must verify the dedicated Alan OS Host is arm64-only before signing"
+
+require_pattern \
+    "scripts/assemble-release-app.sh" \
     "thin_macho_to_arm64 \"\\\$SHELL_CORE_FFI_DYLIB\"" \
     "release assembly must verify the shell-core FFI dylib is arm64-only before signing"
 
@@ -2767,6 +2772,21 @@ require_pattern \
     "scripts/install-channel.sh" \
     'ALAN_PRIVILEGED_HELPER_LABEL="app\.alanworks\.macos\.dev\.privileged-helper"' \
     "dev channel install contract must expose the dev privileged helper label"
+
+require_pattern \
+    "scripts/install-channel.sh" \
+    'ALAN_OS_HOST_NAME="alan-os-host-dev"' \
+    "dev channel install contract must expose the dev Alan OS Host executable name"
+
+require_pattern \
+    "crates/alan/src/main.rs" \
+    '\.arg\("submit"\)' \
+    "macOS CLI startup must request the dedicated Alan OS Host through launchd"
+
+require_pattern \
+    "crates/alan/src/main.rs" \
+    'os_host_launch_label' \
+    "macOS Host launchd identity must remain install-channel scoped"
 
 require_pattern \
     "scripts/assemble-release-app.sh" \

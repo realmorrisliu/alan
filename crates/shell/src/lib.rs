@@ -240,6 +240,12 @@ impl Shell {
     /// a held offset, keeping the fid open so a multi-append stream is fully
     /// observed (not just its first chunk). Close it with [`Tail::close`].
     pub async fn tail(&self, path: &str) -> Result<Tail, ErrorCode> {
+        self.tail_from(path, 0).await
+    }
+
+    /// Open a live tail at a caller-held offset, for example after reconnecting
+    /// to the same stream through a new attachment.
+    pub async fn tail_from(&self, path: &str, offset: Offset) -> Result<Tail, ErrorCode> {
         let (fid, _) = self.walk_to(path).await?;
         if let Err(e) = self.open(fid, OpenMode::Read).await {
             self.clunk_quietly(fid).await;
@@ -248,7 +254,7 @@ impl Shell {
         Ok(Tail {
             fs: self.fs.clone(),
             fid,
-            offset: 0,
+            offset,
         })
     }
 

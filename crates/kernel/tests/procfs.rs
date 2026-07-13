@@ -358,6 +358,61 @@ async fn spawn_via_clone_open_write_clunk_makes_a_public_process() {
 }
 
 #[tokio::test]
+async fn process_input_commits_one_framed_unit_on_clunk() {
+    let fs = proc();
+    let pid = spawn(&fs, Fid(10)).await;
+    let input_fid = Fid(11);
+    fs.walk(
+        Fid::ROOT,
+        input_fid,
+        &[pid.clone(), "io".to_string(), "input".to_string()],
+    )
+    .await
+    .unwrap();
+    fs.open(input_fid, OpenMode::Write).await.unwrap();
+    fs.write(input_fid, 0, b"hello ").await.unwrap();
+    fs.write(input_fid, 6, b"world").await.unwrap();
+    assert_eq!(fs.stat(input_fid).await.unwrap().length, 0);
+    fs.clunk(input_fid).await.unwrap();
+
+    assert_eq!(
+        read_at(&fs, &[&pid, "io", "input"], Fid(12)).await.unwrap(),
+        b"11\nhello world"
+    );
+}
+
+#[tokio::test]
+async fn failed_oversize_process_input_is_not_committed_on_clunk() {
+    let fs = proc();
+    let pid = spawn(&fs, Fid(10)).await;
+    let input_fid = Fid(11);
+    fs.walk(
+        Fid::ROOT,
+        input_fid,
+        &[pid.clone(), "io".to_string(), "input".to_string()],
+    )
+    .await
+    .unwrap();
+    fs.open(input_fid, OpenMode::Write).await.unwrap();
+    fs.write(input_fid, 0, &vec![b'a'; 1 << 20]).await.unwrap();
+    assert_eq!(
+        fs.write(input_fid, 1 << 20, b"b").await,
+        Err(ErrorCode::BadRequest)
+    );
+    assert_eq!(fs.clunk(input_fid).await, Err(ErrorCode::BadRequest));
+
+    assert!(
+        tokio::time::timeout(
+            std::time::Duration::from_millis(20),
+            read_at(&fs, &[&pid, "io", "input"], Fid(12)),
+        )
+        .await
+        .is_err(),
+        "failed input write committed its accepted prefix"
+    );
+}
+
+#[tokio::test]
 async fn child_namespace_rebinds_proc_clone_to_the_child_spawn_context() {
     let runner = Arc::new(CaptureRunner::new());
     let fs = ProcFs::new().with_runner(runner.clone());
@@ -835,7 +890,7 @@ async fn proc_input_accepts_write_intent_and_records_io_event() {
 
     assert_eq!(
         String::from_utf8(read_at(&fs, &[&pid, "io", "input"], Fid(12)).await.unwrap()).unwrap(),
-        "hello proc"
+        "10\nhello proc"
     );
     assert_eq!(
         String::from_utf8(

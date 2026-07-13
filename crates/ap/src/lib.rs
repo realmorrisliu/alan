@@ -29,6 +29,10 @@ pub use types::{ErrorCode, Fid, FileKind, Offset, OpenMode, Qid, Stat};
 pub use version::VersionTable;
 pub use wire::{
     MAX_WIRE_FRAME_BYTES, Request, Response, WireError, WireRequestFrame, WireResponseFrame,
-    decode_request_frame, decode_response_frame, encode_request_frame, encode_response_frame,
-    read_request_frame, read_response_frame, write_request_frame, write_response_frame,
+    WireTag, decode_request_frame, decode_response_frame, decode_tagged_request_frame,
+    decode_tagged_response_frame, encode_request_frame, encode_response_frame,
+    encode_tagged_request_frame, encode_tagged_response_frame, read_request_frame,
+    read_response_frame, read_tagged_request_frame, read_tagged_response_frame,
+    write_request_frame, write_response_frame, write_tagged_request_frame,
+    write_tagged_response_frame,
 };

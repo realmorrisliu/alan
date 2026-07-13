@@ -33,12 +33,11 @@ dependencies = [
  "alan-agent-protocol",
  "alan-ap",
  "alan-auth",
- "alan-hostfs",
  "alan-kernel",
  "alan-llm",
+ "alan-os-host",
  "alan-shell",
  "alan-swebench-tooling",
- "alan-terminal-ui",
  "alan-tools",
  "anyhow",
  "async-trait",
@@ -55,7 +54,6 @@ dependencies = [
  "tokio",
  "toml",
  "tracing",
- "tracing-subscriber",
  "urlencoding",
  "uuid",
 ]
@@ -261,6 +259,33 @@ dependencies = [
  "alan-knowledge",
  "async-trait",
  "tokio",
+]
+
+[[package]]
+name = "alan-os-host"
+version = "0.1.0"
+dependencies = [
+ "alan-agent-engine",
+ "alan-agentfs",
+ "alan-ap",
+ "alan-hostfs",
+ "alan-kernel",
+ "alan-llm",
+ "alan-llmfs",
+ "alan-routefs",
+ "alan-shell",
+ "anyhow",
+ "async-trait",
+ "dirs",
+ "libc",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+ "toml",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]

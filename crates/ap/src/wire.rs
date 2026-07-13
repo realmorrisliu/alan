@@ -20,6 +20,9 @@ use crate::{ErrorCode, Fid, FileKind, Offset, OpenMode, Qid, Stat};
 /// Maximum newline-delimited aP wire frame accepted by the v1 byte transport.
 pub const MAX_WIRE_FRAME_BYTES: usize = 1 << 20; // 1 MiB
 
+/// Connection-local request tag used to pair responses with concurrent calls.
+pub type WireTag = u64;
+
 /// One aP operation request. Inputs are fids, paths (name components), byte
 /// buffers, offsets, and counts — nothing in-process-only.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -81,6 +84,7 @@ pub enum Response {
 /// A newline-delimited request frame carried by the aP byte transport.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WireRequestFrame {
+    pub tag: WireTag,
     pub request: Request,
 }
 
@@ -92,24 +96,25 @@ pub struct WireRequestFrame {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "status")]
 pub enum WireResponseFrame {
-    Ok { response: Response },
-    Error { code: ErrorCode },
+    Ok { tag: WireTag, response: Response },
+    Error { tag: WireTag, code: ErrorCode },
 }
 
 impl WireResponseFrame {
-    pub fn from_result(result: &Result<Response, ErrorCode>) -> Self {
+    pub fn from_result(tag: WireTag, result: &Result<Response, ErrorCode>) -> Self {
         match result {
             Ok(response) => Self::Ok {
+                tag,
                 response: response.clone(),
             },
-            Err(code) => Self::Error { code: *code },
+            Err(code) => Self::Error { tag, code: *code },
         }
     }
 
-    pub fn into_result(self) -> Result<Response, ErrorCode> {
+    pub fn into_result(self) -> (WireTag, Result<Response, ErrorCode>) {
         match self {
-            Self::Ok { response } => Ok(response),
-            Self::Error { code } => Err(code),
+            Self::Ok { tag, response } => (tag, Ok(response)),
+            Self::Error { tag, code } => (tag, Err(code)),
         }
     }
 }
@@ -145,21 +150,43 @@ impl WireError {
 }
 
 pub fn encode_request_frame(request: &Request) -> Result<Vec<u8>, WireError> {
+    encode_tagged_request_frame(0, request)
+}
+
+pub fn encode_tagged_request_frame(tag: WireTag, request: &Request) -> Result<Vec<u8>, WireError> {
     encode_json_line(&WireRequestFrame {
+        tag,
         request: request.clone(),
     })
 }
 
 pub fn decode_request_frame(frame: &[u8]) -> Result<Request, WireError> {
+    decode_tagged_request_frame(frame).map(|(_, request)| request)
+}
+
+pub fn decode_tagged_request_frame(frame: &[u8]) -> Result<(WireTag, Request), WireError> {
     let frame: WireRequestFrame = serde_json::from_slice(frame)?;
-    Ok(frame.request)
+    Ok((frame.tag, frame.request))
 }
 
 pub fn encode_response_frame(result: &Result<Response, ErrorCode>) -> Result<Vec<u8>, WireError> {
-    encode_json_line(&WireResponseFrame::from_result(result))
+    encode_tagged_response_frame(0, result)
+}
+
+pub fn encode_tagged_response_frame(
+    tag: WireTag,
+    result: &Result<Response, ErrorCode>,
+) -> Result<Vec<u8>, WireError> {
+    encode_json_line(&WireResponseFrame::from_result(tag, result))
 }
 
 pub fn decode_response_frame(frame: &[u8]) -> Result<Result<Response, ErrorCode>, WireError> {
+    decode_tagged_response_frame(frame).map(|(_, result)| result)
+}
+
+pub fn decode_tagged_response_frame(
+    frame: &[u8],
+) -> Result<(WireTag, Result<Response, ErrorCode>), WireError> {
     let frame: WireResponseFrame = serde_json::from_slice(frame)?;
     Ok(frame.into_result())
 }
@@ -168,7 +195,18 @@ pub async fn write_request_frame<W>(writer: &mut W, request: &Request) -> Result
 where
     W: AsyncWrite + Unpin,
 {
-    let frame = encode_request_frame(request)?;
+    write_tagged_request_frame(writer, 0, request).await
+}
+
+pub async fn write_tagged_request_frame<W>(
+    writer: &mut W,
+    tag: WireTag,
+    request: &Request,
+) -> Result<(), WireError>
+where
+    W: AsyncWrite + Unpin,
+{
+    let frame = encode_tagged_request_frame(tag, request)?;
     writer.write_all(&frame).await?;
     writer.flush().await?;
     Ok(())
@@ -178,10 +216,21 @@ pub async fn read_request_frame<R>(reader: &mut R) -> Result<Option<Request>, Wi
 where
     R: AsyncBufRead + Unpin,
 {
+    Ok(read_tagged_request_frame(reader)
+        .await?
+        .map(|(_, request)| request))
+}
+
+pub async fn read_tagged_request_frame<R>(
+    reader: &mut R,
+) -> Result<Option<(WireTag, Request)>, WireError>
+where
+    R: AsyncBufRead + Unpin,
+{
     let Some(frame) = read_json_line(reader).await? else {
         return Ok(None);
     };
-    decode_request_frame(&frame).map(Some)
+    decode_tagged_request_frame(&frame).map(Some)
 }
 
 pub async fn write_response_frame<W>(
@@ -191,7 +240,18 @@ pub async fn write_response_frame<W>(
 where
     W: AsyncWrite + Unpin,
 {
-    let frame = encode_response_frame(result)?;
+    write_tagged_response_frame(writer, 0, result).await
+}
+
+pub async fn write_tagged_response_frame<W>(
+    writer: &mut W,
+    tag: WireTag,
+    result: &Result<Response, ErrorCode>,
+) -> Result<(), WireError>
+where
+    W: AsyncWrite + Unpin,
+{
+    let frame = encode_tagged_response_frame(tag, result)?;
     writer.write_all(&frame).await?;
     writer.flush().await?;
     Ok(())
@@ -203,10 +263,21 @@ pub async fn read_response_frame<R>(
 where
     R: AsyncBufRead + Unpin,
 {
+    Ok(read_tagged_response_frame(reader)
+        .await?
+        .map(|(_, result)| result))
+}
+
+pub async fn read_tagged_response_frame<R>(
+    reader: &mut R,
+) -> Result<Option<(WireTag, Result<Response, ErrorCode>)>, WireError>
+where
+    R: AsyncBufRead + Unpin,
+{
     let Some(frame) = read_json_line(reader).await? else {
         return Ok(None);
     };
-    decode_response_frame(&frame).map(Some)
+    decode_tagged_response_frame(&frame).map(Some)
 }
 
 fn encode_json_line<T>(value: &T) -> Result<Vec<u8>, WireError>

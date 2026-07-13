@@ -35,7 +35,11 @@ fn build_jwt(payload: serde_json::Value) -> String {
 }
 
 fn seed_chatgpt_auth(data_dir: &Path) {
-    let host_store = alan::HostStorePaths::from_data_dir(data_dir, InstallChannel::Stable).unwrap();
+    let host_store = alan_os_host::HostStorePaths::from_data_dir(
+        data_dir,
+        InstallChannel::Stable.descriptor().id,
+    )
+    .unwrap();
     std::fs::create_dir_all(host_store.managed_auth.parent().unwrap()).unwrap();
     let storage = AuthStorage::new(host_store.managed_auth).unwrap();
     let id_token = build_jwt(json!({
@@ -70,8 +74,11 @@ fn seed_chatgpt_auth(data_dir: &Path) {
 }
 
 fn seed_chatgpt_connection(data_dir: &Path) {
-    let system_store =
-        alan::SystemStorePaths::from_data_dir(data_dir, InstallChannel::Stable).unwrap();
+    let system_store = alan_os_host::SystemStorePaths::from_data_dir(
+        data_dir,
+        InstallChannel::Stable.descriptor().id,
+    )
+    .unwrap();
     let mut connections = ConnectionsFile {
         version: 1,
         default_profile: Some("chatgpt-main".to_string()),
@@ -241,8 +248,11 @@ fn connection_edit_registers_replacement_credential_metadata() {
     assert!(String::from_utf8_lossy(&test.stdout).contains("status: success"));
 
     let data_dir = detected_data_dir(&home, &xdg_data);
-    let system_store =
-        alan::SystemStorePaths::from_data_dir(&data_dir, InstallChannel::Stable).unwrap();
+    let system_store = alan_os_host::SystemStorePaths::from_data_dir(
+        &data_dir,
+        InstallChannel::Stable.descriptor().id,
+    )
+    .unwrap();
     let (connections, _) =
         ConnectionsFile::load_from_path(&system_store.connections_metadata().unwrap()).unwrap();
     let credential = connections.credentials.get("replacement-secret").unwrap();

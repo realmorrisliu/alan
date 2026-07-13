@@ -106,6 +106,10 @@ struct ProcFid {
     clone_pid: Option<Pid>,
     /// Buffered exec-spec document for a `clone` fid (commit-on-clunk).
     write_buf: Vec<u8>,
+    /// Whether this fid received a write, including an intentional empty input.
+    wrote: bool,
+    /// Whether a buffered write failed; failed documents must never commit on clunk.
+    write_failed: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -121,13 +125,42 @@ impl ProcFid {
             mode: None,
             clone_pid: None,
             write_buf: Vec::new(),
+            wrote: false,
+            write_failed: false,
         }
+    }
+
+    fn buffer_write(
+        &mut self,
+        offset: Offset,
+        data: &[u8],
+        limit: usize,
+    ) -> Result<u32, ErrorCode> {
+        let Some(start) = usize::try_from(offset).ok() else {
+            self.write_failed = true;
+            return Err(ErrorCode::BadRequest);
+        };
+        let Some(end) = start.checked_add(data.len()) else {
+            self.write_failed = true;
+            return Err(ErrorCode::BadRequest);
+        };
+        if end > limit {
+            self.write_failed = true;
+            return Err(ErrorCode::BadRequest);
+        }
+        if self.write_buf.len() < end {
+            self.write_buf.resize(end, 0);
+        }
+        self.write_buf[start..end].copy_from_slice(data);
+        self.wrote = true;
+        Ok(data.len() as u32)
     }
 }
 
 /// Upper bound on a buffered exec-spec document, so a huge/sparse write offset
 /// cannot make `/proc` allocate unbounded memory.
 const MAX_EXEC_SPEC_BYTES: usize = 1 << 16; // 64 KiB
+const MAX_PROCESS_INPUT_BYTES: usize = 1 << 20; // 1 MiB
 const CHILD_PID_PLACEHOLDER: &str = "<child-pid>";
 static NEXT_PROCFS_VIEW_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -811,11 +844,6 @@ impl State {
 }
 
 enum ProcStreamWrite {
-    Input {
-        pid: Pid,
-        stream: Stream,
-        events: Stream,
-    },
     Output {
         pid: Pid,
         stream: Stream,
@@ -943,16 +971,7 @@ impl FileServer for ProcFs {
                     if f.clone_pid.is_none() {
                         return Err(ErrorCode::BadRequest);
                     }
-                    let start = usize::try_from(offset).map_err(|_| ErrorCode::BadRequest)?;
-                    let end = start.checked_add(data.len()).ok_or(ErrorCode::BadRequest)?;
-                    if end > MAX_EXEC_SPEC_BYTES {
-                        return Err(ErrorCode::BadRequest);
-                    }
-                    if f.write_buf.len() < end {
-                        f.write_buf.resize(end, 0);
-                    }
-                    f.write_buf[start..end].copy_from_slice(data);
-                    return Ok(data.len() as u32);
+                    return f.buffer_write(offset, data, MAX_EXEC_SPEC_BYTES);
                 }
                 // Generic process control (interrupt/cancel) routes through ctl.
                 Node::Ctl(pid) => {
@@ -972,19 +991,12 @@ impl FileServer for ProcFs {
                 }
                 // Process input is a stream owned by `/proc`; parents, shells,
                 // and hosts write to it, and process descriptors read from it.
-                Node::Input(pid) => {
+                Node::Input(_) => {
                     if !has_write_intent {
                         return Err(ErrorCode::NoAccess);
                     }
-                    ProcStreamWrite::Input {
-                        pid,
-                        stream: state.inputs.get(&pid).cloned().ok_or(ErrorCode::NotFound)?,
-                        events: state
-                            .io_events
-                            .get(&pid)
-                            .cloned()
-                            .ok_or(ErrorCode::NotFound)?,
-                    }
+                    let f = state.fids.get_mut(&fid_key).ok_or(ErrorCode::NotFound)?;
+                    return f.buffer_write(offset, data, MAX_PROCESS_INPUT_BYTES);
                 }
                 // Process output is a stream owned by `/proc`; process descriptors
                 // write to it, and readers tail it through `io/output`.
@@ -1011,16 +1023,6 @@ impl FileServer for ProcFs {
         };
         let count = data.len() as u32;
         match stream_write {
-            ProcStreamWrite::Input {
-                pid,
-                stream,
-                events,
-            } => {
-                stream.append(data).await;
-                append_io_event(&events, "input", count).await;
-                self.publish_process_event(pid, ProcessEvent::Input { count })
-                    .await;
-            }
             ProcStreamWrite::Output {
                 pid,
                 stream,
@@ -1092,11 +1094,17 @@ impl FileServer for ProcFs {
         if fid == Fid::ROOT && !matches!(self.root_node, Node::Clone) {
             return Ok(());
         }
-        let committed_process = {
+        let (committed_process, committed_input) = {
             let mut state = self.state.lock().await;
             let Some(f) = state.fids.remove(&self.fid_key(fid)) else {
                 return Err(ErrorCode::NotFound);
             };
+            if f.write_failed {
+                if let Some(pid) = f.clone_pid {
+                    state.table.discard(pid);
+                }
+                return Err(ErrorCode::BadRequest);
+            }
             // Commit-on-clunk: a clone fid commits its pending process here.
             if let Some(pid) = f.clone_pid {
                 match serde_json::from_slice::<ExecSpec>(&f.write_buf) {
@@ -1144,7 +1152,7 @@ impl FileServer for ProcFs {
                             .runner
                             .clone()
                             .map(|runner| (runner, output, io_events, invocation, self.clone()));
-                        Some((committed, runner_launch))
+                        (Some((committed, runner_launch)), None)
                     }
                     Err(_) => {
                         // Reject at commit and discard the fid-private slot — it was
@@ -1153,10 +1161,29 @@ impl FileServer for ProcFs {
                         return Err(ErrorCode::BadRequest);
                     }
                 }
+            } else if let Node::Input(pid) = f.node
+                && f.wrote
+            {
+                let stream = state.inputs.get(&pid).cloned().ok_or(ErrorCode::NotFound)?;
+                let events = state
+                    .io_events
+                    .get(&pid)
+                    .cloned()
+                    .ok_or(ErrorCode::NotFound)?;
+                let count = f.write_buf.len() as u32;
+                let mut framed = format!("{}\n", f.write_buf.len()).into_bytes();
+                framed.extend_from_slice(&f.write_buf);
+                (None, Some((pid, stream, events, framed, count)))
             } else {
-                None
+                (None, None)
             }
         };
+        if let Some((pid, stream, events, framed, count)) = committed_input {
+            stream.append(&framed).await;
+            append_io_event(&events, "input", count).await;
+            self.publish_process_event(pid, ProcessEvent::Input { count })
+                .await;
+        }
         if let Some((committed, runner_launch)) = committed_process {
             self.publish_process_event(
                 committed,

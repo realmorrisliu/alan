@@ -1,14 +1,68 @@
-//! File-native runtime smoke tests.
+//! File-native runtime smoke tests through an explicit ephemeral Alan OS Host.
 
 use alan_agent_engine::{
     AgentProcessConfig, AgentRuntimeStoreBindings, HostMountGrant, LlmClient, ProcessLaunchContext,
-    RuntimeNamespaceSurface, spawn_with_llm_client_and_namespace_surface,
-    spawn_with_llm_client_and_tools_and_namespace_surface,
+    ToolRegistry,
 };
-use alan_agent_protocol::{ContentPart, Op, Submission, UiActivityState, UiEvent};
+use alan_agent_protocol::{UiActivityState, UiEvent};
+use alan_ap::InProcessTransport;
 use alan_kernel::{Access, Credentials, Namespace};
 use alan_llm::{GenerationResponse, MockLlmProvider, TokenUsage, ToolCall};
+use alan_os_host::{AlanOsHost, FixedBootConfig, HostEndpointPaths, LocalAttachment};
 use std::time::Duration;
+
+const AGENT_PATH: &str = "/agent/root";
+const TEST_TIMEOUT: Duration = Duration::from_secs(20);
+
+struct TestHost {
+    root: InProcessTransport,
+    shutdown: tokio::sync::oneshot::Sender<()>,
+    task: tokio::task::JoinHandle<anyhow::Result<()>>,
+    _runtime: tempfile::TempDir,
+}
+
+impl TestHost {
+    async fn boot(config: AgentProcessConfig, llm: LlmClient, tools: ToolRegistry) -> Self {
+        let runtime = tempfile::tempdir().unwrap();
+        let paths = HostEndpointPaths::from_runtime_dir(runtime.path(), "test").unwrap();
+        let host = tokio::time::timeout(
+            TEST_TIMEOUT,
+            AlanOsHost::boot(
+                FixedBootConfig::ephemeral("test", config, llm, tools),
+                paths.clone(),
+            ),
+        )
+        .await
+        .expect("ephemeral Alan OS Host boot timed out")
+        .unwrap();
+        let (shutdown, stopped) = tokio::sync::oneshot::channel();
+        let task = tokio::spawn(async move {
+            host.serve_until(async move {
+                let _ = stopped.await;
+            })
+            .await
+        });
+        let attachment = tokio::time::timeout(TEST_TIMEOUT, LocalAttachment::new(paths).connect())
+            .await
+            .expect("ephemeral Alan OS Host attachment timed out")
+            .unwrap();
+        Self {
+            root: attachment.root,
+            shutdown,
+            task,
+            _runtime: runtime,
+        }
+    }
+
+    async fn shutdown(self) {
+        let _ = self.shutdown.send(());
+        tokio::time::timeout(TEST_TIMEOUT, self.task)
+            .await
+            .expect("ephemeral Alan OS Host shutdown timed out")
+            .unwrap()
+            .unwrap();
+    }
+}
 
 fn response(content: &str) -> GenerationResponse {
     GenerationResponse {
@@ -31,12 +85,26 @@ fn response(content: &str) -> GenerationResponse {
     }
 }
 
-async fn wait_for_turn(tail: &mut alan_shell::Tail, surface: &RuntimeNamespaceSurface) -> String {
+async fn read_tail_until(tail: &mut alan_shell::Tail, expected: &str) -> String {
     tokio::time::timeout(Duration::from_secs(15), async {
+        let mut output = String::new();
+        loop {
+            output.push_str(&String::from_utf8(tail.read(4096).await.unwrap()).unwrap());
+            if output.contains(expected) {
+                return output;
+            }
+        }
+    })
+    .await
+    .unwrap_or_else(|error| panic!("Agent output did not contain {expected:?}: {error}"))
+}
+
+async fn wait_for_idle(events: &mut alan_shell::Tail) {
+    tokio::time::timeout(TEST_TIMEOUT, async {
         let mut pending = String::new();
         let mut saw_running = false;
         loop {
-            pending.push_str(&String::from_utf8(tail.read(4096).await.unwrap()).unwrap());
+            pending.push_str(&String::from_utf8(events.read(4096).await.unwrap()).unwrap());
             while let Some(newline) = pending.find('\n') {
                 let line = pending[..newline].to_string();
                 pending.drain(..=newline);
@@ -44,66 +112,50 @@ async fn wait_for_turn(tail: &mut alan_shell::Tail, surface: &RuntimeNamespaceSu
                 if let UiEvent::Activity { snapshot } = event {
                     saw_running |= snapshot.state == UiActivityState::Running;
                     if saw_running && snapshot.state == UiActivityState::Idle {
-                        let shell = alan_shell::Shell::new(surface.root_transport());
-                        return String::from_utf8(
-                            shell
-                                .cat(&format!("{}/io/output", surface.agent_path()))
-                                .await
-                                .unwrap(),
-                        )
-                        .unwrap();
+                        return;
                     }
                 }
             }
         }
     })
     .await
-    .expect("turn UI stream did not reach idle")
+    .expect("Agent activity did not return to idle")
 }
 
-async fn submit(controller: &alan_agent_engine::RuntimeController, text: &str) {
-    controller
-        .handle
-        .submission_tx
-        .send(Submission::new(Op::Turn {
-            parts: vec![ContentPart::text(text)],
-            context: None,
-        }))
-        .await
-        .unwrap();
-}
-
-#[tokio::test]
-async fn smoke_text_response_is_observable_from_agentfs() {
-    let launch = spawn_with_llm_client_and_namespace_surface(
-        AgentProcessConfig::default(),
-        LlmClient::new(MockLlmProvider::new().with_response(response("Hello from AgentFS!"))),
+async fn submit(shell: &alan_shell::Shell, text: &str) {
+    tokio::time::timeout(
+        TEST_TIMEOUT,
+        shell.write(&format!("{AGENT_PATH}/io/input"), text.as_bytes()),
     )
     .await
+    .expect("AgentFS input submission timed out")
     .unwrap();
-    let shell = alan_shell::Shell::new(launch.surface.root_transport());
-    let mut events = shell
-        .tail(&format!(
-            "{}/machine/ui/events",
-            launch.surface.agent_path()
-        ))
-        .await
-        .unwrap();
-    let mut controller = launch.controller;
-    controller.wait_until_ready().await.unwrap();
+}
 
-    submit(&controller, "Say hello").await;
-    let output = wait_for_turn(&mut events, &launch.surface).await;
-    assert_eq!(output, "Hello from AgentFS!");
-    controller.shutdown().await.unwrap();
+async fn wait_for_action(shell: &alan_shell::Shell) -> String {
+    tokio::time::timeout(TEST_TIMEOUT, async {
+        loop {
+            if let Some(action) = shell
+                .ls(&format!("{AGENT_PATH}/actions"))
+                .await
+                .unwrap()
+                .into_iter()
+                .find(|name| name.starts_with('a'))
+            {
+                return action;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("Agent action file did not appear")
 }
 
 #[tokio::test]
-async fn smoke_tool_result_is_observable_from_action_files() {
+async fn alan_os_host_smoke_covers_multiple_turns_tools_and_agentfs() {
     let temp = tempfile::tempdir().unwrap();
     let store = tempfile::tempdir().unwrap();
-    let file = temp.path().join("test.txt");
-    std::fs::write(&file, "hello from smoke test").unwrap();
+    std::fs::write(temp.path().join("test.txt"), "hello from smoke test").unwrap();
     let tool_response = GenerationResponse {
         tool_calls: vec![ToolCall {
             id: Some("call_001".to_string()),
@@ -112,17 +164,27 @@ async fn smoke_tool_result_is_observable_from_action_files() {
         }],
         ..response("")
     };
-    let mock = MockLlmProvider::new()
-        .with_responses(vec![tool_response, response("I read the file for you.")]);
+    let mock = MockLlmProvider::new().with_responses(vec![
+        response("First response"),
+        tool_response,
+        response("I read the file for you."),
+    ]);
     let mut config = AgentProcessConfig::default();
+    // This smoke owns the foreground Host -> AgentFS -> Tool Process path. Turn-end
+    // Memory promotion is an independent deferred consumer of the LLM connection;
+    // leaving it enabled would make a sequential mock race the next foreground turn.
+    config.agent_config.core_config.memory.enabled = false;
     config.agent_config.runtime_config.governance = alan_agent_protocol::GovernanceConfig {
         profile: alan_agent_protocol::GovernanceProfile::Autonomous,
         policy_path: None,
     };
     let grant = HostMountGrant::new("/mnt/source", temp.path(), Access::ReadOnly).unwrap();
     let mut namespace = Namespace::new();
-    alan::host_mounts::apply_host_mount_declarations(&mut namespace, std::slice::from_ref(&grant))
-        .unwrap();
+    alan_os_host::host_mounts::apply_host_mount_declarations(
+        &mut namespace,
+        std::slice::from_ref(&grant),
+    )
+    .unwrap();
     config.launch_context =
         ProcessLaunchContext::new(namespace, Credentials::user("smoke-agent"), "/mnt/source")
             .unwrap();
@@ -145,36 +207,32 @@ async fn smoke_tool_result_is_observable_from_action_files() {
     }
     config.store_bindings = Some(store_bindings);
     let tools = alan_tools::create_tool_registry_with_core_tools(temp.path().to_path_buf());
-    let launch =
-        spawn_with_llm_client_and_tools_and_namespace_surface(config, LlmClient::new(mock), tools)
-            .await
-            .unwrap();
-    let shell = alan_shell::Shell::new(launch.surface.root_transport());
+    let host = TestHost::boot(config, LlmClient::new(mock), tools).await;
+    let shell = alan_shell::Shell::new(host.root.clone());
+    let mut output = shell
+        .tail(&format!("{AGENT_PATH}/io/output"))
+        .await
+        .unwrap();
     let mut events = shell
-        .tail(&format!(
-            "{}/machine/ui/events",
-            launch.surface.agent_path()
-        ))
+        .tail(&format!("{AGENT_PATH}/machine/ui/events"))
         .await
         .unwrap();
-    let mut controller = launch.controller;
-    controller.wait_until_ready().await.unwrap();
+    submit(&shell, "First question").await;
+    assert_eq!(
+        read_tail_until(&mut output, "First response").await,
+        "First response"
+    );
+    wait_for_idle(&mut events).await;
 
-    submit(&controller, "Read the test file").await;
-    let output = wait_for_turn(&mut events, &launch.surface).await;
-    assert!(output.contains("I read the file for you."));
-    let actions = shell
-        .ls(&format!("{}/actions", launch.surface.agent_path()))
-        .await
-        .unwrap();
-    let action = actions.iter().find(|name| name.starts_with('a')).unwrap();
+    submit(&shell, "Read the test file").await;
+    let second_output = read_tail_until(&mut output, "I read the file for you.").await;
+    wait_for_idle(&mut events).await;
+    assert_eq!(second_output, "I read the file for you.");
+    let action = wait_for_action(&shell).await;
     assert_eq!(
         String::from_utf8(
             shell
-                .cat(&format!(
-                    "{}/actions/{action}/status",
-                    launch.surface.agent_path()
-                ))
+                .cat(&format!("{AGENT_PATH}/actions/{action}/status"))
                 .await
                 .unwrap(),
         )
@@ -183,51 +241,14 @@ async fn smoke_tool_result_is_observable_from_action_files() {
     );
     let action_output = String::from_utf8(
         shell
-            .cat(&format!(
-                "{}/actions/{action}/output",
-                launch.surface.agent_path()
-            ))
+            .cat(&format!("{AGENT_PATH}/actions/{action}/output"))
             .await
             .unwrap(),
     )
     .unwrap();
     assert!(action_output.contains("/mnt/source/test.txt"));
     assert!(!action_output.contains(temp.path().to_string_lossy().as_ref()));
-    controller.shutdown().await.unwrap();
-}
-
-#[tokio::test]
-async fn smoke_multiple_turns_resume_ui_stream_by_offset() {
-    let mock = MockLlmProvider::new().with_responses(vec![
-        response("First response"),
-        response("Second response"),
-    ]);
-    let launch = spawn_with_llm_client_and_namespace_surface(
-        AgentProcessConfig::default(),
-        LlmClient::new(mock),
-    )
-    .await
-    .unwrap();
-    let shell = alan_shell::Shell::new(launch.surface.root_transport());
-    let mut events = shell
-        .tail(&format!(
-            "{}/machine/ui/events",
-            launch.surface.agent_path()
-        ))
-        .await
-        .unwrap();
-    let mut controller = launch.controller;
-    controller.wait_until_ready().await.unwrap();
-
-    submit(&controller, "First question").await;
-    assert_eq!(
-        wait_for_turn(&mut events, &launch.surface).await,
-        "First response"
-    );
-    submit(&controller, "Second question").await;
-    assert_eq!(
-        wait_for_turn(&mut events, &launch.surface).await,
-        "First responseSecond response"
-    );
-    controller.shutdown().await.unwrap();
+    events.close().await.unwrap();
+    output.close().await.unwrap();
+    host.shutdown().await;
 }

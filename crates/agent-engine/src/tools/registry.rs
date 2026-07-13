@@ -309,6 +309,26 @@ impl ToolRegistry {
             .map(|tool| self.effective_timeout_secs(tool.as_ref()))
     }
 
+    /// Serialize the namespace package manifest for one registered Tool.
+    ///
+    /// Alan OS Host uses this when assembling `/lib/exec/<tool>`; the manifest
+    /// shape remains owned and validated by Agent Execution Engine.
+    pub fn package_manifest_bytes(&self, name: &str) -> Result<Vec<u8>> {
+        let tool = self
+            .get(name)
+            .with_context(|| format!("materialize Tool package metadata for {name}"))?;
+        let manifest = crate::runtime::ToolPackageManifest::from_tool(
+            tool.as_ref(),
+            self.execution_timeout_secs(name).unwrap_or(30),
+        )?;
+        serde_json::to_vec(&manifest).with_context(|| format!("serialize Tool manifest for {name}"))
+    }
+
+    /// Create the Process runner used by `/proc` for Tool executables.
+    pub fn process_runner(&self) -> ToolProcessRunner {
+        ToolProcessRunner::from_registry(self)
+    }
+
     fn effective_timeout_secs(&self, tool: &dyn Tool) -> usize {
         if self.config.tool_timeout_secs != 30 {
             self.config.tool_timeout_secs
@@ -442,7 +462,7 @@ impl Default for ToolRegistry {
 
 /// Process-server host for Tool executables reached through `/proc/clone`.
 #[derive(Clone)]
-pub(crate) struct ToolProcessRunner {
+pub struct ToolProcessRunner {
     inner: Arc<ToolProcessRunnerInner>,
 }
 
