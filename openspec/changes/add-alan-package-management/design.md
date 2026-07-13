@@ -97,15 +97,14 @@ folding or Unicode normalization. `q install` either validates an explicit
 `--name` exactly or derives the source leaf and rejects it when that leaf is not
 already canonical.
 
-The snapshot contains each entry's normalized relative path and type,
-regular-file bytes and executable metadata where portable, or the uninterpreted
-target text for a symbolic link. It contains no absolute source path. `q` does
-not dereference symlinks while walking the source; it rejects absolute link
-targets and targets whose normalized resolution escapes the selected source
-subtree before uploading target content. Package Service independently
-revalidates the entry metadata and rejects `.`/`..`, absolute entries, duplicate
-normalized paths, special files, escaping symlinks, and bounded-input violations
-before staging any revision. VCS control directories are excluded.
+The snapshot contains normalized relative paths, file bytes, and executable
+metadata where portable. It contains no absolute source path. Package Service
+rejects `.`/`..`, absolute entries, duplicate normalized paths, special files,
+and bounded-input violations before staging any revision. Snapshot entries are
+regular files only: the source File-Server adapter must reject symlink access
+without following the target, and `q` aborts the import on that rejection
+instead of serializing dereferenced bytes. VCS control directories are
+excluded.
 
 Remote URLs are not accepted in v0. A later network-fetch service may produce a
 namespace tree and pass it through this same import boundary; `q` must not gain

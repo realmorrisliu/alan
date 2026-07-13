@@ -71,12 +71,9 @@ fail without a partial catalog change.
 
 `q install` and `q upgrade` SHALL accept source content only from an absolute
 readable path in the invoking Process namespace. The `q` Process SHALL import
-each entry's normalized relative path and type, regular-file bytes and portable
-executable metadata, or uninterpreted symbolic-link target through aP. `q` MUST
-NOT dereference symbolic links while constructing the snapshot. Package Service
-MUST NOT scan workspace, AgentRoot, `.agents`, Alan home, or any other Host
-directory and MUST NOT persist a raw Host path, URL credential, or VCS control
-directory.
+normalized relative paths and bytes through aP. Package Service MUST NOT scan
+workspace, AgentRoot, `.agents`, Alan home, or any other Host directory and
+MUST NOT persist a raw Host path, URL credential, or VCS control directory.
 
 #### Scenario: Host content is installed
 
@@ -104,14 +101,18 @@ directory.
 Package Service SHALL reject absolute entries, parent traversal, duplicate
 normalized paths, special files, escaping symbolic links, excessive file
 counts, excessive per-file size, and excessive total bytes before publication.
-VCS control metadata SHALL not enter an installed revision.
+Snapshot entries SHALL represent regular files only. A source File-Server
+adapter SHALL reject walking or reading a symbolic link without following its
+target, and `q` SHALL abort the import on that rejection rather than serialize
+dereferenced target bytes. VCS control metadata SHALL not enter an installed
+revision.
 
 #### Scenario: Source symlink escapes its tree
 
-- **WHEN** a source symlink has an absolute target or its normalized target
-  escapes the supplied namespace subtree
-- **THEN** installation fails before catalog publication
-- **AND** `q` does not dereference or upload bytes from the target
+- **WHEN** the selected source tree contains a symbolic link, whether its
+  target is inside or outside the selected subtree
+- **THEN** the source adapter does not expose target bytes through that entry
+- **AND** `q` fails the import before catalog publication
 
 #### Scenario: Source includes a Git control directory
 
