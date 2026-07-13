@@ -56,4 +56,4 @@
 - [x] 8.1 Submit after `extract-system-level-alan-os-host` is merged and archived
 - [x] 8.2 Complete current-HEAD Codex review, zero unresolved threads, green CI, and delayed recheck before merge
 - [x] 8.3 Sync all service deltas into canonical specs and verify package-management rewrite prerequisites
-- [ ] 8.4 Archive only after implementation and canonical sync are merged
+- [x] 8.4 Archive only after implementation and canonical sync are merged
