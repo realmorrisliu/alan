@@ -39,9 +39,11 @@ human-facing version. It MUST NOT contain executable
 manifest logic.
 
 Every export SHALL canonicalize inside the package tree. Skill exports SHALL
-satisfy `skill-system-contract`. A Tool export SHALL map one valid command name
-to one executable inside the package and SHALL satisfy the existing `/bin` Tool
-contract. Merely placing files under `bin/` or `scripts/` MUST NOT export them.
+satisfy `skill-system-contract`, and their derived runtime `skill_id` values
+SHALL be unique within one package manifest. A Tool export SHALL map one valid
+command name to one executable inside the package and SHALL satisfy the existing
+`/bin` Tool contract. Merely placing files under `bin/` or `scripts/` MUST NOT
+export them.
 
 #### Scenario: Package exports multiple Skills
 - **WHEN** one valid manifest lists several Skill package roots
@@ -53,6 +55,11 @@ contract. Merely placing files under `bin/` or `scripts/` MUST NOT export them.
 - **WHEN** a manifest id contains uppercase letters, Unicode, `.`, `..`, `_`,
   repeated separators, or more than 64 characters
 - **THEN** validation rejects the transaction before catalog or namespace use
+
+#### Scenario: Two exports derive the same Skill id
+- **WHEN** two declared Skill roots in one manifest derive the same runtime
+  `skill_id`
+- **THEN** validation rejects the transaction before activation
 
 #### Scenario: Export escapes the package
 - **WHEN** an export is absolute, traverses outside the package, or resolves
@@ -144,7 +151,10 @@ selected package tree unless separately exported.
 Package Service SHALL resolve only manifest-declared Skill exports. An Agent
 Process SHALL receive a selected installed Skill through a bounded descriptor;
 installation or a `/lib/pkg` mount MUST NOT cause recursive or ambient Skill
-discovery.
+discovery. Before capability-view assembly, Process launch SHALL reject any
+selected package or explicit descriptor set containing duplicate runtime
+`skill_id` values. Packages with colliding Skill ids MAY remain installed when
+they are not selected together.
 
 #### Scenario: Agent receives one exported Skill
 - **WHEN** launch selects one Skill export from an installed package
@@ -156,6 +166,12 @@ discovery.
 - **WHEN** the package, declared export, or required projection is absent
 - **THEN** launch fails closed with an inspectable availability error
 - **AND** it does not scan Host directories for a substitute
+
+#### Scenario: Selected packages export the same Skill id
+- **WHEN** a Process launch selects Skill exports from different packages or
+  descriptors that derive the same runtime `skill_id`
+- **THEN** launch fails with an inspectable collision error
+- **AND** no precedence rule silently selects one export
 
 ### Requirement: Package management is an Alan Shell Tool
 Alan OS SHALL provide the base-system `/bin/pkg` Tool with `install`, `list`,
