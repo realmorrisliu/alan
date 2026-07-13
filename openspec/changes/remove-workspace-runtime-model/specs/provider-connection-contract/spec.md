@@ -27,3 +27,15 @@ It MUST NOT silently reselect the Connection Service default.
 - **WHEN** the Agent Runtime Service launches the child
 - **THEN** it resolves the child-selected profile before constructing the child's LLM client
 - **AND** child setup and runtime startup use the same resolved provider settings
+
+### Requirement: Connection profile credential references remain resolvable
+Alan SHALL create or validate matching non-secret credential metadata whenever
+an operator assigns an explicit credential reference to a Connection profile.
+It MUST NOT persist a profile that references unknown or incompatible credential
+metadata.
+
+#### Scenario: Operator replaces a profile credential reference
+- **GIVEN** an existing secret-backed Connection profile
+- **WHEN** the operator edits it to use a new valid credential id
+- **THEN** matching credential metadata is registered before the profile is saved
+- **AND** setting the secret and testing the edited profile succeed

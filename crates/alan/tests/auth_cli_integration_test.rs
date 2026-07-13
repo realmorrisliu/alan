@@ -187,3 +187,65 @@ fn connection_default_and_current_use_system_metadata() {
     assert!(stdout.contains("effective_profile: chatgpt-main"));
     assert!(stdout.contains("source: default_profile"));
 }
+
+#[test]
+fn connection_edit_registers_replacement_credential_metadata() {
+    let temp = TempDir::new().unwrap();
+    let home = temp.path().join("home");
+    let xdg_data = temp.path().join("data");
+    std::fs::create_dir_all(&home).unwrap();
+
+    let add = alan_command(&home, &xdg_data)
+        .args([
+            "connection",
+            "add",
+            "openai_responses",
+            "--profile",
+            "openai-main",
+            "--credential",
+            "original-secret",
+        ])
+        .output()
+        .unwrap();
+    assert!(add.status.success(), "{add:?}");
+
+    let edit = alan_command(&home, &xdg_data)
+        .args([
+            "connection",
+            "edit",
+            "openai-main",
+            "--credential",
+            "replacement-secret",
+        ])
+        .output()
+        .unwrap();
+    assert!(edit.status.success(), "{edit:?}");
+
+    let set_secret = alan_command(&home, &xdg_data)
+        .args([
+            "connection",
+            "set-secret",
+            "openai-main",
+            "--value",
+            "sk-replacement",
+        ])
+        .output()
+        .unwrap();
+    assert!(set_secret.status.success(), "{set_secret:?}");
+
+    let test = alan_command(&home, &xdg_data)
+        .args(["connection", "test", "openai-main"])
+        .output()
+        .unwrap();
+    assert!(test.status.success(), "{test:?}");
+    assert!(String::from_utf8_lossy(&test.stdout).contains("status: success"));
+
+    let data_dir = detected_data_dir(&home, &xdg_data);
+    let system_store =
+        alan::SystemStorePaths::from_data_dir(&data_dir, InstallChannel::Stable).unwrap();
+    let (connections, _) =
+        ConnectionsFile::load_from_path(&system_store.connections_metadata().unwrap()).unwrap();
+    let credential = connections.credentials.get("replacement-secret").unwrap();
+    assert_eq!(credential.kind, CredentialKind::SecretString);
+    assert_eq!(credential.provider_family, LlmProvider::OpenAiResponses);
+}

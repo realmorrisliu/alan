@@ -76,6 +76,48 @@ fn connection_profile<'a>(
         .ok_or_else(|| anyhow::anyhow!("Unknown connection profile `{profile_id}`"))
 }
 
+fn ensure_credential_metadata(
+    connections: &mut ConnectionsFile,
+    credential_id: &str,
+    provider: LlmProvider,
+    profile_label: Option<&str>,
+) -> Result<()> {
+    let descriptor = ConnectionsFile::profile_descriptor(provider);
+    anyhow::ensure!(
+        descriptor.credential_kind != CredentialKind::AmbientCloudAuth,
+        "Provider `{}` does not use an explicit credential reference",
+        provider.as_str()
+    );
+    if let Some(existing) = connections.credentials.get(credential_id) {
+        anyhow::ensure!(
+            existing.provider_family == provider,
+            "Credential `{credential_id}` is already bound to provider `{}`",
+            existing.provider_family.as_str()
+        );
+        anyhow::ensure!(
+            existing.kind == descriptor.credential_kind,
+            "Credential `{credential_id}` uses kind `{}` but provider `{}` requires `{}`",
+            existing.kind.as_str(),
+            provider.as_str(),
+            descriptor.credential_kind.as_str()
+        );
+        return Ok(());
+    }
+    let label = profile_label
+        .filter(|label| !label.trim().is_empty())
+        .unwrap_or(descriptor.display_name);
+    connections.credentials.insert(
+        credential_id.to_string(),
+        ConnectionCredential {
+            kind: descriptor.credential_kind,
+            provider_family: provider,
+            label: format!("{label} credential"),
+            backend: default_credential_backend(descriptor.credential_kind).to_string(),
+        },
+    );
+    Ok(())
+}
+
 fn parse_provider_id(raw: &str) -> Result<LlmProvider> {
     let provider = match raw.trim().to_ascii_lowercase().as_str() {
         "chatgpt" => LlmProvider::Chatgpt,
@@ -224,20 +266,7 @@ pub async fn run_connection_add(
         Some(validated_profile_id(&id)?)
     };
     if let Some(credential_id) = credential_id.as_ref() {
-        connections
-            .credentials
-            .entry(credential_id.clone())
-            .or_insert_with(|| ConnectionCredential {
-                kind: descriptor.credential_kind,
-                provider_family: provider,
-                label: format!(
-                    "{} credential",
-                    label
-                        .clone()
-                        .unwrap_or_else(|| descriptor.display_name.to_string())
-                ),
-                backend: default_credential_backend(descriptor.credential_kind).to_string(),
-            });
+        ensure_credential_metadata(&mut connections, credential_id, provider, label.as_deref())?;
     }
     let now = Utc::now();
     connections.profiles.insert(
@@ -270,7 +299,28 @@ pub async fn run_connection_edit(
     setting_pairs: &[String],
 ) -> Result<()> {
     let profile_id = validated_profile_id(profile_id)?;
+    let credential_id = credential_id
+        .map(|credential_id| validated_profile_id(&credential_id))
+        .transpose()?;
     let (stores, mut connections) = load_connections()?;
+    let (provider, credential_label) = {
+        let profile = connections
+            .profiles
+            .get(&profile_id)
+            .ok_or_else(|| anyhow::anyhow!("Unknown connection profile `{profile_id}`"))?;
+        (
+            profile.provider,
+            label.clone().or_else(|| profile.label.clone()),
+        )
+    };
+    if let Some(credential_id) = credential_id.as_deref() {
+        ensure_credential_metadata(
+            &mut connections,
+            credential_id,
+            provider,
+            credential_label.as_deref(),
+        )?;
+    }
     let profile = connections
         .profiles
         .get_mut(&profile_id)
@@ -279,7 +329,7 @@ pub async fn run_connection_edit(
         profile.label = Some(label);
     }
     if let Some(credential_id) = credential_id {
-        profile.credential_id = Some(validated_profile_id(&credential_id)?);
+        profile.credential_id = Some(credential_id);
     }
     if !setting_pairs.is_empty() {
         let settings =
