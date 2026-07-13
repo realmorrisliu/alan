@@ -1,11 +1,12 @@
 ## MODIFIED Requirements
 
 ### Requirement: Discovery is separate from exposure
-alan SHALL discover skill packages from Package Service-installed first-party
-or third-party packages and explicitly supplied Skill or Agent Definition
-descriptors without making discovery itself imply runtime exposure. It MUST NOT
-enumerate Host directories or maintain an Agent Execution Engine package
-registry as an installed-package source.
+alan SHALL discover skill packages only from Package Service Skill exports
+explicitly selected for the current Process and explicitly supplied Skill or
+Agent Definition descriptors, without making discovery itself imply runtime
+exposure. It MUST NOT discover every installed package, enumerate Host
+directories, or maintain an Agent Execution Engine package registry as an
+installed-package source.
 
 Rules:
 
@@ -14,15 +15,21 @@ Rules:
   disabled or unavailable.
 - Built-in first-party packages are not a separate package kind; `first-party`
   is package provenance and a precedence tier, not a different runtime contract.
-- Package Service resolves only manifest-declared Skill exports.
+- Package Service resolves only manifest-declared Skill exports selected for
+  the current Process.
 - Explicit Skill and Agent Definition descriptors remain valid without
   installing their source as a package.
 
 #### Scenario: First-party package is discovered
-- **WHEN** alan discovers a first-party installed skill package
+- **WHEN** a first-party installed Skill export is selected for a Process
 - **THEN** it follows the ordinary directory-backed skill package contract
 - **AND** first-party provenance does not by itself imply enablement or implicit
   prompt listing
+
+#### Scenario: Installed package is not selected
+- **WHEN** Package Service has an installed Skill package that is not selected
+  for the current Process
+- **THEN** alan does not add its Skill exports to the resolved capability view
 
 #### Scenario: Host directory contains a Skill
 - **WHEN** a mounted Host directory contains `SKILL.md` but is neither installed

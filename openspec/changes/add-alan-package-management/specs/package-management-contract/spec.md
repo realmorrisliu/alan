@@ -110,19 +110,28 @@ explicit Host Mount.
 - **AND** no compatibility path resolver is used
 
 ### Requirement: Package lifecycle is transactional and exact
-Package Service SHALL copy explicit input into service-owned staging, compute a
-content digest, validate all content and exports, and atomically activate one
-revision per package id. Install SHALL reject an owned id. Update SHALL require
-the expected active digest and atomically replace that revision. Remove SHALL
-delete only Package Service-owned catalog and content for the named package.
+The `/bin/pkg` client SHALL copy the explicitly named, namespace-readable input
+into Package Service-owned transaction staging. Package Service SHALL compute a
+content digest over the staged bytes, validate all content and exports, and
+atomically activate one revision per package id. Install SHALL reject an owned
+id. Update SHALL require the expected active digest and atomically replace that
+revision. Remove SHALL delete only Package Service-owned catalog and content for
+the named package.
 
 Interrupted, aborted, or invalid transactions MUST NOT change active package
 state. The original source tree MUST NOT be modified or removed.
 
 #### Scenario: Install succeeds
-- **WHEN** a staged package passes validation and its id is unowned
+- **WHEN** the client finishes uploading a package and the staged bytes pass
+  validation with an unowned id
 - **THEN** one atomic commit makes its catalog entry and content active
 - **AND** the event stream records the new digest
+
+#### Scenario: Source is private to the caller namespace
+- **WHEN** `/bin/pkg` can read a source that Package Service cannot address
+  directly
+- **THEN** the client uploads its bytes through the transaction tree
+- **AND** Package Service receives no authority to resolve the caller's path
 
 #### Scenario: Concurrent update wins first
 - **WHEN** an update's expected digest no longer matches the active digest
