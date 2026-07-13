@@ -1,7 +1,7 @@
 ## 1. Implement Package Service ownership
 
 - [ ] 1.1 Add `alan-package-service` with aP catalog, transaction, event, and lifecycle files
-- [ ] 1.2 Add the versioned `alan-package.yaml` parser with package-id, Skill export, and Tool export validation
+- [ ] 1.2 Add the versioned `alan-package.yaml` parser and the single-root portable Skill adoption path with package-id, Skill export, and Tool export validation
 - [ ] 1.3 Persist catalog, content, provenance, digests, and transaction recovery only through Package Service's System Store binding
 - [ ] 1.4 Validate canonical paths, reject escaping symlinks and export collisions, and compute content digests inside the service boundary
 - [ ] 1.5 Implement atomic install, update-with-expected-digest, abort, and exact remove

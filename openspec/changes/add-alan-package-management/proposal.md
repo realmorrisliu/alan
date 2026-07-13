@@ -28,8 +28,9 @@ and descriptors.
   and `remove`. It operates through the mounted service tree; no Host-side
   package command or background management API is introduced.
 - Install only explicit, namespace-readable Alan package trees with a
-  declarative `alan-package.yaml`. Alan OS does not scan workspace, AgentRoot,
-  `.agents`, Alan home, or arbitrary Host directories for packages.
+  declarative `alan-package.yaml`, or one bare portable Skill root containing
+  `SKILL.md`. Alan OS does not scan workspace, AgentRoot, `.agents`, Alan home,
+  or arbitrary Host directories for packages.
 - Stage, validate, and atomically activate package content. Updates replace one
   installed revision; removal deletes only Package Service-owned state.
 - Project explicitly selected package content read-only at

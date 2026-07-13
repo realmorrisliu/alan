@@ -72,7 +72,8 @@ Process namespaces and descriptors are rebuilt rather than persisted.
 ### D3. Install input is an explicit Alan package tree
 
 `pkg install <path>` accepts only a directory readable in the caller's Alan OS
-namespace. The directory contains a declarative `alan-package.yaml` with:
+namespace. A normal package directory contains a declarative
+`alan-package.yaml` with:
 
 - a schema version;
 - one package id;
@@ -91,6 +92,15 @@ This is intentionally not a Git installer. A Host checkout must first be
 mounted explicitly, and foreign content must first be adapted into an Alan
 package tree outside Package Service. Remote fetching and adapters can be added
 as separate Tools later without changing package ownership.
+
+The sole manifest-free adoption path preserves the portable Skill contract. If
+the named source root has no `alan-package.yaml` but has one valid root
+`SKILL.md`, Package Service derives its existing normalized runtime `skill_id`
+from the source directory name and uses that value as the package id. It creates
+an internal manifest with one Skill export at `.` and no Tool exports. The
+derived id must satisfy the package-id grammar; otherwise the operator must add
+an explicit manifest. Adoption copies the entire portable Skill directory but
+does not mutate it or recursively discover nested Skills.
 
 ### D4. Lifecycle is staged and atomic
 

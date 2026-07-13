@@ -45,6 +45,14 @@ command name to one executable inside the package and SHALL satisfy the existing
 `/bin` Tool contract. Merely placing files under `bin/` or `scripts/` MUST NOT
 export them.
 
+As the only manifest-free install form, Package Service SHALL adopt an
+explicitly named portable Skill root that has no `alan-package.yaml` and has one
+valid root `SKILL.md`. It SHALL use the normalized runtime `skill_id` defined by
+`skill-system-contract` as the package id, require that id to satisfy the
+package-id grammar, and record an internal manifest with exactly one Skill
+export at `.` and no Tool exports. It MUST NOT mutate the source or recursively
+discover nested Skill roots.
+
 #### Scenario: Package exports multiple Skills
 - **WHEN** one valid manifest lists several Skill package roots
 - **THEN** Package Service records one installed package with those declared
@@ -60,6 +68,18 @@ export them.
 - **WHEN** two declared Skill roots in one manifest derive the same runtime
   `skill_id`
 - **THEN** validation rejects the transaction before activation
+
+#### Scenario: Bare portable Skill is installed
+- **WHEN** the explicitly named source has one valid root `SKILL.md` and no
+  `alan-package.yaml`
+- **THEN** Package Service adopts it as one package and one Skill export using
+  its derived runtime `skill_id`
+- **AND** unknown files remain content without becoming additional exports
+
+#### Scenario: Bare portable Skill id is not a package id
+- **WHEN** the derived runtime `skill_id` exceeds the package-id bound or is
+  otherwise invalid
+- **THEN** adoption fails and requires an explicit `alan-package.yaml`
 
 #### Scenario: Export escapes the package
 - **WHEN** an export is absolute, traverses outside the package, or resolves
@@ -215,7 +235,8 @@ Service SHALL NOT execute install hooks or foreign conversion code.
 - **THEN** it marks that package unavailable and emits an event
 - **AND** namespace assembly does not project the corrupted content
 
-#### Scenario: Foreign source lacks an Alan manifest
-- **WHEN** an operator installs a source tree without `alan-package.yaml`
+#### Scenario: Nonportable source lacks an Alan manifest
+- **WHEN** an operator installs a source tree with neither
+  `alan-package.yaml` nor a valid root `SKILL.md`
 - **THEN** validation rejects it with a manifest error
 - **AND** Package Service does not guess or convert the foreign layout
