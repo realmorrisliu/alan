@@ -71,9 +71,12 @@ fail without a partial catalog change.
 
 `q install` and `q upgrade` SHALL accept source content only from an absolute
 readable path in the invoking Process namespace. The `q` Process SHALL import
-normalized relative paths and bytes through aP. Package Service MUST NOT scan
-workspace, AgentRoot, `.agents`, Alan home, or any other Host directory and
-MUST NOT persist a raw Host path, URL credential, or VCS control directory.
+each entry's normalized relative path and type, regular-file bytes and portable
+executable metadata, or uninterpreted symbolic-link target through aP. `q` MUST
+NOT dereference symbolic links while constructing the snapshot. Package Service
+MUST NOT scan workspace, AgentRoot, `.agents`, Alan home, or any other Host
+directory and MUST NOT persist a raw Host path, URL credential, or VCS control
+directory.
 
 #### Scenario: Host content is installed
 
@@ -105,8 +108,10 @@ VCS control metadata SHALL not enter an installed revision.
 
 #### Scenario: Source symlink escapes its tree
 
-- **WHEN** a source entry resolves outside the supplied namespace subtree
+- **WHEN** a source symlink has an absolute target or its normalized target
+  escapes the supplied namespace subtree
 - **THEN** installation fails before catalog publication
+- **AND** `q` does not dereference or upload bytes from the target
 
 #### Scenario: Source includes a Git control directory
 
