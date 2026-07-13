@@ -6,16 +6,17 @@
 
 use std::{
     fs,
-    io::Write,
     path::{Component, Path, PathBuf},
 };
 
-use alan_agent_engine::{ConnectionsFile, InstallChannel, default_credential_backend};
+use alan_agent_engine::InstallChannel;
 use anyhow::{Context, Result, bail, ensure};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
-use alan_os_host::{HostStorePaths, SystemStorePaths};
+use alan_os_host::{
+    ConnectionMigrationReport, HostStorePaths, LegacyConnectionPaths, SystemStorePaths,
+};
 
 const LEGACY_STABLE_HOME: &str = ".alan";
 const LEGACY_DEV_HOME: &str = ".alan-dev";
@@ -88,13 +89,6 @@ pub struct LegacyInspection {
     pub generated_paths: Vec<PathBuf>,
     pub migratable_paths: Vec<PathBuf>,
     pub authored_roots: Vec<AuthoredRoot>,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
-pub struct ConnectionMigrationReport {
-    pub metadata_migrated: bool,
-    pub credential_file_migrated: bool,
-    pub managed_auth_migrated: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
@@ -219,40 +213,16 @@ pub fn cleanup_legacy_state(
     })
 }
 
-/// Perform the one-shot migrate-verify-delete pass needed before reading the
-/// current Connection Service store.
-pub fn migrate_legacy_connections(
+fn migrate_legacy_connections(
     paths: &LegacyStatePaths,
     system_store: &SystemStorePaths,
     host_store: &HostStorePaths,
 ) -> Result<ConnectionMigrationReport> {
-    ensure_real_legacy_root_or_missing(&paths.alan_root)?;
-    ensure!(
-        paths.channel.descriptor().id == system_store.channel_id,
-        "legacy and System Store channels differ"
-    );
-
-    // Preserve secret-bearing Host files before deleting any metadata pointer.
-    let credential_file_migrated = migrate_host_file(
-        &paths.credential_file(),
-        &host_store.credentials.join(SECRET_STORE_FILE),
-        "Host credential file",
-    )?;
-    let managed_auth_migrated = migrate_host_file(
-        &paths.managed_auth(),
-        &host_store.managed_auth,
-        "managed auth file",
-    )?;
-    let metadata_migrated = migrate_connection_metadata(
-        &paths.connections_metadata(),
-        &system_store.connections_metadata()?,
-    )?;
-
-    Ok(ConnectionMigrationReport {
-        metadata_migrated,
-        credential_file_migrated,
-        managed_auth_migrated,
-    })
+    alan_os_host::migrate_legacy_connections(
+        &LegacyConnectionPaths::from_home_dir(&paths.home_dir, paths.channel)?,
+        system_store,
+        host_store,
+    )
 }
 
 pub fn import_authored_content(
@@ -402,213 +372,6 @@ fn remove_import_source_if_unchanged(source: &Path, expected_fingerprint: &[u8])
             source.display()
         )
     })
-}
-
-fn migrate_connection_metadata(source: &Path, target: &Path) -> Result<bool> {
-    let Some(source_metadata) = optional_symlink_metadata(source)? else {
-        return Ok(false);
-    };
-    ensure!(
-        source_metadata.file_type().is_file() && !source_metadata.file_type().is_symlink(),
-        "legacy connection metadata must be a real file: {}",
-        source.display()
-    );
-    let legacy = load_legacy_connections(source)?;
-    let (current, _) = ConnectionsFile::load_from_path(target)?;
-    let merged = merge_connections(current, legacy)?;
-
-    if !target.is_file() || ConnectionsFile::load_from_path(target)?.0 != merged {
-        save_connections_atomically(&merged, target)?;
-    }
-    let verified = ConnectionsFile::load_from_path(target)?.0;
-    ensure!(
-        verified == merged,
-        "Connection Service verification failed at {}",
-        target.display()
-    );
-    fs::remove_file(source).with_context(|| {
-        format!(
-            "connection metadata migrated but legacy deletion failed for {}",
-            source.display()
-        )
-    })?;
-    prune_empty_parents(source.parent(), source.parent().and_then(Path::parent));
-    Ok(true)
-}
-
-fn load_legacy_connections(source: &Path) -> Result<ConnectionsFile> {
-    let content = fs::read_to_string(source).with_context(|| {
-        format!(
-            "failed to read legacy connection metadata {}",
-            source.display()
-        )
-    })?;
-    let mut document: toml::Value = toml::from_str(&content).with_context(|| {
-        format!(
-            "failed to parse legacy connection metadata {}",
-            source.display()
-        )
-    })?;
-    let table = document.as_table_mut().with_context(|| {
-        format!(
-            "legacy connection metadata must be a TOML table: {}",
-            source.display()
-        )
-    })?;
-    table.remove("workspace_pins");
-    let mut connections: ConnectionsFile = document.try_into().with_context(|| {
-        format!(
-            "failed to decode legacy connection metadata {}",
-            source.display()
-        )
-    })?;
-    ensure!(
-        connections.version == ConnectionsFile::default().version,
-        "unsupported legacy connections file version {} in {}",
-        connections.version,
-        source.display()
-    );
-    for credential in connections.credentials.values_mut() {
-        credential.backend = default_credential_backend(credential.kind).to_string();
-    }
-    Ok(connections)
-}
-
-fn merge_connections(
-    mut current: ConnectionsFile,
-    legacy: ConnectionsFile,
-) -> Result<ConnectionsFile> {
-    match (&current.default_profile, &legacy.default_profile) {
-        (None, Some(value)) => current.default_profile = Some(value.clone()),
-        (Some(current_value), Some(legacy_value)) => ensure!(
-            current_value == legacy_value,
-            "legacy and current default connection profiles conflict (`{legacy_value}` vs `{current_value}`)"
-        ),
-        _ => {}
-    }
-    for (id, credential) in legacy.credentials {
-        if let Some(existing) = current.credentials.get(&id) {
-            ensure!(
-                existing == &credential,
-                "legacy and current credential metadata conflict for `{id}`"
-            );
-        } else {
-            current.credentials.insert(id, credential);
-        }
-    }
-    for (id, profile) in legacy.profiles {
-        if let Some(existing) = current.profiles.get(&id) {
-            ensure!(
-                existing == &profile,
-                "legacy and current connection profiles conflict for `{id}`"
-            );
-        } else {
-            current.profiles.insert(id, profile);
-        }
-    }
-    Ok(current)
-}
-
-fn save_connections_atomically(connections: &ConnectionsFile, target: &Path) -> Result<()> {
-    let parent = target
-        .parent()
-        .context("Connection Service metadata path has no parent")?;
-    fs::create_dir_all(parent).with_context(|| {
-        format!(
-            "failed to create Connection Service directory {}",
-            parent.display()
-        )
-    })?;
-    let staging = parent.join(format!(
-        ".connections-migration-{}.tmp",
-        uuid::Uuid::new_v4().simple()
-    ));
-    connections.save_to_path(&staging)?;
-    ensure!(
-        ConnectionsFile::load_from_path(&staging)?.0 == *connections,
-        "staged Connection Service metadata failed verification"
-    );
-    fs::rename(&staging, target).with_context(|| {
-        format!(
-            "failed to atomically install Connection Service metadata {}",
-            target.display()
-        )
-    })?;
-    Ok(())
-}
-
-fn migrate_host_file(source: &Path, target: &Path, label: &str) -> Result<bool> {
-    let Some(source_metadata) = optional_symlink_metadata(source)? else {
-        return Ok(false);
-    };
-    ensure!(
-        source_metadata.file_type().is_file() && !source_metadata.file_type().is_symlink(),
-        "legacy {label} must be a real file: {}",
-        source.display()
-    );
-    let source_bytes = fs::read(source)
-        .with_context(|| format!("failed to read legacy {label} {}", source.display()))?;
-    if let Some(target_metadata) = optional_symlink_metadata(target)? {
-        ensure!(
-            target_metadata.file_type().is_file() && !target_metadata.file_type().is_symlink(),
-            "current {label} must be a real file: {}",
-            target.display()
-        );
-        let target_bytes = fs::read(target)
-            .with_context(|| format!("failed to read current {label} {}", target.display()))?;
-        ensure!(
-            target_bytes == source_bytes,
-            "legacy and current {label} conflict; both files were preserved"
-        );
-    } else {
-        write_sensitive_file_atomically(target, &source_bytes)?;
-        ensure!(
-            fs::read(target)? == source_bytes,
-            "{label} verification failed at {}",
-            target.display()
-        );
-    }
-    fs::remove_file(source).with_context(|| {
-        format!(
-            "{label} migrated but legacy deletion failed for {}",
-            source.display()
-        )
-    })?;
-    Ok(true)
-}
-
-fn write_sensitive_file_atomically(target: &Path, bytes: &[u8]) -> Result<()> {
-    let parent = target
-        .parent()
-        .context("Host-owned sensitive path has no parent")?;
-    fs::create_dir_all(parent)
-        .with_context(|| format!("failed to create Host Store directory {}", parent.display()))?;
-    let staging = parent.join(format!(
-        ".host-migration-{}.tmp",
-        uuid::Uuid::new_v4().simple()
-    ));
-    let mut options = fs::OpenOptions::new();
-    options.create_new(true).write(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    let mut file = options
-        .open(&staging)
-        .with_context(|| format!("failed to stage Host Store file {}", staging.display()))?;
-    file.write_all(bytes)
-        .with_context(|| format!("failed to stage Host Store file {}", staging.display()))?;
-    file.sync_all()
-        .with_context(|| format!("failed to sync Host Store file {}", staging.display()))?;
-    drop(file);
-    ensure!(
-        fs::read(&staging)? == bytes,
-        "staged Host Store file failed verification"
-    );
-    fs::rename(&staging, target)
-        .with_context(|| format!("failed to install Host Store file {}", target.display()))?;
-    Ok(())
 }
 
 fn explicit_alan_root(source: &Path, channel: InstallChannel) -> PathBuf {
@@ -789,18 +552,6 @@ fn prune_empty_generated_parents(root: &Path) -> Result<()> {
     Ok(())
 }
 
-fn prune_empty_parents(mut path: Option<&Path>, stop_before: Option<&Path>) {
-    while let Some(current) = path {
-        if stop_before.is_some_and(|stop| current == stop) {
-            break;
-        }
-        if fs::remove_dir(current).is_err() {
-            break;
-        }
-        path = current.parent();
-    }
-}
-
 fn validate_import_shape(kind: AuthoredImportKind, source: &Path) -> Result<()> {
     match kind {
         AuthoredImportKind::AgentDefinition => ensure!(
@@ -958,7 +709,8 @@ fn path_exists_without_following(path: &Path) -> Result<bool> {
 mod tests {
     use super::*;
     use alan_agent_engine::{
-        ConnectionCredential, ConnectionProfile, CredentialKind, LlmProvider,
+        ConnectionCredential, ConnectionProfile, ConnectionsFile, CredentialKind, LlmProvider,
+        default_credential_backend,
         skills::{ResolvedCapabilityView, ScopedPackageDir, SkillScope, SkillsRegistry},
     };
     use chrono::Utc;

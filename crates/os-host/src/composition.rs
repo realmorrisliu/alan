@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use alan_agent_engine::runtime::effective_core_config_for_runtime;
 use alan_agent_engine::{
-    AgentProcessConfig, Config, LlmClient, ProcessDescriptor, ProcessLaunchContext,
+    AgentProcessConfig, Config, InstallChannel, LlmClient, ProcessDescriptor, ProcessLaunchContext,
     RuntimeController, ToolRegistry, configure_runtime_tool_execution_binding,
     spawn_with_namespace_environment,
 };
@@ -20,6 +20,7 @@ use uuid::Uuid;
 
 use crate::host_mounts::LiveNamespaceMountGrantApplicatorFactory;
 use crate::paths::{HostStorePaths, SystemStorePaths};
+use crate::{LegacyConnectionPaths, migrate_legacy_connections};
 
 pub const BOOT_ID_PATH: &str = "/proc/host/boot_id";
 pub const BOOT_STATE_PATH: &str = "/proc/host/state";
@@ -40,8 +41,14 @@ pub struct FixedBootConfig {
 impl FixedBootConfig {
     /// Build product inputs from the channel System Store and explicit Process descriptors.
     pub fn product(channel_id: &str) -> Result<Self> {
+        let channel = InstallChannel::from_id(channel_id)
+            .with_context(|| format!("unknown Alan OS Host channel `{channel_id}`"))?;
         let system_store = SystemStorePaths::detect(channel_id)?;
         let host_store = HostStorePaths::detect(channel_id)?;
+        if let Some(legacy) = LegacyConnectionPaths::detect(channel)? {
+            migrate_legacy_connections(&legacy, &system_store, &host_store)
+                .context("failed to migrate legacy connections before Host boot")?;
+        }
         let memory_store_backing = system_store.memory_stores()?.join("default");
         std::fs::create_dir_all(&memory_store_backing)
             .context("failed to prepare Memory Store backing")?;

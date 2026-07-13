@@ -1,4 +1,3 @@
-use crate::legacy_state::{LegacyStatePaths, migrate_legacy_connections};
 use alan_agent_engine::{
     Config, ConnectionCredential, ConnectionProfile, ConnectionStoreBindings, ConnectionsFile,
     CredentialKind, InstallChannel, LlmProvider, SecretStore, default_credential_backend,
@@ -7,7 +6,9 @@ use alan_agent_engine::{
 use alan_auth::{
     BrowserLoginOptions, ChatgptAuthConfig, ChatgptAuthManager, DeviceCodeLoginOptions,
 };
-use alan_os_host::{HostStorePaths, SystemStorePaths};
+use alan_os_host::{
+    HostStorePaths, LegacyConnectionPaths, SystemStorePaths, migrate_legacy_connections,
+};
 use anyhow::Result;
 use chrono::Utc;
 use std::{
@@ -26,7 +27,7 @@ fn connection_stores() -> Result<ConnectionStores> {
     let channel = InstallChannel::detect_current();
     let system = SystemStorePaths::detect(channel.descriptor().id)?;
     let host = HostStorePaths::detect(channel.descriptor().id)?;
-    if let Some(legacy) = LegacyStatePaths::detect(channel)? {
+    if let Some(legacy) = LegacyConnectionPaths::detect(channel)? {
         migrate_legacy_connections(&legacy, &system, &host)?;
     }
     Ok(ConnectionStores {
