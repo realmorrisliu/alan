@@ -1317,6 +1317,7 @@ mod tests {
     #[cfg(target_os = "macos")]
     use super::cli::host::os_host_launch_label;
     use super::cli::host::sibling_executable;
+    #[cfg(target_os = "macos")]
     use alan_agent_engine::InstallChannel;
     use clap::Parser;
 

@@ -47,6 +47,25 @@ async fn connection_view_exposes_only_the_selected_live_connection() {
         .await,
         Err(ErrorCode::NotFound)
     );
+    read_all(&fs, &["connections", "withheld", "provider"], Fid(903)).await;
+    assert_eq!(
+        view.read(Fid(903), 0, 65536).await,
+        Err(ErrorCode::NotFound),
+        "a narrowed view must not inherit a fid opened through another view"
+    );
+    view.walk(
+        Fid::ROOT,
+        Fid(903),
+        &["connections".into(), "selected".into(), "provider".into()],
+    )
+    .await
+    .expect("views must have independent fid namespaces");
+    let narrowed_again = view.connection_view("withheld");
+    assert_eq!(
+        read_all(&narrowed_again, &["connections"], Fid(904)).await,
+        b"",
+        "deriving a view must not widen its parent's capability"
+    );
 
     fs.unregister_connection("selected").await;
     assert_eq!(read_all(&view, &["connections"], Fid(902)).await, b"");
