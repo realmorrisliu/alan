@@ -86,8 +86,34 @@ trap 'rm -f "$matches_file"' EXIT
 
 retired_exact_pattern='ALAN_AGENTD_URL|BIND_ADDRESS|/api/v1/(sessions|connections)|reconnect[ _-]snapshot|websocket_url|host\.toml|alan[[:space:]]+daemon|daemon[[:space:]]+(start|stop|status)|DaemonAPIModels|AlanAPIClient|ConsoleEventReducer|EventEnvelope\.session_id|SessionMeta|(^|[^[:alnum:]_])relay([^[:alnum:]_]|$)'
 
+is_allowed_retired_exact_match() {
+    local file="$1"
+
+    case "$file" in
+        crates/alan/src/legacy_state.rs)
+            return 0 # Exact authored host.toml report; never a compatibility reader
+            ;;
+        docs/adr/0044-one-system-level-alan-os-instance-per-channel.md)
+            return 0 # Accepted decision explicitly rejects retired transports
+            ;;
+        openspec/changes/extract-system-level-alan-os-host/design.md | openspec/changes/extract-system-level-alan-os-host/specs/local-alan-os-attachment/spec.md)
+            return 0 # Active target architecture explicitly rejects retired transports
+            ;;
+    esac
+    return 1
+}
+
+exact_violations=()
 if search_repo "$retired_exact_pattern" "${scan_roots[@]}" >"$matches_file"; then
-    cat "$matches_file" >&2
+    while IFS=: read -r file line text; do
+        if ! is_allowed_retired_exact_match "$file"; then
+            exact_violations+=("$file:$line:$text")
+        fi
+    done <"$matches_file"
+fi
+
+if (("${#exact_violations[@]}" > 0)); then
+    printf '%s\n' "${exact_violations[@]}" >&2
     fail "unambiguously retired daemon-era surface found"
 fi
 
@@ -106,6 +132,18 @@ is_allowed_daemon_match() {
             ;;
         crates/agent-engine/skills/swebench/scripts/check_swebench_harness_env.sh)
             return 0 # Docker daemon
+            ;;
+        crates/alan/src/legacy_state.rs)
+            return 0 # Exact generated daemon.pid cleanup; never a compatibility reader
+            ;;
+        docs/adr/0044-one-system-level-alan-os-instance-per-channel.md | docs/adr/0053-clean-generated-state-import-authored-content.md)
+            return 0 # Accepted removal/cleanup decisions name the retired era negatively
+            ;;
+        openspec/changes/add-alan-package-management/proposal.md)
+            return 0 # Planning hold names the retired contract it must be rewritten away from
+            ;;
+        openspec/changes/remove-workspace-runtime-model/tasks.md)
+            return 0 # Exact cleanup task names generated state owned by the retired implementation
             ;;
         clients/apple/alan-macos/Services/Shell/AlanPrivilegedHelperService.swift)
             return 0 # Apple SMAppService.daemon
@@ -151,6 +189,9 @@ is_allowed_session_match() {
     [[ "$text" == *"remove-daemon-era"* ]] && return 0
 
     case "$file" in
+        CONTEXT.md)
+            return 0 # Current vocabulary guide explicitly rejects Agent Session
+            ;;
         crates/llm/src/openrouter.rs)
             return 0 # OpenRouter SDK request metadata
             ;;
@@ -165,6 +206,9 @@ is_allowed_session_match() {
             ;;
         openspec/changes/define-groove-master-alan-app/design.md)
             return 0 # Groove Master practice-session domain
+            ;;
+        openspec/changes/extract-system-level-alan-os-host/design.md | openspec/changes/implement-minimal-service-manager/proposal.md)
+            return 0 # Target architecture explicitly rejects Session identity
             ;;
     esac
     return 1

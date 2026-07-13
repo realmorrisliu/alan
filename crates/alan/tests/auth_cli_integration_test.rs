@@ -1,14 +1,31 @@
 use alan_agent_engine::{
-    AlanHomePaths, ConnectionCredential, ConnectionProfile, ConnectionsFile, CredentialKind,
-    LlmProvider,
+    ConnectionCredential, ConnectionProfile, ConnectionsFile, CredentialKind, InstallChannel,
+    LlmProvider, default_credential_backend,
 };
 use alan_auth::{AuthStorage, AuthStore, ChatgptIdTokenInfo, ChatgptTokenData, StoredChatgptAuth};
 use base64::Engine;
 use chrono::Utc;
 use serde_json::json;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use tempfile::TempDir;
+
+fn detected_data_dir(home: &Path, xdg_data: &Path) -> PathBuf {
+    if cfg!(target_os = "macos") {
+        home.join("Library/Application Support")
+    } else {
+        xdg_data.to_path_buf()
+    }
+}
+
+fn alan_command(home: &Path, xdg_data: &Path) -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_alan"));
+    command
+        .env("HOME", home)
+        .env("XDG_DATA_HOME", xdg_data)
+        .env("ALAN_INSTALL_CHANNEL", "stable");
+    command
+}
 
 fn build_jwt(payload: serde_json::Value) -> String {
     let header =
@@ -17,10 +34,10 @@ fn build_jwt(payload: serde_json::Value) -> String {
     format!("{header}.{payload}.sig")
 }
 
-fn seed_chatgpt_auth(home: &Path) {
-    let auth_dir = home.join(".alan");
-    std::fs::create_dir_all(&auth_dir).unwrap();
-    let storage = AuthStorage::new(auth_dir.join("auth.json")).unwrap();
+fn seed_chatgpt_auth(data_dir: &Path) {
+    let host_store = alan::HostStorePaths::from_data_dir(data_dir, InstallChannel::Stable).unwrap();
+    std::fs::create_dir_all(host_store.managed_auth.parent().unwrap()).unwrap();
+    let storage = AuthStorage::new(host_store.managed_auth).unwrap();
     let id_token = build_jwt(json!({
         "email": "user@example.com",
         "https://api.openai.com/auth": {
@@ -52,14 +69,12 @@ fn seed_chatgpt_auth(home: &Path) {
         .unwrap();
 }
 
-fn seed_chatgpt_connection(home: &Path) {
-    let alan_dir = home.join(".alan");
-    std::fs::create_dir_all(&alan_dir).unwrap();
-    let home_paths = AlanHomePaths::from_home_dir(home);
+fn seed_chatgpt_connection(data_dir: &Path) {
+    let system_store =
+        alan::SystemStorePaths::from_data_dir(data_dir, InstallChannel::Stable).unwrap();
     let mut connections = ConnectionsFile {
         version: 1,
         default_profile: Some("chatgpt-main".to_string()),
-        workspace_pins: std::collections::BTreeMap::new(),
         credentials: std::collections::BTreeMap::new(),
         profiles: std::collections::BTreeMap::new(),
     };
@@ -69,7 +84,7 @@ fn seed_chatgpt_connection(home: &Path) {
             kind: CredentialKind::ManagedOauth,
             provider_family: LlmProvider::Chatgpt,
             label: "ChatGPT managed login".to_string(),
-            backend: "alan_home_auth_json".to_string(),
+            backend: default_credential_backend(CredentialKind::ManagedOauth).to_string(),
         },
     );
     connections.profiles.insert(
@@ -91,20 +106,23 @@ fn seed_chatgpt_connection(home: &Path) {
             ]),
         },
     );
-    connections.save_to_home_paths(&home_paths).unwrap();
+    connections
+        .save_to_path(&system_store.connections_metadata().unwrap())
+        .unwrap();
 }
 
 #[test]
 fn connection_show_reports_managed_chatgpt_login() {
     let temp = TempDir::new().unwrap();
     let home = temp.path().join("home");
+    let xdg_data = temp.path().join("data");
     std::fs::create_dir_all(&home).unwrap();
-    seed_chatgpt_auth(&home);
-    seed_chatgpt_connection(&home);
+    let data_dir = detected_data_dir(&home, &xdg_data);
+    seed_chatgpt_auth(&data_dir);
+    seed_chatgpt_connection(&data_dir);
 
-    let output = Command::new(env!("CARGO_BIN_EXE_alan"))
+    let output = alan_command(&home, &xdg_data)
         .args(["connection", "show", "chatgpt-main"])
-        .env("HOME", &home)
         .output()
         .unwrap();
 
@@ -112,7 +130,7 @@ fn connection_show_reports_managed_chatgpt_login() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("profile_id: chatgpt-main"));
     assert!(stdout.contains("provider: chatgpt"));
-    assert!(stdout.contains("credential: <configured>"));
+    assert!(stdout.contains("credential: configured"));
     assert!(stdout.contains("settings_keys: account_id, base_url, model"));
     assert!(!stdout.contains("user_123"));
     assert!(!stdout.contains("user@example.com"));
@@ -122,24 +140,23 @@ fn connection_show_reports_managed_chatgpt_login() {
 fn connection_logout_removes_managed_chatgpt_login() {
     let temp = TempDir::new().unwrap();
     let home = temp.path().join("home");
+    let xdg_data = temp.path().join("data");
     std::fs::create_dir_all(&home).unwrap();
-    seed_chatgpt_auth(&home);
-    seed_chatgpt_connection(&home);
+    let data_dir = detected_data_dir(&home, &xdg_data);
+    seed_chatgpt_auth(&data_dir);
+    seed_chatgpt_connection(&data_dir);
 
-    let logout = Command::new(env!("CARGO_BIN_EXE_alan"))
+    let logout = alan_command(&home, &xdg_data)
         .args(["connection", "logout", "chatgpt-main"])
-        .env("HOME", &home)
         .output()
         .unwrap();
     assert!(logout.status.success(), "{logout:?}");
     assert!(
-        String::from_utf8_lossy(&logout.stdout)
-            .contains("Removed managed credentials for chatgpt-main.")
+        String::from_utf8_lossy(&logout.stdout).contains("Removed credentials for chatgpt-main.")
     );
 
-    let status = Command::new(env!("CARGO_BIN_EXE_alan"))
+    let status = alan_command(&home, &xdg_data)
         .args(["connection", "show", "chatgpt-main"])
-        .env("HOME", &home)
         .output()
         .unwrap();
     assert!(status.status.success(), "{status:?}");
@@ -147,31 +164,88 @@ fn connection_logout_removes_managed_chatgpt_login() {
 }
 
 #[test]
-fn connection_pin_and_current_report_selection_layers() {
+fn connection_default_and_current_use_system_metadata() {
     let temp = TempDir::new().unwrap();
     let home = temp.path().join("home");
+    let xdg_data = temp.path().join("data");
     std::fs::create_dir_all(&home).unwrap();
-    seed_chatgpt_connection(&home);
+    let data_dir = detected_data_dir(&home, &xdg_data);
+    seed_chatgpt_connection(&data_dir);
 
-    let pin = Command::new(env!("CARGO_BIN_EXE_alan"))
-        .args(["connection", "pin", "chatgpt-main"])
-        .env("HOME", &home)
+    let set_default = alan_command(&home, &xdg_data)
+        .args(["connection", "default", "set", "chatgpt-main"])
         .output()
         .unwrap();
-    assert!(pin.status.success(), "{pin:?}");
-    let agent_config =
-        std::fs::read_to_string(home.join(".alan/agents/default/agent.toml")).unwrap();
-    assert!(agent_config.contains("connection_profile = \"chatgpt-main\""));
+    assert!(set_default.status.success(), "{set_default:?}");
 
-    let current = Command::new(env!("CARGO_BIN_EXE_alan"))
+    let current = alan_command(&home, &xdg_data)
         .args(["connection", "current"])
-        .env("HOME", &home)
         .output()
         .unwrap();
     assert!(current.status.success(), "{current:?}");
     let stdout = String::from_utf8_lossy(&current.stdout);
-    assert!(stdout.contains("global_pin: chatgpt-main (global)"));
-    assert!(stdout.contains("default_profile: chatgpt-main"));
     assert!(stdout.contains("effective_profile: chatgpt-main"));
-    assert!(stdout.contains("effective_source: global_pin"));
+    assert!(stdout.contains("source: default_profile"));
+}
+
+#[test]
+fn connection_edit_registers_replacement_credential_metadata() {
+    let temp = TempDir::new().unwrap();
+    let home = temp.path().join("home");
+    let xdg_data = temp.path().join("data");
+    std::fs::create_dir_all(&home).unwrap();
+
+    let add = alan_command(&home, &xdg_data)
+        .args([
+            "connection",
+            "add",
+            "openai_responses",
+            "--profile",
+            "openai-main",
+            "--credential",
+            "original-secret",
+        ])
+        .output()
+        .unwrap();
+    assert!(add.status.success(), "{add:?}");
+
+    let edit = alan_command(&home, &xdg_data)
+        .args([
+            "connection",
+            "edit",
+            "openai-main",
+            "--credential",
+            "replacement-secret",
+        ])
+        .output()
+        .unwrap();
+    assert!(edit.status.success(), "{edit:?}");
+
+    let set_secret = alan_command(&home, &xdg_data)
+        .args([
+            "connection",
+            "set-secret",
+            "openai-main",
+            "--value",
+            "sk-replacement",
+        ])
+        .output()
+        .unwrap();
+    assert!(set_secret.status.success(), "{set_secret:?}");
+
+    let test = alan_command(&home, &xdg_data)
+        .args(["connection", "test", "openai-main"])
+        .output()
+        .unwrap();
+    assert!(test.status.success(), "{test:?}");
+    assert!(String::from_utf8_lossy(&test.stdout).contains("status: success"));
+
+    let data_dir = detected_data_dir(&home, &xdg_data);
+    let system_store =
+        alan::SystemStorePaths::from_data_dir(&data_dir, InstallChannel::Stable).unwrap();
+    let (connections, _) =
+        ConnectionsFile::load_from_path(&system_store.connections_metadata().unwrap()).unwrap();
+    let credential = connections.credentials.get("replacement-secret").unwrap();
+    assert_eq!(credential.kind, CredentialKind::SecretString);
+    assert_eq!(credential.provider_family, LlmProvider::OpenAiResponses);
 }

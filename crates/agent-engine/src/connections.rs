@@ -1,5 +1,4 @@
 use crate::config::{Config, LlmProvider};
-use crate::paths::AlanHomePaths;
 use anyhow::Context;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -7,12 +6,28 @@ use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
 
 const CONNECTIONS_VERSION: u32 = 1;
-const CHATGPT_AUTH_BACKEND: &str = "alan_home_auth_json";
-const SECRET_STORE_BACKEND: &str = "alan_home_secret_store";
+const CHATGPT_AUTH_BACKEND: &str = "host_managed_auth";
+const SECRET_STORE_BACKEND: &str = "host_credential_store";
 const AMBIENT_BACKEND: &str = "ambient";
-const CONNECTIONS_FILE_NAME: &str = "connections.toml";
 const SECRET_STORE_FILE_NAME: &str = "secrets.toml";
-const CREDENTIALS_DIR_NAME: &str = "credentials";
+
+/// Host-selected backing for Connection Service metadata and Host-owned secrets.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConnectionStoreBindings {
+    pub metadata_path: PathBuf,
+    pub credentials_dir: PathBuf,
+}
+
+impl ConnectionStoreBindings {
+    pub fn new(metadata_path: PathBuf, credentials_dir: PathBuf) -> anyhow::Result<Self> {
+        validate_safe_absolute_path("connection metadata path", &metadata_path)?;
+        validate_safe_absolute_path("Host credential directory", &credentials_dir)?;
+        Ok(Self {
+            metadata_path,
+            credentials_dir,
+        })
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -66,8 +81,6 @@ pub struct ConnectionsFile {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_profile: Option<String>,
     #[serde(default)]
-    pub workspace_pins: BTreeMap<String, String>,
-    #[serde(default)]
     pub credentials: BTreeMap<String, ConnectionCredential>,
     #[serde(default)]
     pub profiles: BTreeMap<String, ConnectionProfile>,
@@ -85,7 +98,6 @@ impl Default for ConnectionsFile {
         Self {
             version: CONNECTIONS_VERSION,
             default_profile: None,
-            workspace_pins: BTreeMap::new(),
             credentials: BTreeMap::new(),
             profiles: BTreeMap::new(),
         }
@@ -118,30 +130,21 @@ pub struct ProviderDescriptor {
 
 #[derive(Debug, Clone)]
 pub struct SecretStore {
-    home_paths: AlanHomePaths,
+    credentials_dir: PathBuf,
 }
 
 impl SecretStore {
-    #[cfg(test)]
-    pub fn new(root_dir: PathBuf) -> Self {
-        let home_dir = root_dir
-            .parent()
-            .and_then(Path::parent)
-            .unwrap_or_else(|| Path::new("/"));
-        let home_paths = AlanHomePaths::from_home_dir(home_dir);
-        Self { home_paths }
-    }
-
-    pub fn from_home_paths(home_paths: &AlanHomePaths) -> anyhow::Result<Self> {
+    pub fn from_directory(credentials_dir: &Path) -> anyhow::Result<Self> {
+        validate_safe_absolute_path("Host credential directory", credentials_dir)?;
         Ok(Self {
-            home_paths: normalized_home_paths(home_paths)?,
+            credentials_dir: credentials_dir.to_path_buf(),
         })
     }
-
-    pub fn detect() -> anyhow::Result<Self> {
-        let home_paths = AlanHomePaths::detect()
-            .ok_or_else(|| anyhow::anyhow!("Could not determine alan home directory"))?;
-        Self::from_home_paths(&home_paths)
+    #[cfg(test)]
+    pub fn new(root_dir: PathBuf) -> Self {
+        Self {
+            credentials_dir: root_dir,
+        }
     }
 
     pub fn load(&self, credential_id: &str) -> anyhow::Result<Option<String>> {
@@ -170,7 +173,9 @@ impl SecretStore {
     }
 
     fn secret_file_path(&self) -> anyhow::Result<PathBuf> {
-        secret_store_file_path(&self.home_paths)
+        let path = self.credentials_dir.join(SECRET_STORE_FILE_NAME);
+        validate_safe_absolute_path("secret store path", &path)?;
+        Ok(path)
     }
 
     fn read_secret_file(&self) -> anyhow::Result<SecretStoreFile> {
@@ -234,24 +239,9 @@ impl SecretStore {
 }
 
 impl ConnectionsFile {
-    pub fn detect() -> anyhow::Result<(Self, Option<PathBuf>)> {
-        let Some(home_paths) = AlanHomePaths::detect() else {
-            return Ok((Self::default(), None));
-        };
-        Self::load_from_home_paths(&home_paths)
-    }
-
-    pub fn load_global() -> anyhow::Result<(Self, Option<PathBuf>)> {
-        let home_paths = AlanHomePaths::detect()
-            .ok_or_else(|| anyhow::anyhow!("Could not determine alan home directory"))?;
-        Self::load_from_home_paths(&home_paths)
-    }
-
-    pub fn load_from_home_paths(
-        home_paths: &AlanHomePaths,
-    ) -> anyhow::Result<(Self, Option<PathBuf>)> {
-        let path = connections_file_path(home_paths)?;
-        match std::fs::read_to_string(&path) {
+    pub fn load_from_path(path: &Path) -> anyhow::Result<(Self, Option<PathBuf>)> {
+        validate_safe_absolute_path("connection metadata path", path)?;
+        match std::fs::read_to_string(path) {
             Ok(content) => {
                 let parsed: Self = toml::from_str(&content).with_context(|| {
                     format!("failed to parse connections file {}", path.display())
@@ -273,8 +263,8 @@ impl ConnectionsFile {
         }
     }
 
-    pub fn save_to_home_paths(&self, home_paths: &AlanHomePaths) -> anyhow::Result<()> {
-        let path = connections_file_path(home_paths)?;
+    pub fn save_to_path(&self, path: &Path) -> anyhow::Result<()> {
+        validate_safe_absolute_path("connection metadata path", path)?;
         if self.version != CONNECTIONS_VERSION {
             anyhow::bail!("unsupported connections file version {}", self.version);
         }
@@ -283,20 +273,13 @@ impl ConnectionsFile {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).with_context(|| {
                 format!(
-                    "failed to create alan config directory {}",
+                    "failed to create connection metadata directory {}",
                     parent.display()
                 )
             })?;
         }
-        std::fs::write(&path, rendered)
-            .with_context(|| format!("failed to write connections file {}", path.display()))?;
-        Ok(())
-    }
-
-    pub fn save_global(&self) -> anyhow::Result<()> {
-        let home_paths = AlanHomePaths::detect()
-            .ok_or_else(|| anyhow::anyhow!("Could not determine alan home directory"))?;
-        self.save_to_home_paths(&home_paths)
+        std::fs::write(path, rendered)
+            .with_context(|| format!("failed to write connections file {}", path.display()))
     }
 
     pub fn profile_descriptor(provider: LlmProvider) -> &'static ProviderDescriptor {
@@ -624,58 +607,6 @@ fn validated_identifier_component<'a>(label: &str, value: &'a str) -> anyhow::Re
     Ok(trimmed)
 }
 
-fn connections_file_path(home_paths: &AlanHomePaths) -> anyhow::Result<PathBuf> {
-    Ok(normalized_home_paths(home_paths)?.global_connections_path)
-}
-
-fn secret_store_file_path(home_paths: &AlanHomePaths) -> anyhow::Result<PathBuf> {
-    let normalized = normalized_home_paths(home_paths)?;
-    let path = normalized
-        .global_credentials_dir
-        .join(SECRET_STORE_FILE_NAME);
-    validate_safe_absolute_path("secret store path", &path)?;
-    Ok(path)
-}
-
-fn normalized_home_paths(home_paths: &AlanHomePaths) -> anyhow::Result<AlanHomePaths> {
-    validate_safe_absolute_path("alan home parent directory", &home_paths.home_dir)?;
-    let normalized =
-        AlanHomePaths::from_home_dir_for_channel(&home_paths.home_dir, home_paths.channel);
-    if normalized != *home_paths {
-        anyhow::bail!(
-            "invalid alan home layout; expected paths under {}",
-            normalized.alan_home_dir.display()
-        );
-    }
-    validate_safe_absolute_path("alan home directory", &normalized.alan_home_dir)?;
-    validate_safe_absolute_path("alan connections path", &normalized.global_connections_path)?;
-    validate_safe_absolute_path(
-        "alan credentials directory",
-        &normalized.global_credentials_dir,
-    )?;
-
-    let alan_home_name = normalized
-        .alan_home_dir
-        .file_name()
-        .and_then(|value| value.to_str());
-    let expected_alan_home_name = normalized.channel.descriptor().alan_home_dir_name;
-    let connections_name = normalized
-        .global_connections_path
-        .file_name()
-        .and_then(|value| value.to_str());
-    let credentials_name = normalized
-        .global_credentials_dir
-        .file_name()
-        .and_then(|value| value.to_str());
-    if alan_home_name != Some(expected_alan_home_name)
-        || connections_name != Some(CONNECTIONS_FILE_NAME)
-        || credentials_name != Some(CREDENTIALS_DIR_NAME)
-    {
-        anyhow::bail!("invalid alan home path layout");
-    }
-    Ok(normalized)
-}
-
 fn validate_safe_absolute_path(label: &str, path: &Path) -> anyhow::Result<()> {
     if !path.is_absolute() {
         anyhow::bail!("{label} must be absolute: {}", path.display());
@@ -894,8 +825,7 @@ mod tests {
     #[test]
     fn secret_store_round_trips_secret() {
         let temp = TempDir::new().unwrap();
-        let home_paths = AlanHomePaths::from_home_dir(temp.path());
-        let store = SecretStore::from_home_paths(&home_paths).unwrap();
+        let store = SecretStore::from_directory(temp.path()).unwrap();
         store.save("kimi", "sk-test").unwrap();
         assert_eq!(store.load("kimi").unwrap().as_deref(), Some("sk-test"));
         assert!(store.delete("kimi").unwrap());
@@ -903,28 +833,31 @@ mod tests {
     }
 
     #[test]
-    fn secret_store_uses_dev_channel_credentials_dir() {
+    fn secret_store_uses_only_explicit_credentials_dir() {
         let temp = TempDir::new().unwrap();
-        let home_paths =
-            AlanHomePaths::from_home_dir_for_channel(temp.path(), crate::InstallChannel::Dev);
-        let store = SecretStore::from_home_paths(&home_paths).unwrap();
+        let credentials = temp.path().join("host-store/dev/credentials");
+        let store = SecretStore::from_directory(&credentials).unwrap();
 
         store.save("dev-profile", "sk-dev").unwrap();
 
         assert!(
-            std::fs::read_to_string(temp.path().join(".alan-dev/credentials/secrets.toml"))
+            std::fs::read_to_string(credentials.join("secrets.toml"))
                 .unwrap()
                 .contains("sk-dev")
         );
-        assert!(!temp.path().join(".alan/credentials/secrets.toml").exists());
+        assert!(
+            !temp
+                .path()
+                .join("host-store/stable/credentials/secrets.toml")
+                .exists()
+        );
     }
 
     #[test]
     fn dev_connection_store_does_not_fall_back_to_stable_store() {
         let temp = TempDir::new().unwrap();
-        let stable_paths = AlanHomePaths::from_home_dir(temp.path());
-        let dev_paths =
-            AlanHomePaths::from_home_dir_for_channel(temp.path(), crate::InstallChannel::Dev);
+        let stable_path = temp.path().join("system-store/stable/connections.toml");
+        let dev_path = temp.path().join("system-store/dev/connections.toml");
         let stable_connections = ConnectionsFile {
             default_profile: Some("stable-main".to_string()),
             profiles: BTreeMap::from([(
@@ -942,16 +875,13 @@ mod tests {
             ..ConnectionsFile::default()
         };
         stable_connections
-            .save_to_home_paths(&stable_paths)
+            .save_to_path(&stable_path)
             .expect("save stable connections");
 
-        let (dev_connections, dev_path) =
-            ConnectionsFile::load_from_home_paths(&dev_paths).expect("load dev connections");
+        let (dev_connections, loaded_path) =
+            ConnectionsFile::load_from_path(&dev_path).expect("load dev connections");
 
-        assert_eq!(
-            dev_path.as_deref(),
-            Some(dev_paths.global_connections_path.as_path())
-        );
+        assert_eq!(loaded_path.as_deref(), Some(dev_path.as_path()));
         assert_eq!(dev_connections.default_profile, None);
         assert!(dev_connections.profiles.is_empty());
     }
@@ -995,8 +925,7 @@ mod tests {
     #[test]
     fn apply_openrouter_profile_to_config_loads_secret_and_metadata() {
         let temp = TempDir::new().unwrap();
-        let home_paths = AlanHomePaths::from_home_dir(temp.path());
-        let store = SecretStore::from_home_paths(&home_paths).unwrap();
+        let store = SecretStore::from_directory(temp.path()).unwrap();
         store.save("openrouter-main", "sk-or").unwrap();
 
         let file = ConnectionsFile {

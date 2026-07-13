@@ -3,6 +3,7 @@
 //! This layer expresses decision semantics ("should we do this now?"),
 //! while the current execution backend remains a best-effort host-side guard.
 
+use anyhow::{Context, ensure};
 use serde::{Deserialize, Serialize};
 use std::path::{Component, Path, PathBuf};
 
@@ -224,8 +225,8 @@ impl PolicyEngine {
                     reason: Some("host mount grants require approval".to_string()),
                 },
             ],
-            // Reads and in-workspace writes proceed automatically; writes
-            // outside the workspace are stopped by the execution path guard.
+            // Reads and writes inside explicit Host Mount grants proceed
+            // automatically; the execution path guard stops out-of-view writes.
             default_action: PolicyAction::Allow,
             source: "builtin_autonomous",
         }
@@ -263,14 +264,14 @@ impl PolicyEngine {
     }
 
     pub fn load_for_governance(
-        workspace_alan_dir: Option<&Path>,
+        definition_root: Option<&Path>,
         governance: &alan_agent_protocol::GovernanceConfig,
     ) -> Self {
-        Self::load_for_governance_with_default_policy_path(workspace_alan_dir, None, governance)
+        Self::load_for_governance_with_default_policy_path(definition_root, None, governance)
     }
 
     pub fn load_for_governance_with_default_policy_path(
-        workspace_alan_dir: Option<&Path>,
+        definition_root: Option<&Path>,
         default_policy_path: Option<&Path>,
         governance: &alan_agent_protocol::GovernanceConfig,
     ) -> Self {
@@ -280,7 +281,18 @@ impl PolicyEngine {
             return Self::load_or_default_with_default_policy_path(default_policy_path);
         };
 
-        let resolved = resolve_policy_path(workspace_alan_dir, Path::new(policy_path));
+        let resolved = match resolve_definition_policy_path(definition_root, Path::new(policy_path))
+        {
+            Ok(path) => path,
+            Err(err) => {
+                tracing::error!(
+                    policy_path,
+                    error = %err,
+                    "Explicit governance policy is outside the Agent Definition; failing closed"
+                );
+                return Self::fail_closed();
+            }
+        };
         match load_policy_file(&resolved) {
             Ok(policy_file) => Self {
                 rules: policy_file.rules,
@@ -299,10 +311,8 @@ impl PolicyEngine {
         }
     }
 
-    pub fn load_or_default(workspace_alan_dir: Option<&Path>) -> Self {
-        Self::load_or_default_with_default_policy_path(
-            workspace_alan_dir.map(workspace_policy_path).as_deref(),
-        )
+    pub fn load_or_default(default_policy_path: Option<&Path>) -> Self {
+        Self::load_or_default_with_default_policy_path(default_policy_path)
     }
 
     pub fn load_or_default_with_default_policy_path(default_policy_path: Option<&Path>) -> Self {
@@ -318,7 +328,7 @@ impl PolicyEngine {
             Ok(policy_file) => Self {
                 rules: policy_file.rules,
                 default_action: policy_file.default_action,
-                source: "workspace_policy_file",
+                source: "definition_policy_file",
             },
             Err(err) => {
                 tracing::error!(
@@ -352,36 +362,30 @@ impl PolicyEngine {
     }
 }
 
-fn workspace_policy_path(workspace_alan_dir: &Path) -> PathBuf {
-    workspace_alan_dir.join("policy.yaml")
-}
-
-fn resolve_policy_path(workspace_alan_dir: Option<&Path>, raw_path: &Path) -> PathBuf {
-    if raw_path.is_absolute() {
-        return raw_path.to_path_buf();
-    }
-    if let Some(base) = workspace_alan_dir {
-        if let Some(stripped) = strip_dot_alan_prefix(raw_path) {
-            return base.join(stripped);
-        }
-        return base.join(raw_path);
-    }
-    raw_path.to_path_buf()
-}
-
-fn strip_dot_alan_prefix(path: &Path) -> Option<&Path> {
-    let mut components = path.components();
-    match components.next() {
-        Some(Component::CurDir) => match components.next() {
-            Some(Component::Normal(name)) if name == std::ffi::OsStr::new(".alan") => {
-                Some(components.as_path())
-            }
-            _ => None,
-        },
-        Some(Component::Normal(name)) if name == std::ffi::OsStr::new(".alan") => {
-            Some(components.as_path())
-        }
-        _ => None,
+fn resolve_definition_policy_path(
+    definition_root: Option<&Path>,
+    raw_path: &Path,
+) -> anyhow::Result<PathBuf> {
+    let definition_root = definition_root
+        .context("relative governance policy requires an Agent Definition descriptor")?;
+    ensure!(
+        !raw_path.is_absolute()
+            && raw_path
+                .components()
+                .all(|component| { matches!(component, Component::Normal(_) | Component::CurDir) }),
+        "governance policy path must stay relative to the Agent Definition"
+    );
+    let resolved = definition_root.join(raw_path);
+    if resolved.exists() {
+        let canonical_root = std::fs::canonicalize(definition_root)?;
+        let canonical_resolved = std::fs::canonicalize(&resolved)?;
+        ensure!(
+            canonical_resolved.starts_with(&canonical_root),
+            "governance policy escaped the Agent Definition"
+        );
+        Ok(canonical_resolved)
+    } else {
+        Ok(resolved)
     }
 }
 
@@ -450,11 +454,10 @@ fn collect_path_candidates(
         "paths",
         "directory",
         "cwd",
-        "workspace_root",
         "host_path",
         "namespace_path",
     ];
-    const BASE_PATH_KEYS: &[&str] = &["directory", "cwd", "workspace_root"];
+    const BASE_PATH_KEYS: &[&str] = &["directory", "cwd"];
 
     let Some(object) = arguments.as_object() else {
         return Vec::new();
@@ -752,9 +755,9 @@ mod tests {
     }
 
     #[test]
-    fn load_workspace_policy_file_overrides_builtin() {
+    fn load_definition_policy_file_overrides_builtin() {
         let tmp = TempDir::new().unwrap();
-        let policy_dir = tmp.path().join("workspace-alan");
+        let policy_dir = tmp.path().join("definition");
         std::fs::create_dir_all(&policy_dir).unwrap();
         std::fs::write(
             policy_dir.join("policy.yaml"),
@@ -769,7 +772,7 @@ default_action: allow
         )
         .unwrap();
 
-        let engine = PolicyEngine::load_or_default(Some(policy_dir.as_path()));
+        let engine = PolicyEngine::load_or_default(Some(&policy_dir.join("policy.yaml")));
         let decision = engine.evaluate(PolicyContext {
             tool_name: "read_file",
             arguments: &json!({}),
@@ -778,18 +781,18 @@ default_action: allow
         });
         assert_eq!(decision.action, PolicyAction::Deny);
         assert_eq!(decision.rule_id.as_deref(), Some("deny-read-file"));
-        assert_eq!(decision.source, "workspace_policy_file");
+        assert_eq!(decision.source, "definition_policy_file");
     }
 
     #[test]
     fn malformed_policy_file_fails_closed_not_permissive() {
         let tmp = TempDir::new().unwrap();
-        let policy_dir = tmp.path().join("workspace-alan");
+        let policy_dir = tmp.path().join("definition");
         std::fs::create_dir_all(&policy_dir).unwrap();
         // A present-but-broken policy file (YAML/schema error).
         std::fs::write(policy_dir.join("policy.yaml"), "rules: [ this is not valid").unwrap();
 
-        let engine = PolicyEngine::load_or_default(Some(policy_dir.as_path()));
+        let engine = PolicyEngine::load_or_default(Some(&policy_dir.join("policy.yaml")));
         // Must NOT silently become the permissive builtin; deny by default so the
         // misconfiguration surfaces instead of allowing routine writes.
         let decision = engine.evaluate(PolicyContext {
@@ -875,7 +878,7 @@ default_action: allow
         let decision = engine.evaluate(PolicyContext {
             tool_name: "write_file",
             arguments: &json!({
-                "path":"/workspace/repo/.github/workflows/release.yml",
+                "path":"/mnt/source/.github/workflows/release.yml",
                 "content":"name: release"
             }),
             capability: alan_agent_protocol::ToolCapability::Write,
@@ -1000,7 +1003,7 @@ default_action: allow
             tool_name: "edit_file",
             arguments: &json!({"path":"../deploy/prod.yaml"}),
             capability: alan_agent_protocol::ToolCapability::Write,
-            cwd: Some(Path::new("/workspace/repo/src")),
+            cwd: Some(Path::new("/mnt/source/src")),
         });
 
         assert_eq!(decision.action, PolicyAction::Escalate);
@@ -1035,9 +1038,9 @@ default_action: allow
     }
 
     #[test]
-    fn load_workspace_policy_file_supports_match_path_prefix() {
+    fn load_definition_policy_file_supports_match_path_prefix() {
         let tmp = TempDir::new().unwrap();
-        let policy_dir = tmp.path().join("workspace-alan");
+        let policy_dir = tmp.path().join("definition");
         std::fs::create_dir_all(&policy_dir).unwrap();
         std::fs::write(
             policy_dir.join("policy.yaml"),
@@ -1054,7 +1057,7 @@ default_action: allow
         )
         .unwrap();
 
-        let engine = PolicyEngine::load_or_default(Some(policy_dir.as_path()));
+        let engine = PolicyEngine::load_or_default(Some(&policy_dir.join("policy.yaml")));
         let decision = engine.evaluate(PolicyContext {
             tool_name: "read_file",
             arguments: &json!({"path":".env.production"}),
@@ -1064,7 +1067,7 @@ default_action: allow
 
         assert_eq!(decision.action, PolicyAction::Escalate);
         assert_eq!(decision.rule_id.as_deref(), Some("review-credentials"));
-        assert_eq!(decision.source, "workspace_policy_file");
+        assert_eq!(decision.source, "definition_policy_file");
     }
 
     #[test]
@@ -1081,32 +1084,20 @@ default_action: allow
     }
 
     #[test]
-    fn resolve_policy_path_strips_dot_alan_prefix() {
+    fn resolve_definition_policy_path_stays_inside_definition() {
         let tmp = TempDir::new().unwrap();
-        let alan_dir = tmp.path().join(".alan");
-        let resolved = resolve_policy_path(
-            Some(alan_dir.as_path()),
-            Path::new(".alan/agents/default/policy.yaml"),
-        );
-        assert_eq!(resolved, alan_dir.join("agents/default/policy.yaml"));
+        let definition = tmp.path().join("definition");
+        let resolved =
+            resolve_definition_policy_path(Some(&definition), Path::new("policy.yaml")).unwrap();
+        assert_eq!(resolved, definition.join("policy.yaml"));
     }
 
     #[test]
-    fn resolve_policy_path_strips_curdir_dot_alan_prefix() {
+    fn resolve_definition_policy_path_rejects_parent_escape() {
         let tmp = TempDir::new().unwrap();
-        let alan_dir = tmp.path().join(".alan");
-        let resolved = resolve_policy_path(
-            Some(alan_dir.as_path()),
-            Path::new("./.alan/agents/default/policy.yaml"),
-        );
-        assert_eq!(resolved, alan_dir.join("agents/default/policy.yaml"));
-    }
-
-    #[test]
-    fn resolve_policy_path_keeps_regular_relative_path() {
-        let tmp = TempDir::new().unwrap();
-        let alan_dir = tmp.path().join(".alan");
-        let resolved = resolve_policy_path(Some(alan_dir.as_path()), Path::new("policy.yaml"));
-        assert_eq!(resolved, alan_dir.join("policy.yaml"));
+        let definition = tmp.path().join("definition");
+        let error = resolve_definition_policy_path(Some(&definition), Path::new("../policy.yaml"))
+            .unwrap_err();
+        assert!(error.to_string().contains("stay relative"));
     }
 }

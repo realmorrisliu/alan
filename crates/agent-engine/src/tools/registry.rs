@@ -2,9 +2,9 @@
 
 use super::{
     context::{ToolContext, ToolExecutionBinding},
-    sandbox::{SandboxSpec, protected_path_component},
+    sandbox::SandboxSpec,
 };
-use anyhow::Result;
+use anyhow::{Context, Result};
 use jsonschema::{Draft, Validator};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -19,15 +19,6 @@ use crate::llm::ToolDefinition;
 /// Result type for tool execution
 pub type ToolResult = Pin<Box<dyn Future<Output = Result<Value>> + Send>>;
 type ToolFactory = dyn Fn() -> Box<dyn Tool> + Send + Sync;
-
-/// Coarse locality class for tool execution and workspace-routing policy.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ToolLocality {
-    /// Tool semantics are not implicitly tied to the runtime's bound workspace.
-    Global,
-    /// Tool semantics are tied to the runtime's bound local workspace.
-    WorkspaceLocal,
-}
 
 /// A tool that can be executed by the agent
 pub trait Tool: Send + Sync {
@@ -56,13 +47,6 @@ pub trait Tool: Send + Sync {
     /// Get the recommended timeout for this tool in seconds.
     fn timeout_secs(&self) -> usize {
         30
-    }
-
-    /// Whether this tool operates on the runtime's bound local workspace.
-    ///
-    /// Workspace-routing preflight only applies to tools in this category.
-    fn locality(&self) -> ToolLocality {
-        ToolLocality::Global
     }
 }
 
@@ -124,65 +108,7 @@ impl ToolRegistry {
         if let Some(spec) = binding.sandbox_spec.as_ref() {
             return spec.writable_roots.clone();
         }
-        binding.workspace_root.clone().into_iter().collect()
-    }
-
-    /// Add a writable root to the default runtime sandbox projection.
-    ///
-    /// Returns true when the root was newly inserted. If the registry has no
-    /// workspace-bound default binding, no projection is changed and false is returned.
-    pub fn add_default_sandbox_writable_root(&mut self, path: std::path::PathBuf) -> bool {
-        let mut default_binding = self
-            .default_binding
-            .lock()
-            .expect("default binding mutex poisoned");
-        let Some(binding) = default_binding.as_mut() else {
-            return false;
-        };
-        add_sandbox_writable_root(binding, path)
-    }
-
-    /// Set a default workspace binding using the provided workspace root and cwd.
-    pub fn set_default_workspace_binding(
-        &mut self,
-        workspace_root: std::path::PathBuf,
-        cwd: std::path::PathBuf,
-    ) {
-        let scratch_dir = default_scratch_dir_for_cwd(&cwd);
-        let mut default_binding = self
-            .default_binding
-            .lock()
-            .expect("default binding mutex poisoned");
-        let sandbox_spec = default_binding
-            .as_ref()
-            .filter(|binding| {
-                binding.workspace_root.as_ref().is_some_and(|existing| {
-                    normalize_sandbox_root(existing.clone())
-                        == normalize_sandbox_root(workspace_root.clone())
-                })
-            })
-            .and_then(|binding| binding.sandbox_spec.clone());
-        let mut binding = ToolExecutionBinding::with_workspace(workspace_root, cwd, scratch_dir);
-        binding.sandbox_spec = sandbox_spec;
-        *default_binding = Some(binding);
-    }
-
-    /// Set a default workspace root using the workspace root as cwd.
-    pub fn set_default_workspace_root(&mut self, workspace_root: std::path::PathBuf) {
-        self.set_default_workspace_binding(workspace_root.clone(), workspace_root);
-    }
-
-    /// Set a default working directory for `execute()` calls that don't provide context.
-    pub fn set_default_cwd(&mut self, cwd: std::path::PathBuf) {
-        let scratch_dir = default_scratch_dir_for_cwd(&cwd);
-        let mut default_binding = self
-            .default_binding
-            .lock()
-            .expect("default binding mutex poisoned");
-        let workspace_root = default_binding
-            .as_ref()
-            .and_then(|binding| binding.workspace_root.clone());
-        *default_binding = Some(ToolExecutionBinding::new(workspace_root, cwd, scratch_dir));
+        Vec::new()
     }
 
     /// Get the configured default working directory, if any.
@@ -190,13 +116,6 @@ impl ToolRegistry {
         self.default_binding_snapshot()
             .as_ref()
             .map(|binding| binding.cwd.clone())
-    }
-
-    /// Get the configured default workspace root, if any.
-    pub fn default_workspace_root(&self) -> Option<std::path::PathBuf> {
-        self.default_binding_snapshot()
-            .as_ref()
-            .and_then(|binding| binding.workspace_root.clone())
     }
 
     /// Register a tool
@@ -268,16 +187,6 @@ impl ToolRegistry {
         arguments: &Value,
     ) -> Option<alan_agent_protocol::ToolCapability> {
         self.get(name).map(|tool| tool.capability(arguments))
-    }
-
-    /// Resolve a tool's locality classification.
-    pub fn tool_locality(&self, name: &str) -> Option<ToolLocality> {
-        self.get(name).map(|tool| tool.locality())
-    }
-
-    /// Whether the named tool targets the runtime's bound local workspace.
-    pub fn is_workspace_local_tool(&self, name: &str) -> bool {
-        self.tool_locality(name) == Some(ToolLocality::WorkspaceLocal)
     }
 
     /// Get all registered tool names
@@ -422,7 +331,7 @@ impl ToolRegistry {
             // Use tool-specific timeout unless the runtime config overrides it.
             let timeout_secs = self.effective_timeout_secs(tool.as_ref());
 
-            if timeout_secs == 0 {
+            let result = if timeout_secs == 0 {
                 tool.execute(arguments, ctx).await
             } else {
                 let timeout = std::time::Duration::from_secs(timeout_secs as u64);
@@ -430,6 +339,13 @@ impl ToolRegistry {
                     Ok(result) => result,
                     Err(_) => anyhow::bail!("Tool execution timed out after {}s", timeout_secs),
                 }
+            };
+            match result {
+                Ok(mut value) => {
+                    ctx.project_value(&mut value);
+                    Ok(value)
+                }
+                Err(err) => Err(anyhow::anyhow!(ctx.project_text(&format!("{err:#}")))),
             }
         } else {
             anyhow::bail!("Tool not found: {}", name)
@@ -439,11 +355,9 @@ impl ToolRegistry {
     /// Execute a tool by name (backward compatible, uses default context)
     /// Note: This creates a default ToolContext. Prefer execute_with_context for production use.
     pub async fn execute(&self, name: &str, arguments: Value) -> Result<Value> {
-        let binding = self.default_binding_snapshot().unwrap_or_else(|| {
-            let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-            let scratch_dir = default_scratch_dir_for_cwd(&cwd);
-            ToolExecutionBinding::without_workspace(cwd, scratch_dir)
-        });
+        let binding = self
+            .default_binding_snapshot()
+            .context("Tool execution requires an explicit Process binding")?;
         let ctx = ToolContext::from_binding(binding, self.config.clone());
         self.execute_with_context(name, arguments, &ctx).await
     }
@@ -518,10 +432,6 @@ impl ToolRegistry {
         }
         Ok(missing)
     }
-}
-
-fn normalize_sandbox_root(path: std::path::PathBuf) -> std::path::PathBuf {
-    dunce::canonicalize(&path).unwrap_or_else(|_| dunce::simplified(&path).to_path_buf())
 }
 
 impl Default for ToolRegistry {
@@ -604,49 +514,6 @@ impl ToolProcessRunner {
             .get(name)
             .map(|tool| tool.capability(arguments))
     }
-
-    pub(crate) fn add_process_sandbox_writable_root(
-        &self,
-        pid: alan_kernel::Pid,
-        path: std::path::PathBuf,
-    ) -> bool {
-        let mut bindings = self
-            .inner
-            .process_bindings
-            .lock()
-            .expect("process binding mutex poisoned");
-        if let Some(binding) = bindings.get_mut(&pid) {
-            return add_sandbox_writable_root(binding, path);
-        }
-        drop(bindings);
-        self.inner
-            .default_binding
-            .lock()
-            .expect("default binding mutex poisoned")
-            .as_mut()
-            .is_some_and(|binding| add_sandbox_writable_root(binding, path))
-    }
-}
-
-fn add_sandbox_writable_root(binding: &mut ToolExecutionBinding, path: std::path::PathBuf) -> bool {
-    let Some(workspace_root) = binding.workspace_root.clone() else {
-        return false;
-    };
-    let normalized = normalize_sandbox_root(path);
-    if protected_path_component(&normalized).is_some() {
-        return false;
-    }
-    let mut spec = binding
-        .sandbox_spec
-        .clone()
-        .unwrap_or_else(|| SandboxSpec::seed(workspace_root));
-    if spec.writable_roots.iter().any(|root| root == &normalized) {
-        binding.sandbox_spec = Some(spec);
-        return false;
-    }
-    spec.writable_roots.push(normalized);
-    binding.sandbox_spec = Some(spec);
-    true
 }
 
 #[async_trait::async_trait]
@@ -704,21 +571,19 @@ impl alan_kernel::ProcessRunner for ToolProcessRunner {
             .expect("process binding mutex poisoned")
             .get(&invocation.parent.unwrap_or(invocation.pid))
             .cloned();
-        let binding = process_binding.unwrap_or_else(|| {
+        let binding = process_binding.or_else(|| {
             self.inner
                 .default_binding
                 .lock()
                 .expect("default binding mutex poisoned")
                 .clone()
-                .unwrap_or_else(|| {
-                    let cwd =
-                        std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-                    ToolExecutionBinding::without_workspace(
-                        cwd.clone(),
-                        default_scratch_dir_for_cwd(&cwd),
-                    )
-                })
         });
+        let Some(binding) = binding else {
+            return process_json_outcome(
+                1,
+                serde_json::json!({"success": false, "error": "Tool Process has no explicit execution binding"}),
+            );
+        };
         let context = ToolContext::from_binding(binding, Arc::clone(&self.inner.config));
         let timeout_secs = if self.inner.config.tool_timeout_secs != 30 {
             self.inner.config.tool_timeout_secs
@@ -742,10 +607,13 @@ impl alan_kernel::ProcessRunner for ToolProcessRunner {
             }
         };
         match result {
-            Ok(output) => process_json_outcome(0, output),
+            Ok(mut output) => {
+                context.project_value(&mut output);
+                process_json_outcome(0, output)
+            }
             Err(error) => process_json_outcome(
                 1,
-                serde_json::json!({"success": false, "error": format!("{error:#}")}),
+                serde_json::json!({"success": false, "error": context.project_text(&format!("{error:#}"))}),
             ),
         }
     }
@@ -757,18 +625,6 @@ fn process_json_outcome(exit_code: i32, value: Value) -> alan_kernel::ProcessOut
     });
     bytes.push(b'\n');
     alan_kernel::ProcessOutcome::exited(exit_code, bytes)
-}
-
-pub(crate) fn default_scratch_dir_for_cwd(cwd: &std::path::Path) -> std::path::PathBuf {
-    if cwd
-        .file_name()
-        .map(|name| name == std::ffi::OsStr::new(".alan"))
-        .unwrap_or(false)
-    {
-        cwd.join("tmp")
-    } else {
-        cwd.join(".alan").join("tmp")
-    }
 }
 
 #[cfg(test)]
@@ -825,87 +681,6 @@ mod tests {
         fn execute(&self, _arguments: Value, ctx: &ToolContext) -> ToolResult {
             let cwd = ctx.cwd.display().to_string();
             Box::pin(async move { Ok(serde_json::json!({"cwd": cwd})) })
-        }
-    }
-
-    struct ScratchEchoTool;
-
-    impl Tool for ScratchEchoTool {
-        fn name(&self) -> &str {
-            "scratch_echo"
-        }
-
-        fn description(&self) -> &str {
-            "Return scratch dir from tool context"
-        }
-
-        fn parameters_schema(&self) -> Value {
-            serde_json::json!({"type": "object"})
-        }
-
-        fn execute(&self, _arguments: Value, ctx: &ToolContext) -> ToolResult {
-            let scratch = ctx.scratch_dir.display().to_string();
-            Box::pin(async move { Ok(serde_json::json!({"scratch": scratch})) })
-        }
-    }
-
-    struct BindingEchoTool;
-
-    impl Tool for BindingEchoTool {
-        fn name(&self) -> &str {
-            "binding_echo"
-        }
-
-        fn description(&self) -> &str {
-            "Return execution binding from tool context"
-        }
-
-        fn parameters_schema(&self) -> Value {
-            serde_json::json!({"type": "object"})
-        }
-
-        fn execute(&self, _arguments: Value, ctx: &ToolContext) -> ToolResult {
-            let workspace_root = ctx
-                .workspace_root()
-                .map(|path| path.display().to_string())
-                .unwrap_or_default();
-            let cwd = ctx.cwd.display().to_string();
-            Box::pin(async move {
-                Ok(serde_json::json!({
-                    "workspace_root": workspace_root,
-                    "cwd": cwd,
-                }))
-            })
-        }
-    }
-
-    struct SandboxRootsEchoTool;
-
-    impl Tool for SandboxRootsEchoTool {
-        fn name(&self) -> &str {
-            "sandbox_roots_echo"
-        }
-
-        fn description(&self) -> &str {
-            "Return sandbox writable roots from tool context"
-        }
-
-        fn parameters_schema(&self) -> Value {
-            serde_json::json!({"type": "object"})
-        }
-
-        fn execute(&self, _arguments: Value, ctx: &ToolContext) -> ToolResult {
-            let writable_roots = ctx
-                .sandbox_spec
-                .as_ref()
-                .map(|spec| {
-                    spec.writable_roots
-                        .iter()
-                        .map(|path| path.display().to_string())
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default();
-            Box::pin(async move { Ok(serde_json::json!({"writable_roots": writable_roots})) })
         }
     }
 
@@ -970,15 +745,15 @@ mod tests {
         }
     }
 
-    struct WorkspaceLocalTool;
+    struct CatalogTestTool;
 
-    impl Tool for WorkspaceLocalTool {
+    impl Tool for CatalogTestTool {
         fn name(&self) -> &str {
-            "workspace_local_tool"
+            "catalog_test_tool"
         }
 
         fn description(&self) -> &str {
-            "Workspace-local test tool"
+            "Catalog test Tool"
         }
 
         fn parameters_schema(&self) -> Value {
@@ -988,15 +763,11 @@ mod tests {
         fn execute(&self, _arguments: Value, _ctx: &ToolContext) -> ToolResult {
             Box::pin(async move { Ok(serde_json::json!({"ok": true})) })
         }
-
-        fn locality(&self) -> ToolLocality {
-            ToolLocality::WorkspaceLocal
-        }
     }
 
     fn test_ctx() -> ToolContext {
         ToolContext::new(
-            PathBuf::from("/workspace"),
+            PathBuf::from("/mnt/source"),
             PathBuf::from("/tmp"),
             Arc::new(Config::default()),
         )
@@ -1081,25 +852,6 @@ mod tests {
     }
 
     #[test]
-    fn test_tool_registry_locality_for_tool() {
-        let mut registry = ToolRegistry::new();
-        registry.register(TestTool);
-        registry.register(WorkspaceLocalTool);
-
-        assert_eq!(
-            registry.tool_locality("test_tool"),
-            Some(ToolLocality::Global)
-        );
-        assert_eq!(
-            registry.tool_locality("workspace_local_tool"),
-            Some(ToolLocality::WorkspaceLocal)
-        );
-        assert!(registry.is_workspace_local_tool("workspace_local_tool"));
-        assert!(!registry.is_workspace_local_tool("test_tool"));
-        assert_eq!(registry.tool_locality("nonexistent"), None);
-    }
-
-    #[test]
     fn test_execution_timeout_uses_tool_timeout_when_runtime_default() {
         let mut registry = ToolRegistry::new();
         registry.register(NetworkTool);
@@ -1123,8 +875,8 @@ mod tests {
     #[test]
     fn test_filtered_clone_with_config_prunes_tool_factories_to_allowed_tools() {
         let mut registry = ToolRegistry::new();
-        registry.register_tool_factory("allowed_factory", || Box::new(WorkspaceLocalTool));
-        registry.register_tool_factory("blocked_factory", || Box::new(WorkspaceLocalTool));
+        registry.register_tool_factory("allowed_factory", || Box::new(CatalogTestTool));
+        registry.register_tool_factory("blocked_factory", || Box::new(CatalogTestTool));
 
         let filtered =
             registry.filtered_clone_with_config(["allowed_factory"], Arc::new(Config::default()));
@@ -1136,8 +888,8 @@ mod tests {
     #[test]
     fn test_catalog_filtered_clone_with_config_prunes_tool_factories_to_allowed_tools() {
         let mut registry = ToolRegistry::new();
-        registry.register_tool_factory("allowed_factory", || Box::new(WorkspaceLocalTool));
-        registry.register_tool_factory("blocked_factory", || Box::new(WorkspaceLocalTool));
+        registry.register_tool_factory("allowed_factory", || Box::new(CatalogTestTool));
+        registry.register_tool_factory("blocked_factory", || Box::new(CatalogTestTool));
 
         let filtered = registry
             .catalog_filtered_clone_with_config(["allowed_factory"], Arc::new(Config::default()));
@@ -1149,7 +901,6 @@ mod tests {
     struct MarkerTool {
         name: &'static str,
         marker: &'static str,
-        locality: ToolLocality,
     }
 
     impl Tool for MarkerTool {
@@ -1169,10 +920,6 @@ mod tests {
             let marker = self.marker;
             Box::pin(async move { Ok(serde_json::json!({ "marker": marker })) })
         }
-
-        fn locality(&self) -> ToolLocality {
-            self.locality
-        }
     }
 
     #[tokio::test]
@@ -1181,20 +928,18 @@ mod tests {
         registry.register(MarkerTool {
             name: "override_tool",
             marker: "override",
-            locality: ToolLocality::Global,
         });
         registry.register_tool_factory("override_tool", || {
             Box::new(MarkerTool {
                 name: "override_tool",
                 marker: "factory",
-                locality: ToolLocality::Global,
             })
         });
 
         let filtered = registry
             .catalog_filtered_clone_with_config(["override_tool"], Arc::new(Config::default()));
         let result = filtered
-            .execute("override_tool", serde_json::json!({}))
+            .execute_with_context("override_tool", serde_json::json!({}), &test_ctx())
             .await
             .unwrap();
 
@@ -1268,7 +1013,7 @@ mod tests {
         let runner = ToolProcessRunner::from_registry(&registry);
         runner.register_process_binding(
             alan_kernel::Pid(7),
-            ToolExecutionBinding::without_workspace(
+            ToolExecutionBinding::new(
                 PathBuf::from("/tmp/child-cwd"),
                 PathBuf::from("/tmp/child-scratch"),
             ),
@@ -1298,238 +1043,109 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_tool_registry_execute_backward_compat() {
+    async fn execute_requires_an_explicit_process_binding() {
         let mut registry = ToolRegistry::new();
         registry.register(TestTool);
 
-        let args = serde_json::json!({"input": "test"});
-        let result = registry.execute("test_tool", args).await;
+        let error = registry
+            .execute("test_tool", serde_json::json!({"input": "test"}))
+            .await
+            .unwrap_err();
 
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap()["result"], "test");
+        assert!(
+            error
+                .to_string()
+                .contains("requires an explicit Process binding")
+        );
     }
 
     #[tokio::test]
-    async fn test_tool_registry_execute_uses_configured_default_cwd() {
+    async fn execute_uses_the_configured_process_binding() {
         let mut registry = ToolRegistry::new();
         registry.register(CwdEchoTool);
-        registry.set_default_cwd(PathBuf::from("/tmp/alan-test-cwd"));
-
-        let result = registry.execute("cwd_echo", serde_json::json!({})).await;
-
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap()["cwd"], "/tmp/alan-test-cwd");
-    }
-
-    #[tokio::test]
-    async fn test_tool_registry_execute_default_scratch_under_workspace_alan_dir() {
-        let mut registry = ToolRegistry::new();
-        registry.register(ScratchEchoTool);
-        registry.set_default_cwd(PathBuf::from("/tmp/alan-test-cwd"));
+        registry.set_default_execution_binding(ToolExecutionBinding::new(
+            PathBuf::from("/host/source"),
+            PathBuf::from("/system-store/tmp"),
+        ));
 
         let result = registry
-            .execute("scratch_echo", serde_json::json!({}))
-            .await
-            .unwrap();
-        assert_eq!(result["scratch"], "/tmp/alan-test-cwd/.alan/tmp");
-    }
-
-    #[tokio::test]
-    async fn test_tool_registry_execute_default_scratch_does_not_double_alan() {
-        let mut registry = ToolRegistry::new();
-        registry.register(ScratchEchoTool);
-        registry.set_default_cwd(PathBuf::from("/tmp/alan-test-cwd/.alan"));
-
-        let result = registry
-            .execute("scratch_echo", serde_json::json!({}))
-            .await
-            .unwrap();
-        assert_eq!(result["scratch"], "/tmp/alan-test-cwd/.alan/tmp");
-    }
-
-    #[tokio::test]
-    async fn test_tool_registry_execute_uses_default_workspace_binding() {
-        let mut registry = ToolRegistry::new();
-        registry.register(BindingEchoTool);
-        registry.set_default_workspace_root(PathBuf::from("/tmp/alan-test-workspace"));
-
-        let result = registry
-            .execute("binding_echo", serde_json::json!({}))
+            .execute("cwd_echo", serde_json::json!({}))
             .await
             .unwrap();
 
-        assert_eq!(result["workspace_root"], "/tmp/alan-test-workspace");
-        assert_eq!(result["cwd"], "/tmp/alan-test-workspace");
-    }
-
-    #[tokio::test]
-    async fn test_tool_registry_set_default_cwd_preserves_workspace_root() {
-        let mut registry = ToolRegistry::new();
-        registry.register(BindingEchoTool);
-        registry.set_default_workspace_root(PathBuf::from("/tmp/alan-test-workspace"));
-        registry.set_default_cwd(PathBuf::from("/tmp/alan-test-workspace/src"));
-
-        let result = registry
-            .execute("binding_echo", serde_json::json!({}))
-            .await
-            .unwrap();
-
-        assert_eq!(result["workspace_root"], "/tmp/alan-test-workspace");
-        assert_eq!(result["cwd"], "/tmp/alan-test-workspace/src");
+        assert_eq!(result["cwd"], "/host/source");
     }
 
     #[test]
-    fn test_tool_registry_add_default_sandbox_writable_root_is_idempotent() {
-        let workspace = tempfile::tempdir().unwrap();
+    fn complete_process_binding_updates_path_projection_and_sandbox_together() {
+        let source = tempfile::tempdir().unwrap();
         let approved = tempfile::tempdir().unwrap();
-        let mut registry = ToolRegistry::new();
-        registry.set_default_workspace_root(workspace.path().to_path_buf());
-
-        assert_eq!(
-            registry.default_sandbox_writable_roots(),
-            vec![workspace.path().to_path_buf()]
+        let launch_context = crate::ProcessLaunchContext::new(
+            alan_kernel::Namespace::new(),
+            alan_kernel::Credentials::user("agent"),
+            "/mnt/source",
+        )
+        .unwrap()
+        .with_host_mount(
+            crate::HostMountGrant::new(
+                "/mnt/source",
+                source.path(),
+                alan_kernel::Access::ReadWrite,
+            )
+            .unwrap(),
         );
-        assert!(registry.add_default_sandbox_writable_root(approved.path().to_path_buf()));
-        assert!(!registry.add_default_sandbox_writable_root(approved.path().to_path_buf()));
-
-        let roots = registry.default_sandbox_writable_roots();
-        assert_eq!(roots.len(), 2);
-        assert_eq!(roots[0], workspace.path());
-        assert_eq!(roots[1], dunce::canonicalize(approved.path()).unwrap());
-        assert_eq!(
-            registry.default_sandbox_spec().unwrap().writable_roots,
-            roots
+        let registry = ToolRegistry::new();
+        let runner = ToolProcessRunner::from_registry(&registry);
+        runner.register_process_binding(
+            alan_kernel::Pid(7),
+            ToolExecutionBinding::from_launch_context(
+                &launch_context,
+                source.path().join("scratch"),
+            )
+            .unwrap(),
         );
-    }
+        let grant = crate::HostMountGrant::new(
+            "/mnt/approved",
+            approved.path(),
+            alan_kernel::Access::ReadOnly,
+        )
+        .unwrap();
 
-    #[test]
-    fn test_tool_registry_rejects_protected_sandbox_writable_roots() {
-        let workspace = tempfile::tempdir().unwrap();
-        let host = tempfile::tempdir().unwrap();
-        let protected_root = host.path().join(".git");
-        let nested_protected_root = protected_root.join("objects");
-        std::fs::create_dir_all(&nested_protected_root).unwrap();
-        let mut registry = ToolRegistry::new();
-        registry.set_default_workspace_root(workspace.path().to_path_buf());
-
-        assert!(!registry.add_default_sandbox_writable_root(protected_root));
-        assert!(!registry.add_default_sandbox_writable_root(nested_protected_root));
-        assert_eq!(
-            registry.default_sandbox_writable_roots(),
-            vec![workspace.path().to_path_buf()]
+        let updated_context = launch_context.with_host_mount(grant);
+        runner.register_process_binding(
+            alan_kernel::Pid(7),
+            ToolExecutionBinding::from_launch_context(
+                &updated_context,
+                source.path().join("scratch"),
+            )
+            .unwrap(),
         );
-    }
-
-    #[test]
-    fn test_tool_registry_rebinding_same_workspace_preserves_sandbox_spec() {
-        let workspace = tempfile::tempdir().unwrap();
-        let approved = tempfile::tempdir().unwrap();
-        let mut registry = ToolRegistry::new();
-        registry.set_default_workspace_root(workspace.path().to_path_buf());
-        assert!(registry.add_default_sandbox_writable_root(approved.path().to_path_buf()));
-
-        registry.set_default_workspace_binding(
-            workspace.path().to_path_buf(),
-            workspace.path().join("child-cwd"),
+        let binding = runner.process_binding(alan_kernel::Pid(7)).unwrap();
+        assert!(
+            binding
+                .host_mounts
+                .iter()
+                .any(|mount| mount.namespace_path == "/mnt/approved")
         );
-
-        let roots = registry.default_sandbox_writable_roots();
-        assert_eq!(roots.len(), 2);
-        assert_eq!(roots[0], workspace.path());
-        assert_eq!(roots[1], dunce::canonicalize(approved.path()).unwrap());
-    }
-
-    #[test]
-    fn test_tool_registry_rebinding_different_workspace_drops_sandbox_spec() {
-        let workspace = tempfile::tempdir().unwrap();
-        let next_workspace = tempfile::tempdir().unwrap();
-        let approved = tempfile::tempdir().unwrap();
-        let mut registry = ToolRegistry::new();
-        registry.set_default_workspace_root(workspace.path().to_path_buf());
-        assert!(registry.add_default_sandbox_writable_root(approved.path().to_path_buf()));
-
-        registry.set_default_workspace_root(next_workspace.path().to_path_buf());
-
-        assert_eq!(
-            registry.default_sandbox_writable_roots(),
-            vec![next_workspace.path().to_path_buf()]
+        let sandbox = binding.sandbox_spec.unwrap();
+        assert!(
+            sandbox
+                .host_mounts
+                .iter()
+                .any(|mount| mount.namespace_path == "/mnt/approved")
         );
-        assert!(registry.default_sandbox_spec().is_none());
-    }
-
-    #[tokio::test]
-    async fn test_tool_registry_clone_shares_default_sandbox_binding() {
-        let workspace = tempfile::tempdir().unwrap();
-        let approved = tempfile::tempdir().unwrap();
-        let mut registry = ToolRegistry::new();
-        registry.register(SandboxRootsEchoTool);
-        registry.set_default_workspace_root(workspace.path().to_path_buf());
-
-        let runner_registry = registry.clone();
-        assert!(registry.add_default_sandbox_writable_root(approved.path().to_path_buf()));
-
-        let expected_roots = vec![
-            workspace.path().to_path_buf(),
-            dunce::canonicalize(approved.path()).unwrap(),
-        ];
-        assert_eq!(
-            runner_registry.default_sandbox_writable_roots(),
-            expected_roots
+        assert!(
+            sandbox
+                .readable_roots
+                .iter()
+                .any(|path| path == &dunce::canonicalize(approved.path()).unwrap())
         );
-
-        let result = runner_registry
-            .execute("sandbox_roots_echo", serde_json::json!({}))
-            .await
-            .unwrap();
-        let root_values = result["writable_roots"].as_array().unwrap();
-        assert_eq!(root_values.len(), 2);
-        assert_eq!(
-            root_values[0],
-            serde_json::json!(expected_roots[0].display().to_string())
+        assert!(
+            !sandbox
+                .writable_roots
+                .iter()
+                .any(|path| path == &dunce::canonicalize(approved.path()).unwrap())
         );
-        assert_eq!(
-            root_values[1],
-            serde_json::json!(expected_roots[1].display().to_string())
-        );
-    }
-
-    #[test]
-    fn test_tool_registry_derived_clones_snapshot_default_sandbox_binding() {
-        let workspace = tempfile::tempdir().unwrap();
-        let approved = tempfile::tempdir().unwrap();
-        let mut registry = ToolRegistry::new();
-        registry.register(SandboxRootsEchoTool);
-        registry.set_default_workspace_root(workspace.path().to_path_buf());
-
-        let clone_with_config = registry.clone_with_config(Arc::new(Config::default()));
-        let filtered = registry.filtered_clone(["sandbox_roots_echo"]);
-        let catalog_filtered = registry.catalog_filtered_clone_with_config(
-            ["sandbox_roots_echo"],
-            Arc::new(Config::default()),
-        );
-
-        assert!(registry.add_default_sandbox_writable_root(approved.path().to_path_buf()));
-        let snapshot_roots = vec![workspace.path().to_path_buf()];
-
-        assert_eq!(
-            clone_with_config.default_sandbox_writable_roots(),
-            snapshot_roots
-        );
-        assert_eq!(filtered.default_sandbox_writable_roots(), snapshot_roots);
-        assert_eq!(
-            catalog_filtered.default_sandbox_writable_roots(),
-            snapshot_roots
-        );
-    }
-
-    #[test]
-    fn test_tool_registry_add_default_sandbox_writable_root_requires_workspace_binding() {
-        let approved = tempfile::tempdir().unwrap();
-        let mut registry = ToolRegistry::new();
-        registry.set_default_cwd(PathBuf::from("/tmp/alan-no-workspace"));
-
-        assert!(!registry.add_default_sandbox_writable_root(approved.path().to_path_buf()));
-        assert!(registry.default_sandbox_spec().is_none());
     }
 
     #[tokio::test]

@@ -1088,7 +1088,7 @@ struct ShellSettingsLocalSummary: Equatable {
     let cliToolName: String
     let updateSummary: String
     let updateDetail: String
-    let alanHomeDisplayPath: String
+    let systemStoreDisplayPath: String
     let applicationSupportDisplayPath: String
     let shellControlNamespace: String
 
@@ -1106,7 +1106,7 @@ struct ShellSettingsLocalSummary: Equatable {
             cliToolName: channel.cliToolName,
             updateSummary: updateSummary(for: updateDecision),
             updateDetail: updateDetail(for: updateDecision),
-            alanHomeDisplayPath: channel.alanHomeDisplayPath,
+            systemStoreDisplayPath: channel.systemStoreDisplayPath(homeDirectory: homeDirectory),
             applicationSupportDisplayPath: channel.applicationSupportDisplayPath(
                 homeDirectory: homeDirectory
             ),
@@ -1187,13 +1187,13 @@ private extension AlanInstallChannel {
         }
     }
 
-    var alanHomeDisplayPath: String {
-        switch self {
-        case .stable:
-            return "~/.alan"
-        case .dev:
-            return "~/.alan-dev"
+    func systemStoreDisplayPath(homeDirectory: URL) -> String {
+        let suffix = "Library/Application Support/Alan/System Store/\(installChannelID)"
+        let homePath = homeDirectory.standardizedFileURL.path
+        if homePath == "/" {
+            return "/\(suffix)"
         }
+        return "~/" + suffix
     }
 
     func applicationSupportDisplayPath(homeDirectory: URL) -> String {

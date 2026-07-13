@@ -7,8 +7,9 @@ use super::delegation_capabilities::{
     DelegatedSpawnRejected, evaluate_delegated_namespace, namespace_summary_from_bindings,
 };
 use super::engine::{
-    AgentConfig, RuntimeController, RuntimeStartupMetadata, WorkspaceRuntimeConfig,
-    runtime_host_capabilities_for_tools, spawn_with_namespace_environment,
+    AgentConfig, AgentProcessConfig, RuntimeController, RuntimeStartupMetadata,
+    effective_core_config_for_runtime, runtime_host_capabilities_for_tools,
+    spawn_with_namespace_environment,
 };
 use crate::llm::LlmClient;
 use crate::tape::{ContentPart, Message};
@@ -21,7 +22,7 @@ use alan_kernel::{ExecNamespaceAccess, ExecNamespaceManifest, ExecNamespaceMount
 use alan_llm::{GenerationRequest, GenerationResponse, LlmProvider, StreamChunk};
 use anyhow::{Context, Result, bail};
 use std::collections::BTreeSet;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::sync::{
     Arc,
     atomic::{AtomicU64, Ordering},
@@ -247,67 +248,89 @@ where
         bail!(CHILD_AGENT_LAUNCH_CANCELLED_MESSAGE);
     }
 
-    validate_child_launch_contract(&spec)?;
+    let child_cwd = validate_child_launch_contract(&spec)?;
     let launch_root_dir = resolve_launch_root_dir(parent, &spec.target)?;
     let child_agent_config = build_child_agent_config(parent, &spec);
-    let workspace_root_dir = resolve_child_workspace_root(parent, &spec);
-    let workspace_alan_dir = resolve_child_workspace_alan_dir(
-        &spec,
-        workspace_root_dir.as_deref(),
-        parent.core_config.memory.workspace_dir.as_deref(),
-    );
-    let child_workspace_id = format!("{}:child:{}", parent.workspace_id, uuid::Uuid::new_v4());
-    let default_cwd_override = spec
-        .launch
-        .cwd
-        .clone()
-        .or_else(|| workspace_root_dir.clone());
+    let mut launch_context = parent
+        .namespace_environment()
+        .launch_context()
+        .cloned()
+        .unwrap_or_else(crate::ProcessLaunchContext::root)
+        .child();
+    if let Some(cwd) = child_cwd {
+        launch_context.cwd = cwd;
+    }
+    if !spec.has_handle(SpawnHandle::Memory) {
+        launch_context.namespace.unmount("/memory");
+        launch_context
+            .descriptors
+            .remove(crate::MEMORY_STORE_DESCRIPTOR);
+    }
+    if let Some(root_dir) = launch_root_dir.as_ref() {
+        launch_context = launch_context
+            .with_host_mount(crate::HostMountGrant::new(
+                "/agent-definition",
+                root_dir,
+                alan_kernel::Access::ReadOnly,
+            )?)
+            .with_descriptor(
+                crate::AGENT_DEFINITION_DESCRIPTOR,
+                crate::ProcessDescriptor::new("/agent-definition")?,
+            );
+    }
 
-    let mut child_config = WorkspaceRuntimeConfig {
+    let mut child_config = AgentProcessConfig {
         agent_config: child_agent_config.clone(),
         // Child launches should still resolve their target/root overlays. Using the
         // default source keeps launch-root agent.toml in play instead of treating the
         // parent's effective config as a terminal env override.
         core_config_source: crate::ConfigSourceKind::Default,
-        agent_name: None,
-        workspace_id: child_workspace_id,
-        workspace_root_dir,
-        workspace_alan_dir,
+        launch_context,
+        store_bindings: parent.runtime_config.store_bindings.clone(),
+        memory_store_backing: spec
+            .has_handle(SpawnHandle::Memory)
+            .then(|| parent.runtime_config.memory_store_backing.clone())
+            .flatten(),
+        connection_store: parent.runtime_config.connection_store.clone(),
         recovery_rollout_path: None,
-        launch_root_dir,
-        default_cwd_override,
-        agent_home_paths: parent_agent_home_paths(parent),
         chatgpt_auth_storage_path: parent.runtime_config.chatgpt_auth_storage_path.clone(),
         mount_grant_applicator_factory: parent
             .namespace_environment()
             .mount_grant_applicator_factory(),
     };
-    let resolved_child_definition =
-        crate::ResolvedAgentDefinition::from_runtime_config(&child_config)
-            .context("Failed to resolve child-agent definition")?;
+    let resolved_child_definition = crate::ResolvedAgentDefinition::from_launch_context(
+        &child_config.launch_context,
+        &child_config
+            .agent_config
+            .core_config
+            .resolved_skill_overrides(),
+        child_config.core_config_source,
+    )
+    .context("Failed to resolve child-agent definition")?;
     let mut resolved_child_agent_config = child_agent_config.clone();
-    if !resolved_child_definition.config_overlay_paths.is_empty() {
+    if let Some(config_path) = resolved_child_definition.config_path.as_ref() {
         resolved_child_agent_config = resolved_child_agent_config
-            .with_agent_root_overlays(&resolved_child_definition.config_overlay_paths)
+            .with_definition_overlays(std::slice::from_ref(config_path))
             .context("Failed to resolve effective child-agent config")?;
     }
     if spec.has_handle(SpawnHandle::Memory) {
-        if let Some(alan_dir) = resolved_child_definition.workspace_alan_dir.as_ref() {
-            let channel = parent_runtime_channel(parent);
-            resolved_child_agent_config.core_config.memory.workspace_dir = Some(
-                crate::workspace_memory_dir_for_channel_from_alan_dir(alan_dir, channel),
-            );
-        }
+        resolved_child_agent_config.core_config.memory.store_dir =
+            parent.core_config.memory.store_dir.clone();
     } else {
-        resolved_child_agent_config.core_config.memory.workspace_dir = None;
+        resolved_child_agent_config.core_config.memory.store_dir = None;
     }
-    let effective_child_core_config = resolved_child_agent_config.core_config.clone();
     child_config.agent_config = resolved_child_agent_config;
     child_config.core_config_source = crate::ConfigSourceKind::EnvOverride;
-    let child_namespace_plan =
-        build_child_namespace_assembly_plan(parent, &spec, &effective_child_core_config)
-            .await
-            .context("Failed to assemble child-agent namespace plan")?;
+    let effective_child_core_config = effective_core_config_for_runtime(&child_config)
+        .context("Failed to resolve effective child-agent runtime config")?;
+    let child_namespace_plan = build_child_namespace_assembly_plan(
+        parent,
+        &spec,
+        &effective_child_core_config,
+        child_config.launch_context.clone(),
+    )
+    .await
+    .context("Failed to assemble child-agent namespace plan")?;
     let delegation_capability_decision =
         evaluate_delegated_launch_capabilities(parent, &mut spec, &child_namespace_plan).await?;
     let llm_client = llm_client_factory(&effective_child_core_config)
@@ -326,7 +349,12 @@ where
     let runtime_procfs = launch_procfs
         .clone()
         .with_runner(Arc::new(tool_runner.clone()));
-    let child_tool_binding = child_namespace_plan.execution_binding();
+    let child_tool_binding = child_namespace_plan.runtime_execution_binding(
+        child_config
+            .store_bindings
+            .as_ref()
+            .map(|stores| stores.tmp.clone()),
+    )?;
     let agentfs = Arc::new(alan_agentfs::AgentFs::new());
     let llmfs = Arc::new(alan_llmfs::LlmFs::new());
     llmfs.register_connection(
@@ -377,7 +405,6 @@ where
     let generation_capabilities =
         crate::provider_capabilities_for_config(&effective_child_core_config);
     let host_capabilities = runtime_host_capabilities_for_tools(
-        &child_config,
         child_namespace_plan
             .tool_packages
             .iter()
@@ -422,10 +449,6 @@ where
         child_run_id.clone(),
         parent.process_path().to_string(),
         startup_metadata.process_path.clone(),
-        resolved_child_definition
-            .workspace_root_dir
-            .as_ref()
-            .map(|path| path.display().to_string()),
         Some(startup_metadata.agent_path.clone()),
         Some(format!("{:?}", spec.target)),
     );
@@ -503,15 +526,22 @@ async fn evaluate_delegated_launch_capabilities(
 fn namespace_summary_from_child_plan(
     plan: &ChildNamespaceAssemblyPlan,
 ) -> alan_agent_protocol::DelegatedNamespaceSummary {
+    let mut described = plan.launch_context.namespace.describe();
+    described.extend([
+        (plan.agent_mount.clone(), alan_kernel::Access::ReadWrite),
+        (plan.llm_mount.clone(), alan_kernel::Access::ReadWrite),
+        (plan.srv_mount.clone(), alan_kernel::Access::ReadOnly),
+        (plan.route_mount.clone(), alan_kernel::Access::ReadWrite),
+    ]);
     namespace_summary_from_bindings(
-        vec![
-            plan.agent_mount.clone(),
-            plan.llm_mount.clone(),
-            plan.srv_mount.clone(),
-            plan.route_mount.clone(),
-        ],
+        described.iter().map(|(path, _)| path.clone()).collect(),
+        described
+            .iter()
+            .filter(|(_, access)| *access == alan_kernel::Access::ReadWrite)
+            .map(|(path, _)| path.clone())
+            .collect(),
         plan.bin_tool_mounts.clone(),
-        plan.workspace_root.clone(),
+        plan.cwd.clone(),
         Some(plan.llm_connection_name.clone()),
     )
 }
@@ -519,20 +549,37 @@ fn namespace_summary_from_child_plan(
 async fn namespace_summary_from_parent(
     parent: &RuntimeLoopState,
 ) -> Result<alan_agent_protocol::DelegatedNamespaceSummary> {
-    Ok(namespace_summary_from_bindings(
-        vec![
-            "/agent".to_string(),
-            "/mnt/llm".to_string(),
-            "/srv".to_string(),
+    let mut described = parent
+        .namespace_environment()
+        .launch_context()
+        .map(|context| context.namespace.describe())
+        .unwrap_or_default();
+    described.extend([
+        ("/agent".to_string(), alan_kernel::Access::ReadWrite),
+        ("/mnt/llm".to_string(), alan_kernel::Access::ReadWrite),
+        ("/srv".to_string(), alan_kernel::Access::ReadOnly),
+        (
             alan_routefs::MOUNT_PATH.to_string(),
-        ],
+            alan_kernel::Access::ReadWrite,
+        ),
+    ]);
+    Ok(namespace_summary_from_bindings(
+        described.iter().map(|(path, _)| path.clone()).collect(),
+        described
+            .iter()
+            .filter(|(_, access)| *access == alan_kernel::Access::ReadWrite)
+            .map(|(path, _)| path.clone())
+            .collect(),
         parent
             .static_tool_names()
             .await?
             .into_iter()
             .map(|tool| format!("/bin/{tool}"))
             .collect(),
-        bound_workspace_root(parent),
+        parent
+            .namespace_environment()
+            .launch_context()
+            .map(|context| PathBuf::from(&context.cwd)),
         Some(
             parent
                 .core_config
@@ -602,19 +649,10 @@ async fn send_initial_child_submission(
     Ok(runtime)
 }
 
-fn validate_child_launch_contract(spec: &SpawnSpec) -> Result<()> {
+fn validate_child_launch_contract(spec: &SpawnSpec) -> Result<Option<String>> {
     if spec.has_handle(SpawnHandle::Artifacts) || spec.launch.output_dir.is_some() {
         bail!(
             "Child-agent launches do not support artifact routing yet; omit SpawnHandle::Artifacts and launch.output_dir."
-        );
-    }
-
-    if let Some(workspace_root) = spec.launch.workspace_root.as_deref()
-        && !workspace_root.is_absolute()
-    {
-        bail!(
-            "Child-agent launch workspace_root '{}' must be absolute.",
-            workspace_root.display()
         );
     }
 
@@ -627,38 +665,23 @@ fn validate_child_launch_contract(spec: &SpawnSpec) -> Result<()> {
         );
     }
 
-    if let (Some(workspace_root), Some(cwd)) = (
-        spec.launch.workspace_root.as_deref(),
-        spec.launch.cwd.as_deref(),
-    ) {
-        let normalized_workspace_root = lexically_normalize_path(workspace_root);
-        let normalized_cwd = lexically_normalize_path(cwd);
-        if !normalized_cwd.starts_with(&normalized_workspace_root) {
-            bail!(
-                "Child-agent launch cwd '{}' must stay within workspace_root '{}'.",
-                normalized_cwd.display(),
-                normalized_workspace_root.display()
-            );
-        }
-    }
+    let cwd = spec
+        .launch
+        .cwd
+        .as_deref()
+        .map(|cwd| {
+            let cwd = cwd.to_str().with_context(|| {
+                format!(
+                    "Child-agent launch cwd '{}' must be valid Unicode.",
+                    cwd.display()
+                )
+            })?;
+            crate::process_launch::normalize_namespace_path(cwd)
+                .with_context(|| format!("Invalid child-agent launch cwd '{}'.", cwd))
+        })
+        .transpose()?;
 
-    Ok(())
-}
-
-fn lexically_normalize_path(path: &Path) -> PathBuf {
-    let mut normalized = PathBuf::new();
-    for component in path.components() {
-        match component {
-            Component::Prefix(prefix) => normalized.push(prefix.as_os_str()),
-            Component::RootDir => normalized.push(component.as_os_str()),
-            Component::CurDir => {}
-            Component::ParentDir => {
-                normalized.pop();
-            }
-            Component::Normal(part) => normalized.push(part),
-        }
-    }
-    normalized
+    Ok(cwd)
 }
 
 fn resolve_launch_root_dir(
@@ -666,7 +689,24 @@ fn resolve_launch_root_dir(
     target: &SpawnTarget,
 ) -> Result<Option<PathBuf>> {
     match target {
-        SpawnTarget::ResolvedAgentRoot { root_dir } => Ok(Some(root_dir.clone())),
+        SpawnTarget::DefinitionDescriptor { descriptor } => {
+            let descriptor = parent
+                .namespace_environment()
+                .launch_context()
+                .and_then(|context| context.descriptor(descriptor))
+                .with_context(|| format!("parent Process has no `{descriptor}` descriptor"))?;
+            let root = parent
+                .namespace_environment()
+                .launch_context()
+                .and_then(|context| context.host_path(&descriptor.path))
+                .with_context(|| {
+                    format!(
+                        "Agent Definition descriptor {} has no explicit Host Mount backing",
+                        descriptor.path
+                    )
+                })?;
+            Ok(Some(root))
+        }
         SpawnTarget::PackageChildAgent { .. } => parent
             .prompt_cache
             .capability_view()
@@ -1367,7 +1407,7 @@ fn build_child_agent_config(parent: &RuntimeLoopState, spec: &SpawnSpec) -> Agen
     child_agent_config.runtime_config = parent.runtime_config.clone();
 
     if !spec.has_handle(SpawnHandle::Memory) {
-        child_agent_config.core_config.memory.workspace_dir = None;
+        child_agent_config.core_config.memory.store_dir = None;
     }
 
     if spec.has_handle(SpawnHandle::ApprovalScope) {
@@ -1389,7 +1429,7 @@ fn build_child_agent_config(parent: &RuntimeLoopState, spec: &SpawnSpec) -> Agen
     child_agent_config
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 struct ChildNamespaceAssemblyPlan {
     agent_mount: String,
     llm_mount: String,
@@ -1398,18 +1438,34 @@ struct ChildNamespaceAssemblyPlan {
     route_mount: String,
     bin_tool_mounts: Vec<String>,
     tool_packages: Vec<super::ToolPackageManifest>,
-    workspace_root: Option<PathBuf>,
     cwd: Option<PathBuf>,
+    launch_context: crate::ProcessLaunchContext,
 }
 
 impl ChildNamespaceAssemblyPlan {
-    fn execution_binding(&self) -> Option<crate::tools::ToolExecutionBinding> {
-        let cwd = self.cwd.clone()?;
-        let scratch = crate::tools::default_scratch_dir_for_cwd(&cwd);
-        Some(match self.workspace_root.clone() {
-            Some(root) => crate::tools::ToolExecutionBinding::with_workspace(root, cwd, scratch),
-            None => crate::tools::ToolExecutionBinding::without_workspace(cwd, scratch),
-        })
+    fn runtime_execution_binding(
+        &self,
+        scratch: Option<PathBuf>,
+    ) -> Result<Option<crate::tools::ToolExecutionBinding>> {
+        if self.launch_context.host_mounts.is_empty() {
+            return Ok(None);
+        }
+        let scratch = scratch.context(
+            "child Agent Process with Host Mounts requires Agent Runtime Service store bindings",
+        )?;
+        self.execution_binding(scratch)
+    }
+
+    fn execution_binding(
+        &self,
+        scratch: PathBuf,
+    ) -> Result<Option<crate::tools::ToolExecutionBinding>> {
+        if self.launch_context.host_mounts.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(
+            crate::tools::ToolExecutionBinding::from_launch_context(&self.launch_context, scratch)?,
+        ))
     }
     fn bin_tool_names(&self) -> impl Iterator<Item = &str> {
         self.bin_tool_mounts
@@ -1632,6 +1688,7 @@ async fn spawn_child_namespace_runtime_environment(
         format!("/agent/{pid}"),
         plan.llm_connection_name()?,
     )
+    .with_launch_context(plan.launch_context.clone())
     .with_process_context(launch_procfs.clone(), agent_root, child_pid, tool_runner)
     .with_shared_services(handles.srv.clone(), handles.route.clone());
     let environment = if let Some(factory) = mount_grant_applicator_factory {
@@ -1712,7 +1769,7 @@ fn child_namespace_from_launch_handles(
     agent_root_tree: InProcessTransport,
     handles: &ChildNamespaceLaunchHandles,
 ) -> alan_kernel::Namespace {
-    let mut namespace = alan_kernel::Namespace::new();
+    let mut namespace = plan.launch_context.namespace.child();
     namespace.mount(
         &plan.agent_mount,
         agent_root_tree,
@@ -1768,7 +1825,8 @@ async fn child_observation_environment(
         InProcessTransport::new(Arc::new(alan_kernel::MountFs::new(namespace))),
         agent_path,
         plan.llm_connection_name.clone(),
-    ))
+    )
+    .with_launch_context(plan.launch_context.clone()))
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -1780,14 +1838,13 @@ async fn build_child_namespace_assembly_plan(
     parent: &RuntimeLoopState,
     spec: &SpawnSpec,
     child_core_config: &crate::Config,
+    launch_context: crate::ProcessLaunchContext,
 ) -> Result<ChildNamespaceAssemblyPlan> {
-    let workspace_root = resolve_child_workspace_root(parent, spec);
     let cwd = spec
         .launch
         .cwd
         .clone()
-        .or_else(|| workspace_root.clone())
-        .or_else(|| parent.default_tool_cwd());
+        .or_else(|| Some(PathBuf::from(&launch_context.cwd)));
     let llm_connection = child_core_config
         .connection_profile
         .as_deref()
@@ -1800,27 +1857,14 @@ async fn build_child_namespace_assembly_plan(
         route_mount: alan_routefs::MOUNT_PATH.to_string(),
         bin_tool_mounts: Vec::new(),
         tool_packages: Vec::new(),
-        workspace_root: workspace_root.clone(),
         cwd,
+        launch_context,
     };
 
-    if !spec.has_handle(SpawnHandle::Workspace) {
-        return Ok(plan);
-    }
-
-    let shares_parent_workspace = workspace_root
-        .as_ref()
-        .zip(bound_workspace_root(parent).as_ref())
-        .is_some_and(|(child, parent)| {
-            lexically_normalize_path(child) == lexically_normalize_path(parent)
-        });
     let packages = parent
         .namespace_environment()
         .discover_tool_packages()
-        .await?
-        .into_iter()
-        .filter(|package| !package.is_workspace_local() || shares_parent_workspace)
-        .collect::<Vec<_>>();
+        .await?;
     plan.tool_packages = if let Some(profile) = spec.runtime_overrides.tool_profile.as_ref() {
         let available = packages
             .iter()
@@ -1851,95 +1895,6 @@ async fn build_child_namespace_assembly_plan(
         .map(|package| format!("/bin/{}", package.name))
         .collect();
     Ok(plan)
-}
-
-fn resolve_child_workspace_root(parent: &RuntimeLoopState, spec: &SpawnSpec) -> Option<PathBuf> {
-    spec.launch.workspace_root.clone().or_else(|| {
-        if spec.has_handle(SpawnHandle::Workspace) {
-            bound_workspace_root(parent)
-        } else {
-            None
-        }
-    })
-}
-
-fn resolve_child_workspace_alan_dir(
-    spec: &SpawnSpec,
-    workspace_root_dir: Option<&Path>,
-    memory_dir: Option<&Path>,
-) -> Option<PathBuf> {
-    if !spec.has_handle(SpawnHandle::Memory) && !preserves_workspace_policy_context(spec) {
-        return None;
-    }
-
-    workspace_root_dir
-        .map(|root| root.join(".alan"))
-        .or_else(|| infer_workspace_alan_dir_from_memory_dir(memory_dir))
-}
-
-fn preserves_workspace_policy_context(spec: &SpawnSpec) -> bool {
-    spec.has_handle(SpawnHandle::ApprovalScope) || spec.runtime_overrides.policy_path.is_some()
-}
-
-fn infer_workspace_alan_dir_from_memory_dir(memory_dir: Option<&Path>) -> Option<PathBuf> {
-    let memory_dir = memory_dir?;
-    if memory_dir.file_name()? != "memory" {
-        return None;
-    }
-    let alan_dir = memory_dir.parent()?;
-    if alan_dir.file_name()? == ".alan" {
-        return Some(alan_dir.to_path_buf());
-    }
-    if alan_dir
-        .parent()
-        .and_then(Path::file_name)
-        .is_some_and(|name| name == "runtime")
-    {
-        let workspace_alan_dir = alan_dir.parent()?.parent()?;
-        return (workspace_alan_dir.file_name()? == ".alan")
-            .then(|| workspace_alan_dir.to_path_buf());
-    }
-    None
-}
-
-pub(super) fn infer_workspace_root_from_memory_dir(memory_dir: Option<&Path>) -> Option<PathBuf> {
-    let alan_dir = infer_workspace_alan_dir_from_memory_dir(memory_dir);
-    let alan_dir = alan_dir.as_deref()?;
-    (alan_dir.file_name()? == ".alan").then(|| alan_dir.parent().map(Path::to_path_buf))?
-}
-
-fn parent_runtime_channel(parent: &RuntimeLoopState) -> crate::InstallChannel {
-    parent_runtime_channel_from_memory(parent).unwrap_or_else(crate::InstallChannel::detect_current)
-}
-
-fn parent_agent_home_paths(parent: &RuntimeLoopState) -> Option<crate::AlanHomePaths> {
-    let channel = parent_runtime_channel_from_memory(parent)?;
-    let current_home_paths = crate::AlanHomePaths::detect()?;
-    Some(crate::AlanHomePaths::from_home_dir_for_channel(
-        &current_home_paths.home_dir,
-        channel,
-    ))
-}
-
-fn parent_runtime_channel_from_memory(parent: &RuntimeLoopState) -> Option<crate::InstallChannel> {
-    let memory_dir = parent.core_config.memory.workspace_dir.as_deref()?;
-    if let Some(channel_dir) = memory_dir.parent()
-        && channel_dir
-            .parent()
-            .and_then(Path::file_name)
-            .is_some_and(|name| name == "runtime")
-        && let Some(channel_id) = channel_dir.file_name().and_then(|name| name.to_str())
-        && let Some(channel) = crate::InstallChannel::from_id(channel_id)
-    {
-        return Some(channel);
-    }
-    None
-}
-
-pub(super) fn bound_workspace_root(state: &RuntimeLoopState) -> Option<PathBuf> {
-    state.workspace_root_dir.clone().or_else(|| {
-        infer_workspace_root_from_memory_dir(state.core_config.memory.workspace_dir.as_deref())
-    })
 }
 
 fn build_child_task_text(parent: &RuntimeLoopState, spec: &SpawnSpec) -> String {
@@ -1975,9 +1930,6 @@ fn render_launch_metadata(spec: &SpawnSpec) -> Option<String> {
     let mut lines = Vec::new();
     if let Some(cwd) = spec.launch.cwd.as_ref() {
         lines.push(format!("cwd: {}", cwd.display()));
-    }
-    if let Some(workspace_root) = spec.launch.workspace_root.as_ref() {
-        lines.push(format!("workspace_root: {}", workspace_root.display()));
     }
     if let Some(output_dir) = spec.launch.output_dir.as_ref() {
         lines.push(format!("output_dir: {}", output_dir.display()));
@@ -2106,6 +2058,7 @@ mod tests {
     };
     use alan_llm::LlmProvider;
     use serde_json::json;
+    use std::collections::BTreeMap;
     use std::sync::{Arc, Mutex};
     use tempfile::TempDir;
 
@@ -2275,10 +2228,6 @@ mod tests {
         ) -> crate::tools::ToolResult {
             Box::pin(async { Ok(json!({"ok": true})) })
         }
-
-        fn locality(&self) -> crate::tools::ToolLocality {
-            crate::tools::ToolLocality::WorkspaceLocal
-        }
     }
 
     #[derive(Debug, Default)]
@@ -2314,29 +2263,27 @@ mod tests {
     }
 
     impl MountGrantApplicator for RecordingMountGrantApplicator {
-        fn apply_mount_grant(&self, grant: &ApprovedMountGrant) -> anyhow::Result<()> {
+        fn apply_mount_grant(&self, grant: &ApprovedMountGrant) -> anyhow::Result<KernelNamespace> {
             let access = match grant.access {
                 ApprovedMountGrantAccess::ReadOnly => KernelAccess::ReadOnly,
                 ApprovedMountGrantAccess::ReadWrite => KernelAccess::ReadWrite,
             };
             self.live_namespace
                 .mount(&grant.namespace_path, memfs_transport(), access);
-            Ok(())
+            Ok(self.live_namespace.snapshot())
         }
     }
 
     struct MarkerTool {
         name: String,
         marker: String,
-        locality: crate::tools::ToolLocality,
     }
 
     impl MarkerTool {
-        fn new(name: &str, marker: &str, locality: crate::tools::ToolLocality) -> Self {
+        fn new(name: &str, marker: &str) -> Self {
             Self {
                 name: name.to_string(),
                 marker: marker.to_string(),
-                locality,
             }
         }
     }
@@ -2365,10 +2312,6 @@ mod tests {
             let marker = self.marker.clone();
             Box::pin(async move { Ok(json!({ "marker": marker })) })
         }
-
-        fn locality(&self) -> crate::tools::ToolLocality {
-            self.locality
-        }
     }
 
     fn make_parent_state(
@@ -2390,23 +2333,73 @@ mod tests {
         _response: GenerationResponse,
         capability_view: crate::skills::ResolvedCapabilityView,
     ) -> RuntimeLoopState {
-        let workspace_root = temp.path().join("repo");
-        let workspace_alan_dir = workspace_root.join(".alan");
-        let launch_root = workspace_root.join(".alan/agents/grader");
-        std::fs::create_dir_all(launch_root.join("persona")).unwrap();
-        std::fs::create_dir_all(crate::workspace_runtime_rollouts_dir_from_alan_dir(
-            &workspace_alan_dir,
-            crate::InstallChannel::Stable,
-        ))
+        let source_root = temp.path().join("source");
+        let definition_root = temp.path().join("definition");
+        let store_root = temp.path().join("system-store");
+        std::fs::create_dir_all(&source_root).unwrap();
+        std::fs::create_dir_all(definition_root.join("persona")).unwrap();
+        std::fs::create_dir_all(definition_root.join("skills")).unwrap();
+        std::fs::write(
+            definition_root.join("agent.toml"),
+            "tool_repeat_limit = 4\n",
+        )
         .unwrap();
-        std::fs::create_dir_all(launch_root.join("skills")).unwrap();
-        std::fs::write(launch_root.join("agent.toml"), "tool_repeat_limit = 4\n").unwrap();
+
+        let store_bindings = crate::AgentRuntimeStoreBindings {
+            rollouts: store_root.join("rollouts"),
+            checkpoints: store_root.join("checkpoints"),
+            cache: store_root.join("cache"),
+            tmp: store_root.join("tmp"),
+            metadata: store_root.join("metadata"),
+        };
+        for path in [
+            &store_bindings.rollouts,
+            &store_bindings.checkpoints,
+            &store_bindings.cache,
+            &store_bindings.tmp,
+            &store_bindings.metadata,
+        ] {
+            std::fs::create_dir_all(path).unwrap();
+        }
+        let memory_store = store_root.join("memory");
+        std::fs::create_dir_all(&memory_store).unwrap();
+
+        let mut launch_namespace = KernelNamespace::new();
+        launch_namespace.mount("/mnt/source", memfs_transport(), KernelAccess::ReadWrite);
+        launch_namespace.mount(
+            "/agent-definition",
+            memfs_transport(),
+            KernelAccess::ReadOnly,
+        );
+        let launch_context = crate::ProcessLaunchContext::new(
+            launch_namespace,
+            KernelCredentials::user("parent-agent"),
+            "/mnt/source",
+        )
+        .unwrap()
+        .with_host_mount(
+            crate::HostMountGrant::new("/mnt/source", &source_root, KernelAccess::ReadWrite)
+                .unwrap(),
+        )
+        .with_host_mount(
+            crate::HostMountGrant::new(
+                "/agent-definition",
+                &definition_root,
+                KernelAccess::ReadOnly,
+            )
+            .unwrap(),
+        )
+        .with_descriptor(
+            crate::AGENT_DEFINITION_DESCRIPTOR,
+            crate::ProcessDescriptor::new("/agent-definition").unwrap(),
+        )
+        .with_descriptor(
+            crate::MEMORY_STORE_DESCRIPTOR,
+            crate::ProcessDescriptor::new("/memory").unwrap(),
+        );
 
         let mut core_config = crate::Config::default();
-        core_config.memory.workspace_dir = Some(crate::workspace_runtime_memory_dir_from_alan_dir(
-            &workspace_alan_dir,
-            crate::InstallChannel::Stable,
-        ));
+        core_config.memory.store_dir = Some(memory_store.clone());
         core_config.openai_responses_model = "gpt-5.4".to_string();
         let mut machine = crate::AgentMachine::new();
         machine.add_user_message("Parent user asks for review");
@@ -2424,14 +2417,17 @@ mod tests {
         );
 
         RuntimeLoopState {
-            workspace_id: "parent-workspace".to_string(),
-            workspace_root_dir: Some(workspace_root),
             machine,
             current_submission_id: None,
-            environment: namespace_environment_for_parent_test(),
+            environment: namespace_environment_for_parent_test()
+                .with_launch_context(launch_context),
             core_config,
-            runtime_config: RuntimeConfig::default(),
-            workspace_persona_dirs: Vec::new(),
+            runtime_config: RuntimeConfig {
+                store_bindings: Some(store_bindings),
+                memory_store_backing: Some(memory_store),
+                ..RuntimeConfig::default()
+            },
+            definition_persona_dirs: Vec::new(),
             prompt_cache:
                 super::super::prompt_cache::PromptAssemblyCache::with_fixed_capability_view(
                     capability_view,
@@ -2449,13 +2445,22 @@ mod tests {
         tools
     }
 
-    fn launch_spec(root_dir: PathBuf) -> SpawnSpec {
+    fn inherited_launch_context(parent: &RuntimeLoopState) -> crate::ProcessLaunchContext {
+        parent
+            .namespace_environment()
+            .launch_context()
+            .expect("test parent has a Process Launch Context")
+            .child()
+    }
+
+    fn launch_spec(_definition_root: PathBuf) -> SpawnSpec {
         SpawnSpec {
-            target: SpawnTarget::ResolvedAgentRoot { root_dir },
+            target: SpawnTarget::DefinitionDescriptor {
+                descriptor: crate::AGENT_DEFINITION_DESCRIPTOR.to_string(),
+            },
             launch: alan_agent_protocol::SpawnLaunchInputs {
                 task: "Review the repository changes".to_string(),
                 cwd: None,
-                workspace_root: None,
                 timeout_secs: Some(30),
                 output_dir: None,
             },
@@ -2465,10 +2470,21 @@ mod tests {
         }
     }
 
-    fn capability_plan(
-        workspace_root: Option<PathBuf>,
-        tools: &[&str],
-    ) -> ChildNamespaceAssemblyPlan {
+    fn capability_plan(host_mount: Option<PathBuf>, tools: &[&str]) -> ChildNamespaceAssemblyPlan {
+        let mut launch_context = crate::ProcessLaunchContext::root();
+        let cwd = host_mount.as_ref().map(|_| PathBuf::from("/mnt/source"));
+        if let Some(host_mount) = host_mount {
+            launch_context.namespace.mount(
+                "/mnt/source",
+                memfs_transport(),
+                KernelAccess::ReadWrite,
+            );
+            launch_context.host_mounts.push(
+                crate::HostMountGrant::new("/mnt/source", host_mount, KernelAccess::ReadWrite)
+                    .unwrap(),
+            );
+            launch_context.cwd = "/mnt/source".to_string();
+        }
         ChildNamespaceAssemblyPlan {
             agent_mount: "/agent".to_string(),
             llm_mount: "/mnt/llm".to_string(),
@@ -2477,9 +2493,35 @@ mod tests {
             route_mount: alan_routefs::MOUNT_PATH.to_string(),
             bin_tool_mounts: tools.iter().map(|tool| format!("/bin/{tool}")).collect(),
             tool_packages: Vec::new(),
-            cwd: workspace_root.clone(),
-            workspace_root,
+            cwd,
+            launch_context,
         }
+    }
+
+    #[test]
+    fn inherited_mount_without_host_backed_cwd_uses_authorized_native_cwd() {
+        let source = TempDir::new().unwrap();
+        let scratch = TempDir::new().unwrap();
+        let mut plan = capability_plan(Some(source.path().to_path_buf()), &["read_file"]);
+        plan.cwd = None;
+        plan.launch_context.cwd = "/".to_string();
+
+        let binding = plan
+            .runtime_execution_binding(Some(scratch.path().to_path_buf()))
+            .unwrap()
+            .expect("an inherited Host Mount should create a child Tool binding");
+
+        assert_eq!(binding.cwd, dunce::canonicalize(source.path()).unwrap());
+        assert_eq!(binding.namespace_cwd, PathBuf::from("/mnt/source"));
+        assert_eq!(binding.host_mounts.len(), 1);
+        assert_eq!(binding.host_mounts[0].namespace_path, "/mnt/source");
+        let sandbox = binding.sandbox_spec.unwrap();
+        assert!(
+            !sandbox
+                .readable_roots
+                .iter()
+                .any(|root| root == &dunce::canonicalize(scratch.path()).unwrap())
+        );
     }
 
     #[tokio::test]
@@ -2490,13 +2532,13 @@ mod tests {
             RecordedRequests::default(),
             completed_response("unused"),
         );
-        let workspace_root = PathBuf::from("/tmp/repo");
+        let host_mount = PathBuf::from("/tmp/repo");
         let mut spec = launch_spec(temp.path().join("agent"));
         spec.launch.task = "Inspect local files".to_string();
         spec.delegated = Some(alan_agent_protocol::DelegatedSpawnContext {
             requirements: vec![
-                alan_agent_protocol::DelegatedCapabilityRequirement::WorkspaceRead {
-                    path: Some(workspace_root.clone()),
+                alan_agent_protocol::DelegatedCapabilityRequirement::MountRead {
+                    path: Some(PathBuf::from("/mnt/source")),
                 },
                 alan_agent_protocol::DelegatedCapabilityRequirement::LlmConnection,
             ],
@@ -2505,7 +2547,7 @@ mod tests {
         let decision = evaluate_delegated_launch_capabilities(
             &parent,
             &mut spec,
-            &capability_plan(Some(workspace_root), &["read_file"]),
+            &capability_plan(Some(host_mount), &["read_file"]),
         )
         .await
         .unwrap()
@@ -2526,13 +2568,13 @@ mod tests {
             RecordedRequests::default(),
             completed_response("unused"),
         );
-        let workspace_root = PathBuf::from("/tmp/repo");
+        let host_mount = PathBuf::from("/tmp/repo");
         let mut spec = launch_spec(temp.path().join("agent"));
         spec.launch.task = "Review GitHub issue against local code".to_string();
         spec.delegated = Some(alan_agent_protocol::DelegatedSpawnContext {
             requirements: vec![
-                alan_agent_protocol::DelegatedCapabilityRequirement::WorkspaceRead {
-                    path: Some(workspace_root.clone()),
+                alan_agent_protocol::DelegatedCapabilityRequirement::MountRead {
+                    path: Some(PathBuf::from("/mnt/source")),
                 },
                 alan_agent_protocol::DelegatedCapabilityRequirement::Github,
             ],
@@ -2541,7 +2583,7 @@ mod tests {
         let decision = evaluate_delegated_launch_capabilities(
             &parent,
             &mut spec,
-            &capability_plan(Some(workspace_root), &["read_file"]),
+            &capability_plan(Some(host_mount), &["read_file"]),
         )
         .await
         .unwrap()
@@ -2556,7 +2598,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn delegated_spawn_boundary_declines_unsatisfied_workspace() {
+    async fn delegated_spawn_boundary_declines_unsatisfied_mount() {
         let temp = TempDir::new().unwrap();
         let parent = make_parent_state(
             &temp,
@@ -2566,8 +2608,8 @@ mod tests {
         let mut spec = launch_spec(temp.path().join("agent"));
         spec.delegated = Some(alan_agent_protocol::DelegatedSpawnContext {
             requirements: vec![
-                alan_agent_protocol::DelegatedCapabilityRequirement::WorkspaceRead {
-                    path: Some(PathBuf::from("/outside/repo")),
+                alan_agent_protocol::DelegatedCapabilityRequirement::MountRead {
+                    path: Some(PathBuf::from("/mnt/private")),
                 },
             ],
         });
@@ -2612,8 +2654,8 @@ mod tests {
     fn capability_view_with_package_child_agent(
         temp: &TempDir,
     ) -> crate::skills::ResolvedCapabilityView {
-        let workspace_root = temp.path().join("repo");
-        let package_root = workspace_root.join(".alan/agents/default/skills/repo-review");
+        let package_store = temp.path().join("package-store");
+        let package_root = package_store.join("repo-review");
         std::fs::create_dir_all(package_root.join("agents/reviewer")).unwrap();
         std::fs::write(
             package_root.join("SKILL.md"),
@@ -2633,8 +2675,8 @@ Body
         .unwrap();
         crate::skills::ResolvedCapabilityView::from_package_dirs(vec![
             crate::skills::ScopedPackageDir {
-                path: workspace_root.join(".alan/agents/default/skills"),
-                scope: crate::skills::SkillScope::Repo,
+                path: package_store,
+                scope: crate::skills::SkillScope::Descriptor,
             },
         ])
     }
@@ -2677,7 +2719,7 @@ Body
     }
 
     #[tokio::test]
-    async fn spawn_child_runtime_defaults_to_exec_like_non_inheritance() {
+    async fn spawn_child_runtime_inherits_namespace_tools_but_not_optional_handles() {
         let temp = TempDir::new().unwrap();
         let requests = RecordedRequests::default();
         let response = completed_response("Child finished cleanly.");
@@ -2687,7 +2729,7 @@ Body
             response.clone(),
             crate::skills::ResolvedCapabilityView::default(),
         );
-        let root_dir = temp.path().join("repo/.alan/agents/grader");
+        let root_dir = temp.path().join("definition");
         let spec = launch_spec(root_dir);
 
         let child = spawn_child_runtime_with_client_factory(&parent, spec, |_| {
@@ -2705,8 +2747,8 @@ Body
         let recorded = requests.0.lock().unwrap();
         assert_eq!(recorded.len(), 1);
         let request = &recorded[0];
-        assert!(request.tools.iter().all(|tool| tool.name != "alpha"));
-        assert!(request.tools.iter().all(|tool| tool.name != "beta"));
+        assert!(request.tools.iter().any(|tool| tool.name == "alpha"));
+        assert!(request.tools.iter().any(|tool| tool.name == "beta"));
         let user_text = request
             .messages
             .iter()
@@ -2720,50 +2762,6 @@ Body
     }
 
     #[tokio::test]
-    async fn spawn_child_runtime_preserves_parent_dev_channel_for_rollouts() {
-        let temp = TempDir::new().unwrap();
-        let requests = RecordedRequests::default();
-        let response = completed_response("Child finished cleanly.");
-        let mut parent = make_parent_state_with_capability_view(
-            &temp,
-            requests.clone(),
-            response.clone(),
-            crate::skills::ResolvedCapabilityView::default(),
-        );
-        let workspace_alan_dir = parent.workspace_root_dir.as_ref().unwrap().join(".alan");
-        parent.core_config.memory.workspace_dir =
-            Some(crate::workspace_runtime_memory_dir_from_alan_dir(
-                &workspace_alan_dir,
-                crate::InstallChannel::Dev,
-            ));
-        let root_dir = workspace_alan_dir.join("agents/grader");
-        let mut spec = launch_spec(root_dir);
-        spec.handles = vec![SpawnHandle::Memory];
-
-        let child = spawn_child_runtime_with_client_factory(&parent, spec, |_| {
-            Ok(LlmClient::new(RecordingProvider::new(
-                requests.clone(),
-                response.clone(),
-            )))
-        })
-        .await
-        .unwrap();
-        let result = child.join().await.unwrap();
-
-        let rollout_path = result.rollout_path.expect("child rollout path");
-        let dev_rollouts_dir = crate::workspace_runtime_rollouts_dir_from_alan_dir(
-            &workspace_alan_dir,
-            crate::InstallChannel::Dev,
-        );
-        let stable_rollouts_dir = crate::workspace_runtime_rollouts_dir_from_alan_dir(
-            &workspace_alan_dir,
-            crate::InstallChannel::Stable,
-        );
-        assert!(rollout_path.starts_with(dev_rollouts_dir));
-        assert!(!rollout_path.starts_with(stable_rollouts_dir));
-    }
-
-    #[tokio::test]
     async fn spawn_child_runtime_binds_requested_parent_handles() {
         let temp = TempDir::new().unwrap();
         let requests = RecordedRequests::default();
@@ -2774,7 +2772,7 @@ Body
             response.clone(),
             crate::skills::ResolvedCapabilityView::default(),
         );
-        let root_dir = temp.path().join("repo/.alan/agents/grader");
+        let root_dir = temp.path().join("definition");
         let mut spec = launch_spec(root_dir);
         spec.handles = vec![
             SpawnHandle::ConversationSnapshot,
@@ -2817,7 +2815,7 @@ Body
         let requests = RecordedRequests::default();
         let response = completed_response("Artifacts are not supported.");
         let parent = make_parent_state(&temp, requests, response);
-        let root_dir = temp.path().join("repo/.alan/agents/grader");
+        let root_dir = temp.path().join("definition");
         let mut spec = launch_spec(root_dir);
         spec.handles = vec![SpawnHandle::Artifacts];
 
@@ -2840,7 +2838,7 @@ Body
         let requests = RecordedRequests::default();
         let response = completed_response("Artifacts are not supported.");
         let parent = make_parent_state(&temp, requests, response);
-        let root_dir = temp.path().join("repo/.alan/agents/grader");
+        let root_dir = temp.path().join("definition");
         let mut spec = launch_spec(root_dir);
         spec.launch.output_dir = Some(temp.path().join("repo/out"));
 
@@ -2858,7 +2856,7 @@ Body
     }
 
     #[tokio::test]
-    async fn spawn_child_runtime_filters_workspace_tools_with_override() {
+    async fn spawn_child_runtime_filters_namespace_tools_with_override() {
         let temp = TempDir::new().unwrap();
         let requests = RecordedRequests::default();
         let response = completed_response("Only one tool should be visible.");
@@ -2868,9 +2866,8 @@ Body
             response.clone(),
             crate::skills::ResolvedCapabilityView::default(),
         );
-        let root_dir = temp.path().join("repo/.alan/agents/grader");
+        let root_dir = temp.path().join("definition");
         let mut spec = launch_spec(root_dir);
-        spec.handles = vec![SpawnHandle::Workspace];
         spec.runtime_overrides.tool_profile = Some(alan_agent_protocol::SpawnToolProfileOverride {
             allowed_tools: vec!["alpha".to_string()],
         });
@@ -2897,14 +2894,13 @@ Body
     }
 
     #[tokio::test]
-    async fn spawn_child_runtime_respects_empty_workspace_tool_override() {
+    async fn spawn_child_runtime_respects_empty_namespace_tool_override() {
         let temp = TempDir::new().unwrap();
         let requests = RecordedRequests::default();
         let response = completed_response("No tools should be visible.");
         let parent = make_parent_state(&temp, requests.clone(), response.clone());
-        let root_dir = temp.path().join("repo/.alan/agents/grader");
+        let root_dir = temp.path().join("definition");
         let mut spec = launch_spec(root_dir);
-        spec.handles = vec![SpawnHandle::Workspace];
         spec.runtime_overrides.tool_profile = Some(alan_agent_protocol::SpawnToolProfileOverride {
             allowed_tools: Vec::new(),
         });
@@ -2931,73 +2927,38 @@ Body
     }
 
     #[tokio::test]
-    async fn child_namespace_plan_without_workspace_handle_mounts_no_bin_tools() {
+    async fn child_namespace_plan_mounts_only_allowed_tools() {
         let temp = TempDir::new().unwrap();
         let requests = RecordedRequests::default();
         let response = completed_response("Child finished cleanly.");
         let parent = make_parent_state(&temp, requests, response);
-        let root_dir = temp.path().join("repo/.alan/agents/grader");
-        let mut child_core_config = parent.core_config.clone();
-        child_core_config.connection_profile = Some("child-main".to_string());
-        let spec = launch_spec(root_dir);
-
-        let plan = build_child_namespace_assembly_plan(&parent, &spec, &child_core_config)
-            .await
-            .unwrap();
-
-        assert_eq!(plan.agent_mount, "/agent");
-        assert_eq!(plan.llm_mount, "/mnt/llm");
-        assert_eq!(plan.llm_connection_name().unwrap(), "child-main");
-        assert_eq!(plan.srv_mount, "/srv");
-        assert_eq!(plan.route_mount, "/mnt/route");
-        assert!(plan.bin_tool_mounts.is_empty());
-        assert_eq!(plan.workspace_root, None);
-    }
-
-    #[tokio::test]
-    async fn child_namespace_plan_mounts_only_allowed_workspace_tools() {
-        let temp = TempDir::new().unwrap();
-        let requests = RecordedRequests::default();
-        let response = completed_response("Child finished cleanly.");
-        let parent = make_parent_state(&temp, requests, response);
-        let root_dir = temp.path().join("repo/.alan/agents/grader");
+        let root_dir = temp.path().join("definition");
         let mut spec = launch_spec(root_dir);
-        spec.handles = vec![SpawnHandle::Workspace];
         spec.runtime_overrides.tool_profile = Some(alan_agent_protocol::SpawnToolProfileOverride {
             allowed_tools: vec!["alpha".to_string()],
         });
 
-        let plan = build_child_namespace_assembly_plan(&parent, &spec, &parent.core_config)
-            .await
-            .unwrap();
+        let launch_context = parent
+            .namespace_environment()
+            .launch_context()
+            .unwrap()
+            .child();
+        let plan = build_child_namespace_assembly_plan(
+            &parent,
+            &spec,
+            &parent.core_config,
+            launch_context,
+        )
+        .await
+        .unwrap();
 
         assert_eq!(plan.llm_mount, "/mnt/llm");
         assert_eq!(plan.llm_connection_name().unwrap(), "default");
         assert_eq!(plan.srv_mount, "/srv");
         assert_eq!(plan.route_mount, "/mnt/route");
-        assert_eq!(plan.workspace_root, Some(temp.path().join("repo")));
-        assert_eq!(plan.cwd, Some(temp.path().join("repo")));
+        assert_eq!(plan.cwd, Some(PathBuf::from("/mnt/source")));
+        assert_eq!(plan.launch_context.cwd, "/mnt/source");
         assert_eq!(plan.bin_tool_mounts, vec!["/bin/alpha"]);
-    }
-
-    #[tokio::test]
-    async fn child_namespace_plan_with_different_root_withholds_parent_workspace_tools() {
-        let temp = TempDir::new().unwrap();
-        let parent = make_parent_state(
-            &temp,
-            RecordedRequests::default(),
-            completed_response("unused"),
-        );
-        let mut spec = launch_spec(temp.path().join("other/.alan/agents/grader"));
-        spec.handles = vec![SpawnHandle::Workspace];
-        spec.launch.workspace_root = Some(temp.path().join("other"));
-
-        let plan = build_child_namespace_assembly_plan(&parent, &spec, &parent.core_config)
-            .await
-            .unwrap();
-
-        assert!(plan.tool_packages.is_empty());
-        assert!(plan.bin_tool_mounts.is_empty());
     }
 
     #[tokio::test]
@@ -3006,14 +2967,19 @@ Body
         let requests = RecordedRequests::default();
         let response = completed_response("Child finished cleanly.");
         let parent = make_parent_state(&temp, requests, response);
-        let root_dir = temp.path().join("repo/.alan/agents/grader");
+        let root_dir = temp.path().join("definition");
         let mut child_core_config = parent.core_config.clone();
         child_core_config.connection_profile = Some("child-main".to_string());
         let spec = launch_spec(root_dir);
 
-        let plan = build_child_namespace_assembly_plan(&parent, &spec, &child_core_config)
-            .await
-            .unwrap();
+        let plan = build_child_namespace_assembly_plan(
+            &parent,
+            &spec,
+            &child_core_config,
+            inherited_launch_context(&parent),
+        )
+        .await
+        .unwrap();
         let exec = plan.clone_exec_spec_for_pid("42", "/bin/alan-agent", ["--boot"]);
 
         assert_eq!(
@@ -3024,6 +2990,10 @@ Body
                 "namespace": {
                     "mounts": [
                         {"path": "/agent", "access": "rw"},
+                        {"path": "/bin/alpha", "access": "ro"},
+                        {"path": "/bin/beta", "access": "ro"},
+                        {"path": "/lib/exec/alpha", "access": "ro"},
+                        {"path": "/lib/exec/beta", "access": "ro"},
                         {"path": "/mnt/llm", "access": "rw"},
                         {"path": "/mnt/route", "access": "rw"},
                         {"path": "/srv", "access": "ro"}
@@ -3042,16 +3012,20 @@ Body
         let requests = RecordedRequests::default();
         let response = completed_response("Child finished cleanly.");
         let parent = make_parent_state(&temp, requests, response);
-        let root_dir = temp.path().join("repo/.alan/agents/grader");
+        let root_dir = temp.path().join("definition");
         let mut spec = launch_spec(root_dir);
-        spec.handles = vec![SpawnHandle::Workspace];
         spec.runtime_overrides.tool_profile = Some(alan_agent_protocol::SpawnToolProfileOverride {
             allowed_tools: vec!["alpha".to_string()],
         });
 
-        let plan = build_child_namespace_assembly_plan(&parent, &spec, &parent.core_config)
-            .await
-            .unwrap();
+        let plan = build_child_namespace_assembly_plan(
+            &parent,
+            &spec,
+            &parent.core_config,
+            inherited_launch_context(&parent),
+        )
+        .await
+        .unwrap();
         let manifest = plan.namespace_manifest_for_pid("99");
 
         assert_eq!(
@@ -3075,15 +3049,19 @@ Body
         let requests = RecordedRequests::default();
         let response = completed_response("Child finished cleanly.");
         let parent = make_parent_state(&temp, requests, response);
-        let root_dir = temp.path().join("repo/.alan/agents/grader");
+        let root_dir = temp.path().join("definition");
         let mut spec = launch_spec(root_dir);
-        spec.handles = vec![SpawnHandle::Workspace];
         spec.runtime_overrides.tool_profile = Some(alan_agent_protocol::SpawnToolProfileOverride {
             allowed_tools: vec!["alpha".to_string()],
         });
-        let plan = build_child_namespace_assembly_plan(&parent, &spec, &parent.core_config)
-            .await
-            .unwrap();
+        let plan = build_child_namespace_assembly_plan(
+            &parent,
+            &spec,
+            &parent.core_config,
+            inherited_launch_context(&parent),
+        )
+        .await
+        .unwrap();
         let procfs = KernelProcFs::new();
         let spawner = procfs.for_spawner(
             None,
@@ -3128,15 +3106,19 @@ Body
         let requests = RecordedRequests::default();
         let response = completed_response("Child finished cleanly.");
         let parent = make_parent_state(&temp, requests, response);
-        let root_dir = temp.path().join("repo/.alan/agents/grader");
+        let root_dir = temp.path().join("definition");
         let mut spec = launch_spec(root_dir);
-        spec.handles = vec![SpawnHandle::Workspace];
         spec.runtime_overrides.tool_profile = Some(alan_agent_protocol::SpawnToolProfileOverride {
             allowed_tools: vec!["alpha".to_string()],
         });
-        let plan = build_child_namespace_assembly_plan(&parent, &spec, &parent.core_config)
-            .await
-            .unwrap();
+        let plan = build_child_namespace_assembly_plan(
+            &parent,
+            &spec,
+            &parent.core_config,
+            inherited_launch_context(&parent),
+        )
+        .await
+        .unwrap();
         let launch_procfs = KernelProcFs::new();
         let tool_runner =
             crate::tools::ToolProcessRunner::from_registry(&parent_test_tools(&parent.core_config));
@@ -3163,7 +3145,7 @@ Body
             handles,
             None,
             tool_runner.clone(),
-            plan.execution_binding(),
+            plan.execution_binding(temp.path().join("scratch")).unwrap(),
             None,
             "/bin/alan-agent",
         )
@@ -3234,7 +3216,7 @@ Body
             child_handles,
             launch.environment.process_context(),
             tool_runner.clone(),
-            plan.execution_binding(),
+            plan.execution_binding(temp.path().join("scratch")).unwrap(),
             None,
             "/bin/alan-agent",
         )
@@ -3355,15 +3337,19 @@ Body
         let requests = RecordedRequests::default();
         let response = completed_response("Child should be stopped externally.");
         let parent = make_parent_state(&temp, requests, response);
-        let root_dir = temp.path().join("repo/.alan/agents/grader");
+        let root_dir = temp.path().join("definition");
         let mut spec = launch_spec(root_dir);
-        spec.handles = vec![SpawnHandle::Workspace];
         spec.runtime_overrides.tool_profile = Some(alan_agent_protocol::SpawnToolProfileOverride {
             allowed_tools: vec!["alpha".to_string()],
         });
-        let plan = build_child_namespace_assembly_plan(&parent, &spec, &parent.core_config)
-            .await
-            .unwrap();
+        let plan = build_child_namespace_assembly_plan(
+            &parent,
+            &spec,
+            &parent.core_config,
+            inherited_launch_context(&parent),
+        )
+        .await
+        .unwrap();
         let launch_procfs = KernelProcFs::new();
         let tool_runner =
             crate::tools::ToolProcessRunner::from_registry(&parent_test_tools(&parent.core_config));
@@ -3389,7 +3375,7 @@ Body
             handles,
             None,
             tool_runner,
-            plan.execution_binding(),
+            plan.execution_binding(temp.path().join("scratch")).unwrap(),
             None,
             "/bin/alan-agent",
         )
@@ -3440,12 +3426,16 @@ Body
         let requests = RecordedRequests::default();
         let response = completed_response("Child finished cleanly.");
         let parent = make_parent_state(&temp, requests, response);
-        let root_dir = temp.path().join("repo/.alan/agents/grader");
-        let mut spec = launch_spec(root_dir);
-        spec.handles = vec![SpawnHandle::Workspace];
-        let plan = build_child_namespace_assembly_plan(&parent, &spec, &parent.core_config)
-            .await
-            .unwrap();
+        let root_dir = temp.path().join("definition");
+        let spec = launch_spec(root_dir);
+        let plan = build_child_namespace_assembly_plan(
+            &parent,
+            &spec,
+            &parent.core_config,
+            inherited_launch_context(&parent),
+        )
+        .await
+        .unwrap();
         let launch_procfs = KernelProcFs::new();
         let tool_runner =
             crate::tools::ToolProcessRunner::from_registry(&parent_test_tools(&parent.core_config));
@@ -3472,14 +3462,14 @@ Body
         );
         let factory = Arc::new(RecordingMountGrantApplicatorFactory::default());
 
-        let launch = spawn_child_namespace_runtime_environment(
+        let mut launch = spawn_child_namespace_runtime_environment(
             &launch_procfs,
             &runtime_procfs,
             &plan,
             handles,
             None,
             tool_runner,
-            plan.execution_binding(),
+            plan.execution_binding(temp.path().join("scratch")).unwrap(),
             Some(factory.clone()),
             "/bin/alan-agent",
         )
@@ -3530,14 +3520,20 @@ Body
             .await
             .unwrap();
         let mut parent = make_parent_state(&temp, requests, response);
-        parent.environment = namespace_environment_for_parent_test_with_route(routefs.clone());
+        let launch_context = inherited_launch_context(&parent);
+        parent.environment = namespace_environment_for_parent_test_with_route(routefs.clone())
+            .with_launch_context(launch_context);
 
-        let root_dir = temp.path().join("repo/.alan/agents/grader");
-        let mut spec = launch_spec(root_dir);
-        spec.handles = vec![SpawnHandle::Workspace];
-        let plan = build_child_namespace_assembly_plan(&parent, &spec, &parent.core_config)
-            .await
-            .unwrap();
+        let root_dir = temp.path().join("definition");
+        let spec = launch_spec(root_dir);
+        let plan = build_child_namespace_assembly_plan(
+            &parent,
+            &spec,
+            &parent.core_config,
+            inherited_launch_context(&parent),
+        )
+        .await
+        .unwrap();
         let launch_procfs = KernelProcFs::new();
         let runtime_procfs = launch_procfs.clone().with_runner(Arc::new(
             crate::tools::ToolProcessRunner::from_registry(&parent_test_tools(&parent.core_config)),
@@ -3575,7 +3571,7 @@ Body
             handles,
             None,
             crate::tools::ToolProcessRunner::from_registry(&parent_test_tools(&parent.core_config)),
-            plan.execution_binding(),
+            plan.execution_binding(temp.path().join("scratch")).unwrap(),
             None,
             "/bin/alan-agent",
         )
@@ -3604,11 +3600,7 @@ Body
     #[tokio::test]
     async fn child_tool_runner_rejects_unmounted_tool_executables() {
         let mut child_tools = ToolRegistry::new();
-        child_tools.register(MarkerTool::new(
-            "alpha",
-            "mounted-only",
-            crate::tools::ToolLocality::Global,
-        ));
+        child_tools.register(MarkerTool::new("alpha", "mounted-only"));
         let runner = crate::tools::ToolProcessRunner::from_registry(&child_tools);
         let invocation = alan_kernel::ProcessInvocation {
             pid: alan_kernel::Pid(1),
@@ -3634,7 +3626,7 @@ Body
         let requests = RecordedRequests::default();
         let response = completed_response("Snapshot captured.");
         let parent = make_parent_state(&temp, requests.clone(), response.clone());
-        let root_dir = temp.path().join("repo/.alan/agents/grader");
+        let root_dir = temp.path().join("definition");
         let mut spec = launch_spec(root_dir);
         spec.handles = vec![SpawnHandle::ConversationSnapshot];
 
@@ -3670,7 +3662,7 @@ Body
         let requests = RecordedRequests::default();
         let response = completed_response("Child finished cleanly.");
         let parent = make_parent_state(&temp, requests.clone(), response.clone());
-        let root_dir = temp.path().join("repo/.alan/agents/grader");
+        let root_dir = temp.path().join("definition");
         std::fs::write(
             root_dir.join("agent.toml"),
             r#"
@@ -3700,12 +3692,163 @@ tool_repeat_limit = 9
     }
 
     #[tokio::test]
+    async fn spawn_child_runtime_preserves_explicit_connection_profile() {
+        let temp = TempDir::new().unwrap();
+        let requests = RecordedRequests::default();
+        let response = completed_response("Child used the explicit profile.");
+        let mut parent = make_parent_state(&temp, requests.clone(), response.clone());
+        let metadata_path = temp.path().join("connections.toml");
+        let credentials_dir = temp.path().join("credentials");
+        let profile_id = "explicit-main";
+        let credential_id = "explicit-secret";
+        let connections = crate::ConnectionsFile {
+            credentials: BTreeMap::from([(
+                credential_id.to_string(),
+                crate::ConnectionCredential {
+                    kind: crate::CredentialKind::SecretString,
+                    provider_family: crate::config::LlmProvider::OpenAiResponses,
+                    label: "Explicit test credential".to_string(),
+                    backend: crate::default_credential_backend(crate::CredentialKind::SecretString)
+                        .to_string(),
+                },
+            )]),
+            profiles: BTreeMap::from([(
+                profile_id.to_string(),
+                crate::ConnectionProfile {
+                    provider: crate::config::LlmProvider::OpenAiResponses,
+                    label: Some("Explicit profile".to_string()),
+                    credential_id: Some(credential_id.to_string()),
+                    created_at: chrono::Utc::now(),
+                    updated_at: chrono::Utc::now(),
+                    source: "test".to_string(),
+                    settings: BTreeMap::from([("model".to_string(), "gpt-5.4".to_string())]),
+                },
+            )]),
+            ..crate::ConnectionsFile::default()
+        };
+        connections.save_to_path(&metadata_path).unwrap();
+        crate::SecretStore::from_directory(&credentials_dir)
+            .unwrap()
+            .save(credential_id, "sk-explicit")
+            .unwrap();
+        let connection_store =
+            crate::ConnectionStoreBindings::new(metadata_path, credentials_dir).unwrap();
+        parent.core_config.connection_profile = Some(profile_id.to_string());
+        parent
+            .core_config
+            .resolve_connection_profile(&connection_store)
+            .unwrap();
+        parent.runtime_config.connection_store = Some(connection_store);
+        let root_dir = temp.path().join("definition");
+        let seen_config = Arc::new(Mutex::new(None::<crate::Config>));
+        let seen_config_for_factory = seen_config.clone();
+
+        let child =
+            spawn_child_runtime_with_client_factory(&parent, launch_spec(root_dir), |config| {
+                *seen_config_for_factory.lock().unwrap() = Some(config.clone());
+                Ok(LlmClient::new(RecordingProvider::new(
+                    requests.clone(),
+                    response.clone(),
+                )))
+            })
+            .await
+            .unwrap();
+        let result = child.join().await.unwrap();
+
+        assert_eq!(result.status, ChildRuntimeStatus::Completed);
+        assert_eq!(
+            seen_config
+                .lock()
+                .unwrap()
+                .as_ref()
+                .and_then(|config| config.connection_profile.as_deref()),
+            Some(profile_id)
+        );
+    }
+
+    #[tokio::test]
+    async fn spawn_child_runtime_resolves_definition_connection_profile_before_llm_setup() {
+        let temp = TempDir::new().unwrap();
+        let requests = RecordedRequests::default();
+        let response = completed_response("Child used its definition profile.");
+        let mut parent = make_parent_state(&temp, requests.clone(), response.clone());
+        let metadata_path = temp.path().join("connections.toml");
+        let credentials_dir = temp.path().join("credentials");
+        let profile_id = "child-main";
+        let credential_id = "child-secret";
+        let connections = crate::ConnectionsFile {
+            credentials: BTreeMap::from([(
+                credential_id.to_string(),
+                crate::ConnectionCredential {
+                    kind: crate::CredentialKind::SecretString,
+                    provider_family: crate::config::LlmProvider::OpenAiResponses,
+                    label: "Child test credential".to_string(),
+                    backend: crate::default_credential_backend(crate::CredentialKind::SecretString)
+                        .to_string(),
+                },
+            )]),
+            profiles: BTreeMap::from([(
+                profile_id.to_string(),
+                crate::ConnectionProfile {
+                    provider: crate::config::LlmProvider::OpenAiResponses,
+                    label: Some("Child profile".to_string()),
+                    credential_id: Some(credential_id.to_string()),
+                    created_at: chrono::Utc::now(),
+                    updated_at: chrono::Utc::now(),
+                    source: "test".to_string(),
+                    settings: BTreeMap::from([(
+                        "model".to_string(),
+                        "gpt-child-profile".to_string(),
+                    )]),
+                },
+            )]),
+            ..crate::ConnectionsFile::default()
+        };
+        connections.save_to_path(&metadata_path).unwrap();
+        crate::SecretStore::from_directory(&credentials_dir)
+            .unwrap()
+            .save(credential_id, "sk-child")
+            .unwrap();
+        parent.runtime_config.connection_store =
+            Some(crate::ConnectionStoreBindings::new(metadata_path, credentials_dir).unwrap());
+        let root_dir = temp.path().join("definition");
+        std::fs::write(
+            root_dir.join("agent.toml"),
+            format!("connection_profile = \"{profile_id}\"\n"),
+        )
+        .unwrap();
+        let seen_config = Arc::new(Mutex::new(None::<crate::Config>));
+        let seen_config_for_factory = seen_config.clone();
+
+        let child =
+            spawn_child_runtime_with_client_factory(&parent, launch_spec(root_dir), |config| {
+                *seen_config_for_factory.lock().unwrap() = Some(config.clone());
+                Ok(LlmClient::new(RecordingProvider::new(
+                    requests.clone(),
+                    response.clone(),
+                )))
+            })
+            .await
+            .unwrap();
+        let result = child.join().await.unwrap();
+
+        assert_eq!(result.status, ChildRuntimeStatus::Completed);
+        let seen_config = seen_config.lock().unwrap().clone().unwrap();
+        assert_eq!(seen_config.connection_profile.as_deref(), Some(profile_id));
+        assert_eq!(seen_config.effective_model(), "gpt-child-profile");
+        assert_eq!(
+            seen_config.openai_responses_api_key.as_deref(),
+            Some("sk-child")
+        );
+    }
+
+    #[tokio::test]
     async fn spawn_child_runtime_applies_reasoning_effort_override_after_overlay() {
         let temp = TempDir::new().unwrap();
         let requests = RecordedRequests::default();
         let response = completed_response("Child finished cleanly.");
         let parent = make_parent_state(&temp, requests.clone(), response.clone());
-        let root_dir = temp.path().join("repo/.alan/agents/grader");
+        let root_dir = temp.path().join("definition");
         std::fs::write(
             root_dir.join("agent.toml"),
             r#"
@@ -3751,61 +3894,22 @@ model_reasoning_effort = "high"
     }
 
     #[test]
-    fn child_workspace_alan_dir_requires_memory_or_policy_context() {
-        let workspace_root = PathBuf::from("/tmp/repo");
-        let memory_dir = PathBuf::from("/tmp/repo/.alan/memory");
-        let runtime_memory_dir = PathBuf::from("/tmp/repo/.alan/runtime/stable/memory");
-        let mut spec = launch_spec(workspace_root.join(".alan/agents/grader"));
-
-        assert_eq!(
-            resolve_child_workspace_alan_dir(
-                &spec,
-                Some(workspace_root.as_path()),
-                Some(memory_dir.as_path()),
-            ),
-            None
-        );
-
-        spec.handles.push(SpawnHandle::ApprovalScope);
-        assert_eq!(
-            resolve_child_workspace_alan_dir(
-                &spec,
-                Some(workspace_root.as_path()),
-                Some(runtime_memory_dir.as_path()),
-            ),
-            Some(workspace_root.join(".alan"))
-        );
-
-        spec.handles.clear();
-        spec.runtime_overrides.policy_path = Some(".alan/agents/default/policy.yaml".to_string());
-        assert_eq!(
-            resolve_child_workspace_alan_dir(
-                &spec,
-                Some(workspace_root.as_path()),
-                Some(memory_dir.as_path()),
-            ),
-            Some(workspace_root.join(".alan"))
-        );
-    }
-
-    #[test]
     fn child_agent_config_requires_memory_handle_for_memory_dir() {
         let temp = TempDir::new().unwrap();
         let requests = RecordedRequests::default();
         let response = completed_response("Child finished cleanly.");
         let parent = make_parent_state(&temp, requests, response);
-        let root_dir = temp.path().join("repo/.alan/agents/grader");
+        let root_dir = temp.path().join("definition");
 
         let mut approval_spec = launch_spec(root_dir.clone());
         approval_spec.handles = vec![SpawnHandle::ApprovalScope];
         let approval_config = build_child_agent_config(&parent, &approval_spec);
-        assert_eq!(approval_config.core_config.memory.workspace_dir, None);
+        assert_eq!(approval_config.core_config.memory.store_dir, None);
 
         let mut override_spec = launch_spec(root_dir);
-        override_spec.runtime_overrides.policy_path =
-            Some(".alan/agents/default/policy.yaml".to_string());
+        override_spec.runtime_overrides.policy_path = Some("policy.yaml".to_string());
         let override_config = build_child_agent_config(&parent, &override_spec);
-        assert_eq!(override_config.core_config.memory.workspace_dir, None);
+        assert_eq!(override_config.core_config.memory.store_dir, None);
     }
 
     #[test]
@@ -3832,140 +3936,40 @@ model_reasoning_effort = "high"
         assert!(warnings.last().unwrap().ends_with("..."));
     }
 
-    #[tokio::test]
-    async fn spawn_child_runtime_does_not_bind_memory_dir_for_policy_context_only_launches() {
-        let temp = TempDir::new().unwrap();
-        let workspace_root = temp.path().join("repo");
-        std::fs::create_dir_all(workspace_root.join(".alan/agents/default")).unwrap();
-        std::fs::write(
-            workspace_root.join(".alan/agents/default/policy.yaml"),
-            "version: 1\nrules: []\n",
-        )
-        .unwrap();
-        let requests = RecordedRequests::default();
-        let response = completed_response("Child finished cleanly.");
-        let mut parent = make_parent_state(&temp, requests.clone(), response.clone());
-        parent.runtime_config.governance.policy_path =
-            Some(".alan/agents/default/policy.yaml".to_string());
-        let root_dir = workspace_root.join(".alan/agents/grader");
-        std::fs::write(
-            root_dir.join("agent.toml"),
-            format!(
-                "[memory]\nworkspace_dir = \"{}\"\n",
-                workspace_root.join(".alan/overlay-memory").display()
-            ),
-        )
-        .unwrap();
-        let seen_configs = Arc::new(Mutex::new(Vec::<crate::Config>::new()));
-        let seen_configs_for_factory = seen_configs.clone();
-
-        let mut approval_spec = launch_spec(root_dir.clone());
-        approval_spec.handles = vec![SpawnHandle::ApprovalScope];
-        let child = spawn_child_runtime_with_client_factory(&parent, approval_spec, |config| {
-            seen_configs_for_factory
-                .lock()
-                .unwrap()
-                .push(config.clone());
-            Ok(LlmClient::new(RecordingProvider::new(
-                requests.clone(),
-                response.clone(),
-            )))
-        })
-        .await
-        .unwrap();
-        let result = child.join().await.unwrap();
-        assert_eq!(result.status, ChildRuntimeStatus::Completed);
-
-        let mut override_spec = launch_spec(root_dir);
-        override_spec.runtime_overrides.policy_path =
-            Some(".alan/agents/default/policy.yaml".to_string());
-        let child = spawn_child_runtime_with_client_factory(&parent, override_spec, |config| {
-            seen_configs_for_factory
-                .lock()
-                .unwrap()
-                .push(config.clone());
-            Ok(LlmClient::new(RecordingProvider::new(
-                requests.clone(),
-                response.clone(),
-            )))
-        })
-        .await
-        .unwrap();
-        let result = child.join().await.unwrap();
-        assert_eq!(result.status, ChildRuntimeStatus::Completed);
-
-        let seen_configs = seen_configs.lock().unwrap();
-        assert_eq!(seen_configs.len(), 2);
-        assert_eq!(seen_configs[0].memory.workspace_dir, None);
-        assert_eq!(seen_configs[1].memory.workspace_dir, None);
-    }
-
     #[test]
-    fn child_workspace_root_uses_parent_workspace_instead_of_nested_tool_cwd() {
-        let temp = TempDir::new().unwrap();
-        let requests = RecordedRequests::default();
-        let response = completed_response("Child finished cleanly.");
-        let parent = make_parent_state(&temp, requests, response);
-        let workspace_root = temp.path().join("repo");
-        let mut spec = launch_spec(workspace_root.join(".alan/agents/grader"));
-        spec.handles = vec![SpawnHandle::Workspace];
-
-        assert_eq!(
-            resolve_child_workspace_root(&parent, &spec),
-            Some(workspace_root)
-        );
-    }
-
-    #[test]
-    fn child_workspace_root_uses_bound_parent_workspace_with_custom_memory_dir() {
-        let temp = TempDir::new().unwrap();
-        let requests = RecordedRequests::default();
-        let response = completed_response("Child finished cleanly.");
-        let mut parent = make_parent_state(&temp, requests, response);
-        let workspace_root = temp.path().join("repo");
-        parent.core_config.memory.workspace_dir = Some(temp.path().join("custom-memory"));
-
-        let mut spec = launch_spec(workspace_root.join(".alan/agents/grader"));
-        spec.handles = vec![SpawnHandle::Workspace];
-
-        assert_eq!(
-            resolve_child_workspace_root(&parent, &spec),
-            Some(workspace_root)
-        );
-    }
-
-    #[test]
-    fn child_launch_contract_rejects_cwd_outside_workspace_root() {
-        let workspace_root = PathBuf::from("/tmp/repo");
-        let mut spec = launch_spec(workspace_root.join(".alan/agents/grader"));
-        spec.launch.workspace_root = Some(workspace_root);
-        spec.launch.cwd = Some(PathBuf::from("/tmp/other-workspace/docs"));
-
-        let err = validate_child_launch_contract(&spec).unwrap_err();
-        assert!(
-            err.to_string().contains("cwd"),
-            "expected cwd validation error, got {err:#}"
-        );
-    }
-
-    #[test]
-    fn child_launch_contract_rejects_relative_launch_paths() {
-        let mut spec = launch_spec(PathBuf::from("/tmp/repo/.alan/agents/grader"));
-        spec.launch.workspace_root = Some(PathBuf::from("repo"));
-
-        let err = validate_child_launch_contract(&spec).unwrap_err();
-        assert!(
-            err.to_string().contains("absolute"),
-            "expected absolute-path validation error, got {err:#}"
-        );
-
-        spec.launch.workspace_root = Some(PathBuf::from("/tmp/repo"));
+    fn child_launch_contract_rejects_relative_namespace_cwd() {
+        let mut spec = launch_spec(PathBuf::from("/tmp/definition"));
         spec.launch.cwd = Some(PathBuf::from("docs"));
 
         let err = validate_child_launch_contract(&spec).unwrap_err();
         assert!(
-            err.to_string().contains("absolute"),
+            format!("{err:#}").contains("absolute"),
             "expected absolute-path validation error, got {err:#}"
+        );
+    }
+
+    #[test]
+    fn child_launch_contract_rejects_non_normal_namespace_cwd() {
+        for cwd in ["/mnt/source/../other", "/mnt/./source"] {
+            let mut spec = launch_spec(PathBuf::from("/tmp/definition"));
+            spec.launch.cwd = Some(PathBuf::from(cwd));
+
+            let err = validate_child_launch_contract(&spec).unwrap_err();
+            assert!(
+                err.to_string().contains("Invalid child-agent launch cwd"),
+                "expected normal-path validation error for {cwd}, got {err:#}"
+            );
+        }
+    }
+
+    #[test]
+    fn child_launch_contract_normalizes_repeated_namespace_separators() {
+        let mut spec = launch_spec(PathBuf::from("/tmp/definition"));
+        spec.launch.cwd = Some(PathBuf::from("/mnt//source///docs"));
+
+        assert_eq!(
+            validate_child_launch_contract(&spec).unwrap().as_deref(),
+            Some("/mnt/source/docs")
         );
     }
 
@@ -3994,7 +3998,7 @@ model_reasoning_effort = "high"
         let requests = RecordedRequests::default();
         let response = completed_response("finished after file heartbeat");
         let parent = make_parent_state(&temp, requests.clone(), response.clone());
-        let spec = launch_spec(temp.path().join("repo/.alan/agents/grader"));
+        let spec = launch_spec(temp.path().join("definition"));
         let mut child = spawn_child_runtime_with_client_factory(&parent, spec, |_| {
             Ok(LlmClient::new(
                 RecordingProvider::new(requests.clone(), response.clone())
@@ -4025,7 +4029,7 @@ model_reasoning_effort = "high"
         let requests = RecordedRequests::default();
         let response = completed_response("This should never run.");
         let parent = make_parent_state(&temp, requests, response);
-        let root_dir = temp.path().join("repo/.alan/agents/grader");
+        let root_dir = temp.path().join("definition");
         let spec = launch_spec(root_dir);
         let cancel = CancellationToken::new();
         cancel.cancel();
@@ -4061,7 +4065,7 @@ model_reasoning_effort = "high"
         let requests = RecordedRequests::default();
         let response = completed_response("This should not finish before timeout.");
         let parent = make_parent_state(&temp, requests.clone(), response.clone());
-        let root_dir = temp.path().join("repo/.alan/agents/grader");
+        let root_dir = temp.path().join("definition");
         let mut spec = launch_spec(root_dir);
         spec.launch.timeout_secs = Some(1);
 
@@ -4112,11 +4116,11 @@ model_reasoning_effort = "high"
             },
             launch: alan_agent_protocol::SpawnLaunchInputs {
                 task: "Review the repository changes".to_string(),
-                workspace_root: Some(temp.path().join("repo")),
+                cwd: Some(PathBuf::from("/mnt/source")),
                 timeout_secs: Some(30),
                 ..alan_agent_protocol::SpawnLaunchInputs::default()
             },
-            handles: vec![SpawnHandle::Workspace],
+            handles: Vec::new(),
             runtime_overrides: alan_agent_protocol::SpawnRuntimeOverrides::default(),
             delegated: None,
         };
@@ -4140,8 +4144,8 @@ model_reasoning_effort = "high"
         let temp = TempDir::new().unwrap();
         let requests = RecordedRequests::default();
         let response = completed_response("Package child target resolved after refresh.");
-        let workspace_root = temp.path().join("repo");
-        let package_root = workspace_root.join(".alan/agents/default/skills/repo-review");
+        let package_store = temp.path().join("package-store");
+        let package_root = package_store.join("repo-review");
         std::fs::create_dir_all(&package_root).unwrap();
         std::fs::write(
             package_root.join("SKILL.md"),
@@ -4157,8 +4161,8 @@ Body
 
         let capability_view = crate::skills::ResolvedCapabilityView::from_package_dirs(vec![
             crate::skills::ScopedPackageDir {
-                path: workspace_root.join(".alan/agents/default/skills"),
-                scope: crate::skills::SkillScope::Repo,
+                path: package_store,
+                scope: crate::skills::SkillScope::Descriptor,
             },
         ]);
         let parent = make_parent_state_with_capability_view(
@@ -4182,11 +4186,11 @@ Body
             },
             launch: alan_agent_protocol::SpawnLaunchInputs {
                 task: "Review the repository changes".to_string(),
-                workspace_root: Some(workspace_root),
+                cwd: Some(PathBuf::from("/mnt/source")),
                 timeout_secs: Some(30),
                 ..alan_agent_protocol::SpawnLaunchInputs::default()
             },
-            handles: vec![SpawnHandle::Workspace],
+            handles: Vec::new(),
             runtime_overrides: alan_agent_protocol::SpawnRuntimeOverrides::default(),
             delegated: None,
         };

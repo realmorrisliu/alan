@@ -1323,8 +1323,6 @@ mod tests {
         let root = InProcessTransport::new(Arc::new(MountFs::new(namespace)));
 
         RuntimeLoopState {
-            workspace_id: "test-workspace".to_string(),
-            workspace_root_dir: None,
             machine: AgentMachine::new(),
             current_submission_id: None,
             environment: NamespaceRuntimeEnvironment::new(root, "/agent/1", "default"),
@@ -1334,7 +1332,7 @@ mod tests {
                 compaction_keep_last: 1,
                 ..RuntimeConfig::default()
             },
-            workspace_persona_dirs: Vec::new(),
+            definition_persona_dirs: Vec::new(),
             prompt_cache: PromptAssemblyCache::new(Vec::new()),
             turn_state: TurnState::default(),
         }

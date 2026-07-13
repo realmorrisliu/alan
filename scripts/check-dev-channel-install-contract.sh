@@ -63,7 +63,7 @@ reject_pattern "scripts/install.sh" "ALAN_TUI_NAME|alan-tui" "install script mus
 require_pattern "scripts/uninstall.sh" "ALAN_CLI_NAME" "uninstall script must remove channel CLI name"
 reject_pattern "scripts/uninstall.sh" "ALAN_TUI_NAME|alan-tui" "uninstall script must not remove standalone TUI name"
 require_pattern "scripts/smoke-dev-channel-side-by-side.sh" "app.alanworks.macos.dev" "side-by-side smoke must identify dev bundle id"
-require_pattern "scripts/smoke-dev-channel-side-by-side.sh" ".alan/runtime/dev" "side-by-side smoke must verify dev workspace runtime state"
+require_pattern "scripts/smoke-dev-channel-side-by-side.sh" "System Store/dev" "side-by-side smoke must verify dev System Store isolation"
 require_pattern "packaging/homebrew/Casks/alan.rb.template" "app \"Alan\\.app\"" "Homebrew cask must remain stable-only"
 require_pattern "packaging/homebrew/Casks/alan.rb.template" "target: \"alan\"" "Homebrew cask must keep stable CLI target"
 reject_pattern "packaging/homebrew/Casks/alan.rb.template" "Alan Dev|alan-dev|alan-tui" "Homebrew cask must not publish dev or standalone TUI artifacts"

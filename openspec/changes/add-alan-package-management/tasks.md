@@ -1,5 +1,9 @@
 # add-alan-package-management — tasks
 
+> Blocked: these tasks require replacement after the workspace-runtime,
+> system-host, and Service Manager changes. They are retained temporarily as
+> planning input and MUST NOT be implemented as written.
+
 ## 1. Quartermaster resolution authority (retire multi-source enumeration)
 
 - [ ] 1.1 Define the Q resolution interface: given an agent context, return its resolved skill capability set from registered providers

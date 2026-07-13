@@ -20,17 +20,17 @@ pub const COMPATIBILITY_METADATA_DIR: &str = "agents";
 /// Compatibility metadata filename used by public Codex-style skills.
 pub const COMPATIBILITY_METADATA_FILE: &str = "openai.yaml";
 
-/// Skill scope determines precedence.
+/// Explicit Skill source determines precedence.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum SkillScope {
-    /// Repository-level skills (highest priority).
-    #[serde(rename = "repo")]
-    Repo,
-    /// User-level skills.
-    #[serde(rename = "user")]
-    User,
+    /// Skills passed through an Agent Definition or Skill descriptor (highest priority).
+    #[serde(rename = "descriptor")]
+    Descriptor,
+    /// Skills installed in the Alan OS Package Store.
+    #[serde(rename = "installed")]
+    Installed,
     /// Built-in first-party packages (lowest priority).
-    #[serde(rename = "builtin", alias = "system")]
+    #[serde(rename = "builtin")]
     Builtin,
 }
 
@@ -38,14 +38,14 @@ impl SkillScope {
     /// Priority order: lower number = higher priority.
     pub fn priority(&self) -> u8 {
         match self {
-            SkillScope::Repo => 0,
-            SkillScope::User => 1,
+            SkillScope::Descriptor => 0,
+            SkillScope::Installed => 1,
             SkillScope::Builtin => 2,
         }
     }
 }
 
-/// Filesystem package discovery directory with its effective overlay scope.
+/// Explicit package tree with its effective precedence scope.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScopedPackageDir {
     pub path: PathBuf,
@@ -1298,8 +1298,6 @@ pub struct DelegatedSkillInvocationRecord {
     pub target: String,
     pub task: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub workspace_root: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout_secs: Option<u64>,
@@ -2075,27 +2073,28 @@ description: A test skill
 
     #[test]
     fn test_skill_scope_priority() {
-        assert!(SkillScope::Repo.priority() < SkillScope::User.priority());
-        assert!(SkillScope::User.priority() < SkillScope::Builtin.priority());
-        assert_eq!(SkillScope::Repo.priority(), 0);
-        assert_eq!(SkillScope::User.priority(), 1);
+        assert!(SkillScope::Descriptor.priority() < SkillScope::Installed.priority());
+        assert!(SkillScope::Installed.priority() < SkillScope::Builtin.priority());
+        assert_eq!(SkillScope::Descriptor.priority(), 0);
+        assert_eq!(SkillScope::Installed.priority(), 1);
         assert_eq!(SkillScope::Builtin.priority(), 2);
     }
 
     #[test]
     fn test_skill_scope_serde() {
         // Test serialization/deserialization of SkillScope
-        let repo = serde_json::to_string(&SkillScope::Repo).unwrap();
-        assert_eq!(repo, "\"repo\"");
+        let descriptor = serde_json::to_string(&SkillScope::Descriptor).unwrap();
+        assert_eq!(descriptor, "\"descriptor\"");
 
-        let user: SkillScope = serde_json::from_str("\"user\"").unwrap();
-        assert!(matches!(user, SkillScope::User));
+        let installed: SkillScope = serde_json::from_str("\"installed\"").unwrap();
+        assert!(matches!(installed, SkillScope::Installed));
 
         let builtin = serde_json::to_string(&SkillScope::Builtin).unwrap();
         assert_eq!(builtin, "\"builtin\"");
 
-        let legacy_system: SkillScope = serde_json::from_str("\"system\"").unwrap();
-        assert!(matches!(legacy_system, SkillScope::Builtin));
+        assert!(serde_json::from_str::<SkillScope>("\"repo\"").is_err());
+        assert!(serde_json::from_str::<SkillScope>("\"user\"").is_err());
+        assert!(serde_json::from_str::<SkillScope>("\"system\"").is_err());
     }
 
     #[test]
@@ -2185,7 +2184,7 @@ enabled = true
             path: PathBuf::from("/tmp/test-skill/SKILL.md"),
             package_root: None,
             resource_root: None,
-            scope: SkillScope::Repo,
+            scope: SkillScope::Descriptor,
             tags: vec![],
             capabilities: Some(SkillCapabilities {
                 required_tools: vec!["read_file".to_string()],
@@ -2240,7 +2239,7 @@ enabled = true
             path: PathBuf::from("/tmp/jq-summary/SKILL.md"),
             package_root: None,
             resource_root: None,
-            scope: SkillScope::Repo,
+            scope: SkillScope::Descriptor,
             tags: vec![],
             capabilities: Some(SkillCapabilities {
                 required_tools: vec!["jq".to_string()],
@@ -2289,7 +2288,7 @@ enabled = true
             path: PathBuf::from("/tmp/test-skill/SKILL.md"),
             package_root: None,
             resource_root: None,
-            scope: SkillScope::Repo,
+            scope: SkillScope::Descriptor,
             tags: vec![],
             capabilities: Some(SkillCapabilities {
                 required_tools: vec!["read_file".to_string(), "bash".to_string()],
@@ -2351,7 +2350,7 @@ enabled = true
             path: PathBuf::from("/tmp/repo-review/SKILL.md"),
             package_root: None,
             resource_root: None,
-            scope: SkillScope::Repo,
+            scope: SkillScope::Descriptor,
             tags: vec![],
             capabilities: Some(SkillCapabilities {
                 required_tools: vec!["invoke_delegated_skill".to_string()],
@@ -2395,7 +2394,7 @@ enabled = true
             path: PathBuf::from("/tmp/skill-creator/SKILL.md"),
             package_root: None,
             resource_root: None,
-            scope: SkillScope::Repo,
+            scope: SkillScope::Descriptor,
             tags: vec![],
             capabilities: None,
             compatibility: Default::default(),
@@ -2444,7 +2443,7 @@ enabled = true
             path: PathBuf::from("/tmp/openai-docs/SKILL.md"),
             package_root: None,
             resource_root: None,
-            scope: SkillScope::Repo,
+            scope: SkillScope::Descriptor,
             tags: vec![],
             capabilities: None,
             compatibility: SkillCompatibility {
@@ -2531,7 +2530,7 @@ enabled = true
             path: PathBuf::from("/tmp/openai-docs/SKILL.md"),
             package_root: None,
             resource_root: None,
-            scope: SkillScope::Repo,
+            scope: SkillScope::Descriptor,
             tags: vec![],
             capabilities: None,
             compatibility: Default::default(),
@@ -2722,8 +2721,7 @@ enabled = true
             skill_id: "repo-review".to_string(),
             target: "repo-review".to_string(),
             task: "Review the current diff.".to_string(),
-            workspace_root: Some("/tmp/repo".to_string()),
-            cwd: Some("/tmp/repo/src".to_string()),
+            cwd: Some("/mnt/source/src".to_string()),
             timeout_secs: Some(600),
             result: DelegatedSkillResult::failed(
                 "Child-agent spawn support is not yet available.",
@@ -2736,8 +2734,7 @@ enabled = true
         let value = serde_json::to_value(&record).unwrap();
         assert_eq!(value["skill_id"], "repo-review");
         assert_eq!(value["target"], "repo-review");
-        assert_eq!(value["workspace_root"], "/tmp/repo");
-        assert_eq!(value["cwd"], "/tmp/repo/src");
+        assert_eq!(value["cwd"], "/mnt/source/src");
         assert_eq!(value["timeout_secs"], 600);
         assert_eq!(value["task"], "Review the current diff.");
         assert_eq!(value["result"]["status"], "failed");
@@ -2770,7 +2767,7 @@ enabled = true
             path: PathBuf::from("/tmp/repo-review/SKILL.md"),
             package_root: Some(PathBuf::from("/tmp/repo-review")),
             resource_root: None,
-            scope: SkillScope::Repo,
+            scope: SkillScope::Descriptor,
             tags: Vec::new(),
             capabilities: None,
             compatibility: SkillCompatibility::default(),
@@ -2805,7 +2802,7 @@ enabled = true
             path: PathBuf::from("/tmp/test-skill/SKILL.md"),
             package_root: None,
             resource_root: None,
-            scope: SkillScope::Repo,
+            scope: SkillScope::Descriptor,
             tags: vec![],
             capabilities: None,
             compatibility: SkillCompatibility {
@@ -2847,7 +2844,7 @@ enabled = true
             path: PathBuf::from("/tmp/test-skill/SKILL.md"),
             package_root: None,
             resource_root: None,
-            scope: SkillScope::Repo,
+            scope: SkillScope::Descriptor,
             tags: vec![],
             capabilities: None,
             compatibility: SkillCompatibility {
@@ -2965,7 +2962,7 @@ enabled = true
             path: PathBuf::from("/test/SKILL.md"),
             package_root: None,
             resource_root: None,
-            scope: SkillScope::Repo,
+            scope: SkillScope::Descriptor,
             tags: vec!["tag1".to_string(), "tag2".to_string()],
             capabilities: None,
             compatibility: Default::default(),

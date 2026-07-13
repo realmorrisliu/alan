@@ -123,7 +123,8 @@ fn local_rows_match_compact_settings_copy() {
         cli_tool_name: "alan-dev".to_string(),
         update_summary: "Manual local build".to_string(),
         update_detail: "Use manual updates.".to_string(),
-        alan_home_display_path: "~/.alan-dev".to_string(),
+        system_store_display_path: "~/Library/Application Support/Alan/System Store/dev"
+            .to_string(),
         application_support_display_path: "~/Library/Application Support/Alan Dev".to_string(),
         shell_control_namespace: "alan-dev-shell-control".to_string(),
     };

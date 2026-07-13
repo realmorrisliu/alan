@@ -48,35 +48,28 @@ crate ownership is recorded in [ADR-0025](adr/0025-target-crate-architecture.md)
 
 ## Agent definitions
 
-Agent definitions are layered from disk:
-
-```text
-~/.alan/agents/default/
-<workspace>/.alan/agents/default/
-~/.alan/agents/<name>/
-<workspace>/.alan/agents/<name>/
-```
-
-Each root may contribute `agent.toml`, `persona/`, `skills/`, and
-`policy.yaml`. Definition overlay does not imply Process ancestry.
+An Agent Definition is one explicitly supplied file tree containing optional
+`agent.toml`, `persona/`, `skills/`, and `policy.yaml`. A Process receives it by
+descriptor. Alan does not derive an overlay chain from Host cwd, home, or
+directory names, and definition layout does not imply Process ancestry.
 
 ## Persistence
 
-Generated workspace state is channel-scoped:
+Durable service state is channel-isolated in the Host-selected System Store:
 
 ```text
-.alan/runtime/<channel>/
-├── rollouts/
-├── memory/
-├── cache/
-├── shell-restore/
-├── metadata/
-└── tmp/
+Alan/System Store/<channel>/services/
+├── agent-runtime/{rollouts,checkpoints,cache,tmp,metadata}/
+├── connections/connections.toml
+├── memory/stores/
+└── packages/
 ```
 
 A rollout uses its own record id and records the producing Process path.
 Recovery creates a new Process and a new rollout from an explicitly selected
-source record. Working and Episodic Memory use Process provenance.
+source record. Memory Stores are explicit file trees and use Process
+provenance. Live Process tables, PIDs, descriptors, namespaces, and tasks are
+ephemeral.
 
 ## Boundary rules
 

@@ -70,8 +70,6 @@ pub(crate) const BUILTIN_REPO_CODING_PACKAGE_ID: &str = "builtin:alan-repo-codin
 pub(crate) const BUILTIN_SHELL_CONTROL_PACKAGE_ID: &str = "builtin:alan-shell-control";
 pub(crate) const BUILTIN_SKILL_CREATOR_PACKAGE_ID: &str = "builtin:alan-skill-creator";
 pub(crate) const BUILTIN_SWEBENCH_PACKAGE_ID: &str = "builtin:alan-swebench";
-pub(crate) const BUILTIN_WORKSPACE_INSPECT_PACKAGE_ID: &str = "builtin:alan-workspace-inspect";
-pub(crate) const BUILTIN_WORKSPACE_MANAGER_PACKAGE_ID: &str = "builtin:alan-workspace-manager";
 
 static MEMORY_PACKAGE_DIR: Dir<'_> = include_dir::include_dir!("$CARGO_MANIFEST_DIR/skills/memory");
 static PLAN_PACKAGE_DIR: Dir<'_> = include_dir::include_dir!("$CARGO_MANIFEST_DIR/skills/plan");
@@ -83,10 +81,6 @@ static SKILL_CREATOR_PACKAGE_DIR: Dir<'_> =
     include_dir::include_dir!("$CARGO_MANIFEST_DIR/skills/skill-creator");
 static SWEBENCH_PACKAGE_DIR: Dir<'_> =
     include_dir::include_dir!("$CARGO_MANIFEST_DIR/skills/swebench");
-static WORKSPACE_INSPECT_PACKAGE_DIR: Dir<'_> =
-    include_dir::include_dir!("$CARGO_MANIFEST_DIR/skills/workspace-inspect");
-static WORKSPACE_MANAGER_PACKAGE_DIR: Dir<'_> =
-    include_dir::include_dir!("$CARGO_MANIFEST_DIR/skills/workspace-manager");
 
 #[derive(Clone, Copy)]
 pub(crate) struct BuiltinPackageAsset {
@@ -104,7 +98,7 @@ pub(crate) struct MaterializedBuiltinPackage {
 static MATERIALIZED_BUILTIN_PACKAGES: OnceLock<HashMap<&'static str, MaterializedBuiltinPackage>> =
     OnceLock::new();
 
-pub(crate) const BUILTIN_PACKAGE_ASSETS: [BuiltinPackageAsset; 8] = [
+pub(crate) const BUILTIN_PACKAGE_ASSETS: [BuiltinPackageAsset; 6] = [
     BuiltinPackageAsset {
         package_id: BUILTIN_MEMORY_PACKAGE_ID,
         skill_label: "memory",
@@ -134,16 +128,6 @@ pub(crate) const BUILTIN_PACKAGE_ASSETS: [BuiltinPackageAsset; 8] = [
         package_id: BUILTIN_SWEBENCH_PACKAGE_ID,
         skill_label: "swebench",
         dir: &SWEBENCH_PACKAGE_DIR,
-    },
-    BuiltinPackageAsset {
-        package_id: BUILTIN_WORKSPACE_INSPECT_PACKAGE_ID,
-        skill_label: "workspace-inspect",
-        dir: &WORKSPACE_INSPECT_PACKAGE_DIR,
-    },
-    BuiltinPackageAsset {
-        package_id: BUILTIN_WORKSPACE_MANAGER_PACKAGE_ID,
-        skill_label: "workspace-manager",
-        dir: &WORKSPACE_MANAGER_PACKAGE_DIR,
     },
 ];
 
@@ -303,8 +287,8 @@ pub fn list_skills(registry: &SkillsRegistry, host_capabilities: &SkillHostCapab
 
     for skill in available {
         let scope_str = match skill.scope {
-            types::SkillScope::Repo => "[repo]",
-            types::SkillScope::User => "[user]",
+            types::SkillScope::Descriptor => "[descriptor]",
+            types::SkillScope::Installed => "[installed]",
             types::SkillScope::Builtin => "[builtin]",
         };
 
@@ -332,8 +316,8 @@ pub fn list_skills(registry: &SkillsRegistry, host_capabilities: &SkillHostCapab
 
         for (skill, issues) in unavailable {
             let scope_str = match skill.scope {
-                types::SkillScope::Repo => "[repo]",
-                types::SkillScope::User => "[user]",
+                types::SkillScope::Descriptor => "[descriptor]",
+                types::SkillScope::Installed => "[installed]",
                 types::SkillScope::Builtin => "[builtin]",
             };
             lines.push(format!(
@@ -364,8 +348,8 @@ pub fn list_skills(registry: &SkillsRegistry, host_capabilities: &SkillHostCapab
 
         for skill in disabled {
             let scope_str = match skill.scope {
-                types::SkillScope::Repo => "[repo]",
-                types::SkillScope::User => "[user]",
+                types::SkillScope::Descriptor => "[descriptor]",
+                types::SkillScope::Installed => "[installed]",
                 types::SkillScope::Builtin => "[builtin]",
             };
             lines.push(format!(
@@ -465,14 +449,14 @@ Body
 
         let registry = SkillsRegistry::load_package_dirs(&[ScopedPackageDir {
             path: repo_skills,
-            scope: SkillScope::Repo,
+            scope: SkillScope::Descriptor,
         }])
         .unwrap();
         let output = list_skills(&registry, &SkillHostCapabilities::default());
 
         assert!(output.contains("Available Skills"));
         assert!(output.contains("test-skill"));
-        assert!(output.contains("[repo]"));
+        assert!(output.contains("[descriptor]"));
         assert!(output.contains("Short desc"));
         assert!(output.contains("execution: inline(no_child_agent_exports)"));
     }
@@ -540,7 +524,7 @@ Body
 
         let registry = SkillsRegistry::load_package_dirs(&[ScopedPackageDir {
             path: repo_skills,
-            scope: SkillScope::Repo,
+            scope: SkillScope::Descriptor,
         }])
         .unwrap();
         let output = list_skills(&registry, &SkillHostCapabilities::default());
@@ -605,7 +589,7 @@ Body
             path: std::path::PathBuf::from("/test"),
             package_root: None,
             resource_root: None,
-            scope: SkillScope::Repo,
+            scope: SkillScope::Descriptor,
             tags: vec![],
             capabilities: None,
             compatibility: Default::default(),

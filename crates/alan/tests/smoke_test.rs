@@ -1,11 +1,12 @@
 //! File-native runtime smoke tests.
 
 use alan_agent_engine::{
-    LlmClient, RuntimeNamespaceSurface, WorkspaceRuntimeConfig,
-    spawn_with_llm_client_and_namespace_surface,
+    AgentProcessConfig, AgentRuntimeStoreBindings, HostMountGrant, LlmClient, ProcessLaunchContext,
+    RuntimeNamespaceSurface, spawn_with_llm_client_and_namespace_surface,
     spawn_with_llm_client_and_tools_and_namespace_surface,
 };
 use alan_agent_protocol::{ContentPart, Op, Submission, UiActivityState, UiEvent};
+use alan_kernel::{Access, Credentials, Namespace};
 use alan_llm::{GenerationResponse, MockLlmProvider, TokenUsage, ToolCall};
 use std::time::Duration;
 
@@ -75,7 +76,7 @@ async fn submit(controller: &alan_agent_engine::RuntimeController, text: &str) {
 #[tokio::test]
 async fn smoke_text_response_is_observable_from_agentfs() {
     let launch = spawn_with_llm_client_and_namespace_surface(
-        WorkspaceRuntimeConfig::default(),
+        AgentProcessConfig::default(),
         LlmClient::new(MockLlmProvider::new().with_response(response("Hello from AgentFS!"))),
     )
     .await
@@ -100,23 +101,49 @@ async fn smoke_text_response_is_observable_from_agentfs() {
 #[tokio::test]
 async fn smoke_tool_result_is_observable_from_action_files() {
     let temp = tempfile::tempdir().unwrap();
+    let store = tempfile::tempdir().unwrap();
     let file = temp.path().join("test.txt");
     std::fs::write(&file, "hello from smoke test").unwrap();
     let tool_response = GenerationResponse {
         tool_calls: vec![ToolCall {
             id: Some("call_001".to_string()),
             name: "read_file".to_string(),
-            arguments: serde_json::json!({"path": file}),
+            arguments: serde_json::json!({"path": "/mnt/source/test.txt"}),
         }],
         ..response("")
     };
     let mock = MockLlmProvider::new()
         .with_responses(vec![tool_response, response("I read the file for you.")]);
-    let mut config = WorkspaceRuntimeConfig::default();
+    let mut config = AgentProcessConfig::default();
     config.agent_config.runtime_config.governance = alan_agent_protocol::GovernanceConfig {
         profile: alan_agent_protocol::GovernanceProfile::Autonomous,
         policy_path: None,
     };
+    let grant = HostMountGrant::new("/mnt/source", temp.path(), Access::ReadOnly).unwrap();
+    let mut namespace = Namespace::new();
+    alan::host_mounts::apply_host_mount_declarations(&mut namespace, std::slice::from_ref(&grant))
+        .unwrap();
+    config.launch_context =
+        ProcessLaunchContext::new(namespace, Credentials::user("smoke-agent"), "/mnt/source")
+            .unwrap();
+    config.launch_context.host_mounts = vec![grant];
+    let store_bindings = AgentRuntimeStoreBindings {
+        rollouts: store.path().join("rollouts"),
+        checkpoints: store.path().join("checkpoints"),
+        cache: store.path().join("cache"),
+        tmp: store.path().join("tmp"),
+        metadata: store.path().join("metadata"),
+    };
+    for path in [
+        &store_bindings.rollouts,
+        &store_bindings.checkpoints,
+        &store_bindings.cache,
+        &store_bindings.tmp,
+        &store_bindings.metadata,
+    ] {
+        std::fs::create_dir_all(path).unwrap();
+    }
+    config.store_bindings = Some(store_bindings);
     let tools = alan_tools::create_tool_registry_with_core_tools(temp.path().to_path_buf());
     let launch =
         spawn_with_llm_client_and_tools_and_namespace_surface(config, LlmClient::new(mock), tools)
@@ -154,6 +181,18 @@ async fn smoke_tool_result_is_observable_from_action_files() {
         .unwrap(),
         "completed"
     );
+    let action_output = String::from_utf8(
+        shell
+            .cat(&format!(
+                "{}/actions/{action}/output",
+                launch.surface.agent_path()
+            ))
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(action_output.contains("/mnt/source/test.txt"));
+    assert!(!action_output.contains(temp.path().to_string_lossy().as_ref()));
     controller.shutdown().await.unwrap();
 }
 
@@ -164,7 +203,7 @@ async fn smoke_multiple_turns_resume_ui_stream_by_offset() {
         response("Second response"),
     ]);
     let launch = spawn_with_llm_client_and_namespace_surface(
-        WorkspaceRuntimeConfig::default(),
+        AgentProcessConfig::default(),
         LlmClient::new(mock),
     )
     .await

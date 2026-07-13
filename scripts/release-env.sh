@@ -99,8 +99,7 @@ alan_release_env_load() {
         "$repo_root/.release.env.local" \
         "$repo_root/.release.env" \
         "$repo_root/.env.local" \
-        "$repo_root/.env" \
-        "$HOME/.alan/release.env"
+        "$repo_root/.env"
     do
         if [[ -f "$candidate" ]]; then
             alan_release_env_load_file "$candidate"

@@ -158,40 +158,30 @@ assert_bundle_metadata() {
         fail "$app display name: expected $expected_display_name, got $actual_display_name"
 }
 
-assert_no_stable_workspace_runtime_state() {
-    local workspace="$1"
+assert_dev_system_store_isolated() {
+    local fixture_root="$1"
+    local fixture_home="$fixture_root/home"
+    local skill_source="$fixture_root/explicit-skill"
+    local dev_store="$fixture_home/Library/Application Support/Alan/System Store/dev"
+    local stable_store="$fixture_home/Library/Application Support/Alan/System Store/stable"
 
-    [[ -d "$workspace/.alan/runtime/dev/rollouts" ]] ||
-        fail "dev rollout directory was not created"
-    [[ -d "$workspace/.alan/runtime/dev/memory" ]] ||
-        fail "dev memory directory was not created"
-    [[ ! -e "$workspace/.alan/rollouts" ]] ||
-        fail "unscoped rollout path was created by dev smoke"
-    [[ ! -e "$workspace/.alan/runtime/stable" ]] ||
-        fail "stable runtime namespace was created by dev smoke"
-}
+    mkdir -p "$fixture_home" "$skill_source"
+    printf '%s\n' \
+        '---' \
+        'name: side-by-side-smoke' \
+        'description: Explicit dev-channel import smoke' \
+        '---' \
+        'Use only for channel isolation smoke.' >"$skill_source/SKILL.md"
 
-assert_registry_contains_alias() {
-    local registry_path="$1"
-    local alias="$2"
-    local label="$3"
+    HOME="$fixture_home" ALAN_INSTALL_CHANNEL=dev \
+        "$DEV_CLI" host legacy-state import skill "$skill_source" --name side-by-side-smoke
 
-    [[ -f "$registry_path" ]] || fail "$label registry was not written: $registry_path"
-    grep -Fq "\"alias\":\"$alias\"" "$registry_path" ||
-        grep -Fq "\"alias\": \"$alias\"" "$registry_path" ||
-        fail "$label registry does not contain current workspace alias '$alias'"
-}
-
-assert_registry_does_not_contain_alias() {
-    local registry_path="$1"
-    local alias="$2"
-    local label="$3"
-
-    if [[ -f "$registry_path" ]] &&
-        (grep -Fq "\"alias\":\"$alias\"" "$registry_path" ||
-            grep -Fq "\"alias\": \"$alias\"" "$registry_path"); then
-        fail "$label registry unexpectedly contains current workspace alias '$alias'"
-    fi
+    [[ -f "$dev_store/services/packages/imports/skills/side-by-side-smoke/SKILL.md" ]] ||
+        fail "dev System Store import was not created"
+    [[ ! -e "$stable_store" ]] ||
+        fail "dev import unexpectedly created stable System Store state"
+    [[ ! -e "$fixture_home/.alan" && ! -e "$fixture_home/.alan-dev" ]] ||
+        fail "dev import recreated a retired Alan home"
 }
 
 require_command osascript
@@ -209,8 +199,6 @@ stable_shell_dir="$tmp_root/alan-shell-control"
 dev_shell_dir="$tmp_root/alan-dev-shell-control"
 dev_shell_window_dir="$dev_shell_dir/window_main"
 dev_shell_socket="$dev_shell_window_dir/shell.sock"
-stable_registry="$HOME/.alan/registry.json"
-dev_registry="$HOME/.alan-dev/registry.json"
 
 stable_pids_before="$(bundle_process_ids "$STABLE_BUNDLE_ID")"
 if [[ -z "$stable_pids_before" ]]; then
@@ -276,12 +264,15 @@ assert_single_pid_set "$dev_pids_after_stable_relaunch" "Alan Dev after stable d
 [[ "$dev_pids_after_stable_relaunch" == "$dev_pids_second" ]] ||
     fail "second stable Alan launch changed dev PID set: before '$dev_pids_second', after '$dev_pids_after_stable_relaunch'"
 
-workspace="$(mktemp -d "$tmp_root/alan-dev-channel-smoke-workspace.XXXXXX")"
-workspace_alias="alan-dev-channel-smoke-$(basename "$workspace")"
-"$DEV_CLI" init --path "$workspace" --name "$workspace_alias" --silent
-assert_no_stable_workspace_runtime_state "$workspace"
-assert_registry_contains_alias "$dev_registry" "$workspace_alias" "dev"
-assert_registry_does_not_contain_alias "$stable_registry" "$workspace_alias" "stable"
+store_fixture="$(mktemp -d "$tmp_root/alan-dev-channel-system-store.XXXXXX")"
+assert_dev_system_store_isolated "$store_fixture"
+
+if "$DEV_CLI" init --help >/dev/null 2>&1; then
+    fail "retired alan init command is still available"
+fi
+if "$DEV_CLI" workspace --help >/dev/null 2>&1; then
+    fail "retired alan workspace command is still available"
+fi
 
 info "Dev channel side-by-side smoke passed."
 info "  stable pid(s): $stable_pids_second"
@@ -295,5 +286,4 @@ info "  frontmost after duplicate dev launch: $frontmost_after_duplicate_dev"
 info "  frontmost before duplicate stable launch: $frontmost_before_duplicate_stable"
 info "  frontmost after duplicate stable launch: $frontmost_after_duplicate_stable"
 info "  dev shell-control: $dev_shell_dir"
-info "  dev registry: $dev_registry"
-info "  dev workspace state: $workspace/.alan/runtime/dev"
+info "  isolated dev System Store fixture: $store_fixture/home/Library/Application Support/Alan/System Store/dev"

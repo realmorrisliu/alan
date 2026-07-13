@@ -19,9 +19,8 @@ use crate::evidence::{
 };
 
 use super::agent_loop::{NormalizedToolCall, RuntimeLoopState};
-use super::child_agents::bound_workspace_root;
 use super::loop_guard::ToolLoopGuard;
-use super::tool_policy::{ToolPolicyDecision, capability_label, evaluate_tool_policy};
+use super::tool_policy::{ToolPolicyDecision, evaluate_tool_policy};
 use super::turn_driver::{MAX_BUFFERED_INBAND_USER_INPUTS, TurnInputBroker};
 use super::turn_support::{check_turn_cancelled, tool_result_preview};
 use super::virtual_tools::{VirtualToolOutcome, try_handle_virtual_tool_call};
@@ -522,56 +521,6 @@ where
     let tool_capability = state
         .namespace_environment()
         .resolve_tool_capability(&tool_package, &tool_arguments);
-    if tool_package.is_workspace_local()
-        && (tool_call.name == "bash" || tool_capability != ToolCapability::Network)
-        && let Some((routing_payload, routing_preview, routing_audit)) =
-            workspace_routing_preflight(state, &tool_call.name, &tool_arguments, tool_capability)
-    {
-        state.machine.record_event(
-            "tool_policy_decision",
-            json!({
-                "tool_call_id": tool_call.id,
-                "tool_name": tool_call.name,
-                "policy_source": routing_audit.policy_source,
-                "rule_id": routing_audit.rule_id,
-                "action": routing_audit.action,
-                "reason": routing_audit.reason,
-                "capability": routing_audit.capability,
-                "sandbox_backend": routing_audit.sandbox_backend,
-                "path_mode": routing_audit.path_mode,
-            }),
-        );
-        emit(Event::Error {
-            message: routing_payload["error"]
-                .as_str()
-                .unwrap_or("Tool call requires workspace delegation")
-                .to_string(),
-            recoverable: true,
-        })
-        .await;
-        emit(Event::ToolCallCompleted {
-            presentation: None,
-            id: tool_call.id.clone(),
-            name: Some(tool_call.name.clone()),
-            success: Some(false),
-            result_preview: Some(routing_preview),
-            audit: Some(routing_audit.clone()),
-        })
-        .await;
-        state.machine.record_tool_call_with_audit(
-            &tool_call.name,
-            tool_arguments.clone(),
-            routing_payload.clone(),
-            false,
-            Some(routing_audit),
-        );
-        state
-            .machine
-            .add_tool_message(&tool_call.id, &tool_call.name, routing_payload);
-        return Ok(ToolOrchestratorOutcome::ContinueToolBatch {
-            refresh_context: false,
-        });
-    }
     let current_tool_cwd = state.default_tool_cwd();
     let policy_decision = maybe_allow_approved_tool_escalation_replay(
         evaluate_tool_policy(
@@ -1213,151 +1162,6 @@ where
     }
 }
 
-fn workspace_routing_preflight(
-    state: &RuntimeLoopState,
-    tool_name: &str,
-    arguments: &Value,
-    capability: ToolCapability,
-) -> Option<(Value, String, alan_agent_protocol::ToolDecisionAudit)> {
-    let workspace_root = bound_workspace_root(state)?;
-    let sandbox_spec = state
-        .namespace_environment()
-        .tool_execution_binding()
-        .and_then(|binding| binding.sandbox_spec)
-        .unwrap_or_else(|| crate::tools::SandboxSpec::seed(workspace_root.clone()));
-    let sandbox = crate::tools::Sandbox::from_spec(sandbox_spec);
-    let current_cwd = state
-        .default_tool_cwd()
-        .unwrap_or_else(|| workspace_root.clone());
-
-    let reason = if tool_name == "bash" {
-        let command = arguments.get("command")?.as_str()?;
-        sandbox.bash_workspace_routing_reason(command, &current_cwd)?
-    } else {
-        path_argument_workspace_routing_reason(&sandbox, &current_cwd, tool_name, arguments)?
-    };
-
-    let error = format!(
-        "Tool call targets local paths outside the current workspace and requires workspace delegation: {reason}"
-    );
-    let payload = json!({
-        "status": "requires_workspace_delegation",
-        "error": error,
-        "current_workspace_root": workspace_root,
-        "current_cwd": current_cwd,
-    });
-    let preview = format!(
-        "requires_workspace_delegation: {}",
-        payload["error"]
-            .as_str()
-            .unwrap_or("workspace delegation required")
-    );
-    let audit = alan_agent_protocol::ToolDecisionAudit {
-        policy_source: "workspace_routing_preflight".to_string(),
-        rule_id: None,
-        action: "deny".to_string(),
-        reason: payload["error"].as_str().map(ToString::to_string),
-        capability: capability_label(capability).to_string(),
-        sandbox_backend: crate::tools::active_backend_name().to_string(),
-        path_mode: Some(crate::tools::active_backend_path_mode().to_string()),
-    };
-    Some((payload, preview, audit))
-}
-
-fn path_argument_workspace_routing_reason(
-    sandbox: &crate::tools::Sandbox,
-    cwd: &std::path::Path,
-    tool_name: &str,
-    arguments: &Value,
-) -> Option<String> {
-    let mut candidates = Vec::new();
-    for key in ["path", "directory", "cwd", "workspace_root", "base_path"] {
-        if let Some(value) = arguments.get(key).and_then(Value::as_str) {
-            candidates.push((key, value));
-        }
-    }
-    if let Some(paths) = arguments.get("paths").and_then(Value::as_array) {
-        for value in paths {
-            if let Some(path) = value.as_str() {
-                candidates.push(("paths", path));
-            }
-        }
-    }
-
-    for (key, raw) in candidates {
-        let path = raw.trim();
-        if path.is_empty() || path.contains("://") {
-            continue;
-        }
-        if path.starts_with('~') {
-            return Some(format!(
-                "argument `{key}` references HOME path outside workspace: {path}"
-            ));
-        }
-
-        let candidate = if std::path::Path::new(path).is_absolute() {
-            std::path::PathBuf::from(path)
-        } else {
-            cwd.join(path)
-        };
-        if !sandbox.is_in_workspace(&candidate) {
-            return Some(format!(
-                "argument `{key}` references path outside workspace: {}",
-                candidate.display()
-            ));
-        }
-    }
-
-    if tool_name == "glob"
-        && let Some(reason) = glob_pattern_workspace_routing_reason(sandbox, cwd, arguments)
-    {
-        return Some(reason);
-    }
-
-    None
-}
-
-fn glob_pattern_workspace_routing_reason(
-    sandbox: &crate::tools::Sandbox,
-    cwd: &std::path::Path,
-    arguments: &Value,
-) -> Option<String> {
-    let pattern = arguments.get("pattern").and_then(Value::as_str)?.trim();
-    if pattern.is_empty() || pattern.contains("://") {
-        return None;
-    }
-    if pattern.starts_with('~') {
-        return Some(format!(
-            "argument `pattern` references HOME path outside workspace: {pattern}"
-        ));
-    }
-
-    let base_path = match arguments.get("path").and_then(Value::as_str) {
-        Some(path) if !path.trim().is_empty() => {
-            if std::path::Path::new(path).is_absolute() {
-                std::path::PathBuf::from(path)
-            } else {
-                cwd.join(path)
-            }
-        }
-        _ => cwd.to_path_buf(),
-    };
-    let candidate = if std::path::Path::new(pattern).is_absolute() {
-        std::path::PathBuf::from(pattern)
-    } else {
-        base_path.join(pattern)
-    };
-
-    if !sandbox.is_in_workspace(&candidate) {
-        return Some(format!(
-            "argument `pattern` references glob target outside workspace: {}",
-            candidate.display()
-        ));
-    }
-
-    None
-}
-
 async fn orchestrate_tool_batch_with_guard<E, F>(
     state: &mut RuntimeLoopState,
     loop_guard: &mut ToolLoopGuard,
@@ -1579,6 +1383,7 @@ mod tests {
     use alan_shell::Shell;
     use async_trait::async_trait;
     use std::collections::HashMap;
+    use std::path::PathBuf;
     use std::sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
@@ -1917,47 +1722,6 @@ mod tests {
         }
     }
 
-    struct StaticResultTool {
-        name: &'static str,
-        capability: ToolCapability,
-        workspace_local: bool,
-    }
-
-    impl Tool for StaticResultTool {
-        fn name(&self) -> &str {
-            self.name
-        }
-
-        fn description(&self) -> &str {
-            "Static tool used for tool orchestrator tests"
-        }
-
-        fn parameters_schema(&self) -> Value {
-            json!({
-                "type": "object",
-                "properties": {
-                    "command": {"type": "string"}
-                }
-            })
-        }
-
-        fn execute(&self, arguments: Value, _ctx: &ToolContext) -> ToolResult {
-            Box::pin(async move { Ok(json!({ "ok": true, "arguments": arguments })) })
-        }
-
-        fn capability(&self, _arguments: &Value) -> ToolCapability {
-            self.capability
-        }
-
-        fn locality(&self) -> crate::tools::ToolLocality {
-            if self.workspace_local {
-                crate::tools::ToolLocality::WorkspaceLocal
-            } else {
-                crate::tools::ToolLocality::Global
-            }
-        }
-    }
-
     fn create_test_state() -> RuntimeLoopState {
         let config = Config::default();
         let machine = AgentMachine::new();
@@ -1971,14 +1735,12 @@ mod tests {
         let root = InProcessTransport::new(Arc::new(MountFs::new(namespace)));
 
         RuntimeLoopState {
-            workspace_id: "test-workspace".to_string(),
-            workspace_root_dir: None,
             machine,
             current_submission_id: None,
             environment: NamespaceRuntimeEnvironment::new(root, "/agent/1", "default"),
             core_config: config,
             runtime_config,
-            workspace_persona_dirs: Vec::new(),
+            definition_persona_dirs: Vec::new(),
             prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
             turn_state: TurnState::default(),
         }
@@ -2021,7 +1783,6 @@ mod tests {
                     parameters: json!({"type": "object"}),
                     capability: ToolCapability::Read,
                     capability_is_argument_dependent: false,
-                    locality: super::super::tool_packages::ToolPackageLocality::Global,
                     timeout_secs: 30,
                     execution: super::super::tool_packages::ToolExecutionHints {
                         arguments: "json_first_arg".to_string(),
@@ -2062,14 +1823,12 @@ mod tests {
         let root = InProcessTransport::new(Arc::new(MountFs::new(root_namespace)));
         let shell = Shell::new(root.clone());
         let state = RuntimeLoopState {
-            workspace_id: "test-workspace".to_string(),
-            workspace_root_dir: None,
             machine: AgentMachine::new(),
             current_submission_id: None,
             environment: NamespaceRuntimeEnvironment::new(root, "/agent/1", "default"),
             core_config: Config::default(),
             runtime_config: super::super::RuntimeConfig::default(),
-            workspace_persona_dirs: Vec::new(),
+            definition_persona_dirs: Vec::new(),
             prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
             turn_state: TurnState::default(),
         };
@@ -2176,7 +1935,7 @@ mod tests {
 
     fn create_test_state_with_machine_tools_provider_and_agent_path<P: LlmProvider + 'static>(
         machine: AgentMachine,
-        tools: ToolRegistry,
+        mut tools: ToolRegistry,
         provider: P,
         agent_path: &str,
     ) -> RuntimeLoopState {
@@ -2217,9 +1976,26 @@ mod tests {
             );
         }
 
+        let launch_context = crate::ProcessLaunchContext::new(
+            process_namespace.clone(),
+            Credentials::user("test-agent"),
+            "/mnt/source",
+        )
+        .unwrap()
+        .with_host_mount(
+            crate::HostMountGrant::new("/mnt/source", "/tmp", Access::ReadWrite).unwrap(),
+        );
+        let binding = crate::tools::ToolExecutionBinding::from_launch_context(
+            &launch_context,
+            PathBuf::from("/tmp/alan-agent-engine-test-scratch"),
+        )
+        .unwrap();
+        tools.set_default_execution_binding(binding.clone());
+
         let procfs = ProcFs::new().with_runner(Arc::new(RegistryToolRunner::new(tools.clone())));
         let agent_root = Arc::new(alan_agentfs::AgentRootFs::new(Arc::new(procfs.clone())));
         let tool_runner = crate::tools::ToolProcessRunner::from_registry(&tools);
+        tool_runner.register_process_binding(alan_kernel::Pid(1), binding);
         let spawner_procfs = Arc::new(procfs.for_spawner(
             None,
             process_namespace.clone(),
@@ -2236,33 +2012,17 @@ mod tests {
             ..Default::default()
         };
         RuntimeLoopState {
-            workspace_id: "test-workspace".to_string(),
-            workspace_root_dir: None,
             machine,
             current_submission_id: None,
             environment: NamespaceRuntimeEnvironment::new(root, agent_path, "default")
+                .with_launch_context(launch_context)
                 .with_process_context(procfs, agent_root, alan_kernel::Pid(1), tool_runner),
             core_config: config,
             runtime_config: super::super::RuntimeConfig::default(),
-            workspace_persona_dirs: Vec::new(),
+            definition_persona_dirs: Vec::new(),
             prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
             turn_state: TurnState::default(),
         }
-    }
-
-    fn bind_test_tool_workspace(
-        state: &mut RuntimeLoopState,
-        workspace_root: &std::path::Path,
-        cwd: &std::path::Path,
-    ) {
-        state.workspace_root_dir = Some(workspace_root.to_path_buf());
-        assert!(state.namespace_environment().set_tool_execution_binding(
-            crate::tools::ToolExecutionBinding::with_workspace(
-                workspace_root.to_path_buf(),
-                cwd.to_path_buf(),
-                workspace_root.join(".alan/runtime/test/tmp"),
-            ),
-        ));
     }
 
     async fn execute_single_tool_call(
@@ -3172,460 +2932,6 @@ mod tests {
             plan_updates.len(),
             2,
             "Expected two update_plan completion events"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_cross_workspace_bash_is_blocked_before_policy_escalation() {
-        let workspace_root = tempfile::TempDir::new().unwrap();
-        let other_workspace = tempfile::TempDir::new().unwrap();
-        let machine = AgentMachine::new();
-        let mut tools = ToolRegistry::new();
-        tools.register(StaticResultTool {
-            name: "bash",
-            capability: ToolCapability::Unknown,
-            workspace_local: true,
-        });
-        let mut state = create_test_state_with_machine_and_tools(machine, tools);
-        state.core_config.memory.workspace_dir = Some(workspace_root.path().join(".alan/memory"));
-        bind_test_tool_workspace(&mut state, workspace_root.path(), workspace_root.path());
-
-        let (_, events) = execute_single_tool_call(
-            &mut state,
-            "call-cross-workspace",
-            "bash",
-            json!({
-                "command": format!("cd {} && rg -n \"full steward mode\" .", other_workspace.path().display()),
-                "timeout": 60
-            }),
-        )
-        .await;
-
-        let completed = events.iter().find_map(|event| match event {
-            Event::ToolCallCompleted {
-                success,
-                result_preview,
-                audit,
-                ..
-            } => Some((success, result_preview, audit)),
-            _ => None,
-        });
-        let Some((success, result_preview, audit)) = completed else {
-            panic!("expected ToolCallCompleted event");
-        };
-        assert_eq!(*success, Some(false));
-        assert!(
-            result_preview
-                .as_deref()
-                .unwrap_or_default()
-                .contains("requires_workspace_delegation"),
-            "expected delegation-required preview, got {:?}",
-            result_preview
-        );
-        assert!(
-            audit
-                .as_ref()
-                .is_some_and(|audit| audit.policy_source == "workspace_routing_preflight")
-        );
-        assert!(
-            events.iter().all(|event| {
-                !matches!(
-                    event,
-                    Event::Yield {
-                        kind: alan_agent_protocol::YieldKind::Confirmation,
-                        ..
-                    }
-                )
-            }),
-            "cross-workspace local bash should not trigger confirmation escalation"
-        );
-    }
-
-    #[test]
-    fn test_approved_mount_root_bypasses_workspace_routing_preflight() {
-        let workspace_root = tempfile::TempDir::new().unwrap();
-        let approved_root = tempfile::TempDir::new().unwrap();
-        let machine = AgentMachine::new();
-        let mut tools = ToolRegistry::new();
-        tools.register(StaticResultTool {
-            name: "bash",
-            capability: ToolCapability::Unknown,
-            workspace_local: true,
-        });
-        let mut state = create_test_state_with_machine_and_tools(machine, tools);
-        bind_test_tool_workspace(&mut state, workspace_root.path(), workspace_root.path());
-        let arguments = json!({
-            "command": format!("cd {} && pwd", approved_root.path().display()),
-            "timeout": 60
-        });
-        let blocked =
-            workspace_routing_preflight(&state, "bash", &arguments, ToolCapability::Unknown);
-        assert!(
-            blocked.is_some(),
-            "unapproved host root should require delegation"
-        );
-
-        assert!(
-            state
-                .namespace_environment()
-                .add_tool_sandbox_writable_root(approved_root.path().to_path_buf())
-        );
-
-        let preflight =
-            workspace_routing_preflight(&state, "bash", &arguments, ToolCapability::Unknown);
-
-        assert!(preflight.is_none(), "approved root should not be delegated");
-    }
-
-    #[tokio::test]
-    async fn test_cross_workspace_bash_with_network_fragment_still_hits_workspace_routing_preflight()
-     {
-        let workspace_root = tempfile::TempDir::new().unwrap();
-        let other_workspace = tempfile::TempDir::new().unwrap();
-        let machine = AgentMachine::new();
-        let mut tools = ToolRegistry::new();
-        tools.register(StaticResultTool {
-            name: "bash",
-            capability: ToolCapability::Network,
-            workspace_local: true,
-        });
-        let mut state = create_test_state_with_machine_and_tools(machine, tools);
-        state.core_config.memory.workspace_dir = Some(workspace_root.path().join(".alan/memory"));
-        bind_test_tool_workspace(&mut state, workspace_root.path(), workspace_root.path());
-
-        let (_, events) = execute_single_tool_call(
-            &mut state,
-            "call-cross-workspace-network-bash",
-            "bash",
-            json!({
-                "command": format!(
-                    "cd {} && curl -L https://example.com",
-                    other_workspace.path().display()
-                ),
-                "timeout": 60
-            }),
-        )
-        .await;
-
-        let completed = events.iter().find_map(|event| match event {
-            Event::ToolCallCompleted {
-                success,
-                result_preview,
-                audit,
-                ..
-            } => Some((success, result_preview, audit)),
-            _ => None,
-        });
-        let Some((success, result_preview, audit)) = completed else {
-            panic!("expected ToolCallCompleted event");
-        };
-        assert_eq!(*success, Some(false));
-        assert!(
-            result_preview
-                .as_deref()
-                .unwrap_or_default()
-                .contains("requires_workspace_delegation"),
-            "expected delegation-required preview, got {:?}",
-            result_preview
-        );
-        assert!(
-            audit
-                .as_ref()
-                .is_some_and(|audit| audit.policy_source == "workspace_routing_preflight")
-        );
-    }
-
-    #[tokio::test]
-    async fn test_path_prefix_policy_uses_default_tool_cwd() {
-        let temp = tempfile::TempDir::new().unwrap();
-        let workspace_root = temp.path().join("repo");
-        let workspace_alan = workspace_root.join(".alan");
-        std::fs::create_dir_all(workspace_root.join("src")).unwrap();
-        std::fs::create_dir_all(&workspace_alan).unwrap();
-        std::fs::write(
-            workspace_alan.join("policy.yaml"),
-            r#"
-rules:
-  - id: review-deploy
-    tool: "*"
-    capability: write
-    match_path_prefix: "deploy/"
-    action: deny
-    reason: deploy config updates are blocked
-default_action: allow
-"#,
-        )
-        .unwrap();
-
-        let machine = AgentMachine::new();
-        let mut tools = ToolRegistry::new();
-        tools.register(StaticResultTool {
-            name: "write_file",
-            capability: ToolCapability::Write,
-            workspace_local: true,
-        });
-        let mut state = create_test_state_with_machine_and_tools(machine, tools);
-        state.core_config.memory.workspace_dir = Some(workspace_alan.join("memory"));
-        state.runtime_config.policy_engine =
-            crate::policy::PolicyEngine::load_or_default(Some(&workspace_alan));
-        bind_test_tool_workspace(&mut state, &workspace_root, &workspace_root.join("src"));
-
-        let (_, events) = execute_single_tool_call(
-            &mut state,
-            "call-deploy-write",
-            "write_file",
-            json!({"path": "../deploy/prod.yaml", "content": "version = 2"}),
-        )
-        .await;
-
-        let completed = events.iter().find_map(|event| match event {
-            Event::ToolCallCompleted {
-                success,
-                result_preview,
-                audit,
-                ..
-            } => Some((success, result_preview, audit)),
-            _ => None,
-        });
-        let Some((success, result_preview, audit)) = completed else {
-            panic!("expected ToolCallCompleted event");
-        };
-        assert_eq!(*success, Some(false));
-        assert!(
-            result_preview
-                .as_deref()
-                .unwrap_or_default()
-                .contains("deploy config updates are blocked"),
-            "expected policy block preview, got {:?}",
-            result_preview
-        );
-        assert!(audit.as_ref().is_some_and(|audit| {
-            audit.rule_id.as_deref() == Some("review-deploy") && audit.action == "deny"
-        }));
-    }
-
-    #[tokio::test]
-    async fn test_cross_workspace_bash_routing_uses_bound_workspace_root_with_custom_memory_dir() {
-        let workspace_root = tempfile::TempDir::new().unwrap();
-        let other_workspace = tempfile::TempDir::new().unwrap();
-        let custom_memory_root = tempfile::TempDir::new().unwrap();
-        let machine = AgentMachine::new();
-        let mut tools = ToolRegistry::new();
-        tools.register(StaticResultTool {
-            name: "bash",
-            capability: ToolCapability::Unknown,
-            workspace_local: true,
-        });
-        let mut state = create_test_state_with_machine_and_tools(machine, tools);
-        state.core_config.memory.workspace_dir = Some(custom_memory_root.path().join("memory"));
-        bind_test_tool_workspace(&mut state, workspace_root.path(), workspace_root.path());
-
-        let (_, events) = execute_single_tool_call(
-            &mut state,
-            "call-cross-workspace-custom-memory-bash",
-            "bash",
-            json!({
-                "command": format!(
-                    "cd {} && rg -n \"full steward mode\" .",
-                    other_workspace.path().display()
-                ),
-                "timeout": 60
-            }),
-        )
-        .await;
-
-        let completed = events.iter().find_map(|event| match event {
-            Event::ToolCallCompleted {
-                success,
-                result_preview,
-                audit,
-                ..
-            } => Some((success, result_preview, audit)),
-            _ => None,
-        });
-        let Some((success, result_preview, audit)) = completed else {
-            panic!("expected ToolCallCompleted event");
-        };
-        assert_eq!(*success, Some(false));
-        assert!(
-            result_preview
-                .as_deref()
-                .unwrap_or_default()
-                .contains("requires_workspace_delegation"),
-            "expected delegation-required preview, got {:?}",
-            result_preview
-        );
-        assert!(
-            audit
-                .as_ref()
-                .is_some_and(|audit| audit.policy_source == "workspace_routing_preflight")
-        );
-    }
-
-    #[tokio::test]
-    async fn test_cross_workspace_glob_pattern_hits_workspace_routing_preflight() {
-        let root = tempfile::TempDir::new().unwrap();
-        let workspace_root = root.path().join("alpha");
-        let other_workspace = root.path().join("beta");
-        std::fs::create_dir_all(&workspace_root).unwrap();
-        std::fs::create_dir_all(other_workspace.join("docs")).unwrap();
-
-        let machine = AgentMachine::new();
-        let mut tools = ToolRegistry::new();
-        tools.register(StaticResultTool {
-            name: "glob",
-            capability: ToolCapability::Read,
-            workspace_local: true,
-        });
-        let mut state = create_test_state_with_machine_and_tools(machine, tools);
-        state.core_config.memory.workspace_dir = Some(workspace_root.join(".alan/memory"));
-        bind_test_tool_workspace(&mut state, &workspace_root, &workspace_root);
-
-        let (_, events) = execute_single_tool_call(
-            &mut state,
-            "call-cross-workspace-glob",
-            "glob",
-            json!({
-                "pattern": "../beta/docs/**/*.md"
-            }),
-        )
-        .await;
-
-        let completed = events.iter().find_map(|event| match event {
-            Event::ToolCallCompleted {
-                success,
-                result_preview,
-                audit,
-                ..
-            } => Some((success, result_preview, audit)),
-            _ => None,
-        });
-        let Some((success, result_preview, audit)) = completed else {
-            panic!("expected ToolCallCompleted event");
-        };
-        assert_eq!(*success, Some(false));
-        assert!(
-            result_preview
-                .as_deref()
-                .unwrap_or_default()
-                .contains("requires_workspace_delegation"),
-            "expected delegation-required preview, got {:?}",
-            result_preview
-        );
-        assert!(
-            audit
-                .as_ref()
-                .is_some_and(|audit| audit.policy_source == "workspace_routing_preflight")
-        );
-    }
-
-    #[tokio::test]
-    async fn test_glob_pattern_workspace_routing_respects_path_base() {
-        let root = tempfile::TempDir::new().unwrap();
-        let workspace_root = root.path().join("alpha");
-        std::fs::create_dir_all(workspace_root.join("search-root")).unwrap();
-        std::fs::create_dir_all(workspace_root.join("docs")).unwrap();
-
-        let machine = AgentMachine::new();
-        let mut tools = ToolRegistry::new();
-        tools.register(StaticResultTool {
-            name: "glob",
-            capability: ToolCapability::Read,
-            workspace_local: true,
-        });
-        let mut state = create_test_state_with_machine_and_tools(machine, tools);
-        state.core_config.memory.workspace_dir = Some(workspace_root.join(".alan/memory"));
-        bind_test_tool_workspace(&mut state, &workspace_root, &workspace_root);
-
-        let (_, events) = execute_single_tool_call(
-            &mut state,
-            "call-glob-with-relative-parent-under-path",
-            "glob",
-            json!({
-                "path": "search-root",
-                "pattern": "../docs/**/*.md"
-            }),
-        )
-        .await;
-
-        let completed = events.iter().find_map(|event| match event {
-            Event::ToolCallCompleted {
-                success,
-                result_preview,
-                ..
-            } => Some((success, result_preview)),
-            _ => None,
-        });
-        let Some((success, result_preview)) = completed else {
-            panic!("expected ToolCallCompleted event");
-        };
-        assert_eq!(*success, Some(true));
-        assert!(
-            !result_preview
-                .as_deref()
-                .unwrap_or_default()
-                .contains("requires_workspace_delegation"),
-            "glob preflight should resolve pattern relative to the requested base path"
-        );
-        assert!(
-            events.iter().all(|event| match event {
-                Event::Error { message, .. } => !message.contains("requires workspace delegation"),
-                _ => true,
-            }),
-            "glob preflight should not reject an in-workspace relative pattern when `path` changes the base directory"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_static_host_tool_with_path_like_payload_bypasses_workspace_routing_preflight() {
-        let workspace_root = tempfile::TempDir::new().unwrap();
-        let machine = AgentMachine::new();
-        let mut tools = ToolRegistry::new();
-        tools.register(StaticResultTool {
-            name: "custom_static_tool",
-            capability: ToolCapability::Read,
-            workspace_local: false,
-        });
-        let mut state = create_test_state_with_machine_and_tools(machine, tools);
-        state.core_config.memory.workspace_dir = Some(workspace_root.path().join(".alan/memory"));
-        bind_test_tool_workspace(&mut state, workspace_root.path(), workspace_root.path());
-
-        let (_, events) = execute_single_tool_call(
-            &mut state,
-            "call-static-with-path",
-            "custom_static_tool",
-            json!({
-                "path": "/v1/projects",
-                "workspace_root": "/api/root"
-            }),
-        )
-        .await;
-
-        let completed = events.iter().find_map(|event| match event {
-            Event::ToolCallCompleted {
-                success,
-                result_preview,
-                ..
-            } => Some((success, result_preview)),
-            _ => None,
-        });
-        let Some((success, result_preview)) = completed else {
-            panic!("expected ToolCallCompleted event");
-        };
-        assert_eq!(*success, Some(true));
-        assert!(
-            !result_preview
-                .as_deref()
-                .unwrap_or_default()
-                .contains("requires_workspace_delegation"),
-            "workspace routing preflight must not reject static host tools"
-        );
-        assert!(
-            events.iter().all(|event| match event {
-                Event::Error { message, .. } => !message.contains("requires workspace delegation"),
-                _ => true,
-            }),
-            "static host tools should not be rejected by workspace routing preflight"
         );
     }
 

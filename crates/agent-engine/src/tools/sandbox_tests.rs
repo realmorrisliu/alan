@@ -42,10 +42,10 @@ fn sensitive_read_denylist_for_home_includes_core_secret_stores() {
 
 #[test]
 fn sandbox_spec_seed_includes_default_sensitive_read_denylist() {
-    let workspace = PathBuf::from("/workspace");
-    let spec = SandboxSpec::seed(workspace.clone());
+    let host_mount = PathBuf::from("/host_mount");
+    let spec = SandboxSpec::seed(host_mount.clone());
 
-    assert_eq!(spec.writable_roots, vec![workspace]);
+    assert_eq!(spec.writable_roots, vec![host_mount]);
     assert_eq!(
         spec.read_denylist,
         SandboxSpec::default_sensitive_read_denylist()
@@ -56,14 +56,16 @@ fn sandbox_spec_seed_includes_default_sensitive_read_denylist() {
 #[test]
 fn sandbox_spec_excludes_exact_writable_root_read_denies() {
     let home = Path::new("/Users/alice");
-    let workspace = home.join(".alan");
+    let host_mount = home.join(".alan");
     let sandbox = Sandbox::from_spec(SandboxSpec {
-        writable_roots: vec![workspace.clone()],
+        host_mounts: Vec::new(),
+        readable_roots: vec![host_mount.clone()],
+        writable_roots: vec![host_mount.clone()],
         read_denylist: SandboxSpec::sensitive_read_denylist_for_home(home),
         network: NetworkPosture::Deny,
     });
 
-    assert!(!sandbox.spec.read_denylist.contains(&workspace));
+    assert!(!sandbox.spec.read_denylist.contains(&host_mount));
     assert!(sandbox.spec.read_denylist.contains(&home.join(".ssh")));
     assert!(sandbox.spec.read_denylist.contains(&home.join(".alan-dev")));
 }
@@ -72,9 +74,11 @@ fn sandbox_spec_excludes_exact_writable_root_read_denies() {
 fn sandbox_spec_preserves_parent_read_denies_for_nested_writable_roots() {
     let home = Path::new("/Users/alice");
     let sensitive_parent = home.join(".ssh");
-    let workspace = sensitive_parent.join("project");
+    let host_mount = sensitive_parent.join("project");
     let sandbox = Sandbox::from_spec(SandboxSpec {
-        writable_roots: vec![workspace],
+        host_mounts: Vec::new(),
+        readable_roots: vec![host_mount.clone()],
+        writable_roots: vec![host_mount],
         read_denylist: vec![sensitive_parent.clone()],
         network: NetworkPosture::Deny,
     });
@@ -98,12 +102,17 @@ async fn test_sandbox_read_write() {
 
 #[tokio::test]
 async fn sandbox_allows_each_writable_root() {
-    let workspace = TempDir::new().unwrap();
+    let host_mount = TempDir::new().unwrap();
     let approved = TempDir::new().unwrap();
     let outside = TempDir::new().unwrap();
     let sandbox = Sandbox::from_spec(SandboxSpec {
+        host_mounts: Vec::new(),
+        readable_roots: vec![
+            host_mount.path().to_path_buf(),
+            approved.path().to_path_buf(),
+        ],
         writable_roots: vec![
-            workspace.path().to_path_buf(),
+            host_mount.path().to_path_buf(),
             approved.path().to_path_buf(),
         ],
         read_denylist: Vec::new(),
@@ -124,9 +133,9 @@ async fn sandbox_allows_each_writable_root() {
             .iter()
             .any(|entry| entry.file_name() == "notes.txt")
     );
-    assert!(sandbox.is_in_workspace(&workspace.path().join("a.txt")));
-    assert!(sandbox.is_in_workspace(&approved.path().join("b.txt")));
-    assert!(!sandbox.is_in_workspace(&outside.path().join("c.txt")));
+    assert!(sandbox.is_writable(&host_mount.path().join("a.txt")));
+    assert!(sandbox.is_writable(&approved.path().join("b.txt")));
+    assert!(!sandbox.is_writable(&outside.path().join("c.txt")));
 
     let outside_read = sandbox.read(&outside.path().join("secret.txt")).await;
     assert!(outside_read.is_err());
@@ -134,25 +143,30 @@ async fn sandbox_allows_each_writable_root() {
         outside_read
             .unwrap_err()
             .to_string()
-            .contains("outside workspace")
+            .contains("outside host_mount")
     );
 }
 
 #[tokio::test]
 async fn sandbox_exec_accepts_cwd_under_secondary_writable_root() {
-    let workspace = TempDir::new().unwrap();
+    let host_mount = TempDir::new().unwrap();
     let approved = TempDir::new().unwrap();
     let outside = TempDir::new().unwrap();
     let sandbox = Sandbox::from_spec_with_backend(
         SandboxSpec {
+            host_mounts: Vec::new(),
+            readable_roots: vec![
+                host_mount.path().to_path_buf(),
+                approved.path().to_path_buf(),
+            ],
             writable_roots: vec![
-                workspace.path().to_path_buf(),
+                host_mount.path().to_path_buf(),
                 approved.path().to_path_buf(),
             ],
             read_denylist: Vec::new(),
             network: NetworkPosture::Deny,
         },
-        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+        crate::tools::SandboxBackendKind::HostMountPathGuard,
     );
     tokio::fs::write(approved.path().join("in_mount.txt"), "ok")
         .await
@@ -168,24 +182,112 @@ async fn sandbox_exec_accepts_cwd_under_secondary_writable_root() {
         outside_result
             .unwrap_err()
             .to_string()
-            .contains("outside workspace")
+            .contains("outside host_mount")
     );
 }
 
 #[tokio::test]
+async fn sandbox_exec_read_capability_allows_read_only_mount_paths() {
+    let writable = TempDir::new().unwrap();
+    let read_only = TempDir::new().unwrap();
+    let sandbox = Sandbox::from_spec_with_backend(
+        SandboxSpec {
+            host_mounts: Vec::new(),
+            readable_roots: vec![
+                writable.path().to_path_buf(),
+                read_only.path().to_path_buf(),
+            ],
+            writable_roots: vec![writable.path().to_path_buf()],
+            read_denylist: Vec::new(),
+            network: NetworkPosture::Deny,
+        },
+        crate::tools::SandboxBackendKind::HostMountPathGuard,
+    );
+    let document = read_only.path().join("notes.txt");
+    tokio::fs::write(&document, "read-only mount\n")
+        .await
+        .unwrap();
+
+    let relative = sandbox
+        .exec_with_timeout_and_capability(
+            "cat ./notes.txt",
+            read_only.path(),
+            None,
+            Some(alan_agent_protocol::ToolCapability::Read),
+        )
+        .await
+        .unwrap();
+    assert_eq!(relative.stdout, "read-only mount\n");
+
+    let absolute = sandbox
+        .exec_with_timeout_and_capability(
+            &format!("cat '{}'", document.display()),
+            writable.path(),
+            None,
+            Some(alan_agent_protocol::ToolCapability::Read),
+        )
+        .await
+        .unwrap();
+    assert_eq!(absolute.stdout, "read-only mount\n");
+}
+
+#[tokio::test]
+async fn sandbox_exec_write_capability_rejects_read_only_mount_paths() {
+    let writable = TempDir::new().unwrap();
+    let read_only = TempDir::new().unwrap();
+    let sandbox = Sandbox::from_spec_with_backend(
+        SandboxSpec {
+            host_mounts: Vec::new(),
+            readable_roots: vec![
+                writable.path().to_path_buf(),
+                read_only.path().to_path_buf(),
+            ],
+            writable_roots: vec![writable.path().to_path_buf()],
+            read_denylist: Vec::new(),
+            network: NetworkPosture::Deny,
+        },
+        crate::tools::SandboxBackendKind::HostMountPathGuard,
+    );
+    let target = read_only.path().join("created.txt");
+
+    let result = sandbox
+        .exec_with_timeout_and_capability(
+            &format!("touch '{}'", target.display()),
+            writable.path(),
+            None,
+            Some(alan_agent_protocol::ToolCapability::Write),
+        )
+        .await;
+
+    assert!(result.is_err());
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("outside host_mount")
+    );
+    assert!(!target.exists());
+}
+
+#[tokio::test]
 async fn sandbox_protects_reserved_subpaths_under_secondary_writable_root() {
-    let workspace = TempDir::new().unwrap();
+    let host_mount = TempDir::new().unwrap();
     let approved = TempDir::new().unwrap();
     let sandbox = Sandbox::from_spec_with_backend(
         SandboxSpec {
+            host_mounts: Vec::new(),
+            readable_roots: vec![
+                host_mount.path().to_path_buf(),
+                approved.path().to_path_buf(),
+            ],
             writable_roots: vec![
-                workspace.path().to_path_buf(),
+                host_mount.path().to_path_buf(),
                 approved.path().to_path_buf(),
             ],
             read_denylist: Vec::new(),
             network: NetworkPosture::Deny,
         },
-        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+        crate::tools::SandboxBackendKind::HostMountPathGuard,
     );
     let protected = approved.path().join(".git/config");
     tokio::fs::create_dir_all(protected.parent().unwrap())
@@ -203,14 +305,14 @@ async fn sandbox_protects_reserved_subpaths_under_secondary_writable_root() {
 }
 
 #[tokio::test]
-async fn test_sandbox_blocks_outside_workspace() {
+async fn test_sandbox_blocks_outside_host_mount() {
     let temp = TempDir::new().unwrap();
     let sandbox = Sandbox::with_backend(
         temp.path().to_path_buf(),
-        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+        crate::tools::SandboxBackendKind::HostMountPathGuard,
     );
 
-    // Try to read outside workspace
+    // Try to read outside host_mount
     let outside_path = PathBuf::from("/etc/passwd");
     let result = sandbox.read(&outside_path).await;
     assert!(result.is_err());
@@ -218,21 +320,23 @@ async fn test_sandbox_blocks_outside_workspace() {
 
 #[tokio::test]
 async fn sandbox_spec_writable_roots_allow_host_absolute_paths() {
-    let workspace = TempDir::new().unwrap();
+    let host_mount = TempDir::new().unwrap();
     let host = TempDir::new().unwrap();
     let sandbox = Sandbox::from_spec_with_backend(
         SandboxSpec {
-            writable_roots: vec![workspace.path().to_path_buf(), host.path().to_path_buf()],
+            host_mounts: Vec::new(),
+            readable_roots: vec![host_mount.path().to_path_buf(), host.path().to_path_buf()],
+            writable_roots: vec![host_mount.path().to_path_buf(), host.path().to_path_buf()],
             read_denylist: Vec::new(),
             network: NetworkPosture::Deny,
         },
-        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+        crate::tools::SandboxBackendKind::HostMountPathGuard,
     );
     let target = host.path().join("created.txt");
 
-    assert!(sandbox.is_in_workspace(host.path()));
+    assert!(sandbox.is_writable(host.path()));
     let result = sandbox
-        .exec(&format!("touch {}", target.display()), workspace.path())
+        .exec(&format!("touch {}", target.display()), host_mount.path())
         .await
         .unwrap();
 
@@ -242,15 +346,17 @@ async fn sandbox_spec_writable_roots_allow_host_absolute_paths() {
 
 #[tokio::test]
 async fn sandbox_spec_writable_roots_still_block_host_protected_subpaths() {
-    let workspace = TempDir::new().unwrap();
+    let host_mount = TempDir::new().unwrap();
     let host = TempDir::new().unwrap();
     let sandbox = Sandbox::from_spec_with_backend(
         SandboxSpec {
-            writable_roots: vec![workspace.path().to_path_buf(), host.path().to_path_buf()],
+            host_mounts: Vec::new(),
+            readable_roots: vec![host_mount.path().to_path_buf(), host.path().to_path_buf()],
+            writable_roots: vec![host_mount.path().to_path_buf(), host.path().to_path_buf()],
             read_denylist: Vec::new(),
             network: NetworkPosture::Deny,
         },
-        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+        crate::tools::SandboxBackendKind::HostMountPathGuard,
     );
     let protected = host.path().join(".git/config");
     tokio::fs::create_dir_all(protected.parent().unwrap())
@@ -270,17 +376,19 @@ async fn sandbox_spec_writable_roots_still_block_host_protected_subpaths() {
 
 #[tokio::test]
 async fn sandbox_spec_writable_roots_block_protected_roots_themselves() {
-    let workspace = TempDir::new().unwrap();
+    let host_mount = TempDir::new().unwrap();
     let host = TempDir::new().unwrap();
     let protected_root = host.path().join(".git");
     tokio::fs::create_dir_all(&protected_root).await.unwrap();
     let sandbox = Sandbox::from_spec_with_backend(
         SandboxSpec {
-            writable_roots: vec![workspace.path().to_path_buf(), protected_root.clone()],
+            host_mounts: Vec::new(),
+            readable_roots: vec![host_mount.path().to_path_buf(), protected_root.clone()],
+            writable_roots: vec![host_mount.path().to_path_buf(), protected_root.clone()],
             read_denylist: Vec::new(),
             network: NetworkPosture::Deny,
         },
-        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+        crate::tools::SandboxBackendKind::HostMountPathGuard,
     );
 
     let result = sandbox
@@ -307,11 +415,11 @@ async fn test_sandbox_exec() {
 }
 
 #[tokio::test]
-async fn test_sandbox_exec_blocks_outside_workspace_path_reference() {
+async fn test_sandbox_exec_blocks_outside_host_mount_path_reference() {
     let temp = TempDir::new().unwrap();
     let sandbox = Sandbox::with_backend(
         temp.path().to_path_buf(),
-        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+        crate::tools::SandboxBackendKind::HostMountPathGuard,
     );
 
     let result = sandbox.exec("cat /etc/passwd", temp.path()).await;
@@ -319,13 +427,13 @@ async fn test_sandbox_exec_blocks_outside_workspace_path_reference() {
 }
 
 #[tokio::test]
-async fn test_sandbox_exec_allows_workspace_relative_paths() {
+async fn test_sandbox_exec_allows_host_mount_relative_paths() {
     let temp = TempDir::new().unwrap();
     let sandbox = Sandbox::new(temp.path().to_path_buf());
-    let file = temp.path().join("in_workspace.txt");
+    let file = temp.path().join("in_host_mount.txt");
     tokio::fs::write(&file, "ok").await.unwrap();
 
-    let result = sandbox.exec("cat ./in_workspace.txt", temp.path()).await;
+    let result = sandbox.exec("cat ./in_host_mount.txt", temp.path()).await;
     assert!(result.is_ok());
     assert_eq!(result.unwrap().stdout.trim(), "ok");
 }
@@ -345,7 +453,7 @@ async fn test_sandbox_blocks_write_to_protected_subpath() {
     let temp = TempDir::new().unwrap();
     let sandbox = Sandbox::with_backend(
         temp.path().to_path_buf(),
-        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+        crate::tools::SandboxBackendKind::HostMountPathGuard,
     );
     let protected = temp.path().join(".git/config");
     tokio::fs::create_dir_all(protected.parent().unwrap())
@@ -384,6 +492,8 @@ async fn read_denylist_blocks_in_process_reads_and_sensitive_listing() {
     tokio::fs::create_dir_all(&secret_dir).await.unwrap();
     tokio::fs::write(&secret_file, "secret").await.unwrap();
     let sandbox = Sandbox::from_spec(SandboxSpec {
+        host_mounts: Vec::new(),
+        readable_roots: vec![home.path().to_path_buf()],
         writable_roots: vec![home.path().to_path_buf()],
         read_denylist: vec![secret_dir.clone()],
         network: NetworkPosture::Deny,
@@ -402,38 +512,6 @@ async fn read_denylist_blocks_in_process_reads_and_sensitive_listing() {
         listed.to_string().contains("sensitive read-deny path"),
         "{listed}"
     );
-}
-
-#[tokio::test]
-async fn test_sandbox_allows_write_to_workspace_persona_subpath() {
-    let temp = TempDir::new().unwrap();
-    let sandbox = Sandbox::new(temp.path().to_path_buf());
-    let persona_file = temp.path().join(".alan/agents/default/persona/USER.md");
-
-    sandbox
-        .write(&persona_file, b"# USER\n- Preferred name: Test\n")
-        .await
-        .unwrap();
-
-    let written = tokio::fs::read_to_string(&persona_file).await.unwrap();
-    assert!(written.contains("Preferred name"));
-}
-
-#[tokio::test]
-async fn test_sandbox_allows_write_to_channel_scoped_workspace_memory_subpath() {
-    let temp = TempDir::new().unwrap();
-    let sandbox = Sandbox::new(temp.path().to_path_buf());
-    let alan_dir = temp.path().join(".alan");
-
-    for channel in [InstallChannel::Stable, InstallChannel::Dev] {
-        let memory_file = crate::workspace_memory_dir_for_channel_from_alan_dir(&alan_dir, channel)
-            .join("MEMORY.md");
-
-        sandbox.write(&memory_file, b"# Memory\n").await.unwrap();
-
-        let written = tokio::fs::read_to_string(&memory_file).await.unwrap();
-        assert_eq!(written, "# Memory\n");
-    }
 }
 
 #[tokio::test]
@@ -462,7 +540,7 @@ async fn test_sandbox_blocks_write_with_parent_dir_bypass_into_protected_subpath
     let temp = TempDir::new().unwrap();
     let sandbox = Sandbox::with_backend(
         temp.path().to_path_buf(),
-        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+        crate::tools::SandboxBackendKind::HostMountPathGuard,
     );
     tokio::fs::create_dir_all(temp.path().join(".alan/agents/default"))
         .await
@@ -483,37 +561,11 @@ async fn test_sandbox_blocks_write_with_parent_dir_bypass_into_protected_subpath
 }
 
 #[tokio::test]
-async fn test_sandbox_exec_allows_direct_write_to_channel_scoped_memory_subpath() {
-    let temp = TempDir::new().unwrap();
-    let sandbox = Sandbox::new(temp.path().to_path_buf());
-    let memory_dir = temp.path().join(".alan/runtime/stable/memory");
-    tokio::fs::create_dir_all(&memory_dir).await.unwrap();
-
-    let result = sandbox
-        .exec_with_timeout_and_capability(
-            "echo updated > .alan/runtime/stable/memory/MEMORY.md",
-            temp.path(),
-            None,
-            Some(alan_agent_protocol::ToolCapability::Write),
-        )
-        .await
-        .unwrap();
-
-    assert_eq!(result.exit_code, 0);
-    assert_eq!(
-        tokio::fs::read_to_string(memory_dir.join("MEMORY.md"))
-            .await
-            .unwrap(),
-        "updated\n"
-    );
-}
-
-#[tokio::test]
 async fn test_sandbox_exec_blocks_parent_dir_bypass_into_protected_subpath() {
     let temp = TempDir::new().unwrap();
     let sandbox = Sandbox::with_backend(
         temp.path().to_path_buf(),
-        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+        crate::tools::SandboxBackendKind::HostMountPathGuard,
     );
     tokio::fs::create_dir_all(temp.path().join(".alan/agents/default"))
         .await
@@ -542,7 +594,7 @@ async fn test_sandbox_exec_blocks_mutating_command_for_protected_path() {
     let temp = TempDir::new().unwrap();
     let sandbox = Sandbox::with_backend(
         temp.path().to_path_buf(),
-        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+        crate::tools::SandboxBackendKind::HostMountPathGuard,
     );
     let protected = temp.path().join(".alan/config.toml");
     tokio::fs::create_dir_all(protected.parent().unwrap())
@@ -571,7 +623,7 @@ async fn test_sandbox_exec_blocks_read_only_command_for_protected_path() {
     let temp = TempDir::new().unwrap();
     let sandbox = Sandbox::with_backend(
         temp.path().to_path_buf(),
-        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+        crate::tools::SandboxBackendKind::HostMountPathGuard,
     );
     let protected = temp.path().join(".git/HEAD");
     tokio::fs::create_dir_all(protected.parent().unwrap())
@@ -603,7 +655,7 @@ async fn test_sandbox_exec_blocks_mutating_cwd_inside_protected_subpath() {
     let temp = TempDir::new().unwrap();
     let sandbox = Sandbox::with_backend(
         temp.path().to_path_buf(),
-        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+        crate::tools::SandboxBackendKind::HostMountPathGuard,
     );
     let protected_dir = temp.path().join(".agents");
     tokio::fs::create_dir_all(&protected_dir).await.unwrap();
@@ -630,7 +682,7 @@ async fn test_sandbox_exec_blocks_bare_protected_directory_token() {
     let temp = TempDir::new().unwrap();
     let sandbox = Sandbox::with_backend(
         temp.path().to_path_buf(),
-        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+        crate::tools::SandboxBackendKind::HostMountPathGuard,
     );
     let protected_dir = temp.path().join(".git");
     tokio::fs::create_dir_all(&protected_dir).await.unwrap();
@@ -657,7 +709,7 @@ async fn test_sandbox_blocks_symlink_alias_into_protected_subpath() {
     let temp = TempDir::new().unwrap();
     let sandbox = Sandbox::with_backend(
         temp.path().to_path_buf(),
-        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+        crate::tools::SandboxBackendKind::HostMountPathGuard,
     );
     let protected_dir = temp.path().join(".git");
     tokio::fs::create_dir_all(&protected_dir).await.unwrap();
@@ -676,22 +728,22 @@ async fn test_sandbox_blocks_symlink_alias_into_protected_subpath() {
 
 #[tokio::test]
 async fn test_sandbox_blocks_symlink_alias_outside_writable_roots() {
-    let workspace = TempDir::new().unwrap();
+    let host_mount = TempDir::new().unwrap();
     let outside = TempDir::new().unwrap();
     let sandbox = Sandbox::with_backend(
-        workspace.path().to_path_buf(),
-        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+        host_mount.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::HostMountPathGuard,
     );
     let outside_file = outside.path().join("secret.txt");
     tokio::fs::write(&outside_file, "secret").await.unwrap();
-    let alias = workspace.path().join("safe.txt");
+    let alias = host_mount.path().join("safe.txt");
     std::os::unix::fs::symlink(&outside_file, &alias).unwrap();
 
     let read = sandbox.read_string(&alias).await.unwrap_err();
-    assert!(read.to_string().contains("outside workspace"), "{read}");
+    assert!(read.to_string().contains("outside host_mount"), "{read}");
 
     let write = sandbox.write(&alias, b"changed").await.unwrap_err();
-    assert!(write.to_string().contains("outside workspace"), "{write}");
+    assert!(write.to_string().contains("outside host_mount"), "{write}");
 }
 
 #[tokio::test]
@@ -699,7 +751,7 @@ async fn test_sandbox_blocks_hardlink_alias_into_protected_subpath() {
     let temp = TempDir::new().unwrap();
     let sandbox = Sandbox::with_backend(
         temp.path().to_path_buf(),
-        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+        crate::tools::SandboxBackendKind::HostMountPathGuard,
     );
     let protected = temp.path().join(".git/config");
     tokio::fs::create_dir_all(protected.parent().unwrap())
@@ -724,7 +776,7 @@ async fn test_sandbox_exec_blocks_mutating_variable_expansion() {
     let temp = TempDir::new().unwrap();
     let sandbox = Sandbox::with_backend(
         temp.path().to_path_buf(),
-        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+        crate::tools::SandboxBackendKind::HostMountPathGuard,
     );
     let protected_dir = temp.path().join(".git");
     tokio::fs::create_dir_all(&protected_dir).await.unwrap();
@@ -751,7 +803,7 @@ async fn test_sandbox_exec_blocks_globbed_process_paths() {
     let temp = TempDir::new().unwrap();
     let sandbox = Sandbox::with_backend(
         temp.path().to_path_buf(),
-        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+        crate::tools::SandboxBackendKind::HostMountPathGuard,
     );
     let protected_dir = temp.path().join(".git");
     tokio::fs::create_dir_all(&protected_dir).await.unwrap();
@@ -779,7 +831,7 @@ async fn test_sandbox_exec_blocks_set_plus_f_glob_bypass_attempt() {
     let temp = TempDir::new().unwrap();
     let sandbox = Sandbox::with_backend(
         temp.path().to_path_buf(),
-        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+        crate::tools::SandboxBackendKind::HostMountPathGuard,
     );
     let protected_dir = temp.path().join(".git");
     tokio::fs::create_dir_all(&protected_dir).await.unwrap();
@@ -807,7 +859,7 @@ async fn test_sandbox_exec_blocks_read_only_variable_expansion() {
     let temp = TempDir::new().unwrap();
     let sandbox = Sandbox::with_backend(
         temp.path().to_path_buf(),
-        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+        crate::tools::SandboxBackendKind::HostMountPathGuard,
     );
 
     let result = sandbox
@@ -832,7 +884,7 @@ async fn test_sandbox_exec_blocks_brace_expansion() {
     let temp = TempDir::new().unwrap();
     let sandbox = Sandbox::with_backend(
         temp.path().to_path_buf(),
-        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+        crate::tools::SandboxBackendKind::HostMountPathGuard,
     );
 
     let result = sandbox
@@ -857,7 +909,7 @@ async fn test_sandbox_exec_blocks_multiline_nested_shell_eval_wrapper() {
     let temp = TempDir::new().unwrap();
     let sandbox = Sandbox::with_backend(
         temp.path().to_path_buf(),
-        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+        crate::tools::SandboxBackendKind::HostMountPathGuard,
     );
 
     let result = sandbox
@@ -882,7 +934,7 @@ async fn test_sandbox_exec_blocks_nested_shell_eval_wrapper() {
     let temp = TempDir::new().unwrap();
     let sandbox = Sandbox::with_backend(
         temp.path().to_path_buf(),
-        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+        crate::tools::SandboxBackendKind::HostMountPathGuard,
     );
 
     let result = sandbox
@@ -907,7 +959,7 @@ async fn test_sandbox_exec_blocks_nested_python_eval_wrapper() {
     let temp = TempDir::new().unwrap();
     let sandbox = Sandbox::with_backend(
         temp.path().to_path_buf(),
-        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+        crate::tools::SandboxBackendKind::HostMountPathGuard,
     );
 
     let result = sandbox
@@ -932,7 +984,7 @@ async fn test_sandbox_exec_blocks_shell_eval_wrapper_with_leading_option() {
     let temp = TempDir::new().unwrap();
     let sandbox = Sandbox::with_backend(
         temp.path().to_path_buf(),
-        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+        crate::tools::SandboxBackendKind::HostMountPathGuard,
     );
 
     let result = sandbox
@@ -957,7 +1009,7 @@ async fn test_sandbox_exec_blocks_python_eval_wrapper_with_leading_option() {
     let temp = TempDir::new().unwrap();
     let sandbox = Sandbox::with_backend(
         temp.path().to_path_buf(),
-        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+        crate::tools::SandboxBackendKind::HostMountPathGuard,
     );
 
     let result = sandbox
@@ -982,7 +1034,7 @@ async fn test_sandbox_exec_blocks_node_print_eval_wrapper_with_leading_option() 
     let temp = TempDir::new().unwrap();
     let sandbox = Sandbox::with_backend(
         temp.path().to_path_buf(),
-        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+        crate::tools::SandboxBackendKind::HostMountPathGuard,
     );
 
     let result = sandbox
@@ -1007,7 +1059,7 @@ async fn test_sandbox_exec_blocks_node_inline_long_eval_wrapper() {
     let temp = TempDir::new().unwrap();
     let sandbox = Sandbox::with_backend(
         temp.path().to_path_buf(),
-        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+        crate::tools::SandboxBackendKind::HostMountPathGuard,
     );
 
     let result = sandbox
@@ -1032,7 +1084,7 @@ async fn test_sandbox_exec_blocks_node_inline_long_print_wrapper() {
     let temp = TempDir::new().unwrap();
     let sandbox = Sandbox::with_backend(
         temp.path().to_path_buf(),
-        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+        crate::tools::SandboxBackendKind::HostMountPathGuard,
     );
 
     let result = sandbox
@@ -1057,7 +1109,7 @@ async fn test_sandbox_exec_blocks_shell_inline_long_command_wrapper() {
     let temp = TempDir::new().unwrap();
     let sandbox = Sandbox::with_backend(
         temp.path().to_path_buf(),
-        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+        crate::tools::SandboxBackendKind::HostMountPathGuard,
     );
 
     let result = sandbox
@@ -1101,7 +1153,7 @@ async fn test_sandbox_exec_blocks_eval_builtin() {
     let temp = TempDir::new().unwrap();
     let sandbox = Sandbox::with_backend(
         temp.path().to_path_buf(),
-        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+        crate::tools::SandboxBackendKind::HostMountPathGuard,
     );
 
     let result = sandbox
@@ -1126,7 +1178,7 @@ async fn test_sandbox_exec_blocks_command_eval_builtin() {
     let temp = TempDir::new().unwrap();
     let sandbox = Sandbox::with_backend(
         temp.path().to_path_buf(),
-        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+        crate::tools::SandboxBackendKind::HostMountPathGuard,
     );
 
     let result = sandbox
@@ -1151,7 +1203,7 @@ async fn test_sandbox_exec_blocks_source_builtin() {
     let temp = TempDir::new().unwrap();
     let sandbox = Sandbox::with_backend(
         temp.path().to_path_buf(),
-        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+        crate::tools::SandboxBackendKind::HostMountPathGuard,
     );
 
     let result = sandbox
@@ -1176,7 +1228,7 @@ async fn test_sandbox_exec_blocks_env_shell_eval_wrapper() {
     let temp = TempDir::new().unwrap();
     let sandbox = Sandbox::with_backend(
         temp.path().to_path_buf(),
-        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+        crate::tools::SandboxBackendKind::HostMountPathGuard,
     );
 
     let result = sandbox
@@ -1201,7 +1253,7 @@ async fn test_sandbox_exec_blocks_bang_prefixed_nested_shell_eval_wrapper() {
     let temp = TempDir::new().unwrap();
     let sandbox = Sandbox::with_backend(
         temp.path().to_path_buf(),
-        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+        crate::tools::SandboxBackendKind::HostMountPathGuard,
     );
 
     let result = sandbox
@@ -1226,7 +1278,7 @@ async fn test_sandbox_exec_blocks_if_prefixed_nested_shell_eval_wrapper() {
     let temp = TempDir::new().unwrap();
     let sandbox = Sandbox::with_backend(
         temp.path().to_path_buf(),
-        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+        crate::tools::SandboxBackendKind::HostMountPathGuard,
     );
 
     let result = sandbox
@@ -1251,7 +1303,7 @@ async fn test_sandbox_exec_blocks_env_split_string_wrapper() {
     let temp = TempDir::new().unwrap();
     let sandbox = Sandbox::with_backend(
         temp.path().to_path_buf(),
-        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+        crate::tools::SandboxBackendKind::HostMountPathGuard,
     );
 
     let result = sandbox
@@ -1276,7 +1328,7 @@ async fn test_sandbox_exec_blocks_xargs_dispatcher() {
     let temp = TempDir::new().unwrap();
     let sandbox = Sandbox::with_backend(
         temp.path().to_path_buf(),
-        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+        crate::tools::SandboxBackendKind::HostMountPathGuard,
     );
 
     let result = sandbox
@@ -1301,7 +1353,7 @@ async fn test_sandbox_exec_blocks_find_exec_dispatcher() {
     let temp = TempDir::new().unwrap();
     let sandbox = Sandbox::with_backend(
         temp.path().to_path_buf(),
-        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+        crate::tools::SandboxBackendKind::HostMountPathGuard,
     );
 
     let result = sandbox
@@ -1380,7 +1432,7 @@ async fn test_sandbox_exec_blocks_python_script_file_interpreter() {
     let temp = TempDir::new().unwrap();
     let sandbox = Sandbox::with_backend(
         temp.path().to_path_buf(),
-        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+        crate::tools::SandboxBackendKind::HostMountPathGuard,
     );
     tokio::fs::write(temp.path().join("script.py"), "print('ok')")
         .await
@@ -1408,7 +1460,7 @@ async fn test_sandbox_exec_blocks_python_module_interpreter() {
     let temp = TempDir::new().unwrap();
     let sandbox = Sandbox::with_backend(
         temp.path().to_path_buf(),
-        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+        crate::tools::SandboxBackendKind::HostMountPathGuard,
     );
 
     let result = sandbox
@@ -1438,7 +1490,7 @@ async fn test_sandbox_exec_blocks_wrapped_python_script_file_interpreter() {
     let temp = TempDir::new().unwrap();
     let sandbox = Sandbox::with_backend(
         temp.path().to_path_buf(),
-        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+        crate::tools::SandboxBackendKind::HostMountPathGuard,
     );
     tokio::fs::write(temp.path().join("script.py"), "print('ok')")
         .await
@@ -1466,7 +1518,7 @@ async fn test_sandbox_exec_blocks_shell_script_file_interpreter() {
     let temp = TempDir::new().unwrap();
     let sandbox = Sandbox::with_backend(
         temp.path().to_path_buf(),
-        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+        crate::tools::SandboxBackendKind::HostMountPathGuard,
     );
     tokio::fs::write(temp.path().join("script.sh"), "echo ok")
         .await
@@ -1494,7 +1546,7 @@ async fn test_sandbox_exec_blocks_node_script_file_interpreter() {
     let temp = TempDir::new().unwrap();
     let sandbox = Sandbox::with_backend(
         temp.path().to_path_buf(),
-        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+        crate::tools::SandboxBackendKind::HostMountPathGuard,
     );
     tokio::fs::write(temp.path().join("script.js"), "console.log('ok')")
         .await
@@ -1522,7 +1574,7 @@ async fn test_sandbox_exec_blocks_node_stdin_interpreter_via_pipe() {
     let temp = TempDir::new().unwrap();
     let sandbox = Sandbox::with_backend(
         temp.path().to_path_buf(),
-        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+        crate::tools::SandboxBackendKind::HostMountPathGuard,
     );
 
     let result = sandbox
@@ -1547,7 +1599,7 @@ async fn test_sandbox_exec_blocks_awk_script_file_interpreter() {
     let temp = TempDir::new().unwrap();
     let sandbox = Sandbox::with_backend(
         temp.path().to_path_buf(),
-        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+        crate::tools::SandboxBackendKind::HostMountPathGuard,
     );
     tokio::fs::write(temp.path().join("script.awk"), "{ print $0 }")
         .await
@@ -1575,7 +1627,7 @@ async fn test_sandbox_exec_blocks_inline_awk_script_file_option_interpreter() {
     let temp = TempDir::new().unwrap();
     let sandbox = Sandbox::with_backend(
         temp.path().to_path_buf(),
-        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+        crate::tools::SandboxBackendKind::HostMountPathGuard,
     );
     tokio::fs::write(temp.path().join("script.awk"), "{ print $0 }")
         .await
@@ -1603,7 +1655,7 @@ async fn test_sandbox_exec_blocks_inline_php_script_file_option_interpreter() {
     let temp = TempDir::new().unwrap();
     let sandbox = Sandbox::with_backend(
         temp.path().to_path_buf(),
-        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+        crate::tools::SandboxBackendKind::HostMountPathGuard,
     );
     tokio::fs::write(temp.path().join("script.php"), "<?php echo 'ok';")
         .await
@@ -1663,7 +1715,7 @@ async fn test_sandbox_exec_blocks_nice_wrapper() {
     let temp = TempDir::new().unwrap();
     let sandbox = Sandbox::with_backend(
         temp.path().to_path_buf(),
-        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+        crate::tools::SandboxBackendKind::HostMountPathGuard,
     );
 
     let result = sandbox
@@ -1688,7 +1740,7 @@ async fn test_sandbox_exec_blocks_timeout_wrapper() {
     let temp = TempDir::new().unwrap();
     let sandbox = Sandbox::with_backend(
         temp.path().to_path_buf(),
-        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+        crate::tools::SandboxBackendKind::HostMountPathGuard,
     );
     tokio::fs::write(temp.path().join("script.py"), "print('ok')")
         .await
@@ -1716,7 +1768,7 @@ async fn test_sandbox_exec_blocks_chained_wrapped_shell_eval_wrapper() {
     let temp = TempDir::new().unwrap();
     let sandbox = Sandbox::with_backend(
         temp.path().to_path_buf(),
-        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+        crate::tools::SandboxBackendKind::HostMountPathGuard,
     );
 
     let result = sandbox
@@ -1741,7 +1793,7 @@ async fn test_sandbox_exec_blocks_nohup_wrapper() {
     let temp = TempDir::new().unwrap();
     let sandbox = Sandbox::with_backend(
         temp.path().to_path_buf(),
-        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+        crate::tools::SandboxBackendKind::HostMountPathGuard,
     );
     tokio::fs::write(temp.path().join("script.sh"), "echo ok")
         .await
@@ -1769,7 +1821,7 @@ async fn test_sandbox_exec_blocks_stdbuf_wrapper() {
     let temp = TempDir::new().unwrap();
     let sandbox = Sandbox::with_backend(
         temp.path().to_path_buf(),
-        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+        crate::tools::SandboxBackendKind::HostMountPathGuard,
     );
 
     let result = sandbox
@@ -1794,7 +1846,7 @@ async fn test_sandbox_exec_blocks_setsid_wrapper() {
     let temp = TempDir::new().unwrap();
     let sandbox = Sandbox::with_backend(
         temp.path().to_path_buf(),
-        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+        crate::tools::SandboxBackendKind::HostMountPathGuard,
     );
 
     let result = sandbox
@@ -1819,7 +1871,7 @@ async fn test_sandbox_exec_blocks_time_wrapper() {
     let temp = TempDir::new().unwrap();
     let sandbox = Sandbox::with_backend(
         temp.path().to_path_buf(),
-        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+        crate::tools::SandboxBackendKind::HostMountPathGuard,
     );
 
     let result = sandbox
@@ -1844,7 +1896,7 @@ async fn test_sandbox_exec_blocks_timeout_query_mode_wrapper() {
     let temp = TempDir::new().unwrap();
     let sandbox = Sandbox::with_backend(
         temp.path().to_path_buf(),
-        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+        crate::tools::SandboxBackendKind::HostMountPathGuard,
     );
 
     let result = sandbox
@@ -1869,7 +1921,7 @@ async fn test_sandbox_exec_blocks_clustered_env_split_string_wrapper() {
     let temp = TempDir::new().unwrap();
     let sandbox = Sandbox::with_backend(
         temp.path().to_path_buf(),
-        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+        crate::tools::SandboxBackendKind::HostMountPathGuard,
     );
 
     let result = sandbox
@@ -1894,7 +1946,7 @@ async fn test_sandbox_exec_blocks_command_wrapper_with_leading_option() {
     let temp = TempDir::new().unwrap();
     let sandbox = Sandbox::with_backend(
         temp.path().to_path_buf(),
-        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+        crate::tools::SandboxBackendKind::HostMountPathGuard,
     );
 
     let result = sandbox
@@ -1919,7 +1971,7 @@ async fn test_sandbox_exec_blocks_command_query_mode_with_eval_like_argv() {
     let temp = TempDir::new().unwrap();
     let sandbox = Sandbox::with_backend(
         temp.path().to_path_buf(),
-        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+        crate::tools::SandboxBackendKind::HostMountPathGuard,
     );
 
     let result = sandbox
@@ -1945,7 +1997,7 @@ async fn test_sandbox_exec_blocks_builtin_eval_after_end_of_options() {
     let temp = TempDir::new().unwrap();
     let sandbox = Sandbox::with_backend(
         temp.path().to_path_buf(),
-        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+        crate::tools::SandboxBackendKind::HostMountPathGuard,
     );
 
     let result = sandbox
@@ -1970,7 +2022,7 @@ async fn test_sandbox_exec_blocks_exec_shell_eval_wrapper() {
     let temp = TempDir::new().unwrap();
     let sandbox = Sandbox::with_backend(
         temp.path().to_path_buf(),
-        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+        crate::tools::SandboxBackendKind::HostMountPathGuard,
     );
 
     let result = sandbox
@@ -1995,7 +2047,7 @@ async fn test_sandbox_exec_blocks_exec_shell_eval_wrapper_with_argv0_option() {
     let temp = TempDir::new().unwrap();
     let sandbox = Sandbox::with_backend(
         temp.path().to_path_buf(),
-        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+        crate::tools::SandboxBackendKind::HostMountPathGuard,
     );
 
     let result = sandbox
@@ -2074,7 +2126,7 @@ async fn test_sandbox_exec_blocks_protected_redirection_without_whitespace() {
     let temp = TempDir::new().unwrap();
     let sandbox = Sandbox::with_backend(
         temp.path().to_path_buf(),
-        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+        crate::tools::SandboxBackendKind::HostMountPathGuard,
     );
     let protected_dir = temp.path().join(".git");
     tokio::fs::create_dir_all(&protected_dir).await.unwrap();
@@ -2101,7 +2153,7 @@ async fn test_sandbox_exec_blocks_protected_path_with_line_continuation() {
     let temp = TempDir::new().unwrap();
     let sandbox = Sandbox::with_backend(
         temp.path().to_path_buf(),
-        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+        crate::tools::SandboxBackendKind::HostMountPathGuard,
     );
     let protected_dir = temp.path().join(".git");
     tokio::fs::create_dir_all(&protected_dir).await.unwrap();
@@ -2128,7 +2180,7 @@ async fn test_sandbox_exec_blocks_post_comment_line_continuation_nested_eval() {
     let temp = TempDir::new().unwrap();
     let sandbox = Sandbox::with_backend(
         temp.path().to_path_buf(),
-        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+        crate::tools::SandboxBackendKind::HostMountPathGuard,
     );
 
     let result = sandbox
@@ -2153,7 +2205,7 @@ async fn test_sandbox_exec_blocks_eval_wrapper_name_with_line_continuation() {
     let temp = TempDir::new().unwrap();
     let sandbox = Sandbox::with_backend(
         temp.path().to_path_buf(),
-        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+        crate::tools::SandboxBackendKind::HostMountPathGuard,
     );
 
     let result = sandbox
@@ -2178,7 +2230,7 @@ async fn test_sandbox_exec_blocks_wrapper_query_with_line_continuation() {
     let temp = TempDir::new().unwrap();
     let sandbox = Sandbox::with_backend(
         temp.path().to_path_buf(),
-        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+        crate::tools::SandboxBackendKind::HostMountPathGuard,
     );
 
     let result = sandbox
@@ -2203,7 +2255,7 @@ async fn test_sandbox_exec_blocks_attached_short_option_path_argument() {
     let temp = TempDir::new().unwrap();
     let sandbox = Sandbox::with_backend(
         temp.path().to_path_buf(),
-        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+        crate::tools::SandboxBackendKind::HostMountPathGuard,
     );
     let protected_dir = temp.path().join(".git");
     tokio::fs::create_dir_all(&protected_dir).await.unwrap();
@@ -2233,7 +2285,7 @@ async fn test_sandbox_exec_blocks_hardlink_process_path_reference() {
     let temp = TempDir::new().unwrap();
     let sandbox = Sandbox::with_backend(
         temp.path().to_path_buf(),
-        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+        crate::tools::SandboxBackendKind::HostMountPathGuard,
     );
     let protected = temp.path().join(".git/config");
     tokio::fs::create_dir_all(protected.parent().unwrap())
@@ -2265,7 +2317,7 @@ async fn test_sandbox_exec_blocks_protected_path_built_from_quoted_segments() {
     let temp = TempDir::new().unwrap();
     let sandbox = Sandbox::with_backend(
         temp.path().to_path_buf(),
-        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+        crate::tools::SandboxBackendKind::HostMountPathGuard,
     );
     let protected_dir = temp.path().join(".git");
     tokio::fs::create_dir_all(&protected_dir).await.unwrap();
@@ -2307,7 +2359,7 @@ async fn test_sandbox_exec_allows_quoted_relative_glob_path_patterns() {
             Some(alan_agent_protocol::ToolCapability::Read),
         )
         .await
-        .expect("quoted relative path pattern should stay workspace-safe");
+        .expect("quoted relative path pattern should stay host_mount-safe");
     assert_eq!(result.exit_code, 0);
     assert!(result.stdout.contains("./venv/bin/python"));
 }
@@ -2317,7 +2369,7 @@ async fn test_sandbox_exec_blocks_protected_path_in_option_assignment() {
     let temp = TempDir::new().unwrap();
     let sandbox = Sandbox::with_backend(
         temp.path().to_path_buf(),
-        crate::tools::SandboxBackendKind::WorkspacePathGuard,
+        crate::tools::SandboxBackendKind::HostMountPathGuard,
     );
     let protected_dir = temp.path().join(".git");
     tokio::fs::create_dir_all(&protected_dir).await.unwrap();
@@ -2342,7 +2394,7 @@ async fn test_sandbox_exec_blocks_protected_path_in_option_assignment() {
 #[tokio::test]
 async fn test_os_backend_still_blocks_protected_subpath_redirection() {
     // With an OS sandbox active the shape parser is dropped, but the OS profile
-    // allows writes anywhere under the workspace (and Landlock can't carve out
+    // allows writes anywhere under the host_mount (and Landlock can't carve out
     // protected subdirs), so explicit writes to .git/.alan/.agents must still be
     // blocked before the command runs.
     let temp = TempDir::new().unwrap();
@@ -2377,64 +2429,19 @@ async fn test_os_backend_still_blocks_protected_subpath_redirection() {
     }
 }
 
-#[tokio::test]
-async fn test_os_backend_wrapper_honors_channel_scoped_memory_carve_out() {
-    // The recursive wrapper inspection must honor the same carve-outs as direct
-    // commands: the active channel Memory Store is agent-writable even though
-    // `.alan` is protected.
-    let temp = TempDir::new().unwrap();
-    let sandbox = Sandbox::with_backend(
-        temp.path().to_path_buf(),
-        crate::tools::SandboxBackendKind::Seatbelt,
-    );
-    let memory_dir = temp.path().join(".alan/runtime/stable/memory");
-    tokio::fs::create_dir_all(&memory_dir).await.unwrap();
-    tokio::fs::write(memory_dir.join("MEMORY.md"), "# Memory\n")
-        .await
-        .unwrap();
-    // A wrapper writing into the carved-out memory subpath must pass validation
-    // (it should fail later at sandbox-exec on non-macOS, not at the protected
-    // check), so assert it is NOT rejected for a protected-subpath reason.
-    let result = sandbox
-        .exec_with_timeout_and_capability(
-            "bash -lc 'echo hi > .alan/runtime/stable/memory/NOTES.md'",
-            temp.path(),
-            None,
-            Some(alan_agent_protocol::ToolCapability::Write),
-        )
-        .await;
-    if let Err(err) = result {
-        assert!(
-            !err.to_string().contains("protected subpath"),
-            "memory subpath wrongly blocked: {err}"
-        );
-    }
-
-    let legacy_err = sandbox
-        .exec_with_timeout_and_capability(
-            "bash -lc 'echo hi > .alan/memory/NOTES.md'",
-            temp.path(),
-            None,
-            Some(alan_agent_protocol::ToolCapability::Write),
-        )
-        .await
-        .unwrap_err();
-    assert!(legacy_err.to_string().contains("protected subpath .alan"));
-}
-
 #[test]
 fn only_seatbelt_permits_autonomous_bash() {
     use crate::tools::SandboxBackendKind;
-    // Seatbelt is a complete bash boundary (workspace fs + network), so wrappers
+    // Seatbelt is a complete bash boundary (host_mount fs + network), so wrappers
     // run and escalated bash is reviewer-eligible.
     assert!(SandboxBackendKind::Seatbelt.permits_autonomous_bash());
     // Landlock (network confinement is kernel-conditional), Linux reified
-    // namespace (protected subpaths are not carved out of the writable workspace
+    // namespace (protected subpaths are not carved out of the writable host_mount
     // mount), and the path-guard fallback are treated conservatively: full shape
     // parser, escalated bash to a human.
     assert!(!SandboxBackendKind::LinuxReifiedNamespace.permits_autonomous_bash());
     assert!(!SandboxBackendKind::Landlock.permits_autonomous_bash());
-    assert!(!SandboxBackendKind::WorkspacePathGuard.permits_autonomous_bash());
+    assert!(!SandboxBackendKind::HostMountPathGuard.permits_autonomous_bash());
 }
 
 #[tokio::test]
@@ -2460,7 +2467,7 @@ async fn test_landlock_keeps_shape_parser_for_opaque_writers() {
 
 #[tokio::test]
 async fn test_reified_backend_keeps_shape_parser_for_opaque_writers() {
-    // Linux reified namespace still bind-mounts the writable workspace as a whole,
+    // Linux reified namespace still bind-mounts the writable host_mount as a whole,
     // so protected subpath integrity depends on the full parser until those
     // subpaths are carved out of the namespace.
     let temp = TempDir::new().unwrap();
@@ -2511,7 +2518,7 @@ async fn test_reified_backend_fails_closed_without_non_linux_runner() {
 }
 
 #[tokio::test]
-async fn test_reified_backend_accepts_namespace_workspace_paths_for_validation() {
+async fn test_reified_backend_accepts_namespace_host_mount_paths_for_validation() {
     let temp = TempDir::new().unwrap();
     tokio::fs::write(temp.path().join("Cargo.toml"), "[package]\n")
         .await
@@ -2523,7 +2530,7 @@ async fn test_reified_backend_accepts_namespace_workspace_paths_for_validation()
 
     let result = sandbox
         .exec_with_timeout_and_capability(
-            "cat /mnt/workspace/Cargo.toml > /dev/null",
+            "cat /mnt/source/Cargo.toml > /dev/null",
             temp.path(),
             Some(std::time::Duration::from_millis(50)),
             Some(alan_agent_protocol::ToolCapability::Read),
@@ -2533,7 +2540,7 @@ async fn test_reified_backend_accepts_namespace_workspace_paths_for_validation()
     if let Err(err) = result {
         let message = err.to_string();
         assert!(
-            !message.contains("outside workspace"),
+            !message.contains("outside host_mount"),
             "reified namespace path was not translated for validation: {message}"
         );
     }
@@ -2555,7 +2562,7 @@ async fn test_reified_backend_translates_namespace_paths_for_protected_checks() 
 
     let result = sandbox
         .exec_with_timeout_and_capability(
-            "cat /mnt/workspace/.git/config",
+            "cat /mnt/source/.git/config",
             temp.path(),
             None,
             Some(alan_agent_protocol::ToolCapability::Read),
@@ -2576,7 +2583,7 @@ async fn test_reified_backend_translates_namespace_paths_for_protected_checks() 
 }
 
 #[test]
-fn test_reified_backend_translates_host_workspace_paths_in_command_argv() {
+fn test_reified_backend_translates_host_host_mount_paths_in_command_argv() {
     let temp = TempDir::new().unwrap();
     let host_manifest = temp.path().join("Cargo.toml");
     std::fs::write(&host_manifest, "[package]\n").unwrap();
@@ -2599,7 +2606,7 @@ fn test_reified_backend_translates_host_workspace_paths_in_command_argv() {
             "sh".to_string(),
             "-f".to_string(),
             "-c".to_string(),
-            "cat /mnt/workspace/Cargo.toml > /dev/null".to_string()
+            "cat /mnt/source/Cargo.toml > /dev/null".to_string()
         ]
     );
 }
@@ -2633,7 +2640,7 @@ fn test_reified_backend_translates_embedded_host_paths_in_wrapper_script() {
             "sh".to_string(),
             "-f".to_string(),
             "-c".to_string(),
-            "bash -lc 'cp /mnt/workspace/Cargo.toml /mnt/workspace/copy.toml'".to_string()
+            "bash -lc 'cp /mnt/source/Cargo.toml /mnt/source/copy.toml'".to_string()
         ]
     );
 }
@@ -2668,7 +2675,7 @@ fn test_reified_backend_translates_embedded_host_paths_with_intervening_flag() {
             "sh".to_string(),
             "-f".to_string(),
             "-c".to_string(),
-            "bash -lc 'cp /mnt/workspace/Cargo.toml -t /mnt/workspace/out'".to_string()
+            "bash -lc 'cp /mnt/source/Cargo.toml -t /mnt/source/out'".to_string()
         ]
     );
 }
@@ -2701,11 +2708,11 @@ fn test_reified_backend_translates_quoted_spaced_wrapper_operand_before_second_p
 
     let command = &plan.argv[3];
     assert!(
-        command.contains("/mnt/workspace/My Project/Project Notes.txt"),
+        command.contains("/mnt/source/My Project/Project Notes.txt"),
         "spaced source path was not translated: {command}"
     );
     assert!(
-        command.contains("/mnt/workspace/out"),
+        command.contains("/mnt/source/out"),
         "second host path was not translated: {command}"
     );
     assert!(
@@ -2744,11 +2751,11 @@ fn test_reified_backend_preserves_assignment_words_for_quoted_spaced_paths() {
         "translated assignment no longer has assignment syntax: {command}"
     );
     assert!(
-        command.contains("/mnt/workspace/My Project/Project Notes.txt"),
+        command.contains("/mnt/source/My Project/Project Notes.txt"),
         "assignment value path was not translated: {command}"
     );
     assert!(
-        !command.contains("'FOO=/mnt/workspace"),
+        !command.contains("'FOO=/mnt/source"),
         "entire assignment word was quoted instead of only its value: {command}"
     );
     assert!(
@@ -2780,7 +2787,7 @@ fn test_reified_backend_translates_colon_separated_assignment_paths() {
 
     let command = &plan.argv[3];
     assert!(
-        command.contains("PYTHONPATH=/mnt/workspace/pkg:/mnt/workspace/tests"),
+        command.contains("PYTHONPATH=/mnt/source/pkg:/mnt/source/tests"),
         "colon-separated assignment paths were not fully translated: {command}"
     );
     assert!(
@@ -2794,22 +2801,22 @@ fn test_reified_backend_translates_colon_separated_assignment_paths() {
 }
 
 #[test]
-fn test_reified_backend_translates_quoted_host_workspace_paths_with_spaces() {
+fn test_reified_backend_translates_quoted_host_host_mount_paths_with_spaces() {
     let temp = TempDir::new().unwrap();
-    let workspace = temp.path().join("My Project");
-    let docs_dir = workspace.join("docs");
+    let host_mount = temp.path().join("My Project");
+    let docs_dir = host_mount.join("docs");
     std::fs::create_dir_all(&docs_dir).unwrap();
     let host_doc = docs_dir.join("Project Notes.txt");
     std::fs::write(&host_doc, "notes\n").unwrap();
     let sandbox = Sandbox::with_backend(
-        workspace.clone(),
+        host_mount.clone(),
         crate::tools::SandboxBackendKind::LinuxReifiedNamespace,
     );
 
     let plan = sandbox
         .reified_namespace_plan_for_command(
             &format!("cat '{}' > /dev/null", host_doc.display()),
-            &workspace,
+            &host_mount,
             false,
         )
         .unwrap();
@@ -2820,28 +2827,28 @@ fn test_reified_backend_translates_quoted_host_workspace_paths_with_spaces() {
             "sh".to_string(),
             "-f".to_string(),
             "-c".to_string(),
-            "cat '/mnt/workspace/docs/Project Notes.txt' > /dev/null".to_string()
+            "cat '/mnt/source/docs/Project Notes.txt' > /dev/null".to_string()
         ]
     );
 }
 
 #[tokio::test]
-async fn test_reified_backend_exec_validates_quoted_host_workspace_paths_with_spaces() {
+async fn test_reified_backend_exec_validates_quoted_host_host_mount_paths_with_spaces() {
     let temp = TempDir::new().unwrap();
-    let workspace = temp.path().join("My Project");
-    let docs_dir = workspace.join("docs");
+    let host_mount = temp.path().join("My Project");
+    let docs_dir = host_mount.join("docs");
     tokio::fs::create_dir_all(&docs_dir).await.unwrap();
     let host_doc = docs_dir.join("Project Notes.txt");
     tokio::fs::write(&host_doc, "notes\n").await.unwrap();
     let sandbox = Sandbox::with_backend(
-        workspace.clone(),
+        host_mount.clone(),
         crate::tools::SandboxBackendKind::LinuxReifiedNamespace,
     );
 
     let result = sandbox
         .exec_with_timeout_and_capability(
             &format!("cat '{}' > /dev/null", host_doc.display()),
-            &workspace,
+            &host_mount,
             Some(std::time::Duration::from_millis(50)),
             Some(alan_agent_protocol::ToolCapability::Read),
         )
@@ -2850,14 +2857,14 @@ async fn test_reified_backend_exec_validates_quoted_host_workspace_paths_with_sp
     if let Err(err) = result {
         let message = err.to_string();
         assert!(
-            !message.contains("outside workspace"),
-            "quoted host workspace path with spaces should not be truncated during validation: {message}"
+            !message.contains("outside host_mount"),
+            "quoted host host_mount path with spaces should not be truncated during validation: {message}"
         );
     }
 }
 
 #[tokio::test]
-async fn test_os_backend_still_blocks_out_of_workspace_reads() {
+async fn test_os_backend_still_blocks_out_of_host_mount_reads() {
     // Seatbelt denies writes/network but permits reads, so the parser must still
     // contain reads: an auto-approved `cat ~/.ssh/id_rsa` / `cat /etc/passwd` must
     // not exfiltrate secrets into tool output. ProtectedOnly drops only the shape
@@ -2880,12 +2887,12 @@ async fn test_os_backend_still_blocks_out_of_workspace_reads() {
                 Some(alan_agent_protocol::ToolCapability::Read),
             )
             .await;
-        assert!(result.is_err(), "out-of-workspace read not blocked: {cmd}");
+        assert!(result.is_err(), "out-of-host_mount read not blocked: {cmd}");
         assert!(
             result
                 .unwrap_err()
                 .to_string()
-                .contains("outside workspace"),
+                .contains("outside host_mount"),
             "wrong rejection for: {cmd}"
         );
     }
@@ -2894,7 +2901,7 @@ async fn test_os_backend_still_blocks_out_of_workspace_reads() {
 #[tokio::test]
 async fn test_os_backend_rejects_shell_expansion_reads() {
     // Shell expansion defeats static path containment: `$HOME/.ssh/id_rsa` looks
-    // workspace-relative to the parser but `/bin/sh -c` expands it to escape.
+    // host_mount-relative to the parser but `/bin/sh -c` expands it to escape.
     // validate_shell_features must run in ProtectedOnly mode too, rejecting `$`.
     let temp = TempDir::new().unwrap();
     let sandbox = Sandbox::with_backend(
@@ -2926,7 +2933,7 @@ async fn test_os_backend_rejects_shell_expansion_reads() {
 async fn test_os_backend_unwraps_transparent_wrappers_for_protected_and_reads() {
     // Transparent wrappers (`env`, `command`, `timeout`, ...) must be peeled so the
     // inline shell script is still inspected under ProtectedOnly — otherwise the
-    // quoted script is opaque and its .git write / out-of-workspace read escapes.
+    // quoted script is opaque and its .git write / out-of-host_mount read escapes.
     let temp = TempDir::new().unwrap();
     let sandbox = Sandbox::with_backend(
         temp.path().to_path_buf(),
@@ -2960,10 +2967,10 @@ async fn test_os_backend_unwraps_transparent_wrappers_for_protected_and_reads() 
         .await;
     assert!(
         read.is_err(),
-        "wrapper-hidden out-of-workspace read not blocked"
+        "wrapper-hidden out-of-host_mount read not blocked"
     );
     assert!(
-        read.unwrap_err().to_string().contains("outside workspace"),
+        read.unwrap_err().to_string().contains("outside host_mount"),
         "wrong rejection for wrapper-hidden read"
     );
 }

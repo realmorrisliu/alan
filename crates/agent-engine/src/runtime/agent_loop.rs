@@ -55,14 +55,12 @@ pub(super) enum DeferredRuntimeActionExit {
 
 /// Agent state for the execution loop
 pub struct RuntimeLoopState {
-    pub workspace_id: String,
-    pub workspace_root_dir: Option<std::path::PathBuf>,
     pub machine: AgentMachine,
     pub current_submission_id: Option<String>,
     pub environment: NamespaceRuntimeEnvironment,
     pub core_config: Config,
     pub runtime_config: RuntimeConfig,
-    pub workspace_persona_dirs: Vec<std::path::PathBuf>,
+    pub definition_persona_dirs: Vec<std::path::PathBuf>,
     pub prompt_cache: super::prompt_cache::PromptAssemblyCache,
     pub turn_state: TurnState,
 }
@@ -608,14 +606,12 @@ mod tests {
         environment: NamespaceRuntimeEnvironment,
     ) -> RuntimeLoopState {
         RuntimeLoopState {
-            workspace_id: "test-workspace".to_string(),
-            workspace_root_dir: None,
             machine: AgentMachine::new(),
             current_submission_id: None,
             environment,
             core_config: Config::default(),
             runtime_config: super::RuntimeConfig::default(),
-            workspace_persona_dirs: Vec::new(),
+            definition_persona_dirs: Vec::new(),
             prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
             turn_state: TurnState::default(),
         }
@@ -807,8 +803,6 @@ mod tests {
         machine: AgentMachine,
     ) -> RuntimeLoopState {
         RuntimeLoopState {
-            workspace_id: "test-workspace".to_string(),
-            workspace_root_dir: None,
             machine,
             current_submission_id: None,
             environment: namespace_environment_with_provider(DelayedMockProvider::new(
@@ -817,12 +811,12 @@ mod tests {
             )),
             core_config: {
                 let mut config = Config::default();
-                config.memory.workspace_dir = Some(memory_dir);
+                config.memory.store_dir = Some(memory_dir);
                 config.memory.enabled = true;
                 config
             },
             runtime_config: super::RuntimeConfig::default(),
-            workspace_persona_dirs: Vec::new(),
+            definition_persona_dirs: Vec::new(),
             prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
             turn_state,
         }
@@ -1189,8 +1183,6 @@ mod tests {
         let runtime_config = super::RuntimeConfig::default();
 
         let mut state = RuntimeLoopState {
-            workspace_id: "test-workspace".to_string(),
-            workspace_root_dir: None,
             machine,
             current_submission_id: None,
             environment: namespace_environment_with_provider(DelayedMockProvider::new(
@@ -1199,7 +1191,7 @@ mod tests {
             )),
             core_config: config,
             runtime_config,
-            workspace_persona_dirs: Vec::new(),
+            definition_persona_dirs: Vec::new(),
             prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
             turn_state: {
                 let mut turn_state = TurnState::default();
@@ -1382,8 +1374,6 @@ mod tests {
         let runtime_config = super::RuntimeConfig::default();
 
         let state = RuntimeLoopState {
-            workspace_id: "test-workspace".to_string(),
-            workspace_root_dir: None,
             machine,
             current_submission_id: None,
             environment: namespace_environment_with_provider(DelayedMockProvider::new(
@@ -1392,7 +1382,7 @@ mod tests {
             )),
             core_config: config,
             runtime_config,
-            workspace_persona_dirs: Vec::new(),
+            definition_persona_dirs: Vec::new(),
             prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
             turn_state: TurnState::default(),
         };
@@ -1436,8 +1426,6 @@ mod tests {
         let runtime_config = super::RuntimeConfig::default();
 
         let mut state = RuntimeLoopState {
-            workspace_id: "test-workspace".to_string(),
-            workspace_root_dir: None,
             machine,
             current_submission_id: None,
             environment: namespace_environment_with_provider(DelayedMockProvider::new(
@@ -1446,7 +1434,7 @@ mod tests {
             )),
             core_config: config,
             runtime_config,
-            workspace_persona_dirs: Vec::new(),
+            definition_persona_dirs: Vec::new(),
             prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
             turn_state: TurnState::default(),
         };
@@ -1482,8 +1470,6 @@ mod tests {
         let runtime_config = super::RuntimeConfig::default();
 
         let mut state = RuntimeLoopState {
-            workspace_id: "test-workspace".to_string(),
-            workspace_root_dir: None,
             machine,
             current_submission_id: None,
             environment: namespace_environment_with_provider(DelayedMockProvider::new(
@@ -1492,7 +1478,7 @@ mod tests {
             )),
             core_config: config,
             runtime_config,
-            workspace_persona_dirs: Vec::new(),
+            definition_persona_dirs: Vec::new(),
             prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
             turn_state: TurnState::default(),
         };
@@ -1529,8 +1515,6 @@ mod tests {
         runtime_config.compaction_hard_trigger_ratio = 0.8;
 
         let mut state = RuntimeLoopState {
-            workspace_id: "test-workspace".to_string(),
-            workspace_root_dir: None,
             machine,
             current_submission_id: None,
             environment: namespace_environment_with_provider(DelayedMockProvider::new(
@@ -1539,7 +1523,7 @@ mod tests {
             )),
             core_config: config,
             runtime_config,
-            workspace_persona_dirs: Vec::new(),
+            definition_persona_dirs: Vec::new(),
             prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
             turn_state: TurnState::default(),
         };
@@ -1581,8 +1565,6 @@ mod tests {
         runtime_config.compaction_hard_trigger_ratio = 0.0;
 
         let mut state = RuntimeLoopState {
-            workspace_id: "test-workspace".to_string(),
-            workspace_root_dir: None,
             machine,
             current_submission_id: None,
             environment: namespace_environment_with_provider(DelayedMockProvider::new(
@@ -1591,7 +1573,7 @@ mod tests {
             )),
             core_config: config,
             runtime_config,
-            workspace_persona_dirs: Vec::new(),
+            definition_persona_dirs: Vec::new(),
             prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
             turn_state: TurnState::default(),
         };
@@ -1633,8 +1615,6 @@ mod tests {
         runtime_config.compaction_hard_trigger_ratio = 0.8;
 
         let mut state = RuntimeLoopState {
-            workspace_id: "test-workspace".to_string(),
-            workspace_root_dir: None,
             machine,
             current_submission_id: None,
             environment: namespace_environment_with_provider(DelayedMockProvider::new(
@@ -1643,7 +1623,7 @@ mod tests {
             )),
             core_config: config,
             runtime_config,
-            workspace_persona_dirs: Vec::new(),
+            definition_persona_dirs: Vec::new(),
             prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
             turn_state: TurnState::default(),
         };
@@ -1670,7 +1650,7 @@ mod tests {
         std::fs::write(memory_dir.join("MEMORY.md"), "# Memory\n").unwrap();
 
         let mut config = Config::default();
-        config.memory.workspace_dir = Some(memory_dir.clone());
+        config.memory.store_dir = Some(memory_dir.clone());
 
         let mut machine = AgentMachine::new();
         for i in 0..6 {
@@ -1692,8 +1672,6 @@ mod tests {
         };
 
         let mut state = RuntimeLoopState {
-            workspace_id: "test-workspace".to_string(),
-            workspace_root_dir: None,
             machine,
             current_submission_id: None,
             environment: namespace_environment_with_provider(SequencedMockProvider::new(vec![
@@ -1702,7 +1680,7 @@ mod tests {
             ])),
             core_config: config,
             runtime_config,
-            workspace_persona_dirs: Vec::new(),
+            definition_persona_dirs: Vec::new(),
             prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
             turn_state: TurnState::default(),
         };
@@ -1765,7 +1743,7 @@ mod tests {
         std::fs::write(memory_dir.join("MEMORY.md"), "# Memory\n").unwrap();
 
         let mut config = Config::default();
-        config.memory.workspace_dir = Some(memory_dir.clone());
+        config.memory.store_dir = Some(memory_dir.clone());
 
         let mut machine = AgentMachine::new();
         for i in 0..6 {
@@ -1787,8 +1765,6 @@ mod tests {
         };
 
         let mut state = RuntimeLoopState {
-            workspace_id: "test-workspace".to_string(),
-            workspace_root_dir: None,
             machine,
             current_submission_id: None,
             environment: namespace_environment_with_provider(SequencedMockProvider::new(vec![
@@ -1797,7 +1773,7 @@ mod tests {
             ])),
             core_config: config,
             runtime_config,
-            workspace_persona_dirs: Vec::new(),
+            definition_persona_dirs: Vec::new(),
             prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
             turn_state: TurnState::default(),
         };
@@ -1863,7 +1839,7 @@ mod tests {
         std::fs::write(memory_dir.join("MEMORY.md"), "# Memory\n").unwrap();
 
         let mut config = Config::default();
-        config.memory.workspace_dir = Some(memory_dir.clone());
+        config.memory.store_dir = Some(memory_dir.clone());
 
         let mut machine = AgentMachine::new();
         for i in 0..6 {
@@ -1885,8 +1861,6 @@ mod tests {
         };
 
         let mut state = RuntimeLoopState {
-            workspace_id: "test-workspace".to_string(),
-            workspace_root_dir: None,
             machine,
             current_submission_id: None,
             environment: namespace_environment_with_provider(SequencedMockProvider::new(vec![
@@ -1898,7 +1872,7 @@ mod tests {
             ])),
             core_config: config,
             runtime_config,
-            workspace_persona_dirs: Vec::new(),
+            definition_persona_dirs: Vec::new(),
             prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
             turn_state: TurnState::default(),
         };
@@ -1964,7 +1938,7 @@ mod tests {
         std::fs::write(memory_dir.join("MEMORY.md"), "# Memory\n").unwrap();
 
         let mut config = Config::default();
-        config.memory.workspace_dir = Some(memory_dir.clone());
+        config.memory.store_dir = Some(memory_dir.clone());
 
         let mut machine = AgentMachine::new();
         for i in 0..6 {
@@ -1987,8 +1961,6 @@ mod tests {
         };
 
         let mut state = RuntimeLoopState {
-            workspace_id: "test-workspace".to_string(),
-            workspace_root_dir: None,
             machine,
             current_submission_id: None,
             environment: namespace_environment_with_provider(SequencedMockProvider::new(vec![
@@ -1996,7 +1968,7 @@ mod tests {
             ])),
             core_config: config,
             runtime_config,
-            workspace_persona_dirs: Vec::new(),
+            definition_persona_dirs: Vec::new(),
             prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
             turn_state: TurnState::default(),
         };
@@ -2060,7 +2032,7 @@ mod tests {
         std::fs::write(memory_dir.join("MEMORY.md"), "# Memory\n").unwrap();
 
         let mut config = Config::default();
-        config.memory.workspace_dir = Some(memory_dir);
+        config.memory.store_dir = Some(memory_dir);
 
         let mut machine = AgentMachine::new();
         for i in 0..6 {
@@ -2082,8 +2054,6 @@ mod tests {
         };
 
         let mut state = RuntimeLoopState {
-            workspace_id: "test-workspace".to_string(),
-            workspace_root_dir: None,
             machine,
             current_submission_id: None,
             environment: namespace_environment_with_provider(SequencedMockProvider::new(vec![
@@ -2091,7 +2061,7 @@ mod tests {
             ])),
             core_config: config,
             runtime_config,
-            workspace_persona_dirs: Vec::new(),
+            definition_persona_dirs: Vec::new(),
             prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
             turn_state: TurnState::default(),
         };
@@ -2147,8 +2117,6 @@ mod tests {
         };
 
         let mut state = RuntimeLoopState {
-            workspace_id: "test-workspace".to_string(),
-            workspace_root_dir: None,
             machine,
             current_submission_id: None,
             environment: namespace_environment_with_provider(DelayedMockProvider::new(
@@ -2157,7 +2125,7 @@ mod tests {
             )),
             core_config: config,
             runtime_config,
-            workspace_persona_dirs: Vec::new(),
+            definition_persona_dirs: Vec::new(),
             prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
             turn_state: TurnState::default(),
         };
@@ -2204,8 +2172,6 @@ mod tests {
         runtime_config.compaction_hard_trigger_ratio = 1.0;
 
         let mut state = RuntimeLoopState {
-            workspace_id: "test-workspace".to_string(),
-            workspace_root_dir: None,
             machine,
             current_submission_id: None,
             environment: namespace_environment_with_provider(DelayedMockProvider::new(
@@ -2214,7 +2180,7 @@ mod tests {
             )),
             core_config: config,
             runtime_config,
-            workspace_persona_dirs: Vec::new(),
+            definition_persona_dirs: Vec::new(),
             prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
             turn_state: TurnState::default(),
         };
@@ -2253,8 +2219,6 @@ mod tests {
         let runtime_config = super::RuntimeConfig::default();
 
         let mut state = RuntimeLoopState {
-            workspace_id: "test-workspace".to_string(),
-            workspace_root_dir: None,
             machine,
             current_submission_id: Some("sub-compact".to_string()),
             environment: namespace_environment_with_provider(DelayedMockProvider::new(
@@ -2263,7 +2227,7 @@ mod tests {
             )),
             core_config: config,
             runtime_config,
-            workspace_persona_dirs: Vec::new(),
+            definition_persona_dirs: Vec::new(),
             prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
             turn_state: TurnState::default(),
         };
@@ -2348,8 +2312,6 @@ mod tests {
         let runtime_config = super::RuntimeConfig::default();
 
         let mut state = RuntimeLoopState {
-            workspace_id: "test-workspace".to_string(),
-            workspace_root_dir: None,
             machine,
             current_submission_id: None,
             environment: namespace_environment_with_provider(FailThenSucceedMockProvider::new(
@@ -2358,7 +2320,7 @@ mod tests {
             )),
             core_config: config,
             runtime_config,
-            workspace_persona_dirs: Vec::new(),
+            definition_persona_dirs: Vec::new(),
             prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
             turn_state: TurnState::default(),
         };
@@ -2423,8 +2385,6 @@ mod tests {
         let runtime_config = super::RuntimeConfig::default();
 
         let mut state = RuntimeLoopState {
-            workspace_id: "test-workspace".to_string(),
-            workspace_root_dir: None,
             machine,
             current_submission_id: None,
             environment: namespace_environment_with_provider(ErrorMockProvider::new(
@@ -2432,7 +2392,7 @@ mod tests {
             )),
             core_config: config,
             runtime_config,
-            workspace_persona_dirs: Vec::new(),
+            definition_persona_dirs: Vec::new(),
             prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
             turn_state: TurnState::default(),
         };
@@ -2508,8 +2468,6 @@ mod tests {
         };
 
         let mut state = RuntimeLoopState {
-            workspace_id: "test-workspace".to_string(),
-            workspace_root_dir: None,
             machine,
             current_submission_id: None,
             environment: namespace_environment_with_provider(ErrorMockProvider::new(
@@ -2517,7 +2475,7 @@ mod tests {
             )),
             core_config: config,
             runtime_config,
-            workspace_persona_dirs: Vec::new(),
+            definition_persona_dirs: Vec::new(),
             prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
             turn_state: TurnState::default(),
         };
@@ -2598,8 +2556,6 @@ mod tests {
         let runtime_config = super::RuntimeConfig::default();
 
         let mut state = RuntimeLoopState {
-            workspace_id: "test-workspace".to_string(),
-            workspace_root_dir: None,
             machine,
             current_submission_id: None,
             environment: namespace_environment_with_provider(ErrorMockProvider::new(
@@ -2607,7 +2563,7 @@ mod tests {
             )),
             core_config: config,
             runtime_config,
-            workspace_persona_dirs: Vec::new(),
+            definition_persona_dirs: Vec::new(),
             prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
             turn_state: TurnState::default(),
         };
@@ -2688,8 +2644,6 @@ mod tests {
         let runtime_config = super::RuntimeConfig::default();
 
         let mut state = RuntimeLoopState {
-            workspace_id: "test-workspace".to_string(),
-            workspace_root_dir: None,
             machine,
             current_submission_id: None,
             environment: namespace_environment_with_live_process(DelayedMockProvider::new(
@@ -2699,7 +2653,7 @@ mod tests {
             .await,
             core_config: config,
             runtime_config,
-            workspace_persona_dirs: Vec::new(),
+            definition_persona_dirs: Vec::new(),
             prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
             turn_state: TurnState::default(),
         };
@@ -2743,8 +2697,6 @@ mod tests {
         let runtime_config = super::RuntimeConfig::default();
 
         let mut state = RuntimeLoopState {
-            workspace_id: "test-workspace".to_string(),
-            workspace_root_dir: None,
             machine,
             current_submission_id: None,
             environment: namespace_environment_with_provider(DelayedMockProvider::new(
@@ -2753,7 +2705,7 @@ mod tests {
             )),
             core_config: config,
             runtime_config,
-            workspace_persona_dirs: Vec::new(),
+            definition_persona_dirs: Vec::new(),
             prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
             turn_state: TurnState::default(),
         };

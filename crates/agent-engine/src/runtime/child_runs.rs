@@ -57,8 +57,6 @@ pub struct ChildRunRecord {
     pub parent_process_path: String,
     pub child_process_path: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub workspace_root: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_path: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub state_ref: Option<crate::skills::DelegatedSkillOutputRef>,
@@ -90,7 +88,6 @@ impl ChildRunRecord {
         id: String,
         parent_process_path: String,
         child_process_path: String,
-        workspace_root: Option<String>,
         agent_path: Option<String>,
         launch_target: Option<String>,
     ) -> Self {
@@ -99,7 +96,6 @@ impl ChildRunRecord {
             id,
             parent_process_path,
             child_process_path,
-            workspace_root,
             agent_path,
             state_ref: None,
             launch_target,
@@ -369,7 +365,6 @@ mod tests {
             child_run_id.to_string(),
             parent_process_path.to_string(),
             "/proc/42".to_string(),
-            Some("/tmp/workspace".to_string()),
             Some("/agent/42".to_string()),
             Some("repo-coding".to_string()),
         )
@@ -379,16 +374,15 @@ mod tests {
     fn child_run_launch_record_retains_requirements_and_namespace_summary() {
         let decision = alan_agent_protocol::DelegatedCapabilityDecision {
             requirements: vec![
-                alan_agent_protocol::DelegatedCapabilityRequirement::WorkspaceRead {
-                    path: Some(std::path::PathBuf::from("/tmp/workspace")),
+                alan_agent_protocol::DelegatedCapabilityRequirement::MountRead {
+                    path: Some(std::path::PathBuf::from("/mnt/source")),
                 },
             ],
             namespace: alan_agent_protocol::DelegatedNamespaceSummary {
                 mounts: vec!["/agent".to_string(), "/mnt/llm".to_string()],
+                writable_mounts: Vec::new(),
                 bin_bindings: vec!["/bin/read_file".to_string()],
-                workspace_root: Some(std::path::PathBuf::from("/tmp/workspace")),
-                workspace_access: Some(alan_agent_protocol::DelegatedWorkspaceAccess::ReadOnly),
-                workspace_projection: Some("host_tool_binding_compatibility".to_string()),
+                cwd: Some(std::path::PathBuf::from("/mnt/source")),
                 llm_connection: Some("default".to_string()),
             },
             unsatisfied: Vec::new(),

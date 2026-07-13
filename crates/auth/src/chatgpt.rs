@@ -8,7 +8,7 @@ use rand::Rng;
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
 use std::time::Duration;
@@ -37,13 +37,12 @@ pub struct ChatgptAuthConfig {
 
 impl ChatgptAuthConfig {
     pub fn detect() -> io::Result<Self> {
-        let home_dir = dirs::home_dir()
-            .ok_or_else(|| io::Error::other("Could not determine home directory"))?;
-        Ok(Self::with_storage_path(
-            home_dir
-                .join(default_alan_home_dir_name())
-                .join("auth.json"),
-        ))
+        let data_dir = dirs::data_dir()
+            .ok_or_else(|| io::Error::other("Could not determine application data directory"))?;
+        Ok(Self::with_storage_path(default_host_store_auth_path(
+            &data_dir,
+            detected_install_channel_id(),
+        )))
     }
 
     pub fn with_storage_path(storage_path: PathBuf) -> Self {
@@ -56,11 +55,11 @@ impl ChatgptAuthConfig {
     }
 }
 
-fn default_alan_home_dir_name() -> &'static str {
+fn detected_install_channel_id() -> &'static str {
     if let Ok(channel) = std::env::var(INSTALL_CHANNEL_ENV) {
         match channel.trim() {
-            "dev" => return ".alan-dev",
-            "stable" => return ".alan",
+            "dev" => return "dev",
+            "stable" => return "stable",
             _ => {}
         }
     }
@@ -76,10 +75,18 @@ fn default_alan_home_dir_name() -> &'static str {
         .unwrap_or(raw_executable_name);
 
     if matches!(executable_name, "alan-dev") {
-        ".alan-dev"
+        "dev"
     } else {
-        ".alan"
+        "stable"
     }
+}
+
+fn default_host_store_auth_path(data_dir: &Path, channel: &str) -> PathBuf {
+    data_dir
+        .join("Alan")
+        .join("Host Store")
+        .join(channel)
+        .join("auth.json")
 }
 
 #[derive(Debug, Clone)]

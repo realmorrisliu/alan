@@ -14,8 +14,7 @@ dangerous cases that the sandbox alone would not.
 - Broadly or persistently weaken security (disabling protections, opening wide
   permissions, installing persistence, tampering with auth or audit).
 - Write to protected agent/repo control state — `.git/config`, `.git/hooks`, or
-  anything under `.alan`/`.agents` (except the active
-  `.alan/runtime/{stable,dev}/memory/` Memory Store) — by any means other than
+  anything under `.alan`/`.agents` — by any means other than
   ordinary git porcelain on its own repo. An interpreter or redirect writing
   `.git/config`, or `git config core.hooksPath`/an `alias` that redirects
   execution, is a persistence/code-execution vector the OS sandbox cannot block.
@@ -28,7 +27,7 @@ dangerous cases that the sandbox alone would not.
 
 - Is a normal step toward the user's stated task, contained by the sandbox, and
   reversible or low-impact.
-- Reads or writes within the workspace, runs ordinary build/test/lint/VCS
+- Reads or writes within explicit Host Mounts, runs ordinary build/test/lint/VCS
   commands, or makes expected, task-relevant network requests.
 
 ## How to decide

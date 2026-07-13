@@ -1,7 +1,7 @@
 You are performing a SILENT PRE-COMPACTION MEMORY FLUSH.
 
 Extract only durable, high-value information that should survive beyond the
-current Agent Process and be written into workspace memory before compaction.
+current Agent Process and be written into its explicit Memory Store before compaction.
 
 Return JSON only. Do not include markdown fences or any prose outside the JSON.
 

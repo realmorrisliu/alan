@@ -10,7 +10,7 @@ Use this exact schema:
 {
   "writes": [
     {
-      "kind": "user_identity | user_preference | workspace_fact | workflow_rule",
+      "kind": "user_identity | user_preference | domain_fact | workflow_rule",
       "target": "USER.md | MEMORY.md",
       "confidence": "high | medium | low",
       "disposition": "promote_now | stage_inbox",

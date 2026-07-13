@@ -22,7 +22,7 @@ Use these names consistently in code, specs, docs, UI copy, and reviews.
 | Agent Executable | An executable bound into `/bin` that creates an Agent Process when spawned. |
 | Tool | A reusable executable in the Alan OS command namespace. |
 | Skill | A manual-like knowledge package passed to Agent Processes by descriptor. |
-| Memory Stores | File trees that own personal, continuity, app, and workspace memory. |
+| Memory Stores | File trees that own personal, continuity, app, and mounted-domain memory. |
 | Alan Agent | An optional Agent Workspace app that inspects and steers Agent Processes through files. |
 | Agent Execution Engine / `alan-agent-engine` | The current tape/model/Tool/policy/memory transition loop in `crates/agent-engine`. |
 | Alan for macOS | Native Apple terminal host, renderer, input shell, windowing, and OS integration surface. |
@@ -84,7 +84,7 @@ crates/
 ├── agent-engine/     # Agent Execution Engine
 ├── tools/            # builtin Tool implementations
 ├── tui/              # file-backed Ratatui renderer/input loop
-├── shell-core/       # platform-neutral workspace model
+├── shell-core/       # platform-neutral shell surface model
 ├── shell-core-ffi/   # C ABI facade
 └── alan/             # CLI host and linked TUI
 
@@ -146,44 +146,32 @@ Operator-facing provider setup is connection-profile driven:
 
 ```bash
 alan connection list
-alan connection current --workspace /path/to/workspace
+alan connection current
 alan connection add chatgpt --profile chatgpt-main
 alan connection login chatgpt-main browser
 alan connection add openai_responses --profile openai-main --setting model=gpt-5.4
 alan connection set-secret openai-main
 alan connection default set chatgpt-main
-alan connection pin chatgpt-main --scope global
 alan connection test chatgpt-main
 ```
 
-Connection metadata lives in `~/.alan/connections.toml`; credentials and managed
-auth state use their owning host stores. Agent config may select a profile with
-`connection_profile = "profile-id"` but must not contain new inline secrets.
+Connection metadata lives in the channel Connection Service subtree of the
+System Store. Credentials and managed auth state use their owning Host stores.
+Agent config may select a profile with `connection_profile = "profile-id"` but
+must not contain new inline secrets.
 
-Agent definitions resolve from:
-
-```text
-~/.alan/agents/default/
-~/.alan/agents/<name>/
-<workspace>/.alan/agents/default/
-<workspace>/.alan/agents/<name>/
-```
-
-Each root may contain `agent.toml`, `persona/`, `skills/`, and `policy.yaml`.
-Default roots resolve before named roots. This is definition overlay, not
-Process ancestry.
-
-Generated workspace state belongs under:
+Host-private backing is channel-isolated:
 
 ```text
-<workspace>/.alan/runtime/<channel>/
-├── rollouts/
-├── memory/
-├── cache/
-├── shell-restore/
-├── metadata/
-└── tmp/
+~/Library/Application Support/Alan/System Store/<channel>/
+~/Library/Application Support/Alan/Host Store/<channel>/
 ```
+
+Agent Definitions and Skills resolve only from explicit descriptors or
+installed Alan OS references. A definition tree may contain `agent.toml`,
+`persona/`, `skills/`, and `policy.yaml`; no Host-directory overlay is inferred.
+Generated runtime evidence and Memory Store data belong to their owning System
+Store services, never to a Host project directory.
 
 ## Specification workflow
 

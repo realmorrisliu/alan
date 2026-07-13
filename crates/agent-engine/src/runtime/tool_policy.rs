@@ -128,7 +128,7 @@ fn is_recursive_rm(command: &str) -> bool {
 /// Detect a destructive `find` action (`-delete`, `-exec`/`-execdir`,
 /// `-ok`/`-okdir`) in any token form (errs toward escalation). `find` with these
 /// actions deletes files or runs arbitrary commands, which the bare write
-/// classification would otherwise auto-allow in-workspace.
+/// classification would otherwise auto-allow inside an explicit writable Host Mount.
 fn is_destructive_find(command: &str) -> bool {
     let tokens = normalized_tokens(command);
     let has_find = tokens.iter().any(|t| t == "find" || t.ends_with("/find"));
@@ -187,7 +187,7 @@ fn mode_grants_world_write(token: &str) -> bool {
 /// degradation and the syntactic preflight.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct SandboxConfinement {
-    /// The backend is a complete bash boundary (workspace fs + network kernel-
+    /// The backend is a complete bash boundary (Host Mount file view + network kernel-
     /// enforced — Seatbelt), so wrappers may run and escalated bash is reviewer-
     /// eligible rather than routed to a human. This does NOT mean `.git`/`.alan`/
     /// `.agents` are kernel-protected (they cannot be without breaking git) —
@@ -235,7 +235,7 @@ pub(super) fn evaluate_tool_policy(
 ) -> ToolPolicyDecision {
     let sandbox_backend = crate::tools::active_backend_name();
     let path_mode = crate::tools::active_backend_path_mode().to_string();
-    // The bash-shape preflight is the workspace-path-guard parser standing in for
+    // The bash-shape preflight is the Host-Mount path-guard parser standing in for
     // confinement. With a kernel-enforced OS sandbox active, confinement is
     // independent of command syntax, so this syntactic deny must not block
     // commands the sandbox would safely contain (e.g. `python -c ...`,
@@ -307,7 +307,7 @@ pub(super) fn evaluate_tool_policy(
 
     // Destructive `find` actions (`-delete`, `-exec …`) delete files or run
     // arbitrary commands; the bare write classification would auto-allow them
-    // in-workspace, so escalate for review.
+    // inside a writable Host Mount, so escalate for review.
     if action == crate::policy::PolicyAction::Allow
         && builtin_bash
         && is_destructive_find(command_arg)
@@ -347,14 +347,14 @@ pub(super) fn evaluate_tool_policy(
     // `cargo test`/`pytest` can write `.git`) — the reviewer is not a security
     // boundary for it, so an *escalated* bash command must go to a human instead.
     // Only Seatbelt confines both; Landlock cannot carve protected subpaths out of
-    // the writable workspace, and the path-guard fallback confines nothing.
+    // a writable Host Mount, and the path-guard fallback confines nothing.
     //
     // This applies only to commands already escalated (`action == Escalate`):
     // destructive (`rm -rf build`), irreversible (`git reset --hard`), and opaque
     // / unknown ones (`cargo test`, `python script.py`, which all hit
     // `review-unknown`). Auto-allowed bash (`touch`, `echo`, `ls`) is left alone —
     // it is a recognized command whose path operands the parser already confined
-    // to non-protected workspace paths. (`human-` ids never reach the reviewer.)
+    // to non-protected Host Mount paths. (`human-` ids never reach the reviewer.)
     let fully_confined = confinement.network && confinement.permits_autonomous_bash;
     if should_degrade_bash(action, tool_name, &policy_source, fully_confined) {
         action = crate::policy::PolicyAction::Escalate;
@@ -541,7 +541,7 @@ mod tests {
         assert!(!should_degrade_bash(
             PolicyAction::Escalate,
             "bash",
-            "workspace_policy_file",
+            "definition_policy_file",
             false
         ));
         // Non-bash tools (contained by the path guard) are unaffected.
@@ -688,7 +688,7 @@ mod tests {
 
     #[test]
     fn code_runner_routes_to_human_under_landlock() {
-        // Landlock confines the workspace + network but cannot carve out protected
+        // Landlock confines Host Mounts + network but cannot carve out protected
         // subpaths, so a code runner whose test/build code could write `.git`
         // (`cargo test`, `pytest`) must go to a human, not auto-run or be
         // reviewer-routed — the sandbox does not fully confine bash here.
@@ -1040,7 +1040,7 @@ mod tests {
     }
 
     #[test]
-    fn test_in_workspace_write_auto_approves() {
+    fn test_in_mount_write_auto_approves() {
         let policy = crate::policy::PolicyEngine::autonomous();
         let result = evaluate_tool_policy(
             &policy,
@@ -1066,7 +1066,7 @@ mod tests {
     #[test]
     fn test_tool_policy_uses_current_cwd_for_relative_path_prefix_matching() {
         let tmp = TempDir::new().unwrap();
-        let policy_dir = tmp.path().join("workspace-alan");
+        let policy_dir = tmp.path().join("definition");
         std::fs::create_dir_all(&policy_dir).unwrap();
         std::fs::write(
             policy_dir.join("policy.yaml"),
@@ -1082,7 +1082,8 @@ default_action: allow
 "#,
         )
         .unwrap();
-        let policy = crate::policy::PolicyEngine::load_or_default(Some(policy_dir.as_path()));
+        let policy =
+            crate::policy::PolicyEngine::load_or_default(Some(&policy_dir.join("policy.yaml")));
         let result = evaluate_tool_policy(
             &policy,
             &alan_agent_protocol::GovernanceConfig {
@@ -1092,7 +1093,7 @@ default_action: allow
             "write_file",
             &json!({"path":"../deploy/prod.yaml","content":"version = 2"}),
             alan_agent_protocol::ToolCapability::Write,
-            Some(Path::new("/workspace/repo/src")),
+            Some(Path::new("/mnt/source/src")),
             SandboxConfinement::os_enforced(),
         );
         match result {

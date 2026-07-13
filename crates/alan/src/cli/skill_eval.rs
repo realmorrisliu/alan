@@ -230,7 +230,7 @@ pub fn run_eval_manifest(options: &SkillEvalRunOptions) -> Result<SkillEvalRunSu
         fs::canonicalize(&options.manifest_path).unwrap_or_else(|_| options.manifest_path.clone());
     let (_, manifest) = load_eval_manifest(&package_root, Some(&manifest_path))?
         .ok_or_else(|| anyhow!("No eval manifest found at {}", manifest_path.display()))?;
-    let skill = load_skill(&package_root.join("SKILL.md"), SkillScope::Repo)
+    let skill = load_skill(&package_root.join("SKILL.md"), SkillScope::Descriptor)
         .with_context(|| format!("Failed to load skill package {}", package_root.display()))?;
     let suite = manifest
         .suite

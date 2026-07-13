@@ -482,7 +482,7 @@ pub fn validate_skill_package(package_root: &Path) -> SkillPackageValidationRepo
         };
     }
 
-    let mut skill = match load_skill(&skill_path, SkillScope::Repo) {
+    let mut skill = match load_skill(&skill_path, SkillScope::Descriptor) {
         Ok(skill) => skill,
         Err(err) => {
             push_skill_error(
@@ -1051,14 +1051,10 @@ fn discover_child_agent_exports(
 }
 
 fn looks_like_child_agent_root(root_dir: &Path) -> bool {
-    let root = alan_agent_engine::AgentRootPaths::new(
-        alan_agent_engine::AgentRootKind::LaunchRoot,
-        root_dir.to_path_buf(),
-    );
-    root.config_path.is_file()
-        || root.persona_dir.is_dir()
-        || root.skills_dir.is_dir()
-        || root.policy_path.is_file()
+    root_dir.join("agent.toml").is_file()
+        || root_dir.join("persona").is_dir()
+        || root_dir.join("skills").is_dir()
+        || root_dir.join("policy.yaml").is_file()
 }
 
 fn existing_dir(path: PathBuf) -> Option<PathBuf> {

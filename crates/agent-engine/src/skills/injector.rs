@@ -265,7 +265,7 @@ delegated_target: {target}
 This skill executes through alan's delegated runtime path.
 Do not inline or restate the full `SKILL.md` body in this machine.
 When you need this capability, call `invoke_delegated_skill` with a concise bounded task for the delegated runtime.
-If the delegated task targets a different local workspace than the current runtime, include an explicit `workspace_root` and, when helpful, a narrower nested `cwd`.
+The delegated runtime receives only descriptors and inherited namespace mounts. Use an Alan OS `cwd` already present in that namespace; request a Host Mount before delegation when required files are absent.
 The tool returns a bounded result object with `status`, `summary`, optional `child_run`, optional inline `output_text`, optional namespace-path `output_ref`, optional `structured_output`, and explicit `truncation` metadata.
 If `output_ref` or truncation metadata is present, treat the inline text as a preview. When the full delegated output is needed, open or read the namespace file at `output_ref.path`; raw rollout/machine paths are debug metadata, not evidence access paths.
 Use `child_run` metadata only for delegation-scoped launch and handoff context. Inspect live child state through `/agent/<pid>/children` and `/proc`. Parent Agent Processes terminate children through governed `terminate_child_run` handling; external operators may stop a child through `/proc/<pid>/ctl` with `cancel` or `interrupt`. Inspect and control execution only through the owning file surfaces.
@@ -1028,7 +1028,7 @@ pub fn render_skills_list(
                 } else {
                     lines.push("  use: call `invoke_delegated_skill` directly with this `skill_id`, the delegated `target`, and a concise bounded task".to_string());
                 }
-                lines.push("  note: when the delegated task targets a different local workspace, include `workspace_root` and optional `cwd` so the child runtime binds to the correct scope".to_string());
+                lines.push("  note: delegated children receive descriptors and inherited mounts; pass only an Alan OS `cwd` already present in the child namespace".to_string());
             }
             _ => {
                 if builtin_package {
@@ -1143,7 +1143,7 @@ mod tests {
                 path: std::path::PathBuf::from("/tmp/test/SKILL.md"),
                 package_root: None,
                 resource_root: None,
-                scope: SkillScope::User,
+                scope: SkillScope::Installed,
                 tags: vec![],
                 capabilities: None,
                 compatibility: Default::default(),
@@ -1181,7 +1181,7 @@ mod tests {
                 path: std::path::PathBuf::from("/tmp/repo-review/SKILL.md"),
                 package_root: Some(std::path::PathBuf::from("/tmp/repo-review")),
                 resource_root: Some(std::path::PathBuf::from("/tmp/repo-review")),
-                scope: SkillScope::User,
+                scope: SkillScope::Installed,
                 tags: vec![],
                 capabilities: None,
                 compatibility: Default::default(),
@@ -1225,7 +1225,7 @@ mod tests {
                 path: std::path::PathBuf::from("/tmp/repo-review/SKILL.md"),
                 package_root: Some(std::path::PathBuf::from("/tmp/repo-review")),
                 resource_root: Some(std::path::PathBuf::from("/tmp/repo-review")),
-                scope: SkillScope::User,
+                scope: SkillScope::Installed,
                 tags: vec![],
                 capabilities: None,
                 compatibility: Default::default(),
@@ -1281,7 +1281,7 @@ mod tests {
                 path: std::path::PathBuf::from("/tmp/skill-creator/SKILL.md"),
                 package_root: Some(std::path::PathBuf::from("/tmp/skill-creator")),
                 resource_root: Some(std::path::PathBuf::from("/tmp/skill-creator")),
-                scope: SkillScope::User,
+                scope: SkillScope::Installed,
                 tags: vec![],
                 capabilities: None,
                 compatibility: Default::default(),
@@ -1332,7 +1332,7 @@ mod tests {
                 path: std::path::PathBuf::from("/tmp/eval/SKILL.md"),
                 package_root: None,
                 resource_root: None,
-                scope: SkillScope::User,
+                scope: SkillScope::Installed,
                 tags: vec![],
                 capabilities: None,
                 compatibility: Default::default(),
@@ -1370,7 +1370,7 @@ mod tests {
                 path: std::path::PathBuf::from("/a/SKILL.md"),
                 package_root: None,
                 resource_root: None,
-                scope: SkillScope::User,
+                scope: SkillScope::Installed,
                 tags: vec![],
                 capabilities: None,
                 compatibility: Default::default(),
@@ -1397,7 +1397,7 @@ mod tests {
                 path: std::path::PathBuf::from("/b/SKILL.md"),
                 package_root: None,
                 resource_root: None,
-                scope: SkillScope::Repo,
+                scope: SkillScope::Descriptor,
                 tags: vec![],
                 capabilities: None,
                 compatibility: Default::default(),
@@ -1417,7 +1417,7 @@ mod tests {
                 path: std::path::PathBuf::from("/c/SKILL.md"),
                 package_root: None,
                 resource_root: None,
-                scope: SkillScope::Repo,
+                scope: SkillScope::Descriptor,
                 tags: vec![],
                 capabilities: None,
                 compatibility: Default::default(),
@@ -1460,7 +1460,7 @@ mod tests {
             path: std::path::PathBuf::from("/c/SKILL.md"),
             package_root: None,
             resource_root: None,
-            scope: SkillScope::Repo,
+            scope: SkillScope::Descriptor,
             tags: vec![],
             capabilities: None,
             compatibility: Default::default(),
@@ -1723,7 +1723,7 @@ mod tests {
                 path: skill_dir.join("SKILL.md"),
                 package_root: Some(skill_dir.clone()),
                 resource_root: Some(skill_dir.clone()),
-                scope: SkillScope::User,
+                scope: SkillScope::Installed,
                 tags: vec![],
                 capabilities: Some(SkillCapabilities {
                     disclosure: DisclosureConfig {
@@ -1783,7 +1783,7 @@ mod tests {
                 path: skill_dir.join("SKILL.md"),
                 package_root: Some(skill_dir.clone()),
                 resource_root: Some(skill_dir.clone()),
-                scope: SkillScope::User,
+                scope: SkillScope::Installed,
                 tags: vec![],
                 capabilities: Some(SkillCapabilities {
                     disclosure: DisclosureConfig {
@@ -1837,7 +1837,7 @@ mod tests {
                 path: skill_dir.join("SKILL.md"),
                 package_root: Some(skill_dir.clone()),
                 resource_root: Some(skill_dir.clone()),
-                scope: SkillScope::User,
+                scope: SkillScope::Installed,
                 tags: vec![],
                 capabilities: Some(SkillCapabilities {
                     disclosure: DisclosureConfig {
@@ -1897,7 +1897,7 @@ mod tests {
                 path: skill_dir.join("SKILL.md"),
                 package_root: Some(skill_dir.clone()),
                 resource_root: Some(skill_dir.clone()),
-                scope: SkillScope::User,
+                scope: SkillScope::Installed,
                 tags: vec![],
                 capabilities: Some(SkillCapabilities {
                     disclosure: DisclosureConfig {
@@ -1964,7 +1964,7 @@ mod tests {
                 path: skill_dir.join("SKILL.md"),
                 package_root: Some(skill_dir.clone()),
                 resource_root: Some(skill_dir.clone()),
-                scope: SkillScope::User,
+                scope: SkillScope::Installed,
                 tags: vec![],
                 capabilities: Some(SkillCapabilities {
                     disclosure: DisclosureConfig {
@@ -2046,7 +2046,7 @@ mod tests {
                 path: skill_dir.join("SKILL.md"),
                 package_root: Some(skill_dir.clone()),
                 resource_root: Some(skill_dir.clone()),
-                scope: SkillScope::User,
+                scope: SkillScope::Installed,
                 tags: vec![],
                 capabilities: None,
                 compatibility: Default::default(),
@@ -2115,7 +2115,7 @@ mod tests {
                 path: skill_dir.join("SKILL.md"),
                 package_root: Some(skill_dir.clone()),
                 resource_root: Some(skill_dir.clone()),
-                scope: SkillScope::User,
+                scope: SkillScope::Installed,
                 tags: vec![],
                 capabilities: Some(SkillCapabilities {
                     disclosure: DisclosureConfig {
@@ -2174,7 +2174,7 @@ mod tests {
                 path: std::path::PathBuf::from("SKILL.md"), // No parent
                 package_root: None,
                 resource_root: None,
-                scope: SkillScope::User,
+                scope: SkillScope::Installed,
                 tags: vec![],
                 capabilities: None,
                 compatibility: Default::default(),
@@ -2224,7 +2224,7 @@ mod tests {
                 path: std::path::PathBuf::from("/test/SKILL.md"),
                 package_root: None,
                 resource_root: None,
-                scope: SkillScope::User,
+                scope: SkillScope::Installed,
                 tags: vec![],
                 capabilities: None,
                 compatibility: Default::default(),
@@ -2244,7 +2244,7 @@ mod tests {
                 path: std::path::PathBuf::from("/testing/SKILL.md"),
                 package_root: None,
                 resource_root: None,
-                scope: SkillScope::User,
+                scope: SkillScope::Installed,
                 tags: vec![],
                 capabilities: None,
                 compatibility: Default::default(),
@@ -2274,7 +2274,7 @@ mod tests {
             path: std::path::PathBuf::from("/other/SKILL.md"),
             package_root: None,
             resource_root: None,
-            scope: SkillScope::User,
+            scope: SkillScope::Installed,
             tags: vec![],
             capabilities: None,
             compatibility: Default::default(),
@@ -2304,7 +2304,7 @@ mod tests {
             path: std::path::PathBuf::from("/rust/SKILL.md"),
             package_root: None,
             resource_root: None,
-            scope: SkillScope::User,
+            scope: SkillScope::Installed,
             tags: vec![],
             capabilities: None,
             compatibility: Default::default(),

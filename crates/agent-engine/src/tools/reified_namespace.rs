@@ -30,8 +30,8 @@ use super::sandbox_backend::{SandboxBackendKind, detect_backend};
 #[cfg(target_os = "linux")]
 use super::sandbox_backend::{preferred_linux_backend_with_reification, probe_linux_reification};
 
-/// Default namespace path for the workspace seed mount.
-pub const DEFAULT_WORKSPACE_NAMESPACE_PATH: &str = "/mnt/workspace";
+/// Default namespace path used only by the single-mount convenience builder.
+pub const DEFAULT_PRIMARY_MOUNT_NAMESPACE_PATH: &str = "/mnt/source";
 
 /// Default namespace path for the private scratch/tmp mount.
 pub const DEFAULT_SCRATCH_TMP_NAMESPACE_PATH: &str = "/tmp";
@@ -208,18 +208,18 @@ impl ReifiedNamespacePlan {
         })
     }
 
-    /// Build a plan for the default workspace seed mount.
-    pub fn workspace_seed(
-        workspace_root: impl Into<PathBuf>,
+    /// Build a plan for one explicit writable Host Mount.
+    pub fn primary_mount(
+        host_root: impl Into<PathBuf>,
         cwd: impl Into<PathBuf>,
         argv: Vec<String>,
         network: NetworkPosture,
     ) -> Result<Self, ReifiedNamespacePlanError> {
-        let workspace_root = workspace_root.into();
+        let host_root = host_root.into();
         let input = ReifiedNamespacePlanInput::new(
             vec![ReifiedMountDeclaration::host(
-                DEFAULT_WORKSPACE_NAMESPACE_PATH,
-                workspace_root,
+                DEFAULT_PRIMARY_MOUNT_NAMESPACE_PATH,
+                host_root,
                 ReifiedMountAccess::ReadWrite,
             )],
             cwd,
@@ -598,17 +598,17 @@ fn format_path_entries(entries: &[PathBuf]) -> String {
 
 #[cfg(target_os = "linux")]
 fn smoke_linux_reified_namespace_runner_inner() -> Result<(), String> {
-    let workspace = ReifiedSmokeWorkspace::create()
-        .map_err(|err| format!("create runner smoke workspace failed: {err}"))?;
+    let host_mount = ReifiedSmokeHostMount::create()
+        .map_err(|err| format!("create runner smoke host_mount failed: {err}"))?;
     let runner = LinuxReifiedNamespaceRunner::with_fallback_backend(SandboxBackendKind::Landlock);
 
-    let deny_plan = ReifiedNamespacePlan::workspace_seed(
-        workspace.root.as_path(),
-        workspace.root.as_path(),
+    let deny_plan = ReifiedNamespacePlan::primary_mount(
+        host_mount.root.as_path(),
+        host_mount.root.as_path(),
         vec![
             "sh".to_string(),
             "-c".to_string(),
-            "test -d /mnt/workspace && test ! -e /home".to_string(),
+            "test -d /mnt/source && test ! -e /home".to_string(),
         ],
         NetworkPosture::Deny,
     )
@@ -620,9 +620,9 @@ fn smoke_linux_reified_namespace_runner_inner() -> Result<(), String> {
     } else {
         "true"
     };
-    let allow_plan = ReifiedNamespacePlan::workspace_seed(
-        workspace.root.as_path(),
-        workspace.root.as_path(),
+    let allow_plan = ReifiedNamespacePlan::primary_mount(
+        host_mount.root.as_path(),
+        host_mount.root.as_path(),
         vec!["sh".to_string(), "-c".to_string(), allow_script.to_string()],
         NetworkPosture::Allow,
     )
@@ -649,12 +649,12 @@ fn run_linux_reified_smoke_plan(
 
 #[cfg(target_os = "linux")]
 #[derive(Debug)]
-struct ReifiedSmokeWorkspace {
+struct ReifiedSmokeHostMount {
     root: PathBuf,
 }
 
 #[cfg(target_os = "linux")]
-impl ReifiedSmokeWorkspace {
+impl ReifiedSmokeHostMount {
     fn create() -> std::io::Result<Self> {
         let root = std::env::temp_dir().join(format!(
             "alan-reified-smoke-{}-{}",
@@ -667,7 +667,7 @@ impl ReifiedSmokeWorkspace {
 }
 
 #[cfg(target_os = "linux")]
-impl Drop for ReifiedSmokeWorkspace {
+impl Drop for ReifiedSmokeHostMount {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.root);
     }
@@ -1573,10 +1573,10 @@ mod tests {
     }
 
     #[test]
-    fn workspace_seed_mount_translates_cwd_to_namespace_path() {
-        let plan = ReifiedNamespacePlan::workspace_seed(
-            "/host/workspace",
-            "/host/workspace/src",
+    fn primary_mount_mount_translates_cwd_to_namespace_path() {
+        let plan = ReifiedNamespacePlan::primary_mount(
+            "/host/host_mount",
+            "/host/host_mount/src",
             shell_argv(),
             NetworkPosture::Deny,
         )
@@ -1586,12 +1586,12 @@ mod tests {
         assert_eq!(
             plan.declared_host_mounts[0],
             ReifiedHostMount {
-                namespace_path: PathBuf::from(DEFAULT_WORKSPACE_NAMESPACE_PATH),
-                host_path: PathBuf::from("/host/workspace"),
+                namespace_path: PathBuf::from(DEFAULT_PRIMARY_MOUNT_NAMESPACE_PATH),
+                host_path: PathBuf::from("/host/host_mount"),
                 access: ReifiedMountAccess::ReadWrite,
             }
         );
-        assert_eq!(plan.cwd, PathBuf::from("/mnt/workspace/src"));
+        assert_eq!(plan.cwd, PathBuf::from("/mnt/source/src"));
         assert_eq!(plan.argv, shell_argv());
         assert_eq!(plan.network, NetworkPosture::Deny);
         assert_eq!(
@@ -1935,22 +1935,22 @@ mod tests {
     #[test]
     fn symlinked_host_mount_sources_are_normalized_before_overlap_checks() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let workspace = temp_dir.path().join("workspace");
-        let vendor = workspace.join("vendor");
-        let workspace_link = temp_dir.path().join("workspace-link");
+        let host_mount = temp_dir.path().join("host_mount");
+        let vendor = host_mount.join("vendor");
+        let host_mount_link = temp_dir.path().join("host_mount-link");
         std::fs::create_dir_all(&vendor).unwrap();
-        std::os::unix::fs::symlink(&workspace, &workspace_link).unwrap();
+        std::os::unix::fs::symlink(&host_mount, &host_mount_link).unwrap();
 
         let input = ReifiedNamespacePlanInput::new(
             vec![
                 ReifiedMountDeclaration::host(
                     "/mnt/project",
-                    &workspace_link,
+                    &host_mount_link,
                     ReifiedMountAccess::ReadWrite,
                 ),
                 ReifiedMountDeclaration::host("/mnt/vendor", &vendor, ReifiedMountAccess::ReadOnly),
             ],
-            workspace_link.join("vendor"),
+            host_mount_link.join("vendor"),
             shell_argv(),
             NetworkPosture::Deny,
         );
@@ -1960,7 +1960,7 @@ mod tests {
             Err(
                 ReifiedNamespacePlanError::ReadOnlyHostMountOverlapsWritableMount {
                     read_only_host_path: dunce::canonicalize(&vendor).unwrap(),
-                    writable_host_path: dunce::canonicalize(&workspace).unwrap(),
+                    writable_host_path: dunce::canonicalize(&host_mount).unwrap(),
                 }
             )
         );
@@ -1970,21 +1970,21 @@ mod tests {
     #[test]
     fn symlinked_projected_host_paths_are_normalized_before_translation() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let workspace = temp_dir.path().join("workspace");
-        let src = workspace.join("src");
+        let host_mount = temp_dir.path().join("host_mount");
+        let src = host_mount.join("src");
         let lib = src.join("lib.rs");
-        let workspace_link = temp_dir.path().join("workspace-link");
+        let host_mount_link = temp_dir.path().join("host_mount-link");
         std::fs::create_dir_all(&src).unwrap();
         std::fs::write(&lib, b"mod test;").unwrap();
-        std::os::unix::fs::symlink(&workspace, &workspace_link).unwrap();
+        std::os::unix::fs::symlink(&host_mount, &host_mount_link).unwrap();
 
         let input = ReifiedNamespacePlanInput::new(
             vec![ReifiedMountDeclaration::host(
                 "/mnt/project",
-                &workspace_link,
+                &host_mount_link,
                 ReifiedMountAccess::ReadWrite,
             )],
-            workspace_link.join("src"),
+            host_mount_link.join("src"),
             shell_argv(),
             NetworkPosture::Deny,
         );
@@ -1993,14 +1993,14 @@ mod tests {
         assert_eq!(plan.cwd, PathBuf::from("/mnt/project/src"));
         assert_eq!(
             plan.declared_host_mounts[0].host_path,
-            dunce::canonicalize(&workspace).unwrap()
+            dunce::canonicalize(&host_mount).unwrap()
         );
         assert_eq!(
-            plan.translate_projected_host_path(&workspace_link.join("src/lib.rs")),
+            plan.translate_projected_host_path(&host_mount_link.join("src/lib.rs")),
             Some(PathBuf::from("/mnt/project/src/lib.rs"))
         );
         assert_eq!(
-            plan.translate_projected_host_path(&workspace_link.join("generated/new.rs")),
+            plan.translate_projected_host_path(&host_mount_link.join("generated/new.rs")),
             Some(PathBuf::from("/mnt/project/generated/new.rs"))
         );
     }
@@ -2027,24 +2027,24 @@ mod tests {
         );
 
         let temp_dir = tempfile::tempdir().unwrap();
-        let workspace = temp_dir.path().join("workspace");
-        let src = workspace.join("src");
+        let host_mount = temp_dir.path().join("host_mount");
+        let src = host_mount.join("src");
         std::fs::create_dir_all(&src).unwrap();
-        std::fs::write(workspace.join("Cargo.toml"), b"[package]\n").unwrap();
+        std::fs::write(host_mount.join("Cargo.toml"), b"[package]\n").unwrap();
         let input = ReifiedNamespacePlanInput::new(
             vec![ReifiedMountDeclaration::host(
-                "/mnt/workspace",
-                &workspace,
+                "/mnt/source",
+                &host_mount,
                 ReifiedMountAccess::ReadWrite,
             )],
-            &workspace,
+            &host_mount,
             shell_argv(),
             NetworkPosture::Deny,
         );
         let plan = ReifiedNamespacePlan::derive(input).unwrap();
 
         assert_eq!(
-            plan.translate_projected_host_path(&workspace.join("src/../Cargo.toml")),
+            plan.translate_projected_host_path(&host_mount.join("src/../Cargo.toml")),
             None
         );
     }
@@ -2277,15 +2277,15 @@ mod tests {
     #[cfg(not(target_os = "linux"))]
     #[test]
     fn linux_runner_reports_non_linux_unavailable_without_ambient_execution() {
-        let plan = ReifiedNamespacePlan::workspace_seed(
-            "/host/workspace",
-            "/host/workspace",
+        let plan = ReifiedNamespacePlan::primary_mount(
+            "/host/host_mount",
+            "/host/host_mount",
             shell_argv(),
             NetworkPosture::Deny,
         )
         .unwrap();
         let runner = LinuxReifiedNamespaceRunner::with_fallback_backend(
-            SandboxBackendKind::WorkspacePathGuard,
+            SandboxBackendKind::HostMountPathGuard,
         );
 
         let error = runner.run(&plan).unwrap_err();
@@ -2296,7 +2296,7 @@ mod tests {
         );
         assert_eq!(
             error.fallback_backend,
-            SandboxBackendKind::WorkspacePathGuard
+            SandboxBackendKind::HostMountPathGuard
         );
         assert!(
             error
@@ -2306,7 +2306,7 @@ mod tests {
         assert!(
             error
                 .audit_fields
-                .contains(&("fallback_backend", "workspace_path_guard".to_string()))
+                .contains(&("fallback_backend", "host_mount_path_guard".to_string()))
         );
     }
 
@@ -2444,10 +2444,10 @@ mod tests {
             return;
         }
 
-        let workspace = tempfile::tempdir().unwrap();
+        let host_mount = tempfile::tempdir().unwrap();
         let readonly = tempfile::tempdir().unwrap();
         let secret_home = tempfile::tempdir().unwrap();
-        std::fs::write(workspace.path().join("visible.txt"), "visible").unwrap();
+        std::fs::write(host_mount.path().join("visible.txt"), "visible").unwrap();
         std::fs::write(readonly.path().join("readonly.txt"), "readonly").unwrap();
 
         let script = r#"
@@ -2468,7 +2468,7 @@ test ! -e "$secret_home"
             vec![
                 ReifiedMountDeclaration::host(
                     "/mnt/project",
-                    workspace.path(),
+                    host_mount.path(),
                     ReifiedMountAccess::ReadWrite,
                 ),
                 ReifiedMountDeclaration::host(
@@ -2477,7 +2477,7 @@ test ! -e "$secret_home"
                     ReifiedMountAccess::ReadOnly,
                 ),
             ],
-            workspace.path(),
+            host_mount.path(),
             vec![
                 "/bin/sh".to_string(),
                 "-c".to_string(),
@@ -2497,7 +2497,7 @@ test ! -e "$secret_home"
             result.stdout, result.stderr
         );
         assert_eq!(
-            std::fs::read_to_string(workspace.path().join("writable.txt")).unwrap(),
+            std::fs::read_to_string(host_mount.path().join("writable.txt")).unwrap(),
             "changed"
         );
         assert!(
@@ -2513,7 +2513,7 @@ test ! -e "$secret_home"
             return;
         }
 
-        let workspace = tempfile::tempdir().unwrap();
+        let host_mount = tempfile::tempdir().unwrap();
         let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
         listener.set_nonblocking(true).unwrap();
         let port = listener.local_addr().unwrap().port();
@@ -2553,9 +2553,9 @@ if timeout 2 bash -c "cat < /dev/tcp/127.0.0.1/${port}" >/tmp/network-out 2>/tmp
 fi
 exit 0
 "#;
-        let plan = ReifiedNamespacePlan::workspace_seed(
-            workspace.path(),
-            workspace.path(),
+        let plan = ReifiedNamespacePlan::primary_mount(
+            host_mount.path(),
+            host_mount.path(),
             vec![
                 "/bin/sh".to_string(),
                 "-c".to_string(),
@@ -2589,7 +2589,7 @@ exit 0
     #[cfg(target_os = "linux")]
     #[test]
     fn linux_runner_command_uses_unshare_mount_chroot_and_network_namespace() {
-        let workspace = tempfile::tempdir().unwrap();
+        let host_mount = tempfile::tempdir().unwrap();
         let docs = tempfile::tempdir().unwrap();
         let substrate = tempfile::tempdir().unwrap();
         let plan = ReifiedNamespacePlan::derive(
@@ -2597,7 +2597,7 @@ exit 0
                 vec![
                     ReifiedMountDeclaration::host(
                         "/mnt/project",
-                        workspace.path(),
+                        host_mount.path(),
                         ReifiedMountAccess::ReadWrite,
                     ),
                     ReifiedMountDeclaration::host(
@@ -2606,7 +2606,7 @@ exit 0
                         ReifiedMountAccess::ReadOnly,
                     ),
                 ],
-                workspace.path(),
+                host_mount.path(),
                 vec!["sh".to_string(), "-c".to_string(), "pwd".to_string()],
                 NetworkPosture::Deny,
             )
@@ -2678,10 +2678,10 @@ exit 0
     #[cfg(target_os = "linux")]
     #[test]
     fn linux_runner_command_allows_network_by_omitting_network_namespace() {
-        let workspace = tempfile::tempdir().unwrap();
-        let plan = ReifiedNamespacePlan::workspace_seed(
-            workspace.path(),
-            workspace.path(),
+        let host_mount = tempfile::tempdir().unwrap();
+        let plan = ReifiedNamespacePlan::primary_mount(
+            host_mount.path(),
+            host_mount.path(),
             vec!["sh".to_string(), "-c".to_string(), "true".to_string()],
             NetworkPosture::Allow,
         )

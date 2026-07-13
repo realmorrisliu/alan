@@ -1,7 +1,7 @@
-//! Simple workspace-only sandbox.
+//! Native Tool adapter sandbox derived from explicit Host Mount grants.
 //!
 //! This sandbox only enforces that all operations happen within
-//! the workspace directory. No OS-level sandboxing (Landlock/Seatbelt).
+//! the host_mount directory. No OS-level sandboxing (Landlock/Seatbelt).
 //! Shell enforcement is intentionally limited to direct shell syntax, explicit
 //! path-like argv references, redirection targets, and a curated set of common
 //! direct interpreters. It does not infer utility-specific operand roles for
@@ -17,9 +17,7 @@ use std::ops::Range;
 use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 
-use crate::InstallChannel;
-
-const SANDBOX_BACKEND_WORKSPACE_PATH_GUARD: &str = "workspace_path_guard";
+const SANDBOX_BACKEND_PATH_GUARD: &str = "host_mount_path_guard";
 pub(crate) const PROTECTED_SUBPATHS: [&str; 3] = [".git", ".alan", ".agents"];
 
 pub(crate) fn protected_path_component(path: &Path) -> Option<&'static str> {
@@ -38,7 +36,7 @@ fn protected_component(component: Component<'_>) -> Option<&'static str> {
 }
 
 /// How thoroughly to validate command paths. Under an OS sandbox the kernel
-/// enforces workspace containment, so only protected-subpath writes need the
+/// enforces host_mount containment, so only protected-subpath writes need the
 /// parser; on the path-guard fallback the full syntactic checks apply.
 #[derive(Debug, Clone, Copy)]
 enum PathCheckMode {
@@ -71,20 +69,65 @@ impl NetworkPosture {
 /// Projected OS-sandbox confinement input.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SandboxSpec {
+    pub host_mounts: Vec<crate::HostMountGrant>,
+    pub readable_roots: Vec<PathBuf>,
     pub writable_roots: Vec<PathBuf>,
     pub read_denylist: Vec<PathBuf>,
     pub network: NetworkPosture,
 }
 
 impl SandboxSpec {
-    /// Build the default single-workspace seed spec.
-    pub fn seed(workspace_root: PathBuf) -> Self {
-        let writable_roots = vec![workspace_root];
+    /// Build a single writable mount spec for isolated tests and adapters.
+    pub fn seed(root: PathBuf) -> Self {
+        let readable_roots = vec![root.clone()];
+        let writable_roots = vec![root.clone()];
         let read_denylist = super::sandbox_backend::read_denylist_excluding_writable_roots(
             &Self::default_sensitive_read_denylist(),
             &writable_roots,
         );
         Self {
+            host_mounts: vec![crate::HostMountGrant {
+                namespace_path: "/mnt/source".to_string(),
+                host_path: root,
+                access: alan_kernel::Access::ReadWrite,
+            }],
+            readable_roots,
+            writable_roots,
+            read_denylist,
+            network: NetworkPosture::Deny,
+        }
+    }
+
+    /// Derive native write authority from the same Host Mount grants used by the namespace.
+    pub fn from_host_mounts(grants: &[crate::HostMountGrant]) -> Self {
+        let host_mounts = grants
+            .iter()
+            .map(|grant| crate::HostMountGrant {
+                namespace_path: grant.namespace_path.clone(),
+                host_path: dunce::canonicalize(&grant.host_path)
+                    .unwrap_or_else(|_| dunce::simplified(&grant.host_path).to_path_buf()),
+                access: grant.access,
+            })
+            .collect::<Vec<_>>();
+        let readable_roots = host_mounts
+            .iter()
+            .map(|grant| grant.host_path.clone())
+            .collect::<Vec<_>>();
+        let writable_roots = grants
+            .iter()
+            .filter(|grant| grant.access == alan_kernel::Access::ReadWrite)
+            .map(|grant| {
+                dunce::canonicalize(&grant.host_path)
+                    .unwrap_or_else(|_| dunce::simplified(&grant.host_path).to_path_buf())
+            })
+            .collect::<Vec<_>>();
+        let read_denylist = super::sandbox_backend::read_denylist_excluding_writable_roots(
+            &Self::default_sensitive_read_denylist(),
+            &readable_roots,
+        );
+        Self {
+            host_mounts,
+            readable_roots,
             writable_roots,
             read_denylist,
             network: NetworkPosture::Deny,
@@ -102,9 +145,9 @@ impl SandboxSpec {
 
     /// Derive sensitive read-deny paths from an explicit home directory.
     pub fn sensitive_read_denylist_for_home(home_dir: &Path) -> Vec<PathBuf> {
-        let mut paths = [InstallChannel::Stable, InstallChannel::Dev]
+        let mut paths = [".alan", ".alan-dev"]
             .into_iter()
-            .map(|channel| home_dir.join(channel.descriptor().alan_home_dir_name))
+            .map(|name| home_dir.join(name))
             .collect::<Vec<_>>();
 
         paths.extend(
@@ -136,16 +179,16 @@ impl SandboxSpec {
         paths
     }
 
-    fn exclude_writable_roots_from_read_denylist(mut self) -> Self {
+    fn exclude_explicit_mounts_from_read_denylist(mut self) -> Self {
         self.read_denylist = super::sandbox_backend::read_denylist_excluding_writable_roots(
             &self.read_denylist,
-            &self.writable_roots,
+            &self.readable_roots,
         );
         self
     }
 }
 
-/// Simple workspace-only sandbox
+/// Simple host_mount-only sandbox
 #[derive(Clone)]
 pub struct Sandbox {
     spec: SandboxSpec,
@@ -154,17 +197,17 @@ pub struct Sandbox {
 }
 
 impl Sandbox {
-    /// Create a new sandbox restricted to the given workspace
-    pub fn new(workspace_root: PathBuf) -> Self {
-        Self::from_spec(SandboxSpec::seed(workspace_root))
+    /// Create a new sandbox restricted to the given host_mount
+    pub fn new(host_mount_root: PathBuf) -> Self {
+        Self::from_spec(SandboxSpec::seed(host_mount_root))
     }
 
     /// Create a new sandbox from a projected confinement spec.
     pub fn from_spec(spec: SandboxSpec) -> Self {
-        let spec = spec.exclude_writable_roots_from_read_denylist();
+        let spec = spec.exclude_explicit_mounts_from_read_denylist();
         assert!(
-            !spec.writable_roots.is_empty(),
-            "SandboxSpec requires at least one writable root"
+            !spec.readable_roots.is_empty(),
+            "SandboxSpec requires at least one explicit Host Mount"
         );
         Self {
             spec,
@@ -176,10 +219,10 @@ impl Sandbox {
     /// path-guard parser can be exercised regardless of the host's OS sandbox.
     #[cfg(test)]
     pub fn with_backend(
-        workspace_root: PathBuf,
+        host_mount_root: PathBuf,
         backend: super::sandbox_backend::SandboxBackendKind,
     ) -> Self {
-        Self::from_spec_with_backend(SandboxSpec::seed(workspace_root), backend)
+        Self::from_spec_with_backend(SandboxSpec::seed(host_mount_root), backend)
     }
 
     /// Construct a spec-based sandbox pinned to a specific backend (tests only).
@@ -188,10 +231,10 @@ impl Sandbox {
         spec: SandboxSpec,
         backend: super::sandbox_backend::SandboxBackendKind,
     ) -> Self {
-        let spec = spec.exclude_writable_roots_from_read_denylist();
+        let spec = spec.exclude_explicit_mounts_from_read_denylist();
         assert!(
-            !spec.writable_roots.is_empty(),
-            "SandboxSpec requires at least one writable root"
+            !spec.readable_roots.is_empty(),
+            "SandboxSpec requires at least one explicit Host Mount"
         );
         Self {
             spec,
@@ -199,13 +242,13 @@ impl Sandbox {
         }
     }
 
-    fn workspace_root(&self) -> &Path {
-        &self.spec.writable_roots[0]
+    fn primary_host_root(&self) -> &Path {
+        &self.spec.readable_roots[0]
     }
 
     fn allowed_roots_label(&self) -> String {
         self.spec
-            .writable_roots
+            .readable_roots
             .iter()
             .map(|root| root.display().to_string())
             .collect::<Vec<_>>()
@@ -223,13 +266,13 @@ impl Sandbox {
         Self::backend_name_static()
     }
 
-    /// Name of the built-in workspace path guard backend.
+    /// Name of the built-in host_mount path guard backend.
     pub const fn backend_name_static() -> &'static str {
-        SANDBOX_BACKEND_WORKSPACE_PATH_GUARD
+        SANDBOX_BACKEND_PATH_GUARD
     }
 
     /// Return a stable rejection reason when a bash command shape is incompatible
-    /// with the workspace path guard backend.
+    /// with the host_mount path guard backend.
     pub fn bash_preflight_reason(cmd: &str) -> Option<String> {
         validate_bash_command_shape(cmd)
             .err()
@@ -237,35 +280,48 @@ impl Sandbox {
     }
 
     /// Return a stable routing reason when a bash command targets local paths
-    /// outside the current workspace.
-    pub fn bash_workspace_routing_reason(&self, cmd: &str, cwd: &Path) -> Option<String> {
-        if !self.is_in_workspace(cwd) {
+    /// outside the current host_mount.
+    pub fn bash_path_guard_reason(&self, cmd: &str, cwd: &Path) -> Option<String> {
+        if !self.is_writable(cwd) {
             return Some(format!(
-                "Working directory outside workspace roots: {} (allowed roots: {})",
+                "Working directory outside host_mount roots: {} (allowed roots: {})",
                 cwd.display(),
                 self.allowed_roots_label()
             ));
         }
 
-        match self.validate_command_paths(cmd, cwd, PathCheckMode::Full) {
+        match self.validate_command_paths(cmd, cwd, PathCheckMode::Full, None) {
             Ok(()) => None,
             Err(err) => {
                 let reason = err.to_string();
-                is_workspace_routing_reason(&reason).then_some(reason)
+                is_path_guard_reason(&reason).then_some(reason)
             }
         }
     }
 
-    /// Check if a path is within the workspace seed root or another writable root.
-    pub fn is_in_workspace(&self, path: &Path) -> bool {
+    /// Check if a path is within the host_mount seed root or another writable root.
+    pub fn is_writable(&self, path: &Path) -> bool {
         // Try to get absolute path
         let absolute_path = if path.is_absolute() {
             path.to_path_buf()
         } else {
-            self.workspace_root().join(path)
+            self.primary_host_root().join(path)
         };
         self.spec
             .writable_roots
+            .iter()
+            .any(|root| self.is_path_in_root(&absolute_path, root))
+    }
+
+    /// Check whether a path is reachable through an explicit Host Mount.
+    pub fn is_readable(&self, path: &Path) -> bool {
+        let absolute_path = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            self.primary_host_root().join(path)
+        };
+        self.spec
+            .readable_roots
             .iter()
             .any(|root| self.is_path_in_root(&absolute_path, root))
     }
@@ -307,11 +363,11 @@ impl Sandbox {
             || normalized_path.starts_with(&normalized_root)
     }
 
-    /// Read a file within the workspace
+    /// Read a file within the host_mount
     pub async fn read(&self, path: &Path) -> Result<Vec<u8>> {
-        if !self.is_in_workspace(path) {
+        if !self.is_readable(path) {
             return Err(anyhow!(
-                "Path outside workspace roots: {} (allowed roots: {})",
+                "Path outside host_mount roots: {} (allowed roots: {})",
                 path.display(),
                 self.allowed_roots_label()
             ));
@@ -329,11 +385,11 @@ impl Sandbox {
         String::from_utf8(bytes).map_err(|e| anyhow!("Invalid UTF-8: {}", e))
     }
 
-    /// Write a file within the workspace
+    /// Write a file within the host_mount
     pub async fn write(&self, path: &Path, content: &[u8]) -> Result<()> {
-        if !self.is_in_workspace(path) {
+        if !self.is_writable(path) {
             return Err(anyhow!(
-                "Path outside workspace roots: {} (allowed roots: {})",
+                "Path outside host_mount roots: {} (allowed roots: {})",
                 path.display(),
                 self.allowed_roots_label()
             ));
@@ -351,13 +407,13 @@ impl Sandbox {
             .map_err(|e| anyhow!("Failed to write file: {}", e))
     }
 
-    /// Execute a command within the workspace
+    /// Execute a command within the host_mount
     pub async fn exec(&self, cmd: &str, cwd: &Path) -> Result<ExecResult> {
         self.exec_with_timeout_and_capability(cmd, cwd, None, None)
             .await
     }
 
-    /// Execute a command within the workspace with an optional timeout.
+    /// Execute a command within the host_mount with an optional timeout.
     pub async fn exec_with_timeout(
         &self,
         cmd: &str,
@@ -368,7 +424,7 @@ impl Sandbox {
             .await
     }
 
-    /// Execute a command within the workspace with path-guard checks.
+    /// Execute a command within the host_mount with path-guard checks.
     pub async fn exec_with_timeout_and_capability(
         &self,
         cmd: &str,
@@ -376,9 +432,16 @@ impl Sandbox {
         timeout: Option<Duration>,
         capability: Option<alan_agent_protocol::ToolCapability>,
     ) -> Result<ExecResult> {
-        if !self.is_in_workspace(cwd) {
+        let read_only_command =
+            matches!(capability, Some(alan_agent_protocol::ToolCapability::Read));
+        let cwd_is_authorized = if read_only_command {
+            self.is_readable(cwd)
+        } else {
+            self.is_writable(cwd)
+        };
+        if !cwd_is_authorized {
             return Err(anyhow!(
-                "Working directory outside workspace roots: {} (allowed roots: {})",
+                "Working directory outside host_mount roots: {} (allowed roots: {})",
                 cwd.display(),
                 self.allowed_roots_label()
             ));
@@ -387,24 +450,24 @@ impl Sandbox {
 
         // Reject shell expansion ($VAR, $(...), backticks, globs, braces) in EVERY
         // mode. Expansion defeats the static path-containment check — the parser
-        // sees a literal, in-workspace-looking token (`$HOME/.ssh/id_rsa`) but
-        // `/bin/sh -c` then expands it to escape the workspace. Seatbelt permits
+        // sees a literal, in-host_mount-looking token (`$HOME/.ssh/id_rsa`) but
+        // `/bin/sh -c` then expands it to escape the host_mount. Seatbelt permits
         // reads, so an auto-approved read must not be able to exfiltrate this way.
         self.validate_shell_features(cmd)?;
 
         if self.active_backend().permits_autonomous_bash() {
-            // Seatbelt kernel-confines the workspace fs + network, so the syntactic
+            // Seatbelt kernel-confines the host_mount fs + network, so the syntactic
             // *shape* checks are dropped — they would reject commands the sandbox
             // safely contains (`bash -lc ...`, `python -c ...`). Path containment
             // and the protected-subpath check (incl. shell-wrapper-nested) still
             // run in ProtectedOnly mode.
-            self.validate_command_paths(cmd, cwd, PathCheckMode::ProtectedOnly)?;
+            self.validate_command_paths(cmd, cwd, PathCheckMode::ProtectedOnly, capability)?;
         } else {
             // No kernel protected-subpath enforcement (Landlock cannot carve a
             // protected subdir out of the writable tree, or the path-guard
             // fallback): keep the full shape parser so opaque writers — which could
             // hide a protected write the kernel won't deny — are rejected.
-            self.validate_command_paths(cmd, cwd, PathCheckMode::Full)?;
+            self.validate_command_paths(cmd, cwd, PathCheckMode::Full, capability)?;
         }
 
         // A command only reaches execution after policy/reviewer/human clearance.
@@ -454,7 +517,7 @@ impl Sandbox {
 
     /// Build the shell command, confined by an OS sandbox backend when one is
     /// available. On macOS with Seatbelt this wraps the shell in `sandbox-exec`
-    /// with a workspace-write/no-network profile; otherwise it runs the shell
+    /// with a host_mount-write/no-network profile; otherwise it runs the shell
     /// directly under the best-effort path guard.
     fn build_confined_command(
         &self,
@@ -544,7 +607,7 @@ impl Sandbox {
         let cwd = if cwd.is_absolute() {
             cwd.to_path_buf()
         } else {
-            self.workspace_root().join(cwd)
+            self.primary_host_root().join(cwd)
         };
         let network = if allow_network {
             NetworkPosture::Allow
@@ -576,19 +639,20 @@ impl Sandbox {
 
     fn reified_mount_declarations(&self) -> Vec<super::reified_namespace::ReifiedMountDeclaration> {
         self.spec
-            .writable_roots
+            .host_mounts
             .iter()
-            .enumerate()
-            .map(|(index, root)| {
-                let namespace_path = if index == 0 {
-                    super::reified_namespace::DEFAULT_WORKSPACE_NAMESPACE_PATH.to_string()
-                } else {
-                    format!("/mnt/writable-{index}")
-                };
+            .map(|grant| {
                 super::reified_namespace::ReifiedMountDeclaration::host(
-                    namespace_path,
-                    root.clone(),
-                    super::reified_namespace::ReifiedMountAccess::ReadWrite,
+                    &grant.namespace_path,
+                    grant.host_path.clone(),
+                    match grant.access {
+                        alan_kernel::Access::ReadOnly => {
+                            super::reified_namespace::ReifiedMountAccess::ReadOnly
+                        }
+                        alan_kernel::Access::ReadWrite => {
+                            super::reified_namespace::ReifiedMountAccess::ReadWrite
+                        }
+                    },
                 )
             })
             .collect()
@@ -596,9 +660,9 @@ impl Sandbox {
 
     /// List directory contents
     pub async fn list_dir(&self, path: &Path) -> Result<Vec<tokio::fs::DirEntry>> {
-        if !self.is_in_workspace(path) {
+        if !self.is_readable(path) {
             return Err(anyhow!(
-                "Path outside workspace roots: {} (allowed roots: {})",
+                "Path outside host_mount roots: {} (allowed roots: {})",
                 path.display(),
                 self.allowed_roots_label()
             ));
@@ -617,7 +681,13 @@ impl Sandbox {
         Ok(dunce::canonicalize(path)?)
     }
 
-    fn validate_command_paths(&self, cmd: &str, cwd: &Path, mode: PathCheckMode) -> Result<()> {
+    fn validate_command_paths(
+        &self,
+        cmd: &str,
+        cwd: &Path,
+        mode: PathCheckMode,
+        capability: Option<alan_agent_protocol::ToolCapability>,
+    ) -> Result<()> {
         let protected_only = matches!(mode, PathCheckMode::ProtectedOnly);
         let normalized = normalize_shell_line_continuations(cmd);
         let trimmed = normalized.trim();
@@ -653,12 +723,16 @@ impl Sandbox {
         // Wrapper forms (`bash -lc 'echo x > .git/config'`) hide their operands
         // inside a quoted script the outer tokenizer can't decompose. Under an OS
         // sandbox these are allowed to run, so recurse into the inline script and
-        // apply the same protected-subpath checks (with their carve-outs, e.g.
-        // `.alan/runtime/<channel>/memory`) to the wrapped command.
+        // apply the same protected-subpath checks to the wrapped command.
         if protected_only {
             for words in &commands {
                 if let Some(inner) = shell_wrapper_inline_script(words) {
-                    self.validate_command_paths(&inner, cwd, PathCheckMode::ProtectedOnly)?;
+                    self.validate_command_paths(
+                        &inner,
+                        cwd,
+                        PathCheckMode::ProtectedOnly,
+                        capability,
+                    )?;
                 }
             }
         }
@@ -677,11 +751,11 @@ impl Sandbox {
             }
 
             for candidate in path_like_subtokens(&token) {
-                self.validate_command_path_candidate(candidate, cwd)?;
+                self.validate_command_path_candidate(candidate, cwd, capability)?;
             }
         }
 
-        self.validate_absolute_path_literals(&span_tokens)?;
+        self.validate_absolute_path_literals(&span_tokens, capability)?;
 
         Ok(())
     }
@@ -762,9 +836,6 @@ impl Sandbox {
             if let Some(component) = root_protected {
                 return Some(component);
             }
-            if is_allowed_protected_relative_path(relative) {
-                return None;
-            }
             if let Some(component) = relative.components().find_map(protected_component) {
                 return Some(component);
             }
@@ -776,7 +847,7 @@ impl Sandbox {
         let absolute_path = if path.is_absolute() {
             path.to_path_buf()
         } else {
-            self.workspace_root().join(path)
+            self.primary_host_root().join(path)
         };
         if absolute_path.exists() {
             self.canonicalize(&absolute_path)
@@ -790,7 +861,7 @@ impl Sandbox {
         let absolute_path = if path.is_absolute() {
             path.to_path_buf()
         } else {
-            self.workspace_root().join(path)
+            self.primary_host_root().join(path)
         };
         if absolute_path.exists() {
             return self.normalized_path(&absolute_path);
@@ -817,19 +888,24 @@ impl Sandbox {
         }
         resolved
     }
-    // Workspace containment is enforced for ALL modes, including ProtectedOnly.
-    // The OS sandbox confines *writes* (and network) to the workspace, but Seatbelt
+    // HostMount containment is enforced for ALL modes, including ProtectedOnly.
+    // The OS sandbox confines *writes* (and network) to the host_mount, but Seatbelt
     // permits reads by default, so an auto-approved read like `cat ~/.ssh/id_rsa`
     // would otherwise exfiltrate secrets into tool output. ProtectedOnly only drops
     // the syntactic *shape* checks (so wrappers may run), never path containment.
-    fn validate_command_path_candidate(&self, token: &str, cwd: &Path) -> Result<()> {
+    fn validate_command_path_candidate(
+        &self,
+        token: &str,
+        cwd: &Path,
+        capability: Option<alan_agent_protocol::ToolCapability>,
+    ) -> Result<()> {
         if token.is_empty() || token.starts_with('-') {
             return Ok(());
         }
 
         if token.starts_with('~') {
             return Err(anyhow!(
-                "Command references HOME paths outside workspace: {}",
+                "Command references HOME paths outside host_mount: {}",
                 token
             ));
         }
@@ -850,14 +926,25 @@ impl Sandbox {
             let validation_path = self
                 .reified_namespace_path_to_host(&candidate)
                 .unwrap_or(candidate);
-            if !self.is_in_workspace(&validation_path) {
+            let read_only_command =
+                matches!(capability, Some(alan_agent_protocol::ToolCapability::Read));
+            let path_is_authorized = if read_only_command {
+                self.is_readable(&validation_path)
+            } else {
+                self.is_writable(&validation_path)
+            };
+            if !path_is_authorized {
                 return Err(anyhow!(
-                    "Command references path outside workspace: {}",
+                    "Command references path outside host_mount: {}",
                     token
                 ));
             }
             self.ensure_path_not_protected(&validation_path, "process path reference")?;
-            self.ensure_path_not_multiply_linked(&validation_path, "process path reference")?;
+            if read_only_command {
+                self.ensure_path_not_read_denied(&validation_path, "process path reference")?;
+            } else {
+                self.ensure_path_not_multiply_linked(&validation_path, "process path reference")?;
+            }
         }
 
         Ok(())
@@ -870,7 +957,7 @@ impl Sandbox {
 
         if token.starts_with('~') {
             return Err(anyhow!(
-                "Command references HOME paths outside workspace: {}",
+                "Command references HOME paths outside host_mount: {}",
                 token
             ));
         }
@@ -886,9 +973,9 @@ impl Sandbox {
         let validation_path = self
             .reified_namespace_path_to_host(&candidate)
             .unwrap_or(candidate);
-        if !self.is_in_workspace(&validation_path) {
+        if !self.is_writable(&validation_path) {
             return Err(anyhow!(
-                "Command references path outside workspace: {}",
+                "Command references path outside host_mount: {}",
                 token
             ));
         }
@@ -906,12 +993,9 @@ impl Sandbox {
             return None;
         }
 
-        for (index, root) in self.spec.writable_roots.iter().enumerate() {
-            let namespace_path = if index == 0 {
-                PathBuf::from(super::reified_namespace::DEFAULT_WORKSPACE_NAMESPACE_PATH)
-            } else {
-                PathBuf::from(format!("/mnt/writable-{index}"))
-            };
+        for grant in &self.spec.host_mounts {
+            let root = &grant.host_path;
+            let namespace_path = PathBuf::from(&grant.namespace_path);
             if path == namespace_path {
                 return Some(root.clone());
             }
@@ -922,22 +1006,32 @@ impl Sandbox {
         None
     }
 
-    fn validate_absolute_path_literals(&self, tokens: &[ShellWordToken]) -> Result<()> {
+    fn validate_absolute_path_literals(
+        &self,
+        tokens: &[ShellWordToken],
+        capability: Option<alan_agent_protocol::ToolCapability>,
+    ) -> Result<()> {
         for token in tokens {
             for candidates in absolute_path_literal_candidates(&token.decoded) {
                 let literal = candidates
                     .iter()
                     .find(|candidate| {
-                        self.absolute_path_literal_is_allowed_or_in_workspace(candidate)
+                        self.absolute_path_literal_is_allowed_or_in_host_mount(
+                            candidate, capability,
+                        )
                     })
                     .unwrap_or_else(|| &candidates[0]);
-                self.validate_absolute_path_literal(literal)?;
+                self.validate_absolute_path_literal(literal, capability)?;
             }
         }
         Ok(())
     }
 
-    fn absolute_path_literal_is_allowed_or_in_workspace(&self, literal: &str) -> bool {
+    fn absolute_path_literal_is_allowed_or_in_host_mount(
+        &self,
+        literal: &str,
+        capability: Option<alan_agent_protocol::ToolCapability>,
+    ) -> bool {
         let literal_path = Path::new(literal);
         if is_allowed_absolute_command_path(literal_path) {
             return true;
@@ -945,10 +1039,18 @@ impl Sandbox {
         let validation_path = self
             .reified_namespace_path_to_host(literal_path)
             .unwrap_or_else(|| literal_path.to_path_buf());
-        self.is_in_workspace(&validation_path)
+        if matches!(capability, Some(alan_agent_protocol::ToolCapability::Read)) {
+            self.is_readable(&validation_path)
+        } else {
+            self.is_writable(&validation_path)
+        }
     }
 
-    fn validate_absolute_path_literal(&self, literal: &str) -> Result<()> {
+    fn validate_absolute_path_literal(
+        &self,
+        literal: &str,
+        capability: Option<alan_agent_protocol::ToolCapability>,
+    ) -> Result<()> {
         let literal_path = Path::new(literal);
         if !literal_path.is_absolute() || is_allowed_absolute_command_path(literal_path) {
             return Ok(());
@@ -957,15 +1059,25 @@ impl Sandbox {
             .reified_namespace_path_to_host(literal_path)
             .unwrap_or_else(|| literal_path.to_path_buf());
         // Containment applies in every mode: the OS sandbox does not confine
-        // reads, so an out-of-workspace absolute path (e.g. a read of a secret)
+        // reads, so an out-of-host_mount absolute path (e.g. a read of a secret)
         // must still be rejected by the parser.
-        if !self.is_in_workspace(&validation_path) {
+        let read_only_command =
+            matches!(capability, Some(alan_agent_protocol::ToolCapability::Read));
+        let path_is_authorized = if read_only_command {
+            self.is_readable(&validation_path)
+        } else {
+            self.is_writable(&validation_path)
+        };
+        if !path_is_authorized {
             return Err(anyhow!(
-                "Command contains absolute path outside workspace: {}",
+                "Command contains absolute path outside host_mount: {}",
                 literal
             ));
         }
         self.ensure_path_not_protected(&validation_path, "process path reference")?;
+        if read_only_command {
+            self.ensure_path_not_read_denied(&validation_path, "process path reference")?;
+        }
         Ok(())
     }
 
@@ -1452,7 +1564,7 @@ fn validate_direct_command_shapes(commands: &[Vec<String>], backend_name: &str) 
         let command_word = words[command_index].as_str();
         if is_shell_control_prefix(command_word) {
             return Err(anyhow!(
-                "Sandbox backend {} rejects shell control flow like {} because workspace_path_guard only supports direct commands with statically checkable paths",
+                "Sandbox backend {} rejects shell control flow like {} because host_mount_path_guard only supports direct commands with statically checkable paths",
                 backend_name,
                 command_word
             ));
@@ -1461,7 +1573,7 @@ fn validate_direct_command_shapes(commands: &[Vec<String>], backend_name: &str) 
         let command = command_basename(command_word);
         if is_unsupported_shell_wrapper(command) {
             return Err(anyhow!(
-                "Sandbox backend {} rejects shell wrappers like {} because workspace_path_guard only supports direct commands with statically checkable paths",
+                "Sandbox backend {} rejects shell wrappers like {} because host_mount_path_guard only supports direct commands with statically checkable paths",
                 backend_name,
                 command
             ));
@@ -1478,7 +1590,7 @@ fn shell_wrapper_inline_script(words: &[String]) -> Option<String> {
     // Peel transparent wrappers (`env VAR=x`, `command`, `timeout 5`, `nice`,
     // `nohup`, `stdbuf`, `setsid`, ...) so the inline script is found even when the
     // shell is not the direct head — e.g. `env bash -lc '...'`. Otherwise the
-    // quoted script stays an opaque token and its `.git`/out-of-workspace paths
+    // quoted script stays an opaque token and its `.git`/out-of-host_mount paths
     // escape the ProtectedOnly checks.
     let view = nested_evaluator_view(words)?;
     if !matches!(view.command, "sh" | "bash" | "zsh" | "dash" | "ksh") {
@@ -1510,25 +1622,6 @@ fn validate_shell_features(cmd: &str, backend_name: &str) -> Result<()> {
         ));
     }
     Ok(())
-}
-
-fn is_allowed_protected_relative_path(relative: &Path) -> bool {
-    let mut components = Vec::new();
-    for component in relative.components() {
-        let Component::Normal(name) = component else {
-            return false;
-        };
-        let Some(name) = name.to_str() else {
-            return false;
-        };
-        components.push(name);
-    }
-
-    match components.as_slice() {
-        [".alan", "runtime", channel, "memory", ..] => InstallChannel::from_id(channel).is_some(),
-        [".alan", "agents", _, "persona", ..] => true,
-        _ => false,
-    }
 }
 
 fn looks_like_path_token(token: &str) -> bool {
@@ -1600,8 +1693,8 @@ fn is_allowed_absolute_command_path(path: &Path) -> bool {
     )
 }
 
-fn is_workspace_routing_reason(reason: &str) -> bool {
-    reason.contains("outside workspace")
+fn is_path_guard_reason(reason: &str) -> bool {
+    reason.contains("outside host_mount")
 }
 
 #[cfg(unix)]

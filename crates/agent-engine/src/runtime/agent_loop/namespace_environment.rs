@@ -188,9 +188,11 @@ impl ApprovedMountGrant {
 ///
 /// The engine owns the approval flow, but the host composition root owns
 /// host-backed file-server construction. Implementations must keep hostfs
-/// dependencies out of `alan-agent-engine`.
+/// dependencies out of `alan-agent-engine`. A successful call returns the full
+/// post-application namespace snapshot so later child launches inherit the same
+/// view without exposing Host file-server construction to the engine.
 pub trait MountGrantApplicator: std::fmt::Debug + Send + Sync {
-    fn apply_mount_grant(&self, grant: &ApprovedMountGrant) -> Result<()>;
+    fn apply_mount_grant(&self, grant: &ApprovedMountGrant) -> Result<alan_kernel::Namespace>;
 }
 
 /// Host-provided factory that can build a mount grant applicator once the engine
@@ -242,6 +244,7 @@ pub struct NamespaceRuntimeEnvironment {
     mount_grant_applicator: Option<Arc<dyn MountGrantApplicator>>,
     mount_grant_applicator_factory: Option<Arc<dyn MountGrantApplicatorFactory>>,
     child_run_registry: super::super::child_runs::ChildRunRegistry,
+    launch_context: Option<crate::ProcessLaunchContext>,
 }
 
 #[derive(Clone)]
@@ -293,7 +296,20 @@ impl NamespaceRuntimeEnvironment {
             mount_grant_applicator: None,
             mount_grant_applicator_factory: None,
             child_run_registry: super::super::child_runs::ChildRunRegistry::default(),
+            launch_context: None,
         }
+    }
+
+    pub(crate) fn with_launch_context(
+        mut self,
+        launch_context: crate::ProcessLaunchContext,
+    ) -> Self {
+        self.launch_context = Some(launch_context);
+        self
+    }
+
+    pub(crate) fn launch_context(&self) -> Option<&crate::ProcessLaunchContext> {
+        self.launch_context.as_ref()
     }
 
     pub(crate) fn with_process_context(
@@ -352,22 +368,51 @@ impl NamespaceRuntimeEnvironment {
         })
     }
 
-    pub(crate) fn add_tool_sandbox_writable_root(&self, path: std::path::PathBuf) -> bool {
-        self.process_context.as_ref().is_some_and(|context| {
-            context
-                .tool_runner
-                .add_process_sandbox_writable_root(context.pid, path)
-        })
+    pub(crate) fn persist_approved_host_mount(&mut self, grant: crate::HostMountGrant) -> bool {
+        let Some(context) = self.launch_context.as_mut() else {
+            return false;
+        };
+        if let Some(index) = context
+            .host_mounts
+            .iter()
+            .position(|existing| existing.namespace_path == grant.namespace_path)
+        {
+            let changed = context.host_mounts[index] != grant;
+            context.host_mounts[index] = grant;
+            return changed;
+        }
+        context.host_mounts.push(grant);
+        true
     }
 
-    pub(crate) fn tool_sandbox_writable_roots(&self) -> Vec<std::path::PathBuf> {
-        let Some(binding) = self.tool_execution_binding() else {
-            return Vec::new();
+    pub(crate) fn sync_tool_execution_binding(&self, scratch_dir: PathBuf) -> bool {
+        let Some(launch_context) = self.launch_context.as_ref() else {
+            return false;
         };
-        binding
-            .sandbox_spec
+        let Ok(binding) =
+            crate::tools::ToolExecutionBinding::from_launch_context(launch_context, scratch_dir)
+        else {
+            return false;
+        };
+        let Some(process_context) = self.process_context.as_ref() else {
+            return false;
+        };
+        let changed = process_context
+            .tool_runner
+            .process_binding(process_context.pid)
+            != Some(binding.clone());
+        process_context
+            .tool_runner
+            .register_process_binding(process_context.pid, binding);
+        changed
+    }
+
+    #[cfg(test)]
+    pub(crate) fn tool_sandbox_writable_roots(&self) -> Vec<std::path::PathBuf> {
+        self.tool_execution_binding()
+            .and_then(|binding| binding.sandbox_spec)
             .map(|spec| spec.writable_roots)
-            .unwrap_or_else(|| binding.workspace_root.into_iter().collect())
+            .unwrap_or_default()
     }
 
     pub(crate) fn with_shared_services(
@@ -455,18 +500,23 @@ impl NamespaceRuntimeEnvironment {
     }
 
     pub fn apply_approved_mount_grant(
-        &self,
+        &mut self,
         grant: &ApprovedMountGrant,
     ) -> NamespaceMountApplication {
-        let Some(applicator) = self.mount_grant_applicator.as_ref() else {
+        let Some(applicator) = self.mount_grant_applicator.clone() else {
             return NamespaceMountApplication::unavailable(
                 "live namespace mount applicator unavailable",
             );
         };
-        applicator
-            .apply_mount_grant(grant)
-            .map(|()| NamespaceMountApplication::applied())
-            .unwrap_or_else(NamespaceMountApplication::failed)
+        match applicator.apply_mount_grant(grant) {
+            Ok(namespace) => {
+                if let Some(context) = self.launch_context.as_mut() {
+                    context.namespace = namespace;
+                }
+                NamespaceMountApplication::applied()
+            }
+            Err(error) => NamespaceMountApplication::failed(error),
+        }
     }
 
     pub async fn read_llm_connection_capabilities(&self) -> Result<NamespaceLlmCapabilities> {
@@ -3118,14 +3168,12 @@ mod tests {
             questions: Vec::new(),
         });
         let mut state = super::super::RuntimeLoopState {
-            workspace_id: "namespace-resume-test".to_string(),
-            workspace_root_dir: None,
             machine: crate::AgentMachine::new(),
             current_submission_id: None,
             environment,
             core_config: crate::Config::default(),
             runtime_config: super::super::super::RuntimeConfig::default(),
-            workspace_persona_dirs: Vec::new(),
+            definition_persona_dirs: Vec::new(),
             prompt_cache: super::super::super::prompt_cache::PromptAssemblyCache::new(Vec::new()),
             turn_state,
         };

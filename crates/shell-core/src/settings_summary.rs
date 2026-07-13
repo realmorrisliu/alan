@@ -123,8 +123,8 @@ pub struct ShellSettingsLocalSummary {
     pub update_summary: String,
     /// Update detail.
     pub update_detail: String,
-    /// Alan home display path.
-    pub alan_home_display_path: String,
+    /// Channel System Store display path.
+    pub system_store_display_path: String,
     /// Application support display path.
     pub application_support_display_path: String,
     /// Shell control namespace.
@@ -299,8 +299,8 @@ impl ShellSettingsSummaryRows {
                 .with_value(local.cli_tool_name.as_str()),
             ShellSettingsRowSummary::read_only("updates", "arrow.down.circle", "Updates")
                 .with_value(local.update_summary.as_str()),
-            ShellSettingsRowSummary::read_only("dataRoot", "folder", "Alan home")
-                .with_value(local.alan_home_display_path.as_str()),
+            ShellSettingsRowSummary::read_only("dataRoot", "folder", "Alan OS data")
+                .with_value(local.system_store_display_path.as_str()),
             ShellSettingsRowSummary::read_only(
                 "applicationSupport",
                 "externaldrive",

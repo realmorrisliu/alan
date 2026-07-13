@@ -5,7 +5,6 @@ use alan_agent_protocol::{
     MemoryFlushAttemptSnapshot,
 };
 use anyhow::{Context, Result, anyhow};
-use chrono::Datelike;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
@@ -491,40 +490,6 @@ impl RolloutRecorder {
         }
     }
 
-    /// Create a new recorder for one Agent Process machine.
-    pub async fn new(process_path: &str, model: &str) -> anyhow::Result<Self> {
-        Self::new_with_cwd_and_reasoning_effort(process_path, model, None, None).await
-    }
-
-    /// Create a new recorder for a machine and capture an explicit runtime tool cwd in machine
-    /// metadata.
-    pub async fn new_with_cwd(
-        process_path: &str,
-        model: &str,
-        cwd: Option<&std::path::Path>,
-    ) -> anyhow::Result<Self> {
-        Self::new_with_cwd_and_reasoning_effort(process_path, model, cwd, None).await
-    }
-
-    pub async fn new_with_cwd_and_reasoning_effort(
-        process_path: &str,
-        model: &str,
-        cwd: Option<&std::path::Path>,
-        reasoning_effort: Option<alan_agent_protocol::ReasoningEffort>,
-    ) -> anyhow::Result<Self> {
-        let rollout_id = uuid::Uuid::new_v4().to_string();
-        let rollout_path = Self::build_rollout_path(&rollout_id).await?;
-        Self::new_with_rollout_path(
-            &rollout_id,
-            process_path,
-            model,
-            rollout_path,
-            cwd,
-            reasoning_effort,
-        )
-        .await
-    }
-
     /// Create a new recorder for a machine under a specific rollouts directory.
     pub async fn new_in_dir(
         process_path: &str,
@@ -541,8 +506,8 @@ impl RolloutRecorder {
         .await
     }
 
-    /// Create a new recorder under a specific rollouts directory and capture the runtime tool cwd
-    /// in machine metadata.
+    /// Create a new recorder under a specific rollouts directory and capture the Alan OS cwd in
+    /// machine metadata.
     pub async fn new_in_dir_with_cwd(
         process_path: &str,
         model: &str,
@@ -642,12 +607,7 @@ impl RolloutRecorder {
             started_at: chrono::Utc::now().to_rfc3339(),
             cwd: cwd
                 .map(|path| path.to_string_lossy().to_string())
-                .or_else(|| {
-                    std::env::current_dir()
-                        .ok()
-                        .map(|path| path.to_string_lossy().to_string())
-                })
-                .unwrap_or_else(|| ".".to_string()),
+                .unwrap_or_else(|| "/".to_string()),
             model: model.to_string(),
             reasoning_effort,
         };
@@ -1178,29 +1138,6 @@ impl RolloutRecorder {
         &self.rollout_id
     }
 
-    /// Build the rollout file path
-    async fn build_rollout_path(rollout_id: &str) -> anyhow::Result<PathBuf> {
-        let alan_dir = crate::AlanHomePaths::detect()
-            .map(|paths| paths.alan_home_dir)
-            .unwrap_or_else(|| {
-                warn!("Cannot determine home directory; falling back to temp dir");
-                std::env::temp_dir().join(".alan")
-            });
-
-        let now = chrono::Local::now();
-        let date_dir = crate::workspace_rollouts_dir_from_alan_dir(&alan_dir)
-            .join(format!("{:04}", now.year()))
-            .join(format!("{:02}", now.month()))
-            .join(format!("{:02}", now.day()));
-
-        fs::create_dir_all(&date_dir).await?;
-
-        let timestamp = now.format("%Y%m%d-%H%M%S");
-        let filename = format!("rollout-{}-{}.jsonl", timestamp, rollout_id);
-
-        Ok(date_dir.join(filename))
-    }
-
     async fn build_rollout_path_in_dir(
         rollout_id: &str,
         rollouts_dir: &std::path::Path,
@@ -1256,6 +1193,7 @@ impl Clone for RolloutRecorder {
 mod tests {
     use super::*;
     use std::io;
+    use std::path::Path;
     use std::pin::Pin;
     use std::task::{Context, Poll};
     use tempfile::TempDir;
@@ -1320,14 +1258,13 @@ mod tests {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
             let temp_dir = TempDir::new().unwrap();
-            let explicit_cwd = temp_dir.path().join("workspace/src");
-            fs::create_dir_all(&explicit_cwd).await.unwrap();
+            let explicit_cwd = Path::new("/mnt/source/src");
 
             let recorder = RolloutRecorder::new_in_dir_with_cwd(
                 "test-machine-cwd",
                 "gemini-2.0-flash",
                 temp_dir.path(),
-                Some(explicit_cwd.as_path()),
+                Some(explicit_cwd),
             )
             .await
             .unwrap();
@@ -1337,7 +1274,7 @@ mod tests {
                 .unwrap();
             match &items[0] {
                 RolloutItem::AgentMachineMeta(meta) => {
-                    assert_eq!(meta.cwd, explicit_cwd.to_string_lossy());
+                    assert_eq!(meta.cwd, "/mnt/source/src");
                 }
                 _ => panic!("Expected AgentMachineMeta"),
             }

@@ -1,11 +1,7 @@
 use alan_agent_protocol::ReasoningEffort;
-use anyhow::Context;
 use serde::Deserialize;
 use std::collections::{BTreeMap, HashSet};
-use std::path::Path;
 use std::sync::LazyLock;
-
-use crate::AlanHomePaths;
 
 // The shared OpenAi prefix is intentional here: this enum distinguishes
 // OpenAI API families, not unrelated providers.
@@ -86,18 +82,6 @@ struct ModelInfoToml {
     accepts_date_suffixes: bool,
 }
 
-#[derive(Debug, Default, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-struct ModelCatalogOverlayToml {
-    openai_chat_completions_compatible: Option<ProviderCatalogOverlayToml>,
-}
-
-#[derive(Debug, Default, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-struct ProviderCatalogOverlayToml {
-    models: Vec<ModelInfoToml>,
-}
-
 static BASE_MODEL_CATALOG: LazyLock<ModelCatalog> = LazyLock::new(|| {
     let catalog: ModelCatalogToml = toml::from_str(include_str!("../models/catalog.toml"))
         .expect("runtime model catalog TOML should parse");
@@ -127,12 +111,6 @@ pub fn default_model_slug(provider: ModelCatalogProvider) -> &'static str {
 }
 
 impl ModelCatalog {
-    pub fn load_with_overlays(workspace_root: Option<&Path>) -> anyhow::Result<Self> {
-        let global_overlay = AlanHomePaths::detect().map(|paths| paths.global_models_path);
-        let workspace_overlay = workspace_root.map(|root| root.join(".alan").join("models.toml"));
-        Self::load_with_overlay_paths(global_overlay.as_deref(), workspace_overlay.as_deref())
-    }
-
     pub fn default_model_slug(&self, provider: ModelCatalogProvider) -> &str {
         self.provider_catalog(provider).default_model.as_str()
     }
@@ -156,41 +134,6 @@ impl ModelCatalog {
             .iter()
             .map(|entry| entry.info.slug.as_str())
             .collect()
-    }
-
-    pub(crate) fn load_with_overlay_paths(
-        global_overlay: Option<&Path>,
-        workspace_overlay: Option<&Path>,
-    ) -> anyhow::Result<Self> {
-        let mut catalog = base_catalog().clone();
-        if let Some(path) = global_overlay {
-            catalog.apply_overlay_path(path)?;
-        }
-        if let Some(path) = workspace_overlay {
-            catalog.apply_overlay_path(path)?;
-        }
-        Ok(catalog)
-    }
-
-    fn apply_overlay_path(&mut self, path: &Path) -> anyhow::Result<()> {
-        if !path.exists() {
-            return Ok(());
-        }
-
-        let raw = std::fs::read_to_string(path)
-            .with_context(|| format!("failed to read model catalog overlay {}", path.display()))?;
-        let overlay: ModelCatalogOverlayToml = toml::from_str(&raw)
-            .with_context(|| format!("failed to parse model catalog overlay {}", path.display()))?;
-
-        if let Some(openai_chat_completions_compatible) = overlay.openai_chat_completions_compatible
-        {
-            self.openai_chat_completions_compatible.apply_overlay(
-                ModelCatalogProvider::OpenAiChatCompletionsCompatible,
-                openai_chat_completions_compatible,
-            )?;
-        }
-
-        Ok(())
     }
 
     fn provider_catalog(&self, provider: ModelCatalogProvider) -> &ProviderCatalog {
@@ -220,27 +163,6 @@ impl ProviderCatalog {
             .validate()
             .expect("bundled runtime model catalog is valid");
         catalog
-    }
-
-    fn apply_overlay(
-        &mut self,
-        provider: ModelCatalogProvider,
-        overlay: ProviderCatalogOverlayToml,
-    ) -> anyhow::Result<()> {
-        for model in overlay.models {
-            let entry = CatalogEntry::from_toml(provider, model);
-            if let Some(existing) = self
-                .entries
-                .iter_mut()
-                .find(|existing| existing.info.slug == entry.info.slug)
-            {
-                *existing = entry;
-            } else {
-                self.entries.push(entry);
-            }
-        }
-
-        self.validate()
     }
 
     fn validate(&self) -> anyhow::Result<()> {
@@ -440,8 +362,6 @@ fn is_iso_date_snapshot(snapshot: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
-
     #[test]
     fn catalog_exposes_default_models() {
         assert_eq!(
@@ -495,80 +415,6 @@ mod tests {
     }
 
     #[test]
-    fn workspace_overlay_adds_custom_openai_chat_completions_compatible_model() {
-        let temp = TempDir::new().unwrap();
-        let alan_dir = temp.path().join(".alan");
-        std::fs::create_dir_all(&alan_dir).unwrap();
-        std::fs::write(
-            alan_dir.join("models.toml"),
-            r#"
-[openai_chat_completions_compatible]
-[[openai_chat_completions_compatible.models]]
-slug = "custom-kimi"
-family = "custom"
-context_window_tokens = 654321
-supports_reasoning = true
-"#,
-        )
-        .unwrap();
-
-        let catalog =
-            ModelCatalog::load_with_overlay_paths(None, Some(&alan_dir.join("models.toml")))
-                .unwrap();
-        let custom = catalog
-            .find_model_info(
-                ModelCatalogProvider::OpenAiChatCompletionsCompatible,
-                "custom-kimi",
-            )
-            .unwrap();
-        assert_eq!(custom.context_window_tokens, 654_321);
-    }
-
-    #[test]
-    fn workspace_overlay_replaces_existing_model_metadata() {
-        let temp = TempDir::new().unwrap();
-        let alan_dir = temp.path().join(".alan");
-        std::fs::create_dir_all(&alan_dir).unwrap();
-        std::fs::write(
-            alan_dir.join("models.toml"),
-            r#"
-[openai_chat_completions_compatible]
-[[openai_chat_completions_compatible.models]]
-slug = "deepseek-chat"
-family = "deepseek-custom"
-context_window_tokens = 64000
-supports_reasoning = true
-"#,
-        )
-        .unwrap();
-
-        let catalog =
-            ModelCatalog::load_with_overlay_paths(None, Some(&alan_dir.join("models.toml")))
-                .unwrap();
-        let custom = catalog
-            .find_model_info(
-                ModelCatalogProvider::OpenAiChatCompletionsCompatible,
-                "deepseek-chat",
-            )
-            .unwrap();
-        assert_eq!(custom.family, "deepseek-custom");
-        assert_eq!(custom.context_window_tokens, 64_000);
-        assert!(custom.supports_reasoning);
-        assert_eq!(
-            custom.supported_reasoning_efforts,
-            vec![
-                ReasoningEffort::Low,
-                ReasoningEffort::Medium,
-                ReasoningEffort::High
-            ]
-        );
-        assert_eq!(
-            custom.default_reasoning_effort,
-            Some(ReasoningEffort::Medium)
-        );
-    }
-
-    #[test]
     fn supports_reasoning_derives_compatible_reasoning_effort_metadata() {
         let gpt = base_catalog()
             .find_model_info(ModelCatalogProvider::OpenAiResponses, "gpt-5.4")
@@ -584,179 +430,5 @@ supports_reasoning = true
             ]
         );
         assert_eq!(gpt.default_reasoning_effort, Some(ReasoningEffort::Medium));
-    }
-
-    #[test]
-    fn workspace_overlay_can_replace_reasoning_effort_metadata() {
-        let temp = TempDir::new().unwrap();
-        let alan_dir = temp.path().join(".alan");
-        std::fs::create_dir_all(&alan_dir).unwrap();
-        std::fs::write(
-            alan_dir.join("models.toml"),
-            r#"
-[openai_chat_completions_compatible]
-[[openai_chat_completions_compatible.models]]
-slug = "deepseek-reasoner"
-family = "deepseek-custom"
-context_window_tokens = 128000
-supports_reasoning = true
-supported_reasoning_efforts = ["low", "high"]
-default_reasoning_effort = "high"
-effort_budget_tokens = { low = 1024, high = 8192 }
-"#,
-        )
-        .unwrap();
-
-        let catalog =
-            ModelCatalog::load_with_overlay_paths(None, Some(&alan_dir.join("models.toml")))
-                .unwrap();
-        let custom = catalog
-            .find_model_info(
-                ModelCatalogProvider::OpenAiChatCompletionsCompatible,
-                "deepseek-reasoner",
-            )
-            .unwrap();
-        assert_eq!(
-            custom.supported_reasoning_efforts,
-            vec![ReasoningEffort::Low, ReasoningEffort::High]
-        );
-        assert_eq!(custom.default_reasoning_effort, Some(ReasoningEffort::High));
-        assert_eq!(
-            custom.effort_budget_tokens.get(&ReasoningEffort::Low),
-            Some(&1024)
-        );
-        assert_eq!(
-            custom.effort_budget_tokens.get(&ReasoningEffort::High),
-            Some(&8192)
-        );
-    }
-
-    #[test]
-    fn workspace_overlay_rejects_unsupported_default_reasoning_effort() {
-        let temp = TempDir::new().unwrap();
-        let alan_dir = temp.path().join(".alan");
-        std::fs::create_dir_all(&alan_dir).unwrap();
-        let overlay_path = alan_dir.join("models.toml");
-        std::fs::write(
-            &overlay_path,
-            r#"
-[openai_chat_completions_compatible]
-[[openai_chat_completions_compatible.models]]
-slug = "custom-reasoner"
-family = "custom"
-context_window_tokens = 128000
-supports_reasoning = true
-supported_reasoning_efforts = ["low"]
-default_reasoning_effort = "high"
-"#,
-        )
-        .unwrap();
-
-        let err = ModelCatalog::load_with_overlay_paths(None, Some(&overlay_path)).unwrap_err();
-        assert!(
-            err.to_string()
-                .contains("default_reasoning_effort `high` must appear")
-        );
-    }
-
-    #[test]
-    fn workspace_overlay_rejects_budget_for_unsupported_reasoning_effort() {
-        let temp = TempDir::new().unwrap();
-        let alan_dir = temp.path().join(".alan");
-        std::fs::create_dir_all(&alan_dir).unwrap();
-        let overlay_path = alan_dir.join("models.toml");
-        std::fs::write(
-            &overlay_path,
-            r#"
-[openai_chat_completions_compatible]
-[[openai_chat_completions_compatible.models]]
-slug = "custom-reasoner"
-family = "custom"
-context_window_tokens = 128000
-supports_reasoning = true
-supported_reasoning_efforts = ["medium"]
-effort_budget_tokens = { high = 8192 }
-"#,
-        )
-        .unwrap();
-
-        let err = ModelCatalog::load_with_overlay_paths(None, Some(&overlay_path)).unwrap_err();
-        assert!(
-            err.to_string()
-                .contains("effort_budget_tokens contains unsupported reasoning effort `high`")
-        );
-    }
-
-    #[test]
-    fn workspace_overlay_wins_over_global_overlay() {
-        let temp = TempDir::new().unwrap();
-        let global_dir = temp.path().join("global");
-        let workspace_dir = temp.path().join("workspace");
-        std::fs::create_dir_all(&global_dir).unwrap();
-        std::fs::create_dir_all(workspace_dir.join(".alan")).unwrap();
-
-        std::fs::write(
-            global_dir.join("models.toml"),
-            r#"
-[openai_chat_completions_compatible]
-[[openai_chat_completions_compatible.models]]
-slug = "custom-kimi"
-family = "global"
-context_window_tokens = 111111
-supports_reasoning = false
-"#,
-        )
-        .unwrap();
-        std::fs::write(
-            workspace_dir.join(".alan").join("models.toml"),
-            r#"
-[openai_chat_completions_compatible]
-[[openai_chat_completions_compatible.models]]
-slug = "custom-kimi"
-family = "workspace"
-context_window_tokens = 222222
-supports_reasoning = true
-"#,
-        )
-        .unwrap();
-
-        let catalog = ModelCatalog::load_with_overlay_paths(
-            Some(&global_dir.join("models.toml")),
-            Some(&workspace_dir.join(".alan").join("models.toml")),
-        )
-        .unwrap();
-        let custom = catalog
-            .find_model_info(
-                ModelCatalogProvider::OpenAiChatCompletionsCompatible,
-                "custom-kimi",
-            )
-            .unwrap();
-        assert_eq!(custom.family, "workspace");
-        assert_eq!(custom.context_window_tokens, 222_222);
-        assert!(custom.supports_reasoning);
-    }
-
-    #[test]
-    fn workspace_overlay_rejects_legacy_section_name() {
-        let temp = TempDir::new().unwrap();
-        let alan_dir = temp.path().join(".alan");
-        std::fs::create_dir_all(&alan_dir).unwrap();
-        let overlay_path = alan_dir.join("models.toml");
-        std::fs::write(
-            &overlay_path,
-            r#"
-[openai_compatible]
-[[openai_compatible.models]]
-slug = "custom-kimi"
-family = "custom"
-context_window_tokens = 654321
-"#,
-        )
-        .unwrap();
-
-        let err = ModelCatalog::load_with_overlay_paths(None, Some(&overlay_path)).unwrap_err();
-        let message = err.to_string();
-        assert!(message.contains("failed to parse model catalog overlay"));
-        assert!(message.contains(&overlay_path.display().to_string()));
     }
 }

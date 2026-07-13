@@ -33,7 +33,6 @@ pub enum AuthErrorCode {
     MissingAccountIdentity,
     TokenExpired,
     RefreshFailed,
-    WorkspaceMismatch,
     UnauthorizedAfterRefresh,
     LoginFailed,
     Internal,

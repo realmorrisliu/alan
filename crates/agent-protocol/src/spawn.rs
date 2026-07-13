@@ -7,11 +7,11 @@ use std::path::PathBuf;
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum DelegatedCapabilityRequirement {
-    WorkspaceRead {
+    MountRead {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         path: Option<PathBuf>,
     },
-    WorkspaceWrite {
+    MountWrite {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         path: Option<PathBuf>,
     },
@@ -27,8 +27,8 @@ impl DelegatedCapabilityRequirement {
     /// Stable human-readable label used in launch and mismatch records.
     pub fn label(&self) -> &'static str {
         match self {
-            Self::WorkspaceRead { .. } => "workspace_read",
-            Self::WorkspaceWrite { .. } => "workspace_write",
+            Self::MountRead { .. } => "mount_read",
+            Self::MountWrite { .. } => "mount_write",
             Self::Shell => "shell",
             Self::Network => "network",
             Self::Github => "github",
@@ -37,14 +37,6 @@ impl DelegatedCapabilityRequirement {
             Self::SideEffects => "side_effects",
         }
     }
-}
-
-/// Access projected from the assembled namespace into the delegated child.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum DelegatedWorkspaceAccess {
-    ReadOnly,
-    ReadWrite,
 }
 
 /// Bounded historical summary derived from the actual child namespace plan.
@@ -56,13 +48,11 @@ pub struct DelegatedNamespaceSummary {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub mounts: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub writable_mounts: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub bin_bindings: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub workspace_root: Option<PathBuf>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub workspace_access: Option<DelegatedWorkspaceAccess>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub workspace_projection: Option<String>,
+    pub cwd: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub llm_connection: Option<String>,
 }
@@ -103,8 +93,8 @@ pub struct DelegatedSpawnContext {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum SpawnTarget {
-    /// Launch from a resolved on-disk agent root directory.
-    ResolvedAgentRoot { root_dir: PathBuf },
+    /// Launch from an Agent Definition descriptor already present in the parent Process.
+    DefinitionDescriptor { descriptor: String },
     /// Launch from a package-exported child-agent handle in the parent's capability view.
     PackageChildAgent {
         package_id: String,
@@ -116,7 +106,6 @@ pub enum SpawnTarget {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum SpawnHandle {
-    Workspace,
     Artifacts,
     Memory,
     Plan,
@@ -132,8 +121,6 @@ pub struct SpawnLaunchInputs {
     pub task: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cwd: Option<PathBuf>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub workspace_root: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout_secs: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -210,33 +197,28 @@ mod tests {
     #[test]
     fn spawn_spec_round_trips_with_handles_and_overrides() {
         let spec = SpawnSpec {
-            target: SpawnTarget::ResolvedAgentRoot {
-                root_dir: PathBuf::from("/tmp/child"),
+            target: SpawnTarget::DefinitionDescriptor {
+                descriptor: "agent-definition".to_string(),
             },
             launch: SpawnLaunchInputs {
                 task: "Review the repository".to_string(),
-                cwd: Some(PathBuf::from("/tmp/workspace")),
-                workspace_root: Some(PathBuf::from("/tmp/workspace")),
+                cwd: Some(PathBuf::from("/mnt/source")),
                 timeout_secs: Some(120),
-                output_dir: Some(PathBuf::from("/tmp/workspace/out")),
+                output_dir: Some(PathBuf::from("/mnt/source/out")),
             },
-            handles: vec![
-                SpawnHandle::Workspace,
-                SpawnHandle::ConversationSnapshot,
-                SpawnHandle::ToolResults,
-            ],
+            handles: vec![SpawnHandle::ConversationSnapshot, SpawnHandle::ToolResults],
             runtime_overrides: SpawnRuntimeOverrides {
                 model: Some("gpt-5.4".to_string()),
                 model_reasoning_effort: Some(ReasoningEffort::High),
-                policy_path: Some(".alan/agents/default/policy.yaml".to_string()),
+                policy_path: Some("policy.yaml".to_string()),
                 tool_profile: Some(SpawnToolProfileOverride {
                     allowed_tools: vec!["read_file".to_string(), "grep".to_string()],
                 }),
             },
             delegated: Some(DelegatedSpawnContext {
                 requirements: vec![
-                    DelegatedCapabilityRequirement::WorkspaceRead {
-                        path: Some(PathBuf::from("/tmp/workspace")),
+                    DelegatedCapabilityRequirement::MountRead {
+                        path: Some(PathBuf::from("/mnt/source")),
                     },
                     DelegatedCapabilityRequirement::LlmConnection,
                 ],
@@ -244,17 +226,13 @@ mod tests {
         };
 
         let value = serde_json::to_value(&spec).unwrap();
-        assert_eq!(value["target"]["kind"], "resolved_agent_root");
-        assert_eq!(value["handles"][0], "workspace");
+        assert_eq!(value["target"]["kind"], "definition_descriptor");
+        assert_eq!(value["handles"][0], "conversation_snapshot");
         assert_eq!(value["runtime_overrides"]["model"], "gpt-5.4");
         assert_eq!(value["runtime_overrides"]["model_reasoning_effort"], "high");
-        assert_eq!(
-            value["delegated"]["requirements"][0]["kind"],
-            "workspace_read"
-        );
+        assert_eq!(value["delegated"]["requirements"][0]["kind"], "mount_read");
 
         let parsed: SpawnSpec = serde_json::from_value(value).unwrap();
-        assert!(parsed.has_handle(SpawnHandle::Workspace));
         assert!(parsed.has_handle(SpawnHandle::ConversationSnapshot));
         assert_eq!(
             parsed.runtime_overrides.tool_profile.unwrap().allowed_tools,
@@ -273,7 +251,7 @@ mod tests {
                 task: "Review the repository".to_string(),
                 ..SpawnLaunchInputs::default()
             },
-            handles: vec![SpawnHandle::Workspace],
+            handles: Vec::new(),
             runtime_overrides: SpawnRuntimeOverrides::default(),
             delegated: None,
         };

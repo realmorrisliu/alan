@@ -496,14 +496,12 @@ mod tests {
         });
 
         let mut state = RuntimeLoopState {
-            workspace_id: "namespace-pending-wait-test".to_string(),
-            workspace_root_dir: None,
             machine: crate::AgentMachine::new(),
             current_submission_id: None,
             environment,
             core_config: crate::Config::default(),
             runtime_config: super::super::RuntimeConfig::default(),
-            workspace_persona_dirs: Vec::new(),
+            definition_persona_dirs: Vec::new(),
             prompt_cache: super::super::prompt_cache::PromptAssemblyCache::new(Vec::new()),
             turn_state,
         };

@@ -12,16 +12,16 @@ mod sandbox_backend;
 
 pub use context::{ToolContext, ToolExecutionBinding};
 pub(crate) use registry::ToolProcessRunner;
-pub(crate) use registry::default_scratch_dir_for_cwd;
-pub use registry::{Tool, ToolLocality, ToolRegistry, ToolResult};
+pub use registry::{Tool, ToolRegistry, ToolResult};
 pub use reified_namespace::{
-    DEFAULT_SCRATCH_TMP_NAMESPACE_PATH, DEFAULT_WORKSPACE_NAMESPACE_PATH,
+    DEFAULT_PRIMARY_MOUNT_NAMESPACE_PATH, DEFAULT_SCRATCH_TMP_NAMESPACE_PATH,
     LinuxReifiedNamespaceRunner, ReifiedExecutionSubstrateMount, ReifiedHostMount,
     ReifiedMountAccess, ReifiedMountDeclaration, ReifiedMountSource, ReifiedNamespaceCommandSpec,
     ReifiedNamespacePlan, ReifiedNamespacePlanError, ReifiedNamespacePlanInput,
     ReifiedNamespaceRunError, ReifiedNamespaceRunner, ReifiedScratchTmpMount,
     default_execution_substrate,
 };
+pub(crate) use sandbox::protected_path_component;
 pub use sandbox::{ExecResult, NetworkPosture, Sandbox, SandboxSpec};
 pub use sandbox_backend::{
     LinuxReificationCapability, LinuxReificationCapabilityReport, LinuxReificationStatus,

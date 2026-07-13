@@ -8,7 +8,7 @@
 //! The bash execution path (`Sandbox::build_confined_command`) confines the
 //! shell per backend: macOS wraps it in `sandbox-exec` with the generated
 //! Seatbelt profile; Linux applies a Landlock ruleset in a `pre_exec` hook
-//! (`apply_landlock`). Both confine writes to the workspace + temp and deny
+//! (`apply_landlock`). Both confine writes to the host_mount + temp and deny
 //! network by default (Seatbelt `network*`, Landlock ABI v4 TCP). An *approved*
 //! network call (capability == Network reaching execution) runs with network
 //! permitted (still filesystem-confined), so reviewer/human approval is not
@@ -31,8 +31,8 @@ pub enum SandboxBackendKind {
     LinuxReifiedNamespace,
     /// Linux Landlock (filesystem) paired with seccomp/namespace (network).
     Landlock,
-    /// Best-effort in-process workspace path guard (no OS enforcement).
-    WorkspacePathGuard,
+    /// Best-effort in-process host_mount path guard (no OS enforcement).
+    HostMountPathGuard,
 }
 
 impl SandboxBackendKind {
@@ -42,7 +42,7 @@ impl SandboxBackendKind {
             SandboxBackendKind::Seatbelt => "seatbelt",
             SandboxBackendKind::LinuxReifiedNamespace => "linux_reified_namespace",
             SandboxBackendKind::Landlock => "landlock",
-            SandboxBackendKind::WorkspacePathGuard => "workspace_path_guard",
+            SandboxBackendKind::HostMountPathGuard => "host_mount_path_guard",
         }
     }
 
@@ -52,7 +52,7 @@ impl SandboxBackendKind {
             SandboxBackendKind::LinuxReifiedNamespace => "reified_namespace_paths",
             SandboxBackendKind::Seatbelt
             | SandboxBackendKind::Landlock
-            | SandboxBackendKind::WorkspacePathGuard => "projected_host_paths",
+            | SandboxBackendKind::HostMountPathGuard => "projected_host_paths",
         }
     }
 
@@ -74,11 +74,11 @@ impl SandboxBackendKind {
     }
 
     /// Whether the backend confines bash strongly enough to run shell wrappers
-    /// and reviewer-route escalated bash: the workspace filesystem boundary AND
+    /// and reviewer-route escalated bash: the host_mount filesystem boundary AND
     /// network are kernel-enforced (Seatbelt). Landlock does not qualify because
     /// network confinement is kernel-conditional, and Linux reified namespace
     /// does not qualify until protected subpaths are carved out of the writable
-    /// workspace mount. Conservative backends keep the full shape parser and
+    /// host_mount mount. Conservative backends keep the full shape parser and
     /// route escalated bash to a human.
     ///
     /// NOTE: protected subpaths (`.git`/`.alan`/`.agents`) are NOT kernel-confined
@@ -370,7 +370,7 @@ fn preferred_linux_backend_with_reification_runner_and_toolchain(
     } else if landlock_is_available {
         SandboxBackendKind::Landlock
     } else {
-        SandboxBackendKind::WorkspacePathGuard
+        SandboxBackendKind::HostMountPathGuard
     }
 }
 
@@ -723,7 +723,7 @@ pub fn detect_projection_backend() -> SandboxBackendKind {
     } else if cfg!(target_os = "linux") && landlock_available() {
         SandboxBackendKind::Landlock
     } else {
-        SandboxBackendKind::WorkspacePathGuard
+        SandboxBackendKind::HostMountPathGuard
     }
 }
 
@@ -737,7 +737,7 @@ pub fn detect_backend() -> SandboxBackendKind {
     } else if cfg!(target_os = "linux") {
         linux_reified_namespace_backend_readiness().selected_backend
     } else {
-        SandboxBackendKind::WorkspacePathGuard
+        SandboxBackendKind::HostMountPathGuard
     }
 }
 
@@ -770,7 +770,7 @@ fn landlock_available() -> bool {
 /// writable roots (plus the temp dir) and denies outbound network.
 ///
 /// Uses an allow-by-default base then denies the two effects we care about
-/// (network and out-of-workspace writes) and re-allows writes to the workspace
+/// (network and out-of-host_mount writes) and re-allows writes to the host_mount
 /// and temp locations. This keeps process exec, dynamic linking, and reads
 /// working while still blocking network and writes that escape writable roots —
 /// which is what the auto-approve boundary relies on.
@@ -817,7 +817,7 @@ pub fn seatbelt_profile(
     // tampering is instead blocked by the path-guard parser (direct +
     // shell-wrapper-nested path writes), which leaves program-internal writes
     // (git porcelain, memory) intact.
-    // The OS sandbox's role here is the workspace + network boundary.
+    // The OS sandbox's role here is the host_mount + network boundary.
     let network_rule = if allow_network {
         ""
     } else {
@@ -874,8 +874,8 @@ pub fn apply_landlock(
 
     // Handle the highest filesystem ABI the crate knows so newer rights (e.g.
     // `LANDLOCK_ACCESS_FS_TRUNCATE` from ABI v3, `IOCTL_DEV` from v5) are also
-    // restricted to the workspace — Landlock leaves any *unhandled* right
-    // allowed, so a V1-only ruleset would let `truncate(2)` escape the workspace.
+    // restricted to the host_mount — Landlock leaves any *unhandled* right
+    // allowed, so a V1-only ruleset would let `truncate(2)` escape the host_mount.
     // `CompatLevel::BestEffort` degrades gracefully on older kernels.
     let fs_abi = ABI::V5;
     let net_abi = ABI::V4;
@@ -943,7 +943,7 @@ pub fn confines_network() -> bool {
         SandboxBackendKind::LinuxReifiedNamespace => true,
         // Landlock confines network only on kernels exposing ABI v4 net access.
         SandboxBackendKind::Landlock => landlock_supports_network(),
-        SandboxBackendKind::WorkspacePathGuard => false,
+        SandboxBackendKind::HostMountPathGuard => false,
     }
 }
 
@@ -1017,7 +1017,7 @@ mod tests {
 
     #[test]
     fn path_guard_degrades_safely() {
-        let guard = SandboxBackendKind::WorkspacePathGuard;
+        let guard = SandboxBackendKind::HostMountPathGuard;
         assert!(!guard.is_os_enforced());
         // The security-critical rule: no OS backend => bash/network escalate.
         assert!(!guard.allows_unattended_bash_and_network());
@@ -1032,8 +1032,8 @@ mod tests {
         );
         assert_eq!(SandboxBackendKind::Landlock.name(), "landlock");
         assert_eq!(
-            SandboxBackendKind::WorkspacePathGuard.name(),
-            "workspace_path_guard"
+            SandboxBackendKind::HostMountPathGuard.name(),
+            "host_mount_path_guard"
         );
     }
 
@@ -1048,7 +1048,7 @@ mod tests {
             "projected_host_paths"
         );
         assert_eq!(
-            SandboxBackendKind::WorkspacePathGuard.path_mode(),
+            SandboxBackendKind::HostMountPathGuard.path_mode(),
             "projected_host_paths"
         );
         assert_eq!(
@@ -1077,12 +1077,12 @@ mod tests {
 
     #[test]
     fn seatbelt_profile_single_root_matches_pre_refactor_profile() {
-        let workspace_root = PathBuf::from("/work/space");
-        let writable_roots = vec![workspace_root.clone()];
+        let host_mount_root = PathBuf::from("/work/space");
+        let writable_roots = vec![host_mount_root.clone()];
         let profile = seatbelt_profile(&writable_roots, &[], false);
         assert_eq!(
             profile,
-            pre_refactor_single_workspace_profile(&workspace_root, false)
+            pre_refactor_single_host_mount_profile(&host_mount_root, false)
         );
         assert!(!profile.contains("(deny file-read*"));
     }
@@ -1131,14 +1131,14 @@ mod tests {
 
     #[cfg(target_os = "macos")]
     #[test]
-    fn seatbelt_enforces_workspace_write_boundary_on_macos() {
+    fn seatbelt_enforces_host_mount_write_boundary_on_macos() {
         if !super::seatbelt_available() {
             return; // sandbox-exec not present; nothing to enforce
         }
-        let workspace = tempfile::tempdir().unwrap();
-        let writable_roots = vec![workspace.path().to_path_buf()];
+        let host_mount = tempfile::tempdir().unwrap();
+        let writable_roots = vec![host_mount.path().to_path_buf()];
         let profile = seatbelt_profile(&writable_roots, &[], false);
-        let canonical_workspace = std::fs::canonicalize(workspace.path()).unwrap();
+        let canonical_host_mount = std::fs::canonicalize(host_mount.path()).unwrap();
 
         let run = |script: String| {
             std::process::Command::new("/usr/bin/sandbox-exec")
@@ -1151,15 +1151,15 @@ mod tests {
                 .unwrap()
         };
 
-        // In-workspace write succeeds. If it fails, this environment cannot run
+        // In-host_mount write succeeds. If it fails, this environment cannot run
         // `sandbox-exec` (e.g. a restricted CI runner) — skip rather than fail.
-        let inside_file = canonical_workspace.join("inside.txt");
+        let inside_file = canonical_host_mount.join("inside.txt");
         let ok = run(format!("echo hi > {}", inside_file.display()));
         if !ok.success() || !inside_file.exists() {
             return;
         }
 
-        // Out-of-workspace write (under HOME, outside workspace and temp roots)
+        // Out-of-host_mount write (under HOME, outside host_mount and temp roots)
         // is blocked by the kernel regardless of command syntax.
         let escape_file = std::path::PathBuf::from(std::env::var("HOME").unwrap())
             .join(".alan_seatbelt_escape_test");
@@ -1167,29 +1167,29 @@ mod tests {
         let blocked = run(format!("echo hi > {}", escape_file.display()));
         assert!(
             !blocked.success(),
-            "out-of-workspace write should be denied"
+            "out-of-host_mount write should be denied"
         );
         assert!(
             !escape_file.exists(),
-            "kernel must prevent the out-of-workspace file from being created"
+            "kernel must prevent the out-of-host_mount file from being created"
         );
     }
 
     #[cfg(target_os = "linux")]
     #[test]
-    fn landlock_enforces_workspace_write_boundary_on_linux() {
+    fn landlock_enforces_host_mount_write_boundary_on_linux() {
         if !super::landlock_available() {
             return; // kernel without Landlock; nothing to enforce
         }
         use std::os::unix::process::CommandExt;
-        let workspace = tempfile::tempdir().unwrap();
-        let workspace_path = workspace.path().to_path_buf();
+        let host_mount = tempfile::tempdir().unwrap();
+        let host_mount_path = host_mount.path().to_path_buf();
         let escape_file = std::path::PathBuf::from(std::env::var("HOME").unwrap())
             .join(".alan_landlock_escape_test");
         let _ = std::fs::remove_file(&escape_file);
 
         let run = |script: String| {
-            let root = workspace_path.clone();
+            let root = host_mount_path.clone();
             let mut cmd = std::process::Command::new("sh");
             cmd.arg("-c").arg(script);
             unsafe {
@@ -1200,9 +1200,9 @@ mod tests {
             cmd.status().unwrap()
         };
 
-        // If the in-workspace write fails, this environment cannot apply
+        // If the in-host_mount write fails, this environment cannot apply
         // Landlock (e.g. a restricted runner) — skip rather than fail.
-        let inside = workspace.path().join("inside.txt");
+        let inside = host_mount.path().join("inside.txt");
         if !run(format!("echo hi > {}", inside.display())).success() || !inside.exists() {
             return;
         }
@@ -1210,7 +1210,7 @@ mod tests {
         let blocked = run(format!("echo hi > {}", escape_file.display()));
         assert!(
             !blocked.success(),
-            "out-of-workspace write should be denied"
+            "out-of-host_mount write should be denied"
         );
         assert!(!escape_file.exists());
     }
@@ -1238,13 +1238,13 @@ mod tests {
         }
 
         // Confined: the same probe under Landlock net confinement must be blocked.
-        let workspace = tempfile::tempdir().unwrap();
-        let workspace_path = workspace.path().to_path_buf();
+        let host_mount = tempfile::tempdir().unwrap();
+        let host_mount_path = host_mount.path().to_path_buf();
         let mut cmd = std::process::Command::new("sh");
         cmd.arg("-c").arg(probe);
         unsafe {
             cmd.pre_exec(move || {
-                super::apply_landlock(std::slice::from_ref(&workspace_path), &[], false)
+                super::apply_landlock(std::slice::from_ref(&host_mount_path), &[], false)
             });
         }
         let output = cmd.output().unwrap();
@@ -1265,7 +1265,7 @@ mod tests {
             SandboxBackendKind::Seatbelt
                 | SandboxBackendKind::LinuxReifiedNamespace
                 | SandboxBackendKind::Landlock
-                | SandboxBackendKind::WorkspacePathGuard
+                | SandboxBackendKind::HostMountPathGuard
         ));
     }
 
@@ -1397,7 +1397,7 @@ mod tests {
         );
         assert_eq!(
             preferred_linux_backend_with_reification(&incomplete, false),
-            SandboxBackendKind::WorkspacePathGuard
+            SandboxBackendKind::HostMountPathGuard
         );
 
         let degraded = LinuxReificationCapabilityReport::new(LinuxReificationCapabilities {
@@ -1427,7 +1427,7 @@ mod tests {
         );
         assert_eq!(
             preferred_linux_backend_with_reification_and_runner(&complete, &runner_smoke, false),
-            SandboxBackendKind::WorkspacePathGuard
+            SandboxBackendKind::HostMountPathGuard
         );
         assert_eq!(
             preferred_linux_backend_with_reification_and_runner(
@@ -1461,7 +1461,7 @@ mod tests {
                 &toolchain_smoke,
                 false
             ),
-            SandboxBackendKind::WorkspacePathGuard
+            SandboxBackendKind::HostMountPathGuard
         );
         assert_eq!(
             preferred_linux_backend_with_reification_runner_and_toolchain(
@@ -1497,8 +1497,11 @@ mod tests {
         assert!(fields.contains(&("path_mode", "projected_host_paths".to_string())));
     }
 
-    fn pre_refactor_single_workspace_profile(workspace_root: &Path, allow_network: bool) -> String {
-        let canonical_root = canonical_string(workspace_root);
+    fn pre_refactor_single_host_mount_profile(
+        host_mount_root: &Path,
+        allow_network: bool,
+    ) -> String {
+        let canonical_root = canonical_string(host_mount_root);
         let root = sbpl_quote(&canonical_root);
         let tmpdir = std::env::var("TMPDIR").ok();
         let mut writable = vec![

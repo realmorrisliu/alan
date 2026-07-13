@@ -31,15 +31,6 @@ pub struct InstallChannelDescriptor {
     pub bundle_identifier: &'static str,
     /// CLI executable/link name.
     pub cli_name: &'static str,
-    /// Channel root under the user's home directory.
-    pub alan_home: &'static str,
-    /// Alan home directory name, relative to the user's home directory.
-    pub alan_home_dir_name: &'static str,
-    /// Global public skill install root.
-    pub global_skills_dir: &'static str,
-    /// Global public skill parent directory name, relative to the user's home
-    /// directory.
-    pub global_skills_parent_dir_name: &'static str,
     /// Shell-control namespace.
     pub shell_control_namespace: &'static str,
 }
@@ -106,10 +97,6 @@ impl InstallChannel {
                 display_name: "Alan",
                 bundle_identifier: "app.alanworks.macos",
                 cli_name: "alan",
-                alan_home: "~/.alan",
-                alan_home_dir_name: ".alan",
-                global_skills_dir: "~/.agents/skills",
-                global_skills_parent_dir_name: ".agents",
                 shell_control_namespace: "alan-shell-control",
             },
             Self::Dev => InstallChannelDescriptor {
@@ -118,10 +105,6 @@ impl InstallChannel {
                 display_name: "Alan Dev",
                 bundle_identifier: "app.alanworks.macos.dev",
                 cli_name: "alan-dev",
-                alan_home: "~/.alan-dev",
-                alan_home_dir_name: ".alan-dev",
-                global_skills_dir: "~/.agents-dev/skills",
-                global_skills_parent_dir_name: ".agents-dev",
                 shell_control_namespace: "alan-dev-shell-control",
             },
         }
@@ -146,10 +129,6 @@ mod tests {
                 display_name: "Alan",
                 bundle_identifier: "app.alanworks.macos",
                 cli_name: "alan",
-                alan_home: "~/.alan",
-                alan_home_dir_name: ".alan",
-                global_skills_dir: "~/.agents/skills",
-                global_skills_parent_dir_name: ".agents",
                 shell_control_namespace: "alan-shell-control",
             }
         );
@@ -165,10 +144,6 @@ mod tests {
                 display_name: "Alan Dev",
                 bundle_identifier: "app.alanworks.macos.dev",
                 cli_name: "alan-dev",
-                alan_home: "~/.alan-dev",
-                alan_home_dir_name: ".alan-dev",
-                global_skills_dir: "~/.agents-dev/skills",
-                global_skills_parent_dir_name: ".agents-dev",
                 shell_control_namespace: "alan-dev-shell-control",
             }
         );

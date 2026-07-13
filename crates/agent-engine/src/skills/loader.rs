@@ -276,7 +276,7 @@ pub fn scan_skills_dir(dir: &Path, scope: SkillScope) -> SkillLoadOutcome {
         return outcome;
     }
 
-    let follow_symlinks = matches!(scope, SkillScope::Repo | SkillScope::User);
+    let follow_symlinks = matches!(scope, SkillScope::Descriptor | SkillScope::Installed);
     let mut queue: VecDeque<(PathBuf, usize)> = VecDeque::from([(dir.to_path_buf(), 0)]);
     let mut visited_dirs: HashSet<PathBuf> = HashSet::new();
     let mut seen_skills: HashSet<PathBuf> = HashSet::new();
@@ -437,7 +437,7 @@ This is the body content.
         let metadata = parse_skill_metadata(
             content,
             Path::new("/tmp/test-skill/SKILL.md"),
-            SkillScope::User,
+            SkillScope::Installed,
         )
         .unwrap();
 
@@ -446,7 +446,7 @@ This is the body content.
         assert_eq!(metadata.description, "A test skill for testing");
         assert_eq!(metadata.short_description, Some("Short desc".to_string()));
         assert_eq!(metadata.tags, vec!["test", "demo"]);
-        assert_eq!(metadata.scope, SkillScope::User);
+        assert_eq!(metadata.scope, SkillScope::Installed);
     }
 
     #[test]
@@ -462,7 +462,7 @@ Body
         let metadata = parse_skill_metadata(
             content,
             Path::new("/tmp/release-check/SKILL.md"),
-            SkillScope::User,
+            SkillScope::Installed,
         )
         .unwrap();
 
@@ -483,7 +483,7 @@ Body
         let metadata = parse_skill_metadata(
             content,
             Path::new("/tmp/repo.review/SKILL.md"),
-            SkillScope::User,
+            SkillScope::Installed,
         )
         .unwrap();
 
@@ -511,7 +511,7 @@ Body
         let metadata = parse_skill_metadata(
             &content,
             Path::new("/tmp/release-check/SKILL.md"),
-            SkillScope::User,
+            SkillScope::Installed,
         )
         .unwrap();
 
@@ -547,7 +547,7 @@ Body
         // Create a hidden directory (should be ignored)
         std::fs::create_dir(skills_dir.join(".hidden")).unwrap();
 
-        let outcome = scan_skills_dir(&skills_dir, SkillScope::User);
+        let outcome = scan_skills_dir(&skills_dir, SkillScope::Installed);
         assert_eq!(outcome.skills.len(), 1);
         assert_eq!(outcome.skills[0].id, "test-skill");
     }
@@ -577,7 +577,7 @@ Body
         .unwrap();
         symlink(&pack_v1, &linked_pack).unwrap();
 
-        let outcome = scan_skills_dir(&skills_dir, SkillScope::Repo);
+        let outcome = scan_skills_dir(&skills_dir, SkillScope::Descriptor);
         let resolved = std::fs::canonicalize(&linked_pack).unwrap();
 
         assert_eq!(outcome.skills.len(), 1);
@@ -616,7 +616,7 @@ Body
         )
         .unwrap();
 
-        let outcome = scan_skills_dir(&skills_dir, SkillScope::Repo);
+        let outcome = scan_skills_dir(&skills_dir, SkillScope::Descriptor);
         let skill_ids: Vec<_> = outcome
             .skills
             .iter()
@@ -657,7 +657,7 @@ Body
         )
         .unwrap();
 
-        let outcome = scan_skills_dir(&skills_dir, SkillScope::Repo);
+        let outcome = scan_skills_dir(&skills_dir, SkillScope::Descriptor);
         let skill_ids: Vec<_> = outcome
             .skills
             .iter()
@@ -685,7 +685,7 @@ Body
         )
         .unwrap();
 
-        let outcome = scan_skills_dir(&skills_dir, SkillScope::Repo);
+        let outcome = scan_skills_dir(&skills_dir, SkillScope::Descriptor);
         let expected_agents_dir = std::fs::canonicalize(skills_dir.join("parent-skill"))
             .unwrap()
             .join("agents");
@@ -723,7 +723,7 @@ Body
         )
         .unwrap();
 
-        let outcome = scan_skills_dir(&skills_dir, SkillScope::Repo);
+        let outcome = scan_skills_dir(&skills_dir, SkillScope::Descriptor);
         let skill_ids: Vec<_> = outcome
             .skills
             .iter()
@@ -752,7 +752,7 @@ Content here.
 
         std::fs::write(&skill_md, content).unwrap();
 
-        let skill = load_skill(&skill_md, SkillScope::Repo).unwrap();
+        let skill = load_skill(&skill_md, SkillScope::Descriptor).unwrap();
         assert_eq!(skill.metadata.id, "full-test");
         assert!(skill.content.contains("# Body"));
     }

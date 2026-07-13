@@ -1,0 +1,17 @@
+{
+  "id": "coding_steward/process_mount_binding",
+  "category": "coding_steward",
+  "description": "Validate that child execution inherits only explicit namespace and Host Mount authority.",
+  "blocking": true,
+  "command": "cargo test -p alan-agent-engine process_launch::tests::child_inherits_a_snapshot_without_gaining_mounts --lib -- --exact && cargo test -p alan-agent-engine tools::registry::tests::approved_host_mount_updates_path_projection_and_sandbox_together --lib -- --exact",
+  "assertions": [
+    "child launch cannot gain a Host Mount that the parent did not pass",
+    "approved Host Mount projection updates namespace and native sandbox authority together",
+    "cwd remains an Alan OS namespace path"
+  ],
+  "kpi_tags": [
+    "process_launch_context",
+    "host_mount",
+    "path_boundary"
+  ]
+}

@@ -70,6 +70,7 @@ enum RuntimeEnvironmentBootstrap {
     NamespaceRoot {
         llm_client: LlmClient,
         tools: crate::tools::ToolRegistry,
+        launch_context: crate::ProcessLaunchContext,
         mount_grant_applicator_factory: Option<Arc<dyn super::MountGrantApplicatorFactory>>,
     },
 }
@@ -81,17 +82,19 @@ impl RuntimeEnvironmentBootstrap {
             Self::NamespaceRoot {
                 llm_client,
                 tools,
+                launch_context,
                 mount_grant_applicator_factory,
             } => {
-                build_root_namespace_environment(llm_client, tools, mount_grant_applicator_factory)
-                    .await
+                build_root_namespace_environment(
+                    llm_client,
+                    tools,
+                    &launch_context,
+                    mount_grant_applicator_factory,
+                )
+                .await
             }
         }
     }
-}
-
-fn derived_soft_trigger_ratio(hard_trigger_ratio: f32) -> f32 {
-    hard_trigger_ratio * 0.9
 }
 
 /// Queues for managing submissions.
@@ -254,29 +257,24 @@ fn current_execution_backend() -> String {
 }
 
 pub(crate) fn runtime_host_capabilities(
-    config: &WorkspaceRuntimeConfig,
+    _config: &AgentProcessConfig,
     tools: &crate::tools::ToolRegistry,
 ) -> crate::skills::SkillHostCapabilities {
-    runtime_host_capabilities_for_tools(config, tools.list_tools().into_iter().map(str::to_string))
+    runtime_host_capabilities_for_tools(tools.list_tools().into_iter().map(str::to_string))
 }
 
 pub(crate) fn runtime_host_capabilities_for_tools(
-    config: &WorkspaceRuntimeConfig,
     tools: impl IntoIterator<Item = String>,
 ) -> crate::skills::SkillHostCapabilities {
     let path_dirs = std::env::var_os("PATH")
         .map(|path| std::env::split_paths(&path).collect::<Vec<_>>())
         .unwrap_or_default();
-    crate::skills::build_skill_host_capabilities_with_path_dirs(
-        tools,
-        path_dirs,
-        config.launch_root_dir.is_none(),
-    )
+    crate::skills::build_skill_host_capabilities_with_path_dirs(tools, path_dirs, true)
 }
 
 #[cfg(test)]
 fn runtime_host_capabilities_with_path_dirs<I, P>(
-    config: &WorkspaceRuntimeConfig,
+    _config: &AgentProcessConfig,
     tools: &crate::tools::ToolRegistry,
     path_dirs: I,
 ) -> crate::skills::SkillHostCapabilities
@@ -287,7 +285,7 @@ where
     crate::skills::build_skill_host_capabilities_with_path_dirs(
         tools.list_tools().into_iter().map(str::to_string),
         path_dirs,
-        config.launch_root_dir.is_none(),
+        true,
     )
 }
 
@@ -538,7 +536,7 @@ impl AgentConfig {
         sync_runtime_request_control_intent(&self.core_config, &mut self.runtime_config);
     }
 
-    pub fn with_agent_root_overlays(
+    pub fn with_definition_overlays(
         &self,
         overlay_paths: &[std::path::PathBuf],
     ) -> anyhow::Result<Self> {
@@ -547,7 +545,7 @@ impl AgentConfig {
             merge_base_core_config.model_reasoning_effort = None;
         }
 
-        let mut core_config = merge_base_core_config.with_agent_root_overlays(overlay_paths)?;
+        let mut core_config = merge_base_core_config.with_definition_overlays(overlay_paths)?;
         let mut runtime_config = merge_runtime_config_from_core_overlay(
             &merge_base_core_config,
             &core_config,
@@ -592,112 +590,6 @@ impl AgentConfig {
         if self.explicit_runtime_overrides.durability_required {
             core_config.durability.required = self.runtime_config.durability_required;
             runtime_config.durability_required = self.runtime_config.durability_required;
-        }
-    }
-
-    /// Apply persisted configuration state to this agent config
-    ///
-    /// This is called when loading a workspace from disk to restore its
-    /// original behavior settings (provider, model, timeouts, etc.)
-    pub fn apply_persisted_state(&mut self, persisted: &crate::WorkspaceConfigState) {
-        use crate::PersistedLlmProvider;
-        use crate::config::LlmProvider;
-
-        // Restore runtime behavior settings
-        // All fields are Option<T> to distinguish "not set" from "set to 0"
-        if let Some(max_tool_loops) = persisted.max_tool_loops {
-            self.runtime_config.max_tool_loops = max_tool_loops;
-        }
-        if let Some(tool_repeat_limit) = persisted.tool_repeat_limit {
-            self.runtime_config.tool_repeat_limit = tool_repeat_limit;
-        }
-        if let Some(llm_timeout_secs) = persisted.llm_timeout_secs {
-            self.runtime_config.llm_request_timeout_secs = llm_timeout_secs as u64;
-            self.core_config.llm_request_timeout_secs = llm_timeout_secs;
-        }
-        if let Some(tool_timeout_secs) = persisted.tool_timeout_secs {
-            self.core_config.tool_timeout_secs = tool_timeout_secs;
-        }
-        if let Some(temp) = persisted.temperature {
-            self.runtime_config.temperature = temp;
-        }
-        if let Some(max_tokens) = persisted.max_tokens {
-            self.runtime_config.max_tokens = max_tokens;
-        }
-        if let Some(compaction_hard_trigger_ratio) = persisted.compaction_hard_trigger_ratio {
-            self.runtime_config.compaction_hard_trigger_ratio = compaction_hard_trigger_ratio;
-        }
-        if let Some(compaction_soft_trigger_ratio) = persisted.compaction_soft_trigger_ratio {
-            if compaction_soft_trigger_ratio < self.runtime_config.compaction_hard_trigger_ratio {
-                self.runtime_config.compaction_soft_trigger_ratio = compaction_soft_trigger_ratio;
-            } else {
-                self.runtime_config.compaction_soft_trigger_ratio =
-                    derived_soft_trigger_ratio(self.runtime_config.compaction_hard_trigger_ratio);
-                warn!(
-                    persisted_soft_trigger_ratio = compaction_soft_trigger_ratio,
-                    persisted_hard_trigger_ratio = ?persisted.compaction_hard_trigger_ratio,
-                    effective_hard_trigger_ratio = self.runtime_config.compaction_hard_trigger_ratio,
-                    "Ignoring invalid persisted soft compaction threshold and deriving it from the hard threshold"
-                );
-            }
-        } else if persisted.compaction_hard_trigger_ratio.is_some() {
-            self.runtime_config.compaction_soft_trigger_ratio =
-                derived_soft_trigger_ratio(self.runtime_config.compaction_hard_trigger_ratio);
-        }
-        if let Some(streaming_mode) = persisted.streaming_mode {
-            self.runtime_config.streaming_mode = streaming_mode;
-        }
-        if let Some(partial_stream_recovery_mode) = persisted.partial_stream_recovery_mode {
-            self.runtime_config.partial_stream_recovery_mode = partial_stream_recovery_mode;
-        }
-        if let Some(governance) = persisted.governance.clone() {
-            self.runtime_config.governance = governance;
-        }
-
-        // Restore LLM provider and model
-        if let Some(provider) = persisted.llm_provider {
-            self.core_config.llm_provider = match provider {
-                PersistedLlmProvider::GoogleGeminiGenerateContent => {
-                    LlmProvider::GoogleGeminiGenerateContent
-                }
-                PersistedLlmProvider::Chatgpt => LlmProvider::Chatgpt,
-                PersistedLlmProvider::OpenAiResponses => LlmProvider::OpenAiResponses,
-                PersistedLlmProvider::OpenAiChatCompletions => LlmProvider::OpenAiChatCompletions,
-                PersistedLlmProvider::OpenAiChatCompletionsCompatible => {
-                    LlmProvider::OpenAiChatCompletionsCompatible
-                }
-                PersistedLlmProvider::OpenRouter => LlmProvider::OpenRouter,
-                PersistedLlmProvider::AnthropicMessages => LlmProvider::AnthropicMessages,
-            };
-        }
-
-        // Restore model based on provider
-        if let Some(ref model) = persisted.llm_model {
-            match self.core_config.llm_provider {
-                LlmProvider::GoogleGeminiGenerateContent => {
-                    self.core_config.google_gemini_generate_content_model = model.clone()
-                }
-                LlmProvider::Chatgpt => self.core_config.chatgpt_model = model.clone(),
-                LlmProvider::OpenAiResponses => {
-                    self.core_config.openai_responses_model = model.clone()
-                }
-                LlmProvider::OpenAiChatCompletions => {
-                    self.core_config.openai_chat_completions_model = model.clone()
-                }
-                LlmProvider::OpenAiChatCompletionsCompatible => {
-                    self.core_config.openai_chat_completions_compatible_model = model.clone()
-                }
-                LlmProvider::OpenRouter => self.core_config.openrouter_model = model.clone(),
-                LlmProvider::AnthropicMessages => {
-                    self.core_config.anthropic_messages_model = model.clone()
-                }
-            }
-        }
-
-        if let Some(context_window_tokens) = persisted.context_window_tokens {
-            self.runtime_config.context_window_tokens = context_window_tokens;
-        } else {
-            self.refresh_runtime_derived_fields();
         }
     }
 }
@@ -750,105 +642,74 @@ fn merge_runtime_config_from_core_overlay(
     merged_runtime
 }
 
-/// Combined config for spawning a runtime within a workspace
+/// Host inputs for starting one Agent Process runtime.
 #[derive(Debug, Clone)]
-pub struct WorkspaceRuntimeConfig {
-    /// Agent capabilities (reusable across workspaces)
+pub struct AgentProcessConfig {
+    /// Agent execution configuration.
     pub agent_config: AgentConfig,
-    /// Source used to resolve the default agent configuration before workspace overlays.
+    /// Source used before applying the explicit Agent Definition descriptor.
     pub core_config_source: crate::ConfigSourceKind,
-    /// Optional named agent root to resolve on top of the default workspace agent.
-    pub agent_name: Option<String>,
-    /// Workspace identifier
-    pub workspace_id: String,
-    /// Workspace root directory for tool cwd/sandbox context
-    pub workspace_root_dir: Option<std::path::PathBuf>,
-    /// Workspace `.alan` directory for agent overlays, memory, and rollouts.
-    pub workspace_alan_dir: Option<std::path::PathBuf>,
+    /// Process namespace, descriptors, credentials, Host Mounts, and Alan OS cwd.
+    pub launch_context: crate::ProcessLaunchContext,
+    /// Durable service backing selected by the Host; never exposed as Process identity.
+    pub store_bindings: Option<crate::AgentRuntimeStoreBindings>,
+    /// Memory Service backing paired with the explicit Memory Store descriptor.
+    pub memory_store_backing: Option<std::path::PathBuf>,
+    /// Connection Service metadata plus Host-owned credential backing.
+    pub connection_store: Option<crate::ConnectionStoreBindings>,
     /// Optional execution record used to recover Agent Machine state for a new Process.
     pub recovery_rollout_path: Option<std::path::PathBuf>,
-    /// Optional explicit child launch root layered on top of the resolved workspace/default roots.
-    pub launch_root_dir: Option<std::path::PathBuf>,
-    /// Optional default cwd override for the runtime tool context.
-    pub default_cwd_override: Option<std::path::PathBuf>,
-    /// Optional alan home-path override for agent-root resolution in advanced hosts/tests.
-    pub agent_home_paths: Option<crate::AlanHomePaths>,
     /// Optional host-selected ChatGPT auth storage path shared with provider auth flows.
     pub chatgpt_auth_storage_path: Option<std::path::PathBuf>,
     /// Optional host factory for applying approved mount grants to the live namespace.
     pub mount_grant_applicator_factory: Option<Arc<dyn super::MountGrantApplicatorFactory>>,
 }
 
-impl Default for WorkspaceRuntimeConfig {
+impl Default for AgentProcessConfig {
     fn default() -> Self {
         Self {
             agent_config: AgentConfig::default(),
             core_config_source: crate::ConfigSourceKind::Default,
-            agent_name: None,
-            workspace_id: format!(
-                "workspace-{}",
-                uuid::Uuid::new_v4().to_string().split('-').next().unwrap()
-            ),
-            workspace_root_dir: None,
-            workspace_alan_dir: None,
+            launch_context: crate::ProcessLaunchContext::root(),
+            store_bindings: None,
+            memory_store_backing: None,
+            connection_store: None,
             recovery_rollout_path: None,
-            launch_root_dir: None,
-            default_cwd_override: None,
-            agent_home_paths: None,
             chatgpt_auth_storage_path: None,
             mount_grant_applicator_factory: None,
         }
     }
 }
 
-impl From<crate::config::Config> for WorkspaceRuntimeConfig {
+impl From<crate::config::Config> for AgentProcessConfig {
     fn from(config: crate::config::Config) -> Self {
         Self {
             agent_config: AgentConfig::from(config),
             core_config_source: crate::ConfigSourceKind::Default,
-            agent_name: None,
-            workspace_id: format!(
-                "workspace-{}",
-                uuid::Uuid::new_v4().to_string().split('-').next().unwrap()
-            ),
-            workspace_root_dir: None,
-            workspace_alan_dir: None,
+            launch_context: crate::ProcessLaunchContext::root(),
+            store_bindings: None,
+            memory_store_backing: None,
+            connection_store: None,
             recovery_rollout_path: None,
-            launch_root_dir: None,
-            default_cwd_override: None,
-            agent_home_paths: None,
             chatgpt_auth_storage_path: None,
             mount_grant_applicator_factory: None,
         }
     }
 }
 
-impl From<crate::LoadedConfig> for WorkspaceRuntimeConfig {
+impl From<crate::LoadedConfig> for AgentProcessConfig {
     fn from(loaded: crate::LoadedConfig) -> Self {
         Self {
             agent_config: AgentConfig::from(loaded.config),
             core_config_source: loaded.source,
-            agent_name: None,
-            workspace_id: format!(
-                "workspace-{}",
-                uuid::Uuid::new_v4().to_string().split('-').next().unwrap()
-            ),
-            workspace_root_dir: None,
-            workspace_alan_dir: None,
+            launch_context: crate::ProcessLaunchContext::root(),
+            store_bindings: None,
+            memory_store_backing: None,
+            connection_store: None,
             recovery_rollout_path: None,
-            launch_root_dir: None,
-            default_cwd_override: None,
-            agent_home_paths: None,
             chatgpt_auth_storage_path: None,
             mount_grant_applicator_factory: None,
         }
-    }
-}
-
-impl WorkspaceRuntimeConfig {
-    /// Apply persisted configuration state (delegates to agent_config)
-    pub fn apply_persisted_state(&mut self, persisted: &crate::WorkspaceConfigState) {
-        self.agent_config.apply_persisted_state(persisted);
     }
 }
 
@@ -1014,7 +875,7 @@ pub struct RuntimeNamespaceLaunch {
 }
 
 /// Spawn a new agent runtime and return handles for communication
-pub fn spawn(config: WorkspaceRuntimeConfig) -> Result<RuntimeController> {
+pub fn spawn(config: AgentProcessConfig) -> Result<RuntimeController> {
     let core_config = effective_core_config_for_runtime(&config)?;
 
     let llm_client = LlmClient::from_core_config_with_chatgpt_auth_storage_path(
@@ -1029,7 +890,7 @@ pub fn spawn(config: WorkspaceRuntimeConfig) -> Result<RuntimeController> {
 
 /// Spawn a new namespace-native runtime and return the renderer-host surface.
 pub async fn spawn_with_namespace_surface(
-    config: WorkspaceRuntimeConfig,
+    config: AgentProcessConfig,
 ) -> Result<RuntimeNamespaceLaunch> {
     let core_config = effective_core_config_for_runtime(&config)?;
 
@@ -1047,7 +908,7 @@ pub async fn spawn_with_namespace_surface(
 ///
 /// This is useful for testing with a mock LLM provider.
 pub fn spawn_with_llm_client(
-    config: WorkspaceRuntimeConfig,
+    config: AgentProcessConfig,
     llm_client: LlmClient,
 ) -> Result<RuntimeController> {
     let core_config = effective_core_config_for_runtime(&config)?;
@@ -1058,7 +919,7 @@ pub fn spawn_with_llm_client(
 
 /// Spawn a namespace-native runtime with an externally provided LLM client.
 pub async fn spawn_with_llm_client_and_namespace_surface(
-    config: WorkspaceRuntimeConfig,
+    config: AgentProcessConfig,
     llm_client: LlmClient,
 ) -> Result<RuntimeNamespaceLaunch> {
     let core_config = effective_core_config_for_runtime(&config)?;
@@ -1067,69 +928,64 @@ pub async fn spawn_with_llm_client_and_namespace_surface(
 }
 
 fn configure_runtime_tool_execution_binding(
-    config: &WorkspaceRuntimeConfig,
+    config: &AgentProcessConfig,
     tools: &mut crate::tools::ToolRegistry,
 ) -> Result<()> {
-    let resolved_agent_definition = crate::ResolvedAgentDefinition::from_runtime_config(config)?;
-    let channel = runtime_install_channel(config);
-    if let Some(default_cwd) = config.default_cwd_override.as_ref() {
-        if let Some(ws_root) = resolved_agent_definition.workspace_root_dir.as_ref() {
-            let scratch_dir = resolved_agent_definition
-                .workspace_alan_dir
-                .as_ref()
-                .map(|alan_dir| crate::workspace_runtime_tmp_dir_from_alan_dir(alan_dir, channel))
-                .unwrap_or_else(|| default_cwd.join(".alan").join("tmp"));
-            tools.set_default_execution_binding(
-                crate::tools::ToolExecutionBinding::with_workspace(
-                    ws_root.clone(),
-                    default_cwd.clone(),
-                    scratch_dir,
-                ),
-            );
-        } else {
-            tools.set_default_cwd(default_cwd.clone());
-        }
-    } else if let Some(ws_root) = resolved_agent_definition.workspace_root_dir.as_ref() {
-        let scratch_dir = resolved_agent_definition
-            .workspace_alan_dir
+    if !config.launch_context.host_mounts.is_empty() {
+        let scratch_dir = config
+            .store_bindings
             .as_ref()
-            .map(|alan_dir| crate::workspace_runtime_tmp_dir_from_alan_dir(alan_dir, channel))
-            .unwrap_or_else(|| ws_root.join(".alan").join("tmp"));
-        tools.set_default_execution_binding(crate::tools::ToolExecutionBinding::with_workspace(
-            ws_root.clone(),
-            ws_root.clone(),
-            scratch_dir,
-        ));
+            .map(|stores| stores.tmp.clone())
+            .context(
+                "Agent Process with Host Mounts requires Agent Runtime Service store bindings",
+            )?;
+        tools.set_default_execution_binding(
+            crate::tools::ToolExecutionBinding::from_launch_context(
+                &config.launch_context,
+                scratch_dir,
+            )?,
+        );
     }
 
     Ok(())
 }
 
 pub fn effective_core_config_for_runtime(
-    config: &WorkspaceRuntimeConfig,
+    config: &AgentProcessConfig,
 ) -> Result<crate::config::Config> {
-    let resolved_agent_definition = crate::ResolvedAgentDefinition::from_runtime_config(config)?;
+    let resolved_agent_definition = crate::ResolvedAgentDefinition::from_launch_context(
+        &config.launch_context,
+        &config.agent_config.core_config.resolved_skill_overrides(),
+        config.core_config_source,
+    )?;
     let mut agent_config = config.agent_config.clone();
-    if !resolved_agent_definition.config_overlay_paths.is_empty() {
-        agent_config = agent_config
-            .with_agent_root_overlays(&resolved_agent_definition.config_overlay_paths)?;
+    if let Some(config_path) = resolved_agent_definition.config_path.as_ref() {
+        agent_config = agent_config.with_definition_overlays(std::slice::from_ref(config_path))?;
     }
     let mut core_config = agent_config.core_config.clone();
-    let home_paths = config
-        .agent_home_paths
-        .clone()
-        .or_else(crate::AlanHomePaths::detect);
-    let has_connections_store = home_paths
+    let has_connections_store = config
+        .connection_store
         .as_ref()
-        .is_some_and(|paths| paths.global_connections_path.exists());
+        .is_some_and(|store| store.metadata_path.exists());
     if core_config.connection_profile.is_some() || has_connections_store {
-        core_config.resolve_connection_profile(home_paths.as_ref())?;
+        let store = config
+            .connection_store
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Agent Process has no Connection Service descriptor"))?;
+        core_config.resolve_connection_profile(store)?;
     }
-    let channel = runtime_install_channel(config);
-    if let Some(alan_dir) = resolved_agent_definition.workspace_alan_dir.as_ref() {
-        core_config.memory.workspace_dir = Some(
-            crate::workspace_memory_dir_for_channel_from_alan_dir(alan_dir, channel),
+    if let Some(memory_store) = config.memory_store_backing.as_ref() {
+        let memory_descriptor = config
+            .launch_context
+            .descriptor(crate::MEMORY_STORE_DESCRIPTOR)
+            .context("Agent Runtime Service memory backing requires a Memory Store descriptor")?;
+        anyhow::ensure!(
+            memory_descriptor.path == "/memory",
+            "Memory Store descriptor must reference /memory"
         );
+        core_config.memory.store_dir = Some(memory_store.clone());
+    } else {
+        core_config.memory.store_dir = None;
     }
     crate::resolve_runtime_request_controls(
         &core_config,
@@ -1143,6 +999,7 @@ pub fn effective_core_config_for_runtime(
 async fn build_root_namespace_environment(
     llm_client: LlmClient,
     tools: crate::tools::ToolRegistry,
+    launch_context: &crate::ProcessLaunchContext,
     mount_grant_applicator_factory: Option<Arc<dyn super::MountGrantApplicatorFactory>>,
 ) -> Result<NamespaceRuntimeEnvironment> {
     let tool_names = tools
@@ -1161,7 +1018,7 @@ async fn build_root_namespace_environment(
     let agent_root = Arc::new(alan_agentfs::AgentRootFs::new(Arc::new(procfs.clone())));
     let agent_root_tree = InProcessTransport::new(agent_root.clone());
 
-    let mut process_namespace = alan_kernel::Namespace::new();
+    let mut process_namespace = launch_context.namespace.child();
     process_namespace.mount(
         "/agent",
         agent_root_tree.clone(),
@@ -1197,7 +1054,12 @@ async fn build_root_namespace_environment(
     }
 
     let live_namespace = alan_kernel::LiveNamespace::new(process_namespace);
-    let root_pid = spawn_root_agent_process(&procfs, live_namespace.clone()).await?;
+    let root_pid = spawn_root_agent_process(
+        &procfs,
+        live_namespace.clone(),
+        launch_context.credentials.clone(),
+    )
+    .await?;
     agent_root
         .bind_process(root_pid.clone(), agentfs.clone())
         .await;
@@ -1216,7 +1078,7 @@ async fn build_root_namespace_environment(
     let process_procfs = procfs_with_runner.for_live_spawner(
         Some(root_pid_value),
         live_namespace.clone(),
-        alan_kernel::Credentials::user("root-agent"),
+        launch_context.credentials.clone(),
     );
     live_namespace.mount(
         "/proc",
@@ -1228,6 +1090,7 @@ async fn build_root_namespace_environment(
     )));
     let namespace_environment =
         super::NamespaceRuntimeEnvironment::new(root, format!("/agent/{root_pid}"), "default")
+            .with_launch_context(launch_context.clone())
             .with_process_context(procfs, agent_root, root_pid_value, tool_runner)
             .with_shared_services(InProcessTransport::new(srvfs), route_tree);
     let namespace_environment = if let Some(factory) = mount_grant_applicator_factory {
@@ -1291,12 +1154,9 @@ async fn mount_routefs_standard_handles(
 async fn spawn_root_agent_process(
     procfs: &alan_kernel::ProcFs,
     process_namespace: alan_kernel::LiveNamespace,
+    credentials: alan_kernel::Credentials,
 ) -> Result<String> {
-    let spawner_procfs = procfs.for_live_spawner(
-        None,
-        process_namespace.clone(),
-        alan_kernel::Credentials::user("service-manager"),
-    );
+    let spawner_procfs = procfs.for_live_spawner(None, process_namespace.clone(), credentials);
     let clone_fid = Fid(NEXT_RUNTIME_NAMESPACE_FID.fetch_add(1, Ordering::Relaxed));
     spawner_procfs
         .walk(Fid::ROOT, clone_fid, &["clone".to_string()])
@@ -1337,7 +1197,7 @@ async fn spawn_root_agent_process(
 /// Hosts should use this when they need to inject concrete tool implementations
 /// while keeping the runtime crate generic.
 pub fn spawn_with_llm_client_and_tools(
-    config: WorkspaceRuntimeConfig,
+    config: AgentProcessConfig,
     llm_client: LlmClient,
     mut tools: crate::tools::ToolRegistry,
 ) -> Result<RuntimeController> {
@@ -1346,11 +1206,13 @@ pub fn spawn_with_llm_client_and_tools(
     let generation_capabilities = llm_client.capabilities();
     let host_capabilities = runtime_host_capabilities(&config, &tools);
     let mount_grant_applicator_factory = config.mount_grant_applicator_factory.clone();
+    let launch_context = config.launch_context.clone();
     spawn_with_prepared_runtime_environment(
         config,
         RuntimeEnvironmentBootstrap::NamespaceRoot {
             llm_client,
             tools,
+            launch_context,
             mount_grant_applicator_factory,
         },
         host_capabilities,
@@ -1359,7 +1221,7 @@ pub fn spawn_with_llm_client_and_tools(
 }
 
 pub async fn spawn_with_llm_client_and_tools_and_namespace_surface(
-    config: WorkspaceRuntimeConfig,
+    config: AgentProcessConfig,
     llm_client: LlmClient,
     mut tools: crate::tools::ToolRegistry,
 ) -> Result<RuntimeNamespaceLaunch> {
@@ -1370,6 +1232,7 @@ pub async fn spawn_with_llm_client_and_tools_and_namespace_surface(
     let environment = build_root_namespace_environment(
         llm_client,
         tools,
+        &config.launch_context,
         config.mount_grant_applicator_factory.clone(),
     )
     .await?;
@@ -1391,7 +1254,7 @@ pub async fn spawn_with_llm_client_and_tools_and_namespace_surface(
 
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn spawn_with_namespace_environment(
-    config: WorkspaceRuntimeConfig,
+    config: AgentProcessConfig,
     namespace: super::NamespaceRuntimeEnvironment,
     host_capabilities: crate::skills::SkillHostCapabilities,
     generation_capabilities: crate::llm::ProviderCapabilities,
@@ -1405,7 +1268,7 @@ pub(crate) fn spawn_with_namespace_environment(
 }
 
 fn spawn_with_prepared_runtime_environment(
-    config: WorkspaceRuntimeConfig,
+    config: AgentProcessConfig,
     environment: RuntimeEnvironmentBootstrap,
     host_capabilities: crate::skills::SkillHostCapabilities,
     _generation_capabilities: crate::llm::ProviderCapabilities,
@@ -1415,68 +1278,68 @@ fn spawn_with_prepared_runtime_environment(
     let (ready_tx, ready_rx) =
         oneshot::channel::<std::result::Result<RuntimeStartupMetadata, String>>();
 
-    let resolved_agent_definition = crate::ResolvedAgentDefinition::from_runtime_config(&config)?;
-    let channel = runtime_install_channel(&config);
-
+    let resolved_agent_definition = crate::ResolvedAgentDefinition::from_launch_context(
+        &config.launch_context,
+        &config.agent_config.core_config.resolved_skill_overrides(),
+        config.core_config_source,
+    )?;
     let mut agent_config = config.agent_config.clone();
-    if !resolved_agent_definition.config_overlay_paths.is_empty() {
-        agent_config = agent_config
-            .with_agent_root_overlays(&resolved_agent_definition.config_overlay_paths)?;
+    if let Some(config_path) = resolved_agent_definition.config_path.as_ref() {
+        agent_config = agent_config.with_definition_overlays(std::slice::from_ref(config_path))?;
     }
     let mut core_config = agent_config.core_config.clone();
-    let home_paths = config
-        .agent_home_paths
-        .clone()
-        .or_else(crate::AlanHomePaths::detect);
-    let has_connections_store = home_paths
+    let has_connections_store = config
+        .connection_store
         .as_ref()
-        .is_some_and(|paths| paths.global_connections_path.exists());
+        .is_some_and(|store| store.metadata_path.exists());
     if core_config.connection_profile.is_some() || has_connections_store {
-        core_config.resolve_connection_profile(home_paths.as_ref())?;
+        let store = config
+            .connection_store
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Agent Process has no Connection Service descriptor"))?;
+        core_config.resolve_connection_profile(store)?;
     }
-    if let Some(alan_dir) = resolved_agent_definition.workspace_alan_dir.as_ref() {
-        core_config.memory.workspace_dir = Some(
-            crate::workspace_memory_dir_for_channel_from_alan_dir(alan_dir, channel),
+    if let Some(memory_store) = config.memory_store_backing.as_ref() {
+        let memory_descriptor = config
+            .launch_context
+            .descriptor(crate::MEMORY_STORE_DESCRIPTOR)
+            .context("Agent Runtime Service memory backing requires a Memory Store descriptor")?;
+        anyhow::ensure!(
+            memory_descriptor.path == "/memory",
+            "Memory Store descriptor must reference /memory"
         );
+        core_config.memory.store_dir = Some(memory_store.clone());
+    } else {
+        core_config.memory.store_dir = None;
     }
 
     let mut runtime_config = agent_config.runtime_config.clone();
     runtime_config.chatgpt_auth_storage_path = config.chatgpt_auth_storage_path.clone();
+    runtime_config.store_bindings = config.store_bindings.clone();
+    runtime_config.memory_store_backing = config.memory_store_backing.clone();
+    runtime_config.connection_store = config.connection_store.clone();
     runtime_config.policy_engine =
         crate::policy::PolicyEngine::load_for_governance_with_default_policy_path(
-            resolved_agent_definition.workspace_alan_dir.as_deref(),
-            resolved_agent_definition.default_policy_path.as_deref(),
+            resolved_agent_definition.root_dir.as_deref(),
+            resolved_agent_definition.policy_path.as_deref(),
             &runtime_config.governance,
         );
     let prompt_cache_persona_dirs = resolved_agent_definition.persona_dirs.clone();
-    if let Some(persona_dir) = resolved_agent_definition.writable_persona_dir.as_deref()
-        && let Err(err) = crate::prompts::ensure_workspace_bootstrap_files_at(persona_dir)
-    {
-        warn!(
-            path = %persona_dir.display(),
-            error = %err,
-            "Failed to initialize workspace persona files; continuing without bootstrap writes"
-        );
-    }
     if core_config.memory.enabled
-        && let Some(memory_dir) = core_config.memory.workspace_dir.as_deref()
-        && let Err(err) = crate::prompts::ensure_workspace_memory_layout_at(memory_dir)
+        && let Some(memory_dir) = core_config.memory.store_dir.as_deref()
+        && let Err(err) = crate::prompts::ensure_memory_store_layout_at(memory_dir)
     {
         warn!(
             path = %memory_dir.display(),
             error = %err,
-            "Failed to initialize workspace memory layout; continuing without bootstrap writes"
+            "Failed to initialize Memory Store layout; continuing without bootstrap writes"
         );
     }
-    let rollouts_dir = resolved_agent_definition
-        .workspace_alan_dir
+    let rollouts_dir = config
+        .store_bindings
         .as_ref()
-        .map(|dir| crate::workspace_rollouts_dir_for_channel_from_alan_dir(dir, channel));
-    let rollout_cwd = config
-        .default_cwd_override
-        .clone()
-        .or_else(|| resolved_agent_definition.workspace_root_dir.clone());
-    let runtime_workspace_root_dir = resolved_agent_definition.workspace_root_dir.clone();
+        .map(|stores| stores.rollouts.clone());
+    let rollout_cwd = std::path::PathBuf::from(&config.launch_context.cwd);
     let recovery_rollout_path = config.recovery_rollout_path.clone();
     let generation_capabilities = crate::provider_capabilities_for_config(&core_config);
     let mut prompt_cache =
@@ -1486,11 +1349,11 @@ fn spawn_with_prepared_runtime_environment(
             prompt_cache_persona_dirs.clone(),
             host_capabilities,
         );
-    prompt_cache.set_workspace_memory_dir(
+    prompt_cache.set_memory_store_dir(
         core_config
             .memory
             .enabled
-            .then(|| core_config.memory.workspace_dir.clone())
+            .then(|| core_config.memory.store_dir.clone())
             .flatten(),
     );
 
@@ -1532,7 +1395,7 @@ fn spawn_with_prepared_runtime_environment(
             recovery_rollout_path.as_ref(),
             rollouts_dir.as_ref(),
             runtime_config.durability_required,
-            rollout_cwd.as_deref(),
+            Some(rollout_cwd.as_path()),
             machine_request_controls,
         )
         .await
@@ -1547,14 +1410,12 @@ fn spawn_with_prepared_runtime_environment(
 
         // Build agent loop state
         let mut state = RuntimeLoopState {
-            workspace_id: config.workspace_id.clone(),
-            workspace_root_dir: runtime_workspace_root_dir,
             machine,
             current_submission_id: None,
             environment,
             core_config,
             runtime_config,
-            workspace_persona_dirs: prompt_cache_persona_dirs.clone(),
+            definition_persona_dirs: prompt_cache_persona_dirs.clone(),
             prompt_cache,
             turn_state: super::TurnState::default(),
         };
@@ -1938,14 +1799,6 @@ fn spawn_with_prepared_runtime_environment(
     })
 }
 
-fn runtime_install_channel(config: &WorkspaceRuntimeConfig) -> crate::InstallChannel {
-    config
-        .agent_home_paths
-        .as_ref()
-        .map(|paths| paths.channel)
-        .unwrap_or_else(crate::InstallChannel::detect_current)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2005,9 +1858,7 @@ mod tests {
 
     fn make_deferred_action_for_test() -> DeferredRuntimeAction {
         let temp = TempDir::new().unwrap();
-        let workspace_root = temp.path().join("workspace");
-        let workspace_alan_dir = workspace_root.join(".alan");
-        let memory_dir = workspace_alan_dir.join("runtime/stable/memory");
+        let memory_dir = temp.path().join("memory-store");
 
         let mut machine = AgentMachine::new();
         machine.add_user_message("My name is Morris.");
@@ -2017,18 +1868,16 @@ mod tests {
 
         let mut core_config = crate::Config::default();
         core_config.memory.enabled = true;
-        core_config.memory.workspace_dir = Some(memory_dir);
+        core_config.memory.store_dir = Some(memory_dir);
         let runtime_config = RuntimeConfig::from(&core_config);
 
         let state = RuntimeLoopState {
-            workspace_id: "workspace-queue-test".to_string(),
-            workspace_root_dir: None,
             machine,
             current_submission_id: None,
             environment: namespace_environment_for_test(),
             core_config,
             runtime_config,
-            workspace_persona_dirs: Vec::new(),
+            definition_persona_dirs: Vec::new(),
             prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
             turn_state,
         };
@@ -2079,9 +1928,11 @@ mod tests {
 
     #[tokio::test]
     async fn root_namespace_environment_posts_routefs_and_mounts_route_tree() {
+        let launch_context = crate::ProcessLaunchContext::root();
         let environment = build_root_namespace_environment(
             LlmClient::new(MockLlmProvider::new()),
             crate::tools::ToolRegistry::new(),
+            &launch_context,
             None,
         )
         .await
@@ -2129,10 +1980,15 @@ mod tests {
             name: "example",
             description: "Example Tool",
         });
-        let environment =
-            build_root_namespace_environment(LlmClient::new(MockLlmProvider::new()), tools, None)
-                .await
-                .unwrap();
+        let launch_context = crate::ProcessLaunchContext::root();
+        let environment = build_root_namespace_environment(
+            LlmClient::new(MockLlmProvider::new()),
+            tools,
+            &launch_context,
+            None,
+        )
+        .await
+        .unwrap();
         let shell = alan_shell::Shell::new(environment.root_transport());
 
         assert!(
@@ -2214,9 +2070,11 @@ mod tests {
             description: "Invalid Tool",
         });
 
+        let launch_context = crate::ProcessLaunchContext::root();
         let error = match build_root_namespace_environment(
             LlmClient::new(MockLlmProvider::new()),
             tools,
+            &launch_context,
             None,
         )
         .await
@@ -2417,7 +2275,7 @@ mod tests {
                 .with_response(mock_generation_response("hello from namespace bootstrap")),
         );
         let launch = spawn_with_llm_client_and_tools_and_namespace_surface(
-            WorkspaceRuntimeConfig::default(),
+            AgentProcessConfig::default(),
             llm_client,
             crate::tools::ToolRegistry::new(),
         )
@@ -2467,7 +2325,7 @@ mod tests {
             MockLlmProvider::new().with_response(mock_generation_response("hello from surface")),
         );
         let mut launch = spawn_with_llm_client_and_tools_and_namespace_surface(
-            WorkspaceRuntimeConfig::default(),
+            AgentProcessConfig::default(),
             llm_client,
             crate::tools::ToolRegistry::new(),
         )
@@ -2619,10 +2477,25 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_runtime_shutdown_drains_deferred_memory_promotion_actions() {
         let temp = TempDir::new().unwrap();
-        let workspace_root = temp.path().join("workspace");
-        let workspace_alan_dir = workspace_root.join(".alan");
-        let memory_dir = workspace_alan_dir.join("runtime/stable/memory");
-        crate::prompts::ensure_workspace_memory_layout_at(&memory_dir).unwrap();
+        let system_store = temp.path().join("system-store");
+        let memory_dir = system_store.join("memory");
+        crate::prompts::ensure_memory_store_layout_at(&memory_dir).unwrap();
+        let store_bindings = crate::AgentRuntimeStoreBindings {
+            rollouts: system_store.join("rollouts"),
+            checkpoints: system_store.join("checkpoints"),
+            cache: system_store.join("cache"),
+            tmp: system_store.join("tmp"),
+            metadata: system_store.join("metadata"),
+        };
+        for path in [
+            &store_bindings.rollouts,
+            &store_bindings.checkpoints,
+            &store_bindings.cache,
+            &store_bindings.tmp,
+            &store_bindings.metadata,
+        ] {
+            std::fs::create_dir_all(path).unwrap();
+        }
 
         let mut core_config = crate::Config::for_openai_chat_completions_compatible(
             "sk-test",
@@ -2630,17 +2503,21 @@ mod tests {
             Some("test-model"),
         );
         core_config.memory.enabled = true;
-        core_config.memory.workspace_dir = Some(memory_dir.clone());
+        core_config.memory.store_dir = Some(memory_dir.clone());
         core_config.streaming_mode = crate::config::StreamingMode::Off;
 
         let mut agent_config = crate::AgentConfig::from(core_config);
         agent_config.runtime_config.streaming_mode = crate::config::StreamingMode::Off;
 
-        let config = WorkspaceRuntimeConfig {
+        let config = AgentProcessConfig {
             agent_config,
-            workspace_root_dir: Some(workspace_root),
-            workspace_alan_dir: Some(workspace_alan_dir),
-            ..WorkspaceRuntimeConfig::default()
+            launch_context: crate::ProcessLaunchContext::root().with_descriptor(
+                crate::MEMORY_STORE_DESCRIPTOR,
+                crate::ProcessDescriptor::new("/memory").unwrap(),
+            ),
+            store_bindings: Some(store_bindings),
+            memory_store_backing: Some(memory_dir.clone()),
+            ..AgentProcessConfig::default()
         };
         let call_count = Arc::new(Mutex::new(0));
         let llm_client = LlmClient::new(ShutdownDrainMemoryPromotionProvider {
@@ -2690,12 +2567,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_spawn_with_namespace_environment_reaches_ready_without_legacy_capabilities() {
+    async fn test_spawn_with_namespace_environment_reaches_ready_without_store_bindings() {
         let core_config = crate::Config::default();
         let generation_capabilities = crate::provider_capabilities_for_config(&core_config);
-        let config = WorkspaceRuntimeConfig {
+        let config = AgentProcessConfig {
             agent_config: crate::AgentConfig::from(core_config),
-            ..WorkspaceRuntimeConfig::default()
+            ..AgentProcessConfig::default()
         };
         let mut ns = alan_kernel::Namespace::new();
         ns.mount(
@@ -2718,7 +2595,8 @@ mod tests {
 
         assert_eq!(ready.process_path, "/proc/1");
         assert_eq!(ready.agent_path, "/agent/1");
-        assert!(ready.rollout_id.is_some());
+        assert!(ready.rollout_id.is_none());
+        assert!(!ready.durability.durable);
         controller.shutdown().await.unwrap();
     }
 
@@ -2758,9 +2636,9 @@ mod tests {
 
         let core_config = crate::Config::default();
         let generation_capabilities = crate::provider_capabilities_for_config(&core_config);
-        let config = WorkspaceRuntimeConfig {
+        let config = AgentProcessConfig {
             agent_config: crate::AgentConfig::from(core_config),
-            ..WorkspaceRuntimeConfig::default()
+            ..AgentProcessConfig::default()
         };
         let namespace_environment =
             crate::runtime::NamespaceRuntimeEnvironment::new(root, "/agent/1", "default");
@@ -2816,14 +2694,12 @@ mod tests {
             questions: Vec::new(),
         });
         let state = RuntimeLoopState {
-            workspace_id: "outer-idle-namespace-response-test".to_string(),
-            workspace_root_dir: None,
             machine: crate::AgentMachine::new(),
             current_submission_id: None,
             environment: namespace_environment,
             core_config: crate::Config::default(),
             runtime_config: RuntimeConfig::default(),
-            workspace_persona_dirs: Vec::new(),
+            definition_persona_dirs: Vec::new(),
             prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
             turn_state,
         };
@@ -2900,9 +2776,9 @@ mod tests {
 
         let core_config = crate::Config::default();
         let generation_capabilities = crate::provider_capabilities_for_config(&core_config);
-        let config = WorkspaceRuntimeConfig {
+        let config = AgentProcessConfig {
             agent_config: crate::AgentConfig::from(core_config),
-            ..WorkspaceRuntimeConfig::default()
+            ..AgentProcessConfig::default()
         };
         let namespace_environment =
             crate::runtime::NamespaceRuntimeEnvironment::new(root, "/agent/1", "default");
@@ -2953,35 +2829,63 @@ mod tests {
 
     #[test]
     fn test_agent_runtime_config_default() {
-        let config = WorkspaceRuntimeConfig::default();
-        assert!(config.workspace_id.starts_with("workspace-"));
-        assert!(config.workspace_root_dir.is_none());
-        assert!(config.workspace_alan_dir.is_none());
+        let config = AgentProcessConfig::default();
+        assert_eq!(config.launch_context.cwd, "/");
+        assert!(config.launch_context.host_mounts.is_empty());
+        assert!(config.launch_context.descriptors.is_empty());
+        assert!(config.store_bindings.is_none());
+        assert!(config.memory_store_backing.is_none());
+    }
+
+    #[test]
+    fn runtime_tool_binding_uses_host_mount_when_process_cwd_is_virtual() {
+        let temp = TempDir::new().unwrap();
+        let source = temp.path().join("source");
+        std::fs::create_dir_all(&source).unwrap();
+        let mut launch_context = crate::ProcessLaunchContext::root();
+        launch_context.namespace.mount(
+            "/mnt/source",
+            InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::new())),
+            alan_kernel::Access::ReadWrite,
+        );
+        launch_context = launch_context.with_host_mount(
+            crate::HostMountGrant::new("/mnt/source", &source, alan_kernel::Access::ReadWrite)
+                .unwrap(),
+        );
+        let store_root = temp.path().join("system-store");
+        let config = AgentProcessConfig {
+            launch_context,
+            store_bindings: Some(crate::AgentRuntimeStoreBindings {
+                rollouts: store_root.join("rollouts"),
+                checkpoints: store_root.join("checkpoints"),
+                cache: store_root.join("cache"),
+                tmp: store_root.join("tmp"),
+                metadata: store_root.join("metadata"),
+            }),
+            ..AgentProcessConfig::default()
+        };
+        let mut tools = crate::tools::ToolRegistry::new();
+
+        configure_runtime_tool_execution_binding(&config, &mut tools).unwrap();
+
+        let binding = tools
+            .default_execution_binding()
+            .expect("an explicit Host Mount must create a runtime Tool binding");
+        assert_eq!(binding.cwd, dunce::canonicalize(&source).unwrap());
+        assert_eq!(binding.namespace_cwd, PathBuf::from("/mnt/source"));
+        assert_eq!(config.launch_context.cwd, "/");
+        assert_eq!(binding.host_mounts, config.launch_context.host_mounts);
     }
 
     #[test]
     fn test_runtime_host_capabilities_enable_delegated_support_for_top_level_runtime() {
-        let config = WorkspaceRuntimeConfig::default();
+        let config = AgentProcessConfig::default();
         let tools = crate::tools::ToolRegistry::new();
 
         let capabilities = runtime_host_capabilities(&config, &tools);
 
         assert!(capabilities.supports_delegated_skill_invocation());
         assert!(capabilities.tools.contains("invoke_delegated_skill"));
-    }
-
-    #[test]
-    fn test_runtime_host_capabilities_keep_delegated_support_off_for_child_launch_roots() {
-        let config = WorkspaceRuntimeConfig {
-            launch_root_dir: Some(PathBuf::from("/tmp/child-agent")),
-            ..WorkspaceRuntimeConfig::default()
-        };
-        let tools = crate::tools::ToolRegistry::new();
-
-        let capabilities = runtime_host_capabilities(&config, &tools);
-
-        assert!(!capabilities.supports_delegated_skill_invocation());
-        assert!(!capabilities.tools.contains("invoke_delegated_skill"));
     }
 
     #[test]
@@ -3010,7 +2914,7 @@ mod tests {
         }
 
         let capabilities = runtime_host_capabilities_with_path_dirs(
-            &WorkspaceRuntimeConfig::default(),
+            &AgentProcessConfig::default(),
             &crate::tools::ToolRegistry::new(),
             [temp.path()],
         );
@@ -3021,26 +2925,31 @@ mod tests {
     #[test]
     fn test_agent_runtime_config_from_core_config() {
         let core_config = crate::config::Config::default();
-        let runtime_config = WorkspaceRuntimeConfig::from(core_config.clone());
+        let runtime_config = AgentProcessConfig::from(core_config.clone());
 
-        assert!(runtime_config.workspace_id.starts_with("workspace-"));
-        assert_eq!(runtime_config.workspace_root_dir, None);
-        assert_eq!(runtime_config.workspace_alan_dir, None);
+        assert_eq!(runtime_config.launch_context.cwd, "/");
+        assert!(runtime_config.launch_context.host_mounts.is_empty());
+        assert!(runtime_config.store_bindings.is_none());
     }
 
     #[test]
     fn test_agent_runtime_config_clone() {
-        let config = WorkspaceRuntimeConfig::default();
+        let config = AgentProcessConfig::default();
         let cloned = config.clone();
-        assert_eq!(config.workspace_id, cloned.workspace_id);
+        assert_eq!(config.launch_context.cwd, cloned.launch_context.cwd);
+        assert_eq!(
+            config.launch_context.host_mounts,
+            cloned.launch_context.host_mounts
+        );
     }
 
     #[test]
     fn test_agent_runtime_config_debug() {
-        let config = WorkspaceRuntimeConfig::default();
+        let config = AgentProcessConfig::default();
         let debug_str = format!("{:?}", config);
-        assert!(debug_str.contains("WorkspaceRuntimeConfig"));
-        assert!(debug_str.contains("workspace_id"));
+        assert!(debug_str.contains("AgentProcessConfig"));
+        assert!(debug_str.contains("launch_context"));
+        assert!(!debug_str.contains("workspace_id"));
     }
 
     #[test]
@@ -3084,63 +2993,7 @@ mod tests {
     }
 
     #[test]
-    fn test_apply_persisted_state_some_zero_values() {
-        // Regression test: ensure Some(0) values are correctly restored
-        // and not treated as "not set" (which would use defaults instead)
-        use crate::WorkspaceConfigState;
-
-        let base_config = WorkspaceRuntimeConfig::default();
-        let mut restored_config = base_config.clone();
-
-        // Create persisted state with explicit 0 values
-        let persisted = WorkspaceConfigState {
-            max_tool_loops: Some(0),    // 0 = unlimited
-            tool_repeat_limit: Some(0), // 0 = disable protection
-            llm_timeout_secs: Some(0),  // 0 = no timeout
-            tool_timeout_secs: Some(0), // 0 = no timeout
-            llm_provider: None,
-            llm_model: None,
-            temperature: None,
-            max_tokens: None,
-            context_window_tokens: None,
-            compaction_soft_trigger_ratio: None,
-            compaction_hard_trigger_ratio: None,
-            streaming_mode: None,
-            partial_stream_recovery_mode: None,
-            governance: None,
-        };
-
-        restored_config.apply_persisted_state(&persisted);
-
-        // Verify Some(0) values were restored (not skipped)
-        assert_eq!(
-            restored_config.agent_config.runtime_config.max_tool_loops, 0,
-            "max_tool_loops Some(0) should be restored"
-        );
-        assert_eq!(
-            restored_config
-                .agent_config
-                .runtime_config
-                .tool_repeat_limit,
-            0,
-            "tool_repeat_limit Some(0) should be restored"
-        );
-        assert_eq!(
-            restored_config
-                .agent_config
-                .runtime_config
-                .llm_request_timeout_secs,
-            0,
-            "llm_timeout_secs Some(0) should be restored"
-        );
-        assert_eq!(
-            restored_config.agent_config.core_config.tool_timeout_secs, 0,
-            "tool_timeout_secs Some(0) should be restored"
-        );
-    }
-
-    #[test]
-    fn test_agent_config_with_agent_root_overlays_updates_unmodified_runtime_fields() {
+    fn test_agent_config_with_definition_overlays_updates_unmodified_runtime_fields() {
         let temp = TempDir::new().unwrap();
         let overlay_path = temp.path().join("agent.toml");
         write_agent_overlay(
@@ -3152,7 +3005,7 @@ mod tests {
         );
 
         let base = AgentConfig::from(crate::Config::default());
-        let merged = base.with_agent_root_overlays(&[overlay_path]).unwrap();
+        let merged = base.with_definition_overlays(&[overlay_path]).unwrap();
 
         assert_eq!(merged.core_config.tool_repeat_limit, 9);
         assert!(merged.core_config.prompt_snapshot_enabled);
@@ -3161,7 +3014,7 @@ mod tests {
     }
 
     #[test]
-    fn test_agent_config_with_agent_root_overlays_updates_unmodified_reasoning_effort() {
+    fn test_agent_config_with_definition_overlays_updates_unmodified_reasoning_effort() {
         let temp = TempDir::new().unwrap();
         let overlay_path = temp.path().join("agent.toml");
         write_agent_overlay(
@@ -3172,7 +3025,7 @@ model_reasoning_effort = "high"
         );
 
         let base = AgentConfig::from(crate::Config::default());
-        let merged = base.with_agent_root_overlays(&[overlay_path]).unwrap();
+        let merged = base.with_definition_overlays(&[overlay_path]).unwrap();
 
         assert_eq!(
             merged.core_config.model_reasoning_effort,
@@ -3188,7 +3041,7 @@ model_reasoning_effort = "high"
     }
 
     #[test]
-    fn test_agent_config_with_agent_root_overlays_preserves_runtime_overrides() {
+    fn test_agent_config_with_definition_overlays_preserves_runtime_overrides() {
         let temp = TempDir::new().unwrap();
         let overlay_path = temp.path().join("agent.toml");
         write_agent_overlay(
@@ -3206,7 +3059,7 @@ model_reasoning_effort = "high"
         base.set_streaming_mode_override(crate::config::StreamingMode::On);
         base.set_model_reasoning_effort_override(Some(alan_agent_protocol::ReasoningEffort::Low));
 
-        let merged = base.with_agent_root_overlays(&[overlay_path]).unwrap();
+        let merged = base.with_definition_overlays(&[overlay_path]).unwrap();
 
         assert_eq!(merged.core_config.openai_responses_model, "gpt-5-mini");
         assert_eq!(merged.core_config.tool_repeat_limit, 9);
@@ -3258,53 +3111,7 @@ model_reasoning_effort = "high"
     }
 
     #[test]
-    #[allow(clippy::field_reassign_with_default)]
-    fn test_effective_core_config_for_runtime_preserves_explicit_agent_overrides_after_overlay() {
-        let temp = TempDir::new().unwrap();
-        let workspace_root = temp.path().join("workspace");
-        let workspace_alan_dir = workspace_root.join(".alan");
-        let overlay_path = workspace_alan_dir.join("agents/default/agent.toml");
-        std::fs::create_dir_all(overlay_path.parent().unwrap()).unwrap();
-        std::fs::write(
-            &overlay_path,
-            r#"
-	model_reasoning_effort = "high"
-	"#,
-        )
-        .unwrap();
-
-        let mut config = WorkspaceRuntimeConfig {
-            core_config_source: crate::ConfigSourceKind::GlobalAgentHome,
-            workspace_root_dir: Some(workspace_root),
-            workspace_alan_dir: Some(workspace_alan_dir.clone()),
-            agent_home_paths: Some(crate::AlanHomePaths::from_home_dir(
-                &temp.path().join("home"),
-            )),
-            ..WorkspaceRuntimeConfig::default()
-        };
-        config.agent_config.set_model_override("override-model");
-        config
-            .agent_config
-            .set_model_reasoning_effort_override(Some(alan_agent_protocol::ReasoningEffort::Low));
-
-        let core_config = effective_core_config_for_runtime(&config).unwrap();
-
-        assert_eq!(core_config.openai_responses_model, "override-model");
-        assert_eq!(
-            core_config.model_reasoning_effort,
-            Some(alan_agent_protocol::ReasoningEffort::Low)
-        );
-        assert_eq!(
-            core_config.memory.workspace_dir,
-            Some(crate::workspace_runtime_memory_dir_from_alan_dir(
-                &workspace_alan_dir,
-                crate::InstallChannel::Stable
-            ))
-        );
-    }
-
-    #[test]
-    fn test_agent_config_with_agent_root_overlays_preserves_marked_same_value_runtime_overrides() {
+    fn test_agent_config_with_definition_overlays_preserves_marked_same_value_runtime_overrides() {
         let temp = TempDir::new().unwrap();
         let overlay_path = temp.path().join("agent.toml");
         write_agent_overlay(
@@ -3324,7 +3131,7 @@ required = true
         );
         base.set_durability_required_override(false);
 
-        let merged = base.with_agent_root_overlays(&[overlay_path]).unwrap();
+        let merged = base.with_definition_overlays(&[overlay_path]).unwrap();
 
         assert_eq!(
             merged.core_config.streaming_mode,
@@ -3344,599 +3151,6 @@ required = true
         );
         assert!(!merged.core_config.durability.required);
         assert!(!merged.runtime_config.durability_required);
-    }
-
-    #[test]
-    fn test_apply_persisted_state_none_uses_base() {
-        // Test that None values fall back to base config defaults
-        use crate::WorkspaceConfigState;
-
-        let base_config = WorkspaceRuntimeConfig::default();
-        let mut restored_config = base_config.clone();
-
-        // Create persisted state with None values
-        let persisted = WorkspaceConfigState {
-            max_tool_loops: None,
-            tool_repeat_limit: None,
-            llm_timeout_secs: None,
-            tool_timeout_secs: None,
-            llm_provider: None,
-            llm_model: None,
-            temperature: None,
-            max_tokens: None,
-            context_window_tokens: None,
-            compaction_soft_trigger_ratio: None,
-            compaction_hard_trigger_ratio: None,
-            streaming_mode: None,
-            partial_stream_recovery_mode: None,
-            governance: None,
-        };
-
-        restored_config.apply_persisted_state(&persisted);
-
-        // Verify None values use base config defaults
-        assert_eq!(
-            restored_config.agent_config.runtime_config.max_tool_loops,
-            base_config.agent_config.runtime_config.max_tool_loops
-        );
-        assert_eq!(
-            restored_config
-                .agent_config
-                .runtime_config
-                .tool_repeat_limit,
-            base_config.agent_config.runtime_config.tool_repeat_limit
-        );
-        assert_eq!(
-            restored_config
-                .agent_config
-                .runtime_config
-                .llm_request_timeout_secs,
-            base_config
-                .agent_config
-                .runtime_config
-                .llm_request_timeout_secs
-        );
-        assert_eq!(
-            restored_config.agent_config.core_config.tool_timeout_secs,
-            base_config.agent_config.core_config.tool_timeout_secs
-        );
-    }
-
-    #[test]
-    fn test_apply_persisted_state_non_zero_values() {
-        // Test that non-zero values are correctly restored
-        use crate::WorkspaceConfigState;
-
-        let base_config = WorkspaceRuntimeConfig::default();
-        let mut restored_config = base_config.clone();
-
-        // Create persisted state with specific non-zero values
-        let persisted = WorkspaceConfigState {
-            max_tool_loops: Some(10),
-            tool_repeat_limit: Some(8),
-            llm_timeout_secs: Some(300),
-            tool_timeout_secs: Some(60),
-            llm_provider: None,
-            llm_model: None,
-            temperature: None,
-            max_tokens: None,
-            context_window_tokens: None,
-            compaction_soft_trigger_ratio: None,
-            compaction_hard_trigger_ratio: None,
-            streaming_mode: None,
-            partial_stream_recovery_mode: None,
-            governance: None,
-        };
-
-        restored_config.apply_persisted_state(&persisted);
-
-        // Verify values were restored
-        assert_eq!(
-            restored_config.agent_config.runtime_config.max_tool_loops,
-            10
-        );
-        assert_eq!(
-            restored_config
-                .agent_config
-                .runtime_config
-                .tool_repeat_limit,
-            8
-        );
-        assert_eq!(
-            restored_config
-                .agent_config
-                .runtime_config
-                .llm_request_timeout_secs,
-            300
-        );
-        assert_eq!(
-            restored_config.agent_config.core_config.tool_timeout_secs,
-            60
-        );
-    }
-
-    #[test]
-    fn test_apply_persisted_state_temperature_and_max_tokens() {
-        use crate::WorkspaceConfigState;
-
-        let mut config = WorkspaceRuntimeConfig::default();
-        let persisted = WorkspaceConfigState {
-            max_tool_loops: None,
-            tool_repeat_limit: None,
-            llm_timeout_secs: None,
-            tool_timeout_secs: None,
-            llm_provider: None,
-            llm_model: None,
-            temperature: Some(0.7),
-            max_tokens: Some(4096),
-            context_window_tokens: Some(32_768),
-            compaction_soft_trigger_ratio: None,
-            compaction_hard_trigger_ratio: Some(0.7),
-            streaming_mode: None,
-            partial_stream_recovery_mode: None,
-            governance: None,
-        };
-
-        config.apply_persisted_state(&persisted);
-
-        assert_eq!(config.agent_config.runtime_config.temperature, 0.7);
-        assert_eq!(config.agent_config.runtime_config.max_tokens, 4096);
-        assert_eq!(
-            config.agent_config.runtime_config.context_window_tokens,
-            32_768
-        );
-        assert_eq!(
-            config
-                .agent_config
-                .runtime_config
-                .compaction_hard_trigger_ratio,
-            0.7
-        );
-        assert!(
-            (config
-                .agent_config
-                .runtime_config
-                .compaction_soft_trigger_ratio
-                - 0.63)
-                .abs()
-                < f32::EPSILON
-        );
-    }
-
-    #[test]
-    fn test_apply_persisted_state_derives_soft_threshold_when_persisted_pair_is_invalid() {
-        use crate::WorkspaceConfigState;
-
-        let mut config = WorkspaceRuntimeConfig::default();
-        let persisted = WorkspaceConfigState {
-            max_tool_loops: None,
-            tool_repeat_limit: None,
-            llm_timeout_secs: None,
-            tool_timeout_secs: None,
-            llm_provider: None,
-            llm_model: None,
-            temperature: None,
-            max_tokens: None,
-            context_window_tokens: None,
-            compaction_soft_trigger_ratio: Some(0.75),
-            compaction_hard_trigger_ratio: Some(0.7),
-            streaming_mode: None,
-            partial_stream_recovery_mode: None,
-            governance: None,
-        };
-
-        config.apply_persisted_state(&persisted);
-
-        assert_eq!(
-            config
-                .agent_config
-                .runtime_config
-                .compaction_hard_trigger_ratio,
-            0.7
-        );
-        assert!(
-            (config
-                .agent_config
-                .runtime_config
-                .compaction_soft_trigger_ratio
-                - 0.63)
-                .abs()
-                < f32::EPSILON
-        );
-    }
-
-    #[test]
-    fn test_apply_persisted_state_gemini_provider() {
-        use crate::config::LlmProvider;
-        use crate::{PersistedLlmProvider, WorkspaceConfigState};
-
-        let mut config = WorkspaceRuntimeConfig::default();
-        let persisted = WorkspaceConfigState {
-            max_tool_loops: None,
-            tool_repeat_limit: None,
-            llm_timeout_secs: None,
-            tool_timeout_secs: None,
-            llm_provider: Some(PersistedLlmProvider::GoogleGeminiGenerateContent),
-            llm_model: Some("gemini-2.0-pro".to_string()),
-            temperature: None,
-            max_tokens: None,
-            context_window_tokens: None,
-            compaction_soft_trigger_ratio: None,
-            compaction_hard_trigger_ratio: None,
-            streaming_mode: None,
-            partial_stream_recovery_mode: None,
-            governance: None,
-        };
-
-        config.apply_persisted_state(&persisted);
-
-        assert!(matches!(
-            config.agent_config.core_config.llm_provider,
-            LlmProvider::GoogleGeminiGenerateContent
-        ));
-        assert_eq!(
-            config
-                .agent_config
-                .core_config
-                .google_gemini_generate_content_model,
-            "gemini-2.0-pro"
-        );
-    }
-
-    #[test]
-    fn test_apply_persisted_state_openai_provider() {
-        use crate::config::LlmProvider;
-        use crate::{PersistedLlmProvider, WorkspaceConfigState};
-
-        let mut config = WorkspaceRuntimeConfig::default();
-        let persisted = WorkspaceConfigState {
-            max_tool_loops: None,
-            tool_repeat_limit: None,
-            llm_timeout_secs: None,
-            tool_timeout_secs: None,
-            llm_provider: Some(PersistedLlmProvider::OpenAiResponses),
-            llm_model: Some("gpt-5.4".to_string()),
-            temperature: None,
-            max_tokens: None,
-            context_window_tokens: None,
-            compaction_soft_trigger_ratio: None,
-            compaction_hard_trigger_ratio: None,
-            streaming_mode: None,
-            partial_stream_recovery_mode: None,
-            governance: None,
-        };
-
-        config.apply_persisted_state(&persisted);
-
-        assert!(matches!(
-            config.agent_config.core_config.llm_provider,
-            LlmProvider::OpenAiResponses
-        ));
-        assert_eq!(
-            config.agent_config.core_config.openai_responses_model,
-            "gpt-5.4"
-        );
-    }
-
-    #[test]
-    fn test_apply_persisted_state_openai_chat_completions_compatible_provider() {
-        use crate::config::LlmProvider;
-        use crate::{PersistedLlmProvider, WorkspaceConfigState};
-
-        let mut config = WorkspaceRuntimeConfig::default();
-        let persisted = WorkspaceConfigState {
-            max_tool_loops: None,
-            tool_repeat_limit: None,
-            llm_timeout_secs: None,
-            tool_timeout_secs: None,
-            llm_provider: Some(PersistedLlmProvider::OpenAiChatCompletionsCompatible),
-            llm_model: Some("qwen3.5-plus-2026-02-15".to_string()),
-            temperature: None,
-            max_tokens: None,
-            context_window_tokens: None,
-            compaction_soft_trigger_ratio: None,
-            compaction_hard_trigger_ratio: None,
-            streaming_mode: None,
-            partial_stream_recovery_mode: None,
-            governance: None,
-        };
-
-        config.apply_persisted_state(&persisted);
-
-        assert!(matches!(
-            config.agent_config.core_config.llm_provider,
-            LlmProvider::OpenAiChatCompletionsCompatible
-        ));
-        assert_eq!(
-            config
-                .agent_config
-                .core_config
-                .openai_chat_completions_compatible_model,
-            "qwen3.5-plus-2026-02-15"
-        );
-    }
-
-    #[test]
-    fn test_apply_persisted_state_openai_chat_completions_provider() {
-        use crate::config::LlmProvider;
-        use crate::{PersistedLlmProvider, WorkspaceConfigState};
-
-        let mut config = WorkspaceRuntimeConfig::default();
-        let persisted = WorkspaceConfigState {
-            max_tool_loops: None,
-            tool_repeat_limit: None,
-            llm_timeout_secs: None,
-            tool_timeout_secs: None,
-            llm_provider: Some(PersistedLlmProvider::OpenAiChatCompletions),
-            llm_model: Some("gpt-5.4".to_string()),
-            temperature: None,
-            max_tokens: None,
-            context_window_tokens: None,
-            compaction_soft_trigger_ratio: None,
-            compaction_hard_trigger_ratio: None,
-            streaming_mode: None,
-            partial_stream_recovery_mode: None,
-            governance: None,
-        };
-
-        config.apply_persisted_state(&persisted);
-
-        assert!(matches!(
-            config.agent_config.core_config.llm_provider,
-            LlmProvider::OpenAiChatCompletions
-        ));
-        assert_eq!(
-            config
-                .agent_config
-                .core_config
-                .openai_chat_completions_model,
-            "gpt-5.4"
-        );
-    }
-
-    #[test]
-    fn test_apply_persisted_state_anthropic_provider() {
-        use crate::config::LlmProvider;
-        use crate::{PersistedLlmProvider, WorkspaceConfigState};
-
-        let mut config = WorkspaceRuntimeConfig::default();
-        let persisted = WorkspaceConfigState {
-            max_tool_loops: None,
-            tool_repeat_limit: None,
-            llm_timeout_secs: None,
-            tool_timeout_secs: None,
-            llm_provider: Some(PersistedLlmProvider::AnthropicMessages),
-            llm_model: Some("claude-3-5-sonnet".to_string()),
-            temperature: None,
-            max_tokens: None,
-            context_window_tokens: None,
-            compaction_soft_trigger_ratio: None,
-            compaction_hard_trigger_ratio: None,
-            streaming_mode: None,
-            partial_stream_recovery_mode: None,
-            governance: None,
-        };
-
-        config.apply_persisted_state(&persisted);
-
-        assert!(matches!(
-            config.agent_config.core_config.llm_provider,
-            LlmProvider::AnthropicMessages
-        ));
-        assert_eq!(
-            config.agent_config.core_config.anthropic_messages_model,
-            "claude-3-5-sonnet"
-        );
-        assert_eq!(
-            config.agent_config.runtime_config.context_window_tokens,
-            200_000
-        );
-    }
-
-    #[test]
-    fn test_apply_persisted_state_refreshes_legacy_context_window_fallback() {
-        use crate::{PersistedLlmProvider, WorkspaceConfigState};
-
-        let mut config = WorkspaceRuntimeConfig::default();
-        let persisted = WorkspaceConfigState {
-            max_tool_loops: None,
-            tool_repeat_limit: None,
-            llm_timeout_secs: None,
-            tool_timeout_secs: None,
-            llm_provider: Some(PersistedLlmProvider::GoogleGeminiGenerateContent),
-            llm_model: Some("gemini-2.5-pro".to_string()),
-            temperature: None,
-            max_tokens: None,
-            context_window_tokens: None,
-            compaction_soft_trigger_ratio: None,
-            compaction_hard_trigger_ratio: None,
-            streaming_mode: None,
-            partial_stream_recovery_mode: None,
-            governance: None,
-        };
-
-        config.apply_persisted_state(&persisted);
-
-        assert_eq!(
-            config.agent_config.runtime_config.context_window_tokens,
-            1_048_576
-        );
-    }
-
-    #[test]
-    fn test_apply_persisted_state_keeps_explicit_context_window_override() {
-        use crate::config::Config;
-        use crate::{PersistedLlmProvider, WorkspaceConfigState};
-
-        let mut config = WorkspaceRuntimeConfig::from(Config {
-            llm_provider: crate::config::LlmProvider::OpenAiResponses,
-            openai_responses_model: "gpt-5.4".to_string(),
-            model_reasoning_effort: None,
-            context_window_tokens: Some(42_000),
-            ..Config::default()
-        });
-        let persisted = WorkspaceConfigState {
-            max_tool_loops: None,
-            tool_repeat_limit: None,
-            llm_timeout_secs: None,
-            tool_timeout_secs: None,
-            llm_provider: Some(PersistedLlmProvider::GoogleGeminiGenerateContent),
-            llm_model: Some("gemini-2.5-pro".to_string()),
-            temperature: None,
-            max_tokens: None,
-            context_window_tokens: None,
-            compaction_soft_trigger_ratio: None,
-            compaction_hard_trigger_ratio: None,
-            streaming_mode: None,
-            partial_stream_recovery_mode: None,
-            governance: None,
-        };
-
-        config.apply_persisted_state(&persisted);
-
-        assert_eq!(
-            config.agent_config.runtime_config.context_window_tokens,
-            42_000
-        );
-    }
-
-    #[test]
-    #[allow(clippy::field_reassign_with_default)]
-    fn test_agent_runtime_config_set_workspace_paths() {
-        let temp = TempDir::new().unwrap();
-        let config = WorkspaceRuntimeConfig {
-            workspace_root_dir: Some(temp.path().to_path_buf()),
-            workspace_alan_dir: Some(temp.path().join(".alan")),
-            ..Default::default()
-        };
-
-        assert_eq!(config.workspace_root_dir, Some(temp.path().to_path_buf()));
-        assert_eq!(config.workspace_alan_dir, Some(temp.path().join(".alan")));
-    }
-
-    #[test]
-    #[allow(clippy::field_reassign_with_default)]
-    fn test_workspace_runtime_config_set_workspace_id() {
-        let mut config = WorkspaceRuntimeConfig::default();
-        config.workspace_id = "custom-workspace-123".to_string();
-
-        assert_eq!(config.workspace_id, "custom-workspace-123");
-    }
-
-    #[test]
-    #[allow(clippy::field_reassign_with_default)]
-    fn test_effective_core_config_for_runtime_applies_workspace_agent_overlays() {
-        let temp = TempDir::new().unwrap();
-        let workspace_root = temp.path().join("workspace");
-        let workspace_alan_dir = workspace_root.join(".alan");
-        let overlay_path = workspace_alan_dir.join("agents/default/agent.toml");
-        std::fs::create_dir_all(overlay_path.parent().unwrap()).unwrap();
-        std::fs::write(
-            &overlay_path,
-            r#"
-	tool_repeat_limit = 9
-	model_reasoning_effort = "high"
-	"#,
-        )
-        .unwrap();
-
-        let mut config = WorkspaceRuntimeConfig::default();
-        config.core_config_source = crate::ConfigSourceKind::GlobalAgentHome;
-        config.workspace_root_dir = Some(workspace_root);
-        config.workspace_alan_dir = Some(workspace_alan_dir.clone());
-        config.agent_home_paths = Some(crate::AlanHomePaths::from_home_dir(
-            &temp.path().join("home"),
-        ));
-        config.agent_config.core_config.llm_provider = crate::config::LlmProvider::OpenAiResponses;
-        config.agent_config.core_config.openai_responses_api_key = Some("sk-openai-test".into());
-        config.agent_config.core_config.openai_responses_model = "gpt-5.4".into();
-
-        let core_config = effective_core_config_for_runtime(&config).unwrap();
-
-        assert!(matches!(
-            core_config.llm_provider,
-            crate::config::LlmProvider::OpenAiResponses
-        ));
-        assert_eq!(core_config.tool_repeat_limit, 9);
-        assert_eq!(
-            core_config.model_reasoning_effort,
-            Some(alan_agent_protocol::ReasoningEffort::High)
-        );
-        assert_eq!(
-            core_config.memory.workspace_dir,
-            Some(
-                workspace_alan_dir
-                    .join("runtime")
-                    .join("stable")
-                    .join("memory")
-            )
-        );
-    }
-
-    #[test]
-    fn test_effective_core_config_for_runtime_dev_memory_is_channel_scoped() {
-        let temp = TempDir::new().unwrap();
-        let workspace_root = temp.path().join("workspace");
-        let workspace_alan_dir = workspace_root.join(".alan");
-        std::fs::create_dir_all(workspace_alan_dir.join("memory")).unwrap();
-
-        let config = WorkspaceRuntimeConfig {
-            workspace_root_dir: Some(workspace_root),
-            workspace_alan_dir: Some(workspace_alan_dir.clone()),
-            agent_home_paths: Some(crate::AlanHomePaths::from_home_dir_for_channel(
-                &temp.path().join("home"),
-                crate::InstallChannel::Dev,
-            )),
-            ..WorkspaceRuntimeConfig::default()
-        };
-
-        let core_config = effective_core_config_for_runtime(&config).unwrap();
-
-        assert_eq!(
-            core_config.memory.workspace_dir,
-            Some(
-                workspace_alan_dir
-                    .join("runtime")
-                    .join("dev")
-                    .join("memory")
-            )
-        );
-    }
-
-    #[test]
-    fn test_apply_persisted_state_tool_policy_settings() {
-        use crate::WorkspaceConfigState;
-
-        let mut config = WorkspaceRuntimeConfig::default();
-        let persisted = WorkspaceConfigState {
-            max_tool_loops: None,
-            tool_repeat_limit: None,
-            llm_timeout_secs: None,
-            tool_timeout_secs: None,
-            llm_provider: None,
-            llm_model: None,
-            temperature: None,
-            max_tokens: None,
-            context_window_tokens: None,
-            compaction_soft_trigger_ratio: None,
-            compaction_hard_trigger_ratio: None,
-            streaming_mode: None,
-            partial_stream_recovery_mode: None,
-            governance: Some(alan_agent_protocol::GovernanceConfig {
-                profile: alan_agent_protocol::GovernanceProfile::Autonomous,
-                policy_path: Some(".alan/agents/default/policy.yaml".to_string()),
-            }),
-        };
-
-        config.apply_persisted_state(&persisted);
-
-        assert_eq!(
-            config.agent_config.runtime_config.governance,
-            alan_agent_protocol::GovernanceConfig {
-                profile: alan_agent_protocol::GovernanceProfile::Autonomous,
-                policy_path: Some(".alan/agents/default/policy.yaml".to_string()),
-            }
-        );
     }
 
     #[tokio::test]
@@ -3959,24 +3173,11 @@ required = true
     }
 
     #[test]
-    fn test_agent_runtime_config_with_workspace_paths() {
-        let temp = TempDir::new().unwrap();
-        let config = WorkspaceRuntimeConfig {
-            workspace_root_dir: Some(temp.path().to_path_buf()),
-            workspace_alan_dir: Some(temp.path().join(".alan")),
-            ..Default::default()
-        };
-
-        assert_eq!(config.workspace_root_dir, Some(temp.path().to_path_buf()));
-        assert_eq!(config.workspace_alan_dir, Some(temp.path().join(".alan")));
-    }
-
-    #[test]
     fn test_agent_runtime_config_recovery_rollout_path() {
         let temp = TempDir::new().unwrap();
         let rollout_path = temp.path().join("rollout.jsonl");
 
-        let config = WorkspaceRuntimeConfig {
+        let config = AgentProcessConfig {
             recovery_rollout_path: Some(rollout_path.clone()),
             ..Default::default()
         };
@@ -3987,9 +3188,8 @@ required = true
     #[tokio::test]
     async fn test_initialize_agent_machine_from_rollout_preserves_current_process_cwd() {
         let temp = TempDir::new().unwrap();
-        let recovered_cwd = temp.path().join("workspace/src");
+        let process_cwd = std::path::Path::new("/mnt/source/src");
         let recovered_rollouts = temp.path().join("recovered-rollouts");
-        tokio::fs::create_dir_all(&recovered_cwd).await.unwrap();
         let mut source =
             AgentMachine::new_with_recorder_in_dir("/proc/41", "gemini-2.0-flash", temp.path())
                 .await
@@ -4008,7 +3208,7 @@ required = true
             Some(&rollout_path),
             Some(&recovered_rollouts),
             true,
-            Some(recovered_cwd.as_path()),
+            Some(process_cwd),
             crate::ResolvedRequestControls {
                 reasoning: alan_agent_protocol::ReasoningControls {
                     effort: Some(alan_agent_protocol::ReasoningEffort::Medium),
@@ -4039,7 +3239,7 @@ required = true
 
         assert_eq!(
             persisted_meta.as_ref().map(|meta| meta.cwd.as_str()),
-            Some(recovered_cwd.to_string_lossy().as_ref())
+            Some("/mnt/source/src")
         );
         assert_eq!(
             persisted_meta
@@ -4096,105 +3296,5 @@ required = true
                 serde_json::json!({})
             )],
         }));
-    }
-
-    #[test]
-    fn test_apply_persisted_state_governance_profile() {
-        use crate::WorkspaceConfigState;
-
-        let mut config = WorkspaceRuntimeConfig::default();
-        let persisted = WorkspaceConfigState {
-            max_tool_loops: None,
-            tool_repeat_limit: None,
-            llm_timeout_secs: None,
-            tool_timeout_secs: None,
-            llm_provider: None,
-            llm_model: None,
-            temperature: None,
-            max_tokens: None,
-            context_window_tokens: None,
-            compaction_soft_trigger_ratio: None,
-            compaction_hard_trigger_ratio: None,
-            streaming_mode: None,
-            partial_stream_recovery_mode: None,
-            governance: Some(alan_agent_protocol::GovernanceConfig {
-                profile: alan_agent_protocol::GovernanceProfile::Autonomous,
-                policy_path: None,
-            }),
-        };
-
-        config.apply_persisted_state(&persisted);
-
-        assert_eq!(
-            config.agent_config.runtime_config.governance.profile,
-            alan_agent_protocol::GovernanceProfile::Autonomous
-        );
-    }
-
-    #[cfg(unix)]
-    #[tokio::test]
-    async fn test_spawn_continues_when_workspace_persona_bootstrap_is_unwritable() {
-        use std::os::unix::fs::PermissionsExt;
-
-        let temp = TempDir::new().unwrap();
-        let workspace_root = temp.path().join("repo");
-        let alan_dir = workspace_root.join(".alan");
-        let persona_dir = alan_dir.join("agents/default/persona");
-
-        std::fs::create_dir_all(&persona_dir).unwrap();
-        std::fs::write(persona_dir.join("SOUL.md"), "existing persona").unwrap();
-
-        let mut permissions = std::fs::metadata(&persona_dir).unwrap().permissions();
-        permissions.set_mode(0o555);
-        std::fs::set_permissions(&persona_dir, permissions).unwrap();
-
-        let config = WorkspaceRuntimeConfig {
-            workspace_root_dir: Some(workspace_root),
-            workspace_alan_dir: Some(alan_dir),
-            ..WorkspaceRuntimeConfig::default()
-        };
-
-        let llm_client = LlmClient::new(MockLlmProvider::new());
-        let mut controller = spawn_with_llm_client(config, llm_client).unwrap();
-        let ready = controller.wait_until_ready().await;
-
-        let mut cleanup_permissions = std::fs::metadata(&persona_dir).unwrap().permissions();
-        cleanup_permissions.set_mode(0o755);
-        std::fs::set_permissions(&persona_dir, cleanup_permissions).unwrap();
-
-        assert!(ready.is_ok());
-        controller.shutdown().await.unwrap();
-    }
-
-    #[tokio::test]
-    async fn test_spawn_initializes_bootstrap_for_memory_dir_persona_fallback() {
-        let temp = TempDir::new().unwrap();
-        let workspace_root = temp.path().join("repo");
-        let memory_dir = workspace_root.join(".alan/memory");
-        let persona_dir = workspace_root.join(".alan/agents/default/persona");
-        std::fs::create_dir_all(&memory_dir).unwrap();
-
-        let config = WorkspaceRuntimeConfig {
-            agent_config: crate::AgentConfig {
-                core_config: crate::Config {
-                    memory: crate::config::MemoryConfig {
-                        workspace_dir: Some(memory_dir),
-                        strict_workspace: false,
-                        ..crate::config::MemoryConfig::default()
-                    },
-                    ..crate::Config::default()
-                },
-                ..crate::AgentConfig::default()
-            },
-            ..WorkspaceRuntimeConfig::default()
-        };
-
-        let llm_client = LlmClient::new(MockLlmProvider::new());
-        let mut controller = spawn_with_llm_client(config, llm_client).unwrap();
-        let ready = controller.wait_until_ready().await;
-
-        assert!(ready.is_ok());
-        assert!(persona_dir.join("SOUL.md").exists());
-        controller.shutdown().await.unwrap();
     }
 }

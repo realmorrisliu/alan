@@ -4,24 +4,24 @@
 //! Prompts are embedded at compile time for zero-cost runtime access.
 
 mod assembler;
+mod definition;
 mod loader;
 mod memory;
-mod workspace;
 
-pub(crate) use assembler::build_agent_system_prompt_with_workspace_sections;
-pub use assembler::{build_agent_system_prompt, build_agent_system_prompt_for_workspace};
+pub use assembler::build_agent_system_prompt;
+pub(crate) use assembler::build_agent_system_prompt_with_sections;
+pub use definition::ensure_definition_bootstrap_files_at;
+#[allow(unused_imports)]
+pub(crate) use definition::{
+    definition_persona_tracked_paths, definition_persona_tracked_paths_from_dirs,
+    render_definition_persona_context, render_definition_persona_context_from_dirs,
+};
 pub use loader::PromptLoader;
-pub use memory::{MEMORY_DAILY_DIRNAME, ensure_workspace_memory_layout_at};
+pub use memory::{MEMORY_DAILY_DIRNAME, ensure_memory_store_layout_at};
 #[allow(unused_imports)]
 pub(crate) use memory::{
-    MEMORY_INBOX_DIRNAME, MEMORY_TOPICS_DIRNAME, MEMORY_USER_FILENAME, WORKSPACE_MEMORY_FILENAME,
-    render_workspace_memory_context, workspace_memory_tracked_paths,
-};
-pub use workspace::ensure_workspace_bootstrap_files_at;
-#[allow(unused_imports)]
-pub(crate) use workspace::{
-    render_workspace_persona_context, render_workspace_persona_context_from_dirs,
-    workspace_persona_tracked_paths, workspace_persona_tracked_paths_from_dirs,
+    MEMORY_INBOX_DIRNAME, MEMORY_STORE_FILENAME, MEMORY_TOPICS_DIRNAME, MEMORY_USER_FILENAME,
+    memory_store_tracked_paths, render_memory_store_context,
 };
 
 // ============================================================================

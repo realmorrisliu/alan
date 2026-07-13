@@ -1,8 +1,12 @@
 use alan_agent_engine::runtime::{
     effective_core_config_for_runtime, spawn_with_llm_client_and_tools_and_namespace_surface,
 };
-use alan_agent_engine::{AlanHomePaths, Config, LlmClient, ToolRegistry, WorkspaceRuntimeConfig};
+use alan_agent_engine::{
+    AgentProcessConfig, AgentRuntimeStoreBindings, Config, HostMountGrant, LlmClient,
+    ProcessLaunchContext, ToolRegistry,
+};
 use alan_agent_protocol::{ContentPart, Op, Submission, UiActivityState, UiEvent};
+use alan_kernel::{Access, Credentials, Namespace};
 use anyhow::{Context, Result, ensure};
 use std::{env, path::PathBuf, time::Duration};
 use tempfile::TempDir;
@@ -57,22 +61,45 @@ async fn live_chatgpt_runtime_smoke_uses_agentfs() -> Result<()> {
         return Ok(());
     };
 
-    let temp_home = TempDir::new().context("create temp home")?;
-    let temp_workspace = TempDir::new().context("create temp workspace")?;
-    let workspace_root = temp_workspace.path().join("workspace");
-    let workspace_alan_dir = workspace_root.join(".alan");
-    std::fs::create_dir_all(&workspace_alan_dir)?;
+    let source = TempDir::new().context("create source mount")?;
+    let system_store = TempDir::new().context("create temporary System Store")?;
+    let host_mount = HostMountGrant::new("/mnt/source", source.path(), Access::ReadWrite)?;
+    let mut namespace = Namespace::new();
+    alan::host_mounts::apply_host_mount_declarations(
+        &mut namespace,
+        std::slice::from_ref(&host_mount),
+    )?;
+    let launch_context = ProcessLaunchContext::new(
+        namespace,
+        Credentials::user("live-smoke-agent"),
+        "/mnt/source",
+    )?
+    .with_host_mount(host_mount);
+    let store_bindings = AgentRuntimeStoreBindings {
+        rollouts: system_store.path().join("rollouts"),
+        checkpoints: system_store.path().join("checkpoints"),
+        cache: system_store.path().join("cache"),
+        tmp: system_store.path().join("tmp"),
+        metadata: system_store.path().join("metadata"),
+    };
+    for path in [
+        &store_bindings.rollouts,
+        &store_bindings.checkpoints,
+        &store_bindings.cache,
+        &store_bindings.tmp,
+        &store_bindings.metadata,
+    ] {
+        std::fs::create_dir_all(path)?;
+    }
 
     let model = non_empty_env(CHATGPT_MODEL_ENV).unwrap_or_else(|| "gpt-5.3-codex".to_string());
     let mut core_config =
         Config::for_chatgpt(non_empty_env(CHATGPT_BASE_URL_ENV).as_deref(), Some(&model));
     core_config.chatgpt_account_id = non_empty_env(CHATGPT_ACCOUNT_ID_ENV);
 
-    let mut config = WorkspaceRuntimeConfig::from(core_config);
-    config.workspace_root_dir = Some(workspace_root.clone());
-    config.workspace_alan_dir = Some(workspace_alan_dir);
-    config.default_cwd_override = Some(workspace_root.clone());
-    config.agent_home_paths = Some(AlanHomePaths::from_home_dir(temp_home.path()));
+    let mut config = AgentProcessConfig::from(core_config);
+    config.launch_context = launch_context;
+    config.store_bindings = Some(store_bindings);
     config.chatgpt_auth_storage_path = Some(PathBuf::from(auth_storage_path));
 
     let effective = effective_core_config_for_runtime(&config)?;
@@ -81,7 +108,10 @@ async fn live_chatgpt_runtime_smoke_uses_agentfs() -> Result<()> {
         config.chatgpt_auth_storage_path.clone(),
     )?;
     let mut tools = ToolRegistry::new();
-    tools.set_default_cwd(workspace_root);
+    alan_tools::register_builtin_tool_catalog(&mut tools);
+    for tool in alan_tools::create_core_tools() {
+        tools.register_boxed(tool);
+    }
     let launch =
         spawn_with_llm_client_and_tools_and_namespace_surface(config, client, tools).await?;
     let shell = alan_shell::Shell::new(launch.surface.root_transport());

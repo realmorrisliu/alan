@@ -2,7 +2,6 @@
 
 use crate::connections::{ConnectionsFile, ResolvedConnectionProfile, SecretStore};
 use crate::models::{self, ModelCatalogProvider, ModelInfo};
-use crate::paths::AlanHomePaths;
 use crate::skills::{SkillOverride, merge_skill_overrides};
 use alan_agent_protocol::ReasoningEffort;
 use anyhow::Context;
@@ -14,16 +13,16 @@ use std::sync::Arc;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryConfig {
     pub enabled: bool,
-    pub workspace_dir: Option<PathBuf>,
-    pub strict_workspace: bool,
+    pub store_dir: Option<PathBuf>,
+    pub strict_store: bool,
 }
 
 impl Default for MemoryConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            workspace_dir: None,
-            strict_workspace: true,
+            store_dir: None,
+            strict_store: true,
         }
     }
 }
@@ -121,11 +120,10 @@ pub enum PartialStreamRecoveryMode {
     Off,
 }
 
-/// Source used to load the effective global agent configuration.
+/// Source used to load the effective Agent Process configuration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConfigSourceKind {
     EnvOverride,
-    GlobalAgentHome,
     Default,
 }
 
@@ -590,29 +588,22 @@ impl Config {
 
     pub fn resolve_connection_profile(
         &mut self,
-        home_paths: Option<&AlanHomePaths>,
+        bindings: &crate::ConnectionStoreBindings,
     ) -> anyhow::Result<ResolvedConnectionProfile> {
-        let home_paths = home_paths
-            .cloned()
-            .or_else(AlanHomePaths::detect)
-            .ok_or_else(|| anyhow::anyhow!("Could not determine alan home directory"))?;
-        let (connections, _) = ConnectionsFile::load_from_home_paths(&home_paths)?;
-        let secret_store = SecretStore::from_home_paths(&home_paths)?;
+        let (connections, _) = ConnectionsFile::load_from_path(&bindings.metadata_path)?;
+        let secret_store = SecretStore::from_directory(&bindings.credentials_dir)?;
         let selected_profile = self.connection_profile.clone();
         connections.apply_profile_to_config(selected_profile.as_deref(), &secret_store, self)
     }
 
-    /// Load agent-facing configuration from `ALAN_CONFIG_PATH` or `~/.alan/agents/default/agent.toml`.
+    /// Load agent-facing configuration only from `ALAN_CONFIG_PATH`.
     pub fn load() -> anyhow::Result<Self> {
         Ok(Self::load_with_metadata()?.into_config())
     }
 
     /// Load agent-facing configuration together with source metadata.
     pub fn load_with_metadata() -> anyhow::Result<LoadedConfig> {
-        Self::load_with_paths(
-            Self::env_override_config_path(),
-            Self::global_agent_config_file_path(),
-        )
+        Self::load_from_override(Self::env_override_config_path())
     }
 
     /// Load configuration from file (TOML format)
@@ -627,14 +618,9 @@ impl Config {
     }
 
     /// Get the config file path.
-    /// Resolution order:
-    /// 1. `ALAN_CONFIG_PATH` override
-    /// 2. `~/.alan/agents/default/agent.toml`
+    /// The only direct runtime configuration source is `ALAN_CONFIG_PATH`.
     pub fn config_file_path() -> Option<std::path::PathBuf> {
-        Self::resolve_config_file_path(
-            Self::env_override_config_path(),
-            Self::global_agent_config_file_path(),
-        )
+        Self::env_override_config_path()
     }
 
     fn env_override_config_path() -> Option<std::path::PathBuf> {
@@ -643,59 +629,21 @@ impl Config {
             .map(std::path::PathBuf::from)
     }
 
-    fn global_agent_config_file_path() -> Option<std::path::PathBuf> {
-        AlanHomePaths::detect().map(|paths| paths.global_agent_config_path)
-    }
-
-    #[cfg(test)]
-    fn global_agent_config_file_path_from_home(
-        home: &std::path::Path,
-    ) -> Option<std::path::PathBuf> {
-        Some(AlanHomePaths::from_home_dir(home).global_agent_config_path)
-    }
-
-    fn resolve_config_file_path(
+    fn load_from_override(
         override_path: Option<std::path::PathBuf>,
-        global_agent_path: Option<std::path::PathBuf>,
-    ) -> Option<std::path::PathBuf> {
-        if let Some(path) = override_path {
-            return Some(path);
-        }
-
-        if let Some(path) = global_agent_path
-            && path.exists()
-        {
-            return Some(path);
-        }
-
-        None
-    }
-
-    fn load_with_paths(
-        override_path: Option<std::path::PathBuf>,
-        global_agent_path: Option<std::path::PathBuf>,
     ) -> anyhow::Result<LoadedConfig> {
-        if let Some(config_path) = override_path
-            && config_path.exists()
-        {
+        if let Some(config_path) = override_path {
+            anyhow::ensure!(
+                config_path.is_absolute(),
+                "ALAN_CONFIG_PATH must be an absolute path: {}",
+                config_path.display()
+            );
             let config = Self::from_file(&config_path)?;
             tracing::info!(path = %config_path.display(), "Loaded configuration from file");
             return Ok(LoadedConfig {
                 config,
                 path: Some(config_path),
                 source: ConfigSourceKind::EnvOverride,
-            });
-        }
-
-        if let Some(config_path) = global_agent_path
-            && config_path.exists()
-        {
-            let config = Self::from_file(&config_path)?;
-            tracing::info!(path = %config_path.display(), "Loaded configuration from file");
-            return Ok(LoadedConfig {
-                config,
-                path: Some(config_path),
-                source: ConfigSourceKind::GlobalAgentHome,
             });
         }
 
@@ -706,7 +654,7 @@ impl Config {
         })
     }
 
-    pub fn with_agent_root_overlays(
+    pub fn with_definition_overlays(
         &self,
         overlay_paths: &[std::path::PathBuf],
     ) -> anyhow::Result<Self> {
@@ -1323,9 +1271,32 @@ mod tests {
         assert!(config.skill_overrides.is_empty());
         // Memory config
         assert!(config.memory.enabled);
-        assert!(config.memory.strict_workspace);
-        assert!(config.memory.workspace_dir.is_none());
+        assert!(config.memory.strict_store);
+        assert!(config.memory.store_dir.is_none());
         assert!(!config.durability.required);
+    }
+
+    #[test]
+    fn explicit_config_override_must_be_an_existing_absolute_file() {
+        let missing = std::env::temp_dir().join(format!(
+            "alan-missing-config-{}.toml",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let error = Config::load_from_override(Some(missing.clone())).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("failed to read configuration file"),
+            "unexpected missing-file error: {error:#}"
+        );
+
+        let error = Config::load_from_override(Some("agent.toml".into())).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("ALAN_CONFIG_PATH must be an absolute path"),
+            "unexpected relative-path error: {error:#}"
+        );
     }
 
     #[test]
@@ -1826,7 +1797,7 @@ allow_implicit_invocation = false
     }
 
     #[test]
-    fn test_with_agent_root_overlays_merges_skill_overrides_field_by_field() {
+    fn test_with_definition_overlays_merges_skill_overrides_field_by_field() {
         let temp = TempDir::new().unwrap();
         let overlay_path = temp.path().join("agent.toml");
         std::fs::write(
@@ -1848,7 +1819,7 @@ allow_implicit_invocation = false
             ..Config::default()
         };
         let config = base
-            .with_agent_root_overlays(std::slice::from_ref(&overlay_path))
+            .with_definition_overlays(std::slice::from_ref(&overlay_path))
             .unwrap();
         assert_eq!(
             config
@@ -1871,10 +1842,10 @@ allow_implicit_invocation = false
     }
 
     #[test]
-    fn test_with_agent_root_overlays_merges_skill_overrides_across_multiple_roots() {
+    fn test_with_definition_overlays_merges_skill_overrides_across_multiple_roots() {
         let temp = TempDir::new().unwrap();
-        let first_overlay = temp.path().join("global-agent.toml");
-        let second_overlay = temp.path().join("workspace-agent.toml");
+        let first_overlay = temp.path().join("base-definition.toml");
+        let second_overlay = temp.path().join("named-definition.toml");
         std::fs::write(
             &first_overlay,
             r#"
@@ -1895,7 +1866,7 @@ allow_implicit_invocation = false
         .unwrap();
 
         let config = Config::default()
-            .with_agent_root_overlays(&[first_overlay, second_overlay])
+            .with_definition_overlays(&[first_overlay, second_overlay])
             .unwrap();
 
         assert_eq!(
@@ -1940,7 +1911,6 @@ allow_implicit_invocation = false
         let crate_root = Path::new(env!("CARGO_MANIFEST_DIR"));
         let paths = [
             crate_root.join("skills/repo-coding/agents/repo-worker/agent.toml"),
-            crate_root.join("skills/workspace-inspect/agents/workspace-reader/agent.toml"),
             crate_root.join("skills/skill-creator/agents/skill-creator/agent.toml"),
         ];
 
@@ -1948,108 +1918,6 @@ allow_implicit_invocation = false
             Config::from_file(&path)
                 .unwrap_or_else(|err| panic!("failed to parse {}: {err:#}", path.display()));
         }
-    }
-
-    #[test]
-    fn test_config_file_path_prefers_alan_config_path_env() {
-        let temp = TempDir::new().unwrap();
-        let home = temp.path().join("home");
-        let canonical_config = Config::global_agent_config_file_path_from_home(&home).unwrap();
-        std::fs::create_dir_all(canonical_config.parent().unwrap()).unwrap();
-        std::fs::write(
-            &canonical_config,
-            "llm_provider = \"google_gemini_generate_content\"\n",
-        )
-        .unwrap();
-
-        let override_path = temp.path().join("override.toml");
-        std::fs::write(
-            &override_path,
-            "llm_provider = \"google_gemini_generate_content\"\n",
-        )
-        .unwrap();
-
-        let resolved =
-            Config::resolve_config_file_path(Some(override_path.clone()), Some(canonical_config))
-                .unwrap();
-        assert_eq!(resolved, override_path);
-    }
-
-    #[test]
-    fn test_config_file_path_uses_global_agent_home() {
-        let temp = TempDir::new().unwrap();
-        let home = temp.path().join("home");
-        let canonical_config = Config::global_agent_config_file_path_from_home(&home).unwrap();
-        std::fs::create_dir_all(canonical_config.parent().unwrap()).unwrap();
-        std::fs::write(
-            &canonical_config,
-            "llm_provider = \"google_gemini_generate_content\"\n",
-        )
-        .unwrap();
-        let resolved =
-            Config::resolve_config_file_path(None, Some(canonical_config.clone())).unwrap();
-        assert_eq!(resolved, canonical_config);
-    }
-
-    #[test]
-    fn test_load_falls_back_to_global_agent_home_when_override_missing() {
-        let temp = TempDir::new().unwrap();
-        let home = temp.path().join("home");
-        let canonical_config = Config::global_agent_config_file_path_from_home(&home).unwrap();
-        std::fs::create_dir_all(canonical_config.parent().unwrap()).unwrap();
-        std::fs::write(&canonical_config, "connection_profile = \"openai-main\"\n").unwrap();
-
-        let missing_override = temp.path().join("missing-override.toml");
-        let loaded =
-            Config::load_with_paths(Some(missing_override), Some(canonical_config)).unwrap();
-        assert_eq!(loaded.source, ConfigSourceKind::GlobalAgentHome);
-        assert_eq!(
-            loaded.config.connection_profile.as_deref(),
-            Some("openai-main")
-        );
-    }
-
-    #[test]
-    fn test_load_uses_default_when_canonical_missing() {
-        let temp = TempDir::new().unwrap();
-        let missing_override = temp.path().join("missing-override.toml");
-        let loaded = Config::load_with_paths(Some(missing_override), None).unwrap();
-        assert_eq!(loaded.source, ConfigSourceKind::Default);
-        assert!(loaded.path.is_none());
-        assert_eq!(loaded.config.llm_provider, Config::default().llm_provider);
-    }
-
-    #[test]
-    fn test_load_uses_existing_override_when_present() {
-        let temp = TempDir::new().unwrap();
-        let override_path = temp.path().join("override.toml");
-        std::fs::write(&override_path, "connection_profile = \"gemini-main\"\n").unwrap();
-        let loaded = Config::load_with_paths(Some(override_path.clone()), None).unwrap();
-        assert_eq!(loaded.source, ConfigSourceKind::EnvOverride);
-        assert_eq!(loaded.path, Some(override_path));
-        assert_eq!(
-            loaded.config.connection_profile.as_deref(),
-            Some("gemini-main")
-        );
-    }
-
-    #[test]
-    fn test_load_with_paths_rejects_deprecated_provider_key_names() {
-        let temp = TempDir::new().unwrap();
-        let override_path = temp.path().join("legacy.toml");
-        std::fs::write(
-            &override_path,
-            r#"
-llm_provider = "openai_compatible"
-openai_compat_api_key = "sk-test"
-"#,
-        )
-        .unwrap();
-
-        let err = Config::load_with_paths(Some(override_path.clone()), None).unwrap_err();
-        let message = err.to_string();
-        assert!(message.contains("failed to parse configuration file"));
-        assert!(message.contains(&override_path.display().to_string()));
     }
 
     #[test]
@@ -2091,7 +1959,7 @@ partial_stream_recovery_mode = "continue_once"
 
 [memory]
 enabled = false
-strict_workspace = false
+strict_store = false
 
 [durability]
 required = true
@@ -2118,7 +1986,7 @@ required = true
         );
         // Memory
         assert!(!config.memory.enabled);
-        assert!(!config.memory.strict_workspace);
+        assert!(!config.memory.strict_store);
         assert!(config.durability.required);
     }
 
@@ -2126,8 +1994,8 @@ required = true
     fn test_memory_config_default() {
         let memory = MemoryConfig::default();
         assert!(memory.enabled);
-        assert!(memory.strict_workspace);
-        assert!(memory.workspace_dir.is_none());
+        assert!(memory.strict_store);
+        assert!(memory.store_dir.is_none());
     }
 
     #[test]
@@ -2161,13 +2029,13 @@ compaction_trigger_ratio = 0.8
     fn test_memory_config_deserialization() {
         let toml_content = r#"
 enabled = false
-strict_workspace = false
-workspace_dir = "/custom/path"
+strict_store = false
+store_dir = "/custom/path"
 "#;
         let memory: MemoryConfig = toml::from_str(toml_content).unwrap();
         assert!(!memory.enabled);
-        assert!(!memory.strict_workspace);
-        assert_eq!(memory.workspace_dir, Some(PathBuf::from("/custom/path")));
+        assert!(!memory.strict_store);
+        assert_eq!(memory.store_dir, Some(PathBuf::from("/custom/path")));
     }
 
     #[test]
@@ -2257,73 +2125,13 @@ required = true
     }
 
     #[test]
-    fn test_effective_context_window_tokens_uses_overlay_model_catalog() {
-        let temp = TempDir::new().unwrap();
-        let alan_dir = temp.path().join(".alan");
-        std::fs::create_dir_all(&alan_dir).unwrap();
-        std::fs::write(
-            alan_dir.join("models.toml"),
-            r#"
-[openai_chat_completions_compatible]
-[[openai_chat_completions_compatible.models]]
-slug = "custom-kimi"
-family = "custom"
-context_window_tokens = 654321
-supports_reasoning = true
-"#,
-        )
-        .unwrap();
-
-        let catalog = crate::ModelCatalog::load_with_overlays(Some(temp.path())).unwrap();
-        let mut config =
-            Config::for_openai_chat_completions_compatible("sk-test", None, Some("custom-kimi"));
-        config.set_model_catalog(Arc::new(catalog));
-
-        assert_eq!(config.effective_context_window_tokens(), 654_321);
-        assert_eq!(config.effective_model_info().unwrap().slug, "custom-kimi");
-    }
-
-    #[test]
-    fn test_with_agent_root_overlays_preserves_model_catalog() {
-        let temp = TempDir::new().unwrap();
-        let alan_dir = temp.path().join(".alan");
-        std::fs::create_dir_all(&alan_dir).unwrap();
-        std::fs::write(
-            alan_dir.join("models.toml"),
-            r#"
-[openai_chat_completions_compatible]
-[[openai_chat_completions_compatible.models]]
-slug = "custom-kimi"
-family = "custom"
-context_window_tokens = 654321
-supports_reasoning = true
-"#,
-        )
-        .unwrap();
-
-        let overlay_path = temp.path().join("agent.toml");
-        std::fs::write(&overlay_path, "model_reasoning_effort = \"high\"\n").unwrap();
-
-        let catalog = crate::ModelCatalog::load_with_overlays(Some(temp.path())).unwrap();
-        let mut config =
-            Config::for_openai_chat_completions_compatible("sk-test", None, Some("custom-kimi"));
-        config.set_model_catalog(std::sync::Arc::new(catalog));
-
-        let overlaid = config.with_agent_root_overlays(&[overlay_path]).unwrap();
-
-        assert_eq!(overlaid.model_reasoning_effort, Some(ReasoningEffort::High));
-        assert_eq!(overlaid.effective_model_info().unwrap().slug, "custom-kimi");
-        assert_eq!(overlaid.effective_context_window_tokens(), 654_321);
-    }
-
-    #[test]
-    fn test_with_agent_root_overlays_merges_model_reasoning_effort() {
+    fn test_with_definition_overlays_merges_model_reasoning_effort() {
         let temp = TempDir::new().unwrap();
         let overlay_path = temp.path().join("agent.toml");
         std::fs::write(&overlay_path, "model_reasoning_effort = \"high\"\n").unwrap();
 
         let config = Config::for_openai_responses("sk-test", None, Some("gpt-5.4"));
-        let overlaid = config.with_agent_root_overlays(&[overlay_path]).unwrap();
+        let overlaid = config.with_definition_overlays(&[overlay_path]).unwrap();
 
         assert_eq!(
             crate::resolve_runtime_request_controls(
@@ -2338,7 +2146,7 @@ supports_reasoning = true
     }
 
     #[test]
-    fn test_with_agent_root_overlays_preserves_internal_provider_state_for_same_connection_profile()
+    fn test_with_definition_overlays_preserves_internal_provider_state_for_same_connection_profile()
     {
         let temp = TempDir::new().unwrap();
         let overlay_path = temp.path().join("agent.toml");
@@ -2352,7 +2160,7 @@ supports_reasoning = true
             ..Default::default()
         };
 
-        let overlaid = config.with_agent_root_overlays(&[overlay_path]).unwrap();
+        let overlaid = config.with_definition_overlays(&[overlay_path]).unwrap();
 
         assert_eq!(overlaid.connection_profile.as_deref(), Some("openai-main"));
         assert_eq!(overlaid.llm_provider, LlmProvider::OpenAiResponses);
@@ -2598,38 +2406,6 @@ supports_reasoning = true
         let result = config.to_provider_config();
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("curated catalog"));
-    }
-
-    #[test]
-    fn test_to_provider_config_openai_chat_completions_compatible_accepts_workspace_overlay_model()
-    {
-        let temp = TempDir::new().unwrap();
-        let alan_dir = temp.path().join(".alan");
-        std::fs::create_dir_all(&alan_dir).unwrap();
-        std::fs::write(
-            alan_dir.join("models.toml"),
-            r#"
-[openai_chat_completions_compatible]
-[[openai_chat_completions_compatible.models]]
-slug = "custom-kimi"
-family = "custom"
-context_window_tokens = 654321
-supports_reasoning = true
-"#,
-        )
-        .unwrap();
-
-        let catalog = crate::ModelCatalog::load_with_overlays(Some(temp.path())).unwrap();
-        let mut config =
-            Config::for_openai_chat_completions_compatible("sk-test", None, Some("custom-kimi"));
-        config.set_model_catalog(Arc::new(catalog));
-
-        let provider_config = config.to_provider_config().unwrap();
-        assert_eq!(
-            provider_config.provider_type,
-            alan_llm::factory::ProviderType::OpenAiChatCompletionsCompatible
-        );
-        assert_eq!(provider_config.model, "custom-kimi");
     }
 
     #[test]

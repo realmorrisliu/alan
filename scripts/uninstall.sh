@@ -35,4 +35,5 @@ remove_alan_link "$ALAN_CLI_NAME"
 rm -rf "$APP_TARGET"
 
 printf '%s app and PATH symlinks were removed when owned by this install.\n' "$ALAN_DISPLAY_NAME"
-printf 'User data under %s was left intact.\n' "$ALAN_HOME_DISPLAY"
+printf 'Alan OS data under %s was left intact.\n' "$ALAN_SYSTEM_STORE_DISPLAY"
+printf 'Host-owned data under %s was left intact.\n' "$ALAN_HOST_STORE_DISPLAY"

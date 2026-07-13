@@ -39,8 +39,7 @@ Update flow:
 2. Build the release app with `just release`.
    The script loads allowlisted signing/notarization settings from
    `ALAN_RELEASE_ENV_FILE` when set, otherwise from repo-local release env files
-   such as `.env.release.local`, `.env.local`, and `.env`, then
-   `~/.alan/release.env`.
+   such as `.env.release.local`, `.env.local`, and `.env`.
 3. Upload the generated `alan-<version>-macos.zip` artifact to the GitHub
    Release `v<version>`.
 4. Copy the generated SHA-256 checksum from

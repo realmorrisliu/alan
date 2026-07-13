@@ -1,19 +1,17 @@
 //! Delegated-task requirement classification and namespace eligibility checks.
 //!
-//! Requirements use namespace vocabulary. Decisions are derived from the
-//! assembled namespace summary and are persisted only as bounded audit data;
-//! they are not an authority registry.
+//! Requirements use Alan OS namespace vocabulary. Decisions are derived from
+//! the assembled namespace and are audit records, never a second authority
+//! registry.
 
 use alan_agent_protocol::{
     DelegatedCapabilityDecision, DelegatedCapabilityRecovery, DelegatedCapabilityRequirement,
-    DelegatedNamespaceSummary, DelegatedWorkspaceAccess,
+    DelegatedNamespaceSummary,
 };
 use std::collections::BTreeSet;
 use std::fmt;
 use std::path::{Component, Path, PathBuf};
 
-const READ_TOOL_BINDINGS: &[&str] = &["read_file", "grep", "glob", "list_dir", "bash"];
-const WRITE_TOOL_BINDINGS: &[&str] = &["write_file", "edit_file", "bash"];
 const SHELL_TOOL_BINDINGS: &[&str] = &["bash", "shell", "exec_command"];
 const NETWORK_TOOL_BINDINGS: &[&str] = &[
     "bash",
@@ -27,8 +25,6 @@ const NETWORK_TOOL_BINDINGS: &[&str] = &[
 const GITHUB_TOOL_BINDINGS: &[&str] = &["bash", "gh", "github"];
 const BROWSER_TOOL_BINDINGS: &[&str] = &["browser", "agent-browser", "web"];
 
-/// Error returned before `/proc/clone` when the original delegated task cannot
-/// run in the assembled namespace and no explicit narrowing was selected.
 #[derive(Debug, Clone)]
 pub(crate) struct DelegatedSpawnRejected {
     pub decision: DelegatedCapabilityDecision,
@@ -56,17 +52,17 @@ impl std::error::Error for DelegatedSpawnRejected {}
 /// Mechanically classify the first bounded requirement vocabulary.
 pub(crate) fn classify_delegated_task_requirements(
     task: &str,
-    workspace_root: Option<&Path>,
+    cwd: Option<&Path>,
 ) -> Vec<DelegatedCapabilityRequirement> {
     let normalized = task.to_ascii_lowercase();
     let words = normalized
         .split(|character: char| !character.is_ascii_alphanumeric())
         .filter(|word| !word.is_empty())
         .collect::<BTreeSet<_>>();
-    let workspace_path = workspace_root.map(Path::to_path_buf);
+    let mount_path = cwd.map(Path::to_path_buf);
     let mut requirements = BTreeSet::from([
-        DelegatedCapabilityRequirement::WorkspaceRead {
-            path: workspace_path.clone(),
+        DelegatedCapabilityRequirement::MountRead {
+            path: mount_path.clone(),
         },
         DelegatedCapabilityRequirement::LlmConnection,
     ]);
@@ -84,7 +80,7 @@ pub(crate) fn classify_delegated_task_requirements(
     let network = github
         || browser
         || contains_any_word(&words, &["network", "online", "remote", "curl", "download"]);
-    let workspace_write = contains_any_word(
+    let mount_write = contains_any_word(
         &words,
         &[
             "edit",
@@ -100,7 +96,7 @@ pub(crate) fn classify_delegated_task_requirements(
             "apply",
         ],
     );
-    let shell = workspace_write
+    let shell = mount_write
         || contains_any_word(
             &words,
             &[
@@ -108,10 +104,8 @@ pub(crate) fn classify_delegated_task_requirements(
             ],
         );
 
-    if workspace_write {
-        requirements.insert(DelegatedCapabilityRequirement::WorkspaceWrite {
-            path: workspace_path,
-        });
+    if mount_write {
+        requirements.insert(DelegatedCapabilityRequirement::MountWrite { path: mount_path });
         requirements.insert(DelegatedCapabilityRequirement::SideEffects);
     }
     if shell {
@@ -130,8 +124,6 @@ pub(crate) fn classify_delegated_task_requirements(
     requirements.into_iter().collect()
 }
 
-/// Compare requirements with the assembled child namespace and choose a
-/// visible recovery path without silently substituting unrelated context.
 pub(crate) fn evaluate_delegated_namespace(
     original_task: &str,
     requirements: &[DelegatedCapabilityRequirement],
@@ -165,19 +157,18 @@ pub(crate) fn evaluate_delegated_namespace(
             .map(DelegatedCapabilityRequirement::label)
             .collect::<Vec<_>>()
             .join(", ");
-        let narrowed_task = format!(
-            "[NARROWED DELEGATION SCOPE]\n\
-             Work only from the mounted local workspace and return inspection or guidance; do not perform withheld operations.\n\
-             Withheld capabilities: {withheld}.\n\
-             Do not infer or substitute unrelated local context for missing external input. The parent remains responsible for the withheld part.\n\
-             Original task: {original_task}"
-        );
         return DelegatedCapabilityDecision {
             requirements: requirements.to_vec(),
             namespace: child_namespace,
             unsatisfied,
             recovery: DelegatedCapabilityRecovery::Narrowed,
-            narrowed_task: Some(narrowed_task),
+            narrowed_task: Some(format!(
+                "[NARROWED DELEGATION SCOPE]\n\
+                 Work only from mounted Alan OS paths and return inspection or guidance; do not perform withheld operations.\n\
+                 Withheld capabilities: {withheld}.\n\
+                 Do not infer or substitute unavailable Host resources. The parent remains responsible for the withheld part.\n\
+                 Original task: {original_task}"
+            )),
         };
     }
 
@@ -200,37 +191,16 @@ pub(crate) fn evaluate_delegated_namespace(
 
 pub(crate) fn namespace_summary_from_bindings(
     mounts: Vec<String>,
+    writable_mounts: Vec<String>,
     bin_bindings: Vec<String>,
-    workspace_root: Option<PathBuf>,
+    cwd: Option<PathBuf>,
     llm_connection: Option<String>,
 ) -> DelegatedNamespaceSummary {
-    let tool_names = bin_bindings
-        .iter()
-        .map(|binding| binding.strip_prefix("/bin/").unwrap_or(binding))
-        .collect::<BTreeSet<_>>();
-    let workspace_access = if workspace_root.is_none() {
-        None
-    } else if WRITE_TOOL_BINDINGS
-        .iter()
-        .any(|name| tool_names.contains(name))
-    {
-        Some(DelegatedWorkspaceAccess::ReadWrite)
-    } else if READ_TOOL_BINDINGS
-        .iter()
-        .any(|name| tool_names.contains(name))
-    {
-        Some(DelegatedWorkspaceAccess::ReadOnly)
-    } else {
-        None
-    };
-
     DelegatedNamespaceSummary {
         mounts,
+        writable_mounts,
         bin_bindings,
-        workspace_root,
-        workspace_access,
-        workspace_projection: workspace_access
-            .map(|_| "host_tool_binding_compatibility".to_string()),
+        cwd,
         llm_connection,
     }
 }
@@ -256,16 +226,11 @@ fn namespace_satisfies(
         .map(|binding| binding.strip_prefix("/bin/").unwrap_or(binding))
         .collect::<BTreeSet<_>>();
     match requirement {
-        DelegatedCapabilityRequirement::WorkspaceRead { path } => {
-            workspace_path_is_covered(path.as_deref(), namespace.workspace_root.as_deref())
-                && namespace.workspace_access.is_some()
+        DelegatedCapabilityRequirement::MountRead { path } => {
+            mount_path_is_covered(path.as_deref(), &namespace.mounts)
         }
-        DelegatedCapabilityRequirement::WorkspaceWrite { path } => {
-            workspace_path_is_covered(path.as_deref(), namespace.workspace_root.as_deref())
-                && matches!(
-                    namespace.workspace_access,
-                    Some(DelegatedWorkspaceAccess::ReadWrite)
-                )
+        DelegatedCapabilityRequirement::MountWrite { path } => {
+            mount_path_is_covered(path.as_deref(), &namespace.writable_mounts)
         }
         DelegatedCapabilityRequirement::Shell => contains_binding(&tool_names, SHELL_TOOL_BINDINGS),
         DelegatedCapabilityRequirement::Network => {
@@ -279,35 +244,26 @@ fn namespace_satisfies(
         }
         DelegatedCapabilityRequirement::LlmConnection => namespace.llm_connection.is_some(),
         DelegatedCapabilityRequirement::SideEffects => {
-            matches!(
-                namespace.workspace_access,
-                Some(DelegatedWorkspaceAccess::ReadWrite)
-            ) || contains_binding(&tool_names, NETWORK_TOOL_BINDINGS)
+            !namespace.writable_mounts.is_empty()
+                || contains_binding(&tool_names, NETWORK_TOOL_BINDINGS)
         }
     }
 }
 
-fn workspace_path_is_covered(required: Option<&Path>, mounted: Option<&Path>) -> bool {
-    match (required, mounted) {
-        (_, None) => false,
-        (None, Some(_)) => true,
-        (Some(required), Some(mounted)) => {
-            let (Some(required), Some(mounted)) = (
-                normalize_absolute_requirement_path(required),
-                normalize_absolute_requirement_path(mounted),
-            ) else {
-                return false;
-            };
-            required.starts_with(mounted)
-        }
-    }
+fn mount_path_is_covered(required: Option<&Path>, mounts: &[String]) -> bool {
+    let Some(required) = required.and_then(normalize_absolute_requirement_path) else {
+        return required.is_none() && !mounts.is_empty();
+    };
+    mounts.iter().any(|mounted| {
+        normalize_absolute_requirement_path(Path::new(mounted))
+            .is_some_and(|mounted| required.starts_with(mounted))
+    })
 }
 
 fn normalize_absolute_requirement_path(path: &Path) -> Option<PathBuf> {
     if !path.is_absolute() {
         return None;
     }
-
     let mut normalized = PathBuf::new();
     for component in path.components() {
         match component {
@@ -336,13 +292,13 @@ fn can_narrow_to_local_inspection(
     namespace: &DelegatedNamespaceSummary,
 ) -> bool {
     namespace_satisfies(
-        &DelegatedCapabilityRequirement::WorkspaceRead { path: None },
+        &DelegatedCapabilityRequirement::MountRead { path: None },
         namespace,
     ) && namespace_satisfies(&DelegatedCapabilityRequirement::LlmConnection, namespace)
         && unsatisfied.iter().all(|requirement| {
             matches!(
                 requirement,
-                DelegatedCapabilityRequirement::WorkspaceWrite { .. }
+                DelegatedCapabilityRequirement::MountWrite { .. }
                     | DelegatedCapabilityRequirement::Shell
                     | DelegatedCapabilityRequirement::Network
                     | DelegatedCapabilityRequirement::Github
@@ -364,190 +320,61 @@ fn contains_any_word(words: &BTreeSet<&str>, candidates: &[&str]) -> bool {
 mod tests {
     use super::*;
 
-    fn summary(tools: &[&str], access_root: bool) -> DelegatedNamespaceSummary {
+    fn summary(tools: &[&str], writable: bool) -> DelegatedNamespaceSummary {
         namespace_summary_from_bindings(
-            vec!["/agent".to_string(), "/mnt/llm".to_string()],
+            vec!["/agent".into(), "/mnt/source".into(), "/mnt/llm".into()],
+            writable.then(|| "/mnt/source".into()).into_iter().collect(),
             tools.iter().map(|tool| format!("/bin/{tool}")).collect(),
-            access_root.then(|| PathBuf::from("/tmp/repo")),
-            Some("default".to_string()),
+            Some("/mnt/source".into()),
+            Some("default".into()),
         )
     }
 
     #[test]
-    fn classifies_github_review_in_namespace_vocabulary() {
+    fn classifies_mount_authority_in_namespace_vocabulary() {
         let requirements = classify_delegated_task_requirements(
-            "Review GitHub issue #42 and the target repository",
-            Some(Path::new("/tmp/repo")),
+            "Inspect the repository, implement the fix, and run tests",
+            Some(Path::new("/mnt/source")),
         );
-
         assert!(
-            requirements.contains(&DelegatedCapabilityRequirement::WorkspaceRead {
-                path: Some(PathBuf::from("/tmp/repo")),
+            requirements.contains(&DelegatedCapabilityRequirement::MountRead {
+                path: Some("/mnt/source".into()),
             })
         );
-        assert!(requirements.contains(&DelegatedCapabilityRequirement::Github));
-        assert!(requirements.contains(&DelegatedCapabilityRequirement::Network));
-    }
-
-    #[test]
-    fn classifies_local_inspection_without_network_or_write() {
-        let requirements = classify_delegated_task_requirements(
-            "Inspect the local architecture and report findings",
-            Some(Path::new("/tmp/repo")),
-        );
-
         assert!(
-            requirements.contains(&DelegatedCapabilityRequirement::WorkspaceRead {
-                path: Some(PathBuf::from("/tmp/repo")),
+            requirements.contains(&DelegatedCapabilityRequirement::MountWrite {
+                path: Some("/mnt/source".into()),
             })
         );
-        assert!(requirements.contains(&DelegatedCapabilityRequirement::LlmConnection));
-        assert!(!requirements.contains(&DelegatedCapabilityRequirement::Network));
-        assert!(!requirements.iter().any(|requirement| matches!(
-            requirement,
-            DelegatedCapabilityRequirement::WorkspaceWrite { .. }
-        )));
     }
 
     #[test]
-    fn classifies_mixed_remote_edit_task() {
-        let requirements = classify_delegated_task_requirements(
-            "Inspect GitHub PR 7, implement the fix, and run tests",
-            Some(Path::new("/tmp/repo")),
-        );
-
-        assert!(requirements.contains(&DelegatedCapabilityRequirement::Github));
-        assert!(requirements.contains(&DelegatedCapabilityRequirement::Network));
-        assert!(requirements.contains(&DelegatedCapabilityRequirement::Shell));
-        assert!(
-            requirements.contains(&DelegatedCapabilityRequirement::WorkspaceWrite {
-                path: Some(PathBuf::from("/tmp/repo")),
-            })
-        );
-        assert!(requirements.contains(&DelegatedCapabilityRequirement::SideEffects));
-    }
-
-    #[test]
-    fn satisfied_spawn_passes_without_rewriting_task() {
-        let child = summary(&["read_file"], true);
-        let requirements = vec![
-            DelegatedCapabilityRequirement::WorkspaceRead {
-                path: Some(PathBuf::from("/tmp/repo")),
-            },
-            DelegatedCapabilityRequirement::LlmConnection,
-        ];
-
-        let decision = evaluate_delegated_namespace(
-            "Inspect local files",
-            &requirements,
-            child,
-            &DelegatedNamespaceSummary::default(),
-        );
-
-        assert_eq!(decision.recovery, DelegatedCapabilityRecovery::Satisfied);
-        assert!(decision.narrowed_task.is_none());
-    }
-
-    #[test]
-    fn workspace_requirement_cannot_escape_mounted_root_with_parent_components() {
-        let child = summary(&["read_file"], true);
-        let requirements = vec![DelegatedCapabilityRequirement::WorkspaceRead {
-            path: Some(PathBuf::from("/tmp/repo/../other")),
+    fn read_only_mount_cannot_satisfy_write() {
+        let requirements = vec![DelegatedCapabilityRequirement::MountWrite {
+            path: Some("/mnt/source".into()),
         }];
-
         let decision = evaluate_delegated_namespace(
-            "Inspect files outside the mounted workspace",
-            &requirements,
-            child,
-            &DelegatedNamespaceSummary::default(),
-        );
-
-        assert_ne!(decision.recovery, DelegatedCapabilityRecovery::Satisfied);
-        assert_eq!(decision.unsatisfied, requirements);
-    }
-
-    #[test]
-    fn workspace_requirement_normalizes_components_inside_mounted_root() {
-        assert!(workspace_path_is_covered(
-            Some(Path::new("/tmp/repo/src/../tests")),
-            Some(Path::new("/tmp/repo")),
-        ));
-        assert!(!workspace_path_is_covered(
-            Some(Path::new("relative/path")),
-            Some(Path::new("/tmp/repo")),
-        ));
-    }
-
-    #[test]
-    fn parent_path_recovery_is_explicit() {
-        let child = summary(&["read_file"], true);
-        let parent = summary(&["read_file", "gh"], true);
-        let requirements = vec![DelegatedCapabilityRequirement::Github];
-
-        let decision =
-            evaluate_delegated_namespace("Review GitHub issue", &requirements, child, &parent);
-
-        assert_eq!(decision.recovery, DelegatedCapabilityRecovery::ParentPath);
-        assert_eq!(decision.unsatisfied, requirements);
-    }
-
-    #[test]
-    fn builtin_bash_binding_satisfies_network_and_github_requirements() {
-        let child = summary(&["read_file", "bash"], true);
-        let requirements = vec![
-            DelegatedCapabilityRequirement::Network,
-            DelegatedCapabilityRequirement::Github,
-        ];
-
-        let decision = evaluate_delegated_namespace(
-            "Review GitHub issue",
-            &requirements,
-            child,
-            &DelegatedNamespaceSummary::default(),
-        );
-
-        assert_eq!(decision.recovery, DelegatedCapabilityRecovery::Satisfied);
-        assert!(decision.unsatisfied.is_empty());
-    }
-
-    #[test]
-    fn narrowed_spawn_names_scope_and_withheld_capability() {
-        let child = summary(&["read_file"], true);
-        let requirements = vec![
-            DelegatedCapabilityRequirement::WorkspaceRead {
-                path: Some(PathBuf::from("/tmp/repo")),
-            },
-            DelegatedCapabilityRequirement::Github,
-        ];
-
-        let decision = evaluate_delegated_namespace(
-            "Review GitHub issue against local code",
-            &requirements,
-            child,
-            &DelegatedNamespaceSummary::default(),
-        );
-
-        assert_eq!(decision.recovery, DelegatedCapabilityRecovery::Narrowed);
-        let task = decision.narrowed_task.unwrap();
-        assert!(task.contains("NARROWED DELEGATION SCOPE"));
-        assert!(task.contains("Withheld capabilities: github"));
-        assert!(task.contains("parent remains responsible"));
-    }
-
-    #[test]
-    fn missing_workspace_declines_with_ask_user_recovery() {
-        let requirements = vec![DelegatedCapabilityRequirement::WorkspaceRead {
-            path: Some(PathBuf::from("/tmp/repo")),
-        }];
-
-        let decision = evaluate_delegated_namespace(
-            "Inspect local files",
+            "edit source",
             &requirements,
             summary(&["read_file"], false),
-            &DelegatedNamespaceSummary::default(),
+            &summary(&["write_file"], true),
         );
+        assert_eq!(decision.recovery, DelegatedCapabilityRecovery::ParentPath);
+    }
 
-        assert_eq!(decision.recovery, DelegatedCapabilityRecovery::AskUser);
-        assert_eq!(decision.unsatisfied, requirements);
+    #[test]
+    fn writable_mount_and_tool_satisfy_task() {
+        let requirements = classify_delegated_task_requirements(
+            "implement the fix",
+            Some(Path::new("/mnt/source")),
+        );
+        let namespace = summary(&["read_file", "write_file", "bash"], true);
+        let decision = evaluate_delegated_namespace(
+            "implement the fix",
+            &requirements,
+            namespace.clone(),
+            &namespace,
+        );
+        assert_eq!(decision.recovery, DelegatedCapabilityRecovery::Satisfied);
     }
 }

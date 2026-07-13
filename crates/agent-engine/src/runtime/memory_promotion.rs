@@ -16,8 +16,8 @@ use crate::agent_machine::AgentMachine;
 use crate::llm::LlmClient;
 use crate::llm::{GenerationRequest, Message as LlmMessage, MessageRole, build_generation_request};
 use crate::prompts::{
-    MEMORY_INBOX_DIRNAME, MEMORY_PROMOTION_PROMPT, MEMORY_TOPICS_DIRNAME, MEMORY_USER_FILENAME,
-    WORKSPACE_MEMORY_FILENAME, ensure_workspace_memory_layout_at,
+    MEMORY_INBOX_DIRNAME, MEMORY_PROMOTION_PROMPT, MEMORY_STORE_FILENAME, MEMORY_TOPICS_DIRNAME,
+    MEMORY_USER_FILENAME, ensure_memory_store_layout_at,
 };
 use crate::tape::Message;
 
@@ -120,9 +120,9 @@ pub(crate) async fn stage_inbox_entry(
     draft: InboxEntryDraft,
     now: DateTime<Utc>,
 ) -> Result<PathBuf> {
-    ensure_workspace_memory_layout_at(memory_dir).with_context(|| {
+    ensure_memory_store_layout_at(memory_dir).with_context(|| {
         format!(
-            "failed to ensure workspace memory layout before staging inbox entry at {}",
+            "failed to ensure Memory Store layout before staging inbox entry at {}",
             memory_dir.display()
         )
     })?;
@@ -154,9 +154,9 @@ pub(crate) async fn promote_inbox_entry(
     inbox_path: &Path,
     now: DateTime<Utc>,
 ) -> Result<PromotionOutcome> {
-    ensure_workspace_memory_layout_at(memory_dir).with_context(|| {
+    ensure_memory_store_layout_at(memory_dir).with_context(|| {
         format!(
-            "failed to ensure workspace memory layout before promoting inbox entry at {}",
+            "failed to ensure Memory Store layout before promoting inbox entry at {}",
             memory_dir.display()
         )
     })?;
@@ -183,7 +183,7 @@ pub(crate) async fn promote_inbox_entry(
     );
 
     match document.frontmatter.target.as_str() {
-        MEMORY_USER_FILENAME | WORKSPACE_MEMORY_FILENAME => {
+        MEMORY_USER_FILENAME | MEMORY_STORE_FILENAME => {
             let existing = read_text_file_or_default(&target_path).await?;
             if !contains_promoted_observation(&existing, &document.observation) {
                 let updated = append_markdown_section_item(
@@ -224,7 +224,7 @@ pub(crate) async fn promote_inbox_entry(
             }
             write_text_file(&target_path, &topic).await?;
 
-            let memory_path = memory_dir.join(WORKSPACE_MEMORY_FILENAME);
+            let memory_path = memory_dir.join(MEMORY_STORE_FILENAME);
             let memory_content = read_text_file_or_default(&memory_path).await?;
             let topic_index_line = format!(
                 "- {} -> topics/{}.md",
@@ -265,7 +265,7 @@ pub(crate) fn build_turn_memory_promotion_job(
         return None;
     }
 
-    let memory_dir = state.core_config.memory.workspace_dir.clone()?;
+    let memory_dir = state.core_config.memory.store_dir.clone()?;
     let active_turn_user_messages = active_turn_user_messages(
         state.machine.tape.messages(),
         state.turn_state.active_turn_message_start(),
@@ -459,7 +459,7 @@ fn render_inbox_entry(document: &InboxEntryDocument) -> String {
 fn resolve_target_path(memory_dir: &Path, target: &str) -> Result<PathBuf> {
     match target {
         MEMORY_USER_FILENAME => Ok(memory_dir.join(MEMORY_USER_FILENAME)),
-        WORKSPACE_MEMORY_FILENAME => Ok(memory_dir.join(WORKSPACE_MEMORY_FILENAME)),
+        MEMORY_STORE_FILENAME => Ok(memory_dir.join(MEMORY_STORE_FILENAME)),
         _ if is_topic_target(target) => Ok(memory_dir
             .join(MEMORY_TOPICS_DIRNAME)
             .join(format!("{}.md", topic_slug_from_target(target)?))),
@@ -795,7 +795,7 @@ fn normalize_memory_kind(kind: &str) -> Option<&'static str> {
     match kind.trim() {
         "user_identity" => Some("user_identity"),
         "user_preference" => Some("user_preference"),
-        "workspace_fact" => Some("workspace_fact"),
+        "domain_fact" => Some("domain_fact"),
         "workflow_rule" => Some("workflow_rule"),
         _ => None,
     }
@@ -804,8 +804,8 @@ fn normalize_memory_kind(kind: &str) -> Option<&'static str> {
 fn canonical_target_for_kind(kind: &str) -> &'static str {
     match kind {
         "user_identity" | "user_preference" => MEMORY_USER_FILENAME,
-        "workspace_fact" | "workflow_rule" => WORKSPACE_MEMORY_FILENAME,
-        _ => WORKSPACE_MEMORY_FILENAME,
+        "domain_fact" | "workflow_rule" => MEMORY_STORE_FILENAME,
+        _ => MEMORY_STORE_FILENAME,
     }
 }
 
@@ -912,18 +912,9 @@ fn format_relative_memory_path(memory_dir: &Path, path: &Path) -> String {
     path.strip_prefix(memory_dir)
         .map(|relative| {
             let relative = relative.to_string_lossy().replace('\\', "/");
-            if let Some(channel_dir) = memory_dir.parent()
-                && channel_dir
-                    .parent()
-                    .and_then(Path::file_name)
-                    .is_some_and(|name| name == "runtime")
-                && let Some(channel_id) = channel_dir.file_name().and_then(|name| name.to_str())
-            {
-                return format!(".alan/runtime/{channel_id}/memory/{relative}");
-            }
-            format!(".alan/memory/{relative}")
+            format!("/memory/{relative}")
         })
-        .unwrap_or_else(|_| path.display().to_string())
+        .unwrap_or_else(|_| "/memory".to_string())
 }
 
 fn truncate_with_suffix(text: &str, max_chars: usize, suffix: &str) -> String {
@@ -1001,7 +992,7 @@ mod tests {
     #[tokio::test]
     async fn stage_inbox_entry_writes_expected_observed_entry() {
         let temp = TempDir::new().unwrap();
-        let memory_dir = temp.path().join(".alan/memory");
+        let memory_dir = temp.path().join("memory-store");
         let now = DateTime::parse_from_rfc3339("2026-04-15T10:30:00Z")
             .unwrap()
             .with_timezone(&Utc);
@@ -1009,8 +1000,8 @@ mod tests {
         let inbox_path = stage_inbox_entry(
             &memory_dir,
             InboxEntryDraft {
-                kind: "workspace_fact",
-                target: WORKSPACE_MEMORY_FILENAME.to_string(),
+                kind: "domain_fact",
+                target: MEMORY_STORE_FILENAME.to_string(),
                 confidence: "medium",
                 observation: "The recall router should stay lexical-only.".to_string(),
                 evidence: vec!["Observed in machine summary.".to_string()],
@@ -1025,7 +1016,7 @@ mod tests {
         let stored = tokio::fs::read_to_string(&inbox_path).await.unwrap();
         let parsed = parse_inbox_entry(&stored).unwrap();
         assert_eq!(parsed.frontmatter.status, "observed");
-        assert_eq!(parsed.frontmatter.target, WORKSPACE_MEMORY_FILENAME);
+        assert_eq!(parsed.frontmatter.target, MEMORY_STORE_FILENAME);
         assert!(stored.contains("## Observation"));
         assert!(stored.contains("lexical-only"));
     }
@@ -1033,16 +1024,16 @@ mod tests {
     #[tokio::test]
     async fn promote_inbox_entry_updates_memory_file_and_marks_confirmed() {
         let temp = TempDir::new().unwrap();
-        let memory_dir = temp.path().join(".alan/memory");
-        ensure_workspace_memory_layout_at(&memory_dir).unwrap();
+        let memory_dir = temp.path().join("memory-store");
+        ensure_memory_store_layout_at(&memory_dir).unwrap();
         let now = DateTime::parse_from_rfc3339("2026-04-15T10:30:00Z")
             .unwrap()
             .with_timezone(&Utc);
         let inbox_path = stage_inbox_entry(
             &memory_dir,
             InboxEntryDraft {
-                kind: "workspace_fact",
-                target: WORKSPACE_MEMORY_FILENAME.to_string(),
+                kind: "domain_fact",
+                target: MEMORY_STORE_FILENAME.to_string(),
                 confidence: "high",
                 observation: "Keep memory recall lexical and file-backed.".to_string(),
                 evidence: vec!["Repeated in design notes.".to_string()],
@@ -1058,11 +1049,8 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(
-            outcome.target_path,
-            memory_dir.join(WORKSPACE_MEMORY_FILENAME)
-        );
-        let memory_file = tokio::fs::read_to_string(memory_dir.join(WORKSPACE_MEMORY_FILENAME))
+        assert_eq!(outcome.target_path, memory_dir.join(MEMORY_STORE_FILENAME));
+        let memory_file = tokio::fs::read_to_string(memory_dir.join(MEMORY_STORE_FILENAME))
             .await
             .unwrap();
         assert!(memory_file.contains("## Promoted Facts"));
@@ -1076,8 +1064,8 @@ mod tests {
     #[tokio::test]
     async fn promote_topic_entry_creates_topic_page_and_memory_index() {
         let temp = TempDir::new().unwrap();
-        let memory_dir = temp.path().join(".alan/memory");
-        ensure_workspace_memory_layout_at(&memory_dir).unwrap();
+        let memory_dir = temp.path().join("memory-store");
+        ensure_memory_store_layout_at(&memory_dir).unwrap();
         let now = DateTime::parse_from_rfc3339("2026-04-15T10:30:00Z")
             .unwrap()
             .with_timezone(&Utc);
@@ -1112,7 +1100,7 @@ mod tests {
         assert!(topic_page.contains("## Stable Facts"));
         assert!(topic_page.contains("overflow surface"));
 
-        let memory_file = tokio::fs::read_to_string(memory_dir.join(WORKSPACE_MEMORY_FILENAME))
+        let memory_file = tokio::fs::read_to_string(memory_dir.join(MEMORY_STORE_FILENAME))
             .await
             .unwrap();
         assert!(memory_file.contains("## Topic Index"));
@@ -1122,8 +1110,8 @@ mod tests {
     #[tokio::test]
     async fn promote_inbox_entry_rejects_topic_target_path_traversal() {
         let temp = TempDir::new().unwrap();
-        let memory_dir = temp.path().join(".alan/memory");
-        ensure_workspace_memory_layout_at(&memory_dir).unwrap();
+        let memory_dir = temp.path().join("memory-store");
+        ensure_memory_store_layout_at(&memory_dir).unwrap();
         let now = DateTime::parse_from_rfc3339("2026-04-15T10:30:00Z")
             .unwrap()
             .with_timezone(&Utc);
@@ -1153,8 +1141,8 @@ mod tests {
     #[tokio::test]
     async fn capture_confirmed_turn_memory_promotes_model_selected_user_fact() {
         let temp = TempDir::new().unwrap();
-        let memory_dir = temp.path().join(".alan/memory");
-        ensure_workspace_memory_layout_at(&memory_dir).unwrap();
+        let memory_dir = temp.path().join("memory-store");
+        ensure_memory_store_layout_at(&memory_dir).unwrap();
 
         let mut machine = AgentMachine::new();
         machine.add_user_message("My name is Dr. Bob.");
@@ -1201,8 +1189,8 @@ mod tests {
     #[tokio::test]
     async fn capture_confirmed_turn_memory_is_noop_when_memory_disabled() {
         let temp = TempDir::new().unwrap();
-        let memory_dir = temp.path().join(".alan/memory");
-        ensure_workspace_memory_layout_at(&memory_dir).unwrap();
+        let memory_dir = temp.path().join("memory-store");
+        ensure_memory_store_layout_at(&memory_dir).unwrap();
 
         let mut machine = AgentMachine::new();
         machine.add_user_message("My name is Morris.");
@@ -1235,9 +1223,9 @@ mod tests {
     #[tokio::test]
     async fn promote_inbox_entry_treats_similar_facts_as_distinct_observations() {
         let temp = TempDir::new().unwrap();
-        let memory_dir = temp.path().join(".alan/memory");
-        ensure_workspace_memory_layout_at(&memory_dir).unwrap();
-        let existing_memory = "# User Memory\n\n## Promoted Facts\n\n- [2026-04-14] Name: Bobby (promoted from .alan/memory/inbox/2026/04/14/inbox-old.md)\n";
+        let memory_dir = temp.path().join("memory-store");
+        ensure_memory_store_layout_at(&memory_dir).unwrap();
+        let existing_memory = "# User Memory\n\n## Promoted Facts\n\n- [2026-04-14] Name: Bobby (promoted from /memory/inbox/2026/04/14/inbox-old.md)\n";
         tokio::fs::write(memory_dir.join(MEMORY_USER_FILENAME), existing_memory)
             .await
             .unwrap();
@@ -1277,8 +1265,8 @@ mod tests {
     #[tokio::test]
     async fn promote_inbox_entry_sanitizes_multiline_observation_before_writing() {
         let temp = TempDir::new().unwrap();
-        let memory_dir = temp.path().join(".alan/memory");
-        ensure_workspace_memory_layout_at(&memory_dir).unwrap();
+        let memory_dir = temp.path().join("memory-store");
+        ensure_memory_store_layout_at(&memory_dir).unwrap();
         let now = DateTime::parse_from_rfc3339("2026-04-15T10:30:00Z")
             .unwrap()
             .with_timezone(&Utc);
@@ -1330,8 +1318,8 @@ Direct user-stated stable identity detail.
     #[tokio::test]
     async fn capture_confirmed_turn_memory_stages_medium_confidence_rule_without_promotion() {
         let temp = TempDir::new().unwrap();
-        let memory_dir = temp.path().join(".alan/memory");
-        ensure_workspace_memory_layout_at(&memory_dir).unwrap();
+        let memory_dir = temp.path().join("memory-store");
+        ensure_memory_store_layout_at(&memory_dir).unwrap();
 
         let mut machine = AgentMachine::new();
         machine.add_user_message("The rule is use Python 3.12.");
@@ -1365,11 +1353,10 @@ Direct user-stated stable identity detail.
         .await
         .unwrap();
 
-        let workspace_memory =
-            tokio::fs::read_to_string(memory_dir.join(WORKSPACE_MEMORY_FILENAME))
-                .await
-                .unwrap();
-        assert_eq!(workspace_memory, "# Memory\n");
+        let durable_memory = tokio::fs::read_to_string(memory_dir.join(MEMORY_STORE_FILENAME))
+            .await
+            .unwrap();
+        assert_eq!(durable_memory, "# Memory\n");
 
         let inbox_entries =
             collect_markdown_files_recursively(&memory_dir.join(MEMORY_INBOX_DIRNAME));
@@ -1383,14 +1370,14 @@ Direct user-stated stable identity detail.
     #[tokio::test]
     async fn deferred_memory_promotion_uses_namespace_llmfs() {
         let temp = TempDir::new().unwrap();
-        let memory_dir = temp.path().join(".alan/memory");
-        ensure_workspace_memory_layout_at(&memory_dir).unwrap();
+        let memory_dir = temp.path().join("memory-store");
+        ensure_memory_store_layout_at(&memory_dir).unwrap();
 
         let provider = MockLlmProvider::new().with_response(mock_generation_response(
             serde_json::json!({
                 "writes": [
                     {
-                        "kind": "workspace_fact",
+                        "kind": "domain_fact",
                         "target": "MEMORY.md",
                         "confidence": "medium",
                         "disposition": "stage_inbox",
@@ -1414,14 +1401,12 @@ Direct user-stated stable identity detail.
         );
         let root = InProcessTransport::new(Arc::new(MountFs::new(namespace)));
         let mut state = RuntimeLoopState {
-            workspace_id: "test-workspace".to_string(),
-            workspace_root_dir: None,
             machine: AgentMachine::new(),
             current_submission_id: None,
             environment: NamespaceRuntimeEnvironment::new(root, "/agent/1", "default"),
             core_config: Config::default(),
             runtime_config: RuntimeConfig::default(),
-            workspace_persona_dirs: Vec::new(),
+            definition_persona_dirs: Vec::new(),
             prompt_cache: PromptAssemblyCache::new(Vec::new()),
             turn_state: TurnState::default(),
         };
@@ -1588,8 +1573,8 @@ Direct user-stated stable identity detail.
     #[tokio::test]
     async fn run_turn_memory_promotion_job_timeout_zero_can_be_cancelled() {
         let temp = TempDir::new().unwrap();
-        let memory_dir = temp.path().join(".alan/memory");
-        ensure_workspace_memory_layout_at(&memory_dir).unwrap();
+        let memory_dir = temp.path().join("memory-store");
+        ensure_memory_store_layout_at(&memory_dir).unwrap();
 
         let mut llm_client = LlmClient::new(DelayedMemoryPromotionProvider {
             delay: Duration::from_secs(10),
@@ -1622,8 +1607,8 @@ Direct user-stated stable identity detail.
     #[tokio::test]
     async fn capture_confirmed_turn_memory_stops_before_writes_when_cancelled_after_generation() {
         let temp = TempDir::new().unwrap();
-        let memory_dir = temp.path().join(".alan/memory");
-        ensure_workspace_memory_layout_at(&memory_dir).unwrap();
+        let memory_dir = temp.path().join("memory-store");
+        ensure_memory_store_layout_at(&memory_dir).unwrap();
 
         let cancel = CancellationToken::new();
         let mut llm_client = LlmClient::new(CancelOnGenerateMemoryPromotionProvider {
@@ -1740,7 +1725,7 @@ Direct user-stated stable identity detail.
 
     #[test]
     fn promoted_observation_from_line_uses_last_promoted_from_suffix() {
-        let line = "- [2026-04-15] Workflow rule: keep literal (promoted from docs) text intact (promoted from .alan/memory/inbox/2026/04/15/inbox-rule.md)";
+        let line = "- [2026-04-15] Workflow rule: keep literal (promoted from docs) text intact (promoted from /memory/inbox/2026/04/15/inbox-rule.md)";
         assert_eq!(
             promoted_observation_from_line(line),
             Some("Workflow rule: keep literal (promoted from docs) text intact")
