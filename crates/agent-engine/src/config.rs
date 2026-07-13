@@ -1,6 +1,5 @@
 //! Configuration management.
 
-use crate::connections::{ConnectionsFile, ResolvedConnectionProfile, SecretStore};
 use crate::models::{self, ModelCatalogProvider, ModelInfo};
 use crate::skills::{SkillOverride, merge_skill_overrides};
 use alan_agent_protocol::ReasoningEffort;
@@ -584,16 +583,6 @@ impl Config {
         self.anthropic_messages_model = other.anthropic_messages_model.clone();
         self.anthropic_messages_client_name = other.anthropic_messages_client_name.clone();
         self.anthropic_messages_user_agent = other.anthropic_messages_user_agent.clone();
-    }
-
-    pub fn resolve_connection_profile(
-        &mut self,
-        bindings: &crate::ConnectionStoreBindings,
-    ) -> anyhow::Result<ResolvedConnectionProfile> {
-        let (connections, _) = ConnectionsFile::load_from_path(&bindings.metadata_path)?;
-        let secret_store = SecretStore::from_directory(&bindings.credentials_dir)?;
-        let selected_profile = self.connection_profile.clone();
-        connections.apply_profile_to_config(selected_profile.as_deref(), &secret_store, self)
     }
 
     /// Load agent-facing configuration only from `ALAN_CONFIG_PATH`.

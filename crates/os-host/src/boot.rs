@@ -127,11 +127,10 @@ impl HostBootConfig {
         process.store_bindings = Some(system_store.agent_runtime_bindings()?);
         process.memory_store_backing = Some(memory_store_backing);
         let connection_store = system_store.connection_bindings(&host_store)?;
-        process.chatgpt_auth_storage_path = Some(host_store.managed_auth);
         let tools = ToolRegistry::with_config(Arc::new(process.agent_config.core_config.clone()));
         let llm_factory = Arc::new(ProductLlmClientFactory {
             credentials_dir: connection_store.credentials_dir.clone(),
-            managed_auth: process.chatgpt_auth_storage_path.clone(),
+            managed_auth: Some(host_store.managed_auth),
         });
 
         Ok(Self(ServiceManagerConfig::with_factory(

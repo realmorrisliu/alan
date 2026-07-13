@@ -575,12 +575,8 @@ pub struct AgentProcessConfig {
     pub store_bindings: Option<crate::AgentRuntimeStoreBindings>,
     /// Memory Service backing paired with the explicit Memory Store descriptor.
     pub memory_store_backing: Option<std::path::PathBuf>,
-    /// Connection Service metadata plus Host-owned credential backing.
-    pub connection_store: Option<crate::ConnectionStoreBindings>,
     /// Optional execution record used to recover Agent Machine state for a new Process.
     pub recovery_rollout_path: Option<std::path::PathBuf>,
-    /// Optional host-selected ChatGPT auth storage path shared with provider auth flows.
-    pub chatgpt_auth_storage_path: Option<std::path::PathBuf>,
     /// Optional host factory for applying approved mount grants to the live namespace.
     pub mount_grant_applicator_factory: Option<Arc<dyn super::MountGrantApplicatorFactory>>,
 }
@@ -593,9 +589,7 @@ impl Default for AgentProcessConfig {
             launch_context: crate::ProcessLaunchContext::root(),
             store_bindings: None,
             memory_store_backing: None,
-            connection_store: None,
             recovery_rollout_path: None,
-            chatgpt_auth_storage_path: None,
             mount_grant_applicator_factory: None,
         }
     }
@@ -609,9 +603,7 @@ impl From<crate::config::Config> for AgentProcessConfig {
             launch_context: crate::ProcessLaunchContext::root(),
             store_bindings: None,
             memory_store_backing: None,
-            connection_store: None,
             recovery_rollout_path: None,
-            chatgpt_auth_storage_path: None,
             mount_grant_applicator_factory: None,
         }
     }
@@ -625,9 +617,7 @@ impl From<crate::LoadedConfig> for AgentProcessConfig {
             launch_context: crate::ProcessLaunchContext::root(),
             store_bindings: None,
             memory_store_backing: None,
-            connection_store: None,
             recovery_rollout_path: None,
-            chatgpt_auth_storage_path: None,
             mount_grant_applicator_factory: None,
         }
     }
@@ -799,11 +789,6 @@ pub fn effective_core_config_for_runtime(
         agent_config = agent_config.with_definition_overlays(std::slice::from_ref(config_path))?;
     }
     let mut core_config = agent_config.core_config.clone();
-    if let Some(store) = config.connection_store.as_ref()
-        && (core_config.connection_profile.is_some() || store.metadata_path.exists())
-    {
-        core_config.resolve_connection_profile(store)?;
-    }
     if let Some(memory_store) = config.memory_store_backing.as_ref() {
         let memory_descriptor = config
             .launch_context
@@ -865,11 +850,6 @@ fn spawn_with_prepared_runtime_environment(
         agent_config = agent_config.with_definition_overlays(std::slice::from_ref(config_path))?;
     }
     let mut core_config = agent_config.core_config.clone();
-    if let Some(store) = config.connection_store.as_ref()
-        && (core_config.connection_profile.is_some() || store.metadata_path.exists())
-    {
-        core_config.resolve_connection_profile(store)?;
-    }
     if let Some(memory_store) = config.memory_store_backing.as_ref() {
         let memory_descriptor = config
             .launch_context
@@ -885,10 +865,8 @@ fn spawn_with_prepared_runtime_environment(
     }
 
     let mut runtime_config = agent_config.runtime_config.clone();
-    runtime_config.chatgpt_auth_storage_path = config.chatgpt_auth_storage_path.clone();
     runtime_config.store_bindings = config.store_bindings.clone();
     runtime_config.memory_store_backing = config.memory_store_backing.clone();
-    runtime_config.connection_store = config.connection_store.clone();
     runtime_config.policy_engine =
         crate::policy::PolicyEngine::load_for_governance_with_default_policy_path(
             resolved_agent_definition.root_dir.as_deref(),

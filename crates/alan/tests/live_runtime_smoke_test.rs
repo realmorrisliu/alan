@@ -99,12 +99,10 @@ async fn live_chatgpt_runtime_smoke_uses_agentfs() -> Result<()> {
     let mut config = AgentProcessConfig::from(core_config);
     config.launch_context = launch_context;
     config.store_bindings = Some(store_bindings);
-    config.chatgpt_auth_storage_path = Some(PathBuf::from(auth_storage_path));
-
     let effective = effective_core_config_for_runtime(&config)?;
     let client = LlmClient::from_core_config_with_chatgpt_auth_storage_path(
         &effective,
-        config.chatgpt_auth_storage_path.clone(),
+        Some(PathBuf::from(auth_storage_path)),
     )?;
     let mut tools = ToolRegistry::new();
     alan_tools::register_builtin_tool_catalog(&mut tools);

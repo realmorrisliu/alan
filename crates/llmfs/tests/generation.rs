@@ -27,6 +27,31 @@ async fn read_all(fs: &LlmFs, path: &[&str], fid: Fid) -> Vec<u8> {
     fs.read(fid, 0, 65536).await.expect("read")
 }
 
+#[tokio::test]
+async fn connection_view_exposes_only_the_selected_live_connection() {
+    let fs = LlmFs::new();
+    fs.register_connection("selected", Box::new(MockLlmProvider::new()));
+    fs.register_connection("withheld", Box::new(MockLlmProvider::new()));
+    let view = fs.connection_view("selected");
+
+    assert_eq!(
+        String::from_utf8(read_all(&view, &["connections"], Fid(900)).await).unwrap(),
+        "selected"
+    );
+    assert_eq!(
+        view.walk(
+            Fid::ROOT,
+            Fid(901),
+            &["connections".into(), "withheld".into()]
+        )
+        .await,
+        Err(ErrorCode::NotFound)
+    );
+
+    fs.unregister_connection("selected").await;
+    assert_eq!(read_all(&view, &["connections"], Fid(902)).await, b"");
+}
+
 /// Tail `events` until a terminal `done` record appears, accumulating the text.
 async fn drain_events(fs: &LlmFs, gen_id: &str, fid: Fid) -> String {
     let path = [

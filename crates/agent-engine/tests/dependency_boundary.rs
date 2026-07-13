@@ -143,3 +143,26 @@ fn engine_does_not_assemble_alan_os() {
     }
     assert!(production.contains("spawn_with_namespace_environment"));
 }
+
+#[test]
+fn engine_has_no_host_connection_store_or_provider_factory_authority() {
+    let engine = read_runtime_source("engine.rs");
+    let runtime = read_runtime_source("mod.rs");
+    let child = read_runtime_source("child_agents.rs");
+    let source = format!("{engine}\n{runtime}\n{child}");
+
+    for forbidden in [
+        "connection_store",
+        "ConnectionStoreBindings",
+        "resolve_connection_profile",
+        "chatgpt_auth_storage_path",
+        "from_core_config_with_chatgpt_auth_storage_path",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "Agent Execution Engine retained Host Connection authority through {forbidden}"
+        );
+    }
+    assert!(child.contains("ensure_child_connection_is_passed"));
+    assert!(child.contains("parent namespace missing callable Connection service"));
+}

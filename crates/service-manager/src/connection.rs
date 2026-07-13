@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -25,6 +25,9 @@ const FILES: &[(&str, bool)] = &[
     ("native-requests", false),
     ("native-responses", true),
 ];
+const MAX_PENDING_NATIVE_REQUESTS: usize = 32;
+const MAX_NATIVE_RESPONSES: usize = 64;
+const MAX_IDENTIFIER_BYTES: usize = 128;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -82,6 +85,7 @@ struct State {
     selections: BTreeMap<u64, String>,
     requests: BTreeMap<String, NativeConnectionRequest>,
     responses: BTreeMap<String, NativeConnectionResponse>,
+    response_order: VecDeque<String>,
     native_status: BTreeMap<String, String>,
     validation: BTreeMap<String, String>,
 }
@@ -153,6 +157,7 @@ impl ConnectionService {
                 selections: BTreeMap::new(),
                 requests: BTreeMap::new(),
                 responses: BTreeMap::new(),
+                response_order: VecDeque::new(),
                 native_status: BTreeMap::new(),
                 validation,
             }),
@@ -172,6 +177,7 @@ impl ConnectionService {
                 selections: BTreeMap::new(),
                 requests: BTreeMap::new(),
                 responses: BTreeMap::new(),
+                response_order: VecDeque::new(),
                 native_status: BTreeMap::new(),
                 validation: BTreeMap::new(),
             }),
@@ -253,6 +259,10 @@ impl ConnectionService {
         Ok(())
     }
 
+    pub fn release_process(&self, pid: u64) {
+        self.state.lock().unwrap().selections.remove(&pid);
+    }
+
     pub fn native_request(&self, request_id: &str) -> Option<NativeConnectionRequest> {
         self.state.lock().unwrap().requests.get(request_id).cloned()
     }
@@ -280,9 +290,14 @@ impl ConnectionService {
             state
                 .native_status
                 .insert(request.profile_id, response.status.clone());
-            state
-                .responses
-                .insert(response.request_id.clone(), response);
+            let response_id = response.request_id.clone();
+            state.responses.insert(response_id.clone(), response);
+            state.response_order.push_back(response_id);
+            while state.response_order.len() > MAX_NATIVE_RESPONSES {
+                if let Some(expired) = state.response_order.pop_front() {
+                    state.responses.remove(&expired);
+                }
+            }
         }
         self.refresh_callables().await;
         Ok(())
@@ -385,8 +400,13 @@ impl ConnectionService {
                         "unknown profile"
                     );
                     ensure!(
-                        !state.requests.contains_key(&request.id),
+                        !state.requests.contains_key(&request.id)
+                            && !state.responses.contains_key(&request.id),
                         "native request already exists"
+                    );
+                    ensure!(
+                        state.requests.len() < MAX_PENDING_NATIVE_REQUESTS,
+                        "too many pending native requests"
                     );
                     state.requests.insert(request.id.clone(), request);
                     refresh = true;
@@ -578,7 +598,7 @@ impl FlatFileService for ConnectionService {
 
 fn validate_id(id: &str) -> Result<()> {
     ensure!(
-        sanitize_identifier(id).as_deref() == Some(id),
+        id.len() <= MAX_IDENTIFIER_BYTES && sanitize_identifier(id).as_deref() == Some(id),
         "invalid Connection Service identifier"
     );
     Ok(())
@@ -731,6 +751,81 @@ mod tests {
                 .await
                 .is_err()
         );
+    }
+
+    #[tokio::test]
+    async fn native_request_and_response_state_is_bounded() {
+        let pending = ConnectionService::ephemeral("test");
+        pending
+            .apply(ConnectionCommand::AddProfile {
+                profile_id: "main".to_string(),
+                profile: profile(),
+            })
+            .await
+            .unwrap();
+        for index in 0..MAX_PENDING_NATIVE_REQUESTS {
+            pending
+                .apply(ConnectionCommand::RequestNative {
+                    request: NativeConnectionRequest {
+                        id: format!("pending-{index}"),
+                        profile_id: "main".to_string(),
+                        action: NativeConnectionAction::SecretEntry,
+                    },
+                })
+                .await
+                .unwrap();
+        }
+        assert!(
+            pending
+                .apply(ConnectionCommand::RequestNative {
+                    request: NativeConnectionRequest {
+                        id: "pending-overflow".to_string(),
+                        profile_id: "main".to_string(),
+                        action: NativeConnectionAction::SecretEntry,
+                    },
+                })
+                .await
+                .is_err()
+        );
+
+        let completed = ConnectionService::ephemeral("test");
+        completed
+            .apply(ConnectionCommand::AddProfile {
+                profile_id: "main".to_string(),
+                profile: profile(),
+            })
+            .await
+            .unwrap();
+        for index in 0..=MAX_NATIVE_RESPONSES {
+            let request_id = format!("completed-{index}");
+            completed
+                .apply(ConnectionCommand::RequestNative {
+                    request: NativeConnectionRequest {
+                        id: request_id.clone(),
+                        profile_id: "main".to_string(),
+                        action: NativeConnectionAction::SecretEntry,
+                    },
+                })
+                .await
+                .unwrap();
+            completed
+                .respond_native(NativeConnectionResponse {
+                    request_id,
+                    opaque_credential_ref: None,
+                    status: "ready".to_string(),
+                })
+                .await
+                .unwrap();
+        }
+        let state = completed.state.lock().unwrap();
+        assert_eq!(state.responses.len(), MAX_NATIVE_RESPONSES);
+        assert!(!state.responses.contains_key("completed-0"));
+        assert!(
+            state
+                .responses
+                .contains_key(&format!("completed-{MAX_NATIVE_RESPONSES}"))
+        );
+        assert!(validate_id(&"x".repeat(MAX_IDENTIFIER_BYTES + 1)).is_err());
     }
 
     #[tokio::test]

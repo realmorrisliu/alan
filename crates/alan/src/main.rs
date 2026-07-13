@@ -1314,7 +1314,9 @@ fn print_legacy_cleanup(report: &legacy_state::LegacyCleanupReport, json: bool) 
 #[cfg(test)]
 mod tests {
     use super::Cli;
-    use super::cli::host::{os_host_launch_label, sibling_executable};
+    #[cfg(target_os = "macos")]
+    use super::cli::host::os_host_launch_label;
+    use super::cli::host::sibling_executable;
     use alan_agent_engine::InstallChannel;
     use clap::Parser;
 
@@ -1327,6 +1329,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_os = "macos")]
     fn alan_os_host_launch_labels_are_channel_isolated() {
         assert_eq!(
             os_host_launch_label(InstallChannel::Stable),

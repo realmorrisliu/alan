@@ -94,7 +94,7 @@ impl ServiceManagerConfig {
         }
         Self {
             channel_id: channel_id.into(),
-            connection_store: process.connection_store.take(),
+            connection_store: None,
             process,
             llm_factory: Arc::new(OneShotLlmClientFactory(std::sync::Mutex::new(Some(
                 llm_client,
@@ -518,6 +518,7 @@ impl SupervisorRuntime {
                     .unbind_process(&root.pid.0.to_string())
                     .await;
                 self.host_mount.unregister_process(root.pid);
+                self.connection.release_process(root.pid.0);
             }
             self.root_pid.store(0, Ordering::Release);
         }
@@ -541,6 +542,7 @@ impl SupervisorRuntime {
             if name == "root-agent" {
                 self.agent_root.unbind_process(&pid.to_string()).await;
                 self.host_mount.unregister_process(Pid(pid));
+                self.connection.release_process(pid);
                 self.root_pid.store(0, Ordering::Release);
             }
         }
@@ -654,6 +656,15 @@ impl SupervisorRuntime {
             &extra_mounts,
         )
         .await?;
+        let root_llm = Arc::new(
+            self.llmfs
+                .connection_view(&self.root_template.llm_connection),
+        );
+        root_namespace.replace_mount(
+            "/mnt/llm",
+            InProcessTransport::new(root_llm.clone()),
+            Access::ReadWrite,
+        );
         self.state
             .lock()
             .await
@@ -718,6 +729,7 @@ impl SupervisorRuntime {
         .with_shared_services(
             InProcessTransport::new(self.srvfs.clone()),
             InProcessTransport::new(self.routefs.clone()),
+            InProcessTransport::new(root_llm),
         )
         .with_mount_grant_applicator_factory(
             Arc::new(HostMountApplicatorFactory::new(self.host_mount.clone())),
@@ -768,6 +780,7 @@ impl SupervisorRuntime {
                 .unbind_process(&root.pid.0.to_string())
                 .await;
             self.host_mount.unregister_process(root.pid);
+            self.connection.release_process(root.pid.0);
             result?;
         }
         for (name, active) in self.active {
@@ -1006,6 +1019,12 @@ async fn assemble_environment(inputs: AssembleInputs<'_>) -> Result<AssembledEnv
         &extra_mounts,
     )
     .await?;
+    let root_llm = Arc::new(llmfs.connection_view(&llm_connection));
+    root_namespace.replace_mount(
+        "/mnt/llm",
+        InProcessTransport::new(root_llm.clone()),
+        Access::ReadWrite,
+    );
     host_mount_service.register_process(root_pid, root_namespace.clone());
     if connection_service.has_profile(&llm_connection) {
         connection_service.select(root_pid.0, &llm_connection)?;
@@ -1062,7 +1081,11 @@ async fn assemble_environment(inputs: AssembleInputs<'_>) -> Result<AssembledEnv
     )
     .with_launch_context(root_launch_context.clone())
     .with_process_context(procfs.clone(), agent_root.clone(), root_pid, tool_runner)
-    .with_shared_services(InProcessTransport::new(srvfs.clone()), route_tree);
+    .with_shared_services(
+        InProcessTransport::new(srvfs.clone()),
+        route_tree,
+        InProcessTransport::new(root_llm),
+    );
     let environment = environment.with_mount_grant_applicator_factory(
         Arc::new(HostMountApplicatorFactory::new(host_mount_service.clone())),
         root_namespace,

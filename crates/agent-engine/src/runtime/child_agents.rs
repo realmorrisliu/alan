@@ -11,6 +11,7 @@ use super::engine::{
     effective_core_config_for_runtime, runtime_host_capabilities_for_tools,
     spawn_with_namespace_environment,
 };
+#[cfg(test)]
 use crate::llm::LlmClient;
 use crate::tape::{ContentPart, Message};
 use alan_agent_protocol::{
@@ -19,6 +20,7 @@ use alan_agent_protocol::{
 };
 use alan_ap::{Fid, FileServer, InProcessTransport, OpenMode};
 use alan_kernel::{ExecNamespaceAccess, ExecNamespaceManifest, ExecNamespaceMount, ExecSpec};
+#[cfg(test)]
 use alan_llm::{GenerationRequest, GenerationResponse, LlmProvider, StreamChunk};
 use anyhow::{Context, Result, bail};
 use std::collections::BTreeSet;
@@ -42,16 +44,19 @@ const MAX_OBSERVED_CHILD_WARNING_CHARS: usize = 512;
 const MAX_CHILD_FILE_OBSERVATION_POLL_INTERVAL: Duration = Duration::from_millis(250);
 static NEXT_CHILD_NAMESPACE_FID: AtomicU64 = AtomicU64::new(80_000);
 
+#[cfg(test)]
 struct ChildLlmProvider {
     client: LlmClient,
 }
 
+#[cfg(test)]
 impl ChildLlmProvider {
     fn new(client: LlmClient) -> Self {
         Self { client }
     }
 }
 
+#[cfg(test)]
 #[async_trait::async_trait]
 impl LlmProvider for ChildLlmProvider {
     async fn generate(&mut self, request: GenerationRequest) -> Result<GenerationResponse> {
@@ -202,19 +207,14 @@ async fn spawn_child_runtime_with_optional_cancel(
     spec: SpawnSpec,
     cancel: Option<&CancellationToken>,
 ) -> Result<ChildRuntimeController> {
-    let chatgpt_auth_storage_path = parent.runtime_config.chatgpt_auth_storage_path.clone();
-    spawn_child_runtime_with_client_factory_and_cancel(
-        parent,
-        spec,
-        move |core_config| {
-            LlmClient::from_core_config_with_chatgpt_auth_storage_path(
-                core_config,
-                chatgpt_auth_storage_path.clone(),
-            )
-        },
-        cancel,
-    )
-    .await
+    #[cfg(test)]
+    {
+        return spawn_child_runtime_inner(parent, spec, None, cancel).await;
+    }
+    #[cfg(not(test))]
+    {
+        spawn_child_runtime_inner(parent, spec, cancel).await
+    }
 }
 
 #[cfg(test)]
@@ -224,26 +224,21 @@ async fn spawn_child_runtime_with_client_factory<F>(
     llm_client_factory: F,
 ) -> Result<ChildRuntimeController>
 where
-    F: FnOnce(&crate::Config) -> Result<LlmClient>,
+    F: FnOnce(&crate::Config) -> Result<LlmClient> + Send,
 {
-    spawn_child_runtime_with_client_factory_and_cancel(
-        parent,
-        spec,
-        |core_config| llm_client_factory(core_config),
-        None,
-    )
-    .await
+    spawn_child_runtime_inner(parent, spec, Some(Box::new(llm_client_factory)), None).await
 }
 
-async fn spawn_child_runtime_with_client_factory_and_cancel<F>(
+#[cfg(test)]
+type TestChildLlmClientFactory<'a> =
+    Box<dyn FnOnce(&crate::Config) -> Result<LlmClient> + Send + 'a>;
+
+async fn spawn_child_runtime_inner(
     parent: &RuntimeLoopState,
     mut spec: SpawnSpec,
-    llm_client_factory: F,
+    #[cfg(test)] llm_client_factory: Option<TestChildLlmClientFactory<'_>>,
     cancel: Option<&CancellationToken>,
-) -> Result<ChildRuntimeController>
-where
-    F: FnOnce(&crate::Config) -> Result<LlmClient>,
-{
+) -> Result<ChildRuntimeController> {
     if cancel.is_some_and(CancellationToken::is_cancelled) {
         bail!(CHILD_AGENT_LAUNCH_CANCELLED_MESSAGE);
     }
@@ -275,9 +270,7 @@ where
             .has_handle(SpawnHandle::Memory)
             .then(|| parent.runtime_config.memory_store_backing.clone())
             .flatten(),
-        connection_store: parent.runtime_config.connection_store.clone(),
         recovery_rollout_path: None,
-        chatgpt_auth_storage_path: parent.runtime_config.chatgpt_auth_storage_path.clone(),
         mount_grant_applicator_factory: parent
             .namespace_environment()
             .mount_grant_applicator_factory(),
@@ -315,10 +308,23 @@ where
     )
     .await
     .context("Failed to assemble child-agent namespace plan")?;
+    let child_connection = child_namespace_plan.llm_connection_name()?;
+    ensure_child_connection_is_passed(parent, &child_connection)?;
     let delegation_capability_decision =
         evaluate_delegated_launch_capabilities(parent, &mut spec, &child_namespace_plan).await?;
-    let llm_client = llm_client_factory(&effective_child_core_config)
-        .context("Failed to create child-agent LLM client")?;
+    #[cfg(test)]
+    let test_llm = if let Some(factory) = llm_client_factory {
+        let client = factory(&effective_child_core_config)
+            .context("Failed to create test child-agent LLM client")?;
+        let llmfs = Arc::new(alan_llmfs::LlmFs::new());
+        llmfs.register_connection(
+            &child_namespace_plan.llm_connection_name()?,
+            Box::new(ChildLlmProvider::new(client)),
+        );
+        Some(InProcessTransport::new(llmfs))
+    } else {
+        None
+    };
     let parent_process_context = parent.namespace_environment().process_context();
     let launch_procfs = parent_process_context
         .as_ref()
@@ -340,12 +346,14 @@ where
             .map(|stores| stores.tmp.clone()),
     )?;
     let agentfs = Arc::new(alan_agentfs::AgentFs::new());
-    let llmfs = Arc::new(alan_llmfs::LlmFs::new());
-    llmfs.register_connection(
-        &child_namespace_plan.llm_connection_name()?,
-        Box::new(ChildLlmProvider::new(llm_client)),
-    );
-    let mut handles = child_namespace_launch_handles_from_parent(parent, agentfs, llmfs)
+    let shared_llm = parent
+        .namespace_environment()
+        .shared_services()
+        .context("parent namespace missing callable Connection service for child-agent launch")?
+        .llm;
+    #[cfg(test)]
+    let shared_llm = test_llm.unwrap_or(shared_llm);
+    let mut handles = child_namespace_launch_handles_from_parent(parent, agentfs, shared_llm)
         .context("Failed to assemble child-agent shared namespace handles")?;
     for manifest in &child_namespace_plan.tool_packages {
         let name = &manifest.name;
@@ -471,6 +479,16 @@ where
         process_environment: child_process_environment,
         process_pid: child_process_pid,
     })
+}
+
+fn ensure_child_connection_is_passed(parent: &RuntimeLoopState, requested: &str) -> Result<()> {
+    let passed = parent.namespace_environment().llm_connection();
+    if requested != passed {
+        bail!(
+            "Child-agent Connection '{requested}' was not passed by the parent Process; available Connection is '{passed}'."
+        );
+    }
+    Ok(())
 }
 
 fn build_child_launch_context(
@@ -1673,7 +1691,7 @@ impl ChildNamespaceLaunchHandles {
 fn child_namespace_launch_handles_from_parent(
     parent: &RuntimeLoopState,
     agent_tree: Arc<alan_agentfs::AgentFs>,
-    llm_connection: Arc<alan_llmfs::LlmFs>,
+    llm_connection: InProcessTransport,
 ) -> Result<ChildNamespaceLaunchHandles> {
     let shared_services = parent
         .namespace_environment()
@@ -1681,7 +1699,7 @@ fn child_namespace_launch_handles_from_parent(
         .context("parent namespace missing shared service handles for child-agent launch")?;
     Ok(ChildNamespaceLaunchHandles::new(
         agent_tree,
-        InProcessTransport::new(llm_connection),
+        llm_connection,
         shared_services.srv,
         shared_services.route,
     ))
@@ -1789,7 +1807,11 @@ async fn spawn_child_namespace_runtime_environment(
     )
     .with_launch_context(plan.launch_context.clone())
     .with_process_context(launch_procfs.clone(), agent_root, child_pid, tool_runner)
-    .with_shared_services(handles.srv.clone(), handles.route.clone());
+    .with_shared_services(
+        handles.srv.clone(),
+        handles.route.clone(),
+        handles.llm_connection.clone(),
+    );
     let environment = if let Some(factory) = mount_grant_applicator_factory {
         environment.with_mount_grant_applicator_factory(factory, live_namespace)
     } else {
@@ -2157,7 +2179,6 @@ mod tests {
     };
     use alan_llm::LlmProvider;
     use serde_json::json;
-    use std::collections::BTreeMap;
     use std::sync::{Arc, Mutex};
     use tempfile::TempDir;
 
@@ -2181,12 +2202,26 @@ mod tests {
         }
     }
 
-    fn namespace_environment_for_parent_test() -> NamespaceRuntimeEnvironment {
-        namespace_environment_for_parent_test_with_route(Arc::new(alan_routefs::RouteFs::new()))
-    }
-
     fn namespace_environment_for_parent_test_with_route(
         routefs: Arc<alan_routefs::RouteFs>,
+    ) -> NamespaceRuntimeEnvironment {
+        namespace_environment_for_parent_test_with_services(
+            routefs,
+            Arc::new(alan_llmfs::LlmFs::new()),
+        )
+    }
+
+    fn namespace_environment_for_parent_test_with_services(
+        routefs: Arc<alan_routefs::RouteFs>,
+        llmfs: Arc<alan_llmfs::LlmFs>,
+    ) -> NamespaceRuntimeEnvironment {
+        namespace_environment_for_parent_test_with_connection(routefs, llmfs, "default")
+    }
+
+    fn namespace_environment_for_parent_test_with_connection(
+        routefs: Arc<alan_routefs::RouteFs>,
+        llmfs: Arc<alan_llmfs::LlmFs>,
+        connection: &str,
     ) -> NamespaceRuntimeEnvironment {
         let mut mounts = KernelNamespace::new();
         for name in ["alpha", "beta"] {
@@ -2208,8 +2243,12 @@ mod tests {
             );
         }
         let root = InProcessTransport::new(Arc::new(alan_kernel::MountFs::new(mounts)));
-        crate::runtime::NamespaceRuntimeEnvironment::new(root, "/agent/1", "default")
-            .with_shared_services(memfs_transport(), InProcessTransport::new(routefs))
+        crate::runtime::NamespaceRuntimeEnvironment::new(root, "/agent/1", connection)
+            .with_shared_services(
+                memfs_transport(),
+                InProcessTransport::new(routefs),
+                InProcessTransport::new(llmfs),
+            )
     }
 
     #[derive(Clone, Default)]
@@ -2430,8 +2469,8 @@ mod tests {
 
     fn make_parent_state_with_capability_view(
         temp: &TempDir,
-        _requests: RecordedRequests,
-        _response: GenerationResponse,
+        requests: RecordedRequests,
+        response: GenerationResponse,
         capability_view: crate::skills::ResolvedCapabilityView,
     ) -> RuntimeLoopState {
         let source_root = temp.path().join("source");
@@ -2518,11 +2557,20 @@ mod tests {
             }],
         );
 
+        let llmfs = Arc::new(alan_llmfs::LlmFs::new());
+        llmfs.register_connection(
+            "default",
+            Box::new(RecordingProvider::new(requests, response)),
+        );
+
         RuntimeLoopState {
             machine,
             current_submission_id: None,
-            environment: namespace_environment_for_parent_test()
-                .with_launch_context(launch_context),
+            environment: namespace_environment_for_parent_test_with_services(
+                Arc::new(alan_routefs::RouteFs::new()),
+                llmfs,
+            )
+            .with_launch_context(launch_context),
             core_config,
             runtime_config: RuntimeConfig {
                 store_bindings: Some(store_bindings),
@@ -2861,6 +2909,23 @@ Body
         assert!(!user_text.contains("Parent Conversation Snapshot"));
         assert!(!user_text.contains("Parent Plan Snapshot"));
         assert!(!user_text.contains("Parent Tool Results"));
+    }
+
+    #[tokio::test]
+    async fn spawn_child_runtime_reuses_the_passed_callable_connection() {
+        let temp = TempDir::new().unwrap();
+        let requests = RecordedRequests::default();
+        let response = completed_response("Shared Connection completed the child.");
+        let parent = make_parent_state(&temp, requests.clone(), response);
+
+        let child = spawn_child_runtime(&parent, launch_spec(temp.path().join("definition")))
+            .await
+            .unwrap();
+        let result = child.join().await.unwrap();
+
+        assert_eq!(result.status, ChildRuntimeStatus::Completed);
+        assert_eq!(result.output_text, "Shared Connection completed the child.");
+        assert_eq!(requests.0.lock().unwrap().len(), 1);
     }
 
     #[tokio::test]
@@ -3660,7 +3725,7 @@ Body
         let handles = child_namespace_launch_handles_from_parent(
             &parent,
             Arc::new(alan_agentfs::AgentFs::new()),
-            llmfs,
+            InProcessTransport::new(llmfs),
         )
         .unwrap()
         .with_tool_package(
@@ -3810,48 +3875,19 @@ tool_repeat_limit = 9
         let requests = RecordedRequests::default();
         let response = completed_response("Child used the explicit profile.");
         let mut parent = make_parent_state(&temp, requests.clone(), response.clone());
-        let metadata_path = temp.path().join("connections.toml");
-        let credentials_dir = temp.path().join("credentials");
         let profile_id = "explicit-main";
-        let credential_id = "explicit-secret";
-        let connections = crate::ConnectionsFile {
-            credentials: BTreeMap::from([(
-                credential_id.to_string(),
-                crate::ConnectionCredential {
-                    kind: crate::CredentialKind::SecretString,
-                    provider_family: crate::config::LlmProvider::OpenAiResponses,
-                    label: "Explicit test credential".to_string(),
-                    backend: crate::default_credential_backend(crate::CredentialKind::SecretString)
-                        .to_string(),
-                },
-            )]),
-            profiles: BTreeMap::from([(
-                profile_id.to_string(),
-                crate::ConnectionProfile {
-                    provider: crate::config::LlmProvider::OpenAiResponses,
-                    label: Some("Explicit profile".to_string()),
-                    credential_id: Some(credential_id.to_string()),
-                    created_at: chrono::Utc::now(),
-                    updated_at: chrono::Utc::now(),
-                    source: "test".to_string(),
-                    settings: BTreeMap::from([("model".to_string(), "gpt-5.4".to_string())]),
-                },
-            )]),
-            ..crate::ConnectionsFile::default()
-        };
-        connections.save_to_path(&metadata_path).unwrap();
-        crate::SecretStore::from_directory(&credentials_dir)
-            .unwrap()
-            .save(credential_id, "sk-explicit")
-            .unwrap();
-        let connection_store =
-            crate::ConnectionStoreBindings::new(metadata_path, credentials_dir).unwrap();
         parent.core_config.connection_profile = Some(profile_id.to_string());
-        parent
-            .core_config
-            .resolve_connection_profile(&connection_store)
-            .unwrap();
-        parent.runtime_config.connection_store = Some(connection_store);
+        let launch_context = parent
+            .namespace_environment()
+            .launch_context()
+            .unwrap()
+            .clone();
+        parent.environment = namespace_environment_for_parent_test_with_connection(
+            Arc::new(alan_routefs::RouteFs::new()),
+            Arc::new(alan_llmfs::LlmFs::new()),
+            profile_id,
+        )
+        .with_launch_context(launch_context);
         let root_dir = temp.path().join("definition");
         let seen_config = Arc::new(Mutex::new(None::<crate::Config>));
         let seen_config_for_factory = seen_config.clone();
@@ -3880,78 +3916,32 @@ tool_repeat_limit = 9
     }
 
     #[tokio::test]
-    async fn spawn_child_runtime_resolves_definition_connection_profile_before_llm_setup() {
+    async fn spawn_child_runtime_rejects_unpassed_definition_connection_reference() {
         let temp = TempDir::new().unwrap();
         let requests = RecordedRequests::default();
         let response = completed_response("Child used its definition profile.");
-        let mut parent = make_parent_state(&temp, requests.clone(), response.clone());
-        let metadata_path = temp.path().join("connections.toml");
-        let credentials_dir = temp.path().join("credentials");
+        let parent = make_parent_state(&temp, requests.clone(), response.clone());
         let profile_id = "child-main";
-        let credential_id = "child-secret";
-        let connections = crate::ConnectionsFile {
-            credentials: BTreeMap::from([(
-                credential_id.to_string(),
-                crate::ConnectionCredential {
-                    kind: crate::CredentialKind::SecretString,
-                    provider_family: crate::config::LlmProvider::OpenAiResponses,
-                    label: "Child test credential".to_string(),
-                    backend: crate::default_credential_backend(crate::CredentialKind::SecretString)
-                        .to_string(),
-                },
-            )]),
-            profiles: BTreeMap::from([(
-                profile_id.to_string(),
-                crate::ConnectionProfile {
-                    provider: crate::config::LlmProvider::OpenAiResponses,
-                    label: Some("Child profile".to_string()),
-                    credential_id: Some(credential_id.to_string()),
-                    created_at: chrono::Utc::now(),
-                    updated_at: chrono::Utc::now(),
-                    source: "test".to_string(),
-                    settings: BTreeMap::from([(
-                        "model".to_string(),
-                        "gpt-child-profile".to_string(),
-                    )]),
-                },
-            )]),
-            ..crate::ConnectionsFile::default()
-        };
-        connections.save_to_path(&metadata_path).unwrap();
-        crate::SecretStore::from_directory(&credentials_dir)
-            .unwrap()
-            .save(credential_id, "sk-child")
-            .unwrap();
-        parent.runtime_config.connection_store =
-            Some(crate::ConnectionStoreBindings::new(metadata_path, credentials_dir).unwrap());
         let root_dir = temp.path().join("definition");
         std::fs::write(
             root_dir.join("agent.toml"),
             format!("connection_profile = \"{profile_id}\"\n"),
         )
         .unwrap();
-        let seen_config = Arc::new(Mutex::new(None::<crate::Config>));
-        let seen_config_for_factory = seen_config.clone();
-
-        let child =
-            spawn_child_runtime_with_client_factory(&parent, launch_spec(root_dir), |config| {
-                *seen_config_for_factory.lock().unwrap() = Some(config.clone());
-                Ok(LlmClient::new(RecordingProvider::new(
-                    requests.clone(),
-                    response.clone(),
-                )))
+        let error =
+            match spawn_child_runtime_with_client_factory(&parent, launch_spec(root_dir), |_| {
+                unreachable!("an unpassed Connection must fail before provider setup")
             })
             .await
-            .unwrap();
-        let result = child.join().await.unwrap();
+            {
+                Ok(_) => panic!("unpassed child Connection should be rejected"),
+                Err(error) => error,
+            };
 
-        assert_eq!(result.status, ChildRuntimeStatus::Completed);
-        let seen_config = seen_config.lock().unwrap().clone().unwrap();
-        assert_eq!(seen_config.connection_profile.as_deref(), Some(profile_id));
-        assert_eq!(seen_config.effective_model(), "gpt-child-profile");
-        assert_eq!(
-            seen_config.openai_responses_api_key.as_deref(),
-            Some("sk-child")
+        assert!(
+            error
+                .to_string()
+                .contains("was not passed by the parent Process")
         );
     }
 

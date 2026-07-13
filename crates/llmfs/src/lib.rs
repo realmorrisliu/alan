@@ -20,7 +20,7 @@
 //! terminal record to `events` and a terminal `status`, so a consumer tailing
 //! `events` at the live edge never blocks forever.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
@@ -646,7 +646,8 @@ impl State {
 
 /// The LLM file server.
 pub struct LlmFs {
-    state: StdMutex<State>,
+    state: Arc<StdMutex<State>>,
+    allowed_connections: Option<Arc<HashSet<String>>>,
 }
 
 impl Default for LlmFs {
@@ -658,14 +659,32 @@ impl Default for LlmFs {
 impl LlmFs {
     pub fn new() -> Self {
         Self {
-            state: StdMutex::new(State {
+            state: Arc::new(StdMutex::new(State {
                 connections: HashMap::new(),
                 gens: HashMap::new(),
                 fids: HashMap::new(),
                 next_gen: 0,
                 listing_version: 0,
-            }),
+            })),
+            allowed_connections: None,
         }
+    }
+
+    /// Create a capability-narrowed view exposing only one callable Connection.
+    ///
+    /// The view shares live Connection and Generation state with this server,
+    /// while walks and listings structurally hide every other Connection.
+    pub fn connection_view(&self, name: impl Into<String>) -> Self {
+        Self {
+            state: self.state.clone(),
+            allowed_connections: Some(Arc::new(HashSet::from([name.into()]))),
+        }
+    }
+
+    fn connection_visible(&self, name: &str) -> bool {
+        self.allowed_connections
+            .as_ref()
+            .is_none_or(|allowed| allowed.contains(name))
     }
 
     /// Register a callable connection backed by an `alan-llm` provider. (In the
@@ -814,7 +833,9 @@ impl LlmFs {
                 "status" => Ok(Node::ProviderStatus(provider.clone())),
                 _ => Err(ErrorCode::NotFound),
             },
-            Node::ConnectionsDir if state.connections.contains_key(name) => {
+            Node::ConnectionsDir
+                if self.connection_visible(name) && state.connections.contains_key(name) =>
+            {
                 Ok(Node::Connection(name.to_string()))
             }
             Node::ConnectionsDir => Err(ErrorCode::NotFound),
@@ -1071,7 +1092,7 @@ impl FileServer for LlmFs {
                     }
                 }
                 other => Len::Now(
-                    computed_bytes(&state, other)
+                    computed_bytes(&state, other, self.allowed_connections.as_deref())
                         .map(|b| b.len() as u64)
                         .unwrap_or(0),
                 ),
@@ -1293,7 +1314,7 @@ impl LlmFs {
 
     fn computed_bytes(&self, node: &Node) -> Result<Vec<u8>, ErrorCode> {
         let state = self.state.lock().unwrap();
-        computed_bytes(&state, node)
+        computed_bytes(&state, node, self.allowed_connections.as_deref())
     }
 }
 
@@ -1306,7 +1327,11 @@ enum Len {
 
 /// Render a readable node's bytes from already-locked state (so both `read` and
 /// `stat`'s length use one definition).
-fn computed_bytes(state: &State, node: &Node) -> Result<Vec<u8>, ErrorCode> {
+fn computed_bytes(
+    state: &State,
+    node: &Node,
+    allowed_connections: Option<&HashSet<String>>,
+) -> Result<Vec<u8>, ErrorCode> {
     let bytes = match node {
         Node::Root => b"connections\nproviders".to_vec(),
         Node::ProvidersDir => known_provider_names().join("\n").into_bytes(),
@@ -1318,7 +1343,12 @@ fn computed_bytes(state: &State, node: &Node) -> Result<Vec<u8>, ErrorCode> {
         }
         Node::ProviderStatus(provider) => provider_status_doc(provider).into_bytes(),
         Node::ConnectionsDir => {
-            let mut names: Vec<_> = state.connections.keys().cloned().collect();
+            let mut names: Vec<_> = state
+                .connections
+                .keys()
+                .filter(|name| allowed_connections.is_none_or(|allowed| allowed.contains(*name)))
+                .cloned()
+                .collect();
             names.sort();
             names.join("\n").into_bytes()
         }

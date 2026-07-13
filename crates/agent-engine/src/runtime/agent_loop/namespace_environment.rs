@@ -268,6 +268,7 @@ pub(crate) struct NamespaceProcessContext {
 pub(crate) struct NamespaceSharedServices {
     pub(crate) srv: InProcessTransport,
     pub(crate) route: InProcessTransport,
+    pub(crate) llm: InProcessTransport,
 }
 
 impl std::fmt::Debug for NamespaceRuntimeEnvironment {
@@ -428,8 +429,9 @@ impl NamespaceRuntimeEnvironment {
         mut self,
         srv: InProcessTransport,
         route: InProcessTransport,
+        llm: InProcessTransport,
     ) -> Self {
-        self.shared_services = Some(NamespaceSharedServices { srv, route });
+        self.shared_services = Some(NamespaceSharedServices { srv, route, llm });
         self
     }
 
