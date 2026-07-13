@@ -1,15 +1,15 @@
 # runtime-memory-contract Specification
 
 ## Purpose
-Defines runtime-memory contracts for workspace memory layout, recall and write
-paths, explicit dual-threshold compaction coordination, human-readable memory
-surfaces, provenance, and truncation behavior.
+Defines runtime-memory contracts for Memory Store layout, recall and write paths,
+explicit dual-threshold compaction coordination, human-readable surfaces,
+provenance, and truncation behavior.
 ## Requirements
 ### Requirement: Memory kind is separate from memory authority
 alan SHALL treat working, episodic, semantic, and procedural memory as
 agent-cognitive memory kinds rather than ownership buckets. Ownership and access
 authority SHALL be modeled separately by Memory Stores such as personal,
-system-continuity, app, and workspace stores.
+system-continuity, app, and mounted-domain stores.
 
 #### Scenario: Memory store is described
 - **WHEN** runtime code, docs, or specs describe where memory is owned or who may
@@ -109,7 +109,7 @@ turn from the Memory Stores visible in that Process namespace.
 
 #### Scenario: A new Agent Process starts
 - **WHEN** memory is enabled for a newly spawned Agent Process
-- **THEN** the runtime reads the visible user, system-continuity, app, and workspace Memory Stores
+- **THEN** the runtime reads the visible personal, system-continuity, app, and mounted-domain Memory Stores
 - **AND** the selected recall becomes input to that Process's initial Agent Machine state
 
 ### Requirement: Process and service boundaries curate durable memory
@@ -144,3 +144,13 @@ fail normal unknown-field validation.
 - **WHEN** neither current compaction threshold is configured
 - **THEN** Alan uses the current soft and hard defaults
 - **AND** no deprecated single-threshold default participates in resolution
+
+### Requirement: Memory authority is not a workspace directory
+Runtime memory SHALL be accessed through explicit Memory Store file trees or
+descriptors and persisted by their owning service backing. Agent Process boot,
+recall, flush, and promotion MUST NOT infer `<host-dir>/.alan` memory paths.
+
+#### Scenario: Agent receives a Memory Store
+- **WHEN** an Agent Process is launched with a Memory Store descriptor
+- **THEN** recall and writes use that tree
+- **AND** Host cwd contributes no implicit memory authority

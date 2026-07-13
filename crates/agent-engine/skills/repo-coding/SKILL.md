@@ -6,7 +6,7 @@ description: |
   Use this when:
   - alan has already selected the target repo or directory
   - The task needs inspect -> plan -> edit -> verify -> deliver inside that bound scope
-  - The work should run in a focused child runtime instead of the home-root steward
+  - The work should run in a focused child runtime instead of the parent steward
 
 metadata:
   short-description: Launch a repo-scoped coding worker
@@ -25,8 +25,8 @@ work.
 1. Treat the parent alan runtime as the coding steward.
 2. Use this package when the task should move into a fresh repo worker bound to
    one repo or directory.
-3. Keep launch inputs explicit: delegated task, cwd, workspace boundary, child
-   time budget, and approval scope.
+3. Keep launch inputs explicit: delegated task, namespace cwd, Host Mount
+   boundary, child time budget, and approval scope.
 4. Expect bounded result integration rather than inheriting the full child
    transcript into the parent tape.
 5. Do not ask the repo worker to end with prose. The child handoff is the
@@ -37,7 +37,7 @@ work.
 
 Before spawn, alan classifies the delegated task in namespace terms and checks
 the assembled child namespace. Keep the task honest about what the child needs:
-workspace read/write scope, `/bin` shell or external-service bindings, an LLM
+Host Mount read/write scope, `/bin` shell or external-service bindings, an LLM
 Connection, and material side effects.
 
 - If the child namespace satisfies the task, alan launches it unchanged.
@@ -47,7 +47,7 @@ Connection, and material side effects.
   launch and records `parent_path` recovery instead of pretending the child did it.
 - Otherwise alan asks for missing input or returns an explicit limitation. Never
   substitute unrelated local context for unavailable GitHub, network, browser,
-  or workspace evidence.
+  or mounted repository evidence.
 
 The decision is recorded in the parent's delegated tool result/tape. A launched
 child also carries the bounded requirement and namespace summary in its launch

@@ -8,8 +8,7 @@ Normative target requirements live in OpenSpec.
 Policy resolves in this order:
 
 1. an explicit governance policy path;
-2. the highest-precedence existing `policy.yaml` in the resolved AgentRoot
-   chain;
+2. `policy.yaml` in the explicit Agent Definition, when present;
 3. builtin profile defaults.
 
 An authored policy file replaces the builtin rule set; it is not merged
@@ -26,9 +25,10 @@ records distinguish policy decisions from idempotency safety.
 
 ## Execution backend
 
-The default `workspace_path_guard` is best-effort path and command-shape
-enforcement. It does not claim full network or Process isolation. Optional
-Seatbelt or Landlock backends provide stronger host enforcement when active.
+The default `host_mount_path_guard` is best-effort path and command-shape
+enforcement over explicit Host Mounts. It does not claim full network or
+Process isolation. Optional Seatbelt or Landlock backends provide stronger host
+enforcement when active.
 
 Policy and execution backend are separate: policy decides whether an effect is
 authorized, while the backend constrains how an authorized effect executes.

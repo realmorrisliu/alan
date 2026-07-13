@@ -46,7 +46,7 @@ Rules:
      `environment_blocked_count`, `blocked_count`, `not_run_count`,
      `all_passed`, and `entries`.
    - `evaluator` must be an object with `mode` and `reason`, not a string.
-11. Keep shell usage workspace-safe: prefer one simple command per tool call,
+11. Keep shell usage Host-Mount-safe: prefer one simple command per tool call,
    avoid chaining with `&&`/`;`, avoid shell glob or brace expansion, and use
    exact read/edit tools when you already know the target files.
 12. Before declaring verification blocked, check for repo-local execution

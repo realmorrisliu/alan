@@ -54,7 +54,7 @@ generate. The `events` records are the source of truth for the model's output.
 The engine SHALL discover an executable model-callable Tool only when a visible
 executable at `/bin/<tool>` has a valid mounted manifest at
 `/lib/exec/<tool>/manifest`. It SHALL derive the Tool's model definition,
-capability classification, locality, and execution hints from that package and
+capability classification, timeout, and execution hints from that package and
 invoke the Tool by spawning its executable via `/proc/clone`, then reading the
 Tool Process output/result files and projecting them into
 `actions/<id>/`. The transition loop SHALL NOT use or reconstruct an in-process
@@ -185,3 +185,14 @@ writes `io/output`; the shell tails `io/output`.
 - **THEN** the agent reads the input, generates via its mounted LLM connection,
   and the model's response appears on `io/output`
 - **AND** no operation outside aP file IO is used to carry the conversation
+
+### Requirement: Runtime context is Process-shaped
+Agent Execution Engine SHALL derive file reachability, cwd, Tool execution,
+Agent Definition, Skills, policy, memory handles, and durable evidence
+references from the Agent Process namespace and descriptors. It MUST NOT own a
+workspace identity, workspace root, or Host `.alan` directory.
+
+#### Scenario: Runtime prepares a turn
+- **WHEN** an Agent Process begins a transition
+- **THEN** every contextual resource is read from a mounted path or descriptor
+- **AND** no Host-directory overlay scan occurs

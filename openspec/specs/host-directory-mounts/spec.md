@@ -49,24 +49,26 @@ a host path, and an access level. Applying the declaration SHALL mount a
   by namespace access enforcement
 
 ### Requirement: Host mount declarations project into SandboxSpec
-Alan OS SHALL use the same host mount declaration list to derive the OS sandbox
-manifest for native subprocesses. The workspace SHALL be the seed host mount.
-Writable host declarations SHALL contribute writable roots; read-only host
-declarations and virtual mounts SHALL NOT grant native-subprocess write
-authority.
+Alan OS SHALL derive native subprocess sandbox roots from the exact Host Mount
+grants present in the Process launch context. Writable grants SHALL contribute
+writable Host roots; read-only grants SHALL contribute no write authority; and
+virtual mounts SHALL NOT grant Host access. There is no ambient Host-directory seed.
 
-#### Scenario: Writable host declaration becomes sandbox writable root
-- **WHEN** the declaration list contains the workspace seed and a writable host
-  mount at `/host/project`
-- **THEN** the derived `SandboxSpec.writable_roots` contains both the workspace
-  host path and `/host/project`
+#### Scenario: Writable Host Mount becomes sandbox writable root
+- **WHEN** a Process receives one writable Host Mount at `/mnt/source`
+- **THEN** the derived sandbox includes only that grant's Host backing as a
+  writable root
 
-#### Scenario: Read-only host declaration does not grant native writes
-- **WHEN** the declaration list contains a read-only host mount at `/host/docs`
-- **THEN** the derived `SandboxSpec.writable_roots` does not contain
-  `/host/docs`
+#### Scenario: No Host Mount is present
+- **WHEN** a Process has only virtual Alan OS mounts
+- **THEN** no ambient Host cwd, home, or other implicit Host writable root is added
 
-#### Scenario: Virtual mounts do not affect the sandbox
-- **WHEN** the namespace also contains virtual mounts such as `/agent` or
-  `/mnt/llm`
-- **THEN** those virtual mounts do not add host paths to `SandboxSpec`
+### Requirement: Host files are invisible by default
+A Host directory SHALL enter a Process namespace only after explicit Host
+authorization creates a Host Mount. Kernel and Agent runtime files MUST use its
+Alan OS mount path and MUST NOT expose the raw Host path.
+
+#### Scenario: Alan starts inside a Host directory
+- **WHEN** the CLI is launched with that directory as Host cwd
+- **THEN** the directory remains absent until the Host explicitly grants and
+  mounts it

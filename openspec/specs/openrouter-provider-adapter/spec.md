@@ -22,9 +22,8 @@ configuration value, provider catalog entry, and provider construction path
 without providing automatic migration or alias behavior.
 
 #### Scenario: Saved connection metadata uses the retired provider value
-- **WHEN** the active channel's `connections.toml`, such as
-  `~/.alan/connections.toml` for stable or `~/.alan-dev/connections.toml` for
-  dev, contains `openrouter_openai_chat_completions_compatible` in
+- **WHEN** the active channel Connection Service metadata contains
+  `openrouter_openai_chat_completions_compatible` in
   `profiles.<id>.provider` or `credentials.<id>.provider_family`
 - **THEN** alan treats the file as containing unsupported legacy configuration
 - **AND** alan does not automatically rewrite the value to `openrouter`

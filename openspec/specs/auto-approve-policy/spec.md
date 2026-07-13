@@ -19,7 +19,8 @@ denies past the circuit breaker, when an operation is on the always-human red
 line, or when the reviewer is unavailable.
 
 #### Scenario: Routine operation proceeds automatically
-- **WHEN** the policy classifies an operation as a read or an in-workspace write
+- **WHEN** the policy classifies an operation as a read or a write within the
+  Process's explicit writable namespace authority
 - **THEN** the operation proceeds without prompting the user
 
 #### Scenario: No mode switcher
@@ -48,22 +49,31 @@ line, or when the reviewer is unavailable.
 - **THEN** deserialization fails with an error rather than silently resolving to `Autonomous`, so a typo'd profile surfaces as a config error instead of a false sense of a stricter mode
 
 ### Requirement: Conservative escalation boundary before OS sandboxing
-When an OS sandbox backend is active, the policy SHALL allow sandboxed bash and policy-permitted network to proceed without prompting, while still escalating effects that escape the sandbox (writes outside the workspace and disallowed network) and operations of unknown capability. When no OS sandbox backend is active, the policy SHALL escalate network access, writes outside the workspace, explicitly destructive or irreversible operations, and operations of unknown capability.
+When an OS sandbox backend is active, the policy SHALL allow sandboxed bash and
+policy-permitted network to proceed without prompting, while still escalating
+effects that escape the sandbox (writes beyond explicit writable Host Mounts
+and disallowed network) and operations of unknown capability. When no OS
+sandbox backend is active, the policy SHALL escalate network access, writes
+beyond the Process's explicit writable namespace authority, explicitly
+destructive or irreversible operations, and operations of unknown capability.
 
 #### Scenario: Sandboxed bash proceeds when a backend is active
-- **WHEN** an OS sandbox backend is active and a shell command runs confined to the workspace
+- **WHEN** an OS sandbox backend is active and a shell command is confined to
+  the Process's writable Host Mount projection
 - **THEN** the command proceeds without prompting
 
 #### Scenario: Sandbox-escaping effect still escalates
-- **WHEN** an operation would write outside the workspace or perform disallowed network access
+- **WHEN** an operation would write beyond the Process's explicit writable
+  namespace authority or perform disallowed network access
 - **THEN** the policy escalates it for human approval even when a backend is active
 
 #### Scenario: Network access escalates
 - **WHEN** an operation is classified as network capability and no OS sandbox backend is active
 - **THEN** the policy escalates it for human approval
 
-#### Scenario: Out-of-workspace write escalates
-- **WHEN** an operation would write outside the workspace
+#### Scenario: Out-of-authority write escalates
+- **WHEN** an operation would write beyond the Process's explicit writable
+  namespace authority
 - **THEN** the policy escalates it for human approval
 
 #### Scenario: Destructive operation escalates

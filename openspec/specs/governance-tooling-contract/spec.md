@@ -2,13 +2,13 @@
 
 ## Purpose
 Defines durable governance and tooling boundaries for policy decisions, tool
-identity, runtime binding, capability routing, extension points, and workspace
-scoping.
+identity, Process execution binding, capability routing, extension points, and
+namespace authority.
 ## Requirements
 ### Requirement: Governance and tooling contracts live in OpenSpec
 Alan SHALL specify HITE governance, mounted Tool package identity, Process
-execution binding, capability routing, extension points, and workspace routing
-in OpenSpec.
+execution binding, capability routing, extension points, and Host Mount
+authority in OpenSpec.
 
 #### Scenario: Governance behavior changes
 - **WHEN** a change modifies policy `allow`, `deny`, or `escalate` semantics,
@@ -21,14 +21,15 @@ in OpenSpec.
 
 #### Scenario: Tool binding behavior changes
 - **WHEN** a change modifies Tool package manifests, namespace composition,
-  locality, workspace scoping, child Process mounts, or extension routing
+  Process Launch Context, Host Mount authority, child Process mounts, or
+  extension routing
 - **THEN** the behavior is specified in OpenSpec before it is documented as
   current guidance
 
 ### Requirement: Tool identity is separate from execution binding
 Alan SHALL keep stable Tool identity and schema in mounted package manifests
-separate from per-Process execution binding such as workspace root, current
-directory, credentials, namespace reachability, and policy decisions. The
+separate from per-Process execution binding such as namespace cwd, explicit
+Host Mounts, credentials, namespace reachability, and policy decisions. The
 transition loop SHALL derive both through the Process namespace and SHALL NOT
 use an in-process Tool registry as their authority. During the current
 convention-enforced stage, a host Process-runner adapter MAY co-locate an
@@ -39,9 +40,9 @@ come from the Process namespace.
 #### Scenario: Runtime exposes a Tool
 - **WHEN** a Tool package executable and manifest are mounted for an Agent
   Process
-- **THEN** the Tool's identity, schema, capability, and locality come from the
+- **THEN** the Tool's identity, schema, capability, and execution hints come from the
   package manifest
-- **AND** workspace-specific execution facts come from the Tool Process exec
+- **AND** Process-specific execution facts come from the Tool Process exec
   context, descriptors, namespace, and policy
 - **AND** any host-adapter implementation registry cannot expose or execute a
   Tool that is not mounted for that Process
@@ -139,49 +140,6 @@ Every governance decision is traceable through rollout/events with:
 - **THEN** the rollout records the request, resolver, resolution, constraints,
   and effective backend context
 
-### Requirement: Workspace-local tools require explicit runtime binding
-alan SHALL execute workspace-local tools only with explicit workspace binding
-and SHALL keep workspace routing failures distinct from policy escalation.
-
-Locality classes:
-
-1. `global`: not implicitly tied to the runtime's bound workspace
-2. `workspace_local`: acts on the runtime's currently bound local workspace
-
-Workspace-local execution rules:
-
-- Runtime provides explicit `workspace_root`.
-- If both `workspace_root` and `cwd` are present, `cwd` must be inside
-  `workspace_root`.
-- Path resolution stays relative to bound `cwd`.
-- Execution backends enforce the bound `workspace_root` rather than a hidden
-  process-global default.
-- Running a workspace-local tool without explicit binding is a runtime binding
-  error.
-- A tool is not workspace-local merely because arguments are named `path`,
-  `cwd`, or `workspace_root`.
-
-Workspace-routing rules:
-
-- One running `AgentInstance` is bound to one workspace at a time.
-- Natural-language acknowledgements do not mutate runtime binding.
-- When a task targets a different local workspace, alan should launch a fresh
-  child runtime with explicit `workspace_root`, optional nested `cwd`, task
-  text, and handles such as `workspace` and `approval_scope`.
-- Cross-workspace local shell in the current runtime is a routing failure before
-  it is a policy question.
-- `tool_escalation` remains reserved for policy boundaries.
-- Target-local search must run inside the delegated child rather than by
-  searching parent `.alan` state.
-
-#### Scenario: Cross-workspace shell command is attempted
-- **WHEN** a local shell command in the current runtime explicitly targets a
-  path outside the current workspace
-- **THEN** alan reports a recoverable workspace-routing failure and points to
-  delegated child launch
-- **AND** it does not treat user approval alone as making the current runtime
-  the correct execution site
-
 ### Requirement: Governance is scoped to Process and capability execution
 Alan SHALL resolve governance for Agent Process, Tool Process, and capability execution from the
 owning policy files, namespace, credentials, executable identity, requested effect, and explicit
@@ -208,15 +166,15 @@ or durable record.
 Alan SHALL define a Tool's stable model and governance identity in its mounted
 package files. A complete Tool package SHALL include a visible executable and a
 validated manifest containing name, description, parameter schema, capability
-classification, timeout hint, and locality. Tool visibility SHALL be determined
+classification, timeout hint, and execution hints. Tool visibility SHALL be determined
 by namespace reachability, not an ambient host catalog or exposure list inside
 the engine.
 
-#### Scenario: Same Tool package is mounted in two workspaces
-- **WHEN** two Agent Processes with different workspace bindings mount the same
+#### Scenario: Same Tool package is mounted in two Process namespaces
+- **WHEN** two Agent Processes with different launch contexts mount the same
   Tool package version
 - **THEN** the Tool identity and schema are the same
-- **AND** workspace root, cwd, credentials, and scratch state come from each
+- **AND** namespace cwd, Host Mounts, credentials, and scratch state come from each
   Process execution context
 
 #### Scenario: Policy withholds a Tool
@@ -236,17 +194,47 @@ Tool packages into the child's namespace. Parent and child differences SHALL be
 expressed by their mounted packages and Process execution contexts, not by
 cloning parent Tool instances or constructing child registries.
 
-#### Scenario: Child launches with repo-local Tools
-- **WHEN** Alan launches a repo-scoped child Agent Process
+#### Scenario: Child launches with selected Tools
+- **WHEN** Alan launches a child Agent Process with a narrower Tool set
 - **THEN** the child namespace contains only the permitted complete Tool
-  packages plus explicit workspace binding
+  packages plus explicitly inherited mounts and descriptors
 - **AND** the child discovers those Tools by walking its own namespace
-- **AND** it does not inherit parent Tool objects carrying workspace-specific
-  state
+- **AND** it does not inherit parent Tool objects or execution bindings
 
 #### Scenario: Persisted launch metadata is inspected
-- **WHEN** child launch metadata records workspace and Tool selection
+- **WHEN** child launch metadata records Process Launch Context and Tool selection
 - **THEN** it matches the namespace and Process execution binding committed at
   `/proc/clone`
-- **AND** unresolved relative workspace fields are not later resolved through
+- **AND** unresolved Host paths or locality fields are not later inferred from
   process-global defaults
+
+### Requirement: Tool execution binding is Process Launch Context
+Tool execution SHALL derive executable reachability from `/bin`, path access
+from the Process namespace, cwd from a namespace path, and native sandbox roots
+from explicit Host Mount grants. Tool identity MUST NOT be global or
+encode Host locality, and policy escalation MUST remain distinct from missing
+capability.
+
+#### Scenario: Tool accesses mounted source
+- **WHEN** a Tool Process inherits a writable `/mnt/source` Host Mount
+- **THEN** namespace access and native sandbox access derive from the same grant
+- **AND** no Host-locality routing classification is consulted
+
+#### Scenario: Tool Process selects an explicit mount when parent cwd is virtual
+- **GIVEN** an Agent Process cwd such as `/` has no Host backing
+- **WHEN** the Process receives an approved writable Host Mount at `/mnt/project`
+- **THEN** its native Tool Process binding uses `/mnt/project` as the Tool Process cwd
+- **AND** the Agent Process cwd remains unchanged
+- **AND** runtime scratch, Host cwd, and Host home gain no sandbox authority
+
+#### Scenario: Child Tool Process uses an inherited mount with a virtual cwd
+- **GIVEN** a child Agent Process inherits an explicit Host Mount while its cwd is `/`
+- **WHEN** the child Tool Process binding is assembled
+- **THEN** an authorized inherited mount becomes the native Tool Process cwd
+- **AND** the child receives no Host authority beyond its inherited grants
+
+#### Scenario: Read-only Host Mounts remain readable to read-class Tools
+- **GIVEN** a Process has an explicit read-only Host Mount at `/mnt/docs`
+- **WHEN** a read-class Tool Process reads an ordinary path operand under `/mnt/docs`
+- **THEN** the read is permitted by both namespace and native sandbox projection
+- **AND** mutation and redirection targets under `/mnt/docs` remain denied

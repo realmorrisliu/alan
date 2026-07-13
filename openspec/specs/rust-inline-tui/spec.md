@@ -117,7 +117,7 @@ The TUI SHALL provide a completion popup driven by trigger characters that disti
 
 #### Scenario: At references a file inline
 - **WHEN** the user types `@` anywhere in the composer
-- **THEN** a completion popup lists workspace file paths
+- **THEN** a completion popup lists file paths visible in the Process namespace
 - **AND** selecting one inserts the path into the message
 
 #### Scenario: Skill catalog unavailable degrades gracefully

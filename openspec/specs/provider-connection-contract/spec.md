@@ -40,10 +40,9 @@ respective layers.
 alan SHALL store non-secret connection metadata separately from secret-bearing
 credentials and managed login state.
 
-V1 non-secret metadata lives in the active install channel's `connections.toml`
-with this logical shape. The stable channel stores it at
-`~/.alan/connections.toml`; the dev channel stores it at
-`~/.alan-dev/connections.toml`.
+V1 non-secret metadata lives in the Connection Service subtree of the active
+channel System Store as `connections.toml`, with this logical shape. Credentials
+and managed login state remain in the matching channel Host Store.
 
 ```toml
 version = 1
@@ -53,7 +52,7 @@ default_profile = "chatgpt-main"
 kind = "managed_oauth"
 provider_family = "chatgpt"
 label = "ChatGPT login"
-backend = "alan_home_auth_json"
+backend = "host_managed_auth"
 
 [profiles.chatgpt-main]
 provider = "chatgpt"
@@ -71,8 +70,8 @@ Rules:
 - `connections.toml` stores profile and credential metadata only.
 - Secret-bearing credentials live in a host-managed store outside `agent.toml`.
 - Managed ChatGPT login state remains outside `connections.toml`.
-- Existing ChatGPT managed login uses the managed auth store under the active
-  alan home.
+- Existing ChatGPT managed login uses the managed auth owner in the active
+  channel Host Store.
 - `secret_string` credentials use a host-managed secret store with file
   permissions equivalent to `0600` unless replaced by a stronger host backend
   such as keychain or keyring.
@@ -246,7 +245,7 @@ connection profile metadata or auth material into the dev channel.
 #### Scenario: User requests profile import
 - **WHEN** a future import command copies a stable profile into the dev channel
 - **THEN** the command identifies the source channel and target channel explicitly
-- **AND** it writes new dev-channel metadata and credential references under `~/.alan-dev`
+- **AND** it writes new metadata to the dev System Store and new credential references to the dev Host Store
 - **AND** it does not make the dev profile a live reference to stable credential storage
 
 #### Scenario: Managed auth is reused
@@ -257,20 +256,20 @@ connection profile metadata or auth material into the dev channel.
 
 ### Requirement: Provider and connection vocabulary is Process-shaped
 Alan SHALL distinguish provider family, provider descriptor, credential reference, connection
-profile, default profile, pin, resolved connection, and Process connection binding. A Process
+profile, default profile, resolved connection, and Process connection binding. A Process
 connection binding SHALL associate one Agent Process with one resolved provider/model/credential
 reference for its lifetime and SHALL contain no secret material.
 
 #### Scenario: An Agent Process resolves a connection
-- **WHEN** Alan spawns an Agent Process whose definition, workspace, or operator defaults select a
+- **WHEN** Alan spawns an Agent Process whose definition, launch request, or operator default selects a
   connection profile
 - **THEN** it resolves one concrete provider/model/credential reference for that Process
 - **AND** later default changes do not mutate the running Process binding
 
 ### Requirement: Connection management is direct and owner-scoped
 Alan SHALL retain direct `alan connection` commands for descriptor discovery, profile mutation,
-default and pin management, secret entry, login, and connection testing. The commands SHALL operate
-through the owning connection, credential, auth, AgentRoot, and provider components. Any future
+default selection, secret entry, login, and connection testing. The commands SHALL operate through
+the owning Connection Service metadata, Host credential/auth stores, and provider adapters. Any future
 file-server management surface requires its own accepted contract.
 
 #### Scenario: Operator lists connection profiles
@@ -297,3 +296,43 @@ profile rather than borrowing another channel's state.
 - **WHEN** a dev-channel Agent Process is spawned without a resolvable dev connection profile
 - **THEN** creation reports the missing connection
 - **AND** stable connection or credential state is not consumed implicitly
+
+### Requirement: Legacy connection metadata migrates once
+Alan SHALL migrate non-secret legacy connection metadata into the channel
+System Store, verify the service-readable result, and delete the legacy file.
+Credential bytes SHALL remain in the owning Host credential store and no
+compatibility reader SHALL remain.
+
+#### Scenario: Legacy profile is valid
+- **WHEN** upgrade finds a valid legacy profile and credential reference
+- **THEN** the metadata is imported and verified before the old file is deleted
+- **AND** secret bytes are never copied into System Store
+
+### Requirement: Child Agent Processes preserve the selected Connection profile
+Child Agent Process launch SHALL preserve the effective explicit Connection
+profile unless the child definition or launch request selects a different one.
+It MUST NOT silently reselect the Connection Service default.
+
+#### Scenario: Parent uses a non-default explicit profile
+- **GIVEN** a parent Agent Process uses an explicit profile that is not the service default
+- **WHEN** it launches a child without a Connection override
+- **THEN** child setup and runtime startup use the same explicit profile
+- **AND** absence of a service default does not make child startup fail
+
+#### Scenario: Child definition selects a different profile
+- **GIVEN** a child Agent definition selects a profile different from its parent's profile
+- **WHEN** the Agent Runtime Service launches the child
+- **THEN** it resolves the child-selected profile before constructing the child's LLM client
+- **AND** child setup and runtime startup use the same resolved provider settings
+
+### Requirement: Connection profile credential references remain resolvable
+Alan SHALL create or validate matching non-secret credential metadata whenever
+an operator assigns an explicit credential reference to a Connection profile.
+It MUST NOT persist a profile that references unknown or incompatible credential
+metadata.
+
+#### Scenario: Operator replaces a profile credential reference
+- **GIVEN** an existing secret-backed Connection profile
+- **WHEN** the operator edits it to use a new valid credential id
+- **THEN** matching credential metadata is registered before the profile is saved
+- **AND** setting the secret and testing the edited profile succeed

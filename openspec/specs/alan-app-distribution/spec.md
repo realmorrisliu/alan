@@ -153,18 +153,19 @@ while the dev channel SHALL be a local-only development install identity.
 - **THEN** the app bundle is `Alan.app`
 - **AND** the bundle identifier is `app.alanworks.macos`
 - **AND** the embedded command-line tool is exposed as `alan`
-- **AND** the channel uses `~/.alan` as its default alan home
+- **AND** the channel uses the `stable` System Store and Host Store roots
 
 #### Scenario: Dev channel identity is inspected
 - **WHEN** the dev macOS install channel is assembled or installed
 - **THEN** the app bundle is `Alan Dev.app`
 - **AND** the bundle identifier is `app.alanworks.macos.dev`
 - **AND** the embedded command-line tool is exposed as `alan-dev`
-- **AND** the channel uses `~/.alan-dev` as its default alan home
+- **AND** the channel uses the `dev` System Store and Host Store roots
 
 ### Requirement: Dev install does not overwrite stable install
 The dev install workflow SHALL install and uninstall the dev channel without
-modifying the stable app bundle, stable command-line links, or stable alan home.
+modifying the stable app bundle, stable command-line links, or stable System
+Store and Host Store roots.
 
 #### Scenario: Dev local install runs
 - **WHEN** a developer runs the dev local install workflow
@@ -172,14 +173,14 @@ modifying the stable app bundle, stable command-line links, or stable alan home.
 - **AND** the workflow installs or refreshes only the `alan-dev` link
 - **AND** it does not replace `Alan.app`
 - **AND** it does not replace `alan`
-- **AND** it does not write generated data under `~/.alan`
+- **AND** it does not write generated data to the stable System Store or Host Store
 
 #### Scenario: Dev local uninstall runs
 - **WHEN** a developer runs the dev local uninstall workflow
 - **THEN** the workflow removes `Alan Dev.app` when it is owned by the dev install
 - **AND** it removes the `alan-dev` link when it points at the dev app bundle
-- **AND** it leaves `Alan.app`, `alan`, and `~/.alan` untouched
-- **AND** it leaves `~/.alan-dev` intact unless a future explicit data-removal command is added
+- **AND** it leaves `Alan.app`, `alan`, and both stable stores untouched
+- **AND** it leaves the dev System Store and Host Store intact unless a future explicit data-removal command is added
 
 ### Requirement: Dev channel remains local-only in V1
 The first dev channel implementation SHALL NOT create a public distribution

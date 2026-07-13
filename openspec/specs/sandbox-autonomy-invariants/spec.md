@@ -29,7 +29,8 @@ be the sole guard for any red line.
 
 #### Scenario: Destructive find actions are reviewed
 - **WHEN** a builtin bash command runs `find` with a destructive action (`-delete`, `-exec`/`-execdir`, `-ok`/`-okdir`)
-- **THEN** it is escalated for review instead of auto-approved as a bare in-workspace write
+- **THEN** it is escalated for review instead of auto-approved as a bare write
+  within a writable Host Mount
 
 #### Scenario: Catastrophic root delete is denied outright
 - **WHEN** a builtin bash command is a recursive `rm` whose target is a filesystem or home root (`rm -rf /`, `rm -fr /`, `rm -rf /*`, `rm -rf ~`, `rm -rf $HOME`)
@@ -59,8 +60,10 @@ NOT be able to convert a sandbox-uncontainable operation into an executed one.
 - **THEN** it is routed always-human, because the reviewer is not a security boundary for code the sandbox cannot fully contain; only Seatbelt (confines network + protected writes) keeps such commands reviewer-eligible
 
 #### Scenario: Recognized benign bash still auto-runs
-- **WHEN** a builtin bash command is auto-approved (a recognized read/write like `touch`, `echo`, `ls` whose path operands the parser confined to non-protected workspace paths)
-- **THEN** it still runs without prompting even when the backend is not fully confining, because the path guard already contains it — the human gate applies only to escalated commands
+- **WHEN** a builtin bash command is auto-approved (a recognized read/write like `touch`, `echo`, `ls` whose path operands the parser confined to non-protected Host Mount paths)
+- **THEN** it still runs without prompting when its operands are confined to
+  non-protected Host Mount paths, because the path guard already contains it —
+  the human gate applies only to escalated commands
 
 #### Scenario: Reviewer timeout falls back to a human
 - **WHEN** the reviewer provider stalls beyond the configured request timeout
@@ -71,7 +74,7 @@ NOT be able to convert a sandbox-uncontainable operation into an executed one.
 The syntactic shape parser SHALL be dropped only for a backend that
 kernel-enforces protected-subpath writes (Seatbelt); such a backend enforces
 deterministic filesystem confinement at the kernel rather than via the
-workspace-path-guard command parser. A backend that confines the workspace but
+Host Mount path guard. A backend that confines writable Host Mount roots but
 cannot carve out protected subpaths (Landlock) SHALL keep the full shape parser
 so opaque writers cannot hide a protected write the kernel will not deny.
 Protected-subpath writes SHALL remain blocked on every backend.
@@ -81,22 +84,22 @@ Protected-subpath writes SHALL remain blocked on every backend.
 - **THEN** it is not rejected by the syntactic preflight or execution-path shape parser; the kernel sandbox confines it (protected subpaths included)
 
 #### Scenario: Opaque writers stay rejected under Landlock
-- **WHEN** Landlock is active (it cannot carve a protected subdir out of the writable workspace) and a command is an opaque writer the path check cannot inspect (`python -c 'open(".git/config","w")…'`, `python scripts/setup.py`)
+- **WHEN** Landlock is active (it cannot carve a protected subdir out of a writable Host Mount) and a command is an opaque writer the path check cannot inspect (`python -c 'open(".git/config","w")…'`, `python scripts/setup.py`)
 - **THEN** it is rejected by the shape parser, the same posture as the path-guard fallback, because the kernel cannot deny the protected write
 
 #### Scenario: Direct/nested protected-subpath tampering is blocked
 - **WHEN** a command writes to a protected subpath (`.git`, `.alan`, `.agents`) via an explicit path operand, directly or hidden inside a shell-wrapper inline script (`bash -lc 'echo x > .git/config'`)
 - **THEN** the write is blocked by the path-guard parser, which checks direct operands and recurses into shell-wrapper inline scripts
-- **AND** program-internal writes by purpose-built owners remain possible, including git porcelain writing `.git` and Agent memory workflows writing the active channel-scoped Memory Store
+- **AND** purpose-built owners such as git porcelain may still write their own protected trees, while Agent memory writes use Memory Store files rather than raw Host backing paths
 
-#### Scenario: Out-of-workspace reads stay contained under an OS sandbox
-- **WHEN** an auto-approved read-classified bash command references a path outside the workspace (`cat ~/.ssh/id_rsa`, `cat /etc/passwd`), under any backend including a wrapper form
+#### Scenario: Out-of-namespace Host reads stay contained under an OS sandbox
+- **WHEN** an auto-approved read-classified bash command references a Host path outside every explicit mount (`cat ~/.ssh/id_rsa`, `cat /etc/passwd`), under any backend including a wrapper form
 - **THEN** it is rejected by the path-guard parser's containment check — the OS sandbox confines writes and network but permits reads, so dropping the shape parser must NOT drop path containment; secrets cannot be read into tool output without approval
 
-#### Scenario: Channel-scoped Memory Store carve-outs are preserved under recursion
-- **WHEN** an OS-sandboxed command writes beneath `.alan/runtime/stable/memory/` or `.alan/runtime/dev/memory/`, directly or inside a wrapper
-- **THEN** the recursive protected check allows the write through the same narrow carve-out as the direct path check
-- **AND** unscoped `.alan/memory/`, unknown runtime channels, rollout, cache, shell-restore, policy, and other protected state remain blocked
+#### Scenario: Service-owned state is not a Tool carve-out
+- **WHEN** an OS-sandboxed Tool command targets a raw System Store or Host Store backing path
+- **THEN** the path guard rejects the write unless that exact path was separately authorized as a Host Mount
+- **AND** ordinary Memory Store writes continue through mounted files and descriptors rather than a hidden sandbox carve-out
 
 #### Scenario: Approved network intent is preserved
 - **WHEN** a command classified as a network capability is approved and executed

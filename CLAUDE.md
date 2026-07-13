@@ -8,8 +8,8 @@ language). This file is the short operational summary plus the rules that are ea
 ## Critical Workflow Rules
 
 - **OpenSpec owns all specs and design docs.** Change proposals, design docs, task lists, and spec deltas go in `openspec/changes/<change-id>/`; merged long-lived contracts live in `openspec/specs/`. Do NOT create spec files under `docs/superpowers/specs/`, `docs/spec/`, or `plans/` — this overrides any default workflow that writes design docs elsewhere. Completed changes are archived to `openspec/changes/archive/YYYY-MM-DD-<change-id>/`.
-- **macOS app testing targets the dev channel only**: `Alan Dev.app`, bundle `app.alanworks.macos.dev`, CLI `alan-dev`, state `~/.alan-dev` (`just install-dev`). Never launch, quit, or install over the user's stable `Alan.app` / `~/.alan` unless explicitly asked — it is their live work environment.
-- **After Rust changes**: run `just verify` (fmt + lint + test + mock smoke). `just verify-full` adds an E2E pass that needs real LLM config in `~/.alan`.
+- **macOS app testing targets the dev channel only**: `Alan Dev.app`, bundle `app.alanworks.macos.dev`, CLI `alan-dev`, and the dev System Store and Host Store (`just install-dev`). Never launch, quit, or install over the user's stable `Alan.app` or stable stores unless explicitly asked — they are the live work environment.
+- **After Rust changes**: run `just verify` (fmt + lint + test + mock smoke).
 - New/edited Rust tests follow `openspec/specs/rust-test-placement-contract/spec.md`: choose inline unit tests, extracted white-box test files, or crate-level integration tests deliberately.
 - Branch from `main`; conventional-style commit messages recommended (for example,
   `fix(agent-engine): preserve machine state when a turn fails`).
@@ -56,9 +56,9 @@ Dependency order, bottom-up:
 - `tui` — file-backed Ratatui renderer and input loop over AgentFS and `/proc`.
 - `alan` — the direct CLI host and linked TUI entry point.
 
-Tool governance is two-stage: `PolicyEngine` (`allow | escalate | deny`, policy from the AgentRoot chain or builtin profiles) then the `workspace_path_guard` execution guard (workspace containment, protects `.git`/`.alan`/`.agents`; not a strict OS sandbox). Escalations surface as recoverable `Yield` events — there is no session-wide approval cache.
+Tool governance is two-stage: `PolicyEngine` (`allow | escalate | deny`, policy from the explicit Agent Definition or builtin profiles) then the `host_mount_path_guard` execution guard (explicit Host Mount containment and protected-subpath checks; not a strict OS sandbox). Escalations surface as recoverable `Yield` events — there is no Process-wide approval cache.
 
-Skills are Markdown packages with YAML frontmatter, resolved from built-ins, `~/.agents/skills/`, agent-root `skills/` dirs, and workspace equivalents; contract in `openspec/specs/skill-system-contract/spec.md`.
+Skills are Markdown packages with YAML frontmatter, resolved from built-in packages and explicit Skill or Agent Definition descriptors; contract in `openspec/specs/skill-system-contract/spec.md`.
 
 ### macOS client (`clients/apple/alan-macos`)
 
@@ -71,10 +71,10 @@ UI work is governed by `openspec/specs/macos-shell-ui-ux-conformance/spec.md` (t
 
 ## Configuration Pointers
 
-- Agent config lives in an AgentRoot such as `~/.alan/agents/default/agent.toml` (or the path named
-  by `ALAN_CONFIG_PATH`). Stable and dev roots are host-private backing storage, not Alan OS path or
-  format contracts.
-- Provider/model setup is connection-profile driven (`~/.alan/connections.toml` and direct
-  `alan connection …` commands); secrets live in the owning host secret store, never in
-  `agent.toml`. Do not add inline `*_api_key` or `*_base_url` fields to user-facing examples.
+- Agent config comes from an explicit Agent Definition descriptor or the direct path named by
+  `ALAN_CONFIG_PATH`; Alan does not infer Host-directory definition overlays.
+- Provider/model setup is connection-profile driven through direct `alan connection …` commands.
+  Metadata belongs to the channel Connection Service subtree of the System Store; secrets live in
+  the owning Host Store, never in `agent.toml`. Do not add inline `*_api_key` or `*_base_url` fields
+  to user-facing examples.
 - Rust style: Edition 2024, rustfmt 100-char width, clippy thresholds in `clippy.toml`; `tracing` instead of `println!`; `anyhow` in apps, `thiserror` in libs.

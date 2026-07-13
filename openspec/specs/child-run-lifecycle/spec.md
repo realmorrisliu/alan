@@ -8,10 +8,10 @@ parent-initiated termination.
 ## Requirements
 ### Requirement: Child Run Registration
 Alan SHALL register each delegated child as a child Agent Process before its initial turn. The
-record SHALL contain parent and child Process paths or pids, workspace and namespace metadata,
-rollout/checkpoint path when available, launch metadata, creation time, and starting or running
-status. The record SHALL be a projection of `/proc` and `/agent` truth and SHALL identify execution
-only through those Process and durable-evidence owners.
+record SHALL contain parent and child Process paths or pids, Process Launch Context and namespace
+metadata, rollout/checkpoint path when available, launch metadata, creation time, and starting or
+running status. The record SHALL be a projection of `/proc` and `/agent` truth and SHALL identify
+execution only through those Process and durable-evidence owners.
 
 #### Scenario: Child registration precedes initial input
 - **WHEN** a parent Agent Process spawns a child Agent Executable

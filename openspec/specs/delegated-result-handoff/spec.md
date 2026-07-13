@@ -18,7 +18,7 @@ The system SHALL preserve completed delegated child output as full inline text o
 
 #### Scenario: Parent resolves an output reference
 - **WHEN** the parent runtime resolves a delegated `output_ref`
-- **THEN** it walks the namespace path like any other file read, with no dedicated artifact-read API and no reliance on raw child workspace paths
+- **THEN** it walks the namespace path like any other file read, with no dedicated artifact-read API and no reliance on raw child Host paths
 - **AND** a missing or retention-expired reference returns a structured error preserving the original preview and child-run metadata
 
 ### Requirement: Delegated Result Shape
