@@ -137,7 +137,7 @@ execution backend.
 does not execute by itself.
 
 **Memory Stores** — File trees that own personal, system-continuity, app, and
-workspace memory authority.
+mounted-domain memory authority.
 
 **Working Memory** — Process-local continuity material keyed by Process path.
 
@@ -216,6 +216,6 @@ Tool, policy, Skill, memory, compaction, and persistence loop in
 **Alan terminal UI (`alan-terminal-ui`)** — The linked Ratatui renderer and
 input loop in `crates/tui`, backed by AgentFS and `/proc` files.
 
-**Shell workspace core (`alan-shell-core`)** — Platform-neutral spaces, tabs,
+**Shell surface core (`alan-shell-core`)** — Platform-neutral spaces, tabs,
 panes, terminal activity, settings, and persistence domain model shared with
 Alan for macOS.
