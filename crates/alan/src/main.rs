@@ -1220,10 +1220,7 @@ async fn request_platform_host_stop(
     channel: alan_agent_engine::InstallChannel,
     paths: &alan_os_host::HostEndpointPaths,
 ) -> Result<alan_os_host::HostStatus> {
-    let attachment = alan_os_host::LocalAttachment::new(paths.clone())
-        .connect()
-        .await?;
-    let mut status = attachment.status;
+    let mut status = paths.read_status()?;
     let label = os_host_launch_label(channel);
     let result = std::process::Command::new("/bin/launchctl")
         .arg("remove")
