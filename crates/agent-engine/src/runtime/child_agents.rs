@@ -543,15 +543,16 @@ fn build_child_launch_context(
     }
 
     if let Some(root_dir) = launch_root_dir {
-        if launch_context
-            .namespace
-            .resolve("/agent-definition")
-            .is_err()
-            && let Some(parent_definition) = parent.descriptor(crate::AGENT_DEFINITION_DESCRIPTOR)
+        let source_path = parent
+            .namespace_path(root_dir)
+            .filter(|path| !parent.namespace.union_at(path).is_empty());
+        if source_path.as_deref() != Some("/agent-definition")
+            && let Some(source_path) = source_path
         {
+            launch_context.namespace.unmount("/agent-definition");
             launch_context
                 .namespace
-                .bind("/agent-definition", &parent_definition.path);
+                .bind("/agent-definition", &source_path);
         }
         launch_context.host_mounts.retain(|grant| {
             grant.namespace_path != "/agent-definition"
@@ -1812,11 +1813,36 @@ async fn spawn_child_namespace_runtime_environment(
         handles.route.clone(),
         handles.llm_connection.clone(),
     );
-    let environment = if let Some(factory) = mount_grant_applicator_factory {
+    let mut environment = if let Some(factory) = mount_grant_applicator_factory {
         environment.with_mount_grant_applicator_factory(factory, live_namespace)
     } else {
         environment
     };
+    if let Some(grant) = plan
+        .launch_context
+        .host_mounts
+        .iter()
+        .find(|grant| grant.namespace_path == "/agent-definition")
+    {
+        let applied = environment.apply_approved_mount_grant(&super::ApprovedMountGrant::new(
+            grant.namespace_path.clone(),
+            grant.host_path.clone(),
+            match grant.access {
+                alan_kernel::Access::ReadOnly => super::ApprovedMountGrantAccess::ReadOnly,
+                alan_kernel::Access::ReadWrite => super::ApprovedMountGrantAccess::ReadWrite,
+            },
+            "Agent Definition launch reference",
+        ));
+        if environment.mount_grant_applicator_factory().is_some() {
+            anyhow::ensure!(
+                applied.namespace_applied,
+                "failed to project child Agent Definition: {}",
+                applied
+                    .namespace_error
+                    .unwrap_or_else(|| "unknown projection error".to_string())
+            );
+        }
+    }
 
     Ok(ChildNamespaceRuntimeLaunch {
         pid,
@@ -2371,6 +2397,7 @@ mod tests {
     #[derive(Debug, Default)]
     struct RecordingMountGrantApplicatorFactory {
         created: Arc<Mutex<usize>>,
+        applied: Arc<Mutex<Vec<ApprovedMountGrant>>>,
     }
 
     impl RecordingMountGrantApplicatorFactory {
@@ -2379,6 +2406,13 @@ mod tests {
                 .created
                 .lock()
                 .expect("created count lock should not be poisoned")
+        }
+
+        fn applied_grants(&self) -> Vec<ApprovedMountGrant> {
+            self.applied
+                .lock()
+                .expect("applied grants lock should not be poisoned")
+                .clone()
         }
     }
 
@@ -2393,17 +2427,25 @@ mod tests {
                 .created
                 .lock()
                 .expect("created count lock should not be poisoned") += 1;
-            Arc::new(RecordingMountGrantApplicator { live_namespace })
+            Arc::new(RecordingMountGrantApplicator {
+                live_namespace,
+                applied: self.applied.clone(),
+            })
         }
     }
 
     #[derive(Debug)]
     struct RecordingMountGrantApplicator {
         live_namespace: alan_kernel::LiveNamespace,
+        applied: Arc<Mutex<Vec<ApprovedMountGrant>>>,
     }
 
     impl MountGrantApplicator for RecordingMountGrantApplicator {
         fn apply_mount_grant(&self, grant: &ApprovedMountGrant) -> anyhow::Result<KernelNamespace> {
+            self.applied
+                .lock()
+                .expect("applied grants lock should not be poisoned")
+                .push(grant.clone());
             let access = match grant.access {
                 ApprovedMountGrantAccess::ReadOnly => KernelAccess::ReadOnly,
                 ApprovedMountGrantAccess::ReadWrite => KernelAccess::ReadWrite,
@@ -3605,7 +3647,7 @@ Body
         let parent = make_parent_state(&temp, requests, response);
         let root_dir = temp.path().join("definition");
         let spec = launch_spec(root_dir);
-        let plan = build_child_namespace_assembly_plan(
+        let mut plan = build_child_namespace_assembly_plan(
             &parent,
             &spec,
             &parent.core_config,
@@ -3613,6 +3655,18 @@ Body
         )
         .await
         .unwrap();
+        plan.launch_context
+            .host_mounts
+            .retain(|grant| grant.namespace_path != "/agent-definition");
+        let package_child_definition = temp.path().join("package-child-definition");
+        plan.launch_context.host_mounts.push(
+            crate::HostMountGrant::new(
+                "/agent-definition",
+                package_child_definition.clone(),
+                KernelAccess::ReadOnly,
+            )
+            .unwrap(),
+        );
         let launch_procfs = KernelProcFs::new();
         let tool_runner =
             crate::tools::ToolProcessRunner::from_registry(&parent_test_tools(&parent.core_config));
@@ -3654,11 +3708,32 @@ Body
         .unwrap();
 
         assert_eq!(factory.created_count(), 1);
+        assert_eq!(
+            factory.applied_grants(),
+            [ApprovedMountGrant::new(
+                "/agent-definition",
+                package_child_definition,
+                ApprovedMountGrantAccess::ReadOnly,
+                "Agent Definition launch reference",
+            )]
+        );
         assert!(
             launch
                 .environment
                 .mount_grant_applicator_factory()
                 .is_some()
+        );
+        let definition_namespace = read_proc_path(
+            &launch_procfs,
+            vec![launch.pid.clone(), "namespace".to_string()],
+            Fid(95),
+        )
+        .await;
+        assert!(
+            definition_namespace
+                .lines()
+                .any(|line| line == "/agent-definition ro"),
+            "child Process must receive its target Agent Definition: {definition_namespace:?}"
         );
         let applied = launch
             .environment
@@ -4138,6 +4213,65 @@ model_reasoning_effort = "high"
                 .unwrap()
                 .path,
             "/agent-definition"
+        );
+    }
+
+    #[test]
+    fn child_launch_context_keeps_bootstrap_definition_until_descendant_target_is_projected() {
+        let root = TempDir::new().unwrap();
+        let parent_definition = root.path().join("parent-definition");
+        let package_root = root.path().join("package");
+        let child_definition = package_root.join("agents/reviewer");
+        std::fs::create_dir_all(&parent_definition).unwrap();
+        std::fs::create_dir_all(&child_definition).unwrap();
+
+        let mut namespace = KernelNamespace::new();
+        namespace.mount(
+            "/agent-definition",
+            memfs_transport(),
+            KernelAccess::ReadOnly,
+        );
+        namespace.mount("/mnt/package", memfs_transport(), KernelAccess::ReadOnly);
+        let parent = crate::ProcessLaunchContext::new(
+            namespace,
+            KernelCredentials::user("parent-agent"),
+            "/",
+        )
+        .unwrap()
+        .with_host_mount(
+            crate::HostMountGrant::new(
+                "/agent-definition",
+                parent_definition,
+                KernelAccess::ReadOnly,
+            )
+            .unwrap(),
+        )
+        .with_host_mount(
+            crate::HostMountGrant::new("/mnt/package", package_root, KernelAccess::ReadOnly)
+                .unwrap(),
+        )
+        .with_descriptor(
+            crate::AGENT_DEFINITION_DESCRIPTOR,
+            crate::ProcessDescriptor::new("/agent-definition").unwrap(),
+        );
+
+        let child = build_child_launch_context(
+            &parent,
+            &launch_spec(child_definition.clone()),
+            None,
+            Some(&child_definition),
+        )
+        .unwrap();
+
+        assert!(child.namespace.resolve("/agent-definition").is_ok());
+        assert_eq!(
+            child
+                .host_mounts
+                .iter()
+                .find(|grant| grant.namespace_path == "/agent-definition")
+                .unwrap()
+                .host_path,
+            child_definition
         );
     }
 

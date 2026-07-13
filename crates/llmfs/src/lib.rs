@@ -759,6 +759,19 @@ impl LlmFs {
         );
     }
 
+    /// Publish another name for an existing callable Connection.
+    pub fn register_connection_alias(&self, alias: &str, target: &str) -> Result<(), ErrorCode> {
+        let mut state = self.state.lock().unwrap();
+        let connection = state
+            .connections
+            .get(target)
+            .cloned()
+            .ok_or(ErrorCode::NotFound)?;
+        state.connections.insert(alias.to_string(), connection);
+        state.listing_version += 1;
+        Ok(())
+    }
+
     pub async fn unregister_connection(&self, name: &str) {
         let active = {
             let mut state = self.state.lock().unwrap();

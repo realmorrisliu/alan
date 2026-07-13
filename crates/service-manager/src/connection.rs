@@ -97,6 +97,7 @@ struct CallableRegistry {
     bootstrap: Option<(String, LlmClient)>,
     published_profiles: BTreeMap<String, ConnectionProfile>,
     published_fallbacks: BTreeSet<String>,
+    published_default: Option<String>,
 }
 
 /// Channel-scoped Connection metadata authority. Secret bytes never enter it.
@@ -210,6 +211,7 @@ impl ConnectionService {
             bootstrap: Some((bootstrap_name, bootstrap_client)),
             published_profiles: BTreeMap::new(),
             published_fallbacks: BTreeSet::new(),
+            published_default: None,
         });
         drop(callables);
         self.refresh_callables().await;
@@ -361,10 +363,12 @@ impl ConnectionService {
                     );
                     state.connections.default_profile = Some(profile_id);
                     persist = true;
+                    refresh = true;
                 }
                 ConnectionCommand::ClearDefault => {
                     state.connections.default_profile = None;
                     persist = true;
+                    refresh = true;
                 }
                 ConnectionCommand::RemoveProfile { profile_id } => {
                     ensure!(
@@ -523,8 +527,33 @@ impl ConnectionService {
             validation.insert(profile_id, "ready".to_string());
         }
 
+        let default_profile = connections
+            .default_profile
+            .as_ref()
+            .filter(|profile_id| {
+                registry
+                    .published_profiles
+                    .contains_key(profile_id.as_str())
+            })
+            .cloned();
+        if registry.published_default != default_profile {
+            if registry.published_fallbacks.remove("default")
+                || registry.published_default.take().is_some()
+            {
+                registry.llmfs.unregister_connection("default").await;
+            }
+            if let Some(profile_id) = default_profile {
+                registry
+                    .llmfs
+                    .register_connection_alias("default", &profile_id)
+                    .expect("published default profile is callable");
+                registry.published_default = Some(profile_id);
+            }
+        }
+
         if let Some((name, _)) = registry.bootstrap.as_ref()
             && !connections.profiles.contains_key(name)
+            && registry.published_default.is_none()
         {
             let (name, client) = registry.bootstrap.take().expect("bootstrap exists");
             registry
@@ -865,6 +894,26 @@ mod tests {
                 .await
                 .unwrap()
                 .contains(&"openai-main".to_string())
+        );
+        control
+            .write(
+                "/ctl",
+                br#"{"op":"set_default","profile_id":"openai-main"}"#,
+            )
+            .await
+            .unwrap();
+        {
+            let callables = service.callables.lock().await;
+            let registry = callables.as_ref().unwrap();
+            assert_eq!(registry.published_default.as_deref(), Some("openai-main"));
+            assert!(!registry.published_fallbacks.contains("default"));
+        }
+        assert!(
+            callable
+                .ls("/connections")
+                .await
+                .unwrap()
+                .contains(&"default".to_string())
         );
 
         control

@@ -101,6 +101,7 @@ struct Projection {
 
 struct Grant {
     public: HostMountGrantRecord,
+    owner: Pid,
     export: Arc<dyn HostMountExport>,
     projections: Vec<Projection>,
 }
@@ -221,6 +222,7 @@ impl HostMountService {
             record.id.clone(),
             Grant {
                 public: record.clone(),
+                owner: Pid(request.requesting_pid),
                 export,
                 projections: Vec::new(),
             },
@@ -244,6 +246,10 @@ impl HostMountService {
             .get_mut(grant_id)
             .with_context(|| format!("unknown Host Mount grant `{grant_id}`"))?;
         ensure!(grant.public.active, "Host Mount grant is revoked");
+        ensure!(
+            grant.owner == pid,
+            "Host Mount grant belongs to another Process"
+        );
         if grant
             .projections
             .iter()
@@ -251,7 +257,7 @@ impl HostMountService {
         {
             return Ok(());
         }
-        namespace.mount(
+        namespace.replace_mount(
             &grant.public.namespace_path,
             grant.export.file_tree(),
             grant.public.access.kernel(),
@@ -287,8 +293,20 @@ impl HostMountService {
         Ok(())
     }
 
-    fn enqueue(&self, mut request: HostMountRequest) -> Result<String> {
-        validate_request(&request)?;
+    fn enqueue(&self, request: HostMountRequest) -> Result<String> {
+        self.enqueue_inner(request, false)
+    }
+
+    fn enqueue_approved_definition(&self, request: HostMountRequest) -> Result<String> {
+        self.enqueue_inner(request, true)
+    }
+
+    fn enqueue_inner(
+        &self,
+        mut request: HostMountRequest,
+        allow_agent_definition: bool,
+    ) -> Result<String> {
+        validate_request(&request, allow_agent_definition)?;
         let mut state = self.state.lock().unwrap();
         if request.id.is_empty() {
             state.next_id += 1;
@@ -469,7 +487,7 @@ impl MountGrantApplicator for HostMountApplicator {
     fn apply_mount_grant(&self, grant: &ApprovedMountGrant) -> Result<Namespace> {
         self.service
             .register_process(self.pid, self.live_namespace.clone());
-        let id = self.service.enqueue(HostMountRequest {
+        let id = self.service.enqueue_approved_definition(HostMountRequest {
             id: String::new(),
             label: grant.reason.clone(),
             namespace_path: grant.namespace_path.clone(),
@@ -487,13 +505,14 @@ impl MountGrantApplicator for HostMountApplicator {
     }
 }
 
-fn validate_request(request: &HostMountRequest) -> Result<()> {
+fn validate_request(request: &HostMountRequest, allow_agent_definition: bool) -> Result<()> {
     ensure!(
         !request.label.trim().is_empty(),
         "Host Mount label is empty"
     );
     ensure!(
-        request.namespace_path.starts_with("/mnt/")
+        (request.namespace_path.starts_with("/mnt/")
+            || (allow_agent_definition && request.namespace_path == "/agent-definition"))
             && !request
                 .namespace_path
                 .split('/')
@@ -676,7 +695,44 @@ mod tests {
                 .any(|(path, _)| path == "/mnt/data")
         );
         assert!(!child.describe().iter().any(|(path, _)| path == "/mnt/data"));
-        assert!(service.project("unknown", 2).is_err());
+        assert!(service.project(&id, 2).is_err());
+    }
+
+    #[test]
+    fn approved_agent_definition_uses_the_internal_projection_path_only() {
+        let host = tempfile::tempdir().unwrap();
+        let service = service();
+        let namespace = LiveNamespace::new(Namespace::new());
+        service.register_process(Pid(3), namespace.clone());
+        assert!(
+            service
+                .enqueue(HostMountRequest {
+                    id: "public-definition".to_string(),
+                    label: "definition".to_string(),
+                    namespace_path: "/agent-definition".to_string(),
+                    access: HostMountAccess::ReadOnly,
+                    reason: "public request".to_string(),
+                    requesting_pid: 3,
+                })
+                .is_err()
+        );
+
+        let factory = HostMountApplicatorFactory::new(service);
+        let applicator = factory.create(Pid(3), namespace.clone(), &[]);
+        applicator
+            .apply_mount_grant(&ApprovedMountGrant::new(
+                "/agent-definition",
+                host.path().to_path_buf(),
+                ApprovedMountGrantAccess::ReadOnly,
+                "Agent Definition launch reference",
+            ))
+            .unwrap();
+        assert!(
+            namespace
+                .describe()
+                .iter()
+                .any(|(path, access)| path == "/agent-definition" && *access == Access::ReadOnly)
+        );
     }
 
     #[test]
