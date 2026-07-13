@@ -15,6 +15,7 @@ Use these names consistently in code, specs, docs, UI copy, and reviews.
 | Service Manager | The system Process that starts and supervises services and boot units. |
 | File-Server Service | A long-running Process that exports a mountable file tree. |
 | Service Handle Registry / `/srv` | The rendezvous tree for mountable service handles. |
+| Package Service | The File-Server Service that owns installed package content, catalog state, lifecycle, and projections from its System Store subtree. |
 | Agent Runtime Service | The internal file-server service that executes Agent Processes and serves AgentFS at `/agent`. |
 | Process | Bounded execution with PID, parent, descriptors, credentials, lifecycle, streams, status, and exit state. |
 | Agent Process | An ordinary Process recognized by its AgentFS file layout. `/proc/<pid>` is lifecycle truth; `/agent/<pid>` is its agent view. |

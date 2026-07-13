@@ -35,6 +35,11 @@ _Avoid_: Launch profile, Service script
 **File-Server Service** — A long-running Process that exports a tree other
 Processes can mount or bind into their namespace.
 
+**Package Service** — The File-Server Service that owns installed package
+content, catalog state, lifecycle, and namespace projections. It persists only
+through its channel System Store subtree and never discovers Host directories
+implicitly.
+
 **Service Handle Registry (`/srv`)** — The rendezvous tree where a running file
 server posts a mountable handle. Service state belongs in the service's own
 tree, not in `/srv`.
