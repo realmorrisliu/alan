@@ -118,7 +118,10 @@ private func testDevChannelLocalRowsUseDevIdentity() throws {
         "dev settings must show the Alan Dev bundle identifier"
     )
     try expect(localText.contains("alan-dev"), "dev settings must show the alan-dev CLI tool")
-    try expect(localText.contains("~/.alan-dev"), "dev settings must show the dev alan home")
+    try expect(
+        localText.contains("~/Library/Application Support/Alan/System Store/dev"),
+        "dev settings must show the channel System Store"
+    )
     try expect(
         localText.contains("alan-dev-shell-control"),
         "dev settings must show the dev shell-control namespace"
@@ -937,7 +940,7 @@ private func testNavigationGroupsPlaceSystemRows() throws {
         "System Updates must not show dev/update explanation as always-visible copy"
     )
     try expect(
-        rowsByID["dataRoot"]?.title == "Alan home"
+        rowsByID["dataRoot"]?.title == "Alan OS data"
             && rowsByID["applicationSupport"]?.title == "Shell state"
             && rowsByID["shellControl"]?.title == "Control namespace",
         "System path rows must use control-panel labels"
@@ -1422,7 +1425,7 @@ private struct PortableLocalSummary: Encodable {
     let cliToolName: String
     let updateSummary: String
     let updateDetail: String
-    let alanHomeDisplayPath: String
+    let systemStoreDisplayPath: String
     let applicationSupportDisplayPath: String
     let shellControlNamespace: String
 
@@ -1432,7 +1435,7 @@ private struct PortableLocalSummary: Encodable {
         cliToolName = local.cliToolName
         updateSummary = local.updateSummary
         updateDetail = local.updateDetail
-        alanHomeDisplayPath = local.alanHomeDisplayPath
+        systemStoreDisplayPath = local.systemStoreDisplayPath
         applicationSupportDisplayPath = local.applicationSupportDisplayPath
         shellControlNamespace = local.shellControlNamespace
     }
@@ -1443,7 +1446,7 @@ private struct PortableLocalSummary: Encodable {
         case cliToolName = "cli_tool_name"
         case updateSummary = "update_summary"
         case updateDetail = "update_detail"
-        case alanHomeDisplayPath = "alan_home_display_path"
+        case systemStoreDisplayPath = "system_store_display_path"
         case applicationSupportDisplayPath = "application_support_display_path"
         case shellControlNamespace = "shell_control_namespace"
     }

@@ -39,7 +39,7 @@ executed_scenarios_file="$artifact_root/.executed_scenarios.txt"
 
 fixtures=(
     "docs/harness/scenarios/coding_steward/delegated_launch_contract.json"
-    "docs/harness/scenarios/coding_steward/workspace_scope_binding.json"
+    "docs/harness/scenarios/coding_steward/process_mount_binding.json"
     "docs/harness/scenarios/coding_steward/handle_handoff_profile.json"
     "docs/harness/scenarios/coding_steward/bounded_result_integration.json"
     "docs/harness/scenarios/coding_steward/delegated_fallback_boundary.json"

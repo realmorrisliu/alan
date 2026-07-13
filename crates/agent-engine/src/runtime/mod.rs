@@ -39,9 +39,9 @@ pub use child_runs::{
     ChildRunTerminationRequest,
 };
 pub use engine::{
-    AgentConfig, AgentMachineDurabilityState, RuntimeController, RuntimeHandle,
+    AgentConfig, AgentMachineDurabilityState, AgentProcessConfig, RuntimeController, RuntimeHandle,
     RuntimeNamespaceLaunch, RuntimeNamespaceSurface, RuntimeStartupMetadata,
-    WorkspaceRuntimeConfig, effective_core_config_for_runtime, spawn, spawn_with_llm_client,
+    effective_core_config_for_runtime, spawn, spawn_with_llm_client,
     spawn_with_llm_client_and_namespace_surface, spawn_with_llm_client_and_tools,
     spawn_with_llm_client_and_tools_and_namespace_surface, spawn_with_namespace_surface,
 };
@@ -92,6 +92,12 @@ pub struct RuntimeConfig {
     pub durability_required: bool,
     /// Optional host-selected ChatGPT auth storage path shared with provider auth flows.
     pub chatgpt_auth_storage_path: Option<std::path::PathBuf>,
+    /// Durable service backing inherited by child Agent Processes.
+    pub store_bindings: Option<crate::AgentRuntimeStoreBindings>,
+    /// Memory Service backing inherited only with an explicit Memory handle.
+    pub memory_store_backing: Option<std::path::PathBuf>,
+    /// Connection Service and Host credential backing inherited by child Agent Processes.
+    pub connection_store: Option<crate::ConnectionStoreBindings>,
 }
 
 impl Default for RuntimeConfig {
@@ -119,6 +125,9 @@ impl Default for RuntimeConfig {
             partial_stream_recovery_mode: crate::config::PartialStreamRecoveryMode::ContinueOnce,
             durability_required: false,
             chatgpt_auth_storage_path: None,
+            store_bindings: None,
+            memory_store_backing: None,
+            connection_store: None,
         }
     }
 }
@@ -145,6 +154,9 @@ impl From<&crate::config::Config> for RuntimeConfig {
             partial_stream_recovery_mode: config.partial_stream_recovery_mode,
             durability_required: config.durability.required,
             chatgpt_auth_storage_path: None,
+            store_bindings: None,
+            memory_store_backing: None,
+            connection_store: None,
         }
     }
 }

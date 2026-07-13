@@ -475,7 +475,7 @@ Body
             package_dirs: Vec::new(),
             packages: vec![CapabilityPackage {
                 id: package_id.to_string(),
-                scope: SkillScope::Repo,
+                scope: SkillScope::Descriptor,
                 root_dir: Some(canonical_root),
                 exports: CapabilityPackageExports {
                     child_agents,
@@ -499,14 +499,14 @@ Body
 
         let registry = SkillsRegistry::load_package_dirs(&[ScopedPackageDir {
             path: repo_skills,
-            scope: SkillScope::Repo,
+            scope: SkillScope::Descriptor,
         }])
         .unwrap();
 
         assert!(registry.has(&"repo-skill".to_string()));
         assert_eq!(
             registry.get(&"repo-skill".to_string()).unwrap().scope,
-            SkillScope::Repo
+            SkillScope::Descriptor
         );
     }
 
@@ -514,32 +514,32 @@ Body
     fn load_capability_view_prefers_later_entries_for_same_skill_id() {
         let temp = TempDir::new().unwrap();
         let global_dir = temp.path().join("global");
-        let workspace_dir = temp.path().join("workspace");
+        let package_dir = temp.path().join("packages");
 
         create_test_skill(&global_dir, "shared-skill", "Shared Skill", "From global");
         create_test_skill(
-            &workspace_dir,
+            &package_dir,
             "shared-skill",
             "Shared Skill",
-            "From workspace",
+            "From descriptor",
         );
 
         let capability_view = ResolvedCapabilityView::from_package_dirs(vec![
             ScopedPackageDir {
                 path: global_dir,
-                scope: SkillScope::User,
+                scope: SkillScope::Installed,
             },
             ScopedPackageDir {
-                path: workspace_dir,
-                scope: SkillScope::Repo,
+                path: package_dir,
+                scope: SkillScope::Descriptor,
             },
         ]);
 
         let registry = SkillsRegistry::load_capability_view(&capability_view, &[]).unwrap();
         let skill = registry.get(&"shared-skill".to_string()).unwrap();
 
-        assert_eq!(skill.description, "From workspace");
-        assert_eq!(skill.scope, SkillScope::Repo);
+        assert_eq!(skill.description, "From descriptor");
+        assert_eq!(skill.scope, SkillScope::Descriptor);
     }
 
     #[test]
@@ -569,26 +569,6 @@ Body
         assert!(!plan.enabled);
         assert!(registry.get(&"repo-coding".to_string()).is_some());
         assert!(registry.get(&"alan-shell-control".to_string()).is_some());
-        assert!(registry.get(&"workspace-inspect".to_string()).is_some());
-        assert!(registry.get(&"workspace-manager".to_string()).is_some());
-    }
-
-    #[test]
-    fn load_capability_view_requires_exact_override_skill_ids() {
-        let capability_view = ResolvedCapabilityView::from_package_dirs(Vec::new());
-        let registry = SkillsRegistry::load_capability_view(
-            &capability_view,
-            &[SkillOverride {
-                skill_id: "workspace_manager".to_string(),
-                enabled: Some(true),
-                allow_implicit_invocation: Some(false),
-            }],
-        )
-        .unwrap();
-        let workspace_manager = registry.get(&"workspace-manager".to_string()).unwrap();
-
-        assert!(workspace_manager.enabled);
-        assert!(workspace_manager.allow_implicit_invocation);
     }
 
     #[test]
@@ -617,7 +597,7 @@ Body
 
         let registry = SkillsRegistry::load_package_dirs(&[ScopedPackageDir {
             path: repo_skills,
-            scope: SkillScope::Repo,
+            scope: SkillScope::Descriptor,
         }])
         .unwrap();
 
@@ -638,13 +618,13 @@ Body
 
         let registry = SkillsRegistry::load_package_dirs(&[ScopedPackageDir {
             path: repo_skills,
-            scope: SkillScope::Repo,
+            scope: SkillScope::Descriptor,
         }])
         .unwrap();
         let ids: Vec<_> = registry
             .list_sorted()
             .into_iter()
-            .filter(|skill| skill.scope == SkillScope::Repo)
+            .filter(|skill| skill.scope == SkillScope::Descriptor)
             .map(|skill| skill.id.clone())
             .collect();
 
@@ -668,7 +648,7 @@ runtime:
 
         let registry = SkillsRegistry::load_package_dirs(&[ScopedPackageDir {
             path: repo_skills,
-            scope: SkillScope::Repo,
+            scope: SkillScope::Descriptor,
         }])
         .unwrap();
         let skill = registry.get(&"test-skill".to_string()).unwrap();
@@ -706,7 +686,7 @@ runtime:
 
         let registry = SkillsRegistry::load_package_dirs(&[ScopedPackageDir {
             path: repo_skills,
-            scope: SkillScope::Repo,
+            scope: SkillScope::Descriptor,
         }])
         .unwrap();
         let skill = registry.get(&"test-skill".to_string()).unwrap();
@@ -754,7 +734,7 @@ runtime:
 
         let registry = SkillsRegistry::load_package_dirs(&[ScopedPackageDir {
             path: repo_skills,
-            scope: SkillScope::Repo,
+            scope: SkillScope::Descriptor,
         }])
         .unwrap();
         let capabilities = registry
@@ -802,7 +782,7 @@ runtime:
 
         let registry = SkillsRegistry::load_package_dirs(&[ScopedPackageDir {
             path: repo_skills,
-            scope: SkillScope::Repo,
+            scope: SkillScope::Descriptor,
         }])
         .unwrap();
 
@@ -838,7 +818,7 @@ dependencies:
 
         let registry = SkillsRegistry::load_package_dirs(&[ScopedPackageDir {
             path: repo_skills,
-            scope: SkillScope::Repo,
+            scope: SkillScope::Descriptor,
         }])
         .unwrap();
         let skill = registry.get(&"test-skill".to_string()).unwrap();
@@ -920,7 +900,7 @@ interface:
 
         let registry = SkillsRegistry::load_package_dirs(&[ScopedPackageDir {
             path: repo_skills,
-            scope: SkillScope::Repo,
+            scope: SkillScope::Descriptor,
         }])
         .unwrap();
 
@@ -955,7 +935,7 @@ interface:
 
         let registry = SkillsRegistry::load_package_dirs(&[ScopedPackageDir {
             path: repo_skills,
-            scope: SkillScope::Repo,
+            scope: SkillScope::Descriptor,
         }])
         .unwrap();
         let expected_path = std::fs::canonicalize(compatibility_path).unwrap();
@@ -971,7 +951,7 @@ interface:
 
         let registry = SkillsRegistry::load_package_dirs(&[ScopedPackageDir {
             path: repo_skills.clone(),
-            scope: SkillScope::Repo,
+            scope: SkillScope::Descriptor,
         }])
         .unwrap();
         let expected_agents_dir = std::fs::canonicalize(repo_skills.join("test-skill"))
@@ -1088,32 +1068,6 @@ interface:
     }
 
     #[test]
-    fn load_capability_view_loads_builtin_workspace_inspect_as_delegated_skill() {
-        let capability_view = ResolvedCapabilityView::from_package_dirs(Vec::new());
-        let registry = SkillsRegistry::load_capability_view(&capability_view, &[]).unwrap();
-        let skill = registry.get(&"workspace-inspect".to_string()).unwrap();
-
-        assert_eq!(
-            skill.package_id.as_deref(),
-            Some("builtin:alan-workspace-inspect")
-        );
-        assert!(skill.enabled);
-        assert!(skill.allow_implicit_invocation);
-        assert_eq!(skill.display_name(), "Workspace Inspect");
-        assert_eq!(
-            skill.effective_short_description(),
-            Some("Launch a read-only workspace reader")
-        );
-        assert_eq!(
-            skill.execution,
-            ResolvedSkillExecution::Delegate {
-                target: "workspace-reader".to_string(),
-                source: SkillExecutionResolutionSource::ExplicitMetadata,
-            }
-        );
-    }
-
-    #[test]
     fn load_capability_view_invalid_sidecar_is_non_fatal() {
         let temp = TempDir::new().unwrap();
         let repo_skills = temp.path().join("skills");
@@ -1126,7 +1080,7 @@ interface:
 
         let registry = SkillsRegistry::load_package_dirs(&[ScopedPackageDir {
             path: repo_skills,
-            scope: SkillScope::Repo,
+            scope: SkillScope::Descriptor,
         }])
         .unwrap();
         let skill = registry.get(&"test-skill".to_string()).unwrap();
@@ -1157,7 +1111,7 @@ interface:
 
         let registry = SkillsRegistry::load_package_dirs(&[ScopedPackageDir {
             path: repo_skills,
-            scope: SkillScope::Repo,
+            scope: SkillScope::Descriptor,
         }])
         .unwrap();
         let skill = registry.get(&"test-skill".to_string()).unwrap();

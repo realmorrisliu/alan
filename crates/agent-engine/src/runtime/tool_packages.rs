@@ -2,7 +2,7 @@ use alan_agent_protocol::ToolCapability;
 use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 
-use crate::tools::{Tool, ToolLocality};
+use crate::tools::Tool;
 
 const TOOL_MANIFEST_VERSION: u16 = 1;
 
@@ -18,16 +18,8 @@ pub(crate) struct ToolPackageManifest {
     /// Dynamic Tools classify concrete arguments inside their execution adapter.
     #[serde(default)]
     pub capability_is_argument_dependent: bool,
-    pub locality: ToolPackageLocality,
     pub timeout_secs: usize,
     pub execution: ToolExecutionHints,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum ToolPackageLocality {
-    Global,
-    WorkspaceLocal,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -38,10 +30,6 @@ pub(crate) struct ToolExecutionHints {
 }
 
 impl ToolPackageManifest {
-    pub(crate) fn is_workspace_local(&self) -> bool {
-        self.locality == ToolPackageLocality::WorkspaceLocal
-    }
-
     pub(crate) fn model_definition(&self) -> alan_llm::ToolDefinition {
         alan_llm::ToolDefinition {
             name: self.name.clone(),
@@ -58,10 +46,6 @@ impl ToolPackageManifest {
             parameters: tool.parameters_schema(),
             capability: tool.capability(&serde_json::Value::Null),
             capability_is_argument_dependent: tool.capability_is_argument_dependent(),
-            locality: match tool.locality() {
-                ToolLocality::Global => ToolPackageLocality::Global,
-                ToolLocality::WorkspaceLocal => ToolPackageLocality::WorkspaceLocal,
-            },
             timeout_secs,
             execution: ToolExecutionHints {
                 arguments: "json_first_arg".to_string(),

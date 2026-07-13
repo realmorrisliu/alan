@@ -54,7 +54,7 @@ crates/
 ├── agent-engine/       # Agent Execution Engine
 ├── tools/              # builtin Tool implementations
 ├── tui/                # file-backed Rust terminal UI
-├── shell-core/         # platform-neutral workspace model
+├── shell-core/         # platform-neutral shell surface model
 ├── shell-core-ffi/     # C ABI for shell-core
 └── alan/               # CLI host and linked TUI binary
 
@@ -95,9 +95,8 @@ Running `alan` without a subcommand starts the linked file-backed terminal UI.
 The current direct command families are:
 
 ```text
+alan host ...
 alan connection ...
-alan init ...
-alan workspace ...
 alan skills ...
 alan shell ...
 ```
@@ -105,9 +104,9 @@ alan shell ...
 Examples:
 
 ```bash
-alan init --path /path/to/workspace
-alan workspace list
-alan workspace info my-workspace
+alan host legacy-state inspect
+alan host legacy-state cleanup --source-root /path/to/former/project
+alan host legacy-state import skill /path/to/skill --name my-skill
 
 alan connection list
 alan connection add chatgpt --profile chatgpt-main
@@ -115,47 +114,41 @@ alan connection login chatgpt-main browser
 alan connection default set chatgpt-main
 alan connection test chatgpt-main
 
-alan skills list --workspace /path/to/workspace
+alan skills validate /path/to/my-skill
 alan shell state
 alan shell pane list
 ```
 
+Host files do not enter Alan OS because `alan` was launched from their
+directory. Authorize a Host Mount explicitly, then use its Alan OS path from
+Alan Shell. The retired `alan init`, `alan workspace`, and boot-time `--agent`
+surfaces have no compatibility aliases.
+
 ## Configuration and state
 
-Connection metadata and secrets are separate:
+Durable state is separated by owner and install channel:
 
 ```text
-~/.alan/connections.toml       # stable connection profiles
-~/.alan/credentials/           # stable secret references/material
-~/.alan/auth.json              # managed ChatGPT auth state
-~/.alan-dev/...                # isolated dev-channel equivalents
+~/Library/Application Support/Alan/System Store/<channel>/
+├── services/agent-runtime/    # rollout, checkpoint, cache, tmp, metadata
+├── services/connections/      # non-secret connection metadata
+├── services/memory/           # Memory Store backing
+└── services/packages/         # package-owned state and explicit imports
+
+~/Library/Application Support/Alan/Host Store/<channel>/
+├── credentials/               # Host-owned secret material
+└── auth.json                  # Host-managed provider auth
 ```
 
-These are host-private backing roots for the current implementation, not stable
-Alan OS namespace paths or public file-format contracts. Alan OS exposes its
-logical file namespace; changing how hosts persist that namespace is a separate
-bootstrap and persistence design.
+These are Host-private backing roots, never Process identity or implicit
+mounts. Agent Definitions and Skills enter a Process only through descriptors
+or installed Alan OS references. Memory Stores use explicit descriptors such
+as `/memory`; raw backing paths never enter prompts or Agent-visible files.
 
-Agent definitions resolve from:
-
-```text
-~/.alan/agents/default/
-~/.alan/agents/<name>/
-<workspace>/.alan/agents/default/
-<workspace>/.alan/agents/<name>/
-```
-
-Generated workspace state is channel-scoped:
-
-```text
-<workspace>/.alan/runtime/<channel>/
-├── rollouts/
-├── memory/
-├── cache/
-├── shell-restore/
-├── metadata/
-└── tmp/
-```
+On upgrade, recognized generated legacy state is removed and connection state
+is migrated, verified, and only then deleted. Possibly authored Agent, persona,
+policy, Skill, and Memory trees are reported but remain untouched until an
+explicit `alan host legacy-state import` succeeds.
 
 `ALAN_CONFIG_PATH` may point directly to an agent configuration file. New
 user-facing configuration selects a connection with `connection_profile`; it

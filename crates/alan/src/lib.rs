@@ -5,7 +5,7 @@
 pub mod cli;
 pub mod host_mounts;
 pub mod install_channel;
-pub mod registry;
-mod skill_catalog;
+pub mod legacy_state;
+pub mod system_store;
 
-pub use registry::{WorkspaceEntry, WorkspaceRegistry, generate_workspace_id};
+pub use system_store::{AgentRuntimeStorePaths, HostStorePaths, SystemStorePaths};

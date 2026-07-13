@@ -1,4 +1,3 @@
-use crate::agent_root::{AgentRootKind, AgentRootPaths};
 use crate::skills::loader;
 use crate::skills::types::{
     CapabilityChildAgentExport, CapabilityPackage, CapabilityPackageExports,
@@ -153,11 +152,10 @@ fn child_agent_exports(package_id: &str, root_dir: &Path) -> Vec<CapabilityChild
 }
 
 fn looks_like_child_agent_root(root_dir: &Path) -> bool {
-    let root = AgentRootPaths::new(AgentRootKind::LaunchRoot, root_dir.to_path_buf());
-    root.config_path.is_file()
-        || root.persona_dir.is_dir()
-        || root.skills_dir.is_dir()
-        || root.policy_path.is_file()
+    root_dir.join("agent.toml").is_file()
+        || root_dir.join("persona").is_dir()
+        || root_dir.join("skills").is_dir()
+        || root_dir.join("policy.yaml").is_file()
 }
 
 fn existing_dir(path: PathBuf) -> Option<PathBuf> {
@@ -184,8 +182,6 @@ mod tests {
         assert!(package_ids.contains(&"builtin:alan-shell-control"));
         assert!(package_ids.contains(&"builtin:alan-skill-creator"));
         assert!(package_ids.contains(&"builtin:alan-swebench"));
-        assert!(package_ids.contains(&"builtin:alan-workspace-inspect"));
-        assert!(package_ids.contains(&"builtin:alan-workspace-manager"));
     }
 
     #[test]
@@ -387,33 +383,6 @@ mod tests {
     }
 
     #[test]
-    fn builtin_workspace_inspect_package_exposes_workspace_reader_target() {
-        let view = ResolvedCapabilityView::from_package_dirs(Vec::new());
-        let package = view
-            .packages
-            .iter()
-            .find(|package| package.id == "builtin:alan-workspace-inspect")
-            .unwrap();
-
-        let root_dir = package.root_dir.as_ref().unwrap();
-        assert!(root_dir.join("SKILL.md").is_file());
-        assert!(root_dir.join("skill.yaml").is_file());
-        assert!(
-            root_dir
-                .join("agents/workspace-reader/agent.toml")
-                .is_file()
-        );
-        assert_eq!(
-            package.exports.child_agents[0].handle,
-            alan_agent_protocol::SpawnTarget::PackageChildAgent {
-                package_id: "builtin:alan-workspace-inspect".to_string(),
-                export_name: "workspace-reader".to_string(),
-            }
-        );
-        assert_eq!(package.exports.child_agents[0].name, "workspace-reader");
-    }
-
-    #[test]
     fn resolved_capability_view_discovers_single_skill_packages_from_overlay_dirs() {
         let temp = TempDir::new().unwrap();
         let skills_dir = temp.path().join("skills");
@@ -433,7 +402,7 @@ Body
 
         let view = ResolvedCapabilityView::from_package_dirs(vec![ScopedPackageDir {
             path: skills_dir,
-            scope: SkillScope::Repo,
+            scope: SkillScope::Descriptor,
         }]);
 
         assert!(
@@ -471,7 +440,7 @@ Body
 
         let view = ResolvedCapabilityView::from_package_dirs(vec![ScopedPackageDir {
             path: skills_dir,
-            scope: SkillScope::Repo,
+            scope: SkillScope::Descriptor,
         }]);
         let package = view
             .packages
@@ -556,7 +525,7 @@ Body
 
         let view = ResolvedCapabilityView::from_package_dirs(vec![ScopedPackageDir {
             path: skills_dir,
-            scope: SkillScope::Repo,
+            scope: SkillScope::Descriptor,
         }]);
         let package_ids: Vec<_> = view
             .packages
@@ -582,7 +551,7 @@ Body
 
         let view = ResolvedCapabilityView::from_package_dirs(vec![ScopedPackageDir {
             path: skills_dir.clone(),
-            scope: SkillScope::Repo,
+            scope: SkillScope::Descriptor,
         }]);
 
         let skill_dir = skills_dir.join("new-skill");
@@ -656,11 +625,11 @@ Body
         let view = ResolvedCapabilityView::from_package_dirs(vec![
             ScopedPackageDir {
                 path: user_skills_dir,
-                scope: SkillScope::User,
+                scope: SkillScope::Installed,
             },
             ScopedPackageDir {
                 path: repo_skills_dir,
-                scope: SkillScope::Repo,
+                scope: SkillScope::Descriptor,
             },
         ]);
 
@@ -710,7 +679,7 @@ Body
 
         let view = ResolvedCapabilityView::from_package_dirs(vec![ScopedPackageDir {
             path: skills_dir,
-            scope: SkillScope::Repo,
+            scope: SkillScope::Descriptor,
         }]);
         let package = view.package("skill:test-skill").unwrap();
 
@@ -756,7 +725,7 @@ Body
 
         let view = ResolvedCapabilityView::from_package_dirs(vec![ScopedPackageDir {
             path: skills_dir,
-            scope: SkillScope::Repo,
+            scope: SkillScope::Descriptor,
         }]);
         let package = view.package("skill:test-skill").unwrap();
 
@@ -807,11 +776,11 @@ Body
         let view = ResolvedCapabilityView::from_package_dirs(vec![
             ScopedPackageDir {
                 path: user_skills_dir,
-                scope: SkillScope::User,
+                scope: SkillScope::Installed,
             },
             ScopedPackageDir {
                 path: repo_skills_dir,
-                scope: SkillScope::Repo,
+                scope: SkillScope::Descriptor,
             },
         ]);
 
@@ -821,8 +790,8 @@ Body
             .filter(|package| package.id == "skill:repo-review")
             .collect();
         assert_eq!(packages.len(), 2);
-        assert_eq!(packages[0].scope, SkillScope::User);
-        assert_eq!(packages[1].scope, SkillScope::Repo);
+        assert_eq!(packages[0].scope, SkillScope::Installed);
+        assert_eq!(packages[1].scope, SkillScope::Descriptor);
         assert_eq!(
             packages[0]
                 .root_dir
@@ -865,7 +834,7 @@ Body
 
         let view = ResolvedCapabilityView::from_package_dirs(vec![ScopedPackageDir {
             path: skills_dir,
-            scope: SkillScope::Repo,
+            scope: SkillScope::Descriptor,
         }]);
         let package = view.package("skill:test-skill").unwrap();
 

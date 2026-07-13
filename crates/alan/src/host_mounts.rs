@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use alan_agent_engine::{
+    HostMountGrant,
     runtime::{
         ApprovedMountGrant, ApprovedMountGrantAccess, MountGrantApplicator,
         MountGrantApplicatorFactory,
@@ -20,33 +21,9 @@ use alan_hostfs::{HostDirAccess, HostDirFs};
 use alan_kernel::{Access, LiveNamespace, Namespace};
 use anyhow::{Context, Result};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HostMountDeclaration {
-    pub namespace_path: String,
-    pub host_path: PathBuf,
-    pub access: Access,
-}
-
-impl HostMountDeclaration {
-    pub fn new(namespace_path: impl Into<String>, host_path: PathBuf, access: Access) -> Self {
-        Self {
-            namespace_path: namespace_path.into(),
-            host_path,
-            access,
-        }
-    }
-
-    fn hostfs_access(&self) -> HostDirAccess {
-        match self.access {
-            Access::ReadOnly => HostDirAccess::ReadOnly,
-            Access::ReadWrite => HostDirAccess::ReadWrite,
-        }
-    }
-}
-
 pub fn apply_host_mount_declarations(
     namespace: &mut Namespace,
-    declarations: &[HostMountDeclaration],
+    declarations: &[HostMountGrant],
 ) -> Result<()> {
     validate_non_overlapping_declarations(declarations)?;
     let writable_roots = canonical_read_write_mount_roots(declarations)?;
@@ -55,7 +32,7 @@ pub fn apply_host_mount_declarations(
     let staged_mounts = declarations
         .iter()
         .map(|declaration| {
-            let hostfs = HostDirFs::new(&declaration.host_path, declaration.hostfs_access())
+            let hostfs = HostDirFs::new(&declaration.host_path, hostfs_access(declaration.access))
                 .with_context(|| {
                     format!(
                         "failed to mount host directory {} at {}",
@@ -77,26 +54,15 @@ pub fn apply_host_mount_declarations(
     Ok(())
 }
 
-pub fn sandbox_spec_from_host_mounts(
-    workspace_root: PathBuf,
-    declarations: &[HostMountDeclaration],
-) -> Result<SandboxSpec> {
+pub fn sandbox_spec_from_host_mounts(declarations: &[HostMountGrant]) -> Result<SandboxSpec> {
     validate_non_overlapping_declarations(declarations)?;
-    let mut effective_writable_roots = vec![canonical_host_path_or_original(&workspace_root)];
     let writable_host_roots = canonical_read_write_mount_roots(declarations)?;
-    let mut spec = SandboxSpec::seed(workspace_root);
-    for host_path in writable_host_roots {
-        if !spec.writable_roots.contains(&host_path) {
-            spec.writable_roots.push(host_path.clone());
-        }
-        if !effective_writable_roots.contains(&host_path) {
-            effective_writable_roots.push(host_path);
-        }
-    }
-    validate_read_only_mounts_not_covered_by_writable_roots(
-        &effective_writable_roots,
-        declarations,
-    )?;
+    validate_read_only_mounts_not_covered_by_writable_roots(&writable_host_roots, declarations)?;
+    let spec = SandboxSpec::from_host_mounts(declarations);
+    anyhow::ensure!(
+        spec.writable_roots == writable_host_roots,
+        "Host Mount namespace and sandbox projection disagree"
+    );
     Ok(spec)
 }
 
@@ -104,7 +70,7 @@ fn canonical_host_path(path: &Path) -> Result<PathBuf> {
     Ok(std::fs::canonicalize(path)?)
 }
 
-fn canonical_read_write_mount_roots(declarations: &[HostMountDeclaration]) -> Result<Vec<PathBuf>> {
+fn canonical_read_write_mount_roots(declarations: &[HostMountGrant]) -> Result<Vec<PathBuf>> {
     declarations
         .iter()
         .filter(|declaration| declaration.access == Access::ReadWrite)
@@ -119,13 +85,9 @@ fn canonical_read_write_mount_roots(declarations: &[HostMountDeclaration]) -> Re
         .collect()
 }
 
-fn canonical_host_path_or_original(path: &Path) -> PathBuf {
-    canonical_host_path(path).unwrap_or_else(|_| path.to_path_buf())
-}
-
 fn validate_read_only_mounts_not_covered_by_writable_roots(
     writable_roots: &[PathBuf],
-    declarations: &[HostMountDeclaration],
+    declarations: &[HostMountGrant],
 ) -> Result<()> {
     for declaration in declarations {
         if declaration.access != Access::ReadOnly {
@@ -150,7 +112,7 @@ fn validate_read_only_mounts_not_covered_by_writable_roots(
     Ok(())
 }
 
-fn validate_non_overlapping_declarations(declarations: &[HostMountDeclaration]) -> Result<()> {
+fn validate_non_overlapping_declarations(declarations: &[HostMountGrant]) -> Result<()> {
     let paths = declarations
         .iter()
         .map(|declaration| {
@@ -201,6 +163,13 @@ fn host_paths_overlap(left: &Path, right: &Path) -> bool {
     left.starts_with(right) || right.starts_with(left)
 }
 
+fn hostfs_access(access: Access) -> HostDirAccess {
+    match access {
+        Access::ReadOnly => HostDirAccess::ReadOnly,
+        Access::ReadWrite => HostDirAccess::ReadWrite,
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct LiveNamespaceMountGrantApplicatorFactory;
 
@@ -232,8 +201,8 @@ impl MountGrantApplicator for LiveNamespaceMountGrantApplicator {
             ApprovedMountGrantAccess::ReadWrite => Access::ReadWrite,
         };
         let declaration =
-            HostMountDeclaration::new(namespace_path.clone(), grant.host_path.clone(), access);
-        let hostfs = HostDirFs::new(&declaration.host_path, declaration.hostfs_access())
+            HostMountGrant::new(namespace_path.clone(), grant.host_path.clone(), access)?;
+        let hostfs = HostDirFs::new(&declaration.host_path, hostfs_access(declaration.access))
             .with_context(|| {
                 format!(
                     "failed to apply approved host mount {} at {}",
@@ -297,13 +266,15 @@ mod tests {
     use alan_ap::{ErrorCode, Fid, FileKind, OpenMode, Request, Response};
     use alan_kernel::MountFs;
 
+    fn grant(namespace_path: &str, host_path: PathBuf, access: Access) -> HostMountGrant {
+        HostMountGrant::new(namespace_path, host_path, access).unwrap()
+    }
+
     #[tokio::test]
     async fn writable_host_mount_is_reachable_and_projected() {
-        let workspace = tempfile::tempdir().unwrap();
         let host = tempfile::tempdir().unwrap();
         std::fs::write(host.path().join("notes.txt"), "hello").unwrap();
-        let declaration =
-            HostMountDeclaration::new("/mnt/project", host.path().to_path_buf(), Access::ReadWrite);
+        let declaration = grant("/mnt/project", host.path().to_path_buf(), Access::ReadWrite);
         let mut namespace = Namespace::new();
         apply_host_mount_declarations(&mut namespace, std::slice::from_ref(&declaration)).unwrap();
         let root = InProcessTransport::new(Arc::new(MountFs::new(namespace)));
@@ -323,26 +294,22 @@ mod tests {
             b"created through mount"
         );
 
-        let spec =
-            sandbox_spec_from_host_mounts(workspace.path().to_path_buf(), &[declaration]).unwrap();
-        assert_eq!(spec.writable_roots[0], workspace.path());
-        assert!(
-            spec.writable_roots
-                .contains(&std::fs::canonicalize(host.path()).unwrap())
+        let spec = sandbox_spec_from_host_mounts(&[declaration]).unwrap();
+        assert_eq!(
+            spec.writable_roots,
+            vec![std::fs::canonicalize(host.path()).unwrap()]
         );
         assert_eq!(
             spec.read_denylist,
-            SandboxSpec::seed(workspace.path().to_path_buf()).read_denylist
+            SandboxSpec::default_sensitive_read_denylist()
         );
     }
 
     #[tokio::test]
     async fn read_only_host_mount_is_reachable_but_not_projected_as_writable() {
-        let workspace = tempfile::tempdir().unwrap();
         let host = tempfile::tempdir().unwrap();
         std::fs::write(host.path().join("manual.txt"), "read me").unwrap();
-        let declaration =
-            HostMountDeclaration::new("/mnt/docs", host.path().to_path_buf(), Access::ReadOnly);
+        let declaration = grant("/mnt/docs", host.path().to_path_buf(), Access::ReadOnly);
         let mut namespace = Namespace::new();
         apply_host_mount_declarations(&mut namespace, std::slice::from_ref(&declaration)).unwrap();
         let root = InProcessTransport::new(Arc::new(MountFs::new(namespace)));
@@ -356,10 +323,9 @@ mod tests {
             .await;
         assert_eq!(opened.unwrap_err(), alan_ap::ErrorCode::NoAccess);
 
-        let spec =
-            sandbox_spec_from_host_mounts(workspace.path().to_path_buf(), &[declaration]).unwrap();
+        let spec = sandbox_spec_from_host_mounts(&[declaration]).unwrap();
         let host_path = std::fs::canonicalize(host.path()).unwrap();
-        assert_eq!(spec.writable_roots, vec![workspace.path().to_path_buf()]);
+        assert!(spec.writable_roots.is_empty());
         assert!(!spec.writable_roots.contains(&host_path));
     }
 
@@ -520,15 +486,13 @@ mod tests {
 
     #[test]
     fn overlapping_declarations_are_rejected_before_projection() {
-        let workspace = tempfile::tempdir().unwrap();
         let host = tempfile::tempdir().unwrap();
         let declarations = vec![
-            HostMountDeclaration::new("/mnt/project", host.path().to_path_buf(), Access::ReadWrite),
-            HostMountDeclaration::new("/mnt/project", host.path().to_path_buf(), Access::ReadOnly),
+            grant("/mnt/project", host.path().to_path_buf(), Access::ReadWrite),
+            grant("/mnt/project", host.path().to_path_buf(), Access::ReadOnly),
         ];
 
-        let err = sandbox_spec_from_host_mounts(workspace.path().to_path_buf(), &declarations)
-            .unwrap_err();
+        let err = sandbox_spec_from_host_mounts(&declarations).unwrap_err();
         assert!(err.to_string().contains("overlapping host mount"));
         let mut namespace = Namespace::new();
         let err = apply_host_mount_declarations(&mut namespace, &declarations).unwrap_err();
@@ -537,51 +501,31 @@ mod tests {
 
     #[test]
     fn nested_declarations_are_rejected_before_projection() {
-        let workspace = tempfile::tempdir().unwrap();
         let host = tempfile::tempdir().unwrap();
         let declarations = vec![
-            HostMountDeclaration::new("/mnt/project", host.path().to_path_buf(), Access::ReadWrite),
-            HostMountDeclaration::new(
+            grant("/mnt/project", host.path().to_path_buf(), Access::ReadWrite),
+            grant(
                 "/mnt/project/docs",
                 host.path().to_path_buf(),
                 Access::ReadOnly,
             ),
         ];
 
-        let err = sandbox_spec_from_host_mounts(workspace.path().to_path_buf(), &declarations)
-            .unwrap_err();
+        let err = sandbox_spec_from_host_mounts(&declarations).unwrap_err();
         assert!(err.to_string().contains("overlapping host mount"));
     }
 
     #[test]
-    fn read_only_mount_inside_workspace_writable_root_is_rejected() {
-        let workspace = tempfile::tempdir().unwrap();
-        let docs = workspace.path().join("docs");
-        std::fs::create_dir(&docs).unwrap();
-        let declarations = vec![HostMountDeclaration::new(
-            "/mnt/docs",
-            docs,
-            Access::ReadOnly,
-        )];
-
-        let err = sandbox_spec_from_host_mounts(workspace.path().to_path_buf(), &declarations)
-            .unwrap_err();
-        assert!(err.to_string().contains("read-only host mount"));
-    }
-
-    #[test]
     fn read_only_mount_inside_writable_host_mount_is_rejected() {
-        let workspace = tempfile::tempdir().unwrap();
         let host = tempfile::tempdir().unwrap();
         let docs = host.path().join("docs");
         std::fs::create_dir(&docs).unwrap();
         let declarations = vec![
-            HostMountDeclaration::new("/mnt/project", host.path().to_path_buf(), Access::ReadWrite),
-            HostMountDeclaration::new("/mnt/docs", docs, Access::ReadOnly),
+            grant("/mnt/project", host.path().to_path_buf(), Access::ReadWrite),
+            grant("/mnt/docs", docs, Access::ReadOnly),
         ];
 
-        let err = sandbox_spec_from_host_mounts(workspace.path().to_path_buf(), &declarations)
-            .unwrap_err();
+        let err = sandbox_spec_from_host_mounts(&declarations).unwrap_err();
         assert!(err.to_string().contains("read-only host mount"));
     }
 
@@ -591,8 +535,8 @@ mod tests {
         let docs = host.path().join("docs");
         std::fs::create_dir(&docs).unwrap();
         let declarations = vec![
-            HostMountDeclaration::new("/mnt/project", host.path().to_path_buf(), Access::ReadWrite),
-            HostMountDeclaration::new("/mnt/docs", docs, Access::ReadOnly),
+            grant("/mnt/project", host.path().to_path_buf(), Access::ReadWrite),
+            grant("/mnt/docs", docs, Access::ReadOnly),
         ];
         let mut namespace = Namespace::new();
 
@@ -606,8 +550,8 @@ mod tests {
         std::fs::write(host.path().join("notes.txt"), "hello").unwrap();
         let not_directory = tempfile::NamedTempFile::new().unwrap();
         let declarations = vec![
-            HostMountDeclaration::new("/mnt/project", host.path().to_path_buf(), Access::ReadWrite),
-            HostMountDeclaration::new(
+            grant("/mnt/project", host.path().to_path_buf(), Access::ReadWrite),
+            grant(
                 "/mnt/not-directory",
                 not_directory.path().to_path_buf(),
                 Access::ReadOnly,
@@ -633,10 +577,9 @@ mod tests {
     }
 
     #[test]
-    fn empty_declarations_project_only_workspace_seed() {
-        let workspace = PathBuf::from("/workspace");
-        let spec = sandbox_spec_from_host_mounts(workspace.clone(), &[]).unwrap();
-        assert_eq!(spec.writable_roots, vec![workspace]);
+    fn empty_declarations_add_no_implicit_host_authority() {
+        let spec = sandbox_spec_from_host_mounts(&[]).unwrap();
+        assert!(spec.writable_roots.is_empty());
         assert_eq!(
             spec.read_denylist,
             SandboxSpec::default_sensitive_read_denylist()

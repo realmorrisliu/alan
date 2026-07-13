@@ -11,7 +11,6 @@
 
 mod agent_definition;
 mod agent_machine;
-mod agent_root;
 mod approval;
 mod config;
 mod connections;
@@ -19,9 +18,8 @@ mod evidence;
 mod install_channel;
 mod llm;
 mod models;
-mod paths;
-mod persisted_workspace_config;
 mod policy;
+mod process_launch;
 mod request_controls;
 mod retry;
 mod rollout;
@@ -37,28 +35,14 @@ pub use agent_machine::{
     AgentMachine, ROLLBACK_NON_DURABLE_WARNING, latest_compaction_attempt_from_rollout_items,
     latest_memory_flush_attempt_from_rollout_items,
 };
-pub use agent_root::{
-    AgentRootKind, AgentRootLayout, AgentRootPaths, DEFAULT_AGENT_NAME, ResolvedAgentRoots,
-    normalize_agent_name, normalize_named_agent_name, workspace_agent_root_dir,
-    workspace_agent_root_dir_from_alan_dir, workspace_alan_dir, workspace_memory_dir,
-    workspace_memory_dir_for_channel_from_alan_dir, workspace_memory_dir_from_alan_dir,
-    workspace_named_agent_root_dir, workspace_named_agents_dir, workspace_persona_dir,
-    workspace_persona_dir_from_alan_dir, workspace_public_skills_dir, workspace_rollouts_dir,
-    workspace_rollouts_dir_for_channel_from_alan_dir, workspace_rollouts_dir_from_alan_dir,
-    workspace_runtime_cache_dir_from_alan_dir, workspace_runtime_dir,
-    workspace_runtime_dir_from_alan_dir, workspace_runtime_memory_dir,
-    workspace_runtime_memory_dir_from_alan_dir, workspace_runtime_metadata_dir_from_alan_dir,
-    workspace_runtime_rollouts_dir, workspace_runtime_rollouts_dir_from_alan_dir,
-    workspace_runtime_shell_restore_dir_from_alan_dir, workspace_runtime_tmp_dir_from_alan_dir,
-    workspace_skills_dir, workspace_skills_dir_from_alan_dir,
-};
 pub use config::{
     Config, ConfigSourceKind, LlmProvider, LoadedConfig, PartialStreamRecoveryMode, StreamingMode,
 };
 pub use connections::{
-    ConnectionCredential, ConnectionProfile, ConnectionsFile, CredentialKind, ProviderDescriptor,
-    ResolvedConnectionProfile, SecretStore, default_credential_backend, normalize_profile_settings,
-    provider_catalog, sanitize_identifier, validate_profile_settings,
+    ConnectionCredential, ConnectionProfile, ConnectionStoreBindings, ConnectionsFile,
+    CredentialKind, ProviderDescriptor, ResolvedConnectionProfile, SecretStore,
+    default_credential_backend, normalize_profile_settings, provider_catalog, sanitize_identifier,
+    validate_profile_settings,
 };
 pub use install_channel::{INSTALL_CHANNEL_ENV, InstallChannel, InstallChannelDescriptor};
 pub use llm::{
@@ -66,9 +50,11 @@ pub use llm::{
     LlmProjection, ProviderCapabilities, TokenUsage, ToolCall, ToolDefinition,
 };
 pub use models::{ModelCatalog, ModelInfo};
-pub use paths::AlanHomePaths;
-pub use persisted_workspace_config::{PersistedLlmProvider, WorkspaceConfigState};
 pub use policy::{PolicyAction, PolicyDecision, PolicyEngine, PolicyRule};
+pub use process_launch::{
+    AGENT_DEFINITION_DESCRIPTOR, AgentRuntimeStoreBindings, HostMountGrant,
+    MEMORY_STORE_DESCRIPTOR, ProcessDescriptor, ProcessLaunchContext,
+};
 pub use prompts::PromptLoader;
 pub use request_controls::{
     RequestControlDiagnostic, RequestControlIntent, RequestControlResolutionInput,
@@ -80,8 +66,8 @@ pub use rollout::{
     ToolCallRecord, process_storage_key,
 };
 pub use runtime::{
-    AgentConfig, RuntimeController, RuntimeHandle, RuntimeNamespaceLaunch, RuntimeNamespaceSurface,
-    WorkspaceRuntimeConfig, spawn, spawn_with_llm_client,
+    AgentConfig, AgentProcessConfig, RuntimeController, RuntimeHandle, RuntimeNamespaceLaunch,
+    RuntimeNamespaceSurface, spawn, spawn_with_llm_client,
     spawn_with_llm_client_and_namespace_surface,
     spawn_with_llm_client_and_tools_and_namespace_surface, spawn_with_namespace_surface,
 };

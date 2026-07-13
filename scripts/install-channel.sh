@@ -11,8 +11,8 @@ alan_install_channel_load() {
             ALAN_BUNDLE_ID="app.alanworks.macos"
             ALAN_PRIVILEGED_HELPER_LABEL="app.alanworks.macos.privileged-helper"
             ALAN_CLI_NAME="alan"
-            ALAN_HOME_DISPLAY="~/.alan"
-            ALAN_GLOBAL_SKILLS_DIR_DISPLAY="~/.agents/skills"
+            ALAN_SYSTEM_STORE_DISPLAY="~/Library/Application Support/Alan/System Store/stable"
+            ALAN_HOST_STORE_DISPLAY="~/Library/Application Support/Alan/Host Store/stable"
             ALAN_SHELL_CONTROL_NAMESPACE="alan-shell-control"
             ;;
         dev)
@@ -22,8 +22,8 @@ alan_install_channel_load() {
             ALAN_BUNDLE_ID="app.alanworks.macos.dev"
             ALAN_PRIVILEGED_HELPER_LABEL="app.alanworks.macos.dev.privileged-helper"
             ALAN_CLI_NAME="alan-dev"
-            ALAN_HOME_DISPLAY="~/.alan-dev"
-            ALAN_GLOBAL_SKILLS_DIR_DISPLAY="~/.agents-dev/skills"
+            ALAN_SYSTEM_STORE_DISPLAY="~/Library/Application Support/Alan/System Store/dev"
+            ALAN_HOST_STORE_DISPLAY="~/Library/Application Support/Alan/Host Store/dev"
             ALAN_SHELL_CONTROL_NAMESPACE="alan-dev-shell-control"
             ;;
         *)
@@ -38,8 +38,8 @@ alan_install_channel_load() {
     export ALAN_BUNDLE_ID
     export ALAN_PRIVILEGED_HELPER_LABEL
     export ALAN_CLI_NAME
-    export ALAN_HOME_DISPLAY
-    export ALAN_GLOBAL_SKILLS_DIR_DISPLAY
+    export ALAN_SYSTEM_STORE_DISPLAY
+    export ALAN_HOST_STORE_DISPLAY
     export ALAN_SHELL_CONTROL_NAMESPACE
 }
 

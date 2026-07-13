@@ -34,8 +34,8 @@ pub struct FileBackedRunConfig {
     pub root_transport: InProcessTransport,
     /// Concrete launched agent path, for example `/agent/1`.
     pub agent_path: String,
-    /// Optional workspace directory used for local `@` file completion.
-    pub workspace_dir: Option<PathBuf>,
+    /// Optional explicitly authorized Host directory used for local `@` file completion.
+    pub host_file_completion_root: Option<PathBuf>,
     /// Whether stdin/stdout must be interactive before entering the UI.
     pub require_interactive_terminal: bool,
     /// Optional file used to persist composer input history across launches.
@@ -49,7 +49,7 @@ impl FileBackedRunConfig {
         Self {
             root_transport,
             agent_path: agent_path.into(),
-            workspace_dir: None,
+            host_file_completion_root: None,
             require_interactive_terminal: true,
             history_path: None,
             skill_candidates: Vec::new(),
@@ -65,11 +65,8 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
     let shell = alan_shell::Shell::new(config.root_transport.clone());
     let mut app = FileBackedApp::new(config.agent_path.clone());
     app.set_skill_candidates(config.skill_candidates.clone());
-    if let Some(workspace_dir) = &config.workspace_dir {
-        app.set_file_candidates(super::build_file_index(
-            workspace_dir,
-            crate::FILE_INDEX_LIMIT,
-        ));
+    if let Some(host_root) = &config.host_file_completion_root {
+        app.set_file_candidates(super::build_file_index(host_root, crate::FILE_INDEX_LIMIT));
     }
     if let Some(history_path) = &config.history_path {
         let history = load_history(history_path, crate::HISTORY_LIMIT);

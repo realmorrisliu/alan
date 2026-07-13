@@ -126,9 +126,6 @@ pub enum Op {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct TurnContext {
-    /// Optional workspace ID to route this turn to.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub workspace_id: Option<String>,
     /// Optional one-turn reasoning effort override.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning_effort: Option<ReasoningEffort>,
@@ -319,7 +316,6 @@ mod tests {
         let op = Op::Turn {
             parts: vec![ContentPart::text("Hello agent")],
             context: Some(TurnContext {
-                workspace_id: Some("ws-1".to_string()),
                 reasoning_effort: Some(ReasoningEffort::High),
             }),
         };
@@ -327,7 +323,6 @@ mod tests {
         let json = serde_json::to_string(&op).unwrap();
         assert!(json.contains("turn"));
         assert!(json.contains("Hello agent"));
-        assert!(json.contains("ws-1"));
         assert!(json.contains("high"));
 
         let deserialized: Op = serde_json::from_str(&json).unwrap();
@@ -336,7 +331,6 @@ mod tests {
                 assert_eq!(parts.len(), 1);
                 assert_eq!(parts[0].as_text(), Some("Hello agent"));
                 let ctx = context.unwrap();
-                assert_eq!(ctx.workspace_id, Some("ws-1".to_string()));
                 assert_eq!(ctx.reasoning_effort, Some(ReasoningEffort::High));
             }
             _ => panic!("Expected Turn variant"),

@@ -27,8 +27,8 @@ require_equal "$ALAN_DISPLAY_NAME" "Alan" "stable display name"
 require_equal "$ALAN_BUNDLE_ID" "app.alanworks.macos" "stable bundle id"
 require_equal "$ALAN_PRIVILEGED_HELPER_LABEL" "app.alanworks.macos.privileged-helper" "stable privileged helper label"
 require_equal "$ALAN_CLI_NAME" "alan" "stable CLI"
-require_equal "$ALAN_HOME_DISPLAY" "~/.alan" "stable alan home"
-require_equal "$ALAN_GLOBAL_SKILLS_DIR_DISPLAY" "~/.agents/skills" "stable global skills"
+require_equal "$ALAN_SYSTEM_STORE_DISPLAY" "~/Library/Application Support/Alan/System Store/stable" "stable System Store"
+require_equal "$ALAN_HOST_STORE_DISPLAY" "~/Library/Application Support/Alan/Host Store/stable" "stable Host Store"
 require_equal "$ALAN_SHELL_CONTROL_NAMESPACE" "alan-shell-control" "stable shell namespace"
 
 alan_install_channel_load dev
@@ -37,8 +37,8 @@ require_equal "$ALAN_DISPLAY_NAME" "Alan Dev" "dev display name"
 require_equal "$ALAN_BUNDLE_ID" "app.alanworks.macos.dev" "dev bundle id"
 require_equal "$ALAN_PRIVILEGED_HELPER_LABEL" "app.alanworks.macos.dev.privileged-helper" "dev privileged helper label"
 require_equal "$ALAN_CLI_NAME" "alan-dev" "dev CLI"
-require_equal "$ALAN_HOME_DISPLAY" "~/.alan-dev" "dev alan home"
-require_equal "$ALAN_GLOBAL_SKILLS_DIR_DISPLAY" "~/.agents-dev/skills" "dev global skills"
+require_equal "$ALAN_SYSTEM_STORE_DISPLAY" "~/Library/Application Support/Alan/System Store/dev" "dev System Store"
+require_equal "$ALAN_HOST_STORE_DISPLAY" "~/Library/Application Support/Alan/Host Store/dev" "dev Host Store"
 require_equal "$ALAN_SHELL_CONTROL_NAMESPACE" "alan-dev-shell-control" "dev shell namespace"
 
 if alan_install_channel_load nightly 2>/dev/null; then

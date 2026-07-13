@@ -242,6 +242,7 @@ pub struct NamespaceRuntimeEnvironment {
     mount_grant_applicator: Option<Arc<dyn MountGrantApplicator>>,
     mount_grant_applicator_factory: Option<Arc<dyn MountGrantApplicatorFactory>>,
     child_run_registry: super::super::child_runs::ChildRunRegistry,
+    launch_context: Option<crate::ProcessLaunchContext>,
 }
 
 #[derive(Clone)]
@@ -293,7 +294,20 @@ impl NamespaceRuntimeEnvironment {
             mount_grant_applicator: None,
             mount_grant_applicator_factory: None,
             child_run_registry: super::super::child_runs::ChildRunRegistry::default(),
+            launch_context: None,
         }
+    }
+
+    pub(crate) fn with_launch_context(
+        mut self,
+        launch_context: crate::ProcessLaunchContext,
+    ) -> Self {
+        self.launch_context = Some(launch_context);
+        self
+    }
+
+    pub(crate) fn launch_context(&self) -> Option<&crate::ProcessLaunchContext> {
+        self.launch_context.as_ref()
     }
 
     pub(crate) fn with_process_context(
@@ -352,22 +366,20 @@ impl NamespaceRuntimeEnvironment {
         })
     }
 
-    pub(crate) fn add_tool_sandbox_writable_root(&self, path: std::path::PathBuf) -> bool {
+    pub(crate) fn add_tool_host_mount(&self, grant: crate::HostMountGrant) -> bool {
         self.process_context.as_ref().is_some_and(|context| {
             context
                 .tool_runner
-                .add_process_sandbox_writable_root(context.pid, path)
+                .add_process_host_mount(context.pid, grant)
         })
     }
 
+    #[cfg(test)]
     pub(crate) fn tool_sandbox_writable_roots(&self) -> Vec<std::path::PathBuf> {
-        let Some(binding) = self.tool_execution_binding() else {
-            return Vec::new();
-        };
-        binding
-            .sandbox_spec
+        self.tool_execution_binding()
+            .and_then(|binding| binding.sandbox_spec)
             .map(|spec| spec.writable_roots)
-            .unwrap_or_else(|| binding.workspace_root.into_iter().collect())
+            .unwrap_or_default()
     }
 
     pub(crate) fn with_shared_services(
@@ -3118,14 +3130,12 @@ mod tests {
             questions: Vec::new(),
         });
         let mut state = super::super::RuntimeLoopState {
-            workspace_id: "namespace-resume-test".to_string(),
-            workspace_root_dir: None,
             machine: crate::AgentMachine::new(),
             current_submission_id: None,
             environment,
             core_config: crate::Config::default(),
             runtime_config: super::super::super::RuntimeConfig::default(),
-            workspace_persona_dirs: Vec::new(),
+            definition_persona_dirs: Vec::new(),
             prompt_cache: super::super::super::prompt_cache::PromptAssemblyCache::new(Vec::new()),
             turn_state,
         };

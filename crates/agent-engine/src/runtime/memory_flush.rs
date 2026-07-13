@@ -11,7 +11,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     llm::{Message, MessageRole, build_generation_request},
-    prompts::{self, WORKSPACE_MEMORY_FILENAME},
+    prompts::{self, MEMORY_STORE_FILENAME},
 };
 
 use super::agent_loop::RuntimeLoopState;
@@ -70,7 +70,7 @@ pub(crate) async fn perform_memory_flush_attempt(
         );
     }
 
-    let Some(memory_dir) = state.core_config.memory.workspace_dir.clone() else {
+    let Some(memory_dir) = state.core_config.memory.store_dir.clone() else {
         return skipped_attempt(
             attempt_id,
             compaction_mode,
@@ -447,8 +447,8 @@ fn build_memory_flush_inbox_draft(
     evidence.extend(content.important_refs.iter().cloned());
 
     Some(InboxEntryDraft {
-        kind: "workspace_fact",
-        target: WORKSPACE_MEMORY_FILENAME.to_string(),
+        kind: "domain_fact",
+        target: MEMORY_STORE_FILENAME.to_string(),
         confidence: if content.key_decisions.is_empty() && content.constraints.is_empty() {
             "low"
         } else {
@@ -497,30 +497,10 @@ async fn append_memory_entry(note_path: &Path, entry: &str) -> std::io::Result<(
 }
 
 fn snapshot_output_path(memory_dir: &Path, note_path: &Path) -> String {
-    let relative_daily_note = memory_dir
-        .file_name()
-        .and_then(|name| name.to_str())
-        .filter(|name| *name == "memory")
-        .and_then(|_| {
-            let relative_path = note_path.strip_prefix(memory_dir).ok()?;
-            let relative_path = relative_path.to_string_lossy().replace('\\', "/");
-            let parent = memory_dir.parent()?;
-            if parent.file_name().and_then(|name| name.to_str()) == Some(".alan") {
-                return Some(format!(".alan/memory/{relative_path}"));
-            }
-            if parent
-                .parent()
-                .and_then(Path::file_name)
-                .and_then(|name| name.to_str())
-                == Some("runtime")
-                && let Some(channel_id) = parent.file_name().and_then(|name| name.to_str())
-            {
-                return Some(format!(".alan/runtime/{channel_id}/memory/{relative_path}"));
-            }
-            None
-        });
-
-    relative_daily_note.unwrap_or_else(|| note_path.to_string_lossy().to_string())
+    note_path
+        .strip_prefix(memory_dir)
+        .map(|relative| format!("/memory/{}", relative.to_string_lossy().replace('\\', "/")))
+        .unwrap_or_else(|_| "/memory".to_string())
 }
 
 fn mode_label(mode: CompactionMode) -> &'static str {
@@ -641,14 +621,12 @@ mod tests {
         let root = InProcessTransport::new(Arc::new(MountFs::new(namespace)));
 
         RuntimeLoopState {
-            workspace_id: "test-workspace".to_string(),
-            workspace_root_dir: None,
             machine: AgentMachine::new(),
             current_submission_id: None,
             environment: NamespaceRuntimeEnvironment::new(root, "/agent/1", "default"),
             core_config: Config::default(),
             runtime_config: RuntimeConfig::default(),
-            workspace_persona_dirs: Vec::new(),
+            definition_persona_dirs: Vec::new(),
             prompt_cache: PromptAssemblyCache::new(Vec::new()),
             turn_state: TurnState::default(),
         }
@@ -742,23 +720,20 @@ mod tests {
     }
 
     #[test]
-    fn test_snapshot_output_path_prefers_workspace_relative_memory_path() {
-        let memory_dir = PathBuf::from("/tmp/ws/.alan/memory");
+    fn test_snapshot_output_path_uses_memory_store_namespace_path() {
+        let memory_dir = PathBuf::from("/host/system-store/memory/stores/default");
         let note_path = memory_dir.join("daily/2026-03-18.md");
         assert_eq!(
             snapshot_output_path(&memory_dir, &note_path),
-            ".alan/memory/daily/2026-03-18.md"
+            "/memory/daily/2026-03-18.md"
         );
     }
 
     #[test]
-    fn test_snapshot_output_path_preserves_channel_runtime_memory_path() {
-        let memory_dir = PathBuf::from("/tmp/ws/.alan/runtime/dev/memory");
-        let note_path = memory_dir.join("daily/2026-03-18.md");
-        assert_eq!(
-            snapshot_output_path(&memory_dir, &note_path),
-            ".alan/runtime/dev/memory/daily/2026-03-18.md"
-        );
+    fn test_snapshot_output_path_never_exposes_host_backing_path() {
+        let memory_dir = PathBuf::from("/host/system-store/memory/stores/default");
+        let outside = PathBuf::from("/host/private/note.md");
+        assert_eq!(snapshot_output_path(&memory_dir, &outside), "/memory");
     }
 
     #[test]
@@ -776,8 +751,8 @@ mod tests {
         )
         .expect("expected inbox draft");
 
-        assert_eq!(draft.kind, "workspace_fact");
-        assert_eq!(draft.target, WORKSPACE_MEMORY_FILENAME);
+        assert_eq!(draft.kind, "domain_fact");
+        assert_eq!(draft.target, MEMORY_STORE_FILENAME);
         assert_eq!(draft.confidence, "medium");
         assert!(
             draft

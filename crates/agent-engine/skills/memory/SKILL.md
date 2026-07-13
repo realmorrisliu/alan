@@ -18,11 +18,10 @@ capabilities:
 
 # Memory
 
-Alan's current memory surface is pure text under the active workspace's
-channel-scoped runtime directory:
+Alan's Memory Store is an explicit file tree mounted at `/memory`:
 
 ```text
-.alan/runtime/<channel>/memory/
+/memory/
 ├── USER.md
 ├── MEMORY.md
 ├── handoffs/LATEST.md
@@ -33,13 +32,13 @@ channel-scoped runtime directory:
 └── inbox/<candidate>.md
 ```
 
-Resolve the exact active memory directory from runtime context. Do not infer an
-unscoped fallback path.
+Use the Memory Store descriptor supplied to the Agent Process. Do not infer a
+Host backing path or fallback directory.
 
 ## Ownership
 
 - `USER.md`: stable, user-confirmed identity and preferences only.
-- `MEMORY.md`: curated workspace facts and durable decisions.
+- `MEMORY.md`: curated durable facts and decisions.
 - `handoffs/LATEST.md`: compact continuation state for a later Agent Process.
 - `daily/`: chronological work notes and automatic pre-compaction flushes.
 - `episodic/`: durable Process-scoped execution summaries.
@@ -59,7 +58,7 @@ note, or a relevant topic page.
 Persist only information that is useful beyond the current Process:
 
 - explicit decisions and durable constraints;
-- verified workspace conventions and stable references;
+- verified domain conventions and stable references;
 - unfinished work that must survive a Process boundary;
 - user-confirmed preferences the user asked Alan to remember.
 

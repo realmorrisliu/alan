@@ -109,22 +109,7 @@ where
         // New unified operations (Phase 2)
         // ====================================================================
         Op::Turn { parts, context } => {
-            let workspace_id = context.as_ref().and_then(|c| c.workspace_id.clone());
             let reasoning_effort = context.as_ref().and_then(|c| c.reasoning_effort);
-
-            if let Some(requested_workspace_id) = workspace_id.as_deref()
-                && requested_workspace_id != state.workspace_id
-            {
-                emit(Event::Error {
-                    message: format!(
-                        "Turn requested workspace '{}' but this runtime is '{}'. Route the request to the matching workspace runtime.",
-                        requested_workspace_id, state.workspace_id
-                    ),
-                    recoverable: true,
-                })
-                .await;
-                return Ok(RuntimeOpAction::NoTurn);
-            }
 
             let queued_next_turn_inputs = state.turn_state.drain_next_turn_inputs();
             let queued_next_turn_count = queued_next_turn_inputs.len();
@@ -513,28 +498,31 @@ fn handle_mount_escalation_resolution(
             namespace_error: None,
         }
     };
-    let tool_sandbox_projection_changed = approved
-        && grant
-            .as_ref()
-            .is_some_and(|grant| grant.access == ApprovedMountGrantAccess::ReadWrite)
+    let native_grant = grant.as_ref().and_then(|grant| {
+        crate::HostMountGrant::new(
+            grant.namespace_path.clone(),
+            grant.host_path.clone(),
+            match grant.access {
+                ApprovedMountGrantAccess::ReadOnly => alan_kernel::Access::ReadOnly,
+                ApprovedMountGrantAccess::ReadWrite => alan_kernel::Access::ReadWrite,
+            },
+        )
+        .ok()
+    });
+    let namespace_applied = approved && namespace_application.namespace_applied;
+    let tool_sandbox_projection_changed = namespace_applied
+        && native_grant
+            .is_some_and(|grant| state.namespace_environment().add_tool_host_mount(grant));
+    let tool_sandbox_applied = namespace_applied
         && grant.as_ref().is_some_and(|grant| {
-            state
-                .namespace_environment()
-                .add_tool_sandbox_writable_root(grant.host_path.clone())
+            let binding = state.namespace_environment().tool_execution_binding();
+            binding.is_some_and(|binding| {
+                binding.host_mounts.iter().any(|mounted| {
+                    mounted.namespace_path == grant.namespace_path
+                        && mounted.host_path == normalize_mount_grant_host_path(&grant.host_path)
+                })
+            })
         });
-    let tool_sandbox_applied = approved
-        && grant
-            .as_ref()
-            .is_some_and(|grant| grant.access == ApprovedMountGrantAccess::ReadWrite)
-        && state
-            .namespace_environment()
-            .tool_sandbox_writable_roots()
-            .iter()
-            .any(|root| {
-                grant
-                    .as_ref()
-                    .is_some_and(|grant| root == &normalize_mount_grant_host_path(&grant.host_path))
-            });
     let status = if approved { "approved" } else { "rejected" };
     let result = json!({
         "status": status,
@@ -808,28 +796,37 @@ mod tests {
         let runtime_config = RuntimeConfig::default();
 
         RuntimeLoopState {
-            workspace_id: "test-workspace".to_string(),
-            workspace_root_dir: None,
             machine,
             current_submission_id: None,
             environment: namespace_environment_for_test(),
             core_config: config,
             runtime_config,
-            workspace_persona_dirs: Vec::new(),
+            definition_persona_dirs: Vec::new(),
             prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
             turn_state: TurnState::default(),
         }
     }
 
-    fn bind_test_workspace(state: &RuntimeLoopState, workspace: &std::path::Path) {
-        let workspace = workspace.to_path_buf();
-        assert!(state.namespace_environment().set_tool_execution_binding(
-            crate::tools::ToolExecutionBinding::with_workspace(
-                workspace.clone(),
-                workspace.clone(),
-                workspace.join(".alan/runtime/test/tmp"),
-            ),
-        ));
+    fn bind_test_source_mount(state: &RuntimeLoopState, source: &std::path::Path) {
+        let launch_context = crate::ProcessLaunchContext::new(
+            Namespace::new(),
+            alan_kernel::Credentials::user("test-agent"),
+            "/mnt/source",
+        )
+        .unwrap()
+        .with_host_mount(
+            crate::HostMountGrant::new("/mnt/source", source, alan_kernel::Access::ReadWrite)
+                .unwrap(),
+        );
+        assert!(
+            state.namespace_environment().set_tool_execution_binding(
+                crate::tools::ToolExecutionBinding::from_launch_context(
+                    &launch_context,
+                    source.join("scratch"),
+                )
+                .unwrap(),
+            )
+        );
     }
 
     fn mount_escalation_pending_confirmation_with(
@@ -881,7 +878,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_handle_start_task_wrong_agent() {
+    async fn test_turn_context_has_no_process_identity_gate() {
         let mut state = create_test_state();
         let cancel = CancellationToken::new();
 
@@ -894,7 +891,6 @@ mod tests {
         let op = Op::Turn {
             parts: vec![ContentPart::text("test input")],
             context: Some(alan_agent_protocol::TurnContext {
-                workspace_id: Some("wrong-workspace".to_string()),
                 ..alan_agent_protocol::TurnContext::default()
             }),
         };
@@ -902,14 +898,12 @@ mod tests {
         let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
         assert!(result.is_ok());
 
-        match result.unwrap() {
-            RuntimeOpAction::NoTurn => {
-                // Check that error event was emitted
-                let has_error = events.iter().any(|e| matches!(e, Event::Error { .. }));
-                assert!(has_error, "Expected Error event for wrong workspace");
-            }
-            _ => panic!("Expected NoTurn for wrong workspace"),
-        }
+        assert!(matches!(result.unwrap(), RuntimeOpAction::RunTurn { .. }));
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, Event::Error { .. }))
+        );
     }
 
     #[tokio::test]
@@ -927,7 +921,6 @@ mod tests {
         let op = Op::Turn {
             parts: vec![ContentPart::text("test input")],
             context: Some(alan_agent_protocol::TurnContext {
-                workspace_id: Some("test-workspace".to_string()),
                 reasoning_effort: Some(alan_agent_protocol::ReasoningEffort::High),
             }),
         };
@@ -964,7 +957,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_handle_start_task_no_workspace_id() {
+    async fn test_handle_start_task_preserves_attachments_without_identity_field() {
         let mut state = create_test_state();
         let cancel = CancellationToken::new();
 
@@ -1289,14 +1282,14 @@ mod tests {
     #[tokio::test]
     async fn test_handle_mount_escalation_resume_approve_records_grant_and_tool_result() {
         let temp = TempDir::new().unwrap();
-        let workspace = TempDir::new().unwrap();
+        let host_mount_root = TempDir::new().unwrap();
         let approved_host = TempDir::new().unwrap();
         let mut state = create_test_state();
         state.machine =
             AgentMachine::new_with_recorder_in_dir("mount-approve", "test-model", temp.path())
                 .await
                 .unwrap();
-        bind_test_workspace(&state, workspace.path());
+        bind_test_source_mount(&state, host_mount_root.path());
         state
             .turn_state
             .set_confirmation(mount_escalation_pending_confirmation_with(
@@ -1324,8 +1317,8 @@ mod tests {
 
         let tool_result = tool_result_json_for_call(&state, "call_mount");
         assert_eq!(tool_result["status"], "approved");
-        assert_eq!(tool_result["tool_sandbox_applied"], true);
-        assert_eq!(tool_result["tool_sandbox_projection_changed"], true);
+        assert_eq!(tool_result["tool_sandbox_applied"], false);
+        assert_eq!(tool_result["tool_sandbox_projection_changed"], false);
         assert_eq!(tool_result["namespace_applied"], false);
         assert_eq!(
             tool_result["namespace_error"],
@@ -1337,9 +1330,10 @@ mod tests {
             "/mnt/project"
         );
         let roots = state.namespace_environment().tool_sandbox_writable_roots();
-        assert_eq!(roots.len(), 2);
-        assert_eq!(roots[0], workspace.path());
-        assert_eq!(roots[1], dunce::canonicalize(approved_host.path()).unwrap());
+        assert_eq!(
+            roots,
+            vec![dunce::canonicalize(host_mount_root.path()).unwrap()]
+        );
 
         state.machine.flush().await;
         let rollout_path = state.machine.rollout_path().unwrap().clone();
@@ -1369,20 +1363,20 @@ mod tests {
             grant.payload["namespace_error"],
             "live namespace mount applicator unavailable"
         );
-        assert_eq!(grant.payload["tool_sandbox_applied"], true);
-        assert_eq!(grant.payload["tool_sandbox_projection_changed"], true);
+        assert_eq!(grant.payload["tool_sandbox_applied"], false);
+        assert_eq!(grant.payload["tool_sandbox_projection_changed"], false);
         assert_eq!(grant.payload["tool_call_id"], "call_mount");
     }
 
     #[tokio::test]
     async fn test_handle_mount_escalation_resume_applies_namespace_with_applicator() {
-        let workspace = TempDir::new().unwrap();
+        let host_mount_root = TempDir::new().unwrap();
         let approved_host = TempDir::new().unwrap();
         let applicator = Arc::new(RecordingMountGrantApplicator::default());
         let mut state = create_test_state();
         state.environment =
             namespace_environment_with_mount_applicator_for_test(applicator.clone());
-        bind_test_workspace(&state, workspace.path());
+        bind_test_source_mount(&state, host_mount_root.path());
         state
             .turn_state
             .set_confirmation(mount_escalation_pending_confirmation_with(
@@ -1409,6 +1403,14 @@ mod tests {
         assert_eq!(tool_result["namespace_applied"], true);
         assert_eq!(tool_result["namespace_error"], serde_json::Value::Null);
         assert_eq!(tool_result["tool_sandbox_applied"], true);
+        assert_eq!(tool_result["tool_sandbox_projection_changed"], true);
+        assert_eq!(
+            state.namespace_environment().tool_sandbox_writable_roots(),
+            vec![
+                dunce::canonicalize(host_mount_root.path()).unwrap(),
+                dunce::canonicalize(approved_host.path()).unwrap()
+            ]
+        );
         let grants = applicator.grants();
         assert_eq!(grants.len(), 1);
         assert_eq!(grants[0].namespace_path, "/mnt/project");
@@ -1419,13 +1421,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_mount_escalation_resume_read_only_applies_namespace_only() {
-        let workspace = TempDir::new().unwrap();
+        let host_mount_root = TempDir::new().unwrap();
         let approved_host = TempDir::new().unwrap();
         let applicator = Arc::new(RecordingMountGrantApplicator::default());
         let mut state = create_test_state();
         state.environment =
             namespace_environment_with_mount_applicator_for_test(applicator.clone());
-        bind_test_workspace(&state, workspace.path());
+        bind_test_source_mount(&state, host_mount_root.path());
         state
             .turn_state
             .set_confirmation(mount_escalation_pending_confirmation_with(
@@ -1450,10 +1452,11 @@ mod tests {
 
         let tool_result = tool_result_json_for_call(&state, "call_mount");
         assert_eq!(tool_result["namespace_applied"], true);
-        assert_eq!(tool_result["tool_sandbox_applied"], false);
+        assert_eq!(tool_result["tool_sandbox_applied"], true);
+        assert_eq!(tool_result["tool_sandbox_projection_changed"], true);
         assert_eq!(
             state.namespace_environment().tool_sandbox_writable_roots(),
-            vec![workspace.path().to_path_buf()]
+            vec![dunce::canonicalize(host_mount_root.path()).unwrap()]
         );
         let grants = applicator.grants();
         assert_eq!(grants.len(), 1);
@@ -1462,13 +1465,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_mount_escalation_resume_reports_namespace_apply_failure() {
-        let workspace = TempDir::new().unwrap();
+        let host_mount_root = TempDir::new().unwrap();
         let approved_host = TempDir::new().unwrap();
         let applicator = Arc::new(RecordingMountGrantApplicator::failing("mount failed"));
         let mut state = create_test_state();
         state.environment =
             namespace_environment_with_mount_applicator_for_test(applicator.clone());
-        bind_test_workspace(&state, workspace.path());
+        bind_test_source_mount(&state, host_mount_root.path());
         state
             .turn_state
             .set_confirmation(mount_escalation_pending_confirmation_with(
@@ -1494,17 +1497,24 @@ mod tests {
         let tool_result = tool_result_json_for_call(&state, "call_mount");
         assert_eq!(tool_result["namespace_applied"], false);
         assert_eq!(tool_result["namespace_error"], "mount failed");
-        assert_eq!(tool_result["tool_sandbox_applied"], true);
+        assert_eq!(tool_result["tool_sandbox_applied"], false);
+        assert_eq!(tool_result["tool_sandbox_projection_changed"], false);
+        assert_eq!(
+            state.namespace_environment().tool_sandbox_writable_roots(),
+            vec![dunce::canonicalize(host_mount_root.path()).unwrap()]
+        );
         let grants = applicator.grants();
         assert_eq!(grants.len(), 1);
     }
 
     #[tokio::test]
     async fn test_handle_mount_escalation_resume_duplicate_read_write_grant_is_idempotent() {
-        let workspace = TempDir::new().unwrap();
+        let host_mount_root = TempDir::new().unwrap();
         let approved_host = TempDir::new().unwrap();
+        let applicator = Arc::new(RecordingMountGrantApplicator::default());
         let mut state = create_test_state();
-        bind_test_workspace(&state, workspace.path());
+        state.environment = namespace_environment_with_mount_applicator_for_test(applicator);
+        bind_test_source_mount(&state, host_mount_root.path());
         let cancel = CancellationToken::new();
         let mut emit = |_event: Event| async {};
 
@@ -1533,7 +1543,7 @@ mod tests {
         assert_eq!(
             roots,
             vec![
-                workspace.path().to_path_buf(),
+                dunce::canonicalize(host_mount_root.path()).unwrap(),
                 dunce::canonicalize(approved_host.path()).unwrap()
             ]
         );
@@ -1544,10 +1554,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_mount_escalation_resume_read_only_grant_does_not_expand_tool_sandbox() {
-        let workspace = TempDir::new().unwrap();
+        let host_mount_root = TempDir::new().unwrap();
         let approved_host = TempDir::new().unwrap();
+        let applicator = Arc::new(RecordingMountGrantApplicator::default());
         let mut state = create_test_state();
-        bind_test_workspace(&state, workspace.path());
+        state.environment = namespace_environment_with_mount_applicator_for_test(applicator);
+        bind_test_source_mount(&state, host_mount_root.path());
         state
             .turn_state
             .set_confirmation(mount_escalation_pending_confirmation_with(
@@ -1572,25 +1584,25 @@ mod tests {
 
         let tool_result = tool_result_json_for_call(&state, "call_mount");
         assert_eq!(tool_result["status"], "approved");
-        assert_eq!(tool_result["tool_sandbox_applied"], false);
-        assert_eq!(tool_result["tool_sandbox_projection_changed"], false);
+        assert_eq!(tool_result["tool_sandbox_applied"], true);
+        assert_eq!(tool_result["tool_sandbox_projection_changed"], true);
         assert_eq!(
             state.namespace_environment().tool_sandbox_writable_roots(),
-            vec![workspace.path().to_path_buf()]
+            vec![dunce::canonicalize(host_mount_root.path()).unwrap()]
         );
     }
 
     #[tokio::test]
     async fn test_handle_mount_escalation_resume_reject_returns_tool_result_without_grant() {
         let temp = TempDir::new().unwrap();
-        let workspace = TempDir::new().unwrap();
+        let host_mount_root = TempDir::new().unwrap();
         let approved_host = TempDir::new().unwrap();
         let mut state = create_test_state();
         state.machine =
             AgentMachine::new_with_recorder_in_dir("mount-reject", "test-model", temp.path())
                 .await
                 .unwrap();
-        bind_test_workspace(&state, workspace.path());
+        bind_test_source_mount(&state, host_mount_root.path());
         state
             .turn_state
             .set_confirmation(mount_escalation_pending_confirmation_with(
@@ -1624,7 +1636,7 @@ mod tests {
         assert_eq!(tool_result["live_applied"], false);
         assert_eq!(
             state.namespace_environment().tool_sandbox_writable_roots(),
-            vec![workspace.path().to_path_buf()]
+            vec![dunce::canonicalize(host_mount_root.path()).unwrap()]
         );
 
         state.machine.flush().await;

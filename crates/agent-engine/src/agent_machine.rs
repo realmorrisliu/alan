@@ -331,27 +331,16 @@ impl AgentMachine {
         rollout_cwd: Option<&Path>,
         reasoning_effort: Option<alan_agent_protocol::ReasoningEffort>,
     ) -> anyhow::Result<Self> {
-        let recorder = match rollouts_dir {
-            Some(dir) => {
-                RolloutRecorder::new_in_dir_with_cwd_and_reasoning_effort(
-                    process_path,
-                    model,
-                    dir,
-                    rollout_cwd,
-                    reasoning_effort,
-                )
-                .await?
-            }
-            None => {
-                RolloutRecorder::new_with_cwd_and_reasoning_effort(
-                    process_path,
-                    model,
-                    rollout_cwd,
-                    reasoning_effort,
-                )
-                .await?
-            }
-        };
+        let rollouts_dir = rollouts_dir
+            .ok_or_else(|| anyhow::anyhow!("Agent Process has no rollout store binding"))?;
+        let recorder = RolloutRecorder::new_in_dir_with_cwd_and_reasoning_effort(
+            process_path,
+            model,
+            rollouts_dir,
+            rollout_cwd,
+            reasoning_effort,
+        )
+        .await?;
         let memory_record_id = recorder.rollout_id().to_string();
 
         Ok(Self {
@@ -368,11 +357,6 @@ impl AgentMachine {
             auto_memory_flush_attempted_in_cycle: false,
             responses_continuation: None,
         })
-    }
-
-    /// Create a new machine with recorder for persistence
-    pub async fn new_with_recorder(process_path: &str, model: &str) -> anyhow::Result<Self> {
-        Self::new_with_recorder_options(process_path, model, None, None, None).await
     }
 
     /// Create a new machine with recorder under a specific rollouts directory.

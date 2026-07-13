@@ -33,11 +33,11 @@ pub(crate) async fn refresh_turn_memory_surfaces(state: &RuntimeLoopState) -> Re
         return Ok(());
     }
 
-    let Some(memory_dir) = state.core_config.memory.workspace_dir.as_deref() else {
+    let Some(memory_dir) = state.core_config.memory.store_dir.as_deref() else {
         return Ok(());
     };
 
-    crate::prompts::ensure_workspace_memory_layout_at(memory_dir)
+    crate::prompts::ensure_memory_store_layout_at(memory_dir)
         .with_context(|| format!("failed to ensure memory layout at {}", memory_dir.display()))?;
 
     let now = Utc::now();
@@ -949,7 +949,7 @@ mod tests {
     async fn refresh_turn_memory_surfaces_writes_expected_files() {
         let temp = tempfile::TempDir::new().unwrap();
         let memory_dir = temp.path().join(".alan/memory");
-        crate::prompts::ensure_workspace_memory_layout_at(&memory_dir).unwrap();
+        crate::prompts::ensure_memory_store_layout_at(&memory_dir).unwrap();
 
         let mut machine = AgentMachine::new();
         machine.add_user_message("Keep the latest handoff fresh.");
@@ -966,18 +966,16 @@ mod tests {
         );
 
         let state = RuntimeLoopState {
-            workspace_id: "test-workspace".to_string(),
-            workspace_root_dir: None,
             machine,
             current_submission_id: None,
             environment: namespace_environment_for_test(),
             core_config: {
                 let mut config = crate::Config::default();
-                config.memory.workspace_dir = Some(memory_dir.clone());
+                config.memory.store_dir = Some(memory_dir.clone());
                 config
             },
             runtime_config: super::super::RuntimeConfig::default(),
-            workspace_persona_dirs: Vec::new(),
+            definition_persona_dirs: Vec::new(),
             prompt_cache: super::super::prompt_cache::PromptAssemblyCache::new(Vec::new()),
             turn_state,
         };
@@ -1008,18 +1006,16 @@ mod tests {
         machine.add_user_message("Refresh local memory surfaces mechanically.");
         let message_count = machine.tape.messages().len();
         let state = RuntimeLoopState {
-            workspace_id: "test-workspace".to_string(),
-            workspace_root_dir: None,
             machine,
             current_submission_id: None,
             environment: namespace_environment_for_test(),
             core_config: {
                 let mut config = crate::Config::default();
-                config.memory.workspace_dir = Some(memory_dir.clone());
+                config.memory.store_dir = Some(memory_dir.clone());
                 config
             },
             runtime_config: super::super::RuntimeConfig::default(),
-            workspace_persona_dirs: Vec::new(),
+            definition_persona_dirs: Vec::new(),
             prompt_cache: super::super::prompt_cache::PromptAssemblyCache::new(Vec::new()),
             turn_state: TurnState::default(),
         };

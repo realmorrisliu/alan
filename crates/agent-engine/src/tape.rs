@@ -1178,7 +1178,7 @@ mod tests {
     #[test]
     fn test_compact_preserves_reference_context_summary_message_order() {
         let mut ctx = Tape::new();
-        ctx.apply_context_items(vec![item("ctx-1", "workspace context")]);
+        ctx.apply_context_items(vec![item("ctx-1", "domain context")]);
         ctx.push(msg(MessageRole::User, "u1"));
         ctx.push(msg(MessageRole::Assistant, "a1"));
         ctx.push(msg(MessageRole::User, "u2"));
@@ -1188,7 +1188,7 @@ mod tests {
 
         let prompt = ctx.messages_for_prompt();
         assert_eq!(prompt[0].role(), MessageRole::Context);
-        assert!(prompt[0].text_content().contains("workspace context"));
+        assert!(prompt[0].text_content().contains("domain context"));
         assert_eq!(prompt[1].role(), MessageRole::Context);
         assert!(prompt[1].text_content().contains("summary"));
         assert_eq!(prompt[2].text_content(), "u2");

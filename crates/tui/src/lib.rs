@@ -14,13 +14,13 @@ pub use file_backed::{FileBackedRunConfig, run as run_file_backed};
 
 /// Maximum number of composer history entries kept in memory.
 const HISTORY_LIMIT: usize = 1000;
-/// Maximum number of workspace files indexed for `@` completion.
+/// Maximum number of explicitly authorized Host files indexed for `@` completion.
 const FILE_INDEX_LIMIT: usize = 5000;
 
-/// Directory names skipped when indexing workspace files for `@` completion.
+/// Directory names skipped when indexing authorized Host files for `@` completion.
 const SKIP_DIRS: [&str; 5] = [".git", "target", "node_modules", ".alan", "dist"];
 
-/// Build a bounded list of workspace-relative file paths for `@` completion.
+/// Build a bounded list of Host-Mount-relative file paths for `@` completion.
 fn build_file_index(root: &std::path::Path, limit: usize) -> Vec<CompletionCandidate> {
     let mut files = Vec::new();
     let mut stack = vec![root.to_path_buf()];

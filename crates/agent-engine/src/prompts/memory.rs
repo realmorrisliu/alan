@@ -1,4 +1,4 @@
-//! Workspace memory bootstrap file management for prompt assembly.
+//! Memory Store bootstrap file management for prompt assembly.
 
 use std::fs;
 use std::io;
@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use tracing::debug;
 
 pub const MEMORY_USER_FILENAME: &str = "USER.md";
-pub const WORKSPACE_MEMORY_FILENAME: &str = "MEMORY.md";
+pub const MEMORY_STORE_FILENAME: &str = "MEMORY.md";
 pub const MEMORY_HANDOFFS_DIRNAME: &str = "handoffs";
 pub const MEMORY_LATEST_FILENAME: &str = "LATEST.md";
 pub const MEMORY_DAILY_DIRNAME: &str = "daily";
@@ -14,12 +14,12 @@ pub const MEMORY_EPISODIC_DIRNAME: &str = "episodic";
 pub const MEMORY_WORKING_DIRNAME: &str = "working";
 pub const MEMORY_TOPICS_DIRNAME: &str = "topics";
 pub const MEMORY_INBOX_DIRNAME: &str = "inbox";
-pub(crate) const WORKSPACE_MEMORY_MAX_CHARS: usize = 2_000;
+pub(crate) const MEMORY_STORE_MAX_CHARS: usize = 2_000;
 
 const BOOTSTRAP_HEAD_RATIO: f32 = 0.7;
 const BOOTSTRAP_TAIL_RATIO: f32 = 0.2;
 const DEFAULT_USER_MEMORY_CONTENT: &str = "# User Memory\n";
-const DEFAULT_WORKSPACE_MEMORY_CONTENT: &str = "# Memory\n";
+const DEFAULT_MEMORY_STORE_CONTENT: &str = "# Memory\n";
 const DEFAULT_LATEST_HANDOFF_CONTENT: &str = "# Latest Handoff\n";
 
 #[derive(Debug, Clone)]
@@ -32,7 +32,6 @@ struct MemoryFileTemplate {
 struct LatestDailyNoteTarget {
     label: String,
     path: PathBuf,
-    write_path: PathBuf,
 }
 
 const REQUIRED_MEMORY_DIRS: [&str; 6] = [
@@ -50,8 +49,8 @@ const REQUIRED_MEMORY_FILES: [MemoryFileTemplate; 3] = [
         content: DEFAULT_USER_MEMORY_CONTENT,
     },
     MemoryFileTemplate {
-        relative_path: &[WORKSPACE_MEMORY_FILENAME],
-        content: DEFAULT_WORKSPACE_MEMORY_CONTENT,
+        relative_path: &[MEMORY_STORE_FILENAME],
+        content: DEFAULT_MEMORY_STORE_CONTENT,
     },
     MemoryFileTemplate {
         relative_path: &[MEMORY_HANDOFFS_DIRNAME, MEMORY_LATEST_FILENAME],
@@ -60,15 +59,13 @@ const REQUIRED_MEMORY_FILES: [MemoryFileTemplate; 3] = [
 ];
 
 #[derive(Debug, Clone)]
-pub struct WorkspaceMemoryBootstrapFile {
+pub struct MemoryStoreBootstrapFile {
     pub label: String,
-    pub path: PathBuf,
-    pub write_path: PathBuf,
     pub content: Option<String>,
     pub missing: bool,
 }
 
-pub fn ensure_workspace_memory_layout_at(memory_dir: &Path) -> io::Result<()> {
+pub fn ensure_memory_store_layout_at(memory_dir: &Path) -> io::Result<()> {
     fs::create_dir_all(memory_dir)?;
 
     for dir_name in REQUIRED_MEMORY_DIRS {
@@ -86,25 +83,18 @@ pub fn ensure_workspace_memory_layout_at(memory_dir: &Path) -> io::Result<()> {
     Ok(())
 }
 
-pub fn load_workspace_memory_bootstrap_files(
-    memory_dir: &Path,
-) -> Vec<WorkspaceMemoryBootstrapFile> {
+pub fn load_memory_store_bootstrap_files(memory_dir: &Path) -> Vec<MemoryStoreBootstrapFile> {
     let mut files = vec![
         read_memory_file(
             MEMORY_USER_FILENAME.to_string(),
             memory_dir.join(MEMORY_USER_FILENAME),
-            memory_dir.join(MEMORY_USER_FILENAME),
         ),
         read_memory_file(
-            WORKSPACE_MEMORY_FILENAME.to_string(),
-            memory_dir.join(WORKSPACE_MEMORY_FILENAME),
-            memory_dir.join(WORKSPACE_MEMORY_FILENAME),
+            MEMORY_STORE_FILENAME.to_string(),
+            memory_dir.join(MEMORY_STORE_FILENAME),
         ),
         read_memory_file(
             format!("{MEMORY_HANDOFFS_DIRNAME}/{MEMORY_LATEST_FILENAME}"),
-            memory_dir
-                .join(MEMORY_HANDOFFS_DIRNAME)
-                .join(MEMORY_LATEST_FILENAME),
             memory_dir
                 .join(MEMORY_HANDOFFS_DIRNAME)
                 .join(MEMORY_LATEST_FILENAME),
@@ -114,17 +104,17 @@ pub fn load_workspace_memory_bootstrap_files(
     files.extend(
         latest_daily_note_targets(memory_dir)
             .into_iter()
-            .map(|target| read_memory_file(target.label, target.path, target.write_path)),
+            .map(|target| read_memory_file(target.label, target.path)),
     );
 
     files
 }
 
-pub(crate) fn workspace_memory_tracked_paths(memory_dir: &Path) -> Vec<PathBuf> {
+pub(crate) fn memory_store_tracked_paths(memory_dir: &Path) -> Vec<PathBuf> {
     let mut tracked = vec![
         memory_dir.to_path_buf(),
         memory_dir.join(MEMORY_USER_FILENAME),
-        memory_dir.join(WORKSPACE_MEMORY_FILENAME),
+        memory_dir.join(MEMORY_STORE_FILENAME),
         memory_dir
             .join(MEMORY_HANDOFFS_DIRNAME)
             .join(MEMORY_LATEST_FILENAME),
@@ -142,52 +132,37 @@ pub(crate) fn workspace_memory_tracked_paths(memory_dir: &Path) -> Vec<PathBuf> 
     tracked
 }
 
-pub(crate) fn render_workspace_memory_context(memory_dir: &Path) -> String {
-    let files = load_workspace_memory_bootstrap_files(memory_dir);
+pub(crate) fn render_memory_store_context(memory_dir: &Path) -> String {
+    let files = load_memory_store_bootstrap_files(memory_dir);
     if files.is_empty() {
         return String::new();
     }
 
     let mut prompt = String::new();
-    prompt.push_str("## Workspace Memory Bootstrap\n");
-    prompt.push_str(&format!(
-        "Writable Memory Directory: {}\n",
-        memory_dir.display()
-    ));
+    prompt.push_str("## Memory Store Bootstrap\n");
+    prompt.push_str("Memory Store descriptor: /memory\n");
     prompt.push_str(
         "The following pure-text memory surfaces are already injected into this prompt.\n",
     );
     prompt.push_str(
-        "Prefer them before spending tool calls to rediscover stable identity, workspace memory, or recent cross-machine continuity.\n",
+        "Prefer them before spending tool calls to rediscover stable identity, personal memory, or recent cross-process continuity.\n",
     );
     prompt.push_str(
         "Do not re-read them with tools by default; only inspect the on-disk files when you need exact verification or you are editing them.\n",
     );
     prompt.push_str(
-        "Paths below are exact on-disk targets. When you persist stable memory, edit the exact `Write updates to:` path shown for that file.\n",
+        "When you persist stable memory, use the visible `/memory` file tree; Host backing paths are not part of Process context.\n",
     );
 
     for file in files {
         prompt.push_str(&format!("\n### {}\n", file.label));
         if file.missing {
-            prompt.push_str(&format!(
-                "[MISSING] Expected memory file not found: {}\n",
-                file.path.display()
-            ));
-            prompt.push_str(&format!(
-                "Write updates to: {}\n",
-                file.write_path.display()
-            ));
+            prompt.push_str(&format!("[MISSING] /memory/{}\n", file.label));
             continue;
         }
-
-        prompt.push_str(&format!("Resolved from: {}\n", file.path.display()));
-        prompt.push_str(&format!(
-            "Write updates to: {}\n",
-            file.write_path.display()
-        ));
+        prompt.push_str(&format!("Memory Store path: /memory/{}\n", file.label));
         let content = file.content.unwrap_or_default();
-        let trimmed = trim_memory_content(&content, &file.label, WORKSPACE_MEMORY_MAX_CHARS);
+        let trimmed = trim_memory_content(&content, &file.label, MEMORY_STORE_MAX_CHARS);
         if trimmed.is_empty() {
             prompt.push_str("[EMPTY]\n");
         } else {
@@ -208,7 +183,7 @@ fn write_file_if_missing(path: &Path, content: &str) -> io::Result<()> {
         Ok(mut file) => {
             use std::io::Write;
             file.write_all(content.as_bytes())?;
-            debug!(path = %path.display(), "Created workspace memory bootstrap file");
+            debug!(path = %path.display(), "Created Memory Store bootstrap file");
             Ok(())
         }
         Err(err) if err.kind() == io::ErrorKind::AlreadyExists => Ok(()),
@@ -222,34 +197,24 @@ fn join_relative_path(base_dir: &Path, relative_path: &[&str]) -> PathBuf {
         .fold(base_dir.to_path_buf(), |path, segment| path.join(segment))
 }
 
-fn read_memory_file(
-    label: String,
-    path: PathBuf,
-    write_path: PathBuf,
-) -> WorkspaceMemoryBootstrapFile {
+fn read_memory_file(label: String, path: PathBuf) -> MemoryStoreBootstrapFile {
     if path.exists() {
         return match fs::read_to_string(&path) {
-            Ok(content) => WorkspaceMemoryBootstrapFile {
+            Ok(content) => MemoryStoreBootstrapFile {
                 label,
-                path: path.clone(),
-                write_path,
                 content: Some(content),
                 missing: false,
             },
-            Err(err) => WorkspaceMemoryBootstrapFile {
+            Err(err) => MemoryStoreBootstrapFile {
                 label,
-                path: path.clone(),
-                write_path,
                 content: Some(format!("[ERROR] Failed to read file: {}", err)),
                 missing: false,
             },
         };
     }
 
-    WorkspaceMemoryBootstrapFile {
+    MemoryStoreBootstrapFile {
         label,
-        path: path.clone(),
-        write_path,
         content: None,
         missing: true,
     }
@@ -265,8 +230,7 @@ fn latest_daily_note_targets(memory_dir: &Path) -> Vec<LatestDailyNoteTarget> {
         .is_file()
         .then(|| LatestDailyNoteTarget {
             label: format!("{MEMORY_DAILY_DIRNAME}/{latest_stem}.md"),
-            path: canonical_path.clone(),
-            write_path: canonical_path,
+            path: canonical_path,
         })
         .into_iter()
         .collect()
@@ -340,14 +304,14 @@ mod tests {
     use tempfile::TempDir;
 
     #[test]
-    fn test_ensure_workspace_memory_layout_creates_required_structure() {
+    fn test_ensure_memory_store_layout_creates_required_structure() {
         let temp_dir = TempDir::new().unwrap();
         let memory_dir = temp_dir.path().join("memory");
 
-        ensure_workspace_memory_layout_at(&memory_dir).unwrap();
+        ensure_memory_store_layout_at(&memory_dir).unwrap();
 
         assert!(memory_dir.join(MEMORY_USER_FILENAME).exists());
-        assert!(memory_dir.join(WORKSPACE_MEMORY_FILENAME).exists());
+        assert!(memory_dir.join(MEMORY_STORE_FILENAME).exists());
         assert!(
             memory_dir
                 .join(MEMORY_HANDOFFS_DIRNAME)
@@ -362,25 +326,26 @@ mod tests {
     }
 
     #[test]
-    fn test_render_workspace_memory_context_adds_runtime_guidance() {
+    fn test_render_memory_store_context_adds_runtime_guidance() {
         let temp_dir = TempDir::new().unwrap();
         let memory_dir = temp_dir.path().join("memory");
-        ensure_workspace_memory_layout_at(&memory_dir).unwrap();
+        ensure_memory_store_layout_at(&memory_dir).unwrap();
 
-        let prompt = render_workspace_memory_context(&memory_dir);
+        let prompt = render_memory_store_context(&memory_dir);
 
-        assert!(prompt.contains("Workspace Memory Bootstrap"));
+        assert!(prompt.contains("Memory Store Bootstrap"));
         assert!(prompt.contains("already injected into this prompt"));
         assert!(prompt.contains("Do not re-read them with tools by default"));
-        assert!(prompt.contains("Write updates to:"));
-        assert!(prompt.contains("Resolved from:"));
+        assert!(prompt.contains("Memory Store descriptor: /memory"));
+        assert!(prompt.contains("Memory Store path: /memory/MEMORY.md"));
+        assert!(!prompt.contains(memory_dir.to_string_lossy().as_ref()));
     }
 
     #[test]
-    fn test_render_workspace_memory_context_includes_latest_daily_note() {
+    fn test_render_memory_store_context_includes_latest_daily_note() {
         let temp_dir = TempDir::new().unwrap();
         let memory_dir = temp_dir.path().join("memory");
-        ensure_workspace_memory_layout_at(&memory_dir).unwrap();
+        ensure_memory_store_layout_at(&memory_dir).unwrap();
         fs::write(
             memory_dir.join(MEMORY_DAILY_DIRNAME).join("2026-04-14.md"),
             "# 2026-04-14\nolder",
@@ -392,7 +357,7 @@ mod tests {
         )
         .unwrap();
 
-        let prompt = render_workspace_memory_context(&memory_dir);
+        let prompt = render_memory_store_context(&memory_dir);
 
         assert!(prompt.contains("daily/2026-04-15.md"));
         assert!(prompt.contains("newer"));

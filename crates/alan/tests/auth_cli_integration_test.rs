@@ -1,6 +1,6 @@
 use alan_agent_engine::{
-    AlanHomePaths, ConnectionCredential, ConnectionProfile, ConnectionsFile, CredentialKind,
-    LlmProvider,
+    ConnectionCredential, ConnectionProfile, ConnectionsFile, CredentialKind, InstallChannel,
+    LlmProvider, default_credential_backend,
 };
 use alan_auth::{AuthStorage, AuthStore, ChatgptIdTokenInfo, ChatgptTokenData, StoredChatgptAuth};
 use base64::Engine;
@@ -18,9 +18,11 @@ fn build_jwt(payload: serde_json::Value) -> String {
 }
 
 fn seed_chatgpt_auth(home: &Path) {
-    let auth_dir = home.join(".alan");
-    std::fs::create_dir_all(&auth_dir).unwrap();
-    let storage = AuthStorage::new(auth_dir.join("auth.json")).unwrap();
+    let data_dir = home.join("Library/Application Support");
+    let host_store =
+        alan::HostStorePaths::from_data_dir(&data_dir, InstallChannel::Stable).unwrap();
+    std::fs::create_dir_all(host_store.managed_auth.parent().unwrap()).unwrap();
+    let storage = AuthStorage::new(host_store.managed_auth).unwrap();
     let id_token = build_jwt(json!({
         "email": "user@example.com",
         "https://api.openai.com/auth": {
@@ -53,13 +55,12 @@ fn seed_chatgpt_auth(home: &Path) {
 }
 
 fn seed_chatgpt_connection(home: &Path) {
-    let alan_dir = home.join(".alan");
-    std::fs::create_dir_all(&alan_dir).unwrap();
-    let home_paths = AlanHomePaths::from_home_dir(home);
+    let data_dir = home.join("Library/Application Support");
+    let system_store =
+        alan::SystemStorePaths::from_data_dir(&data_dir, InstallChannel::Stable).unwrap();
     let mut connections = ConnectionsFile {
         version: 1,
         default_profile: Some("chatgpt-main".to_string()),
-        workspace_pins: std::collections::BTreeMap::new(),
         credentials: std::collections::BTreeMap::new(),
         profiles: std::collections::BTreeMap::new(),
     };
@@ -69,7 +70,7 @@ fn seed_chatgpt_connection(home: &Path) {
             kind: CredentialKind::ManagedOauth,
             provider_family: LlmProvider::Chatgpt,
             label: "ChatGPT managed login".to_string(),
-            backend: "alan_home_auth_json".to_string(),
+            backend: default_credential_backend(CredentialKind::ManagedOauth).to_string(),
         },
     );
     connections.profiles.insert(
@@ -91,7 +92,9 @@ fn seed_chatgpt_connection(home: &Path) {
             ]),
         },
     );
-    connections.save_to_home_paths(&home_paths).unwrap();
+    connections
+        .save_to_path(&system_store.connections_metadata().unwrap())
+        .unwrap();
 }
 
 #[test]
@@ -112,7 +115,7 @@ fn connection_show_reports_managed_chatgpt_login() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("profile_id: chatgpt-main"));
     assert!(stdout.contains("provider: chatgpt"));
-    assert!(stdout.contains("credential: <configured>"));
+    assert!(stdout.contains("credential: configured"));
     assert!(stdout.contains("settings_keys: account_id, base_url, model"));
     assert!(!stdout.contains("user_123"));
     assert!(!stdout.contains("user@example.com"));
@@ -133,8 +136,7 @@ fn connection_logout_removes_managed_chatgpt_login() {
         .unwrap();
     assert!(logout.status.success(), "{logout:?}");
     assert!(
-        String::from_utf8_lossy(&logout.stdout)
-            .contains("Removed managed credentials for chatgpt-main.")
+        String::from_utf8_lossy(&logout.stdout).contains("Removed credentials for chatgpt-main.")
     );
 
     let status = Command::new(env!("CARGO_BIN_EXE_alan"))
@@ -147,21 +149,18 @@ fn connection_logout_removes_managed_chatgpt_login() {
 }
 
 #[test]
-fn connection_pin_and_current_report_selection_layers() {
+fn connection_default_and_current_use_system_metadata() {
     let temp = TempDir::new().unwrap();
     let home = temp.path().join("home");
     std::fs::create_dir_all(&home).unwrap();
     seed_chatgpt_connection(&home);
 
-    let pin = Command::new(env!("CARGO_BIN_EXE_alan"))
-        .args(["connection", "pin", "chatgpt-main"])
+    let set_default = Command::new(env!("CARGO_BIN_EXE_alan"))
+        .args(["connection", "default", "set", "chatgpt-main"])
         .env("HOME", &home)
         .output()
         .unwrap();
-    assert!(pin.status.success(), "{pin:?}");
-    let agent_config =
-        std::fs::read_to_string(home.join(".alan/agents/default/agent.toml")).unwrap();
-    assert!(agent_config.contains("connection_profile = \"chatgpt-main\""));
+    assert!(set_default.status.success(), "{set_default:?}");
 
     let current = Command::new(env!("CARGO_BIN_EXE_alan"))
         .args(["connection", "current"])
@@ -170,8 +169,6 @@ fn connection_pin_and_current_report_selection_layers() {
         .unwrap();
     assert!(current.status.success(), "{current:?}");
     let stdout = String::from_utf8_lossy(&current.stdout);
-    assert!(stdout.contains("global_pin: chatgpt-main (global)"));
-    assert!(stdout.contains("default_profile: chatgpt-main"));
     assert!(stdout.contains("effective_profile: chatgpt-main"));
-    assert!(stdout.contains("effective_source: global_pin"));
+    assert!(stdout.contains("source: default_profile"));
 }

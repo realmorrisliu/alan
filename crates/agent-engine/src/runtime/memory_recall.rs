@@ -37,12 +37,12 @@ pub(crate) fn build_turn_recall_bundle(
     let query_tokens = tokenize_query(&query_lower);
     let identity_query = is_identity_query(&query_lower);
     let continuity_query = is_continuity_query(&query_lower);
-    let workspace_query = is_workspace_query(&query_lower);
+    let domain_query = is_domain_query(&query_lower);
     let recent_query = is_recent_query(&query_lower);
 
     if !identity_query
         && !continuity_query
-        && !workspace_query
+        && !domain_query
         && !recent_query
         && query_tokens.is_empty()
     {
@@ -53,7 +53,7 @@ pub(crate) fn build_turn_recall_bundle(
     if identity_query {
         selected_paths.push(memory_dir.join("USER.md"));
     }
-    if workspace_query {
+    if domain_query {
         selected_paths.push(memory_dir.join("MEMORY.md"));
     }
     if continuity_query {
@@ -89,7 +89,7 @@ pub(crate) fn build_turn_recall_bundle(
             &query_tokens,
         ));
     }
-    let should_score_topics = workspace_query
+    let should_score_topics = domain_query
         || (!identity_query && !continuity_query && !recent_query && !query_tokens.is_empty());
     if should_score_topics {
         scored_candidates.extend(score_candidate_files(
@@ -171,18 +171,9 @@ fn format_relative_memory_path(memory_dir: &Path, path: &Path) -> String {
     path.strip_prefix(memory_dir)
         .map(|relative| {
             let relative = relative.to_string_lossy().replace('\\', "/");
-            if let Some(channel_dir) = memory_dir.parent()
-                && channel_dir
-                    .parent()
-                    .and_then(Path::file_name)
-                    .is_some_and(|name| name == "runtime")
-                && let Some(channel_id) = channel_dir.file_name().and_then(|name| name.to_str())
-            {
-                return format!(".alan/runtime/{channel_id}/memory/{relative}");
-            }
-            format!(".alan/memory/{relative}")
+            format!("/memory/{relative}")
         })
-        .unwrap_or_else(|_| path.display().to_string())
+        .unwrap_or_else(|_| "/memory".to_string())
 }
 
 fn path_is_within_canonical_root(path: &Path, canonical_memory_root: &Path) -> bool {
@@ -246,7 +237,7 @@ fn is_continuity_query(query: &str) -> bool {
     .any(|needle| query.contains(needle))
 }
 
-fn is_workspace_query(query: &str) -> bool {
+fn is_domain_query(query: &str) -> bool {
     [
         "architecture",
         "decision",
@@ -420,8 +411,8 @@ mod tests {
     #[test]
     fn identity_query_prefers_user_memory() {
         let temp = TempDir::new().unwrap();
-        let memory_dir = temp.path().join(".alan/memory");
-        crate::prompts::ensure_workspace_memory_layout_at(&memory_dir).unwrap();
+        let memory_dir = temp.path().join("memory-store");
+        crate::prompts::ensure_memory_store_layout_at(&memory_dir).unwrap();
         fs::write(
             memory_dir.join("USER.md"),
             "# User Memory\nName: Morris Liu\n",
@@ -434,15 +425,15 @@ mod tests {
         )
         .expect("expected recall bundle");
 
-        assert!(bundle.contains(".alan/memory/USER.md"));
+        assert!(bundle.contains("/memory/USER.md"));
         assert!(bundle.contains("Morris Liu"));
     }
 
     #[test]
     fn continuity_query_picks_handoff_and_episodic_record() {
         let temp = TempDir::new().unwrap();
-        let memory_dir = temp.path().join(".alan/memory");
-        crate::prompts::ensure_workspace_memory_layout_at(&memory_dir).unwrap();
+        let memory_dir = temp.path().join("memory-store");
+        crate::prompts::ensure_memory_store_layout_at(&memory_dir).unwrap();
         fs::write(
             memory_dir.join("handoffs/LATEST.md"),
             "# Latest Handoff\nWe were refining the recall router.\n",
@@ -463,15 +454,15 @@ mod tests {
         )
         .expect("expected recall bundle");
 
-        assert!(bundle.contains(".alan/memory/handoffs/LATEST.md"));
-        assert!(bundle.contains(".alan/memory/episodic/2026/04/15/sess-1.md"));
+        assert!(bundle.contains("/memory/handoffs/LATEST.md"));
+        assert!(bundle.contains("/memory/episodic/2026/04/15/sess-1.md"));
     }
 
     #[test]
-    fn workspace_query_can_pick_relevant_topic_page() {
+    fn domain_query_can_pick_relevant_topic_page() {
         let temp = TempDir::new().unwrap();
-        let memory_dir = temp.path().join(".alan/memory");
-        crate::prompts::ensure_workspace_memory_layout_at(&memory_dir).unwrap();
+        let memory_dir = temp.path().join("memory-store");
+        crate::prompts::ensure_memory_store_layout_at(&memory_dir).unwrap();
         fs::write(
             memory_dir.join("topics/memory-router.md"),
             "# Memory Router\nArchitecture decision: use lexical recall over pure-text files.\n",
@@ -486,15 +477,15 @@ mod tests {
         )
         .expect("expected recall bundle");
 
-        assert!(bundle.contains(".alan/memory/topics/memory-router.md"));
+        assert!(bundle.contains("/memory/topics/memory-router.md"));
         assert!(bundle.contains("lexical recall"));
     }
 
     #[test]
     fn recent_query_fallback_ignores_memory_root_token_overlap() {
         let temp = TempDir::new().unwrap();
-        let memory_dir = temp.path().join("yesterday-root/.alan/memory");
-        crate::prompts::ensure_workspace_memory_layout_at(&memory_dir).unwrap();
+        let memory_dir = temp.path().join("yesterday-root//memory");
+        crate::prompts::ensure_memory_store_layout_at(&memory_dir).unwrap();
         fs::create_dir_all(memory_dir.join("episodic/2026/04/16")).unwrap();
         for index in 1..=4 {
             fs::write(
@@ -523,16 +514,16 @@ mod tests {
         .expect("expected recall bundle");
 
         assert!(bundle.contains("## Runtime Recall Bundle"));
-        assert!(bundle.contains(".alan/memory/daily/2026-04-16.md"));
-        assert!(bundle.contains(".alan/memory/episodic/2026/04/16/process-4.md"));
+        assert!(bundle.contains("/memory/daily/2026-04-16.md"));
+        assert!(bundle.contains("/memory/episodic/2026/04/16/process-4.md"));
         assert!(bundle.contains("ALAN_RECENT_RECALL_4"));
-        assert!(!bundle.contains(".alan/memory/topics/recent-match-4.md"));
+        assert!(!bundle.contains("/memory/topics/recent-match-4.md"));
     }
 
     #[test]
     fn collect_markdown_files_recursive_prioritizes_newest_paths_under_cap() {
         let temp = TempDir::new().unwrap();
-        let episodic_dir = temp.path().join(".alan/memory/episodic");
+        let episodic_dir = temp.path().join("memory-store/episodic");
         fs::create_dir_all(episodic_dir.join("2026/04/15")).unwrap();
         fs::create_dir_all(episodic_dir.join("2026/04/16")).unwrap();
         fs::write(
@@ -546,7 +537,7 @@ mod tests {
         )
         .unwrap();
 
-        let canonical_memory_root = fs::canonicalize(temp.path().join(".alan/memory")).unwrap();
+        let canonical_memory_root = fs::canonicalize(temp.path().join("memory-store")).unwrap();
         let collected = collect_markdown_files_recursive(&episodic_dir, &canonical_memory_root, 1);
 
         assert_eq!(
@@ -561,8 +552,8 @@ mod tests {
         use std::os::unix::fs::symlink;
 
         let temp = TempDir::new().unwrap();
-        let memory_dir = temp.path().join(".alan/memory");
-        crate::prompts::ensure_workspace_memory_layout_at(&memory_dir).unwrap();
+        let memory_dir = temp.path().join("memory-store");
+        crate::prompts::ensure_memory_store_layout_at(&memory_dir).unwrap();
         fs::write(
             memory_dir.join("handoffs/LATEST.md"),
             "# Latest Handoff\nWe were refining the recall router.\n",
@@ -597,8 +588,8 @@ mod tests {
         use std::os::unix::fs::symlink;
 
         let temp = TempDir::new().unwrap();
-        let memory_dir = temp.path().join(".alan/memory");
-        crate::prompts::ensure_workspace_memory_layout_at(&memory_dir).unwrap();
+        let memory_dir = temp.path().join("memory-store");
+        crate::prompts::ensure_memory_store_layout_at(&memory_dir).unwrap();
 
         let external_handoffs = temp.path().join("external-handoffs");
         fs::create_dir_all(&external_handoffs).unwrap();

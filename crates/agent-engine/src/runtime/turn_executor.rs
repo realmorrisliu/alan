@@ -844,8 +844,8 @@ fn build_anthropic_messages_from_tape(
     projected
 }
 
-fn resolve_workspace_persona_dirs(state: &RuntimeLoopState) -> Vec<std::path::PathBuf> {
-    state.workspace_persona_dirs.clone()
+fn resolve_definition_persona_dirs(state: &RuntimeLoopState) -> Vec<std::path::PathBuf> {
+    state.definition_persona_dirs.clone()
 }
 
 fn build_domain_prompt_with_skills(
@@ -855,13 +855,13 @@ fn build_domain_prompt_with_skills(
 ) -> super::prompt_cache::PromptAssemblyResult {
     state
         .prompt_cache
-        .rebind_paths(resolve_workspace_persona_dirs(state));
-    state.prompt_cache.set_workspace_memory_dir(
+        .rebind_paths(resolve_definition_persona_dirs(state));
+    state.prompt_cache.set_memory_store_dir(
         state
             .core_config
             .memory
             .enabled
-            .then(|| state.core_config.memory.workspace_dir.clone())
+            .then(|| state.core_config.memory.store_dir.clone())
             .flatten(),
     );
     match active_skills {
@@ -913,7 +913,7 @@ where
         .filter(|input| !input.trim().is_empty());
     let turn_recall_bundle = if state.core_config.memory.enabled {
         super::memory_recall::build_turn_recall_bundle(
-            state.core_config.memory.workspace_dir.as_deref(),
+            state.core_config.memory.store_dir.as_deref(),
             user_input_for_skills.as_deref(),
         )
     } else {
@@ -2397,7 +2397,7 @@ mod tests {
 
     fn create_test_state_with_provider_and_tools_and_shell<P: LlmProvider + 'static>(
         provider: P,
-        tools: ToolRegistry,
+        mut tools: ToolRegistry,
     ) -> (RuntimeLoopState, alan_shell::Shell) {
         let config = Config {
             openai_responses_model: "mock-model".to_string(),
@@ -2443,6 +2443,23 @@ mod tests {
                 alan_kernel::Access::ReadOnly,
             );
         }
+        let launch_context = crate::ProcessLaunchContext::new(
+            process_namespace.clone(),
+            alan_kernel::Credentials::user("test-agent"),
+            "/mnt/source",
+        )
+        .unwrap()
+        .with_host_mount(
+            crate::HostMountGrant::new("/mnt/source", "/tmp", alan_kernel::Access::ReadWrite)
+                .unwrap(),
+        );
+        tools.set_default_execution_binding(
+            crate::tools::ToolExecutionBinding::from_launch_context(
+                &launch_context,
+                std::path::PathBuf::from("/tmp/alan-turn-executor-test-scratch"),
+            )
+            .unwrap(),
+        );
         let procfs = alan_kernel::ProcFs::new().with_runner(std::sync::Arc::new(
             TestToolProcessRunner::new(tools.clone()),
         ));
@@ -2467,14 +2484,13 @@ mod tests {
         };
 
         let state = RuntimeLoopState {
-            workspace_id: "test-workspace".to_string(),
-            workspace_root_dir: None,
             machine,
             current_submission_id: None,
-            environment: NamespaceRuntimeEnvironment::new(root.clone(), "/agent/1", "default"),
+            environment: NamespaceRuntimeEnvironment::new(root.clone(), "/agent/1", "default")
+                .with_launch_context(launch_context),
             core_config: config,
             runtime_config,
-            workspace_persona_dirs: Vec::new(),
+            definition_persona_dirs: Vec::new(),
             prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
             turn_state: TurnState::default(),
         };
@@ -2498,31 +2514,29 @@ mod tests {
         count
     }
 
-    fn prompt_cache_for_workspace_root(
-        workspace_root: &std::path::Path,
-        workspace_persona_dirs: Vec<std::path::PathBuf>,
+    fn prompt_cache_for_definition_root(
+        definition_root: &std::path::Path,
+        definition_persona_dirs: Vec<std::path::PathBuf>,
     ) -> crate::runtime::prompt_cache::PromptAssemblyCache {
         let capability_view = ResolvedCapabilityView::from_package_dirs(vec![ScopedPackageDir {
-            path: workspace_root.join(".alan/agents/default/skills"),
-            scope: SkillScope::Repo,
+            path: definition_root.join("skills"),
+            scope: SkillScope::Descriptor,
         }]);
         crate::runtime::prompt_cache::PromptAssemblyCache::with_fixed_capability_view(
             capability_view,
-            workspace_persona_dirs,
+            definition_persona_dirs,
             crate::skills::SkillHostCapabilities::default(),
         )
     }
 
     fn create_repo_skill(
-        workspace_root: &std::path::Path,
+        definition_root: &std::path::Path,
         dir_name: &str,
         skill_name: &str,
         description: &str,
         body: &str,
     ) {
-        let skill_dir = workspace_root
-            .join(".alan/agents/default/skills")
-            .join(dir_name);
+        let skill_dir = definition_root.join("skills").join(dir_name);
         std::fs::create_dir_all(&skill_dir).unwrap();
         std::fs::write(
             skill_dir.join("SKILL.md"),
@@ -2567,10 +2581,10 @@ description: {description}
     #[test]
     fn test_build_domain_prompt_with_skills_includes_mentioned_repo_skill_instructions() {
         let temp = TempDir::new().unwrap();
-        let workspace_root = temp.path().join("repo");
-        std::fs::create_dir_all(&workspace_root).unwrap();
+        let definition_root = temp.path().join("repo");
+        std::fs::create_dir_all(&definition_root).unwrap();
         create_repo_skill(
-            &workspace_root,
+            &definition_root,
             "my-skill",
             "My Skill",
             "Custom test skill",
@@ -2578,7 +2592,7 @@ description: {description}
         );
 
         let mut state = create_test_state_with_provider(ContentMockProvider::new("ok"));
-        state.prompt_cache = prompt_cache_for_workspace_root(&workspace_root, Vec::new());
+        state.prompt_cache = prompt_cache_for_definition_root(&definition_root, Vec::new());
 
         let user_input = vec![ContentPart::text("please use $my-skill for this task")];
         let prompt = build_domain_prompt_with_skills(&mut state, Some(&user_input), None);
@@ -2594,45 +2608,47 @@ description: {description}
     }
 
     #[test]
-    fn test_build_domain_prompt_with_skills_uses_persona_fallback_from_memory_dir() {
+    fn test_build_domain_prompt_with_skills_uses_explicit_definition_persona() {
         let temp = TempDir::new().unwrap();
-        let workspace_root = temp.path().join("repo");
-        let alan_dir = workspace_root.join(".alan");
+        let definition_root = temp.path().join("repo");
+        let alan_dir = definition_root.join(".alan");
         let persona_dir = alan_dir.join("agents/default/persona");
         let memory_dir = alan_dir.join("memory");
         std::fs::create_dir_all(&memory_dir).unwrap();
-        crate::prompts::ensure_workspace_bootstrap_files_at(&persona_dir).unwrap();
+        crate::prompts::ensure_definition_bootstrap_files_at(&persona_dir).unwrap();
         std::fs::write(persona_dir.join("SOUL.md"), "custom fallback persona").unwrap();
 
         let mut state = create_test_state_with_provider(ContentMockProvider::new("ok"));
-        state.core_config.memory.workspace_dir = Some(memory_dir);
-        state.workspace_persona_dirs = vec![persona_dir];
-        state.prompt_cache =
-            prompt_cache_for_workspace_root(&workspace_root, state.workspace_persona_dirs.clone());
+        state.core_config.memory.store_dir = Some(memory_dir);
+        state.definition_persona_dirs = vec![persona_dir];
+        state.prompt_cache = prompt_cache_for_definition_root(
+            &definition_root,
+            state.definition_persona_dirs.clone(),
+        );
 
         let prompt = build_domain_prompt_with_skills(&mut state, None, None);
 
-        assert!(prompt.system_prompt.contains("Workspace Persona Context"));
+        assert!(prompt.system_prompt.contains("Agent Definition Persona"));
         assert!(prompt.system_prompt.contains("custom fallback persona"));
     }
 
     #[test]
     fn test_build_domain_prompt_with_skills_omits_memory_bootstrap_when_memory_disabled() {
         let temp = TempDir::new().unwrap();
-        let workspace_root = temp.path().join("repo");
-        let alan_dir = workspace_root.join(".alan");
+        let definition_root = temp.path().join("repo");
+        let alan_dir = definition_root.join(".alan");
         let memory_dir = alan_dir.join("memory");
-        crate::prompts::ensure_workspace_memory_layout_at(&memory_dir).unwrap();
+        crate::prompts::ensure_memory_store_layout_at(&memory_dir).unwrap();
         std::fs::write(memory_dir.join("USER.md"), "# User Memory\n- Morris\n").unwrap();
 
         let mut state = create_test_state_with_provider(ContentMockProvider::new("ok"));
-        state.core_config.memory.workspace_dir = Some(memory_dir);
+        state.core_config.memory.store_dir = Some(memory_dir);
         state.core_config.memory.enabled = false;
-        state.prompt_cache = prompt_cache_for_workspace_root(&workspace_root, Vec::new());
+        state.prompt_cache = prompt_cache_for_definition_root(&definition_root, Vec::new());
 
         let prompt = build_domain_prompt_with_skills(&mut state, None, None);
 
-        assert!(!prompt.system_prompt.contains("Workspace Memory Bootstrap"));
+        assert!(!prompt.system_prompt.contains("Memory Store Bootstrap"));
         assert!(!prompt.system_prompt.contains("# User Memory"));
     }
 
@@ -3360,8 +3376,8 @@ description: {description}
             .tape
             .apply_context_items(vec![crate::tape::ContextItem::new(
                 "ctx_1",
-                "workspace_note",
-                "Workspace note",
+                "domain_note",
+                "Domain note",
                 "Reference context changed",
             )]);
         let cancel = CancellationToken::new();
@@ -4752,7 +4768,7 @@ description: {description}
     #[tokio::test]
     async fn test_run_turn_refreshes_memory_surfaces_when_tool_batch_ends_turn() {
         let temp = TempDir::new().unwrap();
-        let memory_dir = temp.path().join(".alan/memory");
+        let memory_dir = temp.path().join("memory-store");
 
         let mut state = create_test_state_with_provider(ToolCallMockProvider::new(
             vec![ToolCall {
@@ -4762,7 +4778,7 @@ description: {description}
             }],
             "",
         ));
-        state.core_config.memory.workspace_dir = Some(memory_dir.clone());
+        state.core_config.memory.store_dir = Some(memory_dir.clone());
         state
             .turn_state
             .set_turn_activity(TurnActivityState::Running);
@@ -4803,7 +4819,7 @@ description: {description}
     #[tokio::test]
     async fn test_run_turn_promotes_direct_user_fact_when_tool_batch_ends_turn() {
         let temp = TempDir::new().unwrap();
-        let memory_dir = temp.path().join(".alan/memory");
+        let memory_dir = temp.path().join("memory-store");
 
         let mut state = create_test_state_with_provider(ToolCallMockProvider::new(
             vec![ToolCall {
@@ -4813,7 +4829,7 @@ description: {description}
             }],
             "",
         ));
-        state.core_config.memory.workspace_dir = Some(memory_dir.clone());
+        state.core_config.memory.store_dir = Some(memory_dir.clone());
         state.core_config.memory.enabled = true;
         state
             .turn_state
@@ -4845,12 +4861,12 @@ description: {description}
     #[tokio::test]
     async fn test_run_turn_defers_memory_promotion_until_after_completion() {
         let temp = TempDir::new().unwrap();
-        let memory_dir = temp.path().join(".alan/memory");
+        let memory_dir = temp.path().join("memory-store");
 
         let mut state = create_test_state_with_provider(FailOnMemoryPromotionProvider {
             content: "Done.".to_string(),
         });
-        state.core_config.memory.workspace_dir = Some(memory_dir);
+        state.core_config.memory.store_dir = Some(memory_dir);
         state.core_config.memory.enabled = true;
 
         let cancel = CancellationToken::new();
@@ -4912,7 +4928,7 @@ description: {description}
     #[tokio::test]
     async fn test_run_turn_cancelled_tool_batch_does_not_refresh_memory_surfaces() {
         let temp = TempDir::new().unwrap();
-        let memory_dir = temp.path().join(".alan/memory");
+        let memory_dir = temp.path().join("memory-store");
 
         let mut tools = ToolRegistry::new();
         tools.register(SlowTool {
@@ -4929,7 +4945,7 @@ description: {description}
             ),
             tools,
         );
-        state.core_config.memory.workspace_dir = Some(memory_dir.clone());
+        state.core_config.memory.store_dir = Some(memory_dir.clone());
         state
             .turn_state
             .set_turn_activity(TurnActivityState::Running);
@@ -4973,7 +4989,7 @@ description: {description}
     #[allow(clippy::field_reassign_with_default)]
     async fn test_run_turn_tool_loop_guard_refreshes_memory_surfaces_before_completion_event() {
         let temp = TempDir::new().unwrap();
-        let memory_dir = temp.path().join(".alan/memory");
+        let memory_dir = temp.path().join("memory-store");
         let generate_calls = Arc::new(AtomicUsize::new(0));
         let provider = SequenceMockProvider::new(
             vec![
@@ -5019,7 +5035,7 @@ description: {description}
             Arc::clone(&generate_calls),
         );
         let mut state = create_test_state_with_provider(provider);
-        state.core_config.memory.workspace_dir = Some(memory_dir.clone());
+        state.core_config.memory.store_dir = Some(memory_dir.clone());
         state.runtime_config.max_tool_loops = 2;
 
         let cancel = CancellationToken::new();
@@ -5058,8 +5074,8 @@ description: {description}
     #[tokio::test]
     async fn test_run_turn_confirmation_includes_active_skill_permission_hints() {
         let temp = tempfile::TempDir::new().unwrap();
-        let workspace_root = temp.path().join("repo");
-        let skill_dir = workspace_root.join(".alan/agents/default/skills/release-check");
+        let definition_root = temp.path().join("repo");
+        let skill_dir = definition_root.join("skills/release-check");
         std::fs::create_dir_all(&skill_dir).unwrap();
         std::fs::write(
             skill_dir.join("SKILL.md"),
@@ -5094,7 +5110,7 @@ runtime:
             }],
             "",
         ));
-        state.prompt_cache = prompt_cache_for_workspace_root(&workspace_root, Vec::new());
+        state.prompt_cache = prompt_cache_for_definition_root(&definition_root, Vec::new());
         let cancel = CancellationToken::new();
 
         let mut events = vec![];
@@ -5226,9 +5242,9 @@ runtime:
     #[tokio::test]
     async fn test_run_turn_includes_runtime_recall_bundle_for_identity_query() {
         let temp = tempfile::TempDir::new().unwrap();
-        let workspace_root = temp.path().join("repo");
-        let memory_dir = workspace_root.join(".alan/memory");
-        crate::prompts::ensure_workspace_memory_layout_at(&memory_dir).unwrap();
+        let definition_root = temp.path().join("repo");
+        let memory_dir = definition_root.join("memory-store");
+        crate::prompts::ensure_memory_store_layout_at(&memory_dir).unwrap();
         std::fs::write(
             memory_dir.join("USER.md"),
             "# User Memory\n- Favorite runtime marker: ALAN_IDENTITY_RECALL\n",
@@ -5241,8 +5257,8 @@ runtime:
             "ALAN_IDENTITY_RECALL",
             seen_system_prompts.clone(),
         ));
-        state.core_config.memory.workspace_dir = Some(memory_dir);
-        state.prompt_cache = prompt_cache_for_workspace_root(&workspace_root, Vec::new());
+        state.core_config.memory.store_dir = Some(memory_dir);
+        state.prompt_cache = prompt_cache_for_definition_root(&definition_root, Vec::new());
 
         let cancel = CancellationToken::new();
         let mut emit = |_event: Event| async {};
@@ -5266,16 +5282,16 @@ runtime:
             .find(|prompt| prompt.contains("## Runtime Recall Bundle"))
             .expect("expected runtime recall bundle prompt");
         assert!(request_prompt.contains("## Runtime Recall Bundle"));
-        assert!(request_prompt.contains(".alan/memory/USER.md"));
+        assert!(request_prompt.contains("/memory/USER.md"));
         assert!(request_prompt.contains("ALAN_IDENTITY_RECALL"));
     }
 
     #[tokio::test]
     async fn test_run_turn_includes_runtime_recall_bundle_for_continuity_query() {
         let temp = tempfile::TempDir::new().unwrap();
-        let workspace_root = temp.path().join("repo");
-        let memory_dir = workspace_root.join(".alan/memory");
-        crate::prompts::ensure_workspace_memory_layout_at(&memory_dir).unwrap();
+        let definition_root = temp.path().join("repo");
+        let memory_dir = definition_root.join("memory-store");
+        crate::prompts::ensure_memory_store_layout_at(&memory_dir).unwrap();
         std::fs::write(
             memory_dir.join("handoffs/LATEST.md"),
             "# Latest Handoff\n- Continuity marker: ALAN_CONTINUITY_RECALL\n",
@@ -5294,8 +5310,8 @@ runtime:
             "ALAN_CONTINUITY_RECALL",
             seen_system_prompts.clone(),
         ));
-        state.core_config.memory.workspace_dir = Some(memory_dir);
-        state.prompt_cache = prompt_cache_for_workspace_root(&workspace_root, Vec::new());
+        state.core_config.memory.store_dir = Some(memory_dir);
+        state.prompt_cache = prompt_cache_for_definition_root(&definition_root, Vec::new());
 
         let cancel = CancellationToken::new();
         let mut emit = |_event: Event| async {};
@@ -5319,17 +5335,17 @@ runtime:
             .find(|prompt| prompt.contains("## Runtime Recall Bundle"))
             .expect("expected runtime recall bundle prompt");
         assert!(request_prompt.contains("## Runtime Recall Bundle"));
-        assert!(request_prompt.contains(".alan/memory/handoffs/LATEST.md"));
-        assert!(request_prompt.contains(".alan/memory/episodic/2026/04/15/process-1.md"));
+        assert!(request_prompt.contains("/memory/handoffs/LATEST.md"));
+        assert!(request_prompt.contains("/memory/episodic/2026/04/15/process-1.md"));
         assert!(request_prompt.contains("ALAN_CONTINUITY_RECALL"));
     }
 
     #[tokio::test]
     async fn test_run_turn_includes_runtime_recall_bundle_for_recent_query_fallback() {
         let temp = tempfile::TempDir::new().unwrap();
-        let workspace_root = temp.path().join("repo");
-        let memory_dir = workspace_root.join(".alan/memory");
-        crate::prompts::ensure_workspace_memory_layout_at(&memory_dir).unwrap();
+        let definition_root = temp.path().join("repo");
+        let memory_dir = definition_root.join("memory-store");
+        crate::prompts::ensure_memory_store_layout_at(&memory_dir).unwrap();
         std::fs::create_dir_all(memory_dir.join("episodic/2026/04/16")).unwrap();
         for index in 1..=4 {
             std::fs::write(
@@ -5357,8 +5373,8 @@ runtime:
             "ALAN_RECENT_RECALL_4",
             seen_system_prompts.clone(),
         ));
-        state.core_config.memory.workspace_dir = Some(memory_dir);
-        state.prompt_cache = prompt_cache_for_workspace_root(&workspace_root, Vec::new());
+        state.core_config.memory.store_dir = Some(memory_dir);
+        state.prompt_cache = prompt_cache_for_definition_root(&definition_root, Vec::new());
 
         let cancel = CancellationToken::new();
         let mut emit = |_event: Event| async {};
@@ -5380,18 +5396,18 @@ runtime:
             .find(|prompt| prompt.contains("## Runtime Recall Bundle"))
             .expect("expected runtime recall bundle prompt");
         assert!(request_prompt.contains("## Runtime Recall Bundle"));
-        assert!(request_prompt.contains(".alan/memory/daily/2026-04-16.md"));
-        assert!(request_prompt.contains(".alan/memory/episodic/2026/04/16/process-4.md"));
+        assert!(request_prompt.contains("/memory/daily/2026-04-16.md"));
+        assert!(request_prompt.contains("/memory/episodic/2026/04/16/process-4.md"));
         assert!(request_prompt.contains("ALAN_RECENT_RECALL_4"));
-        assert!(!request_prompt.contains(".alan/memory/topics/recent-match-4.md"));
+        assert!(!request_prompt.contains("/memory/topics/recent-match-4.md"));
     }
 
     #[tokio::test]
     async fn test_run_turn_pre_turn_compaction_accounts_for_runtime_recall_budget() {
         let temp = tempfile::TempDir::new().unwrap();
-        let workspace_root = temp.path().join("repo");
-        let memory_dir = workspace_root.join(".alan/memory");
-        crate::prompts::ensure_workspace_memory_layout_at(&memory_dir).unwrap();
+        let definition_root = temp.path().join("repo");
+        let memory_dir = definition_root.join("memory-store");
+        crate::prompts::ensure_memory_store_layout_at(&memory_dir).unwrap();
         std::fs::write(
             memory_dir.join("USER.md"),
             format!(
@@ -5407,8 +5423,8 @@ runtime:
             "COMPACTED_FOR_RECALL",
             seen_system_prompts.clone(),
         ));
-        state.core_config.memory.workspace_dir = Some(memory_dir.clone());
-        state.prompt_cache = prompt_cache_for_workspace_root(&workspace_root, Vec::new());
+        state.core_config.memory.store_dir = Some(memory_dir.clone());
+        state.prompt_cache = prompt_cache_for_definition_root(&definition_root, Vec::new());
         state.runtime_config.compaction_keep_last = 2;
         state.runtime_config.compaction_trigger_messages = usize::MAX;
         state.runtime_config.compaction_soft_trigger_ratio = 1.0;
@@ -5465,9 +5481,9 @@ runtime:
     #[tokio::test]
     async fn test_run_turn_omits_runtime_recall_bundle_when_memory_disabled() {
         let temp = tempfile::TempDir::new().unwrap();
-        let workspace_root = temp.path().join("repo");
-        let memory_dir = workspace_root.join(".alan/memory");
-        crate::prompts::ensure_workspace_memory_layout_at(&memory_dir).unwrap();
+        let definition_root = temp.path().join("repo");
+        let memory_dir = definition_root.join("memory-store");
+        crate::prompts::ensure_memory_store_layout_at(&memory_dir).unwrap();
         std::fs::write(
             memory_dir.join("USER.md"),
             "# User Memory\n- Favorite runtime marker: ALAN_DISABLED_RECALL\n",
@@ -5480,9 +5496,9 @@ runtime:
             "ok",
             seen_system_prompts.clone(),
         ));
-        state.core_config.memory.workspace_dir = Some(memory_dir);
+        state.core_config.memory.store_dir = Some(memory_dir);
         state.core_config.memory.enabled = false;
-        state.prompt_cache = prompt_cache_for_workspace_root(&workspace_root, Vec::new());
+        state.prompt_cache = prompt_cache_for_definition_root(&definition_root, Vec::new());
 
         let cancel = CancellationToken::new();
         let mut emit = |_event: Event| async {};
@@ -5560,8 +5576,8 @@ runtime:
     #[tokio::test]
     async fn test_run_turn_resume_turn_preserves_active_skill_context() {
         let temp = tempfile::TempDir::new().unwrap();
-        let workspace_root = temp.path().join("repo");
-        let skill_dir = workspace_root.join(".alan/agents/default/skills/release-check");
+        let definition_root = temp.path().join("repo");
+        let skill_dir = definition_root.join("skills/release-check");
         std::fs::create_dir_all(&skill_dir).unwrap();
         std::fs::write(
             skill_dir.join("SKILL.md"),
@@ -5598,7 +5614,7 @@ runtime:
             "",
             seen_system_prompts.clone(),
         ));
-        state.prompt_cache = prompt_cache_for_workspace_root(&workspace_root, Vec::new());
+        state.prompt_cache = prompt_cache_for_definition_root(&definition_root, Vec::new());
 
         let prior_prompt = state.prompt_cache.build(Some(&[ContentPart::text(
             "please use $release-check for this task",
@@ -5659,8 +5675,8 @@ runtime:
     #[tokio::test]
     async fn test_run_turn_resume_turn_with_steer_preserves_active_skill_context() {
         let temp = tempfile::TempDir::new().unwrap();
-        let workspace_root = temp.path().join("repo");
-        let skill_dir = workspace_root.join(".alan/agents/default/skills/release-check");
+        let definition_root = temp.path().join("repo");
+        let skill_dir = definition_root.join("skills/release-check");
         std::fs::create_dir_all(&skill_dir).unwrap();
         std::fs::write(
             skill_dir.join("SKILL.md"),
@@ -5697,7 +5713,7 @@ runtime:
             "",
             seen_system_prompts.clone(),
         ));
-        state.prompt_cache = prompt_cache_for_workspace_root(&workspace_root, Vec::new());
+        state.prompt_cache = prompt_cache_for_definition_root(&definition_root, Vec::new());
 
         let prior_prompt = state.prompt_cache.build(Some(&[ContentPart::text(
             "please use $release-check for this task",
@@ -5757,8 +5773,8 @@ runtime:
     #[tokio::test]
     async fn test_run_turn_resume_turn_without_prior_active_skills_can_activate_skill_from_steer() {
         let temp = tempfile::TempDir::new().unwrap();
-        let workspace_root = temp.path().join("repo");
-        let skill_dir = workspace_root.join(".alan/agents/default/skills/release-check");
+        let definition_root = temp.path().join("repo");
+        let skill_dir = definition_root.join("skills/release-check");
         std::fs::create_dir_all(&skill_dir).unwrap();
         std::fs::write(
             skill_dir.join("SKILL.md"),
@@ -5795,7 +5811,7 @@ runtime:
             "",
             seen_system_prompts.clone(),
         ));
-        state.prompt_cache = prompt_cache_for_workspace_root(&workspace_root, Vec::new());
+        state.prompt_cache = prompt_cache_for_definition_root(&definition_root, Vec::new());
 
         let cancel = CancellationToken::new();
         let mut events = vec![];
@@ -5848,9 +5864,9 @@ runtime:
     #[tokio::test]
     async fn test_run_turn_resume_turn_with_steer_can_add_new_skill_context() {
         let temp = tempfile::TempDir::new().unwrap();
-        let workspace_root = temp.path().join("repo");
+        let definition_root = temp.path().join("repo");
 
-        let release_skill_dir = workspace_root.join(".alan/agents/default/skills/release-check");
+        let release_skill_dir = definition_root.join("skills/release-check");
         std::fs::create_dir_all(&release_skill_dir).unwrap();
         std::fs::write(
             release_skill_dir.join("SKILL.md"),
@@ -5874,7 +5890,7 @@ runtime:
         )
         .unwrap();
 
-        let audit_skill_dir = workspace_root.join(".alan/agents/default/skills/safety-audit");
+        let audit_skill_dir = definition_root.join("skills/safety-audit");
         std::fs::create_dir_all(&audit_skill_dir).unwrap();
         std::fs::write(
             audit_skill_dir.join("SKILL.md"),
@@ -5911,7 +5927,7 @@ runtime:
             "",
             seen_system_prompts.clone(),
         ));
-        state.prompt_cache = prompt_cache_for_workspace_root(&workspace_root, Vec::new());
+        state.prompt_cache = prompt_cache_for_definition_root(&definition_root, Vec::new());
 
         let prior_prompt = state.prompt_cache.build(Some(&[ContentPart::text(
             "please use $release-check for this task",

@@ -543,7 +543,7 @@ mod tests {
                 path: std::path::PathBuf::from("/tmp/deploy/SKILL.md"),
                 package_root: None,
                 resource_root: None,
-                scope: crate::skills::SkillScope::Repo,
+                scope: crate::skills::SkillScope::Descriptor,
                 tags: vec![],
                 capabilities: None,
                 compatibility: Default::default(),

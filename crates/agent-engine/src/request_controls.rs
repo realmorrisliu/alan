@@ -327,37 +327,6 @@ mod tests {
     }
 
     #[test]
-    fn model_rejects_unsupported_explicit_effort() {
-        let mut config = openai_config();
-        config.llm_provider = LlmProvider::OpenAiChatCompletionsCompatible;
-        config.openai_chat_completions_compatible_model = "qwen3.5-plus".to_string();
-        let overlay = r#"
-[[openai_chat_completions_compatible.models]]
-slug = "qwen3.5-plus"
-family = "qwen3.5"
-context_window_tokens = 1_000_000
-supports_reasoning = true
-supported_reasoning_efforts = ["low", "high"]
-default_reasoning_effort = "high"
-"#;
-        let dir = tempfile::tempdir().unwrap();
-        let overlay_path = dir.path().join("models.toml");
-        std::fs::write(&overlay_path, overlay).unwrap();
-        let catalog =
-            crate::ModelCatalog::load_with_overlay_paths(None, Some(&overlay_path)).unwrap();
-        config.set_model_catalog(std::sync::Arc::new(catalog));
-
-        let err = resolve_runtime_request_controls(
-            &config,
-            provider_capabilities_for_config(&config),
-            RequestControlIntent::reasoning_effort(Some(ReasoningEffort::XHigh)),
-        )
-        .unwrap_err();
-
-        assert!(err.to_string().contains("supported efforts: low, high"));
-    }
-
-    #[test]
     fn model_catalog_defaults_are_exposed_as_model_default_source() {
         let config = openai_config();
         let model_info = config

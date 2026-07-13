@@ -297,7 +297,7 @@ private struct ShellCoreLocalSettingsSummaryPayload: Encodable {
     let cliToolName: String
     let updateSummary: String
     let updateDetail: String
-    let alanHomeDisplayPath: String
+    let systemStoreDisplayPath: String
     let applicationSupportDisplayPath: String
     let shellControlNamespace: String
 
@@ -307,7 +307,7 @@ private struct ShellCoreLocalSettingsSummaryPayload: Encodable {
         case cliToolName = "cli_tool_name"
         case updateSummary = "update_summary"
         case updateDetail = "update_detail"
-        case alanHomeDisplayPath = "alan_home_display_path"
+        case systemStoreDisplayPath = "system_store_display_path"
         case applicationSupportDisplayPath = "application_support_display_path"
         case shellControlNamespace = "shell_control_namespace"
     }
@@ -318,7 +318,7 @@ private struct ShellCoreLocalSettingsSummaryPayload: Encodable {
         cliToolName = summary.cliToolName
         updateSummary = summary.updateSummary
         updateDetail = summary.updateDetail
-        alanHomeDisplayPath = summary.alanHomeDisplayPath
+        systemStoreDisplayPath = summary.systemStoreDisplayPath
         applicationSupportDisplayPath = summary.applicationSupportDisplayPath
         shellControlNamespace = summary.shellControlNamespace
     }

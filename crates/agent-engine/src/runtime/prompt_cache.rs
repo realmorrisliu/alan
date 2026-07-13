@@ -242,15 +242,15 @@ fn hash_file_contents(path: &Path, max_bytes: Option<u64>) -> Option<[u8; 32]> {
 }
 
 #[derive(Debug, Clone)]
-struct CachedWorkspacePersona {
+struct CachedDefinitionPersona {
     tracked_paths: Vec<PathFingerprint>,
     rendered_section: String,
 }
 
-impl CachedWorkspacePersona {
-    fn load(workspace_persona_dirs: &[PathBuf]) -> Self {
+impl CachedDefinitionPersona {
+    fn load(definition_persona_dirs: &[PathBuf]) -> Self {
         let tracked_paths =
-            prompts::workspace_persona_tracked_paths_from_dirs(workspace_persona_dirs)
+            prompts::definition_persona_tracked_paths_from_dirs(definition_persona_dirs)
                 .into_iter()
                 .map(|path| {
                     PathFingerprint::capture_with_mode(
@@ -260,7 +260,7 @@ impl CachedWorkspacePersona {
                 })
                 .collect();
         let rendered_section =
-            prompts::render_workspace_persona_context_from_dirs(workspace_persona_dirs);
+            prompts::render_definition_persona_context_from_dirs(definition_persona_dirs);
         Self {
             tracked_paths,
             rendered_section,
@@ -275,15 +275,15 @@ impl CachedWorkspacePersona {
 }
 
 #[derive(Debug, Clone)]
-struct CachedWorkspaceMemory {
+struct CachedMemoryStore {
     memory_dir: PathBuf,
     tracked_paths: Vec<PathFingerprint>,
     rendered_section: String,
 }
 
-impl CachedWorkspaceMemory {
+impl CachedMemoryStore {
     fn load(memory_dir: &Path) -> Self {
-        let tracked_paths = prompts::workspace_memory_tracked_paths(memory_dir)
+        let tracked_paths = prompts::memory_store_tracked_paths(memory_dir)
             .into_iter()
             .map(|path| {
                 PathFingerprint::capture_with_mode(
@@ -292,7 +292,7 @@ impl CachedWorkspaceMemory {
                 )
             })
             .collect();
-        let rendered_section = prompts::render_workspace_memory_context(memory_dir);
+        let rendered_section = prompts::render_memory_store_context(memory_dir);
         Self {
             memory_dir: memory_dir.to_path_buf(),
             tracked_paths,
@@ -688,27 +688,27 @@ fn push_unique_message(messages: &mut Vec<String>, message: String) {
 pub(crate) struct PromptAssemblyCache {
     fixed_capability_view: Option<ResolvedCapabilityView>,
     skill_overrides: Vec<SkillOverride>,
-    workspace_persona_dirs: Vec<PathBuf>,
-    workspace_memory_dir: Option<PathBuf>,
+    definition_persona_dirs: Vec<PathBuf>,
+    memory_store_dir: Option<PathBuf>,
     host_capabilities: SkillHostCapabilities,
     skills_snapshot: Option<CachedSkillsRegistry>,
-    workspace_persona_snapshot: Option<CachedWorkspacePersona>,
-    workspace_memory_snapshot: Option<CachedWorkspaceMemory>,
+    definition_persona_snapshot: Option<CachedDefinitionPersona>,
+    memory_store_snapshot: Option<CachedMemoryStore>,
     metrics: PromptAssemblyMetrics,
 }
 
 impl PromptAssemblyCache {
     #[cfg(test)]
-    pub(crate) fn new(workspace_persona_dirs: Vec<PathBuf>) -> Self {
+    pub(crate) fn new(definition_persona_dirs: Vec<PathBuf>) -> Self {
         Self {
             fixed_capability_view: None,
             skill_overrides: Vec::new(),
-            workspace_persona_dirs,
-            workspace_memory_dir: None,
+            definition_persona_dirs,
+            memory_store_dir: None,
             host_capabilities: SkillHostCapabilities::default(),
             skills_snapshot: None,
-            workspace_persona_snapshot: None,
-            workspace_memory_snapshot: None,
+            definition_persona_snapshot: None,
+            memory_store_snapshot: None,
             metrics: PromptAssemblyMetrics::default(),
         }
     }
@@ -716,13 +716,13 @@ impl PromptAssemblyCache {
     #[cfg(test)]
     pub(crate) fn with_fixed_capability_view(
         fixed_capability_view: ResolvedCapabilityView,
-        workspace_persona_dirs: Vec<PathBuf>,
+        definition_persona_dirs: Vec<PathBuf>,
         host_capabilities: SkillHostCapabilities,
     ) -> Self {
         Self::with_fixed_capability_view_and_overrides(
             fixed_capability_view,
             Vec::new(),
-            workspace_persona_dirs,
+            definition_persona_dirs,
             host_capabilities,
         )
     }
@@ -730,33 +730,33 @@ impl PromptAssemblyCache {
     pub(crate) fn with_fixed_capability_view_and_overrides(
         fixed_capability_view: ResolvedCapabilityView,
         skill_overrides: Vec<SkillOverride>,
-        workspace_persona_dirs: Vec<PathBuf>,
+        definition_persona_dirs: Vec<PathBuf>,
         host_capabilities: SkillHostCapabilities,
     ) -> Self {
         Self {
             fixed_capability_view: Some(fixed_capability_view),
             skill_overrides,
-            workspace_persona_dirs,
-            workspace_memory_dir: None,
+            definition_persona_dirs,
+            memory_store_dir: None,
             host_capabilities,
             skills_snapshot: None,
-            workspace_persona_snapshot: None,
-            workspace_memory_snapshot: None,
+            definition_persona_snapshot: None,
+            memory_store_snapshot: None,
             metrics: PromptAssemblyMetrics::default(),
         }
     }
 
-    pub(crate) fn rebind_paths(&mut self, workspace_persona_dirs: Vec<PathBuf>) {
-        if self.workspace_persona_dirs != workspace_persona_dirs {
-            self.workspace_persona_dirs = workspace_persona_dirs;
-            self.workspace_persona_snapshot = None;
+    pub(crate) fn rebind_paths(&mut self, definition_persona_dirs: Vec<PathBuf>) {
+        if self.definition_persona_dirs != definition_persona_dirs {
+            self.definition_persona_dirs = definition_persona_dirs;
+            self.definition_persona_snapshot = None;
         }
     }
 
-    pub(crate) fn set_workspace_memory_dir(&mut self, workspace_memory_dir: Option<PathBuf>) {
-        if self.workspace_memory_dir != workspace_memory_dir {
-            self.workspace_memory_dir = workspace_memory_dir;
-            self.workspace_memory_snapshot = None;
+    pub(crate) fn set_memory_store_dir(&mut self, memory_store_dir: Option<PathBuf>) {
+        if self.memory_store_dir != memory_store_dir {
+            self.memory_store_dir = memory_store_dir;
+            self.memory_store_snapshot = None;
         }
     }
 
@@ -795,11 +795,11 @@ impl PromptAssemblyCache {
         let started_at = Instant::now();
         let (domain_prompt, active_skills, skills_cache_hit) =
             self.domain_prompt_with_cache(user_input);
-        let (workspace_section, persona_cache_hit) = self.workspace_section_with_cache();
-        let system_prompt = prompts::build_agent_system_prompt_with_workspace_sections(
+        let (context_sections, persona_cache_hit) = self.process_context_sections_with_cache();
+        let system_prompt = prompts::build_agent_system_prompt_with_sections(
             &domain_prompt,
-            workspace_section.workspace_persona_section.as_deref(),
-            workspace_section.workspace_memory_section.as_deref(),
+            context_sections.definition_persona_section.as_deref(),
+            context_sections.memory_store_section.as_deref(),
         );
 
         self.metrics
@@ -833,11 +833,11 @@ impl PromptAssemblyCache {
         let started_at = Instant::now();
         let (domain_prompt, active_skills, skills_cache_hit) =
             self.domain_prompt_with_active_skills_cache(active_skills, user_input);
-        let (workspace_section, persona_cache_hit) = self.workspace_section_with_cache();
-        let system_prompt = prompts::build_agent_system_prompt_with_workspace_sections(
+        let (context_sections, persona_cache_hit) = self.process_context_sections_with_cache();
+        let system_prompt = prompts::build_agent_system_prompt_with_sections(
             &domain_prompt,
-            workspace_section.workspace_persona_section.as_deref(),
-            workspace_section.workspace_memory_section.as_deref(),
+            context_sections.definition_persona_section.as_deref(),
+            context_sections.memory_store_section.as_deref(),
         );
 
         self.metrics
@@ -964,66 +964,65 @@ impl PromptAssemblyCache {
         Ok(cache_hit)
     }
 
-    fn workspace_section_with_cache(&mut self) -> (WorkspaceSectionResult, bool) {
-        let (workspace_persona_section, persona_cache_hit) =
-            self.workspace_persona_section_with_cache();
-        let (workspace_memory_section, memory_cache_hit) =
-            self.workspace_memory_section_with_cache();
+    fn process_context_sections_with_cache(&mut self) -> (ProcessContextSections, bool) {
+        let (definition_persona_section, persona_cache_hit) =
+            self.definition_persona_section_with_cache();
+        let (memory_store_section, memory_cache_hit) = self.memory_store_section_with_cache();
         (
-            WorkspaceSectionResult {
-                workspace_persona_section,
-                workspace_memory_section,
+            ProcessContextSections {
+                definition_persona_section,
+                memory_store_section,
             },
             persona_cache_hit && memory_cache_hit,
         )
     }
 
-    fn workspace_persona_section_with_cache(&mut self) -> (Option<String>, bool) {
-        if self.workspace_persona_dirs.is_empty() {
+    fn definition_persona_section_with_cache(&mut self) -> (Option<String>, bool) {
+        if self.definition_persona_dirs.is_empty() {
             return (None, true);
         }
-        if !self.workspace_persona_dirs.iter().any(|dir| dir.exists()) {
-            self.workspace_persona_snapshot = None;
+        if !self.definition_persona_dirs.iter().any(|dir| dir.exists()) {
+            self.definition_persona_snapshot = None;
             return (None, true);
         }
 
         let cache_hit = self
-            .workspace_persona_snapshot
+            .definition_persona_snapshot
             .as_ref()
-            .is_some_and(CachedWorkspacePersona::is_current);
+            .is_some_and(CachedDefinitionPersona::is_current);
         if !cache_hit {
-            self.workspace_persona_snapshot =
-                Some(CachedWorkspacePersona::load(&self.workspace_persona_dirs));
+            self.definition_persona_snapshot =
+                Some(CachedDefinitionPersona::load(&self.definition_persona_dirs));
         }
 
         let rendered = self
-            .workspace_persona_snapshot
+            .definition_persona_snapshot
             .as_ref()
             .map(|snapshot| snapshot.rendered_section.clone())
             .filter(|section| !section.is_empty());
         (rendered, cache_hit)
     }
 
-    fn workspace_memory_section_with_cache(&mut self) -> (Option<String>, bool) {
-        let Some(memory_dir) = self.workspace_memory_dir.as_deref() else {
-            self.workspace_memory_snapshot = None;
+    fn memory_store_section_with_cache(&mut self) -> (Option<String>, bool) {
+        let Some(memory_dir) = self.memory_store_dir.as_deref() else {
+            self.memory_store_snapshot = None;
             return (None, true);
         };
         if !memory_dir.exists() {
-            self.workspace_memory_snapshot = None;
+            self.memory_store_snapshot = None;
             return (None, true);
         }
 
         let cache_hit = self
-            .workspace_memory_snapshot
+            .memory_store_snapshot
             .as_ref()
             .is_some_and(|snapshot| snapshot.is_current_for(memory_dir));
         if !cache_hit {
-            self.workspace_memory_snapshot = Some(CachedWorkspaceMemory::load(memory_dir));
+            self.memory_store_snapshot = Some(CachedMemoryStore::load(memory_dir));
         }
 
         let rendered = self
-            .workspace_memory_snapshot
+            .memory_store_snapshot
             .as_ref()
             .map(|snapshot| snapshot.rendered_section.clone())
             .filter(|section| !section.is_empty());
@@ -1032,31 +1031,29 @@ impl PromptAssemblyCache {
 }
 
 #[derive(Debug, Clone, Default)]
-struct WorkspaceSectionResult {
-    workspace_persona_section: Option<String>,
-    workspace_memory_section: Option<String>,
+struct ProcessContextSections {
+    definition_persona_section: Option<String>,
+    memory_store_section: Option<String>,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::prompts::{ensure_workspace_bootstrap_files_at, ensure_workspace_memory_layout_at};
+    use crate::prompts::{ensure_definition_bootstrap_files_at, ensure_memory_store_layout_at};
     use crate::skills::{
         ResolvedSkillExecution, ScopedPackageDir, SkillExecutionResolutionSource,
         SkillHostCapabilities, SkillOverride, SkillScope,
     };
     use sha2::{Digest, Sha256};
 
-    fn create_repo_skill(
-        workspace_root: &std::path::Path,
+    fn create_definition_skill(
+        definition_root: &std::path::Path,
         dir_name: &str,
         skill_name: &str,
         description: &str,
         body: &str,
     ) {
-        let skill_dir = workspace_root
-            .join(".alan/agents/default/skills")
-            .join(dir_name);
+        let skill_dir = definition_root.join("skills").join(dir_name);
         std::fs::create_dir_all(&skill_dir).unwrap();
         std::fs::write(
             skill_dir.join("SKILL.md"),
@@ -1073,15 +1070,13 @@ description: {description}
         .unwrap();
     }
 
-    fn create_repo_skill_with_frontmatter(
-        workspace_root: &std::path::Path,
+    fn create_definition_skill_with_frontmatter(
+        definition_root: &std::path::Path,
         dir_name: &str,
         frontmatter: &str,
         body: &str,
     ) {
-        let skill_dir = workspace_root
-            .join(".alan/agents/default/skills")
-            .join(dir_name);
+        let skill_dir = definition_root.join("skills").join(dir_name);
         std::fs::create_dir_all(&skill_dir).unwrap();
         std::fs::write(
             skill_dir.join("SKILL.md"),
@@ -1090,13 +1085,13 @@ description: {description}
         .unwrap();
     }
 
-    fn create_repo_child_agent(
-        workspace_root: &std::path::Path,
+    fn create_definition_child_agent(
+        definition_root: &std::path::Path,
         package_dir: &str,
         agent_name: &str,
     ) {
-        let agent_root = workspace_root
-            .join(".alan/agents/default/skills")
+        let agent_root = definition_root
+            .join("skills")
             .join(package_dir)
             .join("agents")
             .join(agent_name);
@@ -1108,35 +1103,35 @@ description: {description}
         .unwrap();
     }
 
-    fn capability_view_for_workspace_root(
-        workspace_root: &std::path::Path,
+    fn capability_view_for_definition_root(
+        definition_root: &std::path::Path,
     ) -> ResolvedCapabilityView {
         ResolvedCapabilityView::from_package_dirs(vec![ScopedPackageDir {
-            path: workspace_root.join(".alan/agents/default/skills"),
-            scope: SkillScope::Repo,
+            path: definition_root.join("skills"),
+            scope: SkillScope::Descriptor,
         }])
     }
 
-    fn prompt_cache_for_workspace_root(
-        workspace_root: &std::path::Path,
-        workspace_persona_dirs: Vec<PathBuf>,
+    fn prompt_cache_for_definition_root(
+        definition_root: &std::path::Path,
+        definition_persona_dirs: Vec<PathBuf>,
     ) -> PromptAssemblyCache {
         PromptAssemblyCache::with_fixed_capability_view(
-            capability_view_for_workspace_root(workspace_root),
-            workspace_persona_dirs,
+            capability_view_for_definition_root(definition_root),
+            definition_persona_dirs,
             SkillHostCapabilities::default(),
         )
     }
 
-    fn prompt_cache_for_workspace_root_with_overrides(
-        workspace_root: &std::path::Path,
+    fn prompt_cache_for_definition_root_with_overrides(
+        definition_root: &std::path::Path,
         skill_overrides: Vec<SkillOverride>,
-        workspace_persona_dirs: Vec<PathBuf>,
+        definition_persona_dirs: Vec<PathBuf>,
     ) -> PromptAssemblyCache {
         PromptAssemblyCache::with_fixed_capability_view_and_overrides(
-            capability_view_for_workspace_root(workspace_root),
+            capability_view_for_definition_root(definition_root),
             skill_overrides,
-            workspace_persona_dirs,
+            definition_persona_dirs,
             SkillHostCapabilities::default(),
         )
     }
@@ -1144,25 +1139,26 @@ description: {description}
     #[test]
     fn prompt_cache_hits_on_repeated_builds() {
         let temp = tempfile::TempDir::new().unwrap();
-        let workspace_root = temp.path().join("repo");
-        let persona_dir = workspace_root.join(".alan/agents/default/persona");
-        std::fs::create_dir_all(&workspace_root).unwrap();
-        ensure_workspace_bootstrap_files_at(&persona_dir).unwrap();
-        create_repo_skill(
-            &workspace_root,
+        let definition_root = temp.path().join("repo");
+        let persona_dir = definition_root.join("persona");
+        std::fs::create_dir_all(&definition_root).unwrap();
+        ensure_definition_bootstrap_files_at(&persona_dir).unwrap();
+        create_definition_skill(
+            &definition_root,
             "my-skill",
             "My Skill",
             "Custom test skill",
             "# Instructions\nUse this skill when asked.",
         );
 
-        let mut cache = prompt_cache_for_workspace_root(&workspace_root, vec![persona_dir.clone()]);
+        let mut cache =
+            prompt_cache_for_definition_root(&definition_root, vec![persona_dir.clone()]);
         let user_input = vec![ContentPart::text("please use $my-skill for this task")];
 
         let first = cache.build(Some(&user_input));
         let second = cache.build(Some(&user_input));
 
-        assert!(first.system_prompt.contains("Workspace Persona Context"));
+        assert!(first.system_prompt.contains("Agent Definition Persona"));
         assert!(first.system_prompt.contains("## Skill: My Skill"));
         assert!(!first.skills_cache_hit);
         assert!(!first.persona_cache_hit);
@@ -1173,27 +1169,32 @@ description: {description}
     }
 
     #[test]
-    fn prompt_cache_includes_workspace_memory_bootstrap_when_configured() {
+    fn prompt_cache_includes_memory_store_bootstrap_when_configured() {
         let temp = tempfile::TempDir::new().unwrap();
-        let workspace_root = temp.path().join("repo");
-        let persona_dir = workspace_root.join(".alan/agents/default/persona");
-        let memory_dir = workspace_root.join(".alan/memory");
-        std::fs::create_dir_all(&workspace_root).unwrap();
-        ensure_workspace_bootstrap_files_at(&persona_dir).unwrap();
-        ensure_workspace_memory_layout_at(&memory_dir).unwrap();
+        let definition_root = temp.path().join("repo");
+        let persona_dir = definition_root.join("persona");
+        let memory_dir = definition_root.join("memory-store");
+        std::fs::create_dir_all(&definition_root).unwrap();
+        ensure_definition_bootstrap_files_at(&persona_dir).unwrap();
+        ensure_memory_store_layout_at(&memory_dir).unwrap();
         std::fs::write(memory_dir.join("USER.md"), "# User Memory\n- Morris\n").unwrap();
 
-        let mut cache = prompt_cache_for_workspace_root(&workspace_root, vec![persona_dir]);
-        cache.set_workspace_memory_dir(Some(memory_dir.clone()));
+        let mut cache = prompt_cache_for_definition_root(&definition_root, vec![persona_dir]);
+        cache.set_memory_store_dir(Some(memory_dir.clone()));
 
         let first = cache.build(None);
         let second = cache.build(None);
 
-        assert!(first.system_prompt.contains("Workspace Memory Bootstrap"));
+        assert!(first.system_prompt.contains("Memory Store Bootstrap"));
         assert!(
             first
                 .system_prompt
-                .contains(memory_dir.join("USER.md").to_string_lossy().as_ref())
+                .contains("Memory Store path: /memory/USER.md")
+        );
+        assert!(
+            !first
+                .system_prompt
+                .contains(memory_dir.to_string_lossy().as_ref())
         );
         assert!(first.system_prompt.contains("# User Memory"));
         assert!(!first.persona_cache_hit);
@@ -1201,14 +1202,14 @@ description: {description}
     }
 
     #[test]
-    fn workspace_persona_cache_uses_prefix_fingerprints_for_tracked_files() {
+    fn definition_persona_cache_uses_prefix_fingerprints_for_tracked_files() {
         let temp = tempfile::TempDir::new().unwrap();
-        let workspace_root = temp.path().join("repo");
-        let persona_dir = workspace_root.join(".alan/agents/default/persona");
-        std::fs::create_dir_all(&workspace_root).unwrap();
-        ensure_workspace_bootstrap_files_at(&persona_dir).unwrap();
+        let definition_root = temp.path().join("repo");
+        let persona_dir = definition_root.join("persona");
+        std::fs::create_dir_all(&definition_root).unwrap();
+        ensure_definition_bootstrap_files_at(&persona_dir).unwrap();
 
-        let snapshot = CachedWorkspacePersona::load(&[persona_dir]);
+        let snapshot = CachedDefinitionPersona::load(&[persona_dir]);
 
         assert!(!snapshot.tracked_paths.is_empty());
         assert!(snapshot.tracked_paths.iter().all(|fingerprint| {
@@ -1218,17 +1219,17 @@ description: {description}
     }
 
     #[test]
-    fn workspace_memory_cache_uses_prefix_fingerprints_for_tracked_files() {
+    fn definition_memory_cache_uses_prefix_fingerprints_for_tracked_files() {
         let temp = tempfile::TempDir::new().unwrap();
         let memory_dir = temp.path().join("memory");
-        ensure_workspace_memory_layout_at(&memory_dir).unwrap();
+        ensure_memory_store_layout_at(&memory_dir).unwrap();
         std::fs::write(
             memory_dir.join("daily/2026-04-17.md"),
             "# 2026-04-17\nappended daily note",
         )
         .unwrap();
 
-        let snapshot = CachedWorkspaceMemory::load(&memory_dir);
+        let snapshot = CachedMemoryStore::load(&memory_dir);
 
         assert!(!snapshot.tracked_paths.is_empty());
         assert!(snapshot.tracked_paths.iter().all(|fingerprint| {
@@ -1272,26 +1273,24 @@ description: {description}
     #[test]
     fn prompt_cache_exposes_active_skill_envelopes_with_canonical_context() {
         let temp = tempfile::TempDir::new().unwrap();
-        let workspace_root = temp.path().join("repo");
-        std::fs::create_dir_all(&workspace_root).unwrap();
-        create_repo_skill(
-            &workspace_root,
+        let definition_root = temp.path().join("repo");
+        std::fs::create_dir_all(&definition_root).unwrap();
+        create_definition_skill(
+            &definition_root,
             "my-skill",
             "My Skill",
             "Custom test skill",
             "# Instructions\nUse this skill when asked.",
         );
 
-        let mut cache = prompt_cache_for_workspace_root(&workspace_root, Vec::new());
+        let mut cache = prompt_cache_for_definition_root(&definition_root, Vec::new());
         let user_input = vec![ContentPart::text("please use $my-skill for this task")];
 
         let prompt = cache.build(Some(&user_input));
         assert_eq!(prompt.active_skills.len(), 1);
 
         let active_skill = &prompt.active_skills[0];
-        let expected_root =
-            std::fs::canonicalize(workspace_root.join(".alan/agents/default/skills/my-skill"))
-                .unwrap();
+        let expected_root = std::fs::canonicalize(definition_root.join("skills/my-skill")).unwrap();
         assert_eq!(active_skill.metadata.id, "my-skill");
         assert_eq!(
             active_skill.metadata.package_id.as_deref(),
@@ -1330,17 +1329,17 @@ description: {description}
     #[test]
     fn prompt_cache_invalidates_when_child_agent_exports_change() {
         let temp = tempfile::TempDir::new().unwrap();
-        let workspace_root = temp.path().join("repo");
-        std::fs::create_dir_all(&workspace_root).unwrap();
-        create_repo_skill(
-            &workspace_root,
+        let definition_root = temp.path().join("repo");
+        std::fs::create_dir_all(&definition_root).unwrap();
+        create_definition_skill(
+            &definition_root,
             "my-skill",
             "My Skill",
             "Custom test skill",
             "# Instructions\nUse this skill when asked.",
         );
 
-        let mut cache = prompt_cache_for_workspace_root(&workspace_root, Vec::new());
+        let mut cache = prompt_cache_for_definition_root(&definition_root, Vec::new());
         let user_input = vec![ContentPart::text("please use $my-skill for this task")];
 
         let first = cache.build(Some(&user_input));
@@ -1351,7 +1350,7 @@ description: {description}
             }
         );
 
-        create_repo_child_agent(&workspace_root, "my-skill", "my-skill");
+        create_definition_child_agent(&definition_root, "my-skill", "my-skill");
 
         let second = cache.build(Some(&user_input));
         assert!(!second.skills_cache_hit);
@@ -1370,10 +1369,10 @@ description: {description}
     #[test]
     fn prompt_cache_revalidates_carried_active_skills_when_they_become_unavailable() {
         let temp = tempfile::TempDir::new().unwrap();
-        let workspace_root = temp.path().join("repo");
-        std::fs::create_dir_all(&workspace_root).unwrap();
-        create_repo_skill(
-            &workspace_root,
+        let definition_root = temp.path().join("repo");
+        std::fs::create_dir_all(&definition_root).unwrap();
+        create_definition_skill(
+            &definition_root,
             "release-check",
             "Release Check",
             "Review risky release actions",
@@ -1383,7 +1382,7 @@ description: {description}
         let host_capabilities =
             SkillHostCapabilities::with_tools(["read_file"]).with_runtime_defaults();
         let mut cache = PromptAssemblyCache::with_fixed_capability_view(
-            capability_view_for_workspace_root(&workspace_root),
+            capability_view_for_definition_root(&definition_root),
             Vec::new(),
             host_capabilities,
         );
@@ -1393,7 +1392,7 @@ description: {description}
         assert_eq!(first.active_skills.len(), 1);
 
         std::fs::write(
-            workspace_root.join(".alan/agents/default/skills/release-check/SKILL.md"),
+            definition_root.join("skills/release-check/SKILL.md"),
             r#"---
 name: Release Check
 description: Review risky release actions
@@ -1427,24 +1426,23 @@ Do not use stale instructions.
     #[test]
     fn prompt_cache_revalidates_carried_active_skills_when_they_disappear() {
         let temp = tempfile::TempDir::new().unwrap();
-        let workspace_root = temp.path().join("repo");
-        std::fs::create_dir_all(&workspace_root).unwrap();
-        create_repo_skill(
-            &workspace_root,
+        let definition_root = temp.path().join("repo");
+        std::fs::create_dir_all(&definition_root).unwrap();
+        create_definition_skill(
+            &definition_root,
             "release-check",
             "Release Check",
             "Review risky release actions",
             "# Instructions\nUse this skill when asked.",
         );
 
-        let mut cache = prompt_cache_for_workspace_root(&workspace_root, Vec::new());
+        let mut cache = prompt_cache_for_definition_root(&definition_root, Vec::new());
         let user_input = vec![ContentPart::text("please use $release-check for this task")];
 
         let first = cache.build(Some(&user_input));
         assert_eq!(first.active_skills.len(), 1);
 
-        std::fs::remove_dir_all(workspace_root.join(".alan/agents/default/skills/release-check"))
-            .unwrap();
+        std::fs::remove_dir_all(definition_root.join("skills/release-check")).unwrap();
 
         let resumed = cache.build_with_active_skills(&first.active_skills, None);
 
@@ -1461,22 +1459,22 @@ Do not use stale instructions.
     #[test]
     fn prompt_cache_renders_delegated_skill_as_stub() {
         let temp = tempfile::TempDir::new().unwrap();
-        let workspace_root = temp.path().join("repo");
-        std::fs::create_dir_all(&workspace_root).unwrap();
-        create_repo_skill(
-            &workspace_root,
+        let definition_root = temp.path().join("repo");
+        std::fs::create_dir_all(&definition_root).unwrap();
+        create_definition_skill(
+            &definition_root,
             "repo-review",
             "Repo Review",
             "Review repository changes",
             "SECRET INLINE REVIEW BODY",
         );
-        create_repo_child_agent(&workspace_root, "repo-review", "repo-review");
+        create_definition_child_agent(&definition_root, "repo-review", "repo-review");
 
         let host_capabilities = SkillHostCapabilities::default()
             .with_runtime_defaults()
             .with_delegated_skill_invocation();
         let mut cache = PromptAssemblyCache::with_fixed_capability_view(
-            capability_view_for_workspace_root(&workspace_root),
+            capability_view_for_definition_root(&definition_root),
             Vec::new(),
             host_capabilities,
         );
@@ -1493,18 +1491,18 @@ Do not use stale instructions.
     #[test]
     fn prompt_cache_falls_back_to_inline_when_delegated_invocation_is_unavailable() {
         let temp = tempfile::TempDir::new().unwrap();
-        let workspace_root = temp.path().join("repo");
-        std::fs::create_dir_all(&workspace_root).unwrap();
-        create_repo_skill(
-            &workspace_root,
+        let definition_root = temp.path().join("repo");
+        std::fs::create_dir_all(&definition_root).unwrap();
+        create_definition_skill(
+            &definition_root,
             "repo-review",
             "Repo Review",
             "Review repository changes",
             "SECRET INLINE REVIEW BODY",
         );
-        create_repo_child_agent(&workspace_root, "repo-review", "repo-review");
+        create_definition_child_agent(&definition_root, "repo-review", "repo-review");
 
-        let mut cache = prompt_cache_for_workspace_root(&workspace_root, Vec::new());
+        let mut cache = prompt_cache_for_definition_root(&definition_root, Vec::new());
         let user_input = vec![ContentPart::text("please use $repo-review for this task")];
 
         let prompt = cache.build(Some(&user_input));
@@ -1519,20 +1517,20 @@ Do not use stale instructions.
     fn prompt_cache_lists_delegated_skill_with_inline_guidance_when_runtime_lacks_delegated_support()
      {
         let temp = tempfile::TempDir::new().unwrap();
-        let workspace_root = temp.path().join("repo");
-        std::fs::create_dir_all(&workspace_root).unwrap();
-        create_repo_skill(
-            &workspace_root,
+        let definition_root = temp.path().join("repo");
+        std::fs::create_dir_all(&definition_root).unwrap();
+        create_definition_skill(
+            &definition_root,
             "repo-review",
             "Repo Review",
             "Review repository changes",
             "SECRET INLINE REVIEW BODY",
         );
-        create_repo_child_agent(&workspace_root, "repo-review", "repo-review");
+        create_definition_child_agent(&definition_root, "repo-review", "repo-review");
 
-        let mut cache = prompt_cache_for_workspace_root(&workspace_root, Vec::new());
+        let mut cache = prompt_cache_for_definition_root(&definition_root, Vec::new());
         let prompt = cache.build(Some(&[ContentPart::text(
-            "please help with this workspace",
+            "please help with this definition",
         )]));
 
         assert!(prompt.system_prompt.contains("## Available Skills"));
@@ -1544,18 +1542,18 @@ Do not use stale instructions.
     #[test]
     fn prompt_cache_rebuilds_delegated_skill_when_invocation_support_changes() {
         let temp = tempfile::TempDir::new().unwrap();
-        let workspace_root = temp.path().join("repo");
-        std::fs::create_dir_all(&workspace_root).unwrap();
-        create_repo_skill(
-            &workspace_root,
+        let definition_root = temp.path().join("repo");
+        std::fs::create_dir_all(&definition_root).unwrap();
+        create_definition_skill(
+            &definition_root,
             "repo-review",
             "Repo Review",
             "Review repository changes",
             "SECRET INLINE REVIEW BODY",
         );
-        create_repo_child_agent(&workspace_root, "repo-review", "repo-review");
+        create_definition_child_agent(&definition_root, "repo-review", "repo-review");
 
-        let mut cache = prompt_cache_for_workspace_root(&workspace_root, Vec::new());
+        let mut cache = prompt_cache_for_definition_root(&definition_root, Vec::new());
         let user_input = vec![ContentPart::text("please use $repo-review for this task")];
 
         let before = cache.build(Some(&user_input));
@@ -1577,17 +1575,17 @@ Do not use stale instructions.
     #[test]
     fn explicit_mention_activation_reason_is_canonical() {
         let temp = tempfile::TempDir::new().unwrap();
-        let workspace_root = temp.path().join("repo");
-        std::fs::create_dir_all(&workspace_root).unwrap();
-        create_repo_skill(
-            &workspace_root,
+        let definition_root = temp.path().join("repo");
+        std::fs::create_dir_all(&definition_root).unwrap();
+        create_definition_skill(
+            &definition_root,
             "my-skill",
             "My Skill",
             "Custom test skill",
             "# Instructions\nUse this skill when asked.",
         );
 
-        let mut cache = prompt_cache_for_workspace_root(&workspace_root, Vec::new());
+        let mut cache = prompt_cache_for_definition_root(&definition_root, Vec::new());
         let mentioned = vec![ContentPart::text("please use $my-skill for this task")];
         let prompt = cache.build(Some(&mentioned));
 
@@ -1606,10 +1604,10 @@ Do not use stale instructions.
     #[test]
     fn obsolete_structured_trigger_aliases_do_not_activate_skill() {
         let temp = tempfile::TempDir::new().unwrap();
-        let workspace_root = temp.path().join("repo");
-        std::fs::create_dir_all(&workspace_root).unwrap();
-        create_repo_skill_with_frontmatter(
-            &workspace_root,
+        let definition_root = temp.path().join("repo");
+        std::fs::create_dir_all(&definition_root).unwrap();
+        create_definition_skill_with_frontmatter(
+            &definition_root,
             "my-skill",
             r#"name: My Skill
 description: Custom test skill
@@ -1619,7 +1617,7 @@ capabilities:
             "# Instructions\nUse this skill when asked.",
         );
 
-        let mut cache = prompt_cache_for_workspace_root(&workspace_root, Vec::new());
+        let mut cache = prompt_cache_for_definition_root(&definition_root, Vec::new());
         let user_input = vec![ContentPart::text("please use $ship-it for this task")];
 
         let prompt = cache.build(Some(&user_input));
@@ -1631,18 +1629,18 @@ capabilities:
     #[test]
     fn implicit_skill_is_listed_but_not_auto_activated() {
         let temp = tempfile::TempDir::new().unwrap();
-        let workspace_root = temp.path().join("repo");
-        std::fs::create_dir_all(&workspace_root).unwrap();
-        create_repo_skill(
-            &workspace_root,
+        let definition_root = temp.path().join("repo");
+        std::fs::create_dir_all(&definition_root).unwrap();
+        create_definition_skill(
+            &definition_root,
             "my-skill",
             "My Skill",
             "Custom test skill",
             "# Instructions\nUse this skill when asked.",
         );
 
-        let mut cache = prompt_cache_for_workspace_root(&workspace_root, Vec::new());
-        let user_input = vec![ContentPart::text("please help with this workspace")];
+        let mut cache = prompt_cache_for_definition_root(&definition_root, Vec::new());
+        let user_input = vec![ContentPart::text("please help with this definition")];
 
         let prompt = cache.build(Some(&user_input));
 
@@ -1655,14 +1653,14 @@ capabilities:
     #[test]
     fn prompt_cache_builtin_skills_do_not_expose_materialized_temp_paths() {
         let temp = tempfile::TempDir::new().unwrap();
-        let workspace_root = temp.path().join("repo");
-        std::fs::create_dir_all(&workspace_root).unwrap();
+        let definition_root = temp.path().join("repo");
+        std::fs::create_dir_all(&definition_root).unwrap();
 
         let host_capabilities =
             SkillHostCapabilities::with_tools(["read_file", "write_file", "edit_file", "bash"])
                 .with_runtime_defaults();
         let mut cache = PromptAssemblyCache::with_fixed_capability_view(
-            capability_view_for_workspace_root(&workspace_root),
+            capability_view_for_definition_root(&definition_root),
             Vec::new(),
             host_capabilities,
         );
@@ -1689,55 +1687,25 @@ capabilities:
     }
 
     #[test]
-    fn prompt_cache_lists_workspace_inspect_with_core_tools_when_delegation_is_supported() {
-        let temp = tempfile::TempDir::new().unwrap();
-        let workspace_root = temp.path().join("repo");
-        std::fs::create_dir_all(&workspace_root).unwrap();
-
-        let host_capabilities =
-            SkillHostCapabilities::with_tools(["read_file", "write_file", "edit_file", "bash"])
-                .with_runtime_defaults()
-                .with_delegated_skill_invocation();
-        let mut cache = PromptAssemblyCache::with_fixed_capability_view(
-            capability_view_for_workspace_root(&workspace_root),
-            Vec::new(),
-            host_capabilities,
-        );
-        let prompt = cache.build(Some(&[ContentPart::text(
-            "帮我看另一个本地 workspace 的文档",
-        )]));
-
-        assert!(prompt.system_prompt.contains("## Available Skills"));
-        assert!(prompt.system_prompt.contains("skill_id: workspace-inspect"));
-        assert!(
-            prompt
-                .system_prompt
-                .contains("execution: delegate(target=workspace-reader)")
-        );
-        assert!(prompt.system_prompt.contains("workspace_root"));
-        assert!(prompt.system_prompt.contains("optional `cwd`"));
-    }
-
-    #[test]
     fn prompt_cache_invalidates_when_skill_changes() {
         let temp = tempfile::TempDir::new().unwrap();
-        let workspace_root = temp.path().join("repo");
-        std::fs::create_dir_all(&workspace_root).unwrap();
-        create_repo_skill(
-            &workspace_root,
+        let definition_root = temp.path().join("repo");
+        std::fs::create_dir_all(&definition_root).unwrap();
+        create_definition_skill(
+            &definition_root,
             "my-skill",
             "My Skill",
             "Custom test skill",
             "# Instructions\nUse this skill when asked.",
         );
 
-        let mut cache = prompt_cache_for_workspace_root(&workspace_root, Vec::new());
+        let mut cache = prompt_cache_for_definition_root(&definition_root, Vec::new());
         let user_input = vec![ContentPart::text("please use $my-skill for this task")];
 
         let first = cache.build(Some(&user_input));
         std::thread::sleep(std::time::Duration::from_millis(20));
         std::fs::write(
-            workspace_root.join(".alan/agents/default/skills/my-skill/SKILL.md"),
+            definition_root.join("skills/my-skill/SKILL.md"),
             r#"---
 name: My Skill
 description: Custom test skill
@@ -1759,8 +1727,8 @@ Updated instructions.
     #[test]
     fn prompt_cache_invalidates_when_skill_contents_change_with_same_length() {
         let temp = tempfile::TempDir::new().unwrap();
-        let workspace_root = temp.path().join("repo");
-        std::fs::create_dir_all(&workspace_root).unwrap();
+        let definition_root = temp.path().join("repo");
+        std::fs::create_dir_all(&definition_root).unwrap();
 
         let initial = r#"---
 name: My Skill
@@ -1780,11 +1748,11 @@ WXYZ
 "#;
         assert_eq!(initial.len(), updated.len());
 
-        let skill_path = workspace_root.join(".alan/agents/default/skills/my-skill/SKILL.md");
+        let skill_path = definition_root.join("skills/my-skill/SKILL.md");
         std::fs::create_dir_all(skill_path.parent().unwrap()).unwrap();
         std::fs::write(&skill_path, initial).unwrap();
 
-        let mut cache = prompt_cache_for_workspace_root(&workspace_root, Vec::new());
+        let mut cache = prompt_cache_for_definition_root(&definition_root, Vec::new());
         let user_input = vec![ContentPart::text("please use $my-skill for this task")];
 
         let first = cache.build(Some(&user_input));
@@ -1799,8 +1767,8 @@ WXYZ
     #[test]
     fn prompt_cache_uses_disclosure_level2_file() {
         let temp = tempfile::TempDir::new().unwrap();
-        let workspace_root = temp.path().join("repo");
-        let skill_dir = workspace_root.join(".alan/agents/default/skills/my-skill");
+        let definition_root = temp.path().join("repo");
+        let skill_dir = definition_root.join("skills/my-skill");
         std::fs::create_dir_all(&skill_dir).unwrap();
         std::fs::write(
             skill_dir.join("SKILL.md"),
@@ -1819,7 +1787,7 @@ Fallback instructions.
         .unwrap();
         std::fs::write(skill_dir.join("details.md"), "Expanded instructions.").unwrap();
 
-        let mut cache = prompt_cache_for_workspace_root(&workspace_root, Vec::new());
+        let mut cache = prompt_cache_for_definition_root(&definition_root, Vec::new());
         let user_input = vec![ContentPart::text("please use $my-skill for this task")];
 
         let prompt = cache.build(Some(&user_input));
@@ -1832,8 +1800,8 @@ Fallback instructions.
     #[test]
     fn prompt_cache_invalidates_when_disclosed_resource_changes() {
         let temp = tempfile::TempDir::new().unwrap();
-        let workspace_root = temp.path().join("repo");
-        let skill_dir = workspace_root.join(".alan/agents/default/skills/my-skill");
+        let definition_root = temp.path().join("repo");
+        let skill_dir = definition_root.join("skills/my-skill");
         let references_dir = skill_dir.join("references");
         std::fs::create_dir_all(&references_dir).unwrap();
         std::fs::write(
@@ -1854,7 +1822,7 @@ Read `references/guide.md` before acting.
         assert_eq!(initial.len(), updated.len());
         std::fs::write(references_dir.join("guide.md"), initial).unwrap();
 
-        let mut cache = prompt_cache_for_workspace_root(&workspace_root, Vec::new());
+        let mut cache = prompt_cache_for_definition_root(&definition_root, Vec::new());
         let user_input = vec![ContentPart::text("please use $my-skill for this task")];
 
         let first = cache.build(Some(&user_input));
@@ -1872,8 +1840,8 @@ Read `references/guide.md` before acting.
         use std::os::unix::fs::symlink;
 
         let temp = tempfile::TempDir::new().unwrap();
-        let workspace_root = temp.path().join("repo");
-        let skills_root = workspace_root.join(".alan/agents/default/skills");
+        let definition_root = temp.path().join("repo");
+        let skills_root = definition_root.join("skills");
         let pack_v1 = temp.path().join("pack-v1");
         let pack_v2 = temp.path().join("pack-v2");
         let linked_pack = skills_root.join("linked-pack");
@@ -1907,7 +1875,7 @@ Version two.
         .unwrap();
         symlink(&pack_v1, &linked_pack).unwrap();
 
-        let mut cache = prompt_cache_for_workspace_root(&workspace_root, Vec::new());
+        let mut cache = prompt_cache_for_definition_root(&definition_root, Vec::new());
         let user_input = vec![ContentPart::text("please use $my-skill for this task")];
 
         let first = cache.build(Some(&user_input));
@@ -1923,18 +1891,18 @@ Version two.
     #[test]
     fn implicit_false_skills_are_mentionable_but_not_implicitly_listed() {
         let temp = tempfile::TempDir::new().unwrap();
-        let workspace_root = temp.path().join("repo");
-        std::fs::create_dir_all(&workspace_root).unwrap();
-        create_repo_skill(
-            &workspace_root,
+        let definition_root = temp.path().join("repo");
+        std::fs::create_dir_all(&definition_root).unwrap();
+        create_definition_skill(
+            &definition_root,
             "my-skill",
             "My Skill",
             "Custom test skill",
             "# Instructions\nUse this skill when asked.",
         );
 
-        let mut cache = prompt_cache_for_workspace_root_with_overrides(
-            &workspace_root,
+        let mut cache = prompt_cache_for_definition_root_with_overrides(
+            &definition_root,
             vec![SkillOverride {
                 skill_id: "my-skill".to_string(),
                 enabled: Some(true),
@@ -1964,18 +1932,18 @@ Version two.
     #[test]
     fn disabled_skills_are_hidden_from_catalog_and_activation() {
         let temp = tempfile::TempDir::new().unwrap();
-        let workspace_root = temp.path().join("repo");
-        std::fs::create_dir_all(&workspace_root).unwrap();
-        create_repo_skill(
-            &workspace_root,
+        let definition_root = temp.path().join("repo");
+        std::fs::create_dir_all(&definition_root).unwrap();
+        create_definition_skill(
+            &definition_root,
             "my-skill",
             "My Skill",
             "Custom test skill",
             "# Instructions\nUse this skill when asked.",
         );
 
-        let mut cache = prompt_cache_for_workspace_root_with_overrides(
-            &workspace_root,
+        let mut cache = prompt_cache_for_definition_root_with_overrides(
+            &definition_root,
             vec![SkillOverride {
                 skill_id: "my-skill".to_string(),
                 enabled: Some(false),
@@ -1994,9 +1962,9 @@ Version two.
     #[test]
     fn disabled_skills_with_missing_tools_still_render_as_not_found() {
         let temp = tempfile::TempDir::new().unwrap();
-        let workspace_root = temp.path().join("repo");
-        std::fs::create_dir_all(&workspace_root).unwrap();
-        let skill_dir = workspace_root.join(".alan/agents/default/skills/hidden-helper");
+        let definition_root = temp.path().join("repo");
+        std::fs::create_dir_all(&definition_root).unwrap();
+        let skill_dir = definition_root.join("skills/hidden-helper");
         std::fs::create_dir_all(&skill_dir).unwrap();
         std::fs::write(
             skill_dir.join("SKILL.md"),
@@ -2014,7 +1982,7 @@ Use this skill when asked.
         .unwrap();
 
         let mut cache = PromptAssemblyCache::with_fixed_capability_view_and_overrides(
-            capability_view_for_workspace_root(&workspace_root),
+            capability_view_for_definition_root(&definition_root),
             vec![SkillOverride {
                 skill_id: "hidden-helper".to_string(),
                 enabled: Some(false),
@@ -2043,9 +2011,9 @@ Use this skill when asked.
     #[test]
     fn skills_with_missing_required_tools_are_reported_as_unavailable() {
         let temp = tempfile::TempDir::new().unwrap();
-        let workspace_root = temp.path().join("repo");
-        std::fs::create_dir_all(&workspace_root).unwrap();
-        let skill_dir = workspace_root.join(".alan/agents/default/skills/tool-heavy");
+        let definition_root = temp.path().join("repo");
+        std::fs::create_dir_all(&definition_root).unwrap();
+        let skill_dir = definition_root.join("skills/tool-heavy");
         std::fs::create_dir_all(&skill_dir).unwrap();
         std::fs::write(
             skill_dir.join("SKILL.md"),
@@ -2063,7 +2031,7 @@ Use this skill when asked.
         .unwrap();
 
         let mut cache = PromptAssemblyCache::with_fixed_capability_view(
-            capability_view_for_workspace_root(&workspace_root),
+            capability_view_for_definition_root(&definition_root),
             Vec::new(),
             SkillHostCapabilities::with_tools(["read_file"]).with_runtime_defaults(),
         );
@@ -2092,20 +2060,20 @@ Use this skill when asked.
     #[test]
     fn skills_with_unresolved_execution_are_reported_as_unavailable() {
         let temp = tempfile::TempDir::new().unwrap();
-        let workspace_root = temp.path().join("repo");
-        std::fs::create_dir_all(&workspace_root).unwrap();
-        create_repo_skill(
-            &workspace_root,
+        let definition_root = temp.path().join("repo");
+        std::fs::create_dir_all(&definition_root).unwrap();
+        create_definition_skill(
+            &definition_root,
             "skill-creator",
             "Skill Creator",
             "Creates new skills",
             "# Instructions\nUse this skill when asked.",
         );
-        create_repo_child_agent(&workspace_root, "skill-creator", "creator");
-        create_repo_child_agent(&workspace_root, "skill-creator", "grader");
+        create_definition_child_agent(&definition_root, "skill-creator", "creator");
+        create_definition_child_agent(&definition_root, "skill-creator", "grader");
 
         let mut cache = PromptAssemblyCache::with_fixed_capability_view(
-            capability_view_for_workspace_root(&workspace_root),
+            capability_view_for_definition_root(&definition_root),
             Vec::new(),
             SkillHostCapabilities::with_tools(["bash"]).with_runtime_defaults(),
         );
@@ -2134,9 +2102,9 @@ Use this skill when asked.
     #[test]
     fn builtin_skill_creator_uses_directory_backed_resource_root() {
         let temp = tempfile::TempDir::new().unwrap();
-        let workspace_root = temp.path().join("repo");
-        std::fs::create_dir_all(&workspace_root).unwrap();
-        let capability_view = capability_view_for_workspace_root(&workspace_root);
+        let definition_root = temp.path().join("repo");
+        std::fs::create_dir_all(&definition_root).unwrap();
+        let capability_view = capability_view_for_definition_root(&definition_root);
         let host_capabilities = SkillHostCapabilities::with_tools(["bash"]).with_runtime_defaults();
         let snapshot =
             CachedSkillsRegistry::load_capability_view(&capability_view, &[], &host_capabilities)
@@ -2200,9 +2168,9 @@ Use this skill when asked.
     #[test]
     fn prompt_cache_invalidates_when_host_capabilities_change() {
         let temp = tempfile::TempDir::new().unwrap();
-        let workspace_root = temp.path().join("repo");
-        std::fs::create_dir_all(&workspace_root).unwrap();
-        let skill_dir = workspace_root.join(".alan/agents/default/skills/dynamic-helper");
+        let definition_root = temp.path().join("repo");
+        std::fs::create_dir_all(&definition_root).unwrap();
+        let skill_dir = definition_root.join("skills/dynamic-helper");
         std::fs::create_dir_all(&skill_dir).unwrap();
         std::fs::write(
             skill_dir.join("SKILL.md"),
@@ -2220,7 +2188,7 @@ Use this skill when asked.
         .unwrap();
 
         let mut cache = PromptAssemblyCache::with_fixed_capability_view(
-            capability_view_for_workspace_root(&workspace_root),
+            capability_view_for_definition_root(&definition_root),
             Vec::new(),
             SkillHostCapabilities::with_tools(["read_file"]).with_runtime_defaults(),
         );

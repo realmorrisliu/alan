@@ -1,8 +1,7 @@
 use alan_agent_protocol::{
     AdaptivePresentationHint, ConfirmationYieldPayload, DelegatedSpawnContext, Event, SpawnHandle,
-    SpawnLaunchInputs, SpawnRuntimeOverrides, SpawnSpec, SpawnToolProfileOverride,
-    StructuredInputKind, StructuredInputOption, StructuredInputQuestion,
-    StructuredInputYieldPayload, YieldKind,
+    SpawnLaunchInputs, SpawnRuntimeOverrides, SpawnSpec, StructuredInputKind,
+    StructuredInputOption, StructuredInputQuestion, StructuredInputYieldPayload, YieldKind,
 };
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -25,7 +24,7 @@ use crate::skills::{
 
 use super::agent_loop::{NamespaceActionRecord, NormalizedToolCall, RuntimeLoopState};
 use super::child_agents::{
-    ChildRuntimeResult, ChildRuntimeStatus, bound_workspace_root, spawn_child_runtime_cancellable,
+    ChildRuntimeResult, ChildRuntimeStatus, spawn_child_runtime_cancellable,
 };
 use super::child_runs::{ChildRunRegistryError, ChildRunTerminationMode};
 use super::delegation_capabilities::{
@@ -46,7 +45,6 @@ const MAX_DELEGATED_STRUCTURED_OUTPUT_CHARS: usize = 4_000;
 const MAX_DELEGATED_CHILD_RUN_METADATA_CHARS: usize = 2_000;
 const MAX_DELEGATED_RESULT_WARNINGS: usize = 16;
 const MAX_DELEGATED_RESULT_WARNING_CHARS: usize = 512;
-const WORKSPACE_INSPECT_READ_ONLY_TOOLS: [&str; 4] = ["read_file", "grep", "glob", "list_dir"];
 const RESERVED_MOUNT_NAMESPACE_ROOTS: &[&str] = &["llm", "mem", "route"];
 
 type DelegatedSkillSpawnResult<T> = std::result::Result<T, Box<DelegatedSkillResult>>;
@@ -1177,7 +1175,6 @@ where
         match resolve_delegated_skill_invocation(state, &request) {
             Ok(spec) => {
                 let persisted_request = request.with_effective_launch_inputs(
-                    spec.launch.workspace_root.clone(),
                     spec.launch.cwd.clone(),
                     spec.launch.timeout_secs,
                 );
@@ -1404,27 +1401,22 @@ fn build_delegated_spawn_spec(
     request: &DelegatedSkillInvocationRequest,
     target: alan_agent_protocol::SpawnTarget,
 ) -> DelegatedSkillSpawnResult<SpawnSpec> {
-    let inferred_workspace_root = bound_workspace_root(state);
-    let parent_default_cwd = state.default_tool_cwd();
-    let workspace_root = normalize_delegated_workspace_root(
-        request.workspace_root.as_deref(),
-        parent_default_cwd.as_deref(),
-        inferred_workspace_root.as_deref(),
-    )?;
-    let cwd = normalize_delegated_cwd(
-        request.cwd.as_deref(),
-        workspace_root.as_deref(),
-        request.workspace_root.is_some(),
-        parent_default_cwd.as_deref(),
-    )?;
-    let requirements =
-        classify_delegated_task_requirements(&request.task, workspace_root.as_deref());
+    let parent_namespace_cwd = state
+        .namespace_environment()
+        .launch_context()
+        .map(|context| Path::new(&context.cwd));
+    let cwd = request
+        .cwd
+        .as_deref()
+        .map(|path| resolve_delegated_launch_path(path, parent_namespace_cwd, "cwd"))
+        .transpose()?
+        .or_else(|| parent_namespace_cwd.map(lexically_normalize_path));
+    let requirements = classify_delegated_task_requirements(&request.task, cwd.as_deref());
     Ok(SpawnSpec {
         target,
         launch: SpawnLaunchInputs {
             task: request.task.clone(),
             cwd,
-            workspace_root,
             timeout_secs: Some(
                 request
                     .timeout_secs
@@ -1432,47 +1424,10 @@ fn build_delegated_spawn_spec(
             ),
             output_dir: None,
         },
-        handles: vec![SpawnHandle::Workspace, SpawnHandle::ApprovalScope],
-        runtime_overrides: delegated_runtime_overrides(request.skill_id.as_str()),
+        handles: vec![SpawnHandle::ApprovalScope],
+        runtime_overrides: SpawnRuntimeOverrides::default(),
         delegated: Some(DelegatedSpawnContext { requirements }),
     })
-}
-
-fn normalize_delegated_workspace_root(
-    requested_workspace_root: Option<&Path>,
-    parent_default_cwd: Option<&Path>,
-    inferred_workspace_root: Option<&Path>,
-) -> DelegatedSkillSpawnResult<Option<PathBuf>> {
-    match requested_workspace_root {
-        None => Ok(inferred_workspace_root.map(lexically_normalize_path)),
-        Some(path) => resolve_delegated_launch_path(
-            path,
-            parent_default_cwd.or(inferred_workspace_root),
-            "workspace_root",
-        )
-        .map(Some),
-    }
-}
-
-fn normalize_delegated_cwd(
-    requested_cwd: Option<&Path>,
-    workspace_root: Option<&Path>,
-    explicit_workspace_root_provided: bool,
-    parent_default_cwd: Option<&Path>,
-) -> DelegatedSkillSpawnResult<Option<PathBuf>> {
-    match requested_cwd {
-        Some(path) => {
-            resolve_delegated_launch_path(path, workspace_root.or(parent_default_cwd), "cwd")
-                .map(Some)
-        }
-        None => {
-            if explicit_workspace_root_provided {
-                Ok(workspace_root.map(Path::to_path_buf))
-            } else {
-                Ok(parent_default_cwd.map(lexically_normalize_path))
-            }
-        }
-    }
 }
 
 fn resolve_delegated_launch_path(
@@ -1514,25 +1469,6 @@ fn lexically_normalize_path(path: &Path) -> PathBuf {
         }
     }
     normalized
-}
-
-fn delegated_runtime_overrides(skill_id: &str) -> SpawnRuntimeOverrides {
-    SpawnRuntimeOverrides {
-        tool_profile: delegated_tool_profile(skill_id),
-        ..SpawnRuntimeOverrides::default()
-    }
-}
-
-fn delegated_tool_profile(skill_id: &str) -> Option<SpawnToolProfileOverride> {
-    match skill_id {
-        "workspace-inspect" => Some(SpawnToolProfileOverride {
-            allowed_tools: WORKSPACE_INSPECT_READ_ONLY_TOOLS
-                .iter()
-                .map(|tool| (*tool).to_string())
-                .collect(),
-        }),
-        _ => None,
-    }
 }
 
 fn delegated_result_from_child_result(
@@ -1892,9 +1828,6 @@ fn build_bounded_delegated_tape_record(
         skill_id,
         target,
         task,
-        workspace_root: request.workspace_root.as_ref().map(|path| {
-            truncate_text_with_suffix(&path.to_string_lossy(), MAX_DELEGATED_PATH_CHARS, "...")
-        }),
         cwd: request.cwd.as_ref().map(|path| {
             truncate_text_with_suffix(&path.to_string_lossy(), MAX_DELEGATED_PATH_CHARS, "...")
         }),
@@ -1906,9 +1839,6 @@ fn build_bounded_delegated_tape_record(
         "target": record.target.clone(),
         "task": record.task.clone(),
     });
-    if let Some(workspace_root) = record.workspace_root.as_ref() {
-        arguments["workspace_root"] = json!(workspace_root);
-    }
     if let Some(cwd) = record.cwd.as_ref() {
         arguments["cwd"] = json!(cwd);
     }
@@ -2469,7 +2399,6 @@ struct DelegatedSkillInvocationRequest {
     skill_id: String,
     target: String,
     task: String,
-    workspace_root: Option<PathBuf>,
     cwd: Option<PathBuf>,
     timeout_secs: Option<u64>,
 }
@@ -2477,7 +2406,6 @@ struct DelegatedSkillInvocationRequest {
 impl DelegatedSkillInvocationRequest {
     fn with_effective_launch_inputs(
         &self,
-        workspace_root: Option<PathBuf>,
         cwd: Option<PathBuf>,
         timeout_secs: Option<u64>,
     ) -> Self {
@@ -2485,7 +2413,6 @@ impl DelegatedSkillInvocationRequest {
             skill_id: self.skill_id.clone(),
             target: self.target.clone(),
             task: self.task.clone(),
-            workspace_root,
             cwd,
             timeout_secs,
         }
@@ -2498,7 +2425,6 @@ fn parse_delegated_skill_invocation_request(
     let skill_id = arguments.get("skill_id")?.as_str()?.trim().to_string();
     let target = arguments.get("target")?.as_str()?.trim().to_string();
     let task = arguments.get("task")?.as_str()?.trim().to_string();
-    let workspace_root = parse_optional_path_argument(arguments, "workspace_root")?;
     let cwd = parse_optional_path_argument(arguments, "cwd")?;
     let timeout_secs = parse_optional_timeout_secs_argument(arguments, "timeout_secs")?;
     if skill_id.is_empty() || target.is_empty() || task.is_empty() {
@@ -2508,7 +2434,6 @@ fn parse_delegated_skill_invocation_request(
         skill_id,
         target,
         task,
-        workspace_root,
         cwd,
         timeout_secs,
     })
@@ -2761,14 +2686,9 @@ fn invoke_delegated_skill_tool_definition() -> ToolDefinition {
                     "description": "A concise bounded task for the delegated runtime.",
                     "maxLength": MAX_DELEGATED_TASK_CHARS
                 },
-                "workspace_root": {
-                    "type": "string",
-                    "description": "Optional explicit workspace root for the delegated runtime. Use this when the delegated task targets a different local workspace than the current runtime.",
-                    "maxLength": MAX_DELEGATED_PATH_CHARS
-                },
                 "cwd": {
                     "type": "string",
-                    "description": "Optional nested working directory inside the delegated workspace. When omitted, the delegated runtime starts at `workspace_root` or its default workspace root.",
+                    "description": "Optional Alan OS namespace cwd for the delegated Process. When omitted, the child inherits the parent Process cwd.",
                     "maxLength": MAX_DELEGATED_PATH_CHARS
                 },
                 "timeout_secs": {

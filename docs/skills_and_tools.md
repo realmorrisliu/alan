@@ -47,9 +47,11 @@ my-skill/
 └── agents/
 ```
 
-AgentRoot overlays, public `.agents/skills/` directories, and builtin packages
-are resolved into one capability view. `skill_overrides` controls whether a
-Skill is enabled and whether implicit invocation is allowed.
+Installed packages, explicit Skill or Agent Definition descriptors, and
+builtin packages are resolved into one capability view. Host directories are
+ordinary mounted content until explicitly imported or passed by descriptor.
+`skill_overrides` controls whether a Skill is enabled and whether implicit
+invocation is allowed.
 
 Delegated Skills launch a bounded child Agent Process from an explicit package
 target. The result may contain inline text, structured output, and a namespace
@@ -57,27 +59,26 @@ file reference for larger evidence.
 
 ## Direct CLI
 
-Skill inspection and authoring operate directly on their owning files and
-components:
+Skill authoring operates on an explicit Host directory; installation is an
+explicit Host import:
 
 ```bash
-alan skills list --workspace /path/to/workspace
-alan skills packages --workspace /path/to/workspace
-alan skills init my-skill --output-dir /path/to/skills
+alan skills init /path/to/my-skill
 alan skills validate /path/to/my-skill
 alan skills eval /path/to/my-skill --output-dir target/skills-eval/my-skill
+alan host legacy-state import skill /path/to/my-skill --name my-skill
 ```
 
 ## Builtin packages
 
-Current first-party packages include memory, plan, shell control,
-workspace management, Skill creation, repo-coding, and SWE-bench operator
-support. Their source lives under `crates/agent-engine/skills/`.
+Current first-party packages include memory, plan, shell control, Skill
+creation, repo-coding, and SWE-bench operator support. Their source lives under
+`crates/agent-engine/skills/`.
 
-Memory surfaces are channel-scoped and Process-shaped:
+An explicitly bound Memory Store appears at a namespace path such as `/memory`:
 
 ```text
-.alan/runtime/<channel>/memory/
+/memory/
 ├── USER.md
 ├── MEMORY.md
 ├── handoffs/LATEST.md

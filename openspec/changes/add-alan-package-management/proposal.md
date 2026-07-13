@@ -1,5 +1,13 @@
 # add-alan-package-management
 
+> Planning hold: this change still describes daemon-era Alan home, workspace,
+> AgentRoot overlay, and implicit Host-directory local-source behavior. Do not
+> implement it until `remove-workspace-runtime-model`,
+> `extract-system-level-alan-os-host`, and
+> `implement-minimal-service-manager` land and this change is rewritten around
+> Package Service plus the Alan OS System Store, with no compatibility source
+> scanning.
+
 ## Why
 
 Alan discovers skill capabilities through two host-side paths:

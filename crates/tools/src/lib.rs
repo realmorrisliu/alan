@@ -8,9 +8,7 @@
 //! - Read-only exploration: read_file, grep, glob, list_dir
 //! - All: core + read-only exploration tools
 
-use alan_agent_engine::tools::{
-    Sandbox, Tool, ToolContext, ToolLocality, ToolRegistry, ToolResult,
-};
+use alan_agent_engine::tools::{Sandbox, Tool, ToolContext, ToolRegistry, ToolResult};
 use anyhow::{Result, anyhow};
 use regex::RegexBuilder;
 use serde_json::{Value, json};
@@ -47,7 +45,7 @@ impl Tool for ReadFileTool {
             "properties": {
                 "path": {
                     "type": "string",
-                    "description": "Path to the file (relative to workspace)"
+                    "description": "Alan OS path to the file, or a path relative to Process cwd"
                 },
                 "offset": {
                     "type": "integer",
@@ -65,11 +63,15 @@ impl Tool for ReadFileTool {
     }
 
     fn execute(&self, args: Value, ctx: &ToolContext) -> ToolResult {
-        let sandbox = match ctx.workspace_sandbox() {
+        let sandbox = match ctx.sandbox() {
             Ok(sandbox) => sandbox,
             Err(err) => return Box::pin(async move { Err(err) }),
         };
-        let path = ctx.resolve_path(args["path"].as_str().unwrap_or(""));
+        let path = match ctx.resolve_path(args["path"].as_str().unwrap_or("")) {
+            Ok(path) => path,
+            Err(err) => return Box::pin(async move { Err(err) }),
+        };
+        let visible_path = ctx.visible_path(&path).to_string_lossy().to_string();
         let offset = args["offset"].as_u64().unwrap_or(1) as usize;
         let limit = args["limit"].as_u64().unwrap_or(1000) as usize;
 
@@ -79,7 +81,7 @@ impl Tool for ReadFileTool {
                 let content = sandbox.read(&path).await?;
                 return Ok(json!({
                     "type": "image",
-                    "path": path.to_string_lossy(),
+                    "path": visible_path,
                     "size_bytes": content.len(),
                     "mime_type": detect_mime(&path)
                 }));
@@ -100,7 +102,7 @@ impl Tool for ReadFileTool {
 
             Ok(json!({
                 "type": "text",
-                "path": path.to_string_lossy(),
+                "path": visible_path,
                 "content": selected.join("\n"),
                 "total_lines": lines.len(),
                 "start_line": start + 1,
@@ -112,10 +114,6 @@ impl Tool for ReadFileTool {
 
     fn capability(&self, _args: &Value) -> alan_agent_protocol::ToolCapability {
         alan_agent_protocol::ToolCapability::Read
-    }
-
-    fn locality(&self) -> ToolLocality {
-        ToolLocality::WorkspaceLocal
     }
 }
 
@@ -149,7 +147,7 @@ impl Tool for WriteFileTool {
             "properties": {
                 "path": {
                     "type": "string",
-                    "description": "Path to the file (relative to workspace)"
+                    "description": "Alan OS path to the file, or a path relative to Process cwd"
                 },
                 "content": {
                     "type": "string",
@@ -160,18 +158,22 @@ impl Tool for WriteFileTool {
     }
 
     fn execute(&self, args: Value, ctx: &ToolContext) -> ToolResult {
-        let sandbox = match ctx.workspace_sandbox() {
+        let sandbox = match ctx.sandbox() {
             Ok(sandbox) => sandbox,
             Err(err) => return Box::pin(async move { Err(err) }),
         };
-        let path = ctx.resolve_path(args["path"].as_str().unwrap_or(""));
+        let path = match ctx.resolve_path(args["path"].as_str().unwrap_or("")) {
+            Ok(path) => path,
+            Err(err) => return Box::pin(async move { Err(err) }),
+        };
+        let visible_path = ctx.visible_path(&path).to_string_lossy().to_string();
         let content = args["content"].as_str().unwrap_or("").to_string();
 
         Box::pin(async move {
             sandbox.write(&path, content.as_bytes()).await?;
             Ok(json!({
                 "success": true,
-                "path": path.to_string_lossy(),
+                "path": visible_path,
                 "bytes_written": content.len()
             }))
         })
@@ -179,10 +181,6 @@ impl Tool for WriteFileTool {
 
     fn capability(&self, _args: &Value) -> alan_agent_protocol::ToolCapability {
         alan_agent_protocol::ToolCapability::Write
-    }
-
-    fn locality(&self) -> ToolLocality {
-        ToolLocality::WorkspaceLocal
     }
 }
 
@@ -231,11 +229,15 @@ impl Tool for EditFileTool {
     }
 
     fn execute(&self, args: Value, ctx: &ToolContext) -> ToolResult {
-        let sandbox = match ctx.workspace_sandbox() {
+        let sandbox = match ctx.sandbox() {
             Ok(sandbox) => sandbox,
             Err(err) => return Box::pin(async move { Err(err) }),
         };
-        let path = ctx.resolve_path(args["path"].as_str().unwrap_or(""));
+        let path = match ctx.resolve_path(args["path"].as_str().unwrap_or("")) {
+            Ok(path) => path,
+            Err(err) => return Box::pin(async move { Err(err) }),
+        };
+        let visible_path = ctx.visible_path(&path).to_string_lossy().to_string();
         let old_string = args["old_string"].as_str().unwrap_or("").to_string();
         let new_string = args["new_string"].as_str().unwrap_or("").to_string();
 
@@ -254,7 +256,7 @@ impl Tool for EditFileTool {
 
             Ok(json!({
                 "success": true,
-                "path": path.to_string_lossy(),
+                "path": visible_path,
                 "replacements": 1
             }))
         })
@@ -262,10 +264,6 @@ impl Tool for EditFileTool {
 
     fn capability(&self, _args: &Value) -> alan_agent_protocol::ToolCapability {
         alan_agent_protocol::ToolCapability::Write
-    }
-
-    fn locality(&self) -> ToolLocality {
-        ToolLocality::WorkspaceLocal
     }
 }
 
@@ -2058,7 +2056,7 @@ impl Tool for BashTool {
     }
 
     fn description(&self) -> &str {
-        "Execute shell commands in the workspace, subject to policy and execution-backend constraints. Prefer direct commands like rg, sed, git status, or curl. Avoid opaque interpreter wrappers like python -, python -c, bash -c, or sh -c unless they are genuinely required, because sandbox preflight may classify or reject them conservatively."
+        "Execute shell commands from the Process cwd, subject to namespace authority, policy, and execution-backend constraints. Prefer direct commands like rg, sed, git status, or curl. Avoid opaque interpreter wrappers like python -, python -c, bash -c, or sh -c unless genuinely required, because sandbox preflight may reject them conservatively."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -2082,11 +2080,12 @@ impl Tool for BashTool {
     }
 
     fn execute(&self, args: Value, ctx: &ToolContext) -> ToolResult {
-        let sandbox = match ctx.workspace_sandbox() {
+        let sandbox = match ctx.sandbox() {
             Ok(sandbox) => sandbox,
             Err(err) => return Box::pin(async move { Err(err) }),
         };
         let cwd = ctx.cwd.clone();
+        let host_mounts = ctx.host_mounts.clone();
         let command = args["command"].as_str().unwrap_or("").to_string();
         let capability = classify_bash_command(&command);
         let timeout_secs = args["timeout"].as_u64().unwrap_or(60).clamp(1, 300);
@@ -2102,8 +2101,8 @@ impl Tool for BashTool {
                 .await?;
 
             Ok(json!({
-                "stdout": result.stdout,
-                "stderr": result.stderr,
+                "stdout": project_host_paths(&result.stdout, &host_mounts),
+                "stderr": project_host_paths(&result.stderr, &host_mounts),
                 "exit_code": result.exit_code,
                 "success": result.exit_code == 0
             }))
@@ -2121,10 +2120,6 @@ impl Tool for BashTool {
 
     fn timeout_secs(&self) -> usize {
         300 // Must be >= user-configurable timeout upper bound in schema
-    }
-
-    fn locality(&self) -> ToolLocality {
-        ToolLocality::WorkspaceLocal
     }
 }
 
@@ -2174,11 +2169,15 @@ impl Tool for GrepTool {
     }
 
     fn execute(&self, args: Value, ctx: &ToolContext) -> ToolResult {
-        let sandbox = match ctx.workspace_sandbox() {
+        let sandbox = match ctx.sandbox() {
             Ok(sandbox) => sandbox,
             Err(err) => return Box::pin(async move { Err(err) }),
         };
-        let path = ctx.resolve_path(args["path"].as_str().unwrap_or(""));
+        let path = match ctx.resolve_path(args["path"].as_str().unwrap_or("")) {
+            Ok(path) => path,
+            Err(err) => return Box::pin(async move { Err(err) }),
+        };
+        let host_mounts = ctx.host_mounts.clone();
         let pattern = args["pattern"].as_str().unwrap_or("").to_string();
         let case_sensitive = args["case_sensitive"].as_bool().unwrap_or(false);
 
@@ -2195,7 +2194,7 @@ impl Tool for GrepTool {
                 for (line_num, line) in content.lines().enumerate() {
                     if regex.is_match(line) {
                         matches.push(json!({
-                            "path": path.to_string_lossy(),
+                            "path": visible_host_path(&path, &host_mounts),
                             "line": line_num + 1,
                             "content": line
                         }));
@@ -2203,7 +2202,7 @@ impl Tool for GrepTool {
                 }
             } else if path.is_dir() {
                 // Recursive search
-                search_directory(&sandbox, &path, &regex, &mut matches).await?;
+                search_directory(&sandbox, &path, &regex, &host_mounts, &mut matches).await?;
             }
 
             Ok(json!({
@@ -2216,16 +2215,13 @@ impl Tool for GrepTool {
     fn capability(&self, _args: &Value) -> alan_agent_protocol::ToolCapability {
         alan_agent_protocol::ToolCapability::Read
     }
-
-    fn locality(&self) -> ToolLocality {
-        ToolLocality::WorkspaceLocal
-    }
 }
 
 async fn search_directory(
     sandbox: &Sandbox,
     dir: &Path,
     regex: &regex::Regex,
+    host_mounts: &[alan_agent_engine::HostMountGrant],
     matches: &mut Vec<Value>,
 ) -> Result<()> {
     let entries = sandbox.list_dir(dir).await?;
@@ -2241,7 +2237,14 @@ async fn search_directory(
             {
                 continue;
             }
-            Box::pin(search_directory(sandbox, &path, regex, matches)).await?;
+            Box::pin(search_directory(
+                sandbox,
+                &path,
+                regex,
+                host_mounts,
+                matches,
+            ))
+            .await?;
         } else if file_type.is_file() {
             // Skip binary files
             if is_binary_file(&path) {
@@ -2252,7 +2255,7 @@ async fn search_directory(
                 for (line_num, line) in content.lines().enumerate() {
                     if regex.is_match(line) {
                         matches.push(json!({
-                            "path": path.to_string_lossy(),
+                            "path": visible_host_path(&path, host_mounts),
                             "line": line_num + 1,
                             "content": line
                         }));
@@ -2299,7 +2302,7 @@ impl Tool for GlobTool {
                 },
                 "path": {
                     "type": "string",
-                    "description": "Base directory (default: workspace root)",
+                    "description": "Base directory (default: Process cwd)",
                     "default": "."
                 }
             }
@@ -2307,21 +2310,25 @@ impl Tool for GlobTool {
     }
 
     fn execute(&self, args: Value, ctx: &ToolContext) -> ToolResult {
-        let sandbox = match ctx.workspace_sandbox() {
+        let sandbox = match ctx.sandbox() {
             Ok(sandbox) => sandbox,
             Err(err) => return Box::pin(async move { Err(err) }),
         };
         let base_path = if let Some(path) = args["path"].as_str() {
-            ctx.resolve_path(path)
+            match ctx.resolve_path(path) {
+                Ok(path) => path,
+                Err(err) => return Box::pin(async move { Err(err) }),
+            }
         } else {
             ctx.cwd.clone()
         };
         let pattern = args["pattern"].as_str().unwrap_or("").to_string();
+        let host_mounts = ctx.host_mounts.clone();
 
         Box::pin(async move {
-            if !sandbox.is_in_workspace(&base_path) {
+            if !sandbox.is_readable(&base_path) {
                 return Err(anyhow!(
-                    "Path outside workspace: {}",
+                    "Path outside the Process file view: {}",
                     base_path.to_string_lossy()
                 ));
             }
@@ -2337,8 +2344,8 @@ impl Tool for GlobTool {
 
             // Use glob crate for pattern matching
             for path in glob::glob(&pattern_str)?.flatten() {
-                if path.is_file() && sandbox.is_in_workspace(&path) {
-                    matches.push(path.to_string_lossy().to_string());
+                if path.is_file() && sandbox.is_readable(&path) {
+                    matches.push(visible_host_path(&path, &host_mounts));
                 }
             }
 
@@ -2351,10 +2358,6 @@ impl Tool for GlobTool {
 
     fn capability(&self, _args: &Value) -> alan_agent_protocol::ToolCapability {
         alan_agent_protocol::ToolCapability::Read
-    }
-
-    fn locality(&self) -> ToolLocality {
-        ToolLocality::WorkspaceLocal
     }
 }
 
@@ -2395,15 +2398,19 @@ impl Tool for ListDirTool {
     }
 
     fn execute(&self, args: Value, ctx: &ToolContext) -> ToolResult {
-        let sandbox = match ctx.workspace_sandbox() {
+        let sandbox = match ctx.sandbox() {
             Ok(sandbox) => sandbox,
             Err(err) => return Box::pin(async move { Err(err) }),
         };
         let path = if let Some(p) = args["path"].as_str() {
-            ctx.resolve_path(p)
+            match ctx.resolve_path(p) {
+                Ok(path) => path,
+                Err(err) => return Box::pin(async move { Err(err) }),
+            }
         } else {
             ctx.cwd.clone()
         };
+        let visible_path = ctx.visible_path(&path).to_string_lossy().to_string();
 
         Box::pin(async move {
             let entries = sandbox.list_dir(&path).await?;
@@ -2433,7 +2440,7 @@ impl Tool for ListDirTool {
             });
 
             Ok(json!({
-                "path": path.to_string_lossy(),
+                "path": visible_path,
                 "entries": items,
                 "total": items.len()
             }))
@@ -2443,15 +2450,48 @@ impl Tool for ListDirTool {
     fn capability(&self, _args: &Value) -> alan_agent_protocol::ToolCapability {
         alan_agent_protocol::ToolCapability::Read
     }
-
-    fn locality(&self) -> ToolLocality {
-        ToolLocality::WorkspaceLocal
-    }
 }
 
 // ============================================================================
 // Helpers
 // ============================================================================
+
+fn visible_host_path(path: &Path, mounts: &[alan_agent_engine::HostMountGrant]) -> String {
+    if mounts.is_empty() {
+        return path.to_string_lossy().to_string();
+    }
+    mounts
+        .iter()
+        .filter_map(|grant| {
+            let requested =
+                dunce::canonicalize(path).unwrap_or_else(|_| dunce::simplified(path).to_path_buf());
+            let root = dunce::canonicalize(&grant.host_path)
+                .unwrap_or_else(|_| dunce::simplified(&grant.host_path).to_path_buf());
+            let suffix = requested.strip_prefix(&root).ok()?;
+            Some((
+                root.components().count(),
+                Path::new(&grant.namespace_path).join(suffix),
+            ))
+        })
+        .max_by_key(|(prefix_len, _)| *prefix_len)
+        .map(|(_, path)| path.to_string_lossy().to_string())
+        .unwrap_or_else(|| "<unmapped-host-path>".to_string())
+}
+
+fn project_host_paths(text: &str, mounts: &[alan_agent_engine::HostMountGrant]) -> String {
+    let mut projected = text.to_string();
+    let mut mounts = mounts.iter().collect::<Vec<_>>();
+    mounts.sort_by_key(|grant| std::cmp::Reverse(grant.host_path.as_os_str().len()));
+    for grant in mounts {
+        for root in [
+            grant.host_path.clone(),
+            dunce::canonicalize(&grant.host_path).unwrap_or_else(|_| grant.host_path.clone()),
+        ] {
+            projected = projected.replace(root.to_string_lossy().as_ref(), &grant.namespace_path);
+        }
+    }
+    projected
+}
 
 fn is_image(path: &Path) -> bool {
     if let Some(ext) = path.extension() {
@@ -2568,10 +2608,16 @@ pub fn create_all_tools() -> Vec<Box<dyn Tool>> {
 }
 
 /// Create a ToolRegistry with the 4 core tools pre-registered.
-pub fn create_tool_registry_with_core_tools(workspace: std::path::PathBuf) -> ToolRegistry {
+pub fn create_tool_registry_with_core_tools(host_root: std::path::PathBuf) -> ToolRegistry {
     let mut registry = ToolRegistry::new();
     register_builtin_tool_catalog(&mut registry);
-    registry.set_default_workspace_root(workspace.clone());
+    registry.set_default_execution_binding(
+        alan_agent_engine::tools::ToolExecutionBinding::new(
+            host_root.clone(),
+            host_root.join(".alan-runtime-tmp"),
+        )
+        .with_sandbox_spec(alan_agent_engine::tools::SandboxSpec::seed(host_root)),
+    );
 
     for tool in create_core_tools() {
         registry.register_boxed(tool);
@@ -2581,10 +2627,16 @@ pub fn create_tool_registry_with_core_tools(workspace: std::path::PathBuf) -> To
 }
 
 /// Create a ToolRegistry with the 4 read-only tools pre-registered.
-pub fn create_tool_registry_with_read_only_tools(workspace: std::path::PathBuf) -> ToolRegistry {
+pub fn create_tool_registry_with_read_only_tools(host_root: std::path::PathBuf) -> ToolRegistry {
     let mut registry = ToolRegistry::new();
     register_builtin_tool_catalog(&mut registry);
-    registry.set_default_workspace_root(workspace.clone());
+    registry.set_default_execution_binding(
+        alan_agent_engine::tools::ToolExecutionBinding::new(
+            host_root.clone(),
+            host_root.join(".alan-runtime-tmp"),
+        )
+        .with_sandbox_spec(alan_agent_engine::tools::SandboxSpec::seed(host_root)),
+    );
 
     for tool in create_read_only_tools() {
         registry.register_boxed(tool);
@@ -2594,10 +2646,16 @@ pub fn create_tool_registry_with_read_only_tools(workspace: std::path::PathBuf) 
 }
 
 /// Create a ToolRegistry with all 7 built-in tools pre-registered.
-pub fn create_tool_registry_with_all_tools(workspace: std::path::PathBuf) -> ToolRegistry {
+pub fn create_tool_registry_with_all_tools(host_root: std::path::PathBuf) -> ToolRegistry {
     let mut registry = ToolRegistry::new();
     register_builtin_tool_catalog(&mut registry);
-    registry.set_default_workspace_root(workspace.clone());
+    registry.set_default_execution_binding(
+        alan_agent_engine::tools::ToolExecutionBinding::new(
+            host_root.clone(),
+            host_root.join(".alan-runtime-tmp"),
+        )
+        .with_sandbox_spec(alan_agent_engine::tools::SandboxSpec::seed(host_root)),
+    );
 
     for tool in create_all_tools() {
         registry.register_boxed(tool);
@@ -2615,19 +2673,31 @@ mod tests {
     use std::sync::Arc;
     use tempfile::TempDir;
 
+    fn tool_context_with_root(
+        root: PathBuf,
+        scratch_dir: PathBuf,
+        config: Arc<Config>,
+    ) -> ToolContext {
+        ToolContext::from_binding(
+            alan_agent_engine::tools::ToolExecutionBinding::new(root.clone(), scratch_dir)
+                .with_sandbox_spec(alan_agent_engine::tools::SandboxSpec::seed(root)),
+            config,
+        )
+    }
+
     #[tokio::test]
     async fn test_read_file_tool() {
         let temp = TempDir::new().unwrap();
-        let workspace = temp.path().to_path_buf();
+        let mount_root = temp.path().to_path_buf();
 
         // Create test file
-        tokio::fs::write(workspace.join("test.txt"), "line1\nline2\nline3\n")
+        tokio::fs::write(mount_root.join("test.txt"), "line1\nline2\nline3\n")
             .await
             .unwrap();
 
         let tool = ReadFileTool::new();
         let config = Arc::new(Config::default());
-        let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
+        let ctx = tool_context_with_root(mount_root.clone(), mount_root.join("tmp"), config);
 
         let args = json!({"path": "test.txt"});
         let result = tool.execute(args, &ctx).await.unwrap();
@@ -2637,36 +2707,36 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_read_file_tool_uses_workspace_binding_from_context() {
+    async fn test_read_file_tool_uses_mount_root_binding_from_context() {
         let temp = TempDir::new().unwrap();
-        let workspace = temp.path().join("workspace");
-        tokio::fs::create_dir_all(&workspace).await.unwrap();
-        tokio::fs::write(workspace.join("test.txt"), "bound\n")
+        let mount_root = temp.path().join("mount_root");
+        tokio::fs::create_dir_all(&mount_root).await.unwrap();
+        tokio::fs::write(mount_root.join("test.txt"), "bound\n")
             .await
             .unwrap();
 
         let tool = ReadFileTool::new();
         let config = Arc::new(Config::default());
-        let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
+        let ctx = tool_context_with_root(mount_root.clone(), mount_root.join("tmp"), config);
 
         let args = json!({"path": "test.txt"});
         let result = tool.execute(args, &ctx).await.unwrap();
 
-        assert_eq!(result["path"], json!(workspace.join("test.txt")));
+        assert_eq!(result["path"], json!(mount_root.join("test.txt")));
         assert_eq!(result["content"], json!("bound"));
     }
 
     #[tokio::test]
-    async fn test_read_file_tool_requires_explicit_workspace_binding() {
+    async fn test_read_file_tool_requires_explicit_sandbox_grant() {
         let temp = TempDir::new().unwrap();
-        let workspace = temp.path().to_path_buf();
-        tokio::fs::write(workspace.join("test.txt"), "hello\n")
+        let mount_root = temp.path().to_path_buf();
+        tokio::fs::write(mount_root.join("test.txt"), "hello\n")
             .await
             .unwrap();
 
         let tool = ReadFileTool::new();
         let config = Arc::new(Config::default());
-        let ctx = ToolContext::without_workspace(workspace.clone(), workspace.join("tmp"), config);
+        let ctx = ToolContext::new(mount_root.clone(), mount_root.join("tmp"), config);
 
         let err = tool
             .execute(json!({"path": "test.txt"}), &ctx)
@@ -2675,17 +2745,17 @@ mod tests {
 
         assert!(
             err.to_string()
-                .contains("Workspace-local tool requires explicit workspace binding")
+                .contains("Tool Process has no explicit sandbox grant")
         );
     }
 
     #[tokio::test]
     async fn test_read_file_with_offset_and_limit() {
         let temp = TempDir::new().unwrap();
-        let workspace = temp.path().to_path_buf();
+        let mount_root = temp.path().to_path_buf();
 
         tokio::fs::write(
-            workspace.join("lines.txt"),
+            mount_root.join("lines.txt"),
             "line1\nline2\nline3\nline4\nline5\n",
         )
         .await
@@ -2693,7 +2763,7 @@ mod tests {
 
         let tool = ReadFileTool::new();
         let config = Arc::new(Config::default());
-        let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
+        let ctx = tool_context_with_root(mount_root.clone(), mount_root.join("tmp"), config);
 
         // Read from line 2, max 2 lines
         let args = json!({"path": "lines.txt", "offset": 2, "limit": 2});
@@ -2709,15 +2779,15 @@ mod tests {
     #[tokio::test]
     async fn test_read_file_offset_beyond_content() {
         let temp = TempDir::new().unwrap();
-        let workspace = temp.path().to_path_buf();
+        let mount_root = temp.path().to_path_buf();
 
-        tokio::fs::write(workspace.join("short.txt"), "one line")
+        tokio::fs::write(mount_root.join("short.txt"), "one line")
             .await
             .unwrap();
 
         let tool = ReadFileTool::new();
         let config = Arc::new(Config::default());
-        let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
+        let ctx = tool_context_with_root(mount_root.clone(), mount_root.join("tmp"), config);
 
         let args = json!({"path": "short.txt", "offset": 10});
         let result = tool.execute(args, &ctx).await.unwrap();
@@ -2729,11 +2799,11 @@ mod tests {
     #[tokio::test]
     async fn test_read_file_not_found() {
         let temp = TempDir::new().unwrap();
-        let workspace = temp.path().to_path_buf();
+        let mount_root = temp.path().to_path_buf();
 
         let tool = ReadFileTool::new();
         let config = Arc::new(Config::default());
-        let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
+        let ctx = tool_context_with_root(mount_root.clone(), mount_root.join("tmp"), config);
 
         let args = json!({"path": "nonexistent.txt"});
         let result = tool.execute(args, &ctx).await;
@@ -2744,17 +2814,17 @@ mod tests {
     #[tokio::test]
     async fn test_read_image_file() {
         let temp = TempDir::new().unwrap();
-        let workspace = temp.path().to_path_buf();
+        let mount_root = temp.path().to_path_buf();
 
         // Create a fake PNG file (just the header bytes)
         let png_header = vec![0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
-        tokio::fs::write(workspace.join("test.png"), png_header)
+        tokio::fs::write(mount_root.join("test.png"), png_header)
             .await
             .unwrap();
 
         let tool = ReadFileTool::new();
         let config = Arc::new(Config::default());
-        let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
+        let ctx = tool_context_with_root(mount_root.clone(), mount_root.join("tmp"), config);
 
         let args = json!({"path": "test.png"});
         let result = tool.execute(args, &ctx).await.unwrap();
@@ -2767,12 +2837,12 @@ mod tests {
     #[tokio::test]
     async fn test_write_and_read_file() {
         let temp = TempDir::new().unwrap();
-        let workspace = temp.path().to_path_buf();
+        let mount_root = temp.path().to_path_buf();
 
         let write_tool = WriteFileTool::new();
         let read_tool = ReadFileTool::new();
         let config = Arc::new(Config::default());
-        let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
+        let ctx = tool_context_with_root(mount_root.clone(), mount_root.join("tmp"), config);
 
         // Write
         let write_args = json!({"path": "output.txt", "content": "Hello World"});
@@ -2788,11 +2858,11 @@ mod tests {
     #[tokio::test]
     async fn test_write_file_creates_parent_dirs() {
         let temp = TempDir::new().unwrap();
-        let workspace = temp.path().to_path_buf();
+        let mount_root = temp.path().to_path_buf();
 
         let tool = WriteFileTool::new();
         let config = Arc::new(Config::default());
-        let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
+        let ctx = tool_context_with_root(mount_root.clone(), mount_root.join("tmp"), config);
 
         let args = json!({"path": "a/b/c/deep.txt", "content": "deep content"});
         let result = tool.execute(args, &ctx).await.unwrap();
@@ -2800,7 +2870,7 @@ mod tests {
         assert!(result["success"].as_bool().unwrap());
 
         // Verify file exists
-        let content = tokio::fs::read_to_string(workspace.join("a/b/c/deep.txt"))
+        let content = tokio::fs::read_to_string(mount_root.join("a/b/c/deep.txt"))
             .await
             .unwrap();
         assert_eq!(content, "deep content");
@@ -2809,11 +2879,11 @@ mod tests {
     #[tokio::test]
     async fn test_write_file_empty_content() {
         let temp = TempDir::new().unwrap();
-        let workspace = temp.path().to_path_buf();
+        let mount_root = temp.path().to_path_buf();
 
         let tool = WriteFileTool::new();
         let config = Arc::new(Config::default());
-        let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
+        let ctx = tool_context_with_root(mount_root.clone(), mount_root.join("tmp"), config);
 
         let args = json!({"path": "empty.txt", "content": ""});
         let result = tool.execute(args, &ctx).await.unwrap();
@@ -2825,23 +2895,23 @@ mod tests {
     #[tokio::test]
     async fn test_write_file_overwrites_existing() {
         let temp = TempDir::new().unwrap();
-        let workspace = temp.path().to_path_buf();
+        let mount_root = temp.path().to_path_buf();
 
         // Create existing file
-        tokio::fs::write(workspace.join("existing.txt"), "old content")
+        tokio::fs::write(mount_root.join("existing.txt"), "old content")
             .await
             .unwrap();
 
         let tool = WriteFileTool::new();
         let config = Arc::new(Config::default());
-        let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
+        let ctx = tool_context_with_root(mount_root.clone(), mount_root.join("tmp"), config);
 
         let args = json!({"path": "existing.txt", "content": "new content"});
         let result = tool.execute(args, &ctx).await.unwrap();
 
         assert!(result["success"].as_bool().unwrap());
 
-        let content = tokio::fs::read_to_string(workspace.join("existing.txt"))
+        let content = tokio::fs::read_to_string(mount_root.join("existing.txt"))
             .await
             .unwrap();
         assert_eq!(content, "new content");
@@ -2850,17 +2920,17 @@ mod tests {
     #[tokio::test]
     async fn test_edit_file() {
         let temp = TempDir::new().unwrap();
-        let workspace = temp.path().to_path_buf();
+        let mount_root = temp.path().to_path_buf();
 
         // Create file
-        tokio::fs::write(workspace.join("edit.txt"), "Hello World")
+        tokio::fs::write(mount_root.join("edit.txt"), "Hello World")
             .await
             .unwrap();
 
         let edit_tool = EditFileTool::new();
         let read_tool = ReadFileTool::new();
         let config = Arc::new(Config::default());
-        let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
+        let ctx = tool_context_with_root(mount_root.clone(), mount_root.join("tmp"), config);
 
         // Edit
         let edit_args = json!({"path": "edit.txt", "old_string": "World", "new_string": "Rust"});
@@ -2876,11 +2946,11 @@ mod tests {
     #[tokio::test]
     async fn test_edit_file_not_found() {
         let temp = TempDir::new().unwrap();
-        let workspace = temp.path().to_path_buf();
+        let mount_root = temp.path().to_path_buf();
 
         let tool = EditFileTool::new();
         let config = Arc::new(Config::default());
-        let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
+        let ctx = tool_context_with_root(mount_root.clone(), mount_root.join("tmp"), config);
 
         let args = json!({
             "path": "nonexistent.txt",
@@ -2895,15 +2965,15 @@ mod tests {
     #[tokio::test]
     async fn test_edit_file_old_string_not_found() {
         let temp = TempDir::new().unwrap();
-        let workspace = temp.path().to_path_buf();
+        let mount_root = temp.path().to_path_buf();
 
-        tokio::fs::write(workspace.join("file.txt"), "content here")
+        tokio::fs::write(mount_root.join("file.txt"), "content here")
             .await
             .unwrap();
 
         let tool = EditFileTool::new();
         let config = Arc::new(Config::default());
-        let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
+        let ctx = tool_context_with_root(mount_root.clone(), mount_root.join("tmp"), config);
 
         let args = json!({
             "path": "file.txt",
@@ -2919,15 +2989,15 @@ mod tests {
     #[tokio::test]
     async fn test_edit_file_multiline_replacement() {
         let temp = TempDir::new().unwrap();
-        let workspace = temp.path().to_path_buf();
+        let mount_root = temp.path().to_path_buf();
 
-        tokio::fs::write(workspace.join("multi.txt"), "start\nmiddle\nend")
+        tokio::fs::write(mount_root.join("multi.txt"), "start\nmiddle\nend")
             .await
             .unwrap();
 
         let tool = EditFileTool::new();
         let config = Arc::new(Config::default());
-        let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
+        let ctx = tool_context_with_root(mount_root.clone(), mount_root.join("tmp"), config);
 
         let args = json!({
             "path": "multi.txt",
@@ -2938,7 +3008,7 @@ mod tests {
 
         assert!(result["success"].as_bool().unwrap());
 
-        let content = tokio::fs::read_to_string(workspace.join("multi.txt"))
+        let content = tokio::fs::read_to_string(mount_root.join("multi.txt"))
             .await
             .unwrap();
         assert_eq!(content, "begin\ncenter\nend");
@@ -2947,15 +3017,15 @@ mod tests {
     #[tokio::test]
     async fn test_edit_file_only_first_occurrence() {
         let temp = TempDir::new().unwrap();
-        let workspace = temp.path().to_path_buf();
+        let mount_root = temp.path().to_path_buf();
 
-        tokio::fs::write(workspace.join("repeat.txt"), "foo foo foo")
+        tokio::fs::write(mount_root.join("repeat.txt"), "foo foo foo")
             .await
             .unwrap();
 
         let tool = EditFileTool::new();
         let config = Arc::new(Config::default());
-        let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
+        let ctx = tool_context_with_root(mount_root.clone(), mount_root.join("tmp"), config);
 
         let args = json!({
             "path": "repeat.txt",
@@ -2966,7 +3036,7 @@ mod tests {
 
         assert_eq!(result["replacements"], 1);
 
-        let content = tokio::fs::read_to_string(workspace.join("repeat.txt"))
+        let content = tokio::fs::read_to_string(mount_root.join("repeat.txt"))
             .await
             .unwrap();
         assert_eq!(content, "bar foo foo");
@@ -2975,11 +3045,11 @@ mod tests {
     #[tokio::test]
     async fn test_bash_tool() {
         let temp = TempDir::new().unwrap();
-        let workspace = temp.path().to_path_buf();
+        let mount_root = temp.path().to_path_buf();
 
         let tool = BashTool::new();
         let config = Arc::new(Config::default());
-        let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
+        let ctx = tool_context_with_root(mount_root.clone(), mount_root.join("tmp"), config);
 
         let args = json!({"command": "echo test_output"});
         let result = tool.execute(args, &ctx).await.unwrap();
@@ -2991,11 +3061,11 @@ mod tests {
     #[tokio::test]
     async fn test_bash_tool_failure() {
         let temp = TempDir::new().unwrap();
-        let workspace = temp.path().to_path_buf();
+        let mount_root = temp.path().to_path_buf();
 
         let tool = BashTool::new();
         let config = Arc::new(Config::default());
-        let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
+        let ctx = tool_context_with_root(mount_root.clone(), mount_root.join("tmp"), config);
 
         let args = json!({"command": "exit 42"});
         let result = tool.execute(args, &ctx).await.unwrap();
@@ -3007,11 +3077,11 @@ mod tests {
     #[tokio::test]
     async fn test_bash_tool_stderr() {
         let temp = TempDir::new().unwrap();
-        let workspace = temp.path().to_path_buf();
+        let mount_root = temp.path().to_path_buf();
 
         let tool = BashTool::new();
         let config = Arc::new(Config::default());
-        let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
+        let ctx = tool_context_with_root(mount_root.clone(), mount_root.join("tmp"), config);
 
         let args = json!({"command": "echo error_msg >&2"});
         let result = tool.execute(args, &ctx).await.unwrap();
@@ -3023,19 +3093,23 @@ mod tests {
     #[tokio::test]
     async fn test_bash_tool_working_directory() {
         let temp = TempDir::new().unwrap();
-        let workspace = temp.path().to_path_buf();
+        let mount_root = temp.path().to_path_buf();
 
         // Create subdirectory
-        tokio::fs::create_dir(workspace.join("subdir"))
+        tokio::fs::create_dir(mount_root.join("subdir"))
             .await
             .unwrap();
 
         let tool = BashTool::new();
         let config = Arc::new(Config::default());
-        let ctx = ToolContext::with_workspace(
-            workspace.clone(),
-            workspace.join("subdir"),
-            workspace.join("tmp"),
+        let ctx = ToolContext::from_binding(
+            alan_agent_engine::tools::ToolExecutionBinding::new(
+                mount_root.join("subdir"),
+                mount_root.join("tmp"),
+            )
+            .with_sandbox_spec(alan_agent_engine::tools::SandboxSpec::seed(
+                mount_root.clone(),
+            )),
             config,
         );
 
@@ -3048,11 +3122,11 @@ mod tests {
     #[tokio::test]
     async fn test_grep_tool() {
         let temp = TempDir::new().unwrap();
-        let workspace = temp.path().to_path_buf();
+        let mount_root = temp.path().to_path_buf();
 
         // Create test file
         tokio::fs::write(
-            workspace.join("search.txt"),
+            mount_root.join("search.txt"),
             "hello world\nfoo bar\nhello rust",
         )
         .await
@@ -3060,7 +3134,7 @@ mod tests {
 
         let tool = GrepTool::new();
         let config = Arc::new(Config::default());
-        let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
+        let ctx = tool_context_with_root(mount_root.clone(), mount_root.join("tmp"), config);
 
         let args = json!({"pattern": "hello", "path": "search.txt"});
         let result = tool.execute(args, &ctx).await.unwrap();
@@ -3071,15 +3145,15 @@ mod tests {
     #[tokio::test]
     async fn test_grep_tool_case_insensitive() {
         let temp = TempDir::new().unwrap();
-        let workspace = temp.path().to_path_buf();
+        let mount_root = temp.path().to_path_buf();
 
-        tokio::fs::write(workspace.join("case.txt"), "Hello\nHELLO\nhello")
+        tokio::fs::write(mount_root.join("case.txt"), "Hello\nHELLO\nhello")
             .await
             .unwrap();
 
         let tool = GrepTool::new();
         let config = Arc::new(Config::default());
-        let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
+        let ctx = tool_context_with_root(mount_root.clone(), mount_root.join("tmp"), config);
 
         let args = json!({"pattern": "hello", "path": "case.txt", "case_sensitive": false});
         let result = tool.execute(args, &ctx).await.unwrap();
@@ -3090,15 +3164,15 @@ mod tests {
     #[tokio::test]
     async fn test_grep_tool_case_sensitive() {
         let temp = TempDir::new().unwrap();
-        let workspace = temp.path().to_path_buf();
+        let mount_root = temp.path().to_path_buf();
 
-        tokio::fs::write(workspace.join("case.txt"), "Hello\nHELLO\nhello")
+        tokio::fs::write(mount_root.join("case.txt"), "Hello\nHELLO\nhello")
             .await
             .unwrap();
 
         let tool = GrepTool::new();
         let config = Arc::new(Config::default());
-        let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
+        let ctx = tool_context_with_root(mount_root.clone(), mount_root.join("tmp"), config);
 
         let args = json!({"pattern": "hello", "path": "case.txt", "case_sensitive": true});
         let result = tool.execute(args, &ctx).await.unwrap();
@@ -3110,22 +3184,22 @@ mod tests {
     #[tokio::test]
     async fn test_grep_tool_directory_recursive() {
         let temp = TempDir::new().unwrap();
-        let workspace = temp.path().to_path_buf();
+        let mount_root = temp.path().to_path_buf();
 
-        tokio::fs::create_dir(workspace.join("src")).await.unwrap();
-        tokio::fs::write(workspace.join("src/a.rs"), "fn main() {}")
+        tokio::fs::create_dir(mount_root.join("src")).await.unwrap();
+        tokio::fs::write(mount_root.join("src/a.rs"), "fn main() {}")
             .await
             .unwrap();
-        tokio::fs::write(workspace.join("src/b.rs"), "fn helper() {}")
+        tokio::fs::write(mount_root.join("src/b.rs"), "fn helper() {}")
             .await
             .unwrap();
-        tokio::fs::write(workspace.join("root.txt"), "fn root() {}")
+        tokio::fs::write(mount_root.join("root.txt"), "fn root() {}")
             .await
             .unwrap();
 
         let tool = GrepTool::new();
         let config = Arc::new(Config::default());
-        let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
+        let ctx = tool_context_with_root(mount_root.clone(), mount_root.join("tmp"), config);
 
         let args = json!({"pattern": "fn ", "path": "."});
         let result = tool.execute(args, &ctx).await.unwrap();
@@ -3136,15 +3210,15 @@ mod tests {
     #[tokio::test]
     async fn test_grep_tool_no_matches() {
         let temp = TempDir::new().unwrap();
-        let workspace = temp.path().to_path_buf();
+        let mount_root = temp.path().to_path_buf();
 
-        tokio::fs::write(workspace.join("file.txt"), "content here")
+        tokio::fs::write(mount_root.join("file.txt"), "content here")
             .await
             .unwrap();
 
         let tool = GrepTool::new();
         let config = Arc::new(Config::default());
-        let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
+        let ctx = tool_context_with_root(mount_root.clone(), mount_root.join("tmp"), config);
 
         let args = json!({"pattern": "nomatch", "path": "file.txt"});
         let result = tool.execute(args, &ctx).await.unwrap();
@@ -3156,11 +3230,11 @@ mod tests {
     #[tokio::test]
     async fn test_grep_tool_invalid_regex() {
         let temp = TempDir::new().unwrap();
-        let workspace = temp.path().to_path_buf();
+        let mount_root = temp.path().to_path_buf();
 
         let tool = GrepTool::new();
         let config = Arc::new(Config::default());
-        let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
+        let ctx = tool_context_with_root(mount_root.clone(), mount_root.join("tmp"), config);
 
         let args = json!({"pattern": "[invalid", "path": "."});
         let result = tool.execute(args, &ctx).await;
@@ -3172,21 +3246,21 @@ mod tests {
     #[tokio::test]
     async fn test_grep_tool_skips_hidden_dirs() {
         let temp = TempDir::new().unwrap();
-        let workspace = temp.path().to_path_buf();
+        let mount_root = temp.path().to_path_buf();
 
-        tokio::fs::create_dir(workspace.join(".hidden"))
+        tokio::fs::create_dir(mount_root.join(".hidden"))
             .await
             .unwrap();
-        tokio::fs::write(workspace.join(".hidden/secret.txt"), "secret content")
+        tokio::fs::write(mount_root.join(".hidden/secret.txt"), "secret content")
             .await
             .unwrap();
-        tokio::fs::write(workspace.join("visible.txt"), "visible content")
+        tokio::fs::write(mount_root.join("visible.txt"), "visible content")
             .await
             .unwrap();
 
         let tool = GrepTool::new();
         let config = Arc::new(Config::default());
-        let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
+        let ctx = tool_context_with_root(mount_root.clone(), mount_root.join("tmp"), config);
 
         let args = json!({"pattern": "content", "path": "."});
         let result = tool.execute(args, &ctx).await.unwrap();
@@ -3203,20 +3277,20 @@ mod tests {
     #[tokio::test]
     async fn test_grep_tool_skips_binary_files() {
         let temp = TempDir::new().unwrap();
-        let workspace = temp.path().to_path_buf();
+        let mount_root = temp.path().to_path_buf();
 
         // Create a binary file with some pattern in it
         let binary_content = vec![0x00, 0x01, 0x02, 0x03];
-        tokio::fs::write(workspace.join("data.bin"), binary_content)
+        tokio::fs::write(mount_root.join("data.bin"), binary_content)
             .await
             .unwrap();
-        tokio::fs::write(workspace.join("text.txt"), "test data")
+        tokio::fs::write(mount_root.join("text.txt"), "test data")
             .await
             .unwrap();
 
         let tool = GrepTool::new();
         let config = Arc::new(Config::default());
-        let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
+        let ctx = tool_context_with_root(mount_root.clone(), mount_root.join("tmp"), config);
 
         let args = json!({"pattern": "data", "path": "."});
         let result = tool.execute(args, &ctx).await.unwrap();
@@ -3233,15 +3307,17 @@ mod tests {
     #[tokio::test]
     async fn test_glob_tool() {
         let temp = TempDir::new().unwrap();
-        let workspace = temp.path().to_path_buf();
+        let mount_root = temp.path().to_path_buf();
 
-        tokio::fs::write(workspace.join("a.rs"), "").await.unwrap();
-        tokio::fs::write(workspace.join("b.rs"), "").await.unwrap();
-        tokio::fs::write(workspace.join("c.txt"), "").await.unwrap();
+        tokio::fs::write(mount_root.join("a.rs"), "").await.unwrap();
+        tokio::fs::write(mount_root.join("b.rs"), "").await.unwrap();
+        tokio::fs::write(mount_root.join("c.txt"), "")
+            .await
+            .unwrap();
 
         let tool = GlobTool::new();
         let config = Arc::new(Config::default());
-        let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
+        let ctx = tool_context_with_root(mount_root.clone(), mount_root.join("tmp"), config);
 
         let args = json!({"pattern": "*.rs"});
         let result = tool.execute(args, &ctx).await.unwrap();
@@ -3252,25 +3328,25 @@ mod tests {
     #[tokio::test]
     async fn test_glob_tool_recursive() {
         let temp = TempDir::new().unwrap();
-        let workspace = temp.path().to_path_buf();
+        let mount_root = temp.path().to_path_buf();
 
-        tokio::fs::create_dir(workspace.join("src")).await.unwrap();
-        tokio::fs::create_dir(workspace.join("src/nested"))
+        tokio::fs::create_dir(mount_root.join("src")).await.unwrap();
+        tokio::fs::create_dir(mount_root.join("src/nested"))
             .await
             .unwrap();
-        tokio::fs::write(workspace.join("src/a.rs"), "")
+        tokio::fs::write(mount_root.join("src/a.rs"), "")
             .await
             .unwrap();
-        tokio::fs::write(workspace.join("src/nested/b.rs"), "")
+        tokio::fs::write(mount_root.join("src/nested/b.rs"), "")
             .await
             .unwrap();
-        tokio::fs::write(workspace.join("root.rs"), "")
+        tokio::fs::write(mount_root.join("root.rs"), "")
             .await
             .unwrap();
 
         let tool = GlobTool::new();
         let config = Arc::new(Config::default());
-        let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
+        let ctx = tool_context_with_root(mount_root.clone(), mount_root.join("tmp"), config);
 
         let args = json!({"pattern": "**/*.rs"});
         let result = tool.execute(args, &ctx).await.unwrap();
@@ -3281,21 +3357,21 @@ mod tests {
     #[tokio::test]
     async fn test_glob_tool_with_path() {
         let temp = TempDir::new().unwrap();
-        let workspace = temp.path().to_path_buf();
+        let mount_root = temp.path().to_path_buf();
 
-        tokio::fs::create_dir(workspace.join("subdir"))
+        tokio::fs::create_dir(mount_root.join("subdir"))
             .await
             .unwrap();
-        tokio::fs::write(workspace.join("subdir/file.txt"), "")
+        tokio::fs::write(mount_root.join("subdir/file.txt"), "")
             .await
             .unwrap();
-        tokio::fs::write(workspace.join("root.txt"), "")
+        tokio::fs::write(mount_root.join("root.txt"), "")
             .await
             .unwrap();
 
         let tool = GlobTool::new();
         let config = Arc::new(Config::default());
-        let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
+        let ctx = tool_context_with_root(mount_root.clone(), mount_root.join("tmp"), config);
 
         let args = json!({"pattern": "*.txt", "path": "subdir"});
         let result = tool.execute(args, &ctx).await.unwrap();
@@ -3307,11 +3383,11 @@ mod tests {
     #[tokio::test]
     async fn test_glob_tool_no_matches() {
         let temp = TempDir::new().unwrap();
-        let workspace = temp.path().to_path_buf();
+        let mount_root = temp.path().to_path_buf();
 
         let tool = GlobTool::new();
         let config = Arc::new(Config::default());
-        let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
+        let ctx = tool_context_with_root(mount_root.clone(), mount_root.join("tmp"), config);
 
         let args = json!({"pattern": "*.nonexistent"});
         let result = tool.execute(args, &ctx).await.unwrap();
@@ -3323,17 +3399,19 @@ mod tests {
     #[tokio::test]
     async fn test_list_dir_tool() {
         let temp = TempDir::new().unwrap();
-        let workspace = temp.path().to_path_buf();
+        let mount_root = temp.path().to_path_buf();
 
         // Create some files
-        tokio::fs::write(workspace.join("file1.txt"), "")
+        tokio::fs::write(mount_root.join("file1.txt"), "")
             .await
             .unwrap();
-        tokio::fs::create_dir(workspace.join("dir1")).await.unwrap();
+        tokio::fs::create_dir(mount_root.join("dir1"))
+            .await
+            .unwrap();
 
         let tool = ListDirTool::new();
         let config = Arc::new(Config::default());
-        let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
+        let ctx = tool_context_with_root(mount_root.clone(), mount_root.join("tmp"), config);
 
         let args = json!({"path": "."});
         let result = tool.execute(args, &ctx).await.unwrap();
@@ -3344,15 +3422,15 @@ mod tests {
     #[tokio::test]
     async fn test_list_dir_default_path() {
         let temp = TempDir::new().unwrap();
-        let workspace = temp.path().to_path_buf();
+        let mount_root = temp.path().to_path_buf();
 
-        tokio::fs::write(workspace.join("file.txt"), "")
+        tokio::fs::write(mount_root.join("file.txt"), "")
             .await
             .unwrap();
 
         let tool = ListDirTool::new();
         let config = Arc::new(Config::default());
-        let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
+        let ctx = tool_context_with_root(mount_root.clone(), mount_root.join("tmp"), config);
 
         // No path argument, should use cwd
         let args = json!({});
@@ -3364,11 +3442,11 @@ mod tests {
     #[tokio::test]
     async fn test_list_dir_empty() {
         let temp = TempDir::new().unwrap();
-        let workspace = temp.path().to_path_buf();
+        let mount_root = temp.path().to_path_buf();
 
         let tool = ListDirTool::new();
         let config = Arc::new(Config::default());
-        let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
+        let ctx = tool_context_with_root(mount_root.clone(), mount_root.join("tmp"), config);
 
         let args = json!({"path": "."});
         let result = tool.execute(args, &ctx).await.unwrap();
@@ -3380,21 +3458,25 @@ mod tests {
     #[tokio::test]
     async fn test_list_dir_sorting() {
         let temp = TempDir::new().unwrap();
-        let workspace = temp.path().to_path_buf();
+        let mount_root = temp.path().to_path_buf();
 
         // Create files and dirs in non-sorted order
-        tokio::fs::write(workspace.join("z.txt"), "").await.unwrap();
-        tokio::fs::create_dir(workspace.join("a_dir"))
+        tokio::fs::write(mount_root.join("z.txt"), "")
             .await
             .unwrap();
-        tokio::fs::write(workspace.join("m.txt"), "").await.unwrap();
-        tokio::fs::create_dir(workspace.join("z_dir"))
+        tokio::fs::create_dir(mount_root.join("a_dir"))
+            .await
+            .unwrap();
+        tokio::fs::write(mount_root.join("m.txt"), "")
+            .await
+            .unwrap();
+        tokio::fs::create_dir(mount_root.join("z_dir"))
             .await
             .unwrap();
 
         let tool = ListDirTool::new();
         let config = Arc::new(Config::default());
-        let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
+        let ctx = tool_context_with_root(mount_root.clone(), mount_root.join("tmp"), config);
 
         let args = json!({"path": "."});
         let result = tool.execute(args, &ctx).await.unwrap();
@@ -3416,11 +3498,11 @@ mod tests {
     #[tokio::test]
     async fn test_list_dir_not_found() {
         let temp = TempDir::new().unwrap();
-        let workspace = temp.path().to_path_buf();
+        let mount_root = temp.path().to_path_buf();
 
         let tool = ListDirTool::new();
         let config = Arc::new(Config::default());
-        let ctx = ToolContext::new(workspace.clone(), workspace.join("tmp"), config);
+        let ctx = tool_context_with_root(mount_root.clone(), mount_root.join("tmp"), config);
 
         let args = json!({"path": "nonexistent"});
         let result = tool.execute(args, &ctx).await;
@@ -4157,24 +4239,28 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_core_registry_materializes_missing_read_only_tool_for_child_workspace() {
+    async fn test_core_registry_materializes_missing_read_only_tool_for_child_mount_root() {
         let temp = TempDir::new().unwrap();
-        let parent_workspace = temp.path().join("parent");
-        let child_workspace = temp.path().join("child");
-        tokio::fs::create_dir_all(&parent_workspace).await.unwrap();
-        tokio::fs::create_dir_all(&child_workspace).await.unwrap();
-        tokio::fs::write(child_workspace.join("notes.txt"), "workspace inspect\n")
+        let parent_mount_root = temp.path().join("parent");
+        let child_mount_root = temp.path().join("child");
+        tokio::fs::create_dir_all(&parent_mount_root).await.unwrap();
+        tokio::fs::create_dir_all(&child_mount_root).await.unwrap();
+        tokio::fs::write(child_mount_root.join("notes.txt"), "mount_root inspect\n")
             .await
             .unwrap();
 
-        let registry = create_tool_registry_with_core_tools(parent_workspace);
+        let registry = create_tool_registry_with_core_tools(parent_mount_root);
         assert!(registry.get("grep").is_none());
 
         let grep_tool = registry
             .materialize("grep")
             .expect("core registry should materialize grep from the catalog");
         let config = Arc::new(Config::default());
-        let ctx = ToolContext::new(child_workspace.clone(), child_workspace.join("tmp"), config);
+        let ctx = tool_context_with_root(
+            child_mount_root.clone(),
+            child_mount_root.join("tmp"),
+            config,
+        );
         let result = grep_tool
             .execute(
                 json!({

@@ -17,8 +17,9 @@ It covers the OpenSpec side-by-side boundary:
    Alan Dev is running without creating or retaining a second stable process;
 5. dev shell-control state is created for the current run in the
    `alan-dev-shell-control` namespace;
-6. `alan-dev init` writes the current smoke workspace to the dev registry and
-   writes rollouts and Memory Store state only under `.alan/runtime/dev/`.
+6. an explicit `alan-dev host legacy-state import skill` writes only to the dev System Store,
+   does not create stable state, and does not recreate `.alan` or `.alan-dev`;
+7. removed `init` and `workspace` commands remain unavailable.
 
 ## Prerequisites
 
@@ -66,34 +67,12 @@ prove the current launch created the dev namespace rather than reusing stale
 temporary files from an earlier run. Stable `Alan.app` may already be running;
 if not, the smoke starts it.
 
-## Latest Local Evidence
-
-Last run: 2026-05-24.
-
-Observed result:
+## Expected evidence
 
 ```text
 Dev channel side-by-side smoke passed.
-  stable pid(s): 60215
-  dev pid(s): 12095
-  dev pid(s) after duplicate launch: 12095
-  stable pid(s) after duplicate launch: 60215
-  frontmost before dev launch: com.apple.finder
-  frontmost after dev launch: com.apple.finder
-  frontmost before duplicate dev launch: com.apple.finder
-  frontmost after duplicate dev launch: app.alanworks.macos.dev
-  frontmost before duplicate stable launch: com.apple.finder
-  frontmost after duplicate stable launch: app.alanworks.macos
-  dev shell-control: /var/folders/3v/mr9cv4y12l30h9y_mtc2txx80000gn/T/alan-dev-shell-control
-  dev registry: /Users/morris/.alan-dev/registry.json
-  dev workspace state: /var/folders/3v/mr9cv4y12l30h9y_mtc2txx80000gn/T/alan-dev-channel-smoke-workspace.6zBX7X/.alan/runtime/dev
+  stable pid(s): …
+  dev pid(s): …
+  dev shell-control: /var/folders/…/alan-dev-shell-control
+  isolated dev System Store fixture: …/Alan/System Store/dev
 ```
-
-Additional install evidence from the same run:
-
-- stable remained installed as `$HOME/Applications/Alan.app`;
-- stable command link remained `/usr/local/bin/alan`;
-- dev installed as `$HOME/Applications/Alan Dev.app`;
-- dev command link was installed as `$HOME/.local/bin/alan-dev`;
-- `Alan Dev.app` reported bundle id `app.alanworks.macos.dev` and display name
-  `Alan Dev`.

@@ -1,53 +1,38 @@
-//! alan — AI Turing Machine CLI.
-//!
-//! This is the unified entry point for all alan operations:
-//! - `alan init` — initialize a workspace
-//! - `alan workspace` — manage workspaces
+//! Alan — a programmable personal computing environment.
 
 mod cli;
 #[allow(dead_code)]
 mod host_mounts;
-pub mod registry;
-mod skill_catalog;
+mod legacy_state;
+mod system_store;
 
 use anyhow::{Context, Result};
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::path::Path;
 use std::path::PathBuf;
 
 #[derive(Parser)]
-#[command(name = "alan", about = "alan — AI Turing Machine", version)]
+#[command(
+    name = "alan",
+    about = "Alan — a programmable personal computing environment",
+    version
+)]
 struct Cli {
-    /// Select a named agent root on top of the base workspace/global agent
-    #[arg(long, global = true)]
-    agent: Option<String>,
     #[command(subcommand)]
     command: Option<Commands>,
 }
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Host lifecycle, migration, and native integration operations
+    Host {
+        #[command(subcommand)]
+        action: HostAction,
+    },
     /// Manage connection profiles and credentials
     Connection {
         #[command(subcommand)]
         action: ConnectionAction,
-    },
-    /// Initialize a directory as a workspace
-    Init {
-        /// Path to initialize (defaults to current directory)
-        #[arg(long)]
-        path: Option<PathBuf>,
-        /// Workspace alias (defaults to directory name)
-        #[arg(long)]
-        name: Option<String>,
-        /// Suppress output (used by install script)
-        #[arg(long, hide = true)]
-        silent: bool,
-    },
-    /// Manage workspaces
-    Workspace {
-        #[command(subcommand)]
-        action: WorkspaceAction,
     },
     /// Inspect resolved skills, packages, and exposure state
     Skills {
@@ -62,16 +47,64 @@ enum Commands {
 }
 
 #[derive(Subcommand)]
+enum HostAction {
+    /// Inspect, migrate, or clean state created by retired Host-directory contracts
+    LegacyState {
+        #[command(subcommand)]
+        action: LegacyStateAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum LegacyStateAction {
+    /// Report fixed generated, migratable, and possibly authored paths
+    Inspect {
+        /// Explicit project roots to inspect; no other Host directories are scanned
+        #[arg(long = "source-root")]
+        source_roots: Vec<PathBuf>,
+        /// Emit structured JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Migrate connections and remove only recognized generated paths
+    Cleanup {
+        /// Explicit project roots whose fixed legacy paths may be cleaned
+        #[arg(long = "source-root")]
+        source_roots: Vec<PathBuf>,
+        /// Emit structured JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Explicitly import authored legacy content into an owning System Store
+    Import {
+        #[arg(value_enum)]
+        kind: LegacyImportKind,
+        /// Existing Host directory to import
+        source: PathBuf,
+        /// Installed name in the destination store
+        #[arg(long)]
+        name: String,
+        /// Delete the source only after byte-for-byte tree verification
+        #[arg(long)]
+        delete_source: bool,
+    },
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum LegacyImportKind {
+    AgentDefinition,
+    Skill,
+    MemoryStore,
+}
+
+#[derive(Subcommand)]
 enum ConnectionAction {
     /// List configured connection profiles
     List,
     /// Show one connection profile and credential status
     Show { profile_id: String },
     /// Show the effective connection selection state
-    Current {
-        #[arg(long)]
-        workspace: Option<PathBuf>,
-    },
+    Current,
     /// Add a new connection profile
     Add {
         provider: String,
@@ -119,53 +152,18 @@ enum ConnectionAction {
         #[command(subcommand)]
         action: ConnectionDefaultAction,
     },
-    /// Pin the effective profile in an agent config file
-    Pin {
-        profile_id: String,
-        #[arg(long, value_enum, default_value_t = ConnectionPinScopeArg::Global)]
-        scope: ConnectionPinScopeArg,
-        #[arg(long)]
-        workspace: Option<PathBuf>,
-    },
-    /// Remove a profile pin from an agent config file
-    Unpin {
-        #[arg(long, value_enum, default_value_t = ConnectionPinScopeArg::Global)]
-        scope: ConnectionPinScopeArg,
-        #[arg(long)]
-        workspace: Option<PathBuf>,
-    },
     /// Validate one connection profile
     Test { profile_id: Option<String> },
     /// Remove a connection profile
     Remove { profile_id: String },
-    /// Deprecated alias for `connection default set`
-    #[command(hide = true)]
-    Activate { profile_id: String },
-    /// Deprecated alias for `connection default set`
-    #[command(hide = true)]
-    Use { profile_id: String },
-    /// Deprecated alias for `connection show/current`
-    #[command(hide = true)]
-    Status {
-        profile_id: Option<String>,
-        #[arg(long)]
-        workspace: Option<PathBuf>,
-    },
 }
 
 #[derive(Subcommand)]
 enum ConnectionDefaultAction {
     /// Set the default profile for future Agent Processes
-    Set {
-        profile_id: String,
-        #[arg(long)]
-        workspace: Option<PathBuf>,
-    },
+    Set { profile_id: String },
     /// Clear the default profile for future Agent Processes
-    Clear {
-        #[arg(long)]
-        workspace: Option<PathBuf>,
-    },
+    Clear,
 }
 
 #[derive(clap::ValueEnum, Clone, Copy, Default)]
@@ -175,60 +173,8 @@ enum ConnectionLoginMode {
     Device,
 }
 
-#[derive(clap::ValueEnum, Clone, Copy, Default)]
-enum ConnectionPinScopeArg {
-    #[default]
-    Global,
-    Workspace,
-}
-
-impl From<ConnectionPinScopeArg> for crate::cli::connection::ConnectionPinScope {
-    fn from(value: ConnectionPinScopeArg) -> Self {
-        match value {
-            ConnectionPinScopeArg::Global => Self::Global,
-            ConnectionPinScopeArg::Workspace => Self::Workspace,
-        }
-    }
-}
-
-#[derive(Subcommand)]
-enum WorkspaceAction {
-    /// List all registered workspaces
-    List,
-    /// Register an existing workspace directory
-    Add {
-        /// Path to the workspace directory (must contain .alan/)
-        path: PathBuf,
-        /// Workspace alias
-        #[arg(long)]
-        name: Option<String>,
-    },
-    /// Unregister a workspace (does not delete files)
-    Remove {
-        /// Workspace alias, short ID, or path
-        workspace: String,
-    },
-    /// Show workspace details
-    Info {
-        /// Workspace alias, short ID, or path
-        workspace: String,
-    },
-}
-
 #[derive(Subcommand)]
 enum SkillsAction {
-    /// List exposed skills for the resolved workspace/agent
-    List {
-        /// Workspace directory to inspect (defaults to current directory)
-        #[arg(long)]
-        workspace: Option<PathBuf>,
-    },
-    /// List resolved capability packages and their exported skills
-    Packages {
-        /// Workspace directory to inspect (defaults to current directory)
-        #[arg(long)]
-        workspace: Option<PathBuf>,
-    },
     /// Scaffold a new skill package from a first-party template
     Init {
         /// Directory to create for the new skill package
@@ -674,13 +620,103 @@ enum ShellRoutingAction {
     },
 }
 
+fn parse_cli() -> Cli {
+    let args = std::env::args_os().collect::<Vec<_>>();
+    match Cli::try_parse_from(&args) {
+        Ok(cli) => cli,
+        Err(error) => {
+            if is_retired_workspace_invocation(&args) {
+                eprintln!(
+                    "Workspace runtime commands were removed. Authorize Host files with an explicit Host Mount, then use Alan Shell operations inside Alan OS."
+                );
+            }
+            error.exit()
+        }
+    }
+}
+
+fn is_retired_workspace_invocation(args: &[std::ffi::OsString]) -> bool {
+    let args = args
+        .iter()
+        .skip(1)
+        .filter_map(|argument| argument.to_str())
+        .collect::<Vec<_>>();
+    matches!(args.first().copied(), Some("init" | "workspace"))
+        || matches!(args.as_slice(), ["connection", "pin" | "unpin", ..])
+        || args.iter().any(|argument| {
+            *argument == "--agent" || argument.starts_with("--agent=") || *argument == "--workspace"
+        })
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
-    let cli = Cli::parse();
-    let agent_name =
-        alan_agent_engine::normalize_agent_name(cli.agent.as_deref()).map(str::to_owned);
+    let cli = parse_cli();
 
     match cli.command {
+        Some(Commands::Host { action }) => match action {
+            HostAction::LegacyState { action } => {
+                let channel = alan_agent_engine::InstallChannel::detect_current();
+                match action {
+                    LegacyStateAction::Inspect { source_roots, json } => {
+                        let Some(paths) = legacy_state::LegacyStatePaths::detect(channel)? else {
+                            anyhow::bail!("cannot determine Host home directory");
+                        };
+                        let source_roots = canonical_existing_roots(source_roots)?;
+                        let report = legacy_state::inspect_legacy_state(&paths, &source_roots)?;
+                        print_legacy_inspection(&report, json)?;
+                    }
+                    LegacyStateAction::Cleanup { source_roots, json } => {
+                        let Some(paths) = legacy_state::LegacyStatePaths::detect(channel)? else {
+                            anyhow::bail!("cannot determine Host home directory");
+                        };
+                        let source_roots = canonical_existing_roots(source_roots)?;
+                        let system = system_store::SystemStorePaths::detect(channel)?;
+                        let host = system_store::HostStorePaths::detect(channel)?;
+                        let report = legacy_state::cleanup_legacy_state(
+                            &paths,
+                            &system,
+                            &host,
+                            &source_roots,
+                        )?;
+                        print_legacy_cleanup(&report, json)?;
+                    }
+                    LegacyStateAction::Import {
+                        kind,
+                        source,
+                        name,
+                        delete_source,
+                    } => {
+                        let source = std::fs::canonicalize(&source).with_context(|| {
+                            format!("failed to resolve import source {}", source.display())
+                        })?;
+                        let system = system_store::SystemStorePaths::detect(channel)?;
+                        let kind = match kind {
+                            LegacyImportKind::AgentDefinition => {
+                                legacy_state::AuthoredImportKind::AgentDefinition
+                            }
+                            LegacyImportKind::Skill => legacy_state::AuthoredImportKind::Skill,
+                            LegacyImportKind::MemoryStore => {
+                                legacy_state::AuthoredImportKind::MemoryStore
+                            }
+                        };
+                        let report = legacy_state::import_authored_content(
+                            kind,
+                            &source,
+                            &name,
+                            delete_source,
+                            &system,
+                        )?;
+                        println!("imported: {}", report.destination.display());
+                        if report.source_deleted {
+                            println!(
+                                "source deleted after verification: {}",
+                                report.source.display()
+                            );
+                        }
+                    }
+                }
+            }
+        },
         Some(Commands::Connection { action }) => match action {
             ConnectionAction::List => {
                 cli::connection::run_connection_list().await?;
@@ -688,8 +724,8 @@ async fn main() -> Result<()> {
             ConnectionAction::Show { profile_id } => {
                 cli::connection::run_connection_show(&profile_id).await?;
             }
-            ConnectionAction::Current { workspace } => {
-                cli::connection::run_connection_current(workspace).await?;
+            ConnectionAction::Current => {
+                cli::connection::run_connection_current().await?;
             }
             ConnectionAction::Add {
                 provider,
@@ -738,70 +774,21 @@ async fn main() -> Result<()> {
                 cli::connection::run_connection_logout(&profile_id).await?;
             }
             ConnectionAction::Default { action } => match action {
-                ConnectionDefaultAction::Set {
-                    profile_id,
-                    workspace,
-                } => {
-                    cli::connection::run_connection_default_set(&profile_id, workspace).await?;
+                ConnectionDefaultAction::Set { profile_id } => {
+                    cli::connection::run_connection_default_set(&profile_id).await?;
                 }
-                ConnectionDefaultAction::Clear { workspace } => {
-                    cli::connection::run_connection_default_clear(workspace).await?;
+                ConnectionDefaultAction::Clear => {
+                    cli::connection::run_connection_default_clear().await?;
                 }
             },
-            ConnectionAction::Pin {
-                profile_id,
-                scope,
-                workspace,
-            } => {
-                cli::connection::run_connection_pin(&profile_id, scope.into(), workspace).await?;
-            }
-            ConnectionAction::Unpin { scope, workspace } => {
-                cli::connection::run_connection_unpin(scope.into(), workspace).await?;
-            }
             ConnectionAction::Test { profile_id } => {
                 cli::connection::run_connection_test(profile_id).await?;
             }
             ConnectionAction::Remove { profile_id } => {
                 cli::connection::run_connection_remove(&profile_id).await?;
             }
-            ConnectionAction::Activate { profile_id } | ConnectionAction::Use { profile_id } => {
-                cli::connection::run_connection_default_set(&profile_id, None).await?;
-            }
-            ConnectionAction::Status {
-                profile_id,
-                workspace,
-            } => {
-                if let Some(profile_id) = profile_id {
-                    cli::connection::run_connection_show(&profile_id).await?;
-                } else {
-                    cli::connection::run_connection_current(workspace).await?;
-                }
-            }
-        },
-        Some(Commands::Init { path, name, silent }) => {
-            cli::init::run_init(path, name, silent)?;
-        }
-        Some(Commands::Workspace { action }) => match action {
-            WorkspaceAction::List => {
-                cli::workspace::list_workspaces()?;
-            }
-            WorkspaceAction::Add { path, name } => {
-                cli::workspace::add_workspace(path, name)?;
-            }
-            WorkspaceAction::Remove { workspace } => {
-                cli::workspace::remove_workspace(&workspace)?;
-            }
-            WorkspaceAction::Info { workspace } => {
-                cli::workspace::workspace_info(&workspace)?;
-            }
         },
         Some(Commands::Skills { action }) => match action {
-            SkillsAction::List { workspace } => {
-                cli::skills::run_list_skills(workspace, agent_name.as_deref())?;
-            }
-            SkillsAction::Packages { workspace } => {
-                cli::skills::run_list_packages(workspace, agent_name.as_deref())?;
-            }
             SkillsAction::Init {
                 path,
                 template,
@@ -1088,7 +1075,7 @@ async fn main() -> Result<()> {
             if !alan_tui::terminal::is_interactive_terminal() {
                 anyhow::bail!("{}", alan_tui::terminal::terminal_capability_error());
             }
-            let (mut config, controller) = prepare_file_backed_tui_config(agent_name).await?;
+            let (mut config, controller) = prepare_file_backed_tui_config().await?;
             config.require_interactive_terminal = false;
             let run_result = alan_tui::run_file_backed(config).await;
             let shutdown_result = controller.shutdown().await;
@@ -1100,54 +1087,51 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn prepare_file_backed_tui_config(
-    agent_name: Option<String>,
-) -> Result<(
+async fn prepare_file_backed_tui_config() -> Result<(
     alan_tui::FileBackedRunConfig,
     alan_agent_engine::RuntimeController,
 )> {
-    let workspace_root =
-        std::env::current_dir().context("failed to determine current directory")?;
-    let workspace_alan_dir = alan_agent_engine::workspace_alan_dir(&workspace_root);
-    let mut runtime_config = alan_agent_engine::WorkspaceRuntimeConfig::from(
-        cli::load_agent_config_metadata_with_notice()?,
+    let channel = alan_agent_engine::InstallChannel::detect_current();
+    let system_store = system_store::SystemStorePaths::detect(channel)?;
+    let host_store = system_store::HostStorePaths::detect(channel)?;
+    if let Some(legacy_paths) = legacy_state::LegacyStatePaths::detect(channel)? {
+        legacy_state::cleanup_legacy_state(&legacy_paths, &system_store, &host_store, &[])?;
+    }
+    let mut namespace = alan_kernel::Namespace::new();
+    let store_bindings = system_store.agent_runtime_bindings()?;
+    let memory_store_backing = system_store.memory_stores()?.join("default");
+    std::fs::create_dir_all(&memory_store_backing)
+        .context("failed to prepare Memory Store backing")?;
+    let memory_store =
+        alan_hostfs::HostDirFs::new(&memory_store_backing, alan_hostfs::HostDirAccess::ReadWrite)
+            .context("failed to open Memory Store backing")?;
+    namespace.mount(
+        "/memory",
+        alan_ap::InProcessTransport::new(std::sync::Arc::new(memory_store)),
+        alan_kernel::Access::ReadWrite,
     );
-    runtime_config.agent_name = agent_name;
-    runtime_config.workspace_root_dir = Some(workspace_root.clone());
-    runtime_config.workspace_alan_dir = Some(workspace_alan_dir);
+    let mut runtime_config = alan_agent_engine::AgentProcessConfig::from(
+        alan_agent_engine::Config::load_with_metadata()?,
+    );
+    runtime_config.launch_context = alan_agent_engine::ProcessLaunchContext::new(
+        namespace,
+        alan_kernel::Credentials::user("local-user"),
+        "/",
+    )?
+    .with_descriptor(
+        alan_agent_engine::MEMORY_STORE_DESCRIPTOR,
+        alan_agent_engine::ProcessDescriptor::new("/memory")?,
+    );
+    runtime_config.store_bindings = Some(store_bindings);
+    runtime_config.memory_store_backing = Some(memory_store_backing);
+    runtime_config.connection_store = Some(system_store.connection_bindings(&host_store)?);
+    runtime_config.chatgpt_auth_storage_path = Some(host_store.managed_auth.clone());
     // Approved request_mount grants must reach the live namespace from bare
     // `alan` too; without the factory
     // the runtime falls back to "live namespace mount applicator unavailable".
     runtime_config.mount_grant_applicator_factory = Some(std::sync::Arc::new(
         crate::host_mounts::LiveNamespaceMountGrantApplicatorFactory,
     ));
-
-    if let Some(paths) = alan_agent_engine::AlanHomePaths::detect() {
-        runtime_config.chatgpt_auth_storage_path = Some(paths.global_auth_path.clone());
-        runtime_config.agent_home_paths = Some(paths.clone());
-    }
-
-    let skill_candidates = match skill_catalog::resolve_skill_catalog_context(&runtime_config) {
-        Ok(context) => context
-            .registry
-            .list_sorted()
-            .into_iter()
-            .map(|skill| {
-                alan_tui::completion::CompletionCandidate::new(
-                    if skill.name.is_empty() {
-                        skill.id.clone()
-                    } else {
-                        skill.name.clone()
-                    },
-                    Some(skill.description.clone()),
-                )
-            })
-            .collect(),
-        Err(err) => {
-            tracing::debug!(error = %format!("{err:#}"), "local skill catalog unavailable for file-backed TUI");
-            Vec::new()
-        }
-    };
 
     let mut launch = alan_agent_engine::spawn_with_namespace_surface(runtime_config)
         .await
@@ -1162,10 +1146,7 @@ async fn prepare_file_backed_tui_config(
         launch.surface.root_transport(),
         launch.surface.agent_path().to_string(),
     );
-    config.workspace_dir = Some(workspace_root);
-    config.history_path = alan_agent_engine::AlanHomePaths::detect()
-        .map(|paths| paths.alan_home_dir.join("tui_history"));
-    config.skill_candidates = skill_candidates;
+    config.history_path = Some(system_store.agent_runtime()?.metadata.join("tui_history"));
 
     Ok((config, launch.controller))
 }
@@ -1180,6 +1161,69 @@ fn shell_target_options(args: ShellTargetArgs) -> cli::shell::ShellTargetOptions
 
 fn path_to_string(path: &Path) -> String {
     path.to_string_lossy().into_owned()
+}
+
+fn canonical_existing_roots(paths: Vec<PathBuf>) -> Result<Vec<PathBuf>> {
+    paths
+        .into_iter()
+        .map(|path| {
+            std::fs::canonicalize(&path)
+                .with_context(|| format!("failed to resolve source root {}", path.display()))
+        })
+        .collect()
+}
+
+fn print_legacy_inspection(report: &legacy_state::LegacyInspection, json: bool) -> Result<()> {
+    if json {
+        println!("{}", serde_json::to_string_pretty(report)?);
+        return Ok(());
+    }
+    for path in &report.generated_paths {
+        println!("generated: {}", path.display());
+    }
+    for path in &report.migratable_paths {
+        println!("migratable: {}", path.display());
+    }
+    for root in &report.authored_roots {
+        println!("authored {:?}: {}", root.kind, root.path.display());
+    }
+    if report.generated_paths.is_empty()
+        && report.migratable_paths.is_empty()
+        && report.authored_roots.is_empty()
+    {
+        println!("no recognized legacy state");
+    }
+    Ok(())
+}
+
+fn print_legacy_cleanup(report: &legacy_state::LegacyCleanupReport, json: bool) -> Result<()> {
+    if json {
+        println!("{}", serde_json::to_string_pretty(report)?);
+        return Ok(());
+    }
+    if report.connection_migration.metadata_migrated {
+        println!("migrated and verified: connection metadata");
+    }
+    if report.connection_migration.credential_file_migrated {
+        println!("migrated and verified: Host credential file");
+    }
+    if report.connection_migration.managed_auth_migrated {
+        println!("migrated and verified: managed auth file");
+    }
+    for path in &report.removed_generated_paths {
+        println!("removed generated: {}", path.display());
+    }
+    for root in &report.authored_roots {
+        println!(
+            "preserved authored {:?}: {} (use `alan host legacy-state import` explicitly)",
+            root.kind,
+            root.path.display()
+        );
+    }
+    if report == &legacy_state::LegacyCleanupReport::default() {
+        println!("no recognized legacy state");
+    }
+    Ok(())
 }
 
 #[cfg(test)]

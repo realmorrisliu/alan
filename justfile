@@ -8,7 +8,7 @@ default:
 test:
     cargo test --workspace
 
-# Run the platform-neutral shell workspace core tests
+# Run the platform-neutral shell surface core tests
 shell-core-test:
     cargo test -p alan-shell-core
 
@@ -17,8 +17,8 @@ shell-core-ffi-test:
     cargo test -p alan-shell-core-ffi
     bash clients/apple/scripts/test-shell-core-ffi-adapter.sh
 
-# Check code (format + lint + test)
-check: fmt lint test
+# Check code and reject reintroduction of the retired workspace runtime model
+check: fmt lint test guard-workspace-runtime-absence
     @echo "✅ All checks passed"
 
 # Format code
@@ -29,9 +29,10 @@ fmt:
 fmt-check:
     cargo fmt --all -- --check
 
-# Check agent-root layout ownership guardrails
-guard-agent-root-layout:
-    ./scripts/check-agent-root-layout-strings.sh
+# Reject the retired workspace runtime model and implicit Host-directory sources
+guard-workspace-runtime-absence:
+    cargo build -p alan --bin alan
+    ./scripts/check-workspace-runtime-absence.sh . target/debug/alan
 
 # Reject retired host-service architecture from current repository and CLI surfaces
 guard-daemon-era-absence:
@@ -140,11 +141,11 @@ release-check:
 release:
     ALAN_INSTALL_CHANNEL=stable ALAN_NOTARIZE=1 ALAN_CREATE_RELEASE_ARCHIVE=1 ./scripts/assemble-release-app.sh
 
-# Uninstall alan app and user-level CLI without removing ~/.alan data
+# Uninstall alan app and user-level CLI without removing System/Host Store data
 uninstall:
     ALAN_INSTALL_CHANNEL=stable ./scripts/uninstall.sh
 
-# Uninstall Alan Dev.app and dev command links without removing ~/.alan-dev data
+# Uninstall Alan Dev.app and dev command links without removing System/Host Store data
 uninstall-dev:
     ./scripts/uninstall-dev.sh
 
