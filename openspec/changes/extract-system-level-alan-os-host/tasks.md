@@ -38,6 +38,6 @@
 ## 6. Review and archive readiness
 
 - [x] 6.1 Submit one Host extraction PR after `remove-workspace-runtime-model` is merged and archived
-- [ ] 6.2 Complete current-HEAD Codex review, zero unresolved threads, green CI, and delayed recheck before merge
-- [ ] 6.3 Sync Host and attachment deltas into canonical specs after implementation merge
+- [x] 6.2 Merge implementation PR #646 after current-HEAD Codex review, zero unresolved threads, green CI, and delayed recheck
+- [ ] 6.3 Merge this canonical-spec sync PR after syncing every Host and attachment delta and completing the same review gate
 - [ ] 6.4 Archive only after canonical sync is merged and `implement-minimal-service-manager` can consume the Host seam

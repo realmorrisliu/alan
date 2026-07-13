@@ -68,3 +68,13 @@ SHALL NOT depend on transport-specific crates or call transport-specific APIs.
 - **THEN** `alan-kernel` still depends only on `alan-ap` among Alan crates
 - **AND** remote import/export is represented to the kernel as ordinary mounted
   file-server handles
+
+### Requirement: Local system root is exportable over aP
+The generic aP export/import implementation SHALL carry the Alan OS mounted
+root across a Unix socket while preserving fid, typed failure, blocking stream,
+and commit-on-clunk semantics.
+
+#### Scenario: Client tails Agent output remotely in-process boundary
+- **WHEN** an imported client reads a live AgentFS stream at its current offset
+- **THEN** the read blocks and later returns appended bytes exactly as the
+  in-process transport would

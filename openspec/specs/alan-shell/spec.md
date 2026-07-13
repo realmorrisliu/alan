@@ -82,3 +82,13 @@ read-eval-print loop. Rich terminal rendering SHALL remain the responsibility of
 - **THEN** a user can list, read, write, tail, and spawn over the namespace
 - **AND** Ratatui rendering is provided later by `alan-terminal-ui`, not by this
   change
+
+### Requirement: Alan enters the system Shell
+Running `alan` SHALL start or attach the matching dedicated Alan OS Host and
+enter Alan Shell. It MUST NOT privately boot an Agent runtime or select an Agent
+Definition as Host startup behavior.
+
+#### Scenario: User runs alan with no subcommand
+- **WHEN** the system Host is ready
+- **THEN** the client attaches and presents Alan Shell
+- **AND** Agent Processes are spawned or attached from inside the Shell

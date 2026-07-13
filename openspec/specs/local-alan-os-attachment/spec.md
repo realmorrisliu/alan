@@ -1,4 +1,11 @@
-## ADDED Requirements
+# local-alan-os-attachment Specification
+
+## Purpose
+Defines channel-scoped same-user local Alan OS attachment over native aP Unix
+sockets, including peer authorization, fid ownership, disconnect, and
+reattachment semantics.
+
+## Requirements
 
 ### Requirement: Local attachment uses native aP wire
 The Alan OS Host SHALL export its ready namespace through the existing aP wire
