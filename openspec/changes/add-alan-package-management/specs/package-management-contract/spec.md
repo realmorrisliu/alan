@@ -31,9 +31,11 @@ adjacent `ctl` and `status` files, and an offset-resumable event stream.
 
 ### Requirement: Alan packages use a bounded declarative manifest
 An installable Alan package SHALL be a directory containing a versioned,
-declarative `alan-package.yaml`. The manifest SHALL contain one path-safe
-package id and MAY declare relative Skill export paths, explicit Tool exports,
-and a human-facing version. It MUST NOT contain executable
+declarative `alan-package.yaml`. The manifest SHALL contain one package id of
+1–64 ASCII characters matching `[a-z0-9]+(?:-[a-z0-9]+)*`. Package ids SHALL be
+compared byte-for-byte without case folding or Unicode normalization. The
+manifest MAY declare relative Skill export paths, explicit Tool exports, and a
+human-facing version. It MUST NOT contain executable
 manifest logic.
 
 Every export SHALL canonicalize inside the package tree. Skill exports SHALL
@@ -46,6 +48,11 @@ contract. Merely placing files under `bin/` or `scripts/` MUST NOT export them.
 - **THEN** Package Service records one installed package with those declared
   Skill exports
 - **AND** it does not recursively discover undeclared Skill roots
+
+#### Scenario: Package id is not canonical
+- **WHEN** a manifest id contains uppercase letters, Unicode, `.`, `..`, `_`,
+  repeated separators, or more than 64 characters
+- **THEN** validation rejects the transaction before catalog or namespace use
 
 #### Scenario: Export escapes the package
 - **WHEN** an export is absolute, traverses outside the package, or resolves
