@@ -119,6 +119,7 @@ impl HostStatus {
             self.channel_id == paths.channel_id,
             "Host status channel mismatch"
         );
+        ensure!(self.pid > 0, "Host status pid must be positive");
         ensure!(self.socket == paths.socket, "Host status socket mismatch");
         Ok(())
     }
@@ -541,5 +542,28 @@ async fn shutdown_signal() {
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {},
         _ = terminate.recv() => {},
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn host_status_rejects_zero_pid() {
+        let paths = HostEndpointPaths::from_runtime_dir(&std::env::temp_dir(), "test").unwrap();
+        let status = HostStatus {
+            version: STATUS_VERSION,
+            channel_id: paths.channel_id.clone(),
+            boot_id: Uuid::new_v4(),
+            pid: 0,
+            readiness: HostReadiness::Ready,
+            socket: paths.socket.clone(),
+        };
+
+        assert_eq!(
+            status.validate_for(&paths).unwrap_err().to_string(),
+            "Host status pid must be positive"
+        );
     }
 }
