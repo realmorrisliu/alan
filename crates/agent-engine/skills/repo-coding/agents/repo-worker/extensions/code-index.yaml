@@ -13,7 +13,6 @@ capabilities:
     risk_level: A
     idempotency: optional
 permissions:
-  fs: host_mount_only
   network: deny
   process: allowlist
 healthcheck:
