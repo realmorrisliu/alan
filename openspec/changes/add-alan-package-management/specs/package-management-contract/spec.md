@@ -274,7 +274,8 @@ compiled-in built-in package set during capability resolution.
 ### Requirement: Quartermaster is an Alan OS command
 
 Alan OS SHALL bind `q` at `/bin/q`. Alan Shell SHALL launch it as an ordinary
-Process through `/proc/clone` and render its output from `/proc/<pid>/io`.
+Process through `/proc/clone` and render its output from
+`/proc/<pid>/io/output`.
 Package-specific command semantics SHALL stay out of Alan Shell.
 
 #### Scenario: User lists packages in Alan Shell
