@@ -212,8 +212,8 @@ impl HostMountService {
             .with_context(|| format!("unknown Host Mount request `{request_id}`"))?;
         let record = HostMountGrantRecord {
             id: request.id.clone(),
-            label: request.label,
-            namespace_path: request.namespace_path,
+            label: request.label.clone(),
+            namespace_path: request.namespace_path.clone(),
             access: request.access,
             provenance: provenance.into(),
             active: true,
@@ -229,7 +229,19 @@ impl HostMountService {
         );
         audit(&mut state, "approve", &record.id, actor.into(), Vec::new());
         drop(state);
-        self.project(&record.id, request.requesting_pid)?;
+        if let Err(error) = self.project(&record.id, request.requesting_pid) {
+            let mut state = self.state.lock().unwrap();
+            state.grants.remove(&record.id);
+            state.requests.insert(request.id.clone(), request);
+            audit(
+                &mut state,
+                "approval_rollback",
+                &record.id,
+                "service-manager".to_string(),
+                Vec::new(),
+            );
+            return Err(error);
+        }
         Ok(record)
     }
 
@@ -696,6 +708,50 @@ mod tests {
         );
         assert!(!child.describe().iter().any(|(path, _)| path == "/mnt/data"));
         assert!(service.project(&id, 2).is_err());
+    }
+
+    #[test]
+    fn failed_initial_projection_restores_the_request_and_removes_the_grant() {
+        let host = tempfile::tempdir().unwrap();
+        let service = service();
+        let namespace = LiveNamespace::new(Namespace::new());
+        service.register_process(Pid(7), namespace.clone());
+        let id = service
+            .enqueue(HostMountRequest {
+                id: "grant-retry".to_string(),
+                label: "retry".to_string(),
+                namespace_path: "/mnt/retry".to_string(),
+                access: HostMountAccess::ReadOnly,
+                reason: "retry after Process exit".to_string(),
+                requesting_pid: 7,
+            })
+            .unwrap();
+        let export = test_export(
+            "/mnt/retry",
+            host.path().to_path_buf(),
+            HostMountAccess::ReadOnly,
+        );
+
+        service.unregister_process(Pid(7));
+        assert!(
+            service
+                .approve_export(&id, export.clone(), "user", "tester")
+                .is_err()
+        );
+        assert!(service.pending_request(&id).is_some());
+        assert!(!service.state.lock().unwrap().grants.contains_key(&id));
+
+        service.register_process(Pid(7), namespace.clone());
+        service
+            .approve_export(&id, export, "user", "tester")
+            .unwrap();
+        assert!(service.pending_request(&id).is_none());
+        assert!(
+            namespace
+                .describe()
+                .iter()
+                .any(|(path, _)| path == "/mnt/retry")
+        );
     }
 
     #[test]
