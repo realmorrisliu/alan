@@ -63,11 +63,29 @@ enum HostAction {
         #[arg(long)]
         json: bool,
     },
+    /// Inspect or answer Host Mount Service requests
+    Mount {
+        #[command(subcommand)]
+        action: HostMountAction,
+    },
     /// Inspect, migrate, or clean state created by retired Host-directory contracts
     LegacyState {
         #[command(subcommand)]
         action: LegacyStateAction,
     },
+}
+
+#[derive(Subcommand)]
+enum HostMountAction {
+    /// List pending requests and Alan OS-visible grants
+    List,
+    /// Approve a pending request with a native Host directory
+    Approve {
+        request_id: String,
+        host_path: PathBuf,
+    },
+    /// Revoke an active grant
+    Revoke { grant_id: String },
 }
 
 #[derive(Subcommand)]
@@ -671,7 +689,7 @@ async fn main() -> Result<()> {
         Some(Commands::Host { action }) => match action {
             HostAction::Start { json } => {
                 let channel = alan_agent_engine::InstallChannel::detect_current();
-                let attachment = attach_or_start_host(channel).await?;
+                let attachment = cli::host::attach_or_start_host(channel).await?;
                 print_host_status(&attachment.status, json)?;
             }
             HostAction::Status { json } => {
@@ -688,6 +706,44 @@ async fn main() -> Result<()> {
                 let status = request_platform_host_stop(channel, &paths).await?;
                 wait_for_host_stop(&paths).await?;
                 print_host_status(&status, json)?;
+            }
+            HostAction::Mount { action } => {
+                let channel = alan_agent_engine::InstallChannel::detect_current();
+                let attached = cli::host::attach_or_start_host(channel).await?;
+                match action {
+                    HostMountAction::List => {
+                        let shell = alan_shell::Shell::new(attached.root);
+                        println!(
+                            "requests: {}",
+                            String::from_utf8(shell.cat("/mnt/host-mount/request").await?)?
+                        );
+                        println!(
+                            "grants: {}",
+                            String::from_utf8(shell.cat("/mnt/host-mount/grants").await?)?
+                        );
+                    }
+                    HostMountAction::Approve {
+                        request_id,
+                        host_path,
+                    } => {
+                        let host_path = host_path.canonicalize().with_context(|| {
+                            format!("resolve Host directory {}", host_path.display())
+                        })?;
+                        anyhow::ensure!(host_path.is_dir(), "Host Mount path is not a directory");
+                        let grant =
+                            alan_os_host::HostCommandPlane::detect(channel.descriptor().id)?
+                                .approve_host_mount(request_id, host_path)
+                                .await?;
+                        println!("grant_id: {}", grant.id);
+                        println!("namespace_path: {}", grant.namespace_path);
+                    }
+                    HostMountAction::Revoke { grant_id } => {
+                        alan_os_host::HostCommandPlane::detect(channel.descriptor().id)?
+                            .revoke_host_mount(&grant_id)
+                            .await?;
+                        println!("Revoked Host Mount grant {grant_id}.");
+                    }
+                }
             }
             HostAction::LegacyState { action } => {
                 let channel = alan_agent_engine::InstallChannel::detect_current();
@@ -1113,7 +1169,7 @@ async fn main() -> Result<()> {
         },
         None => {
             let channel = alan_agent_engine::InstallChannel::detect_current();
-            let attachment = attach_or_start_host(channel).await?;
+            let attachment = cli::host::attach_or_start_host(channel).await?;
             let shell = alan_shell::Shell::new(attachment.root);
             alan_shell::StdioDriver::new(shell)
                 .run(
@@ -1127,101 +1183,13 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn attach_or_start_host(
-    channel: alan_agent_engine::InstallChannel,
-) -> Result<alan_os_host::AttachedNamespace> {
-    let attachment = alan_os_host::LocalAttachment::detect(channel.descriptor().id)?;
-    if let Ok(attached) = attachment.connect().await {
-        return Ok(attached);
-    }
-
-    let executable = dedicated_host_executable(channel)?;
-    let mut start = request_platform_host_start(channel, &executable)?;
-    let mut launcher_status = None;
-    let mut last_error = None;
-    let ready = tokio::time::timeout(std::time::Duration::from_secs(10), async {
-        loop {
-            match attachment.connect().await {
-                Ok(attached) => return Ok(attached),
-                Err(error) => last_error = Some(error),
-            }
-            if launcher_status.is_none() {
-                launcher_status = start.poll_status()?;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        }
-    })
-    .await;
-    if let Ok(result) = ready {
-        return result;
-    }
-    anyhow::bail!(
-        "dedicated Alan OS Host did not become ready (launcher={launcher_status:?}): {}",
-        last_error
-            .map(|error| error.to_string())
-            .unwrap_or_else(|| "no attachment diagnostic".to_string())
-    )
-}
-
-struct HostStartAttempt {
-    child: Option<std::process::Child>,
-    launcher_status: Option<std::process::ExitStatus>,
-}
-
-impl HostStartAttempt {
-    fn poll_status(&mut self) -> Result<Option<std::process::ExitStatus>> {
-        if let Some(child) = &mut self.child {
-            return child
-                .try_wait()
-                .context("poll dedicated Alan OS Host process");
-        }
-        Ok(self.launcher_status)
-    }
-}
-
-#[cfg(any(target_os = "macos", test))]
-fn os_host_launch_label(channel: alan_agent_engine::InstallChannel) -> String {
-    format!("{}.os-host", channel.descriptor().bundle_identifier)
-}
-
-#[cfg(target_os = "macos")]
-fn request_platform_host_start(
-    channel: alan_agent_engine::InstallChannel,
-    executable: &Path,
-) -> Result<HostStartAttempt> {
-    let label = os_host_launch_label(channel);
-    let status = std::process::Command::new("/bin/launchctl")
-        .arg("submit")
-        .arg("-l")
-        .arg(&label)
-        .arg("-p")
-        .arg(executable)
-        .arg("-o")
-        .arg("/dev/null")
-        .arg("-e")
-        .arg("/dev/null")
-        .arg("--")
-        .arg(executable)
-        .status()
-        .with_context(|| {
-            format!(
-                "request launchd start for dedicated Host {} ({label})",
-                executable.display()
-            )
-        })?;
-    Ok(HostStartAttempt {
-        child: None,
-        launcher_status: Some(status),
-    })
-}
-
 #[cfg(target_os = "macos")]
 async fn request_platform_host_stop(
     channel: alan_agent_engine::InstallChannel,
     paths: &alan_os_host::HostEndpointPaths,
 ) -> Result<alan_os_host::HostStatus> {
     let mut status = paths.read_status()?;
-    let label = os_host_launch_label(channel);
+    let label = cli::host::os_host_launch_label(channel);
     let result = std::process::Command::new("/bin/launchctl")
         .arg("remove")
         .arg(&label)
@@ -1241,58 +1209,6 @@ async fn request_platform_host_stop(
     paths: &alan_os_host::HostEndpointPaths,
 ) -> Result<alan_os_host::HostStatus> {
     alan_os_host::request_host_stop(paths).await
-}
-
-#[cfg(not(target_os = "macos"))]
-fn request_platform_host_start(
-    channel: alan_agent_engine::InstallChannel,
-    executable: &Path,
-) -> Result<HostStartAttempt> {
-    use std::os::unix::process::CommandExt;
-
-    let mut command = std::process::Command::new(executable);
-    command
-        .env(
-            alan_agent_engine::INSTALL_CHANNEL_ENV,
-            channel.descriptor().id,
-        )
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .process_group(0);
-    let child = command
-        .spawn()
-        .with_context(|| format!("start dedicated Host {}", executable.display()))?;
-    Ok(HostStartAttempt {
-        child: Some(child),
-        launcher_status: None,
-    })
-}
-
-fn dedicated_host_executable(channel: alan_agent_engine::InstallChannel) -> Result<PathBuf> {
-    let name = channel.descriptor().os_host_name;
-    if let Ok(current) = std::env::current_exe()
-        && let Some(sibling) = sibling_executable(&current, name)
-    {
-        return Ok(sibling);
-    }
-    if let Some(path) = std::env::var_os("PATH") {
-        for directory in std::env::split_paths(&path) {
-            let candidate = directory.join(name);
-            if candidate.is_file() {
-                return Ok(candidate);
-            }
-        }
-    }
-    anyhow::bail!("dedicated Alan OS Host executable {name} was not found beside alan or on PATH")
-}
-
-fn sibling_executable(current: &Path, name: &str) -> Option<PathBuf> {
-    let current = current
-        .canonicalize()
-        .unwrap_or_else(|_| current.to_owned());
-    let sibling = current.parent()?.join(name);
-    sibling.is_file().then_some(sibling)
 }
 
 async fn wait_for_host_stop(paths: &alan_os_host::HostEndpointPaths) -> Result<()> {
@@ -1397,7 +1313,8 @@ fn print_legacy_cleanup(report: &legacy_state::LegacyCleanupReport, json: bool) 
 
 #[cfg(test)]
 mod tests {
-    use super::{Cli, os_host_launch_label, sibling_executable};
+    use super::Cli;
+    use super::cli::host::{os_host_launch_label, sibling_executable};
     use alan_agent_engine::InstallChannel;
     use clap::Parser;
 

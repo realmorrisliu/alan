@@ -95,6 +95,7 @@ enum Node {
     Output(Pid),
     IoEvents(Pid),
     NamespaceInfo(Pid),
+    Descriptors(Pid),
 }
 
 struct ProcFid {
@@ -740,6 +741,7 @@ impl State {
                     .get(p)
                     .map_or(0, LiveNamespace::generation),
             ),
+            Node::Descriptors(p) => self.table.generation(*p),
         };
         Qid {
             kind,
@@ -768,6 +770,7 @@ impl State {
                 "ctl" => Ok(Node::Ctl(*pid)),
                 "io" => Ok(Node::IoDir(*pid)),
                 "namespace" => Ok(Node::NamespaceInfo(*pid)),
+                "descriptors" => Ok(Node::Descriptors(*pid)),
                 _ => Err(ErrorCode::NotFound),
             },
             Node::IoDir(pid) => match name {
@@ -788,7 +791,7 @@ impl State {
                 names.extend(self.table.list().iter().map(|p| p.0.to_string()));
                 names.join("\n").into_bytes()
             }
-            Node::Proc(_) => "status\nparent\ncredentials\nexit\nctl\nio\nnamespace"
+            Node::Proc(_) => "status\nparent\ncredentials\nexit\nctl\nio\nnamespace\ndescriptors"
                 .to_string()
                 .into_bytes(),
             Node::IoDir(_) => b"input\noutput\nevents".to_vec(),
@@ -832,6 +835,10 @@ impl State {
                     .collect::<Vec<_>>()
                     .join("\n")
                     .into_bytes()
+            }
+            Node::Descriptors(pid) => {
+                let process = self.table.get(*pid).ok_or(ErrorCode::NotFound)?;
+                serde_json::to_vec(&process.exec.descriptors).map_err(|_| ErrorCode::Io)?
             }
             // `clone`/`ctl` are write surfaces; IO streams are served directly in
             // `read`, not here.
@@ -1131,6 +1138,21 @@ impl FileServer for ProcFs {
                                 return Err(ErrorCode::BadRequest);
                             }
                         }
+                        let descriptors_valid = {
+                            let Some(pending_namespace) = state.table.pending_namespace(pid) else {
+                                state.table.discard(pid);
+                                return Err(ErrorCode::BadRequest);
+                            };
+                            exec.descriptors.iter().all(|(number, path)| {
+                                *number >= 3
+                                    && valid_descriptor_path(path)
+                                    && pending_namespace.resolve(path).is_ok()
+                            })
+                        };
+                        if !descriptors_valid {
+                            state.table.discard(pid);
+                            return Err(ErrorCode::BadRequest);
+                        }
                         let committed =
                             state.table.commit(pid, exec).ok_or(ErrorCode::BadRequest)?;
                         let process = state.table.get(committed).ok_or(ErrorCode::Io)?;
@@ -1262,6 +1284,7 @@ fn node_identity(node: &Node) -> (FileKind, u64) {
         Node::NamespaceInfo(p) => (FileKind::File, tagged(9, *p)),
         Node::Input(p) => (FileKind::Stream, tagged(10, *p)),
         Node::IoEvents(p) => (FileKind::Stream, tagged(11, *p)),
+        Node::Descriptors(p) => (FileKind::File, tagged(12, *p)),
     }
 }
 
@@ -1278,6 +1301,13 @@ fn next_view_id() -> u64 {
 
 fn parse_pid(name: &str) -> Option<Pid> {
     name.parse::<u64>().ok().map(Pid)
+}
+
+fn valid_descriptor_path(path: &str) -> bool {
+    path.starts_with('/')
+        && !path
+            .split('/')
+            .any(|component| matches!(component, "." | ".."))
 }
 
 fn slice(bytes: Vec<u8>, offset: Offset, count: u32) -> Vec<u8> {

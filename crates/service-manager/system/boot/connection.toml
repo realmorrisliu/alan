@@ -1,0 +1,26 @@
+name = "connection"
+executable = "/bin/connection-service"
+after = []
+required = true
+timeout_ms = 10000
+restart = "on-failure"
+restart_limit = 5
+initial_backoff_ms = 100
+max_backoff_ms = 1000
+stable_reset_ms = 30000
+published_handles = ["connection", "llm"]
+
+[[mounts]]
+path = "/proc"
+source = "/proc"
+access = "write"
+
+[[mounts]]
+path = "/srv"
+source = "/srv"
+access = "write"
+
+[[mounts]]
+path = "/bin/connection-service"
+source = "/bin/connection-service"
+access = "read"

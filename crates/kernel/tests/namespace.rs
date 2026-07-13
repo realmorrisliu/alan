@@ -379,3 +379,34 @@ fn child_inherits_namespace_and_may_only_restrict_its_own_view() {
         "parent view is independent"
     );
 }
+
+#[test]
+fn explicit_mount_projection_carries_descendant_overmounts_and_drops_ambient_mounts() {
+    let mut source = Namespace::new();
+    source.mount("/bin", memfs(), Access::ReadOnly);
+    source.mount("/bin/alan-agent", memfs(), Access::ReadOnly);
+    source.mount("/memory", memfs(), Access::ReadWrite);
+
+    let projected = source
+        .project_mounts([("/bin", "/bin", Access::ReadOnly)])
+        .expect("declared projection is available");
+
+    assert_eq!(
+        projected.describe(),
+        vec![
+            ("/bin".to_string(), Access::ReadOnly),
+            ("/bin/alan-agent".to_string(), Access::ReadOnly),
+        ]
+    );
+    assert!(projected.resolve("/bin/alan-agent").is_ok());
+    assert!(
+        projected.resolve("/memory").is_err(),
+        "an undeclared ambient mount must not cross the projection boundary"
+    );
+    assert!(
+        source
+            .project_mounts([("/bin", "/bin", Access::ReadWrite)])
+            .is_err(),
+        "a projection cannot escalate read-only source authority"
+    );
+}

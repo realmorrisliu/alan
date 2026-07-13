@@ -125,6 +125,12 @@ impl LiveNamespace {
         self.bump_generation();
     }
 
+    /// Remove every exact mount at `at`; future walks lose that authority.
+    pub fn unmount(&self, at: &str) {
+        self.write().unmount(at);
+        self.bump_generation();
+    }
+
     /// Return an inspectable summary of the current mount table.
     pub fn describe(&self) -> Vec<(String, crate::Access)> {
         self.read().describe()

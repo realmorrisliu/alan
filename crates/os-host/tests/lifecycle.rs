@@ -4,8 +4,8 @@ use std::time::Duration;
 use alan_agent_engine::{AgentProcessConfig, LlmClient, ToolRegistry};
 use alan_llm::{GenerationResponse, MockLlmProvider};
 use alan_os_host::{
-    AlanOsHost, FixedBootConfig, HostEndpointPaths, HostStorePaths, LocalAttachment,
-    SystemStorePaths,
+    AlanOsHost, HostBootConfig, HostCommandPlane, HostEndpointPaths, HostStorePaths,
+    LocalAttachment, SystemStorePaths,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -26,12 +26,12 @@ fn response(content: &str) -> GenerationResponse {
     }
 }
 
-fn config() -> FixedBootConfig {
+fn config() -> HostBootConfig {
     config_for("test")
 }
 
-fn config_for(channel_id: &str) -> FixedBootConfig {
-    FixedBootConfig::ephemeral(
+fn config_for(channel_id: &str) -> HostBootConfig {
+    HostBootConfig::ephemeral(
         channel_id,
         AgentProcessConfig::default(),
         LlmClient::new(
@@ -309,6 +309,57 @@ async fn shell_client_exit_detaches_without_stopping_host_or_root_agent() {
     assert_eq!(reattached.boot_id, boot_id);
     let shell = alan_shell::Shell::new(reattached.root);
     assert_eq!(shell.cat("/proc/1/status").await.unwrap(), b"running\n");
+
+    shutdown.cancel();
+    server.await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn native_host_mount_approval_keeps_host_path_out_of_namespace_records() {
+    let _host_guard = TEST_HOST_LOCK.lock().await;
+    let runtime = tempfile::tempdir().unwrap();
+    let host_dir = tempfile::tempdir().unwrap();
+    let paths = HostEndpointPaths::from_runtime_dir(runtime.path(), "test").unwrap();
+    let host = AlanOsHost::boot(config(), paths.clone()).await.unwrap();
+    let shutdown = CancellationToken::new();
+    let shutdown_request = shutdown.clone();
+    let server =
+        tokio::spawn(async move { host.serve_until(shutdown_request.cancelled_owned()).await });
+    let attachment = LocalAttachment::new(paths.clone()).connect().await.unwrap();
+    let shell = alan_shell::Shell::new(attachment.root);
+    let root_pid = String::from_utf8(
+        shell
+            .cat("/mnt/service-manager/units/root-agent/pid")
+            .await
+            .unwrap(),
+    )
+    .unwrap()
+    .trim()
+    .parse::<u64>()
+    .unwrap();
+    shell
+        .write(
+            "/mnt/host-mount/request",
+            &serde_json::to_vec(&serde_json::json!({
+                "id": "docs",
+                "label": "Documents",
+                "namespace_path": "/mnt/docs",
+                "access": "read_only",
+                "reason": "test",
+                "requesting_pid": root_pid,
+            }))
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    HostCommandPlane::new(paths)
+        .approve_host_mount("docs", host_dir.path().to_path_buf())
+        .await
+        .unwrap();
+    let grants = String::from_utf8(shell.cat("/mnt/host-mount/grants").await.unwrap()).unwrap();
+    assert!(grants.contains("\"namespace_path\":\"/mnt/docs\""));
+    assert!(!grants.contains(&host_dir.path().display().to_string()));
 
     shutdown.cancel();
     server.await.unwrap().unwrap();

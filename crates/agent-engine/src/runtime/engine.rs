@@ -799,15 +799,9 @@ pub fn effective_core_config_for_runtime(
         agent_config = agent_config.with_definition_overlays(std::slice::from_ref(config_path))?;
     }
     let mut core_config = agent_config.core_config.clone();
-    let has_connections_store = config
-        .connection_store
-        .as_ref()
-        .is_some_and(|store| store.metadata_path.exists());
-    if core_config.connection_profile.is_some() || has_connections_store {
-        let store = config
-            .connection_store
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Agent Process has no Connection Service descriptor"))?;
+    if let Some(store) = config.connection_store.as_ref()
+        && (core_config.connection_profile.is_some() || store.metadata_path.exists())
+    {
         core_config.resolve_connection_profile(store)?;
     }
     if let Some(memory_store) = config.memory_store_backing.as_ref() {
@@ -871,15 +865,9 @@ fn spawn_with_prepared_runtime_environment(
         agent_config = agent_config.with_definition_overlays(std::slice::from_ref(config_path))?;
     }
     let mut core_config = agent_config.core_config.clone();
-    let has_connections_store = config
-        .connection_store
-        .as_ref()
-        .is_some_and(|store| store.metadata_path.exists());
-    if core_config.connection_profile.is_some() || has_connections_store {
-        let store = config
-            .connection_store
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Agent Process has no Connection Service descriptor"))?;
+    if let Some(store) = config.connection_store.as_ref()
+        && (core_config.connection_profile.is_some() || store.metadata_path.exists())
+    {
         core_config.resolve_connection_profile(store)?;
     }
     if let Some(memory_store) = config.memory_store_backing.as_ref() {

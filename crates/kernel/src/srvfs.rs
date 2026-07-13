@@ -95,6 +95,15 @@ impl SrvFs {
         });
     }
 
+    /// Invalidate a published handle. Existing resolved fids may drain, while
+    /// every later lookup observes absence.
+    pub async fn unpost(&self, name: &str) -> bool {
+        let mut registry = self.registry.lock().await;
+        let before = registry.handles.len();
+        registry.handles.retain(|handle| handle.name != name);
+        registry.handles.len() != before
+    }
+
     /// Every posted handle name visible through this view, in post order.
     pub async fn list(&self) -> Vec<String> {
         self.registry

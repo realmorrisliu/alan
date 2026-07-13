@@ -10,7 +10,7 @@ mod reified_namespace;
 mod sandbox;
 mod sandbox_backend;
 
-pub use context::{ToolContext, ToolExecutionBinding};
+pub use context::{ToolContext, ToolExecutionAuthority, ToolExecutionBinding};
 pub use registry::{Tool, ToolProcessRunner, ToolRegistry, ToolResult};
 pub use reified_namespace::{
     DEFAULT_PRIMARY_MOUNT_NAMESPACE_PATH, DEFAULT_SCRATCH_TMP_NAMESPACE_PATH,

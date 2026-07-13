@@ -251,33 +251,17 @@ where
     let child_cwd = validate_child_launch_contract(&spec)?;
     let launch_root_dir = resolve_launch_root_dir(parent, &spec.target)?;
     let child_agent_config = build_child_agent_config(parent, &spec);
-    let mut launch_context = parent
+    let parent_launch_context = parent
         .namespace_environment()
         .launch_context()
         .cloned()
-        .unwrap_or_else(crate::ProcessLaunchContext::root)
-        .child();
-    if let Some(cwd) = child_cwd {
-        launch_context.cwd = cwd;
-    }
-    if !spec.has_handle(SpawnHandle::Memory) {
-        launch_context.namespace.unmount("/memory");
-        launch_context
-            .descriptors
-            .remove(crate::MEMORY_STORE_DESCRIPTOR);
-    }
-    if let Some(root_dir) = launch_root_dir.as_ref() {
-        launch_context = launch_context
-            .with_host_mount(crate::HostMountGrant::new(
-                "/agent-definition",
-                root_dir,
-                alan_kernel::Access::ReadOnly,
-            )?)
-            .with_descriptor(
-                crate::AGENT_DEFINITION_DESCRIPTOR,
-                crate::ProcessDescriptor::new("/agent-definition")?,
-            );
-    }
+        .unwrap_or_else(crate::ProcessLaunchContext::root);
+    let launch_context = build_child_launch_context(
+        &parent_launch_context,
+        &spec,
+        child_cwd,
+        launch_root_dir.as_deref(),
+    )?;
 
     let mut child_config = AgentProcessConfig {
         agent_config: child_agent_config.clone(),
@@ -487,6 +471,86 @@ where
         process_environment: child_process_environment,
         process_pid: child_process_pid,
     })
+}
+
+fn build_child_launch_context(
+    parent: &crate::ProcessLaunchContext,
+    spec: &SpawnSpec,
+    child_cwd: Option<String>,
+    launch_root_dir: Option<&std::path::Path>,
+) -> Result<crate::ProcessLaunchContext> {
+    let memory_descriptor = parent.descriptor(crate::MEMORY_STORE_DESCRIPTOR).cloned();
+    let parent_definition_path = parent
+        .descriptor(crate::AGENT_DEFINITION_DESCRIPTOR)
+        .map(|descriptor| descriptor.path.clone());
+    let mut launch_context = parent.child();
+    launch_context.descriptors.clear();
+
+    if !spec.has_handle(SpawnHandle::HostMounts) {
+        let inherited_mounts = std::mem::take(&mut launch_context.host_mounts);
+        if let Some(cwd) = child_cwd.as_deref()
+            && inherited_mounts
+                .iter()
+                .any(|grant| grant.resolve_host_path(cwd).is_some())
+        {
+            bail!("Child-agent launch cwd '{cwd}' requires the explicit host_mounts handle.");
+        }
+        if child_cwd.is_none()
+            && inherited_mounts
+                .iter()
+                .any(|grant| grant.resolve_host_path(&launch_context.cwd).is_some())
+        {
+            launch_context.cwd = "/".to_string();
+        }
+        for grant in inherited_mounts {
+            if parent_definition_path.as_deref() == Some(&grant.namespace_path) {
+                launch_context.host_mounts.push(grant);
+                continue;
+            }
+            launch_context.namespace.unmount(&grant.namespace_path);
+        }
+    }
+
+    if let Some(cwd) = child_cwd {
+        launch_context.cwd = cwd;
+    }
+    if spec.has_handle(SpawnHandle::Memory) {
+        if let Some(descriptor) = memory_descriptor {
+            launch_context
+                .descriptors
+                .insert(crate::MEMORY_STORE_DESCRIPTOR.to_string(), descriptor);
+        }
+    } else {
+        launch_context.namespace.unmount("/memory");
+    }
+
+    if let Some(root_dir) = launch_root_dir {
+        if launch_context
+            .namespace
+            .resolve("/agent-definition")
+            .is_err()
+            && let Some(parent_definition) = parent.descriptor(crate::AGENT_DEFINITION_DESCRIPTOR)
+        {
+            launch_context
+                .namespace
+                .bind("/agent-definition", &parent_definition.path);
+        }
+        launch_context.host_mounts.retain(|grant| {
+            grant.namespace_path != "/agent-definition"
+                && parent_definition_path.as_deref() != Some(&grant.namespace_path)
+        });
+        launch_context = launch_context
+            .with_host_mount(crate::HostMountGrant::new(
+                "/agent-definition",
+                root_dir,
+                alan_kernel::Access::ReadOnly,
+            )?)
+            .with_descriptor(
+                crate::AGENT_DEFINITION_DESCRIPTOR,
+                crate::ProcessDescriptor::new("/agent-definition")?,
+            );
+    }
+    Ok(launch_context)
 }
 
 async fn evaluate_delegated_launch_capabilities(
@@ -1488,6 +1552,13 @@ impl ChildNamespaceAssemblyPlan {
             executable: executable.into(),
             args: args.into_iter().map(Into::into).collect(),
             namespace: Some(self.namespace_manifest_for_pid(child_pid)),
+            descriptors: self
+                .launch_context
+                .descriptors
+                .iter()
+                .zip(3_u32..)
+                .map(|((_, descriptor), number)| (number, descriptor.path.clone()))
+                .collect(),
         }
     }
 
@@ -1508,11 +1579,39 @@ impl ChildNamespaceAssemblyPlan {
         mounts.extend(self.bin_tool_names().map(|name| {
             ExecNamespaceMount::new(format!("/lib/exec/{name}"), ExecNamespaceAccess::ReadOnly)
         }));
+        mounts.extend(self.launch_context.host_mounts.iter().map(|grant| {
+            ExecNamespaceMount::new(
+                grant.namespace_path.clone(),
+                match grant.access {
+                    alan_kernel::Access::ReadOnly => ExecNamespaceAccess::ReadOnly,
+                    alan_kernel::Access::ReadWrite => ExecNamespaceAccess::ReadWrite,
+                },
+            )
+        }));
+        mounts.extend(
+            self.launch_context
+                .descriptors
+                .values()
+                .filter_map(|descriptor| {
+                    self.launch_context
+                        .namespace
+                        .resolve(&descriptor.path)
+                        .ok()
+                        .map(|resolved| {
+                            let access = match resolved.access {
+                                alan_kernel::Access::ReadOnly => ExecNamespaceAccess::ReadOnly,
+                                alan_kernel::Access::ReadWrite => ExecNamespaceAccess::ReadWrite,
+                            };
+                            ExecNamespaceMount::new(descriptor.path.clone(), access)
+                        })
+                }),
+        );
         mounts.sort_by(|left, right| {
             left.path
                 .cmp(&right.path)
                 .then_with(|| left.access.cmp(&right.access))
         });
+        mounts.dedup();
         ExecNamespaceManifest { mounts }
     }
 
@@ -2247,7 +2346,9 @@ mod tests {
     impl MountGrantApplicatorFactory for RecordingMountGrantApplicatorFactory {
         fn create(
             &self,
+            _pid: alan_kernel::Pid,
             live_namespace: alan_kernel::LiveNamespace,
+            _inherited_mount_paths: &[String],
         ) -> Arc<dyn MountGrantApplicator> {
             *self
                 .created
@@ -2371,6 +2472,7 @@ mod tests {
             memfs_transport(),
             KernelAccess::ReadOnly,
         );
+        launch_namespace.mount("/memory", memfs_transport(), KernelAccess::ReadWrite);
         let launch_context = crate::ProcessLaunchContext::new(
             launch_namespace,
             KernelCredentials::user("parent-agent"),
@@ -2464,7 +2566,7 @@ mod tests {
                 timeout_secs: Some(30),
                 output_dir: None,
             },
-            handles: Vec::new(),
+            handles: vec![SpawnHandle::HostMounts],
             runtime_overrides: alan_agent_protocol::SpawnRuntimeOverrides::default(),
             delegated: None,
         }
@@ -2686,7 +2788,7 @@ Body
     }
 
     fn namespace_from_child_plan(plan: &ChildNamespaceAssemblyPlan) -> KernelNamespace {
-        let mut namespace = KernelNamespace::new();
+        let mut namespace = plan.launch_context.namespace.child();
         namespace.mount(
             &plan.agent_mount,
             memfs_transport(),
@@ -2987,15 +3089,22 @@ Body
             json!({
                 "executable": "/bin/alan-agent",
                 "args": ["--boot"],
+                "descriptors": {
+                    "3": "/agent-definition",
+                    "4": "/memory"
+                },
                 "namespace": {
                     "mounts": [
                         {"path": "/agent", "access": "rw"},
+                        {"path": "/agent-definition", "access": "ro"},
                         {"path": "/bin/alpha", "access": "ro"},
                         {"path": "/bin/beta", "access": "ro"},
                         {"path": "/lib/exec/alpha", "access": "ro"},
                         {"path": "/lib/exec/beta", "access": "ro"},
+                        {"path": "/memory", "access": "rw"},
                         {"path": "/mnt/llm", "access": "rw"},
                         {"path": "/mnt/route", "access": "rw"},
+                        {"path": "/mnt/source", "access": "rw"},
                         {"path": "/srv", "access": "ro"}
                     ]
                 }
@@ -3033,10 +3142,13 @@ Body
             json!({
                 "mounts": [
                     {"path": "/agent", "access": "rw"},
+                    {"path": "/agent-definition", "access": "ro"},
                     {"path": "/bin/alpha", "access": "ro"},
                     {"path": "/lib/exec/alpha", "access": "ro"},
+                    {"path": "/memory", "access": "rw"},
                     {"path": "/mnt/llm", "access": "rw"},
                     {"path": "/mnt/route", "access": "rw"},
+                    {"path": "/mnt/source", "access": "rw"},
                     {"path": "/srv", "access": "ro"}
                 ]
             })
@@ -3611,6 +3723,7 @@ Body
                 executable: "/bin/alpha".to_string(),
                 args: vec!["{}".to_string()],
                 namespace: None,
+                descriptors: Default::default(),
             },
         };
 
@@ -3963,6 +4076,130 @@ model_reasoning_effort = "high"
     }
 
     #[test]
+    fn child_launch_context_does_not_inherit_parent_host_mounts_or_descriptors_by_default() {
+        let temp = TempDir::new().unwrap();
+        let parent = make_parent_state(
+            &temp,
+            RecordedRequests::default(),
+            completed_response("done"),
+        );
+        let parent_context = parent.namespace_environment().launch_context().unwrap();
+        let definition = temp.path().join("child-definition");
+        let mut spec = launch_spec(definition.clone());
+        spec.handles.clear();
+
+        let child =
+            build_child_launch_context(parent_context, &spec, None, Some(&definition)).unwrap();
+
+        assert_eq!(child.cwd, "/");
+        assert!(child.namespace.resolve("/mnt/source").is_err());
+        assert!(
+            child
+                .host_mounts
+                .iter()
+                .all(|grant| grant.namespace_path != "/mnt/source")
+        );
+        assert_eq!(
+            child
+                .descriptors
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            vec![crate::AGENT_DEFINITION_DESCRIPTOR]
+        );
+    }
+
+    #[test]
+    fn child_launch_context_binds_a_noncanonical_parent_definition_path() {
+        let definition = TempDir::new().unwrap();
+        let mut namespace = KernelNamespace::new();
+        namespace.mount(
+            "/lib/agents/root",
+            memfs_transport(),
+            KernelAccess::ReadOnly,
+        );
+        let parent = crate::ProcessLaunchContext::new(
+            namespace,
+            KernelCredentials::user("parent-agent"),
+            "/",
+        )
+        .unwrap()
+        .with_host_mount(
+            crate::HostMountGrant::new(
+                "/lib/agents/root",
+                definition.path(),
+                KernelAccess::ReadOnly,
+            )
+            .unwrap(),
+        )
+        .with_descriptor(
+            crate::AGENT_DEFINITION_DESCRIPTOR,
+            crate::ProcessDescriptor::new("/lib/agents/root").unwrap(),
+        );
+        let spec = launch_spec(definition.path().to_path_buf());
+
+        let child =
+            build_child_launch_context(&parent, &spec, None, Some(definition.path())).unwrap();
+
+        assert!(child.namespace.resolve("/agent-definition").is_ok());
+        assert_eq!(
+            child
+                .descriptor(crate::AGENT_DEFINITION_DESCRIPTOR)
+                .unwrap()
+                .path,
+            "/agent-definition"
+        );
+    }
+
+    #[test]
+    fn child_launch_context_passes_parent_host_mounts_only_with_explicit_handle() {
+        let temp = TempDir::new().unwrap();
+        let parent = make_parent_state(
+            &temp,
+            RecordedRequests::default(),
+            completed_response("done"),
+        );
+        let parent_context = parent.namespace_environment().launch_context().unwrap();
+        let definition = temp.path().join("child-definition");
+        let spec = launch_spec(definition.clone());
+
+        let child =
+            build_child_launch_context(parent_context, &spec, None, Some(&definition)).unwrap();
+
+        assert_eq!(child.cwd, "/mnt/source");
+        assert!(child.namespace.resolve("/mnt/source").is_ok());
+        assert!(
+            child
+                .host_mounts
+                .iter()
+                .any(|grant| grant.namespace_path == "/mnt/source")
+        );
+    }
+
+    #[test]
+    fn child_launch_rejects_cwd_inside_an_unpassed_host_mount() {
+        let temp = TempDir::new().unwrap();
+        let parent = make_parent_state(
+            &temp,
+            RecordedRequests::default(),
+            completed_response("done"),
+        );
+        let parent_context = parent.namespace_environment().launch_context().unwrap();
+        let definition = temp.path().join("child-definition");
+        let mut spec = launch_spec(definition.clone());
+        spec.handles.clear();
+
+        let error = build_child_launch_context(
+            parent_context,
+            &spec,
+            Some("/mnt/source".to_string()),
+            Some(&definition),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("explicit host_mounts handle"));
+    }
+
+    #[test]
     fn child_launch_contract_normalizes_repeated_namespace_separators() {
         let mut spec = launch_spec(PathBuf::from("/tmp/definition"));
         spec.launch.cwd = Some(PathBuf::from("/mnt//source///docs"));
@@ -4120,7 +4357,7 @@ model_reasoning_effort = "high"
                 timeout_secs: Some(30),
                 ..alan_agent_protocol::SpawnLaunchInputs::default()
             },
-            handles: Vec::new(),
+            handles: vec![SpawnHandle::HostMounts],
             runtime_overrides: alan_agent_protocol::SpawnRuntimeOverrides::default(),
             delegated: None,
         };
@@ -4190,7 +4427,7 @@ Body
                 timeout_secs: Some(30),
                 ..alan_agent_protocol::SpawnLaunchInputs::default()
             },
-            handles: Vec::new(),
+            handles: vec![SpawnHandle::HostMounts],
             runtime_overrides: alan_agent_protocol::SpawnRuntimeOverrides::default(),
             delegated: None,
         };

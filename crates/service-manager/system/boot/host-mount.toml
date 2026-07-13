@@ -1,0 +1,26 @@
+name = "host-mount"
+executable = "/bin/host-mount-service"
+after = []
+required = true
+timeout_ms = 5000
+restart = "on-failure"
+restart_limit = 5
+initial_backoff_ms = 50
+max_backoff_ms = 1000
+stable_reset_ms = 30000
+published_handles = ["host-mount"]
+
+[[mounts]]
+path = "/proc"
+source = "/proc"
+access = "write"
+
+[[mounts]]
+path = "/srv"
+source = "/srv"
+access = "write"
+
+[[mounts]]
+path = "/bin/host-mount-service"
+source = "/bin/host-mount-service"
+access = "read"

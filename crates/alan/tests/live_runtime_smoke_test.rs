@@ -5,7 +5,7 @@ use alan_agent_engine::{
 };
 use alan_agent_protocol::{UiActivityState, UiEvent};
 use alan_kernel::{Access, Credentials, Namespace};
-use alan_os_host::{AlanOsHost, FixedBootConfig, HostEndpointPaths, LocalAttachment};
+use alan_os_host::{AlanOsHost, HostBootConfig, HostEndpointPaths, LocalAttachment};
 use anyhow::{Context, Result, ensure};
 use std::{env, path::PathBuf, time::Duration};
 use tempfile::TempDir;
@@ -114,7 +114,7 @@ async fn live_chatgpt_runtime_smoke_uses_agentfs() -> Result<()> {
     let runtime = TempDir::new().context("create Host runtime directory")?;
     let endpoint = HostEndpointPaths::from_runtime_dir(runtime.path(), "test")?;
     let host = AlanOsHost::boot(
-        FixedBootConfig::ephemeral("test", config, client, tools),
+        HostBootConfig::ephemeral("test", config, client, tools),
         endpoint.clone(),
     )
     .await?;

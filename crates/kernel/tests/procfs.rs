@@ -1189,6 +1189,81 @@ async fn proc_exposes_the_process_namespace() {
 }
 
 #[tokio::test]
+async fn proc_exposes_only_valid_descriptors_bound_inside_the_committed_namespace() {
+    let fs = proc();
+    let mut namespace = Namespace::new();
+    namespace.mount(
+        "/definition",
+        InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::new())),
+        Access::ReadOnly,
+    );
+    let spawner = fs.for_spawner(None, namespace, Credentials::system());
+
+    spawner
+        .walk(Fid::ROOT, Fid(13), &["clone".to_string()])
+        .await
+        .unwrap();
+    spawner.open(Fid(13), OpenMode::ReadWrite).await.unwrap();
+    let pid = String::from_utf8(spawner.read(Fid(13), 0, 64).await.unwrap()).unwrap();
+    let exec = serde_json::json!({
+        "executable": "/bin/alan-agent",
+        "namespace": {"mounts": [{"path": "/definition", "access": "ro"}]},
+        "descriptors": {"3": "/definition"}
+    });
+    spawner
+        .write(Fid(13), 0, exec.to_string().as_bytes())
+        .await
+        .unwrap();
+    assert_eq!(spawner.clunk(Fid(13)).await, Ok(()));
+
+    let directory = String::from_utf8(read_at(&fs, &[&pid], Fid(14)).await.unwrap()).unwrap();
+    assert!(directory.lines().any(|entry| entry == "descriptors"));
+    assert_eq!(
+        serde_json::from_slice::<std::collections::BTreeMap<u32, String>>(
+            &read_at(&fs, &[&pid, "descriptors"], Fid(15)).await.unwrap()
+        )
+        .unwrap(),
+        [(3, "/definition".to_string())].into_iter().collect()
+    );
+}
+
+#[tokio::test]
+async fn clone_rejects_reserved_or_unreachable_descriptors_without_leaking_a_process() {
+    for (fid, descriptors) in [
+        (Fid(16), serde_json::json!({"2": "/definition"})),
+        (Fid(17), serde_json::json!({"3": "/outside"})),
+    ] {
+        let fs = proc();
+        let mut namespace = Namespace::new();
+        namespace.mount(
+            "/definition",
+            InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::new())),
+            Access::ReadOnly,
+        );
+        let spawner = fs.for_spawner(None, namespace, Credentials::system());
+        spawner
+            .walk(Fid::ROOT, fid, &["clone".to_string()])
+            .await
+            .unwrap();
+        spawner.open(fid, OpenMode::ReadWrite).await.unwrap();
+        let exec = serde_json::json!({
+            "executable": "/bin/alan-agent",
+            "namespace": {"mounts": [{"path": "/definition", "access": "ro"}]},
+            "descriptors": descriptors
+        });
+        spawner
+            .write(fid, 0, exec.to_string().as_bytes())
+            .await
+            .unwrap();
+        assert_eq!(spawner.clunk(fid).await, Err(ErrorCode::BadRequest));
+        assert_eq!(
+            String::from_utf8(fs.read(Fid::ROOT, 0, 64).await.unwrap()).unwrap(),
+            "clone"
+        );
+    }
+}
+
+#[tokio::test]
 async fn clone_uses_the_spawner_context_for_child_identity() {
     let fs = proc();
     let parent = spawn(&fs, Fid(10)).await;

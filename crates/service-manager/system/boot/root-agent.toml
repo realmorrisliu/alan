@@ -1,0 +1,84 @@
+name = "root-agent"
+executable = "/bin/alan-agent"
+after = ["agent-runtime", "connection", "route"]
+required = true
+timeout_ms = 30000
+restart = "always"
+restart_limit = 5
+initial_backoff_ms = 100
+max_backoff_ms = 1000
+stable_reset_ms = 30000
+published_handles = []
+
+[[descriptors]]
+number = 3
+path = "/lib/agents/root"
+
+[[descriptors]]
+number = 4
+path = "/memory"
+
+[[mounts]]
+path = "/proc"
+source = "/proc"
+access = "write"
+
+[[mounts]]
+path = "/agent"
+source = "/agent"
+access = "write"
+
+[[mounts]]
+path = "/srv"
+source = "/srv"
+access = "read"
+
+[[mounts]]
+path = "/bin"
+source = "/bin"
+access = "read"
+
+[[mounts]]
+path = "/lib"
+source = "/lib"
+access = "read"
+
+[[mounts]]
+path = "/man"
+source = "/man"
+access = "read"
+
+[[mounts]]
+path = "/mnt"
+source = "/mnt"
+access = "read"
+
+[[mounts]]
+path = "/mnt/llm"
+source = "/mnt/llm"
+access = "write"
+
+[[mounts]]
+path = "/mnt/route"
+source = "/mnt/route"
+access = "write"
+
+[[mounts]]
+path = "/mnt/connections"
+source = "/mnt/connections"
+access = "write"
+
+[[mounts]]
+path = "/mnt/service-manager"
+source = "/mnt/service-manager"
+access = "write"
+
+[[mounts]]
+path = "/mnt/host-mount"
+source = "/mnt/host-mount"
+access = "write"
+
+[[mounts]]
+path = "/memory"
+source = "/memory"
+access = "write"

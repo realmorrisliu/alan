@@ -11,6 +11,7 @@ fn exec(bin: &str) -> ExecSpec {
         executable: bin.to_string(),
         args: vec![],
         namespace: None,
+        descriptors: Default::default(),
     }
 }
 

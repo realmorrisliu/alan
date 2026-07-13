@@ -198,7 +198,16 @@ pub trait MountGrantApplicator: std::fmt::Debug + Send + Sync {
 /// Host-provided factory that can build a mount grant applicator once the engine
 /// has created the live namespace handle for a runtime.
 pub trait MountGrantApplicatorFactory: std::fmt::Debug + Send + Sync {
-    fn create(&self, live_namespace: alan_kernel::LiveNamespace) -> Arc<dyn MountGrantApplicator>;
+    fn create(
+        &self,
+        pid: alan_kernel::Pid,
+        live_namespace: alan_kernel::LiveNamespace,
+        inherited_mount_paths: &[String],
+    ) -> Arc<dyn MountGrantApplicator>;
+
+    fn tool_execution_authority(&self) -> Option<Arc<dyn crate::tools::ToolExecutionAuthority>> {
+        None
+    }
 }
 
 /// Result of attempting live namespace projection for an approved grant.
@@ -441,7 +450,28 @@ impl NamespaceRuntimeEnvironment {
         factory: Arc<dyn MountGrantApplicatorFactory>,
         live_namespace: alan_kernel::LiveNamespace,
     ) -> Self {
-        self.mount_grant_applicator = Some(factory.create(live_namespace));
+        let process = self
+            .process_context
+            .as_ref()
+            .expect("mount grant applicator factory requires a Process context");
+        let inherited_mount_paths = self
+            .launch_context
+            .as_ref()
+            .map(|context| {
+                context
+                    .host_mounts
+                    .iter()
+                    .map(|grant| grant.namespace_path.clone())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        self.mount_grant_applicator =
+            Some(factory.create(process.pid, live_namespace, &inherited_mount_paths));
+        if let Some(authority) = factory.tool_execution_authority() {
+            process
+                .tool_runner
+                .register_process_authority(process.pid, authority);
+        }
         self.mount_grant_applicator_factory = Some(factory);
         self
     }

@@ -79,6 +79,10 @@ impl ToolRegistry {
         }
     }
 
+    pub fn set_config(&mut self, config: Arc<Config>) {
+        self.config = config;
+    }
+
     /// Set a default execution binding for `execute()` calls that don't provide context.
     pub fn set_default_execution_binding(&mut self, binding: ToolExecutionBinding) {
         let mut default_binding = self
@@ -471,6 +475,7 @@ struct ToolProcessRunnerInner {
     config: Arc<Config>,
     default_binding: Arc<Mutex<Option<ToolExecutionBinding>>>,
     process_bindings: Mutex<HashMap<alan_kernel::Pid, ToolExecutionBinding>>,
+    process_authorities: Mutex<HashMap<alan_kernel::Pid, Arc<dyn super::ToolExecutionAuthority>>>,
 }
 
 impl ToolProcessRunner {
@@ -481,6 +486,7 @@ impl ToolProcessRunner {
                 config,
                 default_binding: Arc::new(Mutex::new(None)),
                 process_bindings: Mutex::new(HashMap::new()),
+                process_authorities: Mutex::new(HashMap::new()),
             }),
         }
     }
@@ -492,6 +498,7 @@ impl ToolProcessRunner {
                 config: Arc::clone(&registry.config),
                 default_binding: Arc::clone(&registry.default_binding),
                 process_bindings: Mutex::new(HashMap::new()),
+                process_authorities: Mutex::new(HashMap::new()),
             }),
         }
     }
@@ -522,6 +529,28 @@ impl ToolProcessRunner {
                     .expect("default binding mutex poisoned")
                     .clone()
             })
+    }
+
+    /// Install a late-bound authority resolver for one Agent Process.
+    pub fn register_process_authority(
+        &self,
+        pid: alan_kernel::Pid,
+        authority: Arc<dyn super::ToolExecutionAuthority>,
+    ) {
+        self.inner
+            .process_authorities
+            .lock()
+            .expect("process authority mutex poisoned")
+            .insert(pid, authority);
+    }
+
+    /// Drop the resolver when its owning Process exits.
+    pub fn unregister_process_authority(&self, pid: alan_kernel::Pid) {
+        self.inner
+            .process_authorities
+            .lock()
+            .expect("process authority mutex poisoned")
+            .remove(&pid);
     }
 
     pub(crate) fn capability_for_tool(
@@ -598,12 +627,34 @@ impl alan_kernel::ProcessRunner for ToolProcessRunner {
                 .expect("default binding mutex poisoned")
                 .clone()
         });
-        let Some(binding) = binding else {
+        let Some(mut binding) = binding else {
             return process_json_outcome(
                 1,
                 serde_json::json!({"success": false, "error": "Tool Process has no explicit execution binding"}),
             );
         };
+        let authority_pid = invocation.parent.unwrap_or(invocation.pid);
+        let authority = self
+            .inner
+            .process_authorities
+            .lock()
+            .expect("process authority mutex poisoned")
+            .get(&authority_pid)
+            .cloned();
+        if let Some(authority) = authority {
+            binding = match authority.reconcile(authority_pid, binding) {
+                Ok(binding) => binding,
+                Err(error) => {
+                    return process_json_outcome(
+                        1,
+                        serde_json::json!({
+                            "success": false,
+                            "error": format!("Tool Process authority is unavailable: {error}"),
+                        }),
+                    );
+                }
+            };
+        }
         let context = ToolContext::from_binding(binding, Arc::clone(&self.inner.config));
         let timeout_secs = if self.inner.config.tool_timeout_secs != 30 {
             self.inner.config.tool_timeout_secs
@@ -1018,12 +1069,64 @@ mod tests {
                 executable: "/bin/test_tool".to_string(),
                 args: vec!["{}".to_string()],
                 namespace: None,
+                descriptors: Default::default(),
             },
         };
 
         let outcome = alan_kernel::ProcessRunner::run(&runner, invocation).await;
         assert_eq!(outcome.exit_code, 127);
         assert_eq!(outcome.output, b"executable is not mounted\n");
+    }
+
+    #[tokio::test]
+    async fn process_server_reconciles_late_bound_authority_before_tool_execution() {
+        #[derive(Debug)]
+        struct Revoked;
+
+        impl crate::tools::ToolExecutionAuthority for Revoked {
+            fn reconcile(
+                &self,
+                _pid: alan_kernel::Pid,
+                _binding: ToolExecutionBinding,
+            ) -> Result<ToolExecutionBinding> {
+                anyhow::bail!("grant was revoked")
+            }
+        }
+
+        let mut registry = ToolRegistry::new();
+        registry.register(TestTool);
+        registry.set_default_execution_binding(ToolExecutionBinding::new(
+            PathBuf::from("/host/source"),
+            PathBuf::from("/tmp/scratch"),
+        ));
+        let runner = ToolProcessRunner::from_registry(&registry);
+        runner.register_process_authority(alan_kernel::Pid(7), Arc::new(Revoked));
+        let mut namespace = alan_kernel::Namespace::new();
+        namespace.mount(
+            "/bin/test_tool",
+            alan_ap::InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::empty())),
+            alan_kernel::Access::ReadOnly,
+        );
+        let invocation = alan_kernel::ProcessInvocation {
+            pid: alan_kernel::Pid(8),
+            parent: Some(alan_kernel::Pid(7)),
+            credentials: alan_kernel::Credentials::user("agent"),
+            namespace,
+            exec: alan_kernel::ExecSpec {
+                executable: "/bin/test_tool".to_string(),
+                args: vec![r#"{"input":"hello"}"#.to_string()],
+                namespace: None,
+                descriptors: Default::default(),
+            },
+        };
+
+        let outcome = alan_kernel::ProcessRunner::run(&runner, invocation).await;
+        assert_eq!(outcome.exit_code, 1);
+        assert!(
+            String::from_utf8(outcome.output)
+                .unwrap()
+                .contains("grant was revoked")
+        );
     }
 
     #[tokio::test]
@@ -1053,6 +1156,7 @@ mod tests {
                 executable: "/bin/cwd_echo".to_string(),
                 args: vec!["{}".to_string()],
                 namespace: None,
+                descriptors: Default::default(),
             },
         };
 

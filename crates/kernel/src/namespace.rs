@@ -186,6 +186,51 @@ impl Namespace {
         Namespace { mounts }
     }
 
+    /// Build a capability-preserving namespace from explicit mount projections.
+    ///
+    /// Each declaration is `(target, source, access)`. `source` must name a
+    /// mount already held by this namespace. Descendant overmounts are carried
+    /// with the same path substitution so a bounded tree such as `/bin` keeps
+    /// its installed executables, while requested read-only access narrows the
+    /// whole projected tree.
+    pub fn project_mounts<'a>(
+        &self,
+        declarations: impl IntoIterator<Item = (&'a str, &'a str, Access)>,
+    ) -> Result<Namespace, Unreachable> {
+        let mut projected = Vec::new();
+        for (target, source, requested_access) in declarations {
+            let source_prefix = split_path(source);
+            let target_prefix = split_path(target);
+            let source_mount = self
+                .mounts
+                .iter()
+                .rev()
+                .find(|mount| mount.prefix == source_prefix)
+                .ok_or(Unreachable)?;
+            if !satisfies_access(source_mount.access, requested_access) {
+                return Err(Unreachable);
+            }
+
+            for mount in self
+                .mounts
+                .iter()
+                .filter(|mount| is_prefix(&source_prefix, &mount.prefix))
+            {
+                let mut prefix = target_prefix.clone();
+                prefix.extend_from_slice(&mount.prefix[source_prefix.len()..]);
+                projected.push(Mount {
+                    prefix,
+                    tree: mount.tree.clone(),
+                    access: match requested_access {
+                        Access::ReadOnly => Access::ReadOnly,
+                        Access::ReadWrite => mount.access,
+                    },
+                });
+            }
+        }
+        Ok(Namespace { mounts: projected })
+    }
+
     pub(crate) fn child_with_path_substitution(&self, token: &str, replacement: &str) -> Namespace {
         let mounts = self
             .mounts
