@@ -206,6 +206,21 @@ async fn attachment_rejects_a_symlinked_status_file() {
 }
 
 #[tokio::test]
+async fn attachment_times_out_when_the_host_accepts_no_requests() {
+    let _host_guard = TEST_HOST_LOCK.lock().await;
+    let runtime = tempfile::tempdir().unwrap();
+    let paths = HostEndpointPaths::from_runtime_dir(runtime.path(), "test").unwrap();
+    let _host = AlanOsHost::boot(config(), paths.clone()).await.unwrap();
+
+    let error = LocalAttachment::new(paths)
+        .connect()
+        .await
+        .err()
+        .expect("a wedged Host attachment must time out");
+    assert!(error.to_string().contains("timed out attaching"));
+}
+
+#[tokio::test]
 async fn stable_and_dev_hosts_stores_endpoints_and_clients_are_isolated() {
     let _host_guard = TEST_HOST_LOCK.lock().await;
     let runtime = tempfile::tempdir().unwrap();

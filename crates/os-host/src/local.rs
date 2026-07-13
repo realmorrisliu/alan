@@ -4,6 +4,7 @@ use std::os::fd::AsRawFd;
 use std::os::unix::fs::{FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 use alan_ap::{ImportedFileServer, InProcessTransport, export_file_server};
 use anyhow::{Context, Result, bail, ensure};
@@ -19,6 +20,7 @@ const STATUS_VERSION: u16 = 1;
 const SOCKET_FILE: &str = "namespace.ap.sock";
 const STATUS_FILE: &str = "host.json";
 const LOCK_FILE: &str = "host.lock";
+const ATTACHMENT_CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HostEndpointPaths {
@@ -263,33 +265,42 @@ impl LocalAttachment {
             status.readiness == HostReadiness::Ready,
             "Alan OS Host is not ready"
         );
-        let stream = UnixStream::connect(&self.paths.socket)
-            .await
-            .with_context(|| {
-                format!("attach to Alan OS Host at {}", self.paths.socket.display())
-            })?;
-        let (read, write) = stream.into_split();
-        let imported = Arc::new(ImportedFileServer::new(BufReader::new(read), write));
-        let root = InProcessTransport::new(imported);
-        let shell = alan_shell::Shell::new(root.clone());
-        let boot_id = String::from_utf8(shell.cat(BOOT_ID_PATH).await?)?
-            .trim()
-            .parse::<Uuid>()
-            .context("Alan OS namespace boot ID is invalid")?;
-        ensure!(
-            boot_id == status.boot_id,
-            "Host status and namespace boot ID differ"
-        );
-        ensure!(
-            shell.cat(BOOT_STATE_PATH).await? == b"ready\n",
-            "Alan OS namespace is not ready"
-        );
-        shell.ls("/agent/root").await.context("read /agent/root")?;
-        Ok(AttachedNamespace {
-            boot_id,
-            root,
-            status,
+        tokio::time::timeout(ATTACHMENT_CONNECT_TIMEOUT, async {
+            let stream = UnixStream::connect(&self.paths.socket)
+                .await
+                .with_context(|| {
+                    format!("attach to Alan OS Host at {}", self.paths.socket.display())
+                })?;
+            let (read, write) = stream.into_split();
+            let imported = Arc::new(ImportedFileServer::new(BufReader::new(read), write));
+            let root = InProcessTransport::new(imported);
+            let shell = alan_shell::Shell::new(root.clone());
+            let boot_id = String::from_utf8(shell.cat(BOOT_ID_PATH).await?)?
+                .trim()
+                .parse::<Uuid>()
+                .context("Alan OS namespace boot ID is invalid")?;
+            ensure!(
+                boot_id == status.boot_id,
+                "Host status and namespace boot ID differ"
+            );
+            ensure!(
+                shell.cat(BOOT_STATE_PATH).await? == b"ready\n",
+                "Alan OS namespace is not ready"
+            );
+            shell.ls("/agent/root").await.context("read /agent/root")?;
+            Ok(AttachedNamespace {
+                boot_id,
+                root,
+                status,
+            })
         })
+        .await
+        .with_context(|| {
+            format!(
+                "timed out attaching to Alan OS Host at {}",
+                self.paths.socket.display()
+            )
+        })?
     }
 }
 

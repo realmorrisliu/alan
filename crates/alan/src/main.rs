@@ -676,11 +676,11 @@ async fn main() -> Result<()> {
             }
             HostAction::Status { json } => {
                 let channel = alan_agent_engine::InstallChannel::detect_current();
-                let attachment = alan_os_host::LocalAttachment::detect(channel.descriptor().id)?
-                    .connect()
-                    .await
-                    .context("Alan OS Host is not ready; run `alan host start`")?;
-                print_host_status(&attachment.status, json)?;
+                let paths = alan_os_host::HostEndpointPaths::detect(channel.descriptor().id)?;
+                let status = paths
+                    .read_status()
+                    .context("Alan OS Host status is unavailable; run `alan host start`")?;
+                print_host_status(&status, json)?;
             }
             HostAction::Stop { json } => {
                 let channel = alan_agent_engine::InstallChannel::detect_current();
@@ -1139,15 +1139,21 @@ async fn attach_or_start_host(
     let mut start = request_platform_host_start(channel, &executable)?;
     let mut launcher_status = None;
     let mut last_error = None;
-    for _ in 0..200 {
-        match attachment.connect().await {
-            Ok(attached) => return Ok(attached),
-            Err(error) => last_error = Some(error),
+    let ready = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            match attachment.connect().await {
+                Ok(attached) => return Ok(attached),
+                Err(error) => last_error = Some(error),
+            }
+            if launcher_status.is_none() {
+                launcher_status = start.poll_status()?;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         }
-        if launcher_status.is_none() {
-            launcher_status = start.poll_status()?;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    })
+    .await;
+    if let Ok(result) = ready {
+        return result;
     }
     anyhow::bail!(
         "dedicated Alan OS Host did not become ready (launcher={launcher_status:?}): {}",

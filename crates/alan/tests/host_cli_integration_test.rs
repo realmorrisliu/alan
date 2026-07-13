@@ -1,10 +1,13 @@
 use std::io::Write;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use alan_agent_engine::{AgentProcessConfig, LlmClient, ToolRegistry};
 use alan_llm::{GenerationResponse, MockLlmProvider};
-use alan_os_host::{AlanOsHost, FixedBootConfig, HostEndpointPaths, LocalAttachment};
+use alan_os_host::{
+    AlanOsHost, FixedBootConfig, HostEndpointPaths, HostReadiness, HostStatus, LocalAttachment,
+};
 
 fn runtime_base(root: &Path) -> PathBuf {
     #[cfg(target_os = "macos")]
@@ -76,4 +79,33 @@ async fn cli_exit_detaches_without_stopping_the_host_or_root_agent() {
 
     let _ = shutdown.send(());
     server.await.unwrap().unwrap();
+}
+
+#[test]
+fn host_status_reports_stopping_without_attaching() {
+    let runtime = tempfile::tempdir_in("/tmp").unwrap();
+    let base = runtime_base(runtime.path());
+    let paths = HostEndpointPaths::from_runtime_dir(&base, "stable").unwrap();
+    std::fs::create_dir_all(&paths.root).unwrap();
+    let status = HostStatus {
+        version: 1,
+        channel_id: "stable".to_string(),
+        boot_id: uuid::Uuid::new_v4(),
+        pid: std::process::id(),
+        readiness: HostReadiness::Stopping,
+        socket: paths.socket,
+    };
+    std::fs::write(&paths.status, serde_json::to_vec(&status).unwrap()).unwrap();
+    std::fs::set_permissions(&paths.status, std::fs::Permissions::from_mode(0o600)).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_alan"))
+        .args(["host", "status", "--json"])
+        .env("ALAN_INSTALL_CHANNEL", "stable")
+        .env("TMPDIR", runtime.path())
+        .env("XDG_RUNTIME_DIR", &base)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let reported: HostStatus = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(reported.readiness, HostReadiness::Stopping);
 }
