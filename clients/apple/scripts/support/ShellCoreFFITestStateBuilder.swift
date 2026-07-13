@@ -286,6 +286,10 @@ extension ShellStateSnapshot {
                     title: title
                 )
             )
+        case .agent(let attachment, let requestedTitle):
+            kind = .agent
+            title = requestedTitle ?? "Agent \(attachment.process.pid)"
+            payload = .agent(attachment)
         }
 
         return try ShellCoreFFIAdapter().applyReducer(

@@ -258,7 +258,7 @@ impl AlanOsHost {
                                     &host_mount,
                                     &request_id,
                                     &host_path,
-                                    "cli",
+                                    "native-command-plane",
                                     "local-user",
                                 );
                                 write_local_response(

@@ -199,8 +199,7 @@ impl ConnectionService {
         llmfs: Arc<alan_llmfs::LlmFs>,
         factory: Arc<dyn LlmClientFactory>,
         base_config: Config,
-        bootstrap_name: String,
-        bootstrap_client: LlmClient,
+        bootstrap: Option<(String, LlmClient)>,
     ) -> Result<()> {
         let mut callables = self.callables.lock().await;
         ensure!(callables.is_none(), "callable registry is already attached");
@@ -208,7 +207,7 @@ impl ConnectionService {
             llmfs,
             factory,
             base_config,
-            bootstrap: Some((bootstrap_name, bootstrap_client)),
+            bootstrap,
             published_profiles: BTreeMap::new(),
             published_fallbacks: BTreeSet::new(),
             published_default: None,
@@ -867,8 +866,10 @@ mod tests {
                 llmfs.clone(),
                 factory.clone(),
                 Config::default(),
-                "default".to_string(),
-                LlmClient::new(MockLlmProvider::new()),
+                Some((
+                    "default".to_string(),
+                    LlmClient::new(MockLlmProvider::new()),
+                )),
             )
             .await
             .unwrap();
@@ -1011,6 +1012,37 @@ mod tests {
         );
         assert!(
             !callable
+                .ls("/connections")
+                .await
+                .unwrap()
+                .contains(&"broken".to_string())
+        );
+
+        control
+            .write(
+                "/ctl",
+                br#"{"op":"request_native","request":{"id":"repair-1","profile_id":"broken","action":"secret_entry"}}"#,
+            )
+            .await
+            .unwrap();
+        factory.unavailable.lock().unwrap().remove("broken");
+        control
+            .write(
+                "/native-responses",
+                &serde_json::to_vec(&NativeConnectionResponse {
+                    request_id: "repair-1".to_string(),
+                    opaque_credential_ref: Some("host-keychain:broken".to_string()),
+                    status: "ready".to_string(),
+                })
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        let validation: BTreeMap<String, String> =
+            serde_json::from_slice(&control.cat("/validation").await.unwrap()).unwrap();
+        assert_eq!(validation.get("broken").map(String::as_str), Some("ready"));
+        assert!(
+            callable
                 .ls("/connections")
                 .await
                 .unwrap()

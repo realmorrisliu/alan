@@ -227,10 +227,11 @@ terminal content.
   bounded socket requests, diagnostic surfacing, and truthful `terminal.send_text`
   delivery results
 
-Alan for macOS currently owns renderer, input, windowing, terminal runtime, and
-local shell-control integration. Attachment to Alan OS Agent Processes is a
-separate design change and is intentionally not represented by a compatibility
-network client in this target.
+Alan for macOS owns renderer, input, windowing, terminal runtime, and local
+shell-control integration. It also attaches to the matching stable/dev Alan OS
+Host over aP and renders Agent Processes from Process References and caller-held
+stream offsets. The app does not embed Alan Kernel, the Agent Execution Engine,
+or Process lifecycle authority.
 
 ## Command-Line Build
 

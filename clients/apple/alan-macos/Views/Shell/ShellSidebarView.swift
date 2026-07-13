@@ -861,6 +861,8 @@ struct ShellSidebarView: View {
             return "doc.text"
         case .settings:
             return "gearshape"
+        case .agent:
+            return "sparkles"
         }
     }
 

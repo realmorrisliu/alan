@@ -19,6 +19,10 @@ use std::{
     time::Duration,
 };
 
+/// Existing Connection Service request selected by a native renderer adapter.
+/// The value is an opaque request id, never credential material.
+pub const NATIVE_CONNECTION_REQUEST_ENV: &str = "ALAN_NATIVE_CONNECTION_REQUEST_ID";
+
 struct ConnectionStores {
     bindings: ConnectionStoreBindings,
     managed_auth: PathBuf,
@@ -71,6 +75,30 @@ async fn request_native(
     profile_id: &str,
     action: &str,
 ) -> Result<String> {
+    if let Some(request_id) = std::env::var_os(NATIVE_CONNECTION_REQUEST_ENV) {
+        let request_id = request_id
+            .into_string()
+            .map_err(|_| anyhow::anyhow!("native Connection request id is not UTF-8"))?;
+        let requests: serde_json::Value = serde_json::from_slice(
+            &stores
+                .shell
+                .cat("/mnt/connections/native-requests")
+                .await
+                .map_err(|error| anyhow::anyhow!("read native Connection requests: {error}"))?,
+        )?;
+        let request = requests
+            .get(&request_id)
+            .context("native Connection request is no longer pending")?;
+        anyhow::ensure!(
+            request
+                .get("profile_id")
+                .and_then(serde_json::Value::as_str)
+                == Some(profile_id)
+                && request.get("action").and_then(serde_json::Value::as_str) == Some(action),
+            "native Connection request does not match the requested profile/action"
+        );
+        return Ok(request_id);
+    }
     let request_id = format!("cli-{}", uuid::Uuid::new_v4().simple());
     let command = serde_json::json!({
         "op": "request_native",

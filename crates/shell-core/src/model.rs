@@ -224,8 +224,64 @@ pub struct ShellTerminalContentPayload {
     pub terminal_profile_id: Option<String>,
 }
 
+/// Stable identity of one Alan OS Process within a single Host boot.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentProcessReference {
+    /// Alan OS Host boot identity.
+    pub boot_id: String,
+    /// Kernel Process identifier.
+    pub pid: u64,
+}
+
+/// Renderer-owned byte offsets for AgentFS streams.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentStreamOffsets {
+    /// `/agent/<pid>/io/output` offset.
+    pub output: u64,
+    /// `/agent/<pid>/requests/events` offset.
+    pub requests: u64,
+    /// `/agent/<pid>/actions/events` offset.
+    pub actions: u64,
+    /// `/agent/<pid>/machine/ui/events` offset.
+    pub ui: u64,
+}
+
+/// Host-owned presentation preferences for an Agent ContentInstance.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentContentPresentation {
+    /// Whether a live renderer follows newly appended output.
+    #[serde(default)]
+    pub follows_output: bool,
+}
+
+impl Default for AgentContentPresentation {
+    fn default() -> Self {
+        Self {
+            follows_output: true,
+        }
+    }
+}
+
+/// Narrow persisted attachment to an Agent Process.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentAttachment {
+    /// Process identity validated through `/proc` before AgentFS access.
+    pub process: AgentProcessReference,
+    /// Independent caller-held stream positions.
+    #[serde(default)]
+    pub offsets: AgentStreamOffsets,
+    /// Host presentation only; never Agent Machine state.
+    #[serde(default)]
+    pub presentation: AgentContentPresentation,
+}
+
 /// Portable content restore payload.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ShellContentPayload {
     /// Terminal payload.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -236,6 +292,9 @@ pub struct ShellContentPayload {
     /// Settings payload, preserved opaquely by shell core.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub settings: Option<Value>,
+    /// Agent Process attachment reference and renderer-owned offsets.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent: Option<AgentAttachment>,
 }
 
 impl ShellContentPayload {
@@ -264,12 +323,16 @@ impl ShellContentPayload {
             }),
             markdown: None,
             settings: None,
+            agent: None,
         }
     }
 
     /// Returns whether the payload carries no restorable content-specific data.
     pub fn is_empty(&self) -> bool {
-        self.terminal.is_none() && self.markdown.is_none() && self.settings.is_none()
+        self.terminal.is_none()
+            && self.markdown.is_none()
+            && self.settings.is_none()
+            && self.agent.is_none()
     }
 }
 
@@ -311,6 +374,8 @@ pub enum ContentKind {
     Markdown,
     /// Settings surface content.
     Settings,
+    /// File-backed Agent Process renderer.
+    Agent,
 }
 
 impl ContentKind {
@@ -325,6 +390,12 @@ impl ContentKind {
             ],
             ContentKind::Markdown => vec![ContentCapability::MarkdownReadOnlyViewer],
             ContentKind::Settings => vec![ContentCapability::SettingsSurface],
+            ContentKind::Agent => vec![
+                ContentCapability::AgentInput,
+                ContentCapability::AgentRequestResponse,
+                ContentCapability::AgentMachineControl,
+                ContentCapability::AgentStopProcess,
+            ],
         }
     }
 }
@@ -345,6 +416,14 @@ pub enum ContentCapability {
     MarkdownReadOnlyViewer,
     /// Settings content renders a settings surface.
     SettingsSurface,
+    /// AgentFS input writes.
+    AgentInput,
+    /// AgentFS request response writes.
+    AgentRequestResponse,
+    /// Agent Machine control and interrupt writes.
+    AgentMachineControl,
+    /// Explicit `/proc/<pid>/ctl` stop action.
+    AgentStopProcess,
 }
 
 /// Portable content lifecycle state.

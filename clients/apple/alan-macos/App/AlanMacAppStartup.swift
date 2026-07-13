@@ -9,6 +9,8 @@ enum AlanMacAppStartup {
         "--alan-dev-privileged-helper-restart-and-exit"
     private static let devHelperSmokeAndExitArgument =
         "--alan-dev-privileged-helper-smoke-and-exit"
+    private static let devAlanOSAttachmentSmokeAndExitArgument =
+        "--alan-dev-os-attachment-smoke-and-exit"
 
     static func handleDevPrivilegedHelperCommandIfRequested() {
         let arguments = ProcessInfo.processInfo.arguments
@@ -21,6 +23,35 @@ enum AlanMacAppStartup {
         if arguments.contains(devHelperSmokeAndExitArgument) {
             smokeDevPrivilegedHelperAndExit()
         }
+        if arguments.contains(devAlanOSAttachmentSmokeAndExitArgument) {
+            smokeDevAlanOSAttachmentAndExit()
+        }
+    }
+
+    private static func smokeDevAlanOSAttachmentAndExit() -> Never {
+        guard AlanInstallChannel.current() == .dev else {
+            fputs("Alan OS attachment smoke command is dev-channel only.\n", stderr)
+            Darwin.exit(2)
+        }
+        Task {
+            do {
+                let session = try await AlanOSAttachmentSession.attach(channel: .dev)
+                let bootID = session.status.bootID
+                let processes = try await session.list("/proc")
+                let agents = try await session.list("/agent")
+                print("channel=dev")
+                print("bootID=\(bootID)")
+                print("processCount=\(processes.filter { UInt64($0) != nil }.count)")
+                print("agentCount=\(agents.filter { UInt64($0) != nil }.count)")
+                print("attachment smoke passed")
+                await session.detach()
+                Darwin.exit(0)
+            } catch {
+                fputs("Alan OS attachment smoke failed: \(error.localizedDescription)\n", stderr)
+                Darwin.exit(1)
+            }
+        }
+        dispatchMain()
     }
 
     private static func installDevPrivilegedHelperAndExit() -> Never {

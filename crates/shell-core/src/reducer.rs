@@ -1,8 +1,9 @@
 use crate::{
-    ContentInstance, ContentKind, ContentLifecycleState, PaneSlot, PaneTreeNode,
-    PaneTreeNodeResizeOutcome, ShellAttentionState, ShellContentPayload, ShellLaunchTarget,
-    ShellTabActiveTaskState, Space, SpatialFocusDirection, SplitDirection, SplitPlacement, Tab,
-    TabKind, TabOrganizationSection, TerminalActivitySnapshot, WorkspaceState,
+    AgentContentPresentation, AgentStreamOffsets, ContentInstance, ContentKind,
+    ContentLifecycleState, PaneSlot, PaneTreeNode, PaneTreeNodeResizeOutcome, ShellAttentionState,
+    ShellContentPayload, ShellLaunchTarget, ShellTabActiveTaskState, Space, SpatialFocusDirection,
+    SplitDirection, SplitPlacement, Tab, TabKind, TabOrganizationSection, TerminalActivitySnapshot,
+    WorkspaceState,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -262,6 +263,15 @@ pub enum ReducerOperation {
         /// Optional activity snapshot.
         activity: Option<TerminalActivitySnapshot>,
     },
+    /// Persist renderer-owned progress for one mounted Agent ContentInstance.
+    UpdateAgentRendererState {
+        /// Pane slot mounting the Agent ContentInstance.
+        pane_slot_id: String,
+        /// Caller-owned AgentFS stream offsets.
+        offsets: AgentStreamOffsets,
+        /// Host presentation only; never Agent Machine state.
+        presentation: AgentContentPresentation,
+    },
     /// Apply an agent activity snapshot to a pane's mounted terminal content.
     ApplyAgentActivity {
         /// Target pane slot id.
@@ -483,6 +493,13 @@ pub enum DomainEvent {
     },
     /// Agent activity metadata changed.
     AgentActivityUpdated {
+        /// Pane slot id.
+        pane_slot_id: String,
+        /// Content id.
+        content_id: String,
+    },
+    /// An Agent renderer advanced its caller-owned offsets or presentation.
+    AgentRendererStateUpdated {
         /// Pane slot id.
         pane_slot_id: String,
         /// Content id.
@@ -741,6 +758,11 @@ impl WorkspaceReducer {
                 active_task_state,
                 activity,
             )?,
+            ReducerOperation::UpdateAgentRendererState {
+                pane_slot_id,
+                offsets,
+                presentation,
+            } => self.update_agent_renderer_state(&pane_slot_id, offsets, presentation)?,
             ReducerOperation::ApplyAgentActivity {
                 pane_slot_id,
                 activity,
@@ -2056,6 +2078,52 @@ impl WorkspaceReducer {
         Ok(())
     }
 
+    fn update_agent_renderer_state(
+        &mut self,
+        pane_slot_id: &str,
+        offsets: AgentStreamOffsets,
+        presentation: AgentContentPresentation,
+    ) -> Result<(), ReducerError> {
+        let slot = self.require_pane_slot(pane_slot_id)?.clone();
+        let content = self
+            .state
+            .contents
+            .iter_mut()
+            .find(|content| content.content_id == slot.content_id)
+            .ok_or_else(|| {
+                ReducerError::new(
+                    ReducerErrorCode::UnsupportedContent,
+                    "pane does not mount an Agent ContentInstance",
+                )
+            })?;
+        if content.kind != ContentKind::Agent {
+            return Err(ReducerError::new(
+                ReducerErrorCode::UnsupportedContent,
+                "renderer offsets belong only to Agent content",
+            ));
+        }
+        let attachment = content.payload.agent.as_mut().ok_or_else(|| {
+            ReducerError::new(
+                ReducerErrorCode::UnsupportedContent,
+                "Agent content has no Process Reference",
+            )
+        })?;
+        if attachment.offsets == offsets && attachment.presentation == presentation {
+            return Ok(());
+        }
+        attachment.offsets = offsets;
+        attachment.presentation = presentation;
+        self.changed_ids
+            .updated_content_ids
+            .push(content.content_id.clone());
+        self.domain_events
+            .push(DomainEvent::AgentRendererStateUpdated {
+                pane_slot_id: pane_slot_id.to_string(),
+                content_id: content.content_id.clone(),
+            });
+        Ok(())
+    }
+
     fn apply_agent_activity(
         &mut self,
         pane_slot_id: &str,
@@ -2503,6 +2571,7 @@ fn content_id_for_mount(kind: ContentKind, pane_slot_id: &str) -> String {
         ContentKind::Terminal => terminal_content_id(pane_slot_id),
         ContentKind::Markdown => format!("content_markdown_{pane_slot_id}"),
         ContentKind::Settings => SETTINGS_CONTENT_ID.to_string(),
+        ContentKind::Agent => format!("content_agent_{pane_slot_id}"),
     }
 }
 

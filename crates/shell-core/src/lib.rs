@@ -38,6 +38,7 @@ pub use manifest::{
     ShellContentWorkspaceSpaceRecord, ShellContentWorkspaceTabRecord, ShellPaneSlotRestoreRecord,
 };
 pub use model::{
+    AgentAttachment, AgentContentPresentation, AgentProcessReference, AgentStreamOffsets,
     ContentCapability, ContentInstance, ContentKind, ContentLifecycleState, PaneSlot, PaneTreeKind,
     PaneTreeNode, PaneTreeNodeResizeOutcome, PaneTreeNodeResizeResult, ShellAttentionState,
     ShellContentPayload, ShellLaunchTarget, ShellTabActiveTaskState, ShellTerminalContentPayload,

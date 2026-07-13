@@ -56,6 +56,7 @@
 		000000000000000000000040 /* Services/Terminal/TerminalContentProjectionAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000140 /* Services/Terminal/TerminalContentProjectionAdapter.swift */; };
 		000000000000000000000041 /* Services/Terminal/TerminalContentLifecycleAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000141 /* Services/Terminal/TerminalContentLifecycleAdapter.swift */; };
 		000000000000000000000042 /* Services/Shell/ShellContentRenderingRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000142 /* Services/Shell/ShellContentRenderingRegistry.swift */; };
+		00000000000000000000007A /* Services/AlanOS/AlanOSAttachmentService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000017A /* Services/AlanOS/AlanOSAttachmentService.swift */; };
 		000000000000000000000043 /* Models/Shell/ShellAutomationCommand.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000143 /* Models/Shell/ShellAutomationCommand.swift */; };
 		000000000000000000000044 /* Models/Shell/ShellAutomationEntities.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000144 /* Models/Shell/ShellAutomationEntities.swift */; };
 		000000000000000000000045 /* Models/Shell/ShellAutomationIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000145 /* Models/Shell/ShellAutomationIntents.swift */; };
@@ -181,6 +182,7 @@
 		000000000000000000000140 /* Services/Terminal/TerminalContentProjectionAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Terminal/TerminalContentProjectionAdapter.swift; sourceTree = "<group>"; };
 		000000000000000000000141 /* Services/Terminal/TerminalContentLifecycleAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Terminal/TerminalContentLifecycleAdapter.swift; sourceTree = "<group>"; };
 		000000000000000000000142 /* Services/Shell/ShellContentRenderingRegistry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Shell/ShellContentRenderingRegistry.swift; sourceTree = "<group>"; };
+		00000000000000000000017A /* Services/AlanOS/AlanOSAttachmentService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/AlanOS/AlanOSAttachmentService.swift; sourceTree = "<group>"; };
 		000000000000000000000143 /* Models/Shell/ShellAutomationCommand.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/Shell/ShellAutomationCommand.swift; sourceTree = "<group>"; };
 		000000000000000000000144 /* Models/Shell/ShellAutomationEntities.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/Shell/ShellAutomationEntities.swift; sourceTree = "<group>"; };
 		000000000000000000000145 /* Models/Shell/ShellAutomationIntents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/Shell/ShellAutomationIntents.swift; sourceTree = "<group>"; };
@@ -269,6 +271,7 @@
 				00000000000000000000030F /* Controllers/Shell */,
 				000000000000000000000306 /* Views/Shell */,
 				00000000000000000000030B /* Models/Shell */,
+				00000000000000000000030E /* Services/AlanOS */,
 				00000000000000000000030C /* Services/Shell */,
 				00000000000000000000030D /* Services/Terminal */,
 				000000000000000000000101 /* AlanApp.swift */,
@@ -406,6 +409,14 @@
 				00000000000000000000013A /* Services/Shell/ShellWorkspaceManifestStore.swift */,
 			);
 			name = Services/Shell;
+			sourceTree = "<group>";
+		};
+		00000000000000000000030E /* Services/AlanOS */ = {
+			isa = PBXGroup;
+			children = (
+				00000000000000000000017A /* Services/AlanOS/AlanOSAttachmentService.swift */,
+			);
+			name = Services/AlanOS;
 			sourceTree = "<group>";
 		};
 		00000000000000000000030D /* Services/Terminal */ = {
@@ -663,6 +674,7 @@
 				00000000000000000000002F /* Services/Shell/ShellDiagnostics.swift in Sources */,
 				000000000000000000000030 /* Services/Shell/ShellClipboardWriter.swift in Sources */,
 				000000000000000000000042 /* Services/Shell/ShellContentRenderingRegistry.swift in Sources */,
+				00000000000000000000007A /* Services/AlanOS/AlanOSAttachmentService.swift in Sources */,
 				000000000000000000000041 /* Services/Terminal/TerminalContentLifecycleAdapter.swift in Sources */,
 				000000000000000000000040 /* Services/Terminal/TerminalContentProjectionAdapter.swift in Sources */,
 				000000000000000000000031 /* Services/Terminal/TerminalNativeScrollViewAdapter.swift in Sources */,

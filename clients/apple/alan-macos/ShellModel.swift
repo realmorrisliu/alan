@@ -612,6 +612,8 @@ func shellContentTypeHint(for kind: ShellContentKind) -> String {
         return "Document"
     case .settings:
         return "Settings"
+    case .agent:
+        return "Agent"
     }
 }
 
