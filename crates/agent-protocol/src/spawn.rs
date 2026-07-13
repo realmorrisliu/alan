@@ -108,6 +108,8 @@ pub enum SpawnTarget {
 pub enum SpawnHandle {
     Artifacts,
     Memory,
+    /// Explicitly pass the parent's current Host Mount grants.
+    HostMounts,
     Plan,
     ConversationSnapshot,
     ToolResults,
@@ -206,7 +208,11 @@ mod tests {
                 timeout_secs: Some(120),
                 output_dir: Some(PathBuf::from("/mnt/source/out")),
             },
-            handles: vec![SpawnHandle::ConversationSnapshot, SpawnHandle::ToolResults],
+            handles: vec![
+                SpawnHandle::HostMounts,
+                SpawnHandle::ConversationSnapshot,
+                SpawnHandle::ToolResults,
+            ],
             runtime_overrides: SpawnRuntimeOverrides {
                 model: Some("gpt-5.4".to_string()),
                 model_reasoning_effort: Some(ReasoningEffort::High),
@@ -227,7 +233,7 @@ mod tests {
 
         let value = serde_json::to_value(&spec).unwrap();
         assert_eq!(value["target"]["kind"], "definition_descriptor");
-        assert_eq!(value["handles"][0], "conversation_snapshot");
+        assert_eq!(value["handles"][0], "host_mounts");
         assert_eq!(value["runtime_overrides"]["model"], "gpt-5.4");
         assert_eq!(value["runtime_overrides"]["model_reasoning_effort"], "high");
         assert_eq!(value["delegated"]["requirements"][0]["kind"], "mount_read");

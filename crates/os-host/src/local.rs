@@ -9,18 +9,42 @@ use std::time::Duration;
 use alan_ap::{ImportedFileServer, InProcessTransport, export_file_server};
 use anyhow::{Context, Result, bail, ensure};
 use serde::{Deserialize, Serialize};
-use tokio::io::BufReader;
+use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::task::JoinSet;
 use uuid::Uuid;
 
-use crate::composition::{BOOT_ID_PATH, BOOT_STATE_PATH, FixedBootConfig, FixedComposition};
+use alan_service_manager::HostMountGrantRecord;
+use alan_service_manager::{BOOT_ID_PATH, BOOT_STATE_PATH, ServiceManager};
+
+use crate::HostBootConfig;
 
 const STATUS_VERSION: u16 = 1;
 const SOCKET_FILE: &str = "namespace.ap.sock";
 const STATUS_FILE: &str = "host.json";
 const LOCK_FILE: &str = "host.lock";
 const ATTACHMENT_CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
+const MAX_LOCAL_REQUEST_BYTES: usize = 64 * 1024;
+
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "op", rename_all = "snake_case")]
+enum LocalRequest {
+    Attach,
+    ApproveHostMount {
+        request_id: String,
+        host_path: PathBuf,
+    },
+    RevokeHostMount {
+        grant_id: String,
+    },
+}
+
+#[derive(Serialize, Deserialize)]
+struct LocalResponse {
+    boot_id: Uuid,
+    grant: Option<HostMountGrantRecord>,
+    error: Option<String>,
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HostEndpointPaths {
@@ -148,13 +172,13 @@ pub struct AlanOsHost {
     status: HostStatus,
     listener: UnixListener,
     singleton: SingletonLock,
-    composition: FixedComposition,
+    service_manager: ServiceManager,
 }
 
 impl AlanOsHost {
-    pub async fn boot(config: FixedBootConfig, paths: HostEndpointPaths) -> Result<Self> {
+    pub async fn boot(config: HostBootConfig, paths: HostEndpointPaths) -> Result<Self> {
         ensure!(
-            config.channel_id == paths.channel_id,
+            config.channel_id() == paths.channel_id,
             "Host channel/path mismatch"
         );
         paths.prepare_private_root()?;
@@ -162,7 +186,7 @@ impl AlanOsHost {
         remove_stale_owned_file(&paths.socket)?;
         remove_stale_owned_file(&paths.status)?;
 
-        let composition = FixedComposition::boot(config).await?;
+        let service_manager = ServiceManager::boot(config.into_service_manager()).await?;
         let listener = UnixListener::bind(&paths.socket)
             .with_context(|| format!("bind Alan OS attachment {}", paths.socket.display()))?;
         std::fs::set_permissions(&paths.socket, std::fs::Permissions::from_mode(0o600))?;
@@ -171,7 +195,7 @@ impl AlanOsHost {
         let status = HostStatus {
             version: STATUS_VERSION,
             channel_id: paths.channel_id.clone(),
-            boot_id: composition.boot_id(),
+            boot_id: service_manager.boot_id(),
             pid: std::process::id(),
             readiness: HostReadiness::Ready,
             socket: paths.socket.clone(),
@@ -183,7 +207,7 @@ impl AlanOsHost {
             status,
             listener,
             singleton,
-            composition,
+            service_manager,
         })
     }
 
@@ -206,17 +230,60 @@ impl AlanOsHost {
                         tracing::warn!("rejected Alan OS attachment from foreign uid");
                         continue;
                     }
-                    let namespace = self.composition.attachment_server();
+                    let local_entry = self.service_manager.local_entry();
+                    let host_mount = self.service_manager.host_mount();
+                    let boot_id = self.status.boot_id;
                     connections.spawn(async move {
-                        let (read, write) = stream.into_split();
-                        let result = export_file_server(
-                            namespace.clone(),
-                            BufReader::new(read),
-                            write,
-                        )
-                        .await;
-                        namespace.clunk_all().await;
-                        result
+                        let (mut read, mut write) = stream.into_split();
+                        match read_local_request(&mut read).await? {
+                            LocalRequest::Attach => {
+                                let (entry_id, _, namespace) = local_entry
+                                    .create_and_handoff()
+                                    .await
+                                    .map_err(|error| anyhow::anyhow!(
+                                        "create local Shell entry: {error:?}"
+                                    ))?;
+                                let result = export_file_server(
+                                    namespace.clone(),
+                                    BufReader::new(read),
+                                    write,
+                                )
+                                .await;
+                                namespace.clunk_all().await;
+                                let _ = local_entry.drain_entry(&entry_id).await;
+                                result.map_err(Into::into)
+                            }
+                            LocalRequest::ApproveHostMount { request_id, host_path } => {
+                                let result = crate::host_mounts::approve_host_mount(
+                                    &host_mount,
+                                    &request_id,
+                                    &host_path,
+                                    "cli",
+                                    "local-user",
+                                );
+                                write_local_response(
+                                    &mut write,
+                                    LocalResponse {
+                                        boot_id,
+                                        grant: result.as_ref().ok().cloned(),
+                                        error: result.err().map(|error| error.to_string()),
+                                    },
+                                )
+                                .await
+                            }
+                            LocalRequest::RevokeHostMount { grant_id } => {
+                                let result = host_mount.revoke(&grant_id, "local-user");
+                                write_local_response(
+                                    &mut write,
+                                    LocalResponse {
+                                        boot_id,
+                                        grant: None,
+                                        error: result.err().map(|error| error.to_string()),
+                                    },
+                                )
+                                .await
+                            }
+                        }
                     });
                 }
                 completed = connections.join_next(), if !connections.is_empty() => {
@@ -237,7 +304,7 @@ impl AlanOsHost {
         let _ = write_status(&self.paths.status, &self.status);
         connections.abort_all();
         while connections.join_next().await.is_some() {}
-        let shutdown = self.composition.shutdown().await;
+        let shutdown = self.service_manager.shutdown().await;
         remove_owned_file(&self.paths.socket);
         remove_owned_file(&self.paths.status);
         drop(self.singleton);
@@ -266,11 +333,12 @@ impl LocalAttachment {
             "Alan OS Host is not ready"
         );
         tokio::time::timeout(ATTACHMENT_CONNECT_TIMEOUT, async {
-            let stream = UnixStream::connect(&self.paths.socket)
+            let mut stream = UnixStream::connect(&self.paths.socket)
                 .await
                 .with_context(|| {
                     format!("attach to Alan OS Host at {}", self.paths.socket.display())
                 })?;
+            write_local_request(&mut stream, &LocalRequest::Attach).await?;
             let (read, write) = stream.into_split();
             let imported = Arc::new(ImportedFileServer::new(BufReader::new(read), write));
             let root = InProcessTransport::new(imported);
@@ -302,6 +370,113 @@ impl LocalAttachment {
             )
         })?
     }
+}
+
+/// Same-user native Host commands. Raw Host paths never enter the Alan OS namespace.
+#[derive(Clone, Debug)]
+pub struct HostCommandPlane {
+    paths: HostEndpointPaths,
+}
+
+impl HostCommandPlane {
+    pub fn new(paths: HostEndpointPaths) -> Self {
+        Self { paths }
+    }
+
+    pub fn detect(channel_id: &str) -> Result<Self> {
+        Ok(Self::new(HostEndpointPaths::detect(channel_id)?))
+    }
+
+    pub async fn approve_host_mount(
+        &self,
+        request_id: impl Into<String>,
+        host_path: PathBuf,
+    ) -> Result<HostMountGrantRecord> {
+        self.call(LocalRequest::ApproveHostMount {
+            request_id: request_id.into(),
+            host_path,
+        })
+        .await?
+        .grant
+        .context("Host Mount approval returned no grant")
+    }
+
+    pub async fn revoke_host_mount(&self, grant_id: impl Into<String>) -> Result<()> {
+        self.call(LocalRequest::RevokeHostMount {
+            grant_id: grant_id.into(),
+        })
+        .await?;
+        Ok(())
+    }
+
+    async fn call(&self, request: LocalRequest) -> Result<LocalResponse> {
+        let status = self.paths.read_status()?;
+        ensure!(
+            status.readiness == HostReadiness::Ready,
+            "Alan OS Host is not ready"
+        );
+        let mut stream = UnixStream::connect(&self.paths.socket).await?;
+        write_local_request(&mut stream, &request).await?;
+        let response = read_local_response(&mut stream).await?;
+        ensure!(
+            response.boot_id == status.boot_id,
+            "Host command response belongs to another boot"
+        );
+        if let Some(error) = response.error.as_deref() {
+            anyhow::bail!("{error}");
+        }
+        Ok(response)
+    }
+}
+
+async fn write_local_request(
+    writer: &mut (impl tokio::io::AsyncWrite + Unpin),
+    request: &LocalRequest,
+) -> Result<()> {
+    let bytes = serde_json::to_vec(request)?;
+    ensure!(
+        bytes.len() <= MAX_LOCAL_REQUEST_BYTES,
+        "Host request is too large"
+    );
+    writer.write_u32(bytes.len() as u32).await?;
+    writer.write_all(&bytes).await?;
+    Ok(())
+}
+
+async fn read_local_request(
+    reader: &mut (impl tokio::io::AsyncRead + Unpin),
+) -> Result<LocalRequest> {
+    let length = reader.read_u32().await? as usize;
+    ensure!(
+        length <= MAX_LOCAL_REQUEST_BYTES,
+        "Host request is too large"
+    );
+    let mut bytes = vec![0; length];
+    reader.read_exact(&mut bytes).await?;
+    serde_json::from_slice(&bytes).context("decode Host request")
+}
+
+async fn write_local_response(
+    writer: &mut (impl tokio::io::AsyncWrite + Unpin),
+    response: LocalResponse,
+) -> Result<()> {
+    let bytes = serde_json::to_vec(&response)?;
+    writer.write_u32(bytes.len() as u32).await?;
+    writer.write_all(&bytes).await?;
+    Ok(())
+}
+
+async fn read_local_response(
+    reader: &mut (impl tokio::io::AsyncRead + Unpin),
+) -> Result<LocalResponse> {
+    let length = reader.read_u32().await? as usize;
+    ensure!(
+        length <= MAX_LOCAL_REQUEST_BYTES,
+        "Host response is too large"
+    );
+    let mut bytes = vec![0; length];
+    reader.read_exact(&mut bytes).await?;
+    serde_json::from_slice(&bytes).context("decode Host response")
 }
 
 pub struct AttachedNamespace {
@@ -523,7 +698,7 @@ fn peer_uid(stream: &UnixStream) -> Result<u32> {
 
 pub async fn run_host_process(channel_id: &str) -> Result<()> {
     let paths = HostEndpointPaths::detect(channel_id)?;
-    let config = FixedBootConfig::product(channel_id)?;
+    let config = HostBootConfig::product(channel_id)?;
     let host = AlanOsHost::boot(config, paths).await?;
     host.serve_until(shutdown_signal()).await
 }

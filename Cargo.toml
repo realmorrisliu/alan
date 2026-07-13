@@ -14,6 +14,7 @@ members = [
     "crates/agent-protocol",
     "crates/llm",
     "crates/llmfs",
+    "crates/service-manager",
     "crates/os-host",
     "crates/agent-engine",
     "crates/agent-engine/skills/swebench/tooling",
@@ -119,6 +120,7 @@ alan-knowledge = { path = "crates/knowledge" }
 alan-memfs = { path = "crates/memfs" }
 alan-hostfs = { path = "crates/hostfs" }
 alan-routefs = { path = "crates/routefs" }
+alan-service-manager = { path = "crates/service-manager" }
 alan-os-host = { path = "crates/os-host" }
 alan-editfs = { path = "crates/editfs" }
 alan-branchfs = { path = "crates/branchfs" }

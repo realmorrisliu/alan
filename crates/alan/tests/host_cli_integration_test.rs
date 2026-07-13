@@ -6,7 +6,7 @@ use std::process::{Command, Stdio};
 use alan_agent_engine::{AgentProcessConfig, LlmClient, ToolRegistry};
 use alan_llm::{GenerationResponse, MockLlmProvider};
 use alan_os_host::{
-    AlanOsHost, FixedBootConfig, HostEndpointPaths, HostReadiness, HostStatus, LocalAttachment,
+    AlanOsHost, HostBootConfig, HostEndpointPaths, HostReadiness, HostStatus, LocalAttachment,
 };
 
 fn runtime_base(root: &Path) -> PathBuf {
@@ -39,7 +39,7 @@ async fn cli_exit_detaches_without_stopping_the_host_or_root_agent() {
         warnings: Vec::new(),
     };
     let host = AlanOsHost::boot(
-        FixedBootConfig::ephemeral(
+        HostBootConfig::ephemeral(
             "stable",
             AgentProcessConfig::default(),
             LlmClient::new(MockLlmProvider::new().with_response(response)),

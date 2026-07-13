@@ -236,3 +236,18 @@ async fn srv_root_qid_version_does_not_leak_hidden_handle_activity() {
         "a visible handle still changes the view's root version"
     );
 }
+
+#[tokio::test]
+async fn unpost_invalidates_future_handle_lookup() {
+    let srv = SrvFs::new();
+    srv.post("service", memfs(), Access::ReadWrite).await;
+    assert!(srv.lookup("service").await.is_some());
+
+    assert!(srv.unpost("service").await);
+    assert!(srv.lookup("service").await.is_none());
+    assert_eq!(srv.list().await, Vec::<String>::new());
+    assert_eq!(
+        srv.walk(Fid::ROOT, Fid(9), &["service".into()]).await,
+        Err(alan_ap::ErrorCode::NotFound)
+    );
+}

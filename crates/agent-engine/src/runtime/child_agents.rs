@@ -11,6 +11,7 @@ use super::engine::{
     effective_core_config_for_runtime, runtime_host_capabilities_for_tools,
     spawn_with_namespace_environment,
 };
+#[cfg(test)]
 use crate::llm::LlmClient;
 use crate::tape::{ContentPart, Message};
 use alan_agent_protocol::{
@@ -19,6 +20,7 @@ use alan_agent_protocol::{
 };
 use alan_ap::{Fid, FileServer, InProcessTransport, OpenMode};
 use alan_kernel::{ExecNamespaceAccess, ExecNamespaceManifest, ExecNamespaceMount, ExecSpec};
+#[cfg(test)]
 use alan_llm::{GenerationRequest, GenerationResponse, LlmProvider, StreamChunk};
 use anyhow::{Context, Result, bail};
 use std::collections::BTreeSet;
@@ -42,16 +44,19 @@ const MAX_OBSERVED_CHILD_WARNING_CHARS: usize = 512;
 const MAX_CHILD_FILE_OBSERVATION_POLL_INTERVAL: Duration = Duration::from_millis(250);
 static NEXT_CHILD_NAMESPACE_FID: AtomicU64 = AtomicU64::new(80_000);
 
+#[cfg(test)]
 struct ChildLlmProvider {
     client: LlmClient,
 }
 
+#[cfg(test)]
 impl ChildLlmProvider {
     fn new(client: LlmClient) -> Self {
         Self { client }
     }
 }
 
+#[cfg(test)]
 #[async_trait::async_trait]
 impl LlmProvider for ChildLlmProvider {
     async fn generate(&mut self, request: GenerationRequest) -> Result<GenerationResponse> {
@@ -202,19 +207,14 @@ async fn spawn_child_runtime_with_optional_cancel(
     spec: SpawnSpec,
     cancel: Option<&CancellationToken>,
 ) -> Result<ChildRuntimeController> {
-    let chatgpt_auth_storage_path = parent.runtime_config.chatgpt_auth_storage_path.clone();
-    spawn_child_runtime_with_client_factory_and_cancel(
-        parent,
-        spec,
-        move |core_config| {
-            LlmClient::from_core_config_with_chatgpt_auth_storage_path(
-                core_config,
-                chatgpt_auth_storage_path.clone(),
-            )
-        },
-        cancel,
-    )
-    .await
+    #[cfg(test)]
+    {
+        return spawn_child_runtime_inner(parent, spec, None, cancel).await;
+    }
+    #[cfg(not(test))]
+    {
+        spawn_child_runtime_inner(parent, spec, cancel).await
+    }
 }
 
 #[cfg(test)]
@@ -224,26 +224,21 @@ async fn spawn_child_runtime_with_client_factory<F>(
     llm_client_factory: F,
 ) -> Result<ChildRuntimeController>
 where
-    F: FnOnce(&crate::Config) -> Result<LlmClient>,
+    F: FnOnce(&crate::Config) -> Result<LlmClient> + Send,
 {
-    spawn_child_runtime_with_client_factory_and_cancel(
-        parent,
-        spec,
-        |core_config| llm_client_factory(core_config),
-        None,
-    )
-    .await
+    spawn_child_runtime_inner(parent, spec, Some(Box::new(llm_client_factory)), None).await
 }
 
-async fn spawn_child_runtime_with_client_factory_and_cancel<F>(
+#[cfg(test)]
+type TestChildLlmClientFactory<'a> =
+    Box<dyn FnOnce(&crate::Config) -> Result<LlmClient> + Send + 'a>;
+
+async fn spawn_child_runtime_inner(
     parent: &RuntimeLoopState,
     mut spec: SpawnSpec,
-    llm_client_factory: F,
+    #[cfg(test)] llm_client_factory: Option<TestChildLlmClientFactory<'_>>,
     cancel: Option<&CancellationToken>,
-) -> Result<ChildRuntimeController>
-where
-    F: FnOnce(&crate::Config) -> Result<LlmClient>,
-{
+) -> Result<ChildRuntimeController> {
     if cancel.is_some_and(CancellationToken::is_cancelled) {
         bail!(CHILD_AGENT_LAUNCH_CANCELLED_MESSAGE);
     }
@@ -251,33 +246,17 @@ where
     let child_cwd = validate_child_launch_contract(&spec)?;
     let launch_root_dir = resolve_launch_root_dir(parent, &spec.target)?;
     let child_agent_config = build_child_agent_config(parent, &spec);
-    let mut launch_context = parent
+    let parent_launch_context = parent
         .namespace_environment()
         .launch_context()
         .cloned()
-        .unwrap_or_else(crate::ProcessLaunchContext::root)
-        .child();
-    if let Some(cwd) = child_cwd {
-        launch_context.cwd = cwd;
-    }
-    if !spec.has_handle(SpawnHandle::Memory) {
-        launch_context.namespace.unmount("/memory");
-        launch_context
-            .descriptors
-            .remove(crate::MEMORY_STORE_DESCRIPTOR);
-    }
-    if let Some(root_dir) = launch_root_dir.as_ref() {
-        launch_context = launch_context
-            .with_host_mount(crate::HostMountGrant::new(
-                "/agent-definition",
-                root_dir,
-                alan_kernel::Access::ReadOnly,
-            )?)
-            .with_descriptor(
-                crate::AGENT_DEFINITION_DESCRIPTOR,
-                crate::ProcessDescriptor::new("/agent-definition")?,
-            );
-    }
+        .unwrap_or_else(crate::ProcessLaunchContext::root);
+    let launch_context = build_child_launch_context(
+        &parent_launch_context,
+        &spec,
+        child_cwd,
+        launch_root_dir.as_deref(),
+    )?;
 
     let mut child_config = AgentProcessConfig {
         agent_config: child_agent_config.clone(),
@@ -291,9 +270,7 @@ where
             .has_handle(SpawnHandle::Memory)
             .then(|| parent.runtime_config.memory_store_backing.clone())
             .flatten(),
-        connection_store: parent.runtime_config.connection_store.clone(),
         recovery_rollout_path: None,
-        chatgpt_auth_storage_path: parent.runtime_config.chatgpt_auth_storage_path.clone(),
         mount_grant_applicator_factory: parent
             .namespace_environment()
             .mount_grant_applicator_factory(),
@@ -331,10 +308,23 @@ where
     )
     .await
     .context("Failed to assemble child-agent namespace plan")?;
+    let child_connection = child_namespace_plan.llm_connection_name()?;
+    ensure_child_connection_is_passed(parent, &child_connection)?;
     let delegation_capability_decision =
         evaluate_delegated_launch_capabilities(parent, &mut spec, &child_namespace_plan).await?;
-    let llm_client = llm_client_factory(&effective_child_core_config)
-        .context("Failed to create child-agent LLM client")?;
+    #[cfg(test)]
+    let test_llm = if let Some(factory) = llm_client_factory {
+        let client = factory(&effective_child_core_config)
+            .context("Failed to create test child-agent LLM client")?;
+        let llmfs = Arc::new(alan_llmfs::LlmFs::new());
+        llmfs.register_connection(
+            &child_namespace_plan.llm_connection_name()?,
+            Box::new(ChildLlmProvider::new(client)),
+        );
+        Some(InProcessTransport::new(llmfs))
+    } else {
+        None
+    };
     let parent_process_context = parent.namespace_environment().process_context();
     let launch_procfs = parent_process_context
         .as_ref()
@@ -356,12 +346,14 @@ where
             .map(|stores| stores.tmp.clone()),
     )?;
     let agentfs = Arc::new(alan_agentfs::AgentFs::new());
-    let llmfs = Arc::new(alan_llmfs::LlmFs::new());
-    llmfs.register_connection(
-        &child_namespace_plan.llm_connection_name()?,
-        Box::new(ChildLlmProvider::new(llm_client)),
-    );
-    let mut handles = child_namespace_launch_handles_from_parent(parent, agentfs, llmfs)
+    let shared_llm = parent
+        .namespace_environment()
+        .shared_services()
+        .context("parent namespace missing callable Connection service for child-agent launch")?
+        .llm;
+    #[cfg(test)]
+    let shared_llm = test_llm.unwrap_or(shared_llm);
+    let mut handles = child_namespace_launch_handles_from_parent(parent, agentfs, shared_llm)
         .context("Failed to assemble child-agent shared namespace handles")?;
     for manifest in &child_namespace_plan.tool_packages {
         let name = &manifest.name;
@@ -487,6 +479,97 @@ where
         process_environment: child_process_environment,
         process_pid: child_process_pid,
     })
+}
+
+fn ensure_child_connection_is_passed(parent: &RuntimeLoopState, requested: &str) -> Result<()> {
+    let passed = parent.namespace_environment().llm_connection();
+    if requested != passed {
+        bail!(
+            "Child-agent Connection '{requested}' was not passed by the parent Process; available Connection is '{passed}'."
+        );
+    }
+    Ok(())
+}
+
+fn build_child_launch_context(
+    parent: &crate::ProcessLaunchContext,
+    spec: &SpawnSpec,
+    child_cwd: Option<String>,
+    launch_root_dir: Option<&std::path::Path>,
+) -> Result<crate::ProcessLaunchContext> {
+    let memory_descriptor = parent.descriptor(crate::MEMORY_STORE_DESCRIPTOR).cloned();
+    let parent_definition_path = parent
+        .descriptor(crate::AGENT_DEFINITION_DESCRIPTOR)
+        .map(|descriptor| descriptor.path.clone());
+    let mut launch_context = parent.child();
+    launch_context.descriptors.clear();
+
+    if !spec.has_handle(SpawnHandle::HostMounts) {
+        let inherited_mounts = std::mem::take(&mut launch_context.host_mounts);
+        if let Some(cwd) = child_cwd.as_deref()
+            && inherited_mounts
+                .iter()
+                .any(|grant| grant.resolve_host_path(cwd).is_some())
+        {
+            bail!("Child-agent launch cwd '{cwd}' requires the explicit host_mounts handle.");
+        }
+        if child_cwd.is_none()
+            && inherited_mounts
+                .iter()
+                .any(|grant| grant.resolve_host_path(&launch_context.cwd).is_some())
+        {
+            launch_context.cwd = "/".to_string();
+        }
+        for grant in inherited_mounts {
+            if parent_definition_path.as_deref() == Some(&grant.namespace_path) {
+                launch_context.host_mounts.push(grant);
+                continue;
+            }
+            launch_context.namespace.unmount(&grant.namespace_path);
+        }
+    }
+
+    if let Some(cwd) = child_cwd {
+        launch_context.cwd = cwd;
+    }
+    if spec.has_handle(SpawnHandle::Memory) {
+        if let Some(descriptor) = memory_descriptor {
+            launch_context
+                .descriptors
+                .insert(crate::MEMORY_STORE_DESCRIPTOR.to_string(), descriptor);
+        }
+    } else {
+        launch_context.namespace.unmount("/memory");
+    }
+
+    if let Some(root_dir) = launch_root_dir {
+        let source_path = parent
+            .namespace_path(root_dir)
+            .filter(|path| !parent.namespace.union_at(path).is_empty());
+        if source_path.as_deref() != Some("/agent-definition")
+            && let Some(source_path) = source_path
+        {
+            launch_context.namespace.unmount("/agent-definition");
+            launch_context
+                .namespace
+                .bind("/agent-definition", &source_path);
+        }
+        launch_context.host_mounts.retain(|grant| {
+            grant.namespace_path != "/agent-definition"
+                && parent_definition_path.as_deref() != Some(&grant.namespace_path)
+        });
+        launch_context = launch_context
+            .with_host_mount(crate::HostMountGrant::new(
+                "/agent-definition",
+                root_dir,
+                alan_kernel::Access::ReadOnly,
+            )?)
+            .with_descriptor(
+                crate::AGENT_DEFINITION_DESCRIPTOR,
+                crate::ProcessDescriptor::new("/agent-definition")?,
+            );
+    }
+    Ok(launch_context)
 }
 
 async fn evaluate_delegated_launch_capabilities(
@@ -1488,6 +1571,13 @@ impl ChildNamespaceAssemblyPlan {
             executable: executable.into(),
             args: args.into_iter().map(Into::into).collect(),
             namespace: Some(self.namespace_manifest_for_pid(child_pid)),
+            descriptors: self
+                .launch_context
+                .descriptors
+                .iter()
+                .zip(3_u32..)
+                .map(|((_, descriptor), number)| (number, descriptor.path.clone()))
+                .collect(),
         }
     }
 
@@ -1508,11 +1598,39 @@ impl ChildNamespaceAssemblyPlan {
         mounts.extend(self.bin_tool_names().map(|name| {
             ExecNamespaceMount::new(format!("/lib/exec/{name}"), ExecNamespaceAccess::ReadOnly)
         }));
+        mounts.extend(self.launch_context.host_mounts.iter().map(|grant| {
+            ExecNamespaceMount::new(
+                grant.namespace_path.clone(),
+                match grant.access {
+                    alan_kernel::Access::ReadOnly => ExecNamespaceAccess::ReadOnly,
+                    alan_kernel::Access::ReadWrite => ExecNamespaceAccess::ReadWrite,
+                },
+            )
+        }));
+        mounts.extend(
+            self.launch_context
+                .descriptors
+                .values()
+                .filter_map(|descriptor| {
+                    self.launch_context
+                        .namespace
+                        .resolve(&descriptor.path)
+                        .ok()
+                        .map(|resolved| {
+                            let access = match resolved.access {
+                                alan_kernel::Access::ReadOnly => ExecNamespaceAccess::ReadOnly,
+                                alan_kernel::Access::ReadWrite => ExecNamespaceAccess::ReadWrite,
+                            };
+                            ExecNamespaceMount::new(descriptor.path.clone(), access)
+                        })
+                }),
+        );
         mounts.sort_by(|left, right| {
             left.path
                 .cmp(&right.path)
                 .then_with(|| left.access.cmp(&right.access))
         });
+        mounts.dedup();
         ExecNamespaceManifest { mounts }
     }
 
@@ -1574,7 +1692,7 @@ impl ChildNamespaceLaunchHandles {
 fn child_namespace_launch_handles_from_parent(
     parent: &RuntimeLoopState,
     agent_tree: Arc<alan_agentfs::AgentFs>,
-    llm_connection: Arc<alan_llmfs::LlmFs>,
+    llm_connection: InProcessTransport,
 ) -> Result<ChildNamespaceLaunchHandles> {
     let shared_services = parent
         .namespace_environment()
@@ -1582,7 +1700,7 @@ fn child_namespace_launch_handles_from_parent(
         .context("parent namespace missing shared service handles for child-agent launch")?;
     Ok(ChildNamespaceLaunchHandles::new(
         agent_tree,
-        InProcessTransport::new(llm_connection),
+        llm_connection,
         shared_services.srv,
         shared_services.route,
     ))
@@ -1690,12 +1808,41 @@ async fn spawn_child_namespace_runtime_environment(
     )
     .with_launch_context(plan.launch_context.clone())
     .with_process_context(launch_procfs.clone(), agent_root, child_pid, tool_runner)
-    .with_shared_services(handles.srv.clone(), handles.route.clone());
-    let environment = if let Some(factory) = mount_grant_applicator_factory {
+    .with_shared_services(
+        handles.srv.clone(),
+        handles.route.clone(),
+        handles.llm_connection.clone(),
+    );
+    let mut environment = if let Some(factory) = mount_grant_applicator_factory {
         environment.with_mount_grant_applicator_factory(factory, live_namespace)
     } else {
         environment
     };
+    if let Some(grant) = plan
+        .launch_context
+        .host_mounts
+        .iter()
+        .find(|grant| grant.namespace_path == "/agent-definition")
+    {
+        let applied = environment.apply_approved_mount_grant(&super::ApprovedMountGrant::new(
+            grant.namespace_path.clone(),
+            grant.host_path.clone(),
+            match grant.access {
+                alan_kernel::Access::ReadOnly => super::ApprovedMountGrantAccess::ReadOnly,
+                alan_kernel::Access::ReadWrite => super::ApprovedMountGrantAccess::ReadWrite,
+            },
+            "Agent Definition launch reference",
+        ));
+        if environment.mount_grant_applicator_factory().is_some() {
+            anyhow::ensure!(
+                applied.namespace_applied,
+                "failed to project child Agent Definition: {}",
+                applied
+                    .namespace_error
+                    .unwrap_or_else(|| "unknown projection error".to_string())
+            );
+        }
+    }
 
     Ok(ChildNamespaceRuntimeLaunch {
         pid,
@@ -2058,7 +2205,6 @@ mod tests {
     };
     use alan_llm::LlmProvider;
     use serde_json::json;
-    use std::collections::BTreeMap;
     use std::sync::{Arc, Mutex};
     use tempfile::TempDir;
 
@@ -2082,12 +2228,26 @@ mod tests {
         }
     }
 
-    fn namespace_environment_for_parent_test() -> NamespaceRuntimeEnvironment {
-        namespace_environment_for_parent_test_with_route(Arc::new(alan_routefs::RouteFs::new()))
-    }
-
     fn namespace_environment_for_parent_test_with_route(
         routefs: Arc<alan_routefs::RouteFs>,
+    ) -> NamespaceRuntimeEnvironment {
+        namespace_environment_for_parent_test_with_services(
+            routefs,
+            Arc::new(alan_llmfs::LlmFs::new()),
+        )
+    }
+
+    fn namespace_environment_for_parent_test_with_services(
+        routefs: Arc<alan_routefs::RouteFs>,
+        llmfs: Arc<alan_llmfs::LlmFs>,
+    ) -> NamespaceRuntimeEnvironment {
+        namespace_environment_for_parent_test_with_connection(routefs, llmfs, "default")
+    }
+
+    fn namespace_environment_for_parent_test_with_connection(
+        routefs: Arc<alan_routefs::RouteFs>,
+        llmfs: Arc<alan_llmfs::LlmFs>,
+        connection: &str,
     ) -> NamespaceRuntimeEnvironment {
         let mut mounts = KernelNamespace::new();
         for name in ["alpha", "beta"] {
@@ -2109,8 +2269,12 @@ mod tests {
             );
         }
         let root = InProcessTransport::new(Arc::new(alan_kernel::MountFs::new(mounts)));
-        crate::runtime::NamespaceRuntimeEnvironment::new(root, "/agent/1", "default")
-            .with_shared_services(memfs_transport(), InProcessTransport::new(routefs))
+        crate::runtime::NamespaceRuntimeEnvironment::new(root, "/agent/1", connection)
+            .with_shared_services(
+                memfs_transport(),
+                InProcessTransport::new(routefs),
+                InProcessTransport::new(llmfs),
+            )
     }
 
     #[derive(Clone, Default)]
@@ -2233,6 +2397,7 @@ mod tests {
     #[derive(Debug, Default)]
     struct RecordingMountGrantApplicatorFactory {
         created: Arc<Mutex<usize>>,
+        applied: Arc<Mutex<Vec<ApprovedMountGrant>>>,
     }
 
     impl RecordingMountGrantApplicatorFactory {
@@ -2242,28 +2407,45 @@ mod tests {
                 .lock()
                 .expect("created count lock should not be poisoned")
         }
+
+        fn applied_grants(&self) -> Vec<ApprovedMountGrant> {
+            self.applied
+                .lock()
+                .expect("applied grants lock should not be poisoned")
+                .clone()
+        }
     }
 
     impl MountGrantApplicatorFactory for RecordingMountGrantApplicatorFactory {
         fn create(
             &self,
+            _pid: alan_kernel::Pid,
             live_namespace: alan_kernel::LiveNamespace,
+            _inherited_mount_paths: &[String],
         ) -> Arc<dyn MountGrantApplicator> {
             *self
                 .created
                 .lock()
                 .expect("created count lock should not be poisoned") += 1;
-            Arc::new(RecordingMountGrantApplicator { live_namespace })
+            Arc::new(RecordingMountGrantApplicator {
+                live_namespace,
+                applied: self.applied.clone(),
+            })
         }
     }
 
     #[derive(Debug)]
     struct RecordingMountGrantApplicator {
         live_namespace: alan_kernel::LiveNamespace,
+        applied: Arc<Mutex<Vec<ApprovedMountGrant>>>,
     }
 
     impl MountGrantApplicator for RecordingMountGrantApplicator {
         fn apply_mount_grant(&self, grant: &ApprovedMountGrant) -> anyhow::Result<KernelNamespace> {
+            self.applied
+                .lock()
+                .expect("applied grants lock should not be poisoned")
+                .push(grant.clone());
             let access = match grant.access {
                 ApprovedMountGrantAccess::ReadOnly => KernelAccess::ReadOnly,
                 ApprovedMountGrantAccess::ReadWrite => KernelAccess::ReadWrite,
@@ -2329,8 +2511,8 @@ mod tests {
 
     fn make_parent_state_with_capability_view(
         temp: &TempDir,
-        _requests: RecordedRequests,
-        _response: GenerationResponse,
+        requests: RecordedRequests,
+        response: GenerationResponse,
         capability_view: crate::skills::ResolvedCapabilityView,
     ) -> RuntimeLoopState {
         let source_root = temp.path().join("source");
@@ -2371,6 +2553,7 @@ mod tests {
             memfs_transport(),
             KernelAccess::ReadOnly,
         );
+        launch_namespace.mount("/memory", memfs_transport(), KernelAccess::ReadWrite);
         let launch_context = crate::ProcessLaunchContext::new(
             launch_namespace,
             KernelCredentials::user("parent-agent"),
@@ -2416,11 +2599,20 @@ mod tests {
             }],
         );
 
+        let llmfs = Arc::new(alan_llmfs::LlmFs::new());
+        llmfs.register_connection(
+            "default",
+            Box::new(RecordingProvider::new(requests, response)),
+        );
+
         RuntimeLoopState {
             machine,
             current_submission_id: None,
-            environment: namespace_environment_for_parent_test()
-                .with_launch_context(launch_context),
+            environment: namespace_environment_for_parent_test_with_services(
+                Arc::new(alan_routefs::RouteFs::new()),
+                llmfs,
+            )
+            .with_launch_context(launch_context),
             core_config,
             runtime_config: RuntimeConfig {
                 store_bindings: Some(store_bindings),
@@ -2464,7 +2656,7 @@ mod tests {
                 timeout_secs: Some(30),
                 output_dir: None,
             },
-            handles: Vec::new(),
+            handles: vec![SpawnHandle::HostMounts],
             runtime_overrides: alan_agent_protocol::SpawnRuntimeOverrides::default(),
             delegated: None,
         }
@@ -2686,7 +2878,7 @@ Body
     }
 
     fn namespace_from_child_plan(plan: &ChildNamespaceAssemblyPlan) -> KernelNamespace {
-        let mut namespace = KernelNamespace::new();
+        let mut namespace = plan.launch_context.namespace.child();
         namespace.mount(
             &plan.agent_mount,
             memfs_transport(),
@@ -2759,6 +2951,23 @@ Body
         assert!(!user_text.contains("Parent Conversation Snapshot"));
         assert!(!user_text.contains("Parent Plan Snapshot"));
         assert!(!user_text.contains("Parent Tool Results"));
+    }
+
+    #[tokio::test]
+    async fn spawn_child_runtime_reuses_the_passed_callable_connection() {
+        let temp = TempDir::new().unwrap();
+        let requests = RecordedRequests::default();
+        let response = completed_response("Shared Connection completed the child.");
+        let parent = make_parent_state(&temp, requests.clone(), response);
+
+        let child = spawn_child_runtime(&parent, launch_spec(temp.path().join("definition")))
+            .await
+            .unwrap();
+        let result = child.join().await.unwrap();
+
+        assert_eq!(result.status, ChildRuntimeStatus::Completed);
+        assert_eq!(result.output_text, "Shared Connection completed the child.");
+        assert_eq!(requests.0.lock().unwrap().len(), 1);
     }
 
     #[tokio::test]
@@ -2987,15 +3196,22 @@ Body
             json!({
                 "executable": "/bin/alan-agent",
                 "args": ["--boot"],
+                "descriptors": {
+                    "3": "/agent-definition",
+                    "4": "/memory"
+                },
                 "namespace": {
                     "mounts": [
                         {"path": "/agent", "access": "rw"},
+                        {"path": "/agent-definition", "access": "ro"},
                         {"path": "/bin/alpha", "access": "ro"},
                         {"path": "/bin/beta", "access": "ro"},
                         {"path": "/lib/exec/alpha", "access": "ro"},
                         {"path": "/lib/exec/beta", "access": "ro"},
+                        {"path": "/memory", "access": "rw"},
                         {"path": "/mnt/llm", "access": "rw"},
                         {"path": "/mnt/route", "access": "rw"},
+                        {"path": "/mnt/source", "access": "rw"},
                         {"path": "/srv", "access": "ro"}
                     ]
                 }
@@ -3033,10 +3249,13 @@ Body
             json!({
                 "mounts": [
                     {"path": "/agent", "access": "rw"},
+                    {"path": "/agent-definition", "access": "ro"},
                     {"path": "/bin/alpha", "access": "ro"},
                     {"path": "/lib/exec/alpha", "access": "ro"},
+                    {"path": "/memory", "access": "rw"},
                     {"path": "/mnt/llm", "access": "rw"},
                     {"path": "/mnt/route", "access": "rw"},
+                    {"path": "/mnt/source", "access": "rw"},
                     {"path": "/srv", "access": "ro"}
                 ]
             })
@@ -3428,7 +3647,7 @@ Body
         let parent = make_parent_state(&temp, requests, response);
         let root_dir = temp.path().join("definition");
         let spec = launch_spec(root_dir);
-        let plan = build_child_namespace_assembly_plan(
+        let mut plan = build_child_namespace_assembly_plan(
             &parent,
             &spec,
             &parent.core_config,
@@ -3436,6 +3655,18 @@ Body
         )
         .await
         .unwrap();
+        plan.launch_context
+            .host_mounts
+            .retain(|grant| grant.namespace_path != "/agent-definition");
+        let package_child_definition = temp.path().join("package-child-definition");
+        plan.launch_context.host_mounts.push(
+            crate::HostMountGrant::new(
+                "/agent-definition",
+                package_child_definition.clone(),
+                KernelAccess::ReadOnly,
+            )
+            .unwrap(),
+        );
         let launch_procfs = KernelProcFs::new();
         let tool_runner =
             crate::tools::ToolProcessRunner::from_registry(&parent_test_tools(&parent.core_config));
@@ -3477,11 +3708,32 @@ Body
         .unwrap();
 
         assert_eq!(factory.created_count(), 1);
+        assert_eq!(
+            factory.applied_grants(),
+            [ApprovedMountGrant::new(
+                "/agent-definition",
+                package_child_definition,
+                ApprovedMountGrantAccess::ReadOnly,
+                "Agent Definition launch reference",
+            )]
+        );
         assert!(
             launch
                 .environment
                 .mount_grant_applicator_factory()
                 .is_some()
+        );
+        let definition_namespace = read_proc_path(
+            &launch_procfs,
+            vec![launch.pid.clone(), "namespace".to_string()],
+            Fid(95),
+        )
+        .await;
+        assert!(
+            definition_namespace
+                .lines()
+                .any(|line| line == "/agent-definition ro"),
+            "child Process must receive its target Agent Definition: {definition_namespace:?}"
         );
         let applied = launch
             .environment
@@ -3548,7 +3800,7 @@ Body
         let handles = child_namespace_launch_handles_from_parent(
             &parent,
             Arc::new(alan_agentfs::AgentFs::new()),
-            llmfs,
+            InProcessTransport::new(llmfs),
         )
         .unwrap()
         .with_tool_package(
@@ -3611,6 +3863,7 @@ Body
                 executable: "/bin/alpha".to_string(),
                 args: vec!["{}".to_string()],
                 namespace: None,
+                descriptors: Default::default(),
             },
         };
 
@@ -3697,48 +3950,19 @@ tool_repeat_limit = 9
         let requests = RecordedRequests::default();
         let response = completed_response("Child used the explicit profile.");
         let mut parent = make_parent_state(&temp, requests.clone(), response.clone());
-        let metadata_path = temp.path().join("connections.toml");
-        let credentials_dir = temp.path().join("credentials");
         let profile_id = "explicit-main";
-        let credential_id = "explicit-secret";
-        let connections = crate::ConnectionsFile {
-            credentials: BTreeMap::from([(
-                credential_id.to_string(),
-                crate::ConnectionCredential {
-                    kind: crate::CredentialKind::SecretString,
-                    provider_family: crate::config::LlmProvider::OpenAiResponses,
-                    label: "Explicit test credential".to_string(),
-                    backend: crate::default_credential_backend(crate::CredentialKind::SecretString)
-                        .to_string(),
-                },
-            )]),
-            profiles: BTreeMap::from([(
-                profile_id.to_string(),
-                crate::ConnectionProfile {
-                    provider: crate::config::LlmProvider::OpenAiResponses,
-                    label: Some("Explicit profile".to_string()),
-                    credential_id: Some(credential_id.to_string()),
-                    created_at: chrono::Utc::now(),
-                    updated_at: chrono::Utc::now(),
-                    source: "test".to_string(),
-                    settings: BTreeMap::from([("model".to_string(), "gpt-5.4".to_string())]),
-                },
-            )]),
-            ..crate::ConnectionsFile::default()
-        };
-        connections.save_to_path(&metadata_path).unwrap();
-        crate::SecretStore::from_directory(&credentials_dir)
-            .unwrap()
-            .save(credential_id, "sk-explicit")
-            .unwrap();
-        let connection_store =
-            crate::ConnectionStoreBindings::new(metadata_path, credentials_dir).unwrap();
         parent.core_config.connection_profile = Some(profile_id.to_string());
-        parent
-            .core_config
-            .resolve_connection_profile(&connection_store)
-            .unwrap();
-        parent.runtime_config.connection_store = Some(connection_store);
+        let launch_context = parent
+            .namespace_environment()
+            .launch_context()
+            .unwrap()
+            .clone();
+        parent.environment = namespace_environment_for_parent_test_with_connection(
+            Arc::new(alan_routefs::RouteFs::new()),
+            Arc::new(alan_llmfs::LlmFs::new()),
+            profile_id,
+        )
+        .with_launch_context(launch_context);
         let root_dir = temp.path().join("definition");
         let seen_config = Arc::new(Mutex::new(None::<crate::Config>));
         let seen_config_for_factory = seen_config.clone();
@@ -3767,78 +3991,32 @@ tool_repeat_limit = 9
     }
 
     #[tokio::test]
-    async fn spawn_child_runtime_resolves_definition_connection_profile_before_llm_setup() {
+    async fn spawn_child_runtime_rejects_unpassed_definition_connection_reference() {
         let temp = TempDir::new().unwrap();
         let requests = RecordedRequests::default();
         let response = completed_response("Child used its definition profile.");
-        let mut parent = make_parent_state(&temp, requests.clone(), response.clone());
-        let metadata_path = temp.path().join("connections.toml");
-        let credentials_dir = temp.path().join("credentials");
+        let parent = make_parent_state(&temp, requests.clone(), response.clone());
         let profile_id = "child-main";
-        let credential_id = "child-secret";
-        let connections = crate::ConnectionsFile {
-            credentials: BTreeMap::from([(
-                credential_id.to_string(),
-                crate::ConnectionCredential {
-                    kind: crate::CredentialKind::SecretString,
-                    provider_family: crate::config::LlmProvider::OpenAiResponses,
-                    label: "Child test credential".to_string(),
-                    backend: crate::default_credential_backend(crate::CredentialKind::SecretString)
-                        .to_string(),
-                },
-            )]),
-            profiles: BTreeMap::from([(
-                profile_id.to_string(),
-                crate::ConnectionProfile {
-                    provider: crate::config::LlmProvider::OpenAiResponses,
-                    label: Some("Child profile".to_string()),
-                    credential_id: Some(credential_id.to_string()),
-                    created_at: chrono::Utc::now(),
-                    updated_at: chrono::Utc::now(),
-                    source: "test".to_string(),
-                    settings: BTreeMap::from([(
-                        "model".to_string(),
-                        "gpt-child-profile".to_string(),
-                    )]),
-                },
-            )]),
-            ..crate::ConnectionsFile::default()
-        };
-        connections.save_to_path(&metadata_path).unwrap();
-        crate::SecretStore::from_directory(&credentials_dir)
-            .unwrap()
-            .save(credential_id, "sk-child")
-            .unwrap();
-        parent.runtime_config.connection_store =
-            Some(crate::ConnectionStoreBindings::new(metadata_path, credentials_dir).unwrap());
         let root_dir = temp.path().join("definition");
         std::fs::write(
             root_dir.join("agent.toml"),
             format!("connection_profile = \"{profile_id}\"\n"),
         )
         .unwrap();
-        let seen_config = Arc::new(Mutex::new(None::<crate::Config>));
-        let seen_config_for_factory = seen_config.clone();
-
-        let child =
-            spawn_child_runtime_with_client_factory(&parent, launch_spec(root_dir), |config| {
-                *seen_config_for_factory.lock().unwrap() = Some(config.clone());
-                Ok(LlmClient::new(RecordingProvider::new(
-                    requests.clone(),
-                    response.clone(),
-                )))
+        let error =
+            match spawn_child_runtime_with_client_factory(&parent, launch_spec(root_dir), |_| {
+                unreachable!("an unpassed Connection must fail before provider setup")
             })
             .await
-            .unwrap();
-        let result = child.join().await.unwrap();
+            {
+                Ok(_) => panic!("unpassed child Connection should be rejected"),
+                Err(error) => error,
+            };
 
-        assert_eq!(result.status, ChildRuntimeStatus::Completed);
-        let seen_config = seen_config.lock().unwrap().clone().unwrap();
-        assert_eq!(seen_config.connection_profile.as_deref(), Some(profile_id));
-        assert_eq!(seen_config.effective_model(), "gpt-child-profile");
-        assert_eq!(
-            seen_config.openai_responses_api_key.as_deref(),
-            Some("sk-child")
+        assert!(
+            error
+                .to_string()
+                .contains("was not passed by the parent Process")
         );
     }
 
@@ -3960,6 +4138,189 @@ model_reasoning_effort = "high"
                 "expected normal-path validation error for {cwd}, got {err:#}"
             );
         }
+    }
+
+    #[test]
+    fn child_launch_context_does_not_inherit_parent_host_mounts_or_descriptors_by_default() {
+        let temp = TempDir::new().unwrap();
+        let parent = make_parent_state(
+            &temp,
+            RecordedRequests::default(),
+            completed_response("done"),
+        );
+        let parent_context = parent.namespace_environment().launch_context().unwrap();
+        let definition = temp.path().join("child-definition");
+        let mut spec = launch_spec(definition.clone());
+        spec.handles.clear();
+
+        let child =
+            build_child_launch_context(parent_context, &spec, None, Some(&definition)).unwrap();
+
+        assert_eq!(child.cwd, "/");
+        assert!(child.namespace.resolve("/mnt/source").is_err());
+        assert!(
+            child
+                .host_mounts
+                .iter()
+                .all(|grant| grant.namespace_path != "/mnt/source")
+        );
+        assert_eq!(
+            child
+                .descriptors
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            vec![crate::AGENT_DEFINITION_DESCRIPTOR]
+        );
+    }
+
+    #[test]
+    fn child_launch_context_binds_a_noncanonical_parent_definition_path() {
+        let definition = TempDir::new().unwrap();
+        let mut namespace = KernelNamespace::new();
+        namespace.mount(
+            "/lib/agents/root",
+            memfs_transport(),
+            KernelAccess::ReadOnly,
+        );
+        let parent = crate::ProcessLaunchContext::new(
+            namespace,
+            KernelCredentials::user("parent-agent"),
+            "/",
+        )
+        .unwrap()
+        .with_host_mount(
+            crate::HostMountGrant::new(
+                "/lib/agents/root",
+                definition.path(),
+                KernelAccess::ReadOnly,
+            )
+            .unwrap(),
+        )
+        .with_descriptor(
+            crate::AGENT_DEFINITION_DESCRIPTOR,
+            crate::ProcessDescriptor::new("/lib/agents/root").unwrap(),
+        );
+        let spec = launch_spec(definition.path().to_path_buf());
+
+        let child =
+            build_child_launch_context(&parent, &spec, None, Some(definition.path())).unwrap();
+
+        assert!(child.namespace.resolve("/agent-definition").is_ok());
+        assert_eq!(
+            child
+                .descriptor(crate::AGENT_DEFINITION_DESCRIPTOR)
+                .unwrap()
+                .path,
+            "/agent-definition"
+        );
+    }
+
+    #[test]
+    fn child_launch_context_keeps_bootstrap_definition_until_descendant_target_is_projected() {
+        let root = TempDir::new().unwrap();
+        let parent_definition = root.path().join("parent-definition");
+        let package_root = root.path().join("package");
+        let child_definition = package_root.join("agents/reviewer");
+        std::fs::create_dir_all(&parent_definition).unwrap();
+        std::fs::create_dir_all(&child_definition).unwrap();
+
+        let mut namespace = KernelNamespace::new();
+        namespace.mount(
+            "/agent-definition",
+            memfs_transport(),
+            KernelAccess::ReadOnly,
+        );
+        namespace.mount("/mnt/package", memfs_transport(), KernelAccess::ReadOnly);
+        let parent = crate::ProcessLaunchContext::new(
+            namespace,
+            KernelCredentials::user("parent-agent"),
+            "/",
+        )
+        .unwrap()
+        .with_host_mount(
+            crate::HostMountGrant::new(
+                "/agent-definition",
+                parent_definition,
+                KernelAccess::ReadOnly,
+            )
+            .unwrap(),
+        )
+        .with_host_mount(
+            crate::HostMountGrant::new("/mnt/package", package_root, KernelAccess::ReadOnly)
+                .unwrap(),
+        )
+        .with_descriptor(
+            crate::AGENT_DEFINITION_DESCRIPTOR,
+            crate::ProcessDescriptor::new("/agent-definition").unwrap(),
+        );
+
+        let child = build_child_launch_context(
+            &parent,
+            &launch_spec(child_definition.clone()),
+            None,
+            Some(&child_definition),
+        )
+        .unwrap();
+
+        assert!(child.namespace.resolve("/agent-definition").is_ok());
+        assert_eq!(
+            child
+                .host_mounts
+                .iter()
+                .find(|grant| grant.namespace_path == "/agent-definition")
+                .unwrap()
+                .host_path,
+            child_definition
+        );
+    }
+
+    #[test]
+    fn child_launch_context_passes_parent_host_mounts_only_with_explicit_handle() {
+        let temp = TempDir::new().unwrap();
+        let parent = make_parent_state(
+            &temp,
+            RecordedRequests::default(),
+            completed_response("done"),
+        );
+        let parent_context = parent.namespace_environment().launch_context().unwrap();
+        let definition = temp.path().join("child-definition");
+        let spec = launch_spec(definition.clone());
+
+        let child =
+            build_child_launch_context(parent_context, &spec, None, Some(&definition)).unwrap();
+
+        assert_eq!(child.cwd, "/mnt/source");
+        assert!(child.namespace.resolve("/mnt/source").is_ok());
+        assert!(
+            child
+                .host_mounts
+                .iter()
+                .any(|grant| grant.namespace_path == "/mnt/source")
+        );
+    }
+
+    #[test]
+    fn child_launch_rejects_cwd_inside_an_unpassed_host_mount() {
+        let temp = TempDir::new().unwrap();
+        let parent = make_parent_state(
+            &temp,
+            RecordedRequests::default(),
+            completed_response("done"),
+        );
+        let parent_context = parent.namespace_environment().launch_context().unwrap();
+        let definition = temp.path().join("child-definition");
+        let mut spec = launch_spec(definition.clone());
+        spec.handles.clear();
+
+        let error = build_child_launch_context(
+            parent_context,
+            &spec,
+            Some("/mnt/source".to_string()),
+            Some(&definition),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("explicit host_mounts handle"));
     }
 
     #[test]
@@ -4120,7 +4481,7 @@ model_reasoning_effort = "high"
                 timeout_secs: Some(30),
                 ..alan_agent_protocol::SpawnLaunchInputs::default()
             },
-            handles: Vec::new(),
+            handles: vec![SpawnHandle::HostMounts],
             runtime_overrides: alan_agent_protocol::SpawnRuntimeOverrides::default(),
             delegated: None,
         };
@@ -4190,7 +4551,7 @@ Body
                 timeout_secs: Some(30),
                 ..alan_agent_protocol::SpawnLaunchInputs::default()
             },
-            handles: Vec::new(),
+            handles: vec![SpawnHandle::HostMounts],
             runtime_overrides: alan_agent_protocol::SpawnRuntimeOverrides::default(),
             delegated: None,
         };

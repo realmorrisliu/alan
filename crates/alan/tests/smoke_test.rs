@@ -8,7 +8,7 @@ use alan_agent_protocol::{UiActivityState, UiEvent};
 use alan_ap::InProcessTransport;
 use alan_kernel::{Access, Credentials, Namespace};
 use alan_llm::{GenerationResponse, MockLlmProvider, TokenUsage, ToolCall};
-use alan_os_host::{AlanOsHost, FixedBootConfig, HostEndpointPaths, LocalAttachment};
+use alan_os_host::{AlanOsHost, HostBootConfig, HostEndpointPaths, LocalAttachment};
 use std::time::Duration;
 
 const AGENT_PATH: &str = "/agent/root";
@@ -28,7 +28,7 @@ impl TestHost {
         let host = tokio::time::timeout(
             TEST_TIMEOUT,
             AlanOsHost::boot(
-                FixedBootConfig::ephemeral("test", config, llm, tools),
+                HostBootConfig::ephemeral("test", config, llm, tools),
                 paths.clone(),
             ),
         )

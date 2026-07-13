@@ -56,6 +56,9 @@ pub struct ExecSpec {
     pub args: Vec<String>,
     #[serde(default)]
     pub namespace: Option<ExecNamespaceManifest>,
+    /// Numeric Process descriptors bound to paths in the committed namespace.
+    #[serde(default)]
+    pub descriptors: BTreeMap<u32, String>,
 }
 
 /// The namespace mount set the spawner expects a `/proc/clone` commit to use.

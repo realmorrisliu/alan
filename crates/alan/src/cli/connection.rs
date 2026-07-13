@@ -9,7 +9,8 @@ use alan_auth::{
 use alan_os_host::{
     HostStorePaths, LegacyConnectionPaths, SystemStorePaths, migrate_legacy_connections,
 };
-use anyhow::Result;
+use alan_shell::Shell;
+use anyhow::{Context, Result};
 use chrono::Utc;
 use std::{
     collections::BTreeMap,
@@ -21,9 +22,10 @@ use std::{
 struct ConnectionStores {
     bindings: ConnectionStoreBindings,
     managed_auth: PathBuf,
+    shell: Shell,
 }
 
-fn connection_stores() -> Result<ConnectionStores> {
+async fn connection_stores() -> Result<ConnectionStores> {
     let channel = InstallChannel::detect_current();
     let system = SystemStorePaths::detect(channel.descriptor().id)?;
     let host = HostStorePaths::detect(channel.descriptor().id)?;
@@ -33,17 +35,81 @@ fn connection_stores() -> Result<ConnectionStores> {
     Ok(ConnectionStores {
         bindings: system.connection_bindings(&host)?,
         managed_auth: host.managed_auth,
+        shell: Shell::new(super::host::attach_or_start_host(channel).await?.root),
     })
 }
 
-fn load_connections() -> Result<(ConnectionStores, ConnectionsFile)> {
-    let stores = connection_stores()?;
-    let (connections, _) = ConnectionsFile::load_from_path(&stores.bindings.metadata_path)?;
+async fn load_connections() -> Result<(ConnectionStores, ConnectionsFile)> {
+    let stores = connection_stores().await?;
+    let bytes = stores
+        .shell
+        .cat("/mnt/connections/metadata")
+        .await
+        .map_err(|error| anyhow::anyhow!("read Connection Service metadata: {error}"))?;
+    let connections =
+        serde_json::from_slice(&bytes).context("decode Connection Service metadata")?;
     Ok((stores, connections))
 }
 
-fn save_connections(stores: &ConnectionStores, connections: &ConnectionsFile) -> Result<()> {
-    connections.save_to_path(&stores.bindings.metadata_path)
+async fn save_connections(stores: &ConnectionStores, connections: &ConnectionsFile) -> Result<()> {
+    let command = serde_json::json!({
+        "op": "replace_metadata",
+        "connections": connections,
+    });
+    stores
+        .shell
+        .write(
+            "/mnt/connections/ctl",
+            &serde_json::to_vec(&command).context("encode Connection Service command")?,
+        )
+        .await
+        .map_err(|error| anyhow::anyhow!("update Connection Service metadata: {error}"))
+}
+
+async fn request_native(
+    stores: &ConnectionStores,
+    profile_id: &str,
+    action: &str,
+) -> Result<String> {
+    let request_id = format!("cli-{}", uuid::Uuid::new_v4().simple());
+    let command = serde_json::json!({
+        "op": "request_native",
+        "request": {
+            "id": request_id,
+            "profile_id": profile_id,
+            "action": action,
+        }
+    });
+    stores
+        .shell
+        .write(
+            "/mnt/connections/ctl",
+            &serde_json::to_vec(&command).context("encode native Connection request")?,
+        )
+        .await
+        .map_err(|error| anyhow::anyhow!("create native Connection request: {error}"))?;
+    Ok(request_id)
+}
+
+async fn respond_native(
+    stores: &ConnectionStores,
+    request_id: &str,
+    opaque_credential_ref: Option<String>,
+    status: &str,
+) -> Result<()> {
+    stores
+        .shell
+        .write(
+            "/mnt/connections/native-responses",
+            &serde_json::to_vec(&serde_json::json!({
+                "request_id": request_id,
+                "opaque_credential_ref": opaque_credential_ref,
+                "status": status,
+            }))
+            .context("encode native Connection response")?,
+        )
+        .await
+        .map_err(|error| anyhow::anyhow!("answer native Connection request: {error}"))
 }
 
 fn secret_store(stores: &ConnectionStores) -> Result<SecretStore> {
@@ -201,7 +267,7 @@ fn print_profile(profile_id: &str, profile: &ConnectionProfile, is_default: bool
 }
 
 pub async fn run_connection_list() -> Result<()> {
-    let (_, connections) = load_connections()?;
+    let (_, connections) = load_connections().await?;
     if let Some(default_profile) = connections.default_profile.as_deref() {
         println!("default_profile: {}", display_identifier(default_profile));
     }
@@ -230,7 +296,7 @@ pub async fn run_connection_list() -> Result<()> {
 }
 
 pub async fn run_connection_show(profile_id: &str) -> Result<()> {
-    let (_, connections) = load_connections()?;
+    let (_, connections) = load_connections().await?;
     let profile = connection_profile(&connections, profile_id)?;
     print_profile(
         profile_id,
@@ -252,7 +318,7 @@ pub async fn run_connection_add(
     let profile_id = suggested_profile_id(provider, profile_id)?;
     let settings = normalize_profile_settings(provider, &parse_setting_pairs(setting_pairs)?);
     validate_profile_settings(provider, &settings)?;
-    let (stores, mut connections) = load_connections()?;
+    let (stores, mut connections) = load_connections().await?;
     anyhow::ensure!(
         !connections.profiles.contains_key(&profile_id),
         "Connection profile `{profile_id}` already exists"
@@ -283,7 +349,7 @@ pub async fn run_connection_add(
     if make_default || connections.default_profile.is_none() {
         connections.default_profile = Some(profile_id.clone());
     }
-    save_connections(&stores, &connections)?;
+    save_connections(&stores, &connections).await?;
     println!(
         "Created connection profile {}",
         display_identifier(&profile_id)
@@ -301,7 +367,7 @@ pub async fn run_connection_edit(
     let credential_id = credential_id
         .map(|credential_id| validated_profile_id(&credential_id))
         .transpose()?;
-    let (stores, mut connections) = load_connections()?;
+    let (stores, mut connections) = load_connections().await?;
     let (provider, credential_label) = {
         let profile = connections
             .profiles
@@ -337,7 +403,7 @@ pub async fn run_connection_edit(
         profile.settings = settings;
     }
     profile.updated_at = Utc::now();
-    save_connections(&stores, &connections)?;
+    save_connections(&stores, &connections).await?;
     println!(
         "Updated connection profile {}",
         display_identifier(&profile_id)
@@ -349,7 +415,7 @@ pub async fn run_connection_set_secret(profile_id: &str, value: Option<String>) 
     let secret = value
         .map(Ok)
         .unwrap_or_else(|| prompt_secret_line(profile_id))?;
-    let (stores, connections) = load_connections()?;
+    let (stores, connections) = load_connections().await?;
     let profile = connection_profile(&connections, profile_id)?;
     anyhow::ensure!(
         ConnectionsFile::profile_descriptor(profile.provider).credential_kind
@@ -361,7 +427,15 @@ pub async fn run_connection_set_secret(profile_id: &str, value: Option<String>) 
         .credential_id
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("Profile `{profile_id}` has no credential"))?;
+    let request_id = request_native(&stores, profile_id, "secret_entry").await?;
     secret_store(&stores)?.save(credential_id, &secret)?;
+    respond_native(
+        &stores,
+        &request_id,
+        Some(format!("host-credential-store:{credential_id}")),
+        "ready",
+    )
+    .await?;
     println!("Stored secret for {}.", display_identifier(profile_id));
     Ok(())
 }
@@ -371,12 +445,22 @@ pub async fn run_connection_login(
     use_device_code: bool,
     open_browser: bool,
 ) -> Result<()> {
-    let (stores, connections) = load_connections()?;
+    let (stores, connections) = load_connections().await?;
     let profile = connection_profile(&connections, profile_id)?;
     anyhow::ensure!(
         profile.provider == LlmProvider::Chatgpt,
         "managed login is supported only for chatgpt"
     );
+    let request_id = request_native(
+        &stores,
+        profile_id,
+        if use_device_code {
+            "device_login"
+        } else {
+            "browser_login"
+        },
+    )
+    .await?;
     let manager = chatgpt_auth_manager(&stores)?;
     if use_device_code {
         let prompt = manager.start_device_code().await?;
@@ -399,13 +483,21 @@ pub async fn run_connection_login(
             })
             .await?;
     }
+    respond_native(
+        &stores,
+        &request_id,
+        Some(format!("host-managed-auth:{profile_id}")),
+        "ready",
+    )
+    .await?;
     println!("Logged in to {}.", display_identifier(profile_id));
     Ok(())
 }
 
 pub async fn run_connection_logout(profile_id: &str) -> Result<()> {
-    let (stores, connections) = load_connections()?;
+    let (stores, connections) = load_connections().await?;
     let profile = connection_profile(&connections, profile_id)?;
+    let request_id = request_native(&stores, profile_id, "logout").await?;
     let removed = if profile.provider == LlmProvider::Chatgpt {
         chatgpt_auth_manager(&stores)?.logout().await?
     } else {
@@ -415,6 +507,7 @@ pub async fn run_connection_logout(profile_id: &str) -> Result<()> {
             .ok_or_else(|| anyhow::anyhow!("Profile `{profile_id}` has no credential"))?;
         secret_store(&stores)?.delete(credential_id)?
     };
+    respond_native(&stores, &request_id, None, "logged_out").await?;
     println!(
         "{}",
         if removed {
@@ -433,7 +526,7 @@ pub async fn run_connection_logout(profile_id: &str) -> Result<()> {
 }
 
 pub async fn run_connection_current() -> Result<()> {
-    let (_, connections) = load_connections()?;
+    let (_, connections) = load_connections().await?;
     println!(
         "effective_profile: {}",
         connections
@@ -448,13 +541,13 @@ pub async fn run_connection_current() -> Result<()> {
 
 pub async fn run_connection_default_set(profile_id: &str) -> Result<()> {
     let profile_id = validated_profile_id(profile_id)?;
-    let (stores, mut connections) = load_connections()?;
+    let (stores, mut connections) = load_connections().await?;
     anyhow::ensure!(
         connections.profiles.contains_key(&profile_id),
         "Unknown connection profile `{profile_id}`"
     );
     connections.default_profile = Some(profile_id.clone());
-    save_connections(&stores, &connections)?;
+    save_connections(&stores, &connections).await?;
     println!(
         "Default profile set to {}.",
         display_identifier(&profile_id)
@@ -463,15 +556,15 @@ pub async fn run_connection_default_set(profile_id: &str) -> Result<()> {
 }
 
 pub async fn run_connection_default_clear() -> Result<()> {
-    let (stores, mut connections) = load_connections()?;
+    let (stores, mut connections) = load_connections().await?;
     connections.default_profile = None;
-    save_connections(&stores, &connections)?;
+    save_connections(&stores, &connections).await?;
     println!("Cleared default profile.");
     Ok(())
 }
 
 pub async fn run_connection_test(profile_id: Option<String>) -> Result<()> {
-    let (stores, connections) = load_connections()?;
+    let (stores, connections) = load_connections().await?;
     let profile_id = profile_id
         .or_else(|| connections.default_profile.clone())
         .ok_or_else(|| anyhow::anyhow!("no profile selected"))?;
@@ -496,13 +589,13 @@ pub async fn run_connection_test(profile_id: Option<String>) -> Result<()> {
 
 pub async fn run_connection_remove(profile_id: &str) -> Result<()> {
     let profile_id = validated_profile_id(profile_id)?;
-    let (stores, mut connections) = load_connections()?;
+    let (stores, mut connections) = load_connections().await?;
     let removed = connections.profiles.remove(&profile_id).is_some();
     if connections.default_profile.as_deref() == Some(&profile_id) {
         connections.default_profile = None;
     }
     if removed {
-        save_connections(&stores, &connections)?;
+        save_connections(&stores, &connections).await?;
     }
     println!(
         "Connection profile {} {}.",
@@ -530,5 +623,18 @@ mod tests {
             suggested_profile_id(LlmProvider::OpenRouter, None).unwrap(),
             "openrouter-main"
         );
+    }
+
+    #[test]
+    fn connection_metadata_uses_the_service_file_surface() {
+        let source = include_str!("connection.rs");
+        assert!(source.contains("/mnt/connections/metadata"));
+        assert!(source.contains("/mnt/connections/ctl"));
+        assert!(source.contains("request_native"));
+        assert!(source.contains("/mnt/connections/native-responses"));
+        assert!(source.contains("host-credential-store:"));
+        assert!(source.contains("host-managed-auth:"));
+        assert!(!source.contains(&["ConnectionsFile::load", "_from_path"].concat()));
+        assert!(!source.contains(&["connections.save", "_to_path"].concat()));
     }
 }

@@ -20,7 +20,7 @@
 //! terminal record to `events` and a terminal `status`, so a consumer tailing
 //! `events` at the live edge never blocks forever.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
@@ -597,8 +597,9 @@ impl LlmFid {
 struct State {
     connections: HashMap<String, Arc<Connection>>,
     gens: HashMap<String, Arc<Generation>>,
-    fids: HashMap<Fid, LlmFid>,
+    fids: HashMap<(u64, Fid), LlmFid>,
     next_gen: u64,
+    next_view: u64,
     /// Version of directory listings (`connections/`, a connection's contents),
     /// bumped when a Generation is allocated so cached directory qids go stale.
     listing_version: u32,
@@ -646,7 +647,9 @@ impl State {
 
 /// The LLM file server.
 pub struct LlmFs {
-    state: StdMutex<State>,
+    state: Arc<StdMutex<State>>,
+    allowed_connections: Option<Arc<HashSet<String>>>,
+    view_id: u64,
 }
 
 impl Default for LlmFs {
@@ -658,14 +661,50 @@ impl Default for LlmFs {
 impl LlmFs {
     pub fn new() -> Self {
         Self {
-            state: StdMutex::new(State {
+            state: Arc::new(StdMutex::new(State {
                 connections: HashMap::new(),
                 gens: HashMap::new(),
                 fids: HashMap::new(),
                 next_gen: 0,
+                next_view: 1,
                 listing_version: 0,
-            }),
+            })),
+            allowed_connections: None,
+            view_id: 0,
         }
+    }
+
+    /// Create a capability-narrowed view exposing only one callable Connection.
+    ///
+    /// The view shares live Connection and Generation state with this server,
+    /// while walks and listings structurally hide every other Connection.
+    pub fn connection_view(&self, name: impl Into<String>) -> Self {
+        let name = name.into();
+        let allowed_connections = if self.connection_visible(&name) {
+            HashSet::from([name])
+        } else {
+            HashSet::new()
+        };
+        let view_id = {
+            let mut state = self.state.lock().unwrap();
+            let view_id = state.next_view;
+            state.next_view = state
+                .next_view
+                .checked_add(1)
+                .expect("LLM file-server view identifier space exhausted");
+            view_id
+        };
+        Self {
+            state: self.state.clone(),
+            allowed_connections: Some(Arc::new(allowed_connections)),
+            view_id,
+        }
+    }
+
+    fn connection_visible(&self, name: &str) -> bool {
+        self.allowed_connections
+            .as_ref()
+            .is_none_or(|allowed| allowed.contains(name))
     }
 
     /// Register a callable connection backed by an `alan-llm` provider. (In the
@@ -718,6 +757,19 @@ impl LlmFs {
             limits,
             provider,
         );
+    }
+
+    /// Publish another name for an existing callable Connection.
+    pub fn register_connection_alias(&self, alias: &str, target: &str) -> Result<(), ErrorCode> {
+        let mut state = self.state.lock().unwrap();
+        let connection = state
+            .connections
+            .get(target)
+            .cloned()
+            .ok_or(ErrorCode::NotFound)?;
+        state.connections.insert(alias.to_string(), connection);
+        state.listing_version += 1;
+        Ok(())
     }
 
     pub async fn unregister_connection(&self, name: &str) {
@@ -795,7 +847,7 @@ impl LlmFs {
         let state = self.state.lock().unwrap();
         state
             .fids
-            .get(&fid)
+            .get(&(self.view_id, fid))
             .map(|f| f.node.clone())
             .ok_or(ErrorCode::NotFound)
     }
@@ -814,7 +866,9 @@ impl LlmFs {
                 "status" => Ok(Node::ProviderStatus(provider.clone())),
                 _ => Err(ErrorCode::NotFound),
             },
-            Node::ConnectionsDir if state.connections.contains_key(name) => {
+            Node::ConnectionsDir
+                if self.connection_visible(name) && state.connections.contains_key(name) =>
+            {
                 Ok(Node::Connection(name.to_string()))
             }
             Node::ConnectionsDir => Err(ErrorCode::NotFound),
@@ -867,6 +921,7 @@ impl FileServer for LlmFs {
         // chose the same `newfid` cannot both pass and clobber a live fid (e.g. a
         // write-open `data` fid that already buffered a request).
         let mut state = self.state.lock().unwrap();
+        let newfid = (self.view_id, newfid);
         if state.fids.contains_key(&newfid) {
             return Err(ErrorCode::BadRequest);
         }
@@ -877,9 +932,10 @@ impl FileServer for LlmFs {
 
     async fn open(&self, fid: Fid, mode: OpenMode) -> Result<Qid, ErrorCode> {
         let mut state = self.state.lock().unwrap();
+        let fid_key = (self.view_id, fid);
         // A fid opens once: a second open would allocate a second Generation on a
         // clone file or re-establish intent, so reject it.
-        if state.fids.get(&fid).is_some_and(|f| f.mode.is_some()) {
+        if state.fids.get(&fid_key).is_some_and(|f| f.mode.is_some()) {
             return Err(ErrorCode::BadRequest);
         }
         let node = if fid == Fid::ROOT {
@@ -887,7 +943,7 @@ impl FileServer for LlmFs {
         } else {
             state
                 .fids
-                .get(&fid)
+                .get(&fid_key)
                 .map(|f| f.node.clone())
                 .ok_or(ErrorCode::NotFound)?
         };
@@ -935,7 +991,7 @@ impl FileServer for LlmFs {
                     finalize: AsyncMutex::new(()),
                 }),
             );
-            if let Some(f) = state.fids.get_mut(&fid) {
+            if let Some(f) = state.fids.get_mut(&fid_key) {
                 f.clone_gen = Some(id);
             }
             reap_terminal_generations(&mut state, conn);
@@ -954,7 +1010,7 @@ impl FileServer for LlmFs {
             None
         };
         let qid = state.qid(&node);
-        if let Some(f) = state.fids.get_mut(&fid) {
+        if let Some(f) = state.fids.get_mut(&fid_key) {
             f.mode = Some(mode);
             f.events = opened_events;
         }
@@ -969,7 +1025,10 @@ impl FileServer for LlmFs {
             if fid == Fid::ROOT {
                 (Node::Root, None, None)
             } else {
-                let f = state.fids.get(&fid).ok_or(ErrorCode::NotFound)?;
+                let f = state
+                    .fids
+                    .get(&(self.view_id, fid))
+                    .ok_or(ErrorCode::NotFound)?;
                 if !matches!(f.mode, Some(OpenMode::Read | OpenMode::ReadWrite)) {
                     return Err(ErrorCode::NoAccess);
                 }
@@ -1008,6 +1067,7 @@ impl FileServer for LlmFs {
         // ctl path appends to `events`).
         let generation = {
             let mut state = self.state.lock().unwrap();
+            let fid = (self.view_id, fid);
             let f = state.fids.get(&fid).ok_or(ErrorCode::NotFound)?;
             if !matches!(f.mode, Some(OpenMode::Write | OpenMode::ReadWrite)) {
                 return Err(ErrorCode::NoAccess);
@@ -1055,7 +1115,10 @@ impl FileServer for LlmFs {
             let (node, opened_events) = if fid == Fid::ROOT {
                 (Node::Root, None)
             } else {
-                let f = state.fids.get(&fid).ok_or(ErrorCode::NotFound)?;
+                let f = state
+                    .fids
+                    .get(&(self.view_id, fid))
+                    .ok_or(ErrorCode::NotFound)?;
                 (f.node.clone(), f.events.clone())
             };
             let qid = state.qid(&node);
@@ -1071,7 +1134,7 @@ impl FileServer for LlmFs {
                     }
                 }
                 other => Len::Now(
-                    computed_bytes(&state, other)
+                    computed_bytes(&state, other, self.allowed_connections.as_deref())
                         .map(|b| b.len() as u64)
                         .unwrap_or(0),
                 ),
@@ -1113,7 +1176,7 @@ impl FileServer for LlmFs {
         // we need, then release the state lock before awaiting the provider.
         let commit = {
             let mut state = self.state.lock().unwrap();
-            let Some(f) = state.fids.remove(&fid) else {
+            let Some(f) = state.fids.remove(&(self.view_id, fid)) else {
                 return Err(ErrorCode::NotFound);
             };
             match f.node {
@@ -1293,7 +1356,7 @@ impl LlmFs {
 
     fn computed_bytes(&self, node: &Node) -> Result<Vec<u8>, ErrorCode> {
         let state = self.state.lock().unwrap();
-        computed_bytes(&state, node)
+        computed_bytes(&state, node, self.allowed_connections.as_deref())
     }
 }
 
@@ -1306,7 +1369,11 @@ enum Len {
 
 /// Render a readable node's bytes from already-locked state (so both `read` and
 /// `stat`'s length use one definition).
-fn computed_bytes(state: &State, node: &Node) -> Result<Vec<u8>, ErrorCode> {
+fn computed_bytes(
+    state: &State,
+    node: &Node,
+    allowed_connections: Option<&HashSet<String>>,
+) -> Result<Vec<u8>, ErrorCode> {
     let bytes = match node {
         Node::Root => b"connections\nproviders".to_vec(),
         Node::ProvidersDir => known_provider_names().join("\n").into_bytes(),
@@ -1318,7 +1385,12 @@ fn computed_bytes(state: &State, node: &Node) -> Result<Vec<u8>, ErrorCode> {
         }
         Node::ProviderStatus(provider) => provider_status_doc(provider).into_bytes(),
         Node::ConnectionsDir => {
-            let mut names: Vec<_> = state.connections.keys().cloned().collect();
+            let mut names: Vec<_> = state
+                .connections
+                .keys()
+                .filter(|name| allowed_connections.is_none_or(|allowed| allowed.contains(*name)))
+                .cloned()
+                .collect();
             names.sort();
             names.join("\n").into_bytes()
         }

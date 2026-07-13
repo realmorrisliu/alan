@@ -21,6 +21,19 @@ pub struct ToolExecutionBinding {
     pub sandbox_spec: Option<SandboxSpec>,
 }
 
+/// Late-bound authority check applied immediately before a Tool Process starts.
+///
+/// Long-lived Process bindings can outlive a native grant. Hosts use this hook
+/// to reconcile the cached path projection against the current service-owned
+/// grant set, so revocation cannot leave authority in a future Tool Process.
+pub trait ToolExecutionAuthority: std::fmt::Debug + Send + Sync {
+    fn reconcile(
+        &self,
+        pid: alan_kernel::Pid,
+        binding: ToolExecutionBinding,
+    ) -> Result<ToolExecutionBinding>;
+}
+
 impl ToolExecutionBinding {
     /// Create a binding from Process cwd and explicitly owned scratch storage.
     pub fn new(cwd: PathBuf, scratch_dir: PathBuf) -> Self {
@@ -73,6 +86,67 @@ impl ToolExecutionBinding {
     pub fn with_sandbox_spec(mut self, sandbox_spec: SandboxSpec) -> Self {
         self.sandbox_spec = Some(sandbox_spec);
         self
+    }
+
+    /// Remove service-managed Host Mounts and rebuild native authority from the
+    /// remaining explicit grants.
+    pub fn remove_host_mount_paths(&mut self, namespace_paths: &[String]) -> Result<()> {
+        self.host_mounts.retain(|grant| {
+            !namespace_paths
+                .iter()
+                .any(|path| path == &grant.namespace_path)
+        });
+        self.rebuild_host_authority()
+    }
+
+    /// Add or replace one Host-adapter-produced mount and rebuild the native
+    /// sandbox from the same explicit grant set.
+    pub fn apply_host_mount(&mut self, grant: crate::HostMountGrant) -> Result<()> {
+        if let Some(existing) = self
+            .host_mounts
+            .iter_mut()
+            .find(|existing| existing.namespace_path == grant.namespace_path)
+        {
+            *existing = grant;
+        } else {
+            self.host_mounts.push(grant);
+        }
+        self.rebuild_host_authority()
+    }
+
+    fn rebuild_host_authority(&mut self) -> Result<()> {
+        if self.host_mounts.is_empty() {
+            self.sandbox_spec = None;
+            return Ok(());
+        }
+
+        let namespace_cwd = self.namespace_cwd.to_string_lossy();
+        let current = self.host_mounts.iter().find(|grant| {
+            namespace_cwd == grant.namespace_path
+                || namespace_cwd
+                    .strip_prefix(&grant.namespace_path)
+                    .is_some_and(|suffix| suffix.starts_with('/'))
+        });
+        let selected = current
+            .or_else(|| {
+                self.host_mounts
+                    .iter()
+                    .find(|grant| grant.access == alan_kernel::Access::ReadWrite)
+            })
+            .or_else(|| self.host_mounts.first())
+            .context("Tool Process has no active Host Mount")?;
+        if current.is_none() {
+            self.namespace_cwd = PathBuf::from(&selected.namespace_path);
+        }
+        let namespace_cwd = self
+            .namespace_cwd
+            .to_str()
+            .context("Tool Process namespace cwd is not UTF-8")?;
+        self.cwd = selected
+            .resolve_host_path(namespace_cwd)
+            .context("Tool Process cwd is outside its active Host Mount")?;
+        self.sandbox_spec = Some(SandboxSpec::from_host_mounts(&self.host_mounts));
+        Ok(())
     }
 }
 

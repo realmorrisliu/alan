@@ -364,6 +364,16 @@ impl ConnectionsFile {
         apply_resolved_profile_to_config(&resolved, secret_store, config)?;
         Ok(resolved)
     }
+
+    pub fn apply_profile_metadata_to_config(
+        &self,
+        profile_id: Option<&str>,
+        config: &mut Config,
+    ) -> anyhow::Result<ResolvedConnectionProfile> {
+        let resolved = self.resolve_profile(profile_id)?;
+        apply_resolved_profile_metadata_to_config(&resolved, config);
+        Ok(resolved)
+    }
 }
 
 pub fn provider_catalog() -> &'static [ProviderDescriptor] {
@@ -628,6 +638,41 @@ fn apply_resolved_profile_to_config(
     secret_store: &SecretStore,
     config: &mut Config,
 ) -> anyhow::Result<()> {
+    apply_resolved_profile_metadata_to_config(resolved, config);
+    if matches!(
+        resolved.provider,
+        LlmProvider::Chatgpt | LlmProvider::GoogleGeminiGenerateContent
+    ) {
+        return Ok(());
+    }
+    let Some(credential_id) = resolved.credential_id.as_deref() else {
+        anyhow::bail!("Profile `{}` is missing a credential", resolved.profile_id);
+    };
+    let api_key = secret_store.load(credential_id)?.ok_or_else(|| {
+        anyhow::anyhow!(
+            "Credential `{credential_id}` for profile `{}` is missing a secret",
+            resolved.profile_id
+        )
+    })?;
+    match resolved.provider {
+        LlmProvider::OpenAiResponses => config.openai_responses_api_key = Some(api_key),
+        LlmProvider::OpenAiChatCompletions => {
+            config.openai_chat_completions_api_key = Some(api_key)
+        }
+        LlmProvider::OpenAiChatCompletionsCompatible => {
+            config.openai_chat_completions_compatible_api_key = Some(api_key)
+        }
+        LlmProvider::OpenRouter => config.openrouter_api_key = Some(api_key),
+        LlmProvider::AnthropicMessages => config.anthropic_messages_api_key = Some(api_key),
+        LlmProvider::Chatgpt | LlmProvider::GoogleGeminiGenerateContent => unreachable!(),
+    }
+    Ok(())
+}
+
+fn apply_resolved_profile_metadata_to_config(
+    resolved: &ResolvedConnectionProfile,
+    config: &mut Config,
+) {
     config.reset_internal_provider_config();
     config.connection_profile = Some(resolved.profile_id.clone());
     match resolved.provider {
@@ -643,63 +688,23 @@ fn apply_resolved_profile_to_config(
             };
         }
         LlmProvider::OpenAiResponses => {
-            let credential_id = resolved.credential_id.as_deref().ok_or_else(|| {
-                anyhow::anyhow!("Profile `{}` is missing a credential", resolved.profile_id)
-            })?;
-            let api_key = secret_store.load(credential_id)?.ok_or_else(|| {
-                anyhow::anyhow!(
-                    "Credential `{credential_id}` for profile `{}` is missing a secret",
-                    resolved.profile_id
-                )
-            })?;
             config.llm_provider = LlmProvider::OpenAiResponses;
-            config.openai_responses_api_key = Some(api_key);
             config.openai_responses_base_url = resolved.settings["base_url"].clone();
             config.openai_responses_model = resolved.settings["model"].clone();
         }
         LlmProvider::OpenAiChatCompletions => {
-            let credential_id = resolved.credential_id.as_deref().ok_or_else(|| {
-                anyhow::anyhow!("Profile `{}` is missing a credential", resolved.profile_id)
-            })?;
-            let api_key = secret_store.load(credential_id)?.ok_or_else(|| {
-                anyhow::anyhow!(
-                    "Credential `{credential_id}` for profile `{}` is missing a secret",
-                    resolved.profile_id
-                )
-            })?;
             config.llm_provider = LlmProvider::OpenAiChatCompletions;
-            config.openai_chat_completions_api_key = Some(api_key);
             config.openai_chat_completions_base_url = resolved.settings["base_url"].clone();
             config.openai_chat_completions_model = resolved.settings["model"].clone();
         }
         LlmProvider::OpenAiChatCompletionsCompatible => {
-            let credential_id = resolved.credential_id.as_deref().ok_or_else(|| {
-                anyhow::anyhow!("Profile `{}` is missing a credential", resolved.profile_id)
-            })?;
-            let api_key = secret_store.load(credential_id)?.ok_or_else(|| {
-                anyhow::anyhow!(
-                    "Credential `{credential_id}` for profile `{}` is missing a secret",
-                    resolved.profile_id
-                )
-            })?;
             config.llm_provider = LlmProvider::OpenAiChatCompletionsCompatible;
-            config.openai_chat_completions_compatible_api_key = Some(api_key);
             config.openai_chat_completions_compatible_base_url =
                 resolved.settings["base_url"].clone();
             config.openai_chat_completions_compatible_model = resolved.settings["model"].clone();
         }
         LlmProvider::OpenRouter => {
-            let credential_id = resolved.credential_id.as_deref().ok_or_else(|| {
-                anyhow::anyhow!("Profile `{}` is missing a credential", resolved.profile_id)
-            })?;
-            let api_key = secret_store.load(credential_id)?.ok_or_else(|| {
-                anyhow::anyhow!(
-                    "Credential `{credential_id}` for profile `{}` is missing a secret",
-                    resolved.profile_id
-                )
-            })?;
             config.llm_provider = LlmProvider::OpenRouter;
-            config.openrouter_api_key = Some(api_key);
             config.openrouter_base_url = resolved
                 .settings
                 .get("base_url")
@@ -730,17 +735,7 @@ fn apply_resolved_profile_to_config(
                 .unwrap_or_default();
         }
         LlmProvider::AnthropicMessages => {
-            let credential_id = resolved.credential_id.as_deref().ok_or_else(|| {
-                anyhow::anyhow!("Profile `{}` is missing a credential", resolved.profile_id)
-            })?;
-            let api_key = secret_store.load(credential_id)?.ok_or_else(|| {
-                anyhow::anyhow!(
-                    "Credential `{credential_id}` for profile `{}` is missing a secret",
-                    resolved.profile_id
-                )
-            })?;
             config.llm_provider = LlmProvider::AnthropicMessages;
-            config.anthropic_messages_api_key = Some(api_key);
             config.anthropic_messages_base_url = resolved.settings["base_url"].clone();
             config.anthropic_messages_model = resolved.settings["model"].clone();
             config.anthropic_messages_client_name = resolved
@@ -762,7 +757,6 @@ fn apply_resolved_profile_to_config(
             config.google_gemini_generate_content_model = resolved.settings["model"].clone();
         }
     }
-    Ok(())
 }
 
 #[cfg(test)]
@@ -979,5 +973,44 @@ mod tests {
             config.openrouter_app_categories,
             vec!["cli-agent", "devtool"]
         );
+    }
+
+    #[test]
+    fn service_owned_profile_metadata_does_not_load_secret_material() {
+        let file = ConnectionsFile {
+            credentials: BTreeMap::from([(
+                "openrouter-main".to_string(),
+                ConnectionCredential {
+                    kind: CredentialKind::SecretString,
+                    provider_family: LlmProvider::OpenRouter,
+                    label: "OpenRouter credential".to_string(),
+                    backend: SECRET_STORE_BACKEND.to_string(),
+                },
+            )]),
+            profiles: BTreeMap::from([(
+                "openrouter-main".to_string(),
+                ConnectionProfile {
+                    provider: LlmProvider::OpenRouter,
+                    label: None,
+                    credential_id: Some("openrouter-main".to_string()),
+                    created_at: default_profile_timestamp(),
+                    updated_at: default_profile_timestamp(),
+                    source: default_profile_source(),
+                    settings: BTreeMap::new(),
+                },
+            )]),
+            ..ConnectionsFile::default()
+        };
+        let mut config = Config::default();
+
+        file.apply_profile_metadata_to_config(Some("openrouter-main"), &mut config)
+            .unwrap();
+
+        assert_eq!(config.llm_provider, LlmProvider::OpenRouter);
+        assert_eq!(
+            config.connection_profile.as_deref(),
+            Some("openrouter-main")
+        );
+        assert_eq!(config.openrouter_api_key, None);
     }
 }

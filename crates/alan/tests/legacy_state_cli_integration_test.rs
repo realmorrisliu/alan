@@ -24,7 +24,7 @@ fn alan_command(home: &Path, xdg_data: &Path) -> Command {
 }
 
 #[test]
-fn connection_command_migrates_legacy_metadata_and_host_secrets_once() {
+fn legacy_cleanup_migrates_metadata_and_host_secrets_once() {
     let temp = TempDir::new().unwrap();
     let home = temp.path().join("home");
     let xdg_data = temp.path().join("data");
@@ -41,7 +41,7 @@ fn connection_command_migrates_legacy_metadata_and_host_secrets_once() {
     std::fs::write(legacy.join("auth.json"), "{\"version\":1}").unwrap();
 
     let output = alan_command(&home, &xdg_data)
-        .args(["connection", "list"])
+        .args(["host", "legacy-state", "cleanup", "--json"])
         .output()
         .unwrap();
 

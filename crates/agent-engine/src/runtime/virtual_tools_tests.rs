@@ -2673,7 +2673,10 @@ async fn test_try_handle_virtual_tool_call_invoke_delegated_skill() {
             export_name: "reviewer".to_string(),
         }
     );
-    assert_eq!(spec.handles, vec![SpawnHandle::ApprovalScope]);
+    assert_eq!(
+        spec.handles,
+        vec![SpawnHandle::ApprovalScope, SpawnHandle::HostMounts]
+    );
     assert_eq!(spec.launch.cwd, Some(PathBuf::from("/mnt/source")));
     assert_eq!(
         spec.launch.timeout_secs,
