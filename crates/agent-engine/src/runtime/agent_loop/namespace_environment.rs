@@ -300,10 +300,8 @@ impl NamespaceRuntimeEnvironment {
         }
     }
 
-    pub(crate) fn with_launch_context(
-        mut self,
-        launch_context: crate::ProcessLaunchContext,
-    ) -> Self {
+    /// Bind the explicit Process Launch Context used for child execution.
+    pub fn with_launch_context(mut self, launch_context: crate::ProcessLaunchContext) -> Self {
         self.launch_context = Some(launch_context);
         self
     }
@@ -312,7 +310,8 @@ impl NamespaceRuntimeEnvironment {
         self.launch_context.as_ref()
     }
 
-    pub(crate) fn with_process_context(
+    /// Bind the already-created Process and AgentFS owners for this Agent Process.
+    pub fn with_process_context(
         mut self,
         launch_procfs: alan_kernel::ProcFs,
         agent_root: Arc<alan_agentfs::AgentRootFs>,
@@ -415,7 +414,8 @@ impl NamespaceRuntimeEnvironment {
             .unwrap_or_default()
     }
 
-    pub(crate) fn with_shared_services(
+    /// Bind already-mounted shared service trees used by Agent transitions.
+    pub fn with_shared_services(
         mut self,
         srv: InProcessTransport,
         route: InProcessTransport,
@@ -2566,10 +2566,6 @@ mod tests {
         }
     }
 
-    fn input_frame(message: &str) -> Vec<u8> {
-        format!("{}\n{message}", message.len()).into_bytes()
-    }
-
     fn tool_test_environment(
         runner: Arc<dyn ProcessRunner>,
     ) -> (NamespaceRuntimeEnvironment, Shell) {
@@ -2920,7 +2916,7 @@ mod tests {
         agent_root.set_root_process(pid.clone()).await;
 
         shell
-            .write("/agent/1/io/input", &input_frame("hello agent"))
+            .write("/agent/1/io/input", b"hello agent")
             .await
             .unwrap();
         let mut output_tail = shell.tail("/agent/1/io/output").await.unwrap();

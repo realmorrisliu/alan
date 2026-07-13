@@ -1,10 +1,7 @@
 //! Alan — a programmable personal computing environment.
 
 mod cli;
-#[allow(dead_code)]
-mod host_mounts;
 mod legacy_state;
-mod system_store;
 
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
@@ -48,6 +45,24 @@ enum Commands {
 
 #[derive(Subcommand)]
 enum HostAction {
+    /// Start the matching dedicated Alan OS Host
+    Start {
+        /// Emit structured JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Report the matching Alan OS Host lifecycle state
+    Status {
+        /// Emit structured JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Stop the matching dedicated Alan OS Host
+    Stop {
+        /// Emit structured JSON
+        #[arg(long)]
+        json: bool,
+    },
     /// Inspect, migrate, or clean state created by retired Host-directory contracts
     LegacyState {
         #[command(subcommand)]
@@ -654,6 +669,26 @@ async fn main() -> Result<()> {
 
     match cli.command {
         Some(Commands::Host { action }) => match action {
+            HostAction::Start { json } => {
+                let channel = alan_agent_engine::InstallChannel::detect_current();
+                let attachment = attach_or_start_host(channel).await?;
+                print_host_status(&attachment.status, json)?;
+            }
+            HostAction::Status { json } => {
+                let channel = alan_agent_engine::InstallChannel::detect_current();
+                let attachment = alan_os_host::LocalAttachment::detect(channel.descriptor().id)?
+                    .connect()
+                    .await
+                    .context("Alan OS Host is not ready; run `alan host start`")?;
+                print_host_status(&attachment.status, json)?;
+            }
+            HostAction::Stop { json } => {
+                let channel = alan_agent_engine::InstallChannel::detect_current();
+                let paths = alan_os_host::HostEndpointPaths::detect(channel.descriptor().id)?;
+                let status = request_platform_host_stop(channel, &paths).await?;
+                wait_for_host_stop(&paths).await?;
+                print_host_status(&status, json)?;
+            }
             HostAction::LegacyState { action } => {
                 let channel = alan_agent_engine::InstallChannel::detect_current();
                 match action {
@@ -670,8 +705,9 @@ async fn main() -> Result<()> {
                             anyhow::bail!("cannot determine Host home directory");
                         };
                         let source_roots = canonical_existing_roots(source_roots)?;
-                        let system = system_store::SystemStorePaths::detect(channel)?;
-                        let host = system_store::HostStorePaths::detect(channel)?;
+                        let system =
+                            alan_os_host::SystemStorePaths::detect(channel.descriptor().id)?;
+                        let host = alan_os_host::HostStorePaths::detect(channel.descriptor().id)?;
                         let report = legacy_state::cleanup_legacy_state(
                             &paths,
                             &system,
@@ -692,7 +728,8 @@ async fn main() -> Result<()> {
                                 source.display()
                             )
                         })?;
-                        let system = system_store::SystemStorePaths::detect(channel)?;
+                        let system =
+                            alan_os_host::SystemStorePaths::detect(channel.descriptor().id)?;
                         let kind = match kind {
                             LegacyImportKind::AgentDefinition => {
                                 legacy_state::AuthoredImportKind::AgentDefinition
@@ -1075,84 +1112,202 @@ async fn main() -> Result<()> {
             }
         },
         None => {
-            if !alan_tui::terminal::is_interactive_terminal() {
-                anyhow::bail!("{}", alan_tui::terminal::terminal_capability_error());
-            }
-            let (mut config, controller) = prepare_file_backed_tui_config().await?;
-            config.require_interactive_terminal = false;
-            let run_result = alan_tui::run_file_backed(config).await;
-            let shutdown_result = controller.shutdown().await;
-            run_result?;
-            shutdown_result?;
+            let channel = alan_agent_engine::InstallChannel::detect_current();
+            let attachment = attach_or_start_host(channel).await?;
+            let shell = alan_shell::Shell::new(attachment.root);
+            alan_shell::StdioDriver::new(shell)
+                .run(
+                    tokio::io::BufReader::new(tokio::io::stdin()),
+                    tokio::io::stdout(),
+                )
+                .await?;
         }
     }
 
     Ok(())
 }
 
-async fn prepare_file_backed_tui_config() -> Result<(
-    alan_tui::FileBackedRunConfig,
-    alan_agent_engine::RuntimeController,
-)> {
-    let channel = alan_agent_engine::InstallChannel::detect_current();
-    let system_store = system_store::SystemStorePaths::detect(channel)?;
-    let host_store = system_store::HostStorePaths::detect(channel)?;
-    if let Some(legacy_paths) = legacy_state::LegacyStatePaths::detect(channel)? {
-        legacy_state::cleanup_legacy_state(&legacy_paths, &system_store, &host_store, &[])?;
+async fn attach_or_start_host(
+    channel: alan_agent_engine::InstallChannel,
+) -> Result<alan_os_host::AttachedNamespace> {
+    let attachment = alan_os_host::LocalAttachment::detect(channel.descriptor().id)?;
+    if let Ok(attached) = attachment.connect().await {
+        return Ok(attached);
     }
-    let mut namespace = alan_kernel::Namespace::new();
-    let store_bindings = system_store.agent_runtime_bindings()?;
-    let memory_store_backing = system_store.memory_stores()?.join("default");
-    std::fs::create_dir_all(&memory_store_backing)
-        .context("failed to prepare Memory Store backing")?;
-    let memory_store =
-        alan_hostfs::HostDirFs::new(&memory_store_backing, alan_hostfs::HostDirAccess::ReadWrite)
-            .context("failed to open Memory Store backing")?;
-    namespace.mount(
-        "/memory",
-        alan_ap::InProcessTransport::new(std::sync::Arc::new(memory_store)),
-        alan_kernel::Access::ReadWrite,
-    );
-    let mut runtime_config = alan_agent_engine::AgentProcessConfig::from(
-        alan_agent_engine::Config::load_with_metadata()?,
-    );
-    runtime_config.launch_context = alan_agent_engine::ProcessLaunchContext::new(
-        namespace,
-        alan_kernel::Credentials::user("local-user"),
-        "/",
-    )?
-    .with_descriptor(
-        alan_agent_engine::MEMORY_STORE_DESCRIPTOR,
-        alan_agent_engine::ProcessDescriptor::new("/memory")?,
-    );
-    runtime_config.store_bindings = Some(store_bindings);
-    runtime_config.memory_store_backing = Some(memory_store_backing);
-    runtime_config.connection_store = Some(system_store.connection_bindings(&host_store)?);
-    runtime_config.chatgpt_auth_storage_path = Some(host_store.managed_auth.clone());
-    // Approved request_mount grants must reach the live namespace from bare
-    // `alan` too; without the factory
-    // the runtime falls back to "live namespace mount applicator unavailable".
-    runtime_config.mount_grant_applicator_factory = Some(std::sync::Arc::new(
-        crate::host_mounts::LiveNamespaceMountGrantApplicatorFactory,
-    ));
 
-    let mut launch = alan_agent_engine::spawn_with_namespace_surface(runtime_config)
-        .await
-        .context("failed to spawn file-backed runtime surface")?;
-    launch
-        .controller
-        .wait_until_ready()
-        .await
-        .context("file-backed runtime failed before becoming ready")?;
-
-    let mut config = alan_tui::FileBackedRunConfig::new(
-        launch.surface.root_transport(),
-        launch.surface.agent_path().to_string(),
-    );
-    config.history_path = Some(system_store.agent_runtime()?.metadata.join("tui_history"));
-
-    Ok((config, launch.controller))
+    let executable = dedicated_host_executable(channel)?;
+    let mut start = request_platform_host_start(channel, &executable)?;
+    let mut launcher_status = None;
+    let mut last_error = None;
+    for _ in 0..200 {
+        match attachment.connect().await {
+            Ok(attached) => return Ok(attached),
+            Err(error) => last_error = Some(error),
+        }
+        if launcher_status.is_none() {
+            launcher_status = start.poll_status()?;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    anyhow::bail!(
+        "dedicated Alan OS Host did not become ready (launcher={launcher_status:?}): {}",
+        last_error
+            .map(|error| error.to_string())
+            .unwrap_or_else(|| "no attachment diagnostic".to_string())
+    )
 }
+
+struct HostStartAttempt {
+    child: Option<std::process::Child>,
+    launcher_status: Option<std::process::ExitStatus>,
+}
+
+impl HostStartAttempt {
+    fn poll_status(&mut self) -> Result<Option<std::process::ExitStatus>> {
+        if let Some(child) = &mut self.child {
+            return child
+                .try_wait()
+                .context("poll dedicated Alan OS Host process");
+        }
+        Ok(self.launcher_status)
+    }
+}
+
+fn os_host_launch_label(channel: alan_agent_engine::InstallChannel) -> String {
+    format!("{}.os-host", channel.descriptor().bundle_identifier)
+}
+
+#[cfg(target_os = "macos")]
+fn request_platform_host_start(
+    channel: alan_agent_engine::InstallChannel,
+    executable: &Path,
+) -> Result<HostStartAttempt> {
+    let label = os_host_launch_label(channel);
+    let status = std::process::Command::new("/bin/launchctl")
+        .arg("submit")
+        .arg("-l")
+        .arg(&label)
+        .arg("-p")
+        .arg(executable)
+        .arg("-o")
+        .arg("/dev/null")
+        .arg("-e")
+        .arg("/dev/null")
+        .arg("--")
+        .arg(executable)
+        .status()
+        .with_context(|| {
+            format!(
+                "request launchd start for dedicated Host {} ({label})",
+                executable.display()
+            )
+        })?;
+    Ok(HostStartAttempt {
+        child: None,
+        launcher_status: Some(status),
+    })
+}
+
+#[cfg(target_os = "macos")]
+async fn request_platform_host_stop(
+    channel: alan_agent_engine::InstallChannel,
+    paths: &alan_os_host::HostEndpointPaths,
+) -> Result<alan_os_host::HostStatus> {
+    let attachment = alan_os_host::LocalAttachment::new(paths.clone())
+        .connect()
+        .await?;
+    let status = attachment.status;
+    let label = os_host_launch_label(channel);
+    let result = std::process::Command::new("/bin/launchctl")
+        .arg("remove")
+        .arg(&label)
+        .status()
+        .with_context(|| format!("request launchd stop for dedicated Host {label}"))?;
+    anyhow::ensure!(
+        result.success(),
+        "launchd failed to remove Host {label}: {result}"
+    );
+    Ok(status)
+}
+
+#[cfg(not(target_os = "macos"))]
+async fn request_platform_host_stop(
+    _channel: alan_agent_engine::InstallChannel,
+    paths: &alan_os_host::HostEndpointPaths,
+) -> Result<alan_os_host::HostStatus> {
+    alan_os_host::request_host_stop(paths).await
+}
+
+#[cfg(not(target_os = "macos"))]
+fn request_platform_host_start(
+    channel: alan_agent_engine::InstallChannel,
+    executable: &Path,
+) -> Result<HostStartAttempt> {
+    use std::os::unix::process::CommandExt;
+
+    let mut command = std::process::Command::new(executable);
+    command
+        .env(
+            alan_agent_engine::INSTALL_CHANNEL_ENV,
+            channel.descriptor().id,
+        )
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .process_group(0);
+    let child = command
+        .spawn()
+        .with_context(|| format!("start dedicated Host {}", executable.display()))?;
+    Ok(HostStartAttempt {
+        child: Some(child),
+        launcher_status: None,
+    })
+}
+
+fn dedicated_host_executable(channel: alan_agent_engine::InstallChannel) -> Result<PathBuf> {
+    let name = channel.descriptor().os_host_name;
+    if let Ok(current) = std::env::current_exe()
+        && let Some(directory) = current.parent()
+    {
+        let sibling = directory.join(name);
+        if sibling.is_file() {
+            return Ok(sibling);
+        }
+    }
+    if let Some(path) = std::env::var_os("PATH") {
+        for directory in std::env::split_paths(&path) {
+            let candidate = directory.join(name);
+            if candidate.is_file() {
+                return Ok(candidate);
+            }
+        }
+    }
+    anyhow::bail!("dedicated Alan OS Host executable {name} was not found beside alan or on PATH")
+}
+
+async fn wait_for_host_stop(paths: &alan_os_host::HostEndpointPaths) -> Result<()> {
+    for _ in 0..100 {
+        if !paths.status.exists() && !paths.socket.exists() {
+            return Ok(());
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    anyhow::bail!("Alan OS Host did not stop within five seconds")
+}
+
+fn print_host_status(status: &alan_os_host::HostStatus, json: bool) -> Result<()> {
+    if json {
+        println!("{}", serde_json::to_string_pretty(status)?);
+    } else {
+        println!("channel: {}", status.channel_id);
+        println!("state: {:?}", status.readiness);
+        println!("boot: {}", status.boot_id);
+        println!("host pid: {}", status.pid);
+        println!("attachment: {}", status.socket.display());
+    }
+    Ok(())
+}
+
 fn shell_target_options(args: ShellTargetArgs) -> cli::shell::ShellTargetOptions {
     cli::shell::ShellTargetOptions {
         socket: args.socket,
@@ -1231,7 +1386,8 @@ fn print_legacy_cleanup(report: &legacy_state::LegacyCleanupReport, json: bool) 
 
 #[cfg(test)]
 mod tests {
-    use super::Cli;
+    use super::{Cli, os_host_launch_label};
+    use alan_agent_engine::InstallChannel;
     use clap::Parser;
 
     #[test]
@@ -1240,5 +1396,17 @@ mod tests {
             .map(|_| ())
             .unwrap_err();
         assert!(err.to_string().contains("--tui-backend"));
+    }
+
+    #[test]
+    fn alan_os_host_launch_labels_are_channel_isolated() {
+        assert_eq!(
+            os_host_launch_label(InstallChannel::Stable),
+            "app.alanworks.macos.os-host"
+        );
+        assert_eq!(
+            os_host_launch_label(InstallChannel::Dev),
+            "app.alanworks.macos.dev.os-host"
+        );
     }
 }

@@ -1,12 +1,11 @@
-use alan_agent_engine::runtime::{
-    effective_core_config_for_runtime, spawn_with_llm_client_and_tools_and_namespace_surface,
-};
+use alan_agent_engine::runtime::effective_core_config_for_runtime;
 use alan_agent_engine::{
     AgentProcessConfig, AgentRuntimeStoreBindings, Config, HostMountGrant, LlmClient,
     ProcessLaunchContext, ToolRegistry,
 };
-use alan_agent_protocol::{ContentPart, Op, Submission, UiActivityState, UiEvent};
+use alan_agent_protocol::{UiActivityState, UiEvent};
 use alan_kernel::{Access, Credentials, Namespace};
+use alan_os_host::{AlanOsHost, FixedBootConfig, HostEndpointPaths, LocalAttachment};
 use anyhow::{Context, Result, ensure};
 use std::{env, path::PathBuf, time::Duration};
 use tempfile::TempDir;
@@ -65,7 +64,7 @@ async fn live_chatgpt_runtime_smoke_uses_agentfs() -> Result<()> {
     let system_store = TempDir::new().context("create temporary System Store")?;
     let host_mount = HostMountGrant::new("/mnt/source", source.path(), Access::ReadWrite)?;
     let mut namespace = Namespace::new();
-    alan::host_mounts::apply_host_mount_declarations(
+    alan_os_host::host_mounts::apply_host_mount_declarations(
         &mut namespace,
         std::slice::from_ref(&host_mount),
     )?;
@@ -112,36 +111,33 @@ async fn live_chatgpt_runtime_smoke_uses_agentfs() -> Result<()> {
     for tool in alan_tools::create_core_tools() {
         tools.register_boxed(tool);
     }
-    let launch =
-        spawn_with_llm_client_and_tools_and_namespace_surface(config, client, tools).await?;
-    let shell = alan_shell::Shell::new(launch.surface.root_transport());
-    let mut events = shell
-        .tail(&format!(
-            "{}/machine/ui/events",
-            launch.surface.agent_path()
-        ))
-        .await?;
-    let mut controller = launch.controller;
-    controller.wait_until_ready().await?;
+    let runtime = TempDir::new().context("create Host runtime directory")?;
+    let endpoint = HostEndpointPaths::from_runtime_dir(runtime.path(), "test")?;
+    let host = AlanOsHost::boot(
+        FixedBootConfig::ephemeral("test", config, client, tools),
+        endpoint.clone(),
+    )
+    .await?;
+    let (shutdown, shutdown_rx) = tokio::sync::oneshot::channel();
+    let host_task = tokio::spawn(host.serve_until(async move {
+        let _ = shutdown_rx.await;
+    }));
+    let attachment = LocalAttachment::new(endpoint).connect().await?;
+    let shell = alan_shell::Shell::new(attachment.root);
+    let mut events = shell.tail("/agent/root/machine/ui/events").await?;
 
     let token = "ALAN_RUNTIME_LIVE_CHATGPT_OK";
-    controller
-        .handle
-        .submission_tx
-        .send(Submission::new(Op::Turn {
-            parts: vec![ContentPart::text(format!(
-                "Reply with exactly: {token}. Do not use tools, markdown, or punctuation."
-            ))],
-            context: None,
-        }))
+    shell
+        .write(
+            "/agent/root/io/input",
+            format!("Reply with exactly: {token}. Do not use tools, markdown, or punctuation.")
+                .as_bytes(),
+        )
         .await?;
     wait_for_idle(&mut events).await?;
-    let output = String::from_utf8(
-        shell
-            .cat(&format!("{}/io/output", launch.surface.agent_path()))
-            .await?,
-    )?;
-    controller.shutdown().await?;
+    let output = String::from_utf8(shell.cat("/agent/root/io/output").await?)?;
+    let _ = shutdown.send(());
+    host_task.await??;
     ensure!(
         output.contains(token),
         "live output did not contain {token}: {output:?}"

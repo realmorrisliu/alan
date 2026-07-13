@@ -11,8 +11,7 @@ mod sandbox;
 mod sandbox_backend;
 
 pub use context::{ToolContext, ToolExecutionBinding};
-pub(crate) use registry::ToolProcessRunner;
-pub use registry::{Tool, ToolRegistry, ToolResult};
+pub use registry::{Tool, ToolProcessRunner, ToolRegistry, ToolResult};
 pub use reified_namespace::{
     DEFAULT_PRIMARY_MOUNT_NAMESPACE_PATH, DEFAULT_SCRATCH_TMP_NAMESPACE_PATH,
     LinuxReifiedNamespaceRunner, ReifiedExecutionSubstrateMount, ReifiedHostMount,

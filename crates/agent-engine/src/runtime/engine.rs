@@ -10,92 +10,18 @@ use super::turn_driver::{
 };
 use super::turn_state::TurnState;
 use super::{NamespaceRuntimeEnvironment, RuntimeConfig, RuntimeLoopState};
-use crate::{agent_machine::AgentMachine, llm::LlmClient};
+use crate::agent_machine::AgentMachine;
 use alan_agent_protocol::{Event, InputMode, Submission};
-use alan_ap::{Fid, FileServer, InProcessTransport, OpenMode};
-use alan_llm::{GenerationRequest, GenerationResponse, LlmProvider, StreamChunk};
 use anyhow::{Context, Result};
 use std::collections::VecDeque;
 use std::path::PathBuf;
-use std::sync::{
-    Arc,
-    atomic::{AtomicU64, Ordering},
-};
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tokio::time::MissedTickBehavior;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
-
-static NEXT_RUNTIME_NAMESPACE_FID: AtomicU64 = AtomicU64::new(120_000);
-const LLM_SRV_HANDLE: &str = "llm";
-const SRV_MOUNT: &str = "/srv";
-const LLM_MOUNT: &str = "/mnt/llm";
-
-struct RuntimeLlmProvider {
-    client: LlmClient,
-}
-
-impl RuntimeLlmProvider {
-    fn new(client: LlmClient) -> Self {
-        Self { client }
-    }
-}
-
-#[async_trait::async_trait]
-impl LlmProvider for RuntimeLlmProvider {
-    async fn generate(&mut self, request: GenerationRequest) -> Result<GenerationResponse> {
-        self.client.generate(request).await
-    }
-
-    async fn chat(&mut self, system: Option<&str>, user: &str) -> Result<String> {
-        self.client.chat(system, user).await
-    }
-
-    async fn generate_stream(
-        &mut self,
-        request: GenerationRequest,
-    ) -> Result<tokio::sync::mpsc::Receiver<StreamChunk>> {
-        self.client.generate_stream(request).await
-    }
-
-    fn provider_name(&self) -> &'static str {
-        self.client.provider_name()
-    }
-}
-
-enum RuntimeEnvironmentBootstrap {
-    Ready(NamespaceRuntimeEnvironment),
-    NamespaceRoot {
-        llm_client: LlmClient,
-        tools: crate::tools::ToolRegistry,
-        launch_context: crate::ProcessLaunchContext,
-        mount_grant_applicator_factory: Option<Arc<dyn super::MountGrantApplicatorFactory>>,
-    },
-}
-
-impl RuntimeEnvironmentBootstrap {
-    async fn into_environment(self) -> Result<NamespaceRuntimeEnvironment> {
-        match self {
-            Self::Ready(environment) => Ok(environment),
-            Self::NamespaceRoot {
-                llm_client,
-                tools,
-                launch_context,
-                mount_grant_applicator_factory,
-            } => {
-                build_root_namespace_environment(
-                    llm_client,
-                    tools,
-                    &launch_context,
-                    mount_grant_applicator_factory,
-                )
-                .await
-            }
-        }
-    }
-}
 
 /// Queues for managing submissions.
 ///
@@ -145,13 +71,6 @@ fn should_requeue_deferred_action(
 
 fn preserves_paused_terminal_state(result: &Result<()>, has_pending_interaction: bool) -> bool {
     result.is_ok() && has_pending_interaction
-}
-
-async fn read_namespace_input_submission(
-    namespace: super::NamespaceRuntimeEnvironment,
-    mode: InputMode,
-) -> Option<Result<Submission>> {
-    Some(namespace.read_next_input_submission(mode).await)
 }
 
 async fn read_pending_namespace_resume_submission(
@@ -256,6 +175,7 @@ fn current_execution_backend() -> String {
     crate::tools::active_backend_name().to_string()
 }
 
+#[cfg(test)]
 pub(crate) fn runtime_host_capabilities(
     _config: &AgentProcessConfig,
     tools: &crate::tools::ToolRegistry,
@@ -842,92 +762,8 @@ impl RuntimeController {
     }
 }
 
-/// A renderer-host view of one mounted runtime namespace.
-#[derive(Clone)]
-pub struct RuntimeNamespaceSurface {
-    root: InProcessTransport,
-    agent_path: String,
-}
-
-impl RuntimeNamespaceSurface {
-    fn new(root: InProcessTransport, agent_path: impl Into<String>) -> Self {
-        Self {
-            root,
-            agent_path: agent_path.into(),
-        }
-    }
-
-    /// Root aP transport for the mounted namespace.
-    pub fn root_transport(&self) -> InProcessTransport {
-        self.root.clone()
-    }
-
-    /// Concrete agent path for the launched root agent, for example `/agent/1`.
-    pub fn agent_path(&self) -> &str {
-        &self.agent_path
-    }
-}
-
-/// Local runtime launch handle for renderer hosts.
-pub struct RuntimeNamespaceLaunch {
-    pub controller: RuntimeController,
-    pub surface: RuntimeNamespaceSurface,
-}
-
-/// Spawn a new agent runtime and return handles for communication
-pub fn spawn(config: AgentProcessConfig) -> Result<RuntimeController> {
-    let core_config = effective_core_config_for_runtime(&config)?;
-
-    let llm_client = LlmClient::from_core_config_with_chatgpt_auth_storage_path(
-        &core_config,
-        config.chatgpt_auth_storage_path.clone(),
-    )
-    .context("Failed to create LLM client for runtime")?;
-    let tools = crate::tools::ToolRegistry::with_config(Arc::new(core_config.clone()));
-
-    spawn_with_llm_client_and_tools(config, llm_client, tools)
-}
-
-/// Spawn a new namespace-native runtime and return the renderer-host surface.
-pub async fn spawn_with_namespace_surface(
-    config: AgentProcessConfig,
-) -> Result<RuntimeNamespaceLaunch> {
-    let core_config = effective_core_config_for_runtime(&config)?;
-
-    let llm_client = LlmClient::from_core_config_with_chatgpt_auth_storage_path(
-        &core_config,
-        config.chatgpt_auth_storage_path.clone(),
-    )
-    .context("Failed to create LLM client for runtime")?;
-    let tools = crate::tools::ToolRegistry::with_config(Arc::new(core_config));
-
-    spawn_with_llm_client_and_tools_and_namespace_surface(config, llm_client, tools).await
-}
-
-/// Spawn a new agent runtime with an externally-provided LLM client.
-///
-/// This is useful for testing with a mock LLM provider.
-pub fn spawn_with_llm_client(
-    config: AgentProcessConfig,
-    llm_client: LlmClient,
-) -> Result<RuntimeController> {
-    let core_config = effective_core_config_for_runtime(&config)?;
-    let tools = crate::tools::ToolRegistry::with_config(Arc::new(core_config));
-
-    spawn_with_llm_client_and_tools(config, llm_client, tools)
-}
-
-/// Spawn a namespace-native runtime with an externally provided LLM client.
-pub async fn spawn_with_llm_client_and_namespace_surface(
-    config: AgentProcessConfig,
-    llm_client: LlmClient,
-) -> Result<RuntimeNamespaceLaunch> {
-    let core_config = effective_core_config_for_runtime(&config)?;
-    let tools = crate::tools::ToolRegistry::with_config(Arc::new(core_config));
-    spawn_with_llm_client_and_tools_and_namespace_surface(config, llm_client, tools).await
-}
-
-fn configure_runtime_tool_execution_binding(
+/// Apply the Process Launch Context's explicit Host Mount authority to Tool execution.
+pub fn configure_runtime_tool_execution_binding(
     config: &AgentProcessConfig,
     tools: &mut crate::tools::ToolRegistry,
 ) -> Result<()> {
@@ -996,264 +832,11 @@ pub fn effective_core_config_for_runtime(
     Ok(core_config)
 }
 
-async fn build_root_namespace_environment(
-    llm_client: LlmClient,
-    tools: crate::tools::ToolRegistry,
-    launch_context: &crate::ProcessLaunchContext,
-    mount_grant_applicator_factory: Option<Arc<dyn super::MountGrantApplicatorFactory>>,
-) -> Result<NamespaceRuntimeEnvironment> {
-    let tool_names = tools
-        .list_tools()
-        .into_iter()
-        .map(str::to_string)
-        .collect::<Vec<_>>();
-
-    let agentfs = Arc::new(alan_agentfs::AgentFs::new());
-    let llmfs = Arc::new(alan_llmfs::LlmFs::new());
-    llmfs.register_connection("default", Box::new(RuntimeLlmProvider::new(llm_client)));
-    let routefs = Arc::new(alan_routefs::RouteFs::new());
-    let srvfs = Arc::new(alan_kernel::SrvFs::new());
-
-    let procfs = alan_kernel::ProcFs::new();
-    let agent_root = Arc::new(alan_agentfs::AgentRootFs::new(Arc::new(procfs.clone())));
-    let agent_root_tree = InProcessTransport::new(agent_root.clone());
-
-    let mut process_namespace = launch_context.namespace.child();
-    process_namespace.mount(
-        "/agent",
-        agent_root_tree.clone(),
-        alan_kernel::Access::ReadWrite,
-    );
-    mount_llmfs_standard_handles(&mut process_namespace, srvfs.clone(), llmfs).await?;
-    let route_tree =
-        mount_routefs_standard_handles(&mut process_namespace, srvfs.clone(), routefs).await?;
-    for tool_name in &tool_names {
-        let tool = tools
-            .get(tool_name)
-            .with_context(|| format!("materialize Tool package metadata for {tool_name}"))?;
-        let manifest = super::ToolPackageManifest::from_tool(
-            tool.as_ref(),
-            tools.execution_timeout_secs(tool_name).unwrap_or(30),
-        )?;
-        let manifest_bytes = serde_json::to_vec(&manifest)
-            .with_context(|| format!("serialize Tool manifest for {tool_name}"))?;
-        let manifest_fs = Arc::new(alan_ap::reference::MemFs::with_read_only_file(
-            "manifest",
-            manifest_bytes,
-        ));
-        process_namespace.mount(
-            &format!("/bin/{tool_name}"),
-            InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::new())),
-            alan_kernel::Access::ReadOnly,
-        );
-        process_namespace.mount(
-            &format!("/lib/exec/{tool_name}"),
-            InProcessTransport::new(manifest_fs),
-            alan_kernel::Access::ReadOnly,
-        );
-    }
-
-    let live_namespace = alan_kernel::LiveNamespace::new(process_namespace);
-    let root_pid = spawn_root_agent_process(
-        &procfs,
-        live_namespace.clone(),
-        launch_context.credentials.clone(),
-    )
-    .await?;
-    agent_root
-        .bind_process(root_pid.clone(), agentfs.clone())
-        .await;
-    agent_root.set_root_process(root_pid.clone()).await;
-
-    let root_pid_value = alan_kernel::Pid(
-        root_pid
-            .parse::<u64>()
-            .with_context(|| format!("parse root agent pid '{root_pid}'"))?,
-    );
-    let tool_runner = crate::tools::ToolProcessRunner::from_registry(&tools);
-    let procfs_with_runner = procfs.clone().with_runner(Arc::new(tool_runner.clone()));
-    procfs
-        .bind_live_namespace(root_pid_value, live_namespace.clone())
-        .await;
-    let process_procfs = procfs_with_runner.for_live_spawner(
-        Some(root_pid_value),
-        live_namespace.clone(),
-        launch_context.credentials.clone(),
-    );
-    live_namespace.mount(
-        "/proc",
-        InProcessTransport::new(Arc::new(process_procfs)),
-        alan_kernel::Access::ReadWrite,
-    );
-    let root = InProcessTransport::new(Arc::new(alan_kernel::MountFs::from_live_namespace(
-        live_namespace.clone(),
-    )));
-    let namespace_environment =
-        super::NamespaceRuntimeEnvironment::new(root, format!("/agent/{root_pid}"), "default")
-            .with_launch_context(launch_context.clone())
-            .with_process_context(procfs, agent_root, root_pid_value, tool_runner)
-            .with_shared_services(InProcessTransport::new(srvfs), route_tree);
-    let namespace_environment = if let Some(factory) = mount_grant_applicator_factory {
-        namespace_environment.with_mount_grant_applicator_factory(factory, live_namespace)
-    } else {
-        namespace_environment
-    };
-    Ok(namespace_environment)
-}
-
-async fn mount_llmfs_standard_handles(
-    namespace: &mut alan_kernel::Namespace,
-    srvfs: Arc<alan_kernel::SrvFs>,
-    llmfs: Arc<alan_llmfs::LlmFs>,
-) -> Result<()> {
-    srvfs
-        .post(
-            LLM_SRV_HANDLE,
-            InProcessTransport::new(llmfs),
-            alan_kernel::Access::ReadWrite,
-        )
-        .await;
-    namespace.mount(
-        SRV_MOUNT,
-        InProcessTransport::new(srvfs.clone()),
-        alan_kernel::Access::ReadOnly,
-    );
-    let (llm_tree, llm_access) = srvfs
-        .lookup(LLM_SRV_HANDLE)
-        .await
-        .context("lookup llmfs handle after posting /srv/llm")?;
-    namespace.mount(LLM_MOUNT, llm_tree, llm_access);
-    Ok(())
-}
-
-async fn mount_routefs_standard_handles(
-    namespace: &mut alan_kernel::Namespace,
-    srvfs: Arc<alan_kernel::SrvFs>,
-    routefs: Arc<alan_routefs::RouteFs>,
-) -> Result<InProcessTransport> {
-    srvfs
-        .post(
-            alan_routefs::SRV_HANDLE,
-            InProcessTransport::new(routefs),
-            alan_kernel::Access::ReadWrite,
-        )
-        .await;
-    namespace.mount(
-        SRV_MOUNT,
-        InProcessTransport::new(srvfs.clone()),
-        alan_kernel::Access::ReadOnly,
-    );
-    let (route_tree, route_access) = srvfs
-        .lookup(alan_routefs::SRV_HANDLE)
-        .await
-        .context("lookup routefs handle after posting /srv/route")?;
-    namespace.mount(alan_routefs::MOUNT_PATH, route_tree.clone(), route_access);
-    Ok(route_tree)
-}
-
-async fn spawn_root_agent_process(
-    procfs: &alan_kernel::ProcFs,
-    process_namespace: alan_kernel::LiveNamespace,
-    credentials: alan_kernel::Credentials,
-) -> Result<String> {
-    let spawner_procfs = procfs.for_live_spawner(None, process_namespace.clone(), credentials);
-    let clone_fid = Fid(NEXT_RUNTIME_NAMESPACE_FID.fetch_add(1, Ordering::Relaxed));
-    spawner_procfs
-        .walk(Fid::ROOT, clone_fid, &["clone".to_string()])
-        .await
-        .context("walk root agent /proc/clone")?;
-    spawner_procfs
-        .open(clone_fid, OpenMode::ReadWrite)
-        .await
-        .context("open root agent /proc/clone")?;
-    let pid = String::from_utf8(
-        spawner_procfs
-            .read(clone_fid, 0, 64)
-            .await
-            .context("read root agent pid from /proc/clone")?,
-    )
-    .context("root agent pid is utf8")?;
-    let exec = alan_kernel::ExecSpec {
-        executable: "/bin/alan-agent".to_string(),
-        args: Vec::new(),
-        namespace: Some(alan_kernel::ExecNamespaceManifest::from_namespace(
-            &process_namespace.snapshot(),
-        )),
-    };
-    let exec_bytes = serde_json::to_vec(&exec).context("serialize root agent exec spec")?;
-    spawner_procfs
-        .write(clone_fid, 0, &exec_bytes)
-        .await
-        .context("write root agent exec spec")?;
-    spawner_procfs
-        .clunk(clone_fid)
-        .await
-        .context("commit root agent /proc/clone")?;
-    Ok(pid)
-}
-
-/// Spawn a new agent runtime with an externally-provided LLM client and tools.
+/// Start Agent Execution Engine over an already-assembled Process namespace.
 ///
-/// Hosts should use this when they need to inject concrete tool implementations
-/// while keeping the runtime crate generic.
-pub fn spawn_with_llm_client_and_tools(
-    config: AgentProcessConfig,
-    llm_client: LlmClient,
-    mut tools: crate::tools::ToolRegistry,
-) -> Result<RuntimeController> {
-    configure_runtime_tool_execution_binding(&config, &mut tools)?;
-
-    let generation_capabilities = llm_client.capabilities();
-    let host_capabilities = runtime_host_capabilities(&config, &tools);
-    let mount_grant_applicator_factory = config.mount_grant_applicator_factory.clone();
-    let launch_context = config.launch_context.clone();
-    spawn_with_prepared_runtime_environment(
-        config,
-        RuntimeEnvironmentBootstrap::NamespaceRoot {
-            llm_client,
-            tools,
-            launch_context,
-            mount_grant_applicator_factory,
-        },
-        host_capabilities,
-        generation_capabilities,
-    )
-}
-
-pub async fn spawn_with_llm_client_and_tools_and_namespace_surface(
-    config: AgentProcessConfig,
-    llm_client: LlmClient,
-    mut tools: crate::tools::ToolRegistry,
-) -> Result<RuntimeNamespaceLaunch> {
-    configure_runtime_tool_execution_binding(&config, &mut tools)?;
-
-    let generation_capabilities = llm_client.capabilities();
-    let host_capabilities = runtime_host_capabilities(&config, &tools);
-    let environment = build_root_namespace_environment(
-        llm_client,
-        tools,
-        &config.launch_context,
-        config.mount_grant_applicator_factory.clone(),
-    )
-    .await?;
-    let surface = RuntimeNamespaceSurface::new(
-        environment.root_transport(),
-        environment.agent_path().to_string(),
-    );
-    let controller = spawn_with_prepared_runtime_environment(
-        config,
-        RuntimeEnvironmentBootstrap::Ready(environment),
-        host_capabilities,
-        generation_capabilities,
-    )?;
-    Ok(RuntimeNamespaceLaunch {
-        controller,
-        surface,
-    })
-}
-
-#[cfg_attr(not(test), allow(dead_code))]
-pub(crate) fn spawn_with_namespace_environment(
+/// This entry point does not create Kernel, `/proc`, `/srv`, AgentFS, or system
+/// services. Alan OS Host owns those and supplies the complete environment.
+pub fn spawn_with_namespace_environment(
     config: AgentProcessConfig,
     namespace: super::NamespaceRuntimeEnvironment,
     host_capabilities: crate::skills::SkillHostCapabilities,
@@ -1261,7 +844,7 @@ pub(crate) fn spawn_with_namespace_environment(
 ) -> Result<RuntimeController> {
     spawn_with_prepared_runtime_environment(
         config,
-        RuntimeEnvironmentBootstrap::Ready(namespace),
+        namespace,
         host_capabilities,
         generation_capabilities,
     )
@@ -1269,7 +852,7 @@ pub(crate) fn spawn_with_namespace_environment(
 
 fn spawn_with_prepared_runtime_environment(
     config: AgentProcessConfig,
-    environment: RuntimeEnvironmentBootstrap,
+    environment: NamespaceRuntimeEnvironment,
     host_capabilities: crate::skills::SkillHostCapabilities,
     _generation_capabilities: crate::llm::ProviderCapabilities,
 ) -> Result<RuntimeController> {
@@ -1359,13 +942,6 @@ fn spawn_with_prepared_runtime_environment(
 
     // Spawn the main runtime task
     let task_handle = tokio::spawn(async move {
-        let environment = match environment.into_environment().await {
-            Ok(environment) => environment,
-            Err(err) => {
-                let _ = ready_tx.send(Err(format!("{:#}", err)));
-                return;
-            }
-        };
         let process_path = match environment.process_path() {
             Ok(path) => path,
             Err(err) => {
@@ -1439,6 +1015,18 @@ fn spawn_with_prepared_runtime_environment(
         let mut shutdown_requested = false;
 
         let mut queues = RuntimeSubmissionQueues::default();
+        let input_environment = state.namespace_environment().clone();
+        let (namespace_input_tx, mut namespace_input_rx) = mpsc::channel(1);
+        let namespace_input_task = tokio::spawn(async move {
+            loop {
+                let submission = input_environment
+                    .read_next_input_submission(InputMode::FollowUp)
+                    .await;
+                if namespace_input_tx.send(submission).await.is_err() {
+                    break;
+                }
+            }
+        });
 
         loop {
             let queued_item = if shutdown_requested {
@@ -1474,12 +1062,11 @@ fn spawn_with_prepared_runtime_environment(
             } else if submissions_closed {
                 None
             } else {
-                let namespace_input = state.namespace_environment().clone();
                 let namespace_control = state.namespace_environment().clone();
                 let poll_pending_namespace_response = state.turn_state.has_pending_interaction();
                 tokio::select! {
                     submission = sub_rx.recv() => submission.map(QueuedRuntimeItem::Submission),
-                    namespace_submission = read_namespace_input_submission(namespace_input, InputMode::FollowUp) => {
+                    namespace_submission = namespace_input_rx.recv() => {
                         match namespace_submission {
                             Some(Ok(submission)) => Some(QueuedRuntimeItem::Submission(submission)),
                             Some(Err(err)) => {
@@ -1546,7 +1133,6 @@ fn spawn_with_prepared_runtime_environment(
                     let mut emit = |_event: Event| async {};
 
                     let broker_for_submission = queues.active_turn_broker.clone();
-                    let namespace_input = state.namespace_environment().clone();
                     let namespace_control = state.namespace_environment().clone();
                     let namespace_heartbeat = state.namespace_environment().clone();
                     let mut submission_fut: std::pin::Pin<
@@ -1630,7 +1216,7 @@ fn spawn_with_prepared_runtime_environment(
                                     }
                                 }
                             }
-                            namespace_submission = read_namespace_input_submission(namespace_input.clone(), InputMode::FollowUp) => {
+                            namespace_submission = namespace_input_rx.recv() => {
                                 match namespace_submission {
                                     Some(Ok(incoming)) => {
                                         if drive_as_turn_submission && is_turn_inband_submission(&incoming.op) {
@@ -1700,7 +1286,6 @@ fn spawn_with_prepared_runtime_environment(
                     let action_for_requeue = action.clone();
                     let mut requeue_if_cancelled = false;
                     let cancel = CancellationToken::new();
-                    let namespace_input = state.namespace_environment().clone();
                     let namespace_control = state.namespace_environment().clone();
                     let mut action_fut = Box::pin(run_deferred_runtime_action_with_cancel(
                         &mut state, action, &cancel,
@@ -1731,7 +1316,7 @@ fn spawn_with_prepared_runtime_environment(
                                     }
                                 }
                             }
-                            namespace_submission = read_namespace_input_submission(namespace_input.clone(), InputMode::FollowUp) => {
+                            namespace_submission = namespace_input_rx.recv() => {
                                 match namespace_submission {
                                     Some(Ok(incoming)) => {
                                         requeue_if_cancelled = true;
@@ -1781,6 +1366,8 @@ fn spawn_with_prepared_runtime_environment(
             }
         }
 
+        namespace_input_task.abort();
+        let _ = namespace_input_task.await;
         info!(
             process_path = %state.namespace_environment().agent_path(),
             "Agent runtime stopped"
@@ -1804,6 +1391,7 @@ mod tests {
     use super::*;
     use crate::runtime::{agent_loop::DeferredRuntimeAction, memory_promotion};
     use alan_agent_protocol::{ContentPart, Op};
+    use alan_ap::InProcessTransport;
     use alan_llm::{
         GenerationRequest, GenerationResponse, LlmProvider, MockLlmProvider, StreamChunk,
         TokenUsage, ToolCallDelta,
@@ -1898,115 +1486,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn llmfs_standard_handle_posts_under_srv_and_mounts_tree_under_mnt_llm() {
-        let llmfs = Arc::new(alan_llmfs::LlmFs::new());
-        llmfs.register_connection("default", Box::new(MockLlmProvider::new()));
-        let srvfs = Arc::new(alan_kernel::SrvFs::new());
-        let mut namespace = alan_kernel::Namespace::new();
-
-        mount_llmfs_standard_handles(&mut namespace, srvfs, llmfs)
-            .await
-            .unwrap();
-
-        let root = alan_ap::InProcessTransport::new(Arc::new(alan_kernel::MountFs::new(namespace)));
-        let shell = alan_shell::Shell::new(root);
-
-        assert_eq!(shell.ls("/srv").await.unwrap(), vec!["llm".to_string()]);
-        assert_eq!(shell.cat("/srv/llm").await.unwrap(), b"llm");
-        assert_eq!(
-            shell.ls("/srv/llm").await,
-            Err(alan_ap::ErrorCode::NotDirectory),
-            "/srv/llm is the rendezvous handle, not the llmfs state tree"
-        );
-
-        let llm_root = shell.ls("/mnt/llm").await.unwrap();
-        assert!(llm_root.iter().any(|entry| entry == "connections"));
-        assert!(llm_root.iter().any(|entry| entry == "providers"));
-        let connections = shell.ls("/mnt/llm/connections").await.unwrap();
-        assert_eq!(connections, vec!["default".to_string()]);
-    }
-
-    #[tokio::test]
-    async fn root_namespace_environment_posts_routefs_and_mounts_route_tree() {
-        let launch_context = crate::ProcessLaunchContext::root();
-        let environment = build_root_namespace_environment(
-            LlmClient::new(MockLlmProvider::new()),
-            crate::tools::ToolRegistry::new(),
-            &launch_context,
-            None,
-        )
-        .await
-        .unwrap();
-        let shell = alan_shell::Shell::new(environment.root_transport());
-
-        let srv_entries = shell.ls("/srv").await.unwrap();
-        assert!(srv_entries.iter().any(|entry| entry == "llm"));
-        assert!(srv_entries.iter().any(|entry| entry == "route"));
-        assert_eq!(shell.cat("/srv/route").await.unwrap(), b"route");
-        assert_eq!(
-            shell.ls("/srv/route").await,
-            Err(alan_ap::ErrorCode::NotDirectory),
-            "/srv/route is the rendezvous handle, not the routefs state tree"
-        );
-
-        let route_root = shell.ls("/mnt/route").await.unwrap();
-        for entry in ["send", "rules", "ports", "log"] {
-            assert!(
-                route_root.iter().any(|mounted| mounted == entry),
-                "{route_root:?}"
-            );
-        }
-
-        let message = serde_json::to_vec(&serde_json::json!({
-            "version": 1,
-            "type": "status",
-            "content": "ready"
-        }))
-        .unwrap();
-        shell.write("/mnt/route/send", &message).await.unwrap();
-        let dead_letter =
-            String::from_utf8(shell.cat("/mnt/route/ports/dead-letter").await.unwrap()).unwrap();
-        assert!(
-            dead_letter.contains(r#""rule":"dead-letter""#),
-            "{dead_letter}"
-        );
-        assert!(dead_letter.contains(r#""type":"status""#), "{dead_letter}");
-    }
-
-    #[tokio::test]
-    async fn root_namespace_mounts_complete_tool_packages() {
-        let mut tools = crate::tools::ToolRegistry::new();
-        tools.register(PackageTestTool {
-            name: "example",
-            description: "Example Tool",
-        });
-        let launch_context = crate::ProcessLaunchContext::root();
-        let environment = build_root_namespace_environment(
-            LlmClient::new(MockLlmProvider::new()),
-            tools,
-            &launch_context,
-            None,
-        )
-        .await
-        .unwrap();
-        let shell = alan_shell::Shell::new(environment.root_transport());
-
-        assert!(
-            shell
-                .ls("/bin")
-                .await
-                .unwrap()
-                .contains(&"example".to_string())
-        );
-        let manifest: crate::runtime::ToolPackageManifest =
-            serde_json::from_slice(&shell.cat("/lib/exec/example/manifest").await.unwrap())
-                .unwrap();
-        manifest.validate_for_name("example").unwrap();
-        let discovered = environment.discover_tool_packages().await.unwrap();
-        assert_eq!(discovered, vec![manifest]);
-    }
-
-    #[tokio::test]
     async fn namespace_discovery_ignores_incomplete_tool_packages() {
         let manifest = crate::runtime::ToolPackageManifest::from_tool(
             &PackageTestTool {
@@ -2060,29 +1539,6 @@ mod tests {
             crate::runtime::NamespaceRuntimeEnvironment::new(root, "/agent/1", "default");
 
         assert!(environment.discover_tool_packages().await.is_err());
-    }
-
-    #[tokio::test]
-    async fn invalid_tool_package_fails_before_agent_launch() {
-        let mut tools = crate::tools::ToolRegistry::new();
-        tools.register(PackageTestTool {
-            name: "bad/name",
-            description: "Invalid Tool",
-        });
-
-        let launch_context = crate::ProcessLaunchContext::root();
-        let error = match build_root_namespace_environment(
-            LlmClient::new(MockLlmProvider::new()),
-            tools,
-            &launch_context,
-            None,
-        )
-        .await
-        {
-            Ok(_) => panic!("invalid Tool package must fail before launch"),
-            Err(error) => error,
-        };
-        assert!(error.to_string().contains("does not match mounted package"));
     }
 
     #[test]
@@ -2268,87 +1724,6 @@ mod tests {
         rx
     }
 
-    #[tokio::test]
-    async fn test_spawn_with_llm_client_and_tools_runs_turn_after_namespace_bootstrap() {
-        let llm_client = LlmClient::new(
-            MockLlmProvider::new()
-                .with_response(mock_generation_response("hello from namespace bootstrap")),
-        );
-        let launch = spawn_with_llm_client_and_tools_and_namespace_surface(
-            AgentProcessConfig::default(),
-            llm_client,
-            crate::tools::ToolRegistry::new(),
-        )
-        .await
-        .unwrap();
-        let shell = alan_shell::Shell::new(launch.surface.root_transport());
-        let mut ui_events = shell
-            .tail(&format!(
-                "{}/machine/ui/events",
-                launch.surface.agent_path()
-            ))
-            .await
-            .unwrap();
-        let mut controller = launch.controller;
-        controller.wait_until_ready().await.unwrap();
-
-        controller
-            .handle
-            .submission_tx
-            .send(Submission::new(Op::Turn {
-                parts: vec![ContentPart::text("hello")],
-                context: None,
-            }))
-            .await
-            .unwrap();
-
-        let observed = wait_for_ui_turn_completion(&mut ui_events, Duration::from_secs(5)).await;
-        assert!(observed.iter().any(|event| matches!(
-            event,
-            alan_agent_protocol::UiEvent::Activity { snapshot }
-                if snapshot.state == alan_agent_protocol::UiActivityState::Running
-        )));
-        let text = String::from_utf8(
-            shell
-                .cat(&format!("{}/io/output", launch.surface.agent_path()))
-                .await
-                .unwrap(),
-        )
-        .unwrap();
-        assert_eq!(text, "hello from namespace bootstrap");
-        controller.shutdown().await.unwrap();
-    }
-
-    #[tokio::test]
-    async fn namespace_surface_launch_exposes_live_agent_files_for_renderer_hosts() {
-        let llm_client = LlmClient::new(
-            MockLlmProvider::new().with_response(mock_generation_response("hello from surface")),
-        );
-        let mut launch = spawn_with_llm_client_and_tools_and_namespace_surface(
-            AgentProcessConfig::default(),
-            llm_client,
-            crate::tools::ToolRegistry::new(),
-        )
-        .await
-        .unwrap();
-        launch.controller.wait_until_ready().await.unwrap();
-
-        let shell = alan_shell::Shell::new(launch.surface.root_transport());
-        let agent_path = launch.surface.agent_path().to_string();
-        assert!(agent_path.starts_with("/agent/"));
-        let message = "hello from renderer host";
-        shell
-            .write(&format!("{agent_path}/io/input"), message.as_bytes())
-            .await
-            .expect("write agent input");
-        let status = String::from_utf8(shell.cat("/proc/1/status").await.unwrap()).unwrap();
-        assert_eq!(status, "running\n");
-        let input =
-            String::from_utf8(shell.cat(&format!("{agent_path}/io/input")).await.unwrap()).unwrap();
-        assert_eq!(input, message);
-        launch.controller.shutdown().await.unwrap();
-    }
-
     struct ShutdownDrainMemoryPromotionProvider {
         call_count: Arc<Mutex<usize>>,
         deferred_delay: Duration,
@@ -2520,20 +1895,40 @@ mod tests {
             ..AgentProcessConfig::default()
         };
         let call_count = Arc::new(Mutex::new(0));
-        let llm_client = LlmClient::new(ShutdownDrainMemoryPromotionProvider {
-            call_count: Arc::clone(&call_count),
-            deferred_delay: Duration::from_millis(100),
-        });
-
-        let launch = spawn_with_llm_client_and_namespace_surface(config, llm_client)
-            .await
-            .unwrap();
-        let shell = alan_shell::Shell::new(launch.surface.root_transport());
-        let mut output = shell
-            .tail(&format!("{}/io/output", launch.surface.agent_path()))
-            .await
-            .unwrap();
-        let mut controller = launch.controller;
+        let agentfs = Arc::new(alan_agentfs::AgentFs::new());
+        let llmfs = Arc::new(alan_llmfs::LlmFs::new());
+        llmfs.register_connection(
+            "default",
+            Box::new(ShutdownDrainMemoryPromotionProvider {
+                call_count: Arc::clone(&call_count),
+                deferred_delay: Duration::from_millis(100),
+            }),
+        );
+        let mut namespace = alan_kernel::Namespace::new();
+        namespace.mount(
+            "/agent/1",
+            alan_ap::InProcessTransport::new(agentfs),
+            alan_kernel::Access::ReadWrite,
+        );
+        namespace.mount(
+            "/mnt/llm",
+            alan_ap::InProcessTransport::new(llmfs),
+            alan_kernel::Access::ReadWrite,
+        );
+        let root = alan_ap::InProcessTransport::new(Arc::new(alan_kernel::MountFs::new(namespace)));
+        let shell = alan_shell::Shell::new(root.clone());
+        let mut output = shell.tail("/agent/1/io/output").await.unwrap();
+        let environment =
+            crate::runtime::NamespaceRuntimeEnvironment::new(root, "/agent/1", "default");
+        let generation_capabilities =
+            crate::provider_capabilities_for_config(&config.agent_config.core_config);
+        let mut controller = spawn_with_namespace_environment(
+            config,
+            environment,
+            crate::skills::SkillHostCapabilities::default(),
+            generation_capabilities,
+        )
+        .unwrap();
         controller.wait_until_ready().await.unwrap();
 
         let submission = Submission::new(Op::Turn {
@@ -2604,10 +1999,9 @@ mod tests {
     async fn test_namespace_io_input_frame_drives_runtime_turn_without_api_submission() {
         let agentfs = Arc::new(alan_agentfs::AgentFs::new());
         let llmfs = Arc::new(alan_llmfs::LlmFs::new());
-        llmfs.register_connection(
-            "default",
-            Box::new(MockLlmProvider::new().with_response(GenerationResponse {
-                content: "hello from namespace runtime".to_string(),
+        let mock = MockLlmProvider::new().with_responses(vec![
+            GenerationResponse {
+                content: "first namespace response".to_string(),
                 thinking: None,
                 thinking_signature: None,
                 redacted_thinking: Vec::new(),
@@ -2617,13 +2011,34 @@ mod tests {
                 provider_response_id: None,
                 provider_response_status: None,
                 warnings: Vec::new(),
-            })),
-        );
+            },
+            GenerationResponse {
+                content: "second namespace response".to_string(),
+                thinking: None,
+                thinking_signature: None,
+                redacted_thinking: Vec::new(),
+                tool_calls: Vec::new(),
+                usage: None,
+                finish_reason: Some("stop".to_string()),
+                provider_response_id: None,
+                provider_response_status: None,
+                warnings: Vec::new(),
+            },
+        ]);
+        let mock_probe = mock.clone();
+        llmfs.register_connection("default", Box::new(mock));
 
+        let procfs = Arc::new(alan_kernel::ProcFs::new());
+        let agent_root = Arc::new(alan_agentfs::AgentRootFs::new(procfs.clone()));
         let mut ns = alan_kernel::Namespace::new();
         ns.mount(
-            "/agent/1",
-            alan_ap::InProcessTransport::new(agentfs),
+            "/proc",
+            alan_ap::InProcessTransport::new(procfs),
+            alan_kernel::Access::ReadWrite,
+        );
+        ns.mount(
+            "/agent",
+            alan_ap::InProcessTransport::new(agent_root.clone()),
             alan_kernel::Access::ReadWrite,
         );
         ns.mount(
@@ -2631,13 +2046,88 @@ mod tests {
             alan_ap::InProcessTransport::new(llmfs),
             alan_kernel::Access::ReadWrite,
         );
-        let root = alan_ap::InProcessTransport::new(Arc::new(alan_kernel::MountFs::new(ns)));
-        let shell = alan_shell::Shell::new(root.clone());
+        for path in ["/bin", "/lib", "/man", "/mnt"] {
+            ns.mount(
+                path,
+                alan_ap::InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::empty())),
+                alan_kernel::Access::ReadOnly,
+            );
+        }
+        for name in ["read_file", "write_file", "search_files", "run_command"] {
+            let manifest = crate::runtime::ToolPackageManifest::from_tool(
+                &PackageTestTool {
+                    name,
+                    description: "Host-mounted test Tool",
+                },
+                30,
+            )
+            .unwrap();
+            ns.mount(
+                &format!("/bin/{name}"),
+                alan_ap::InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::empty())),
+                alan_kernel::Access::ReadOnly,
+            );
+            ns.mount(
+                &format!("/lib/exec/{name}"),
+                alan_ap::InProcessTransport::new(Arc::new(
+                    alan_ap::reference::MemFs::with_read_only_file(
+                        "manifest",
+                        serde_json::to_vec(&manifest).unwrap(),
+                    ),
+                )),
+                alan_kernel::Access::ReadOnly,
+            );
+        }
+        let live_namespace = alan_kernel::LiveNamespace::new(ns);
+        let root = alan_ap::InProcessTransport::new(Arc::new(
+            alan_kernel::MountFs::from_live_namespace(live_namespace.clone()),
+        ));
+        let bootstrap_shell = alan_shell::Shell::new(root.clone());
+        let pid = bootstrap_shell
+            .spawn(r#"{"executable":"/bin/agent","args":[]}"#)
+            .await
+            .unwrap();
+        assert_eq!(pid, "1");
+        agent_root.bind_process(pid.clone(), agentfs).await;
+        agent_root.set_root_process(pid).await;
+        let (client_stream, server_stream) = tokio::io::duplex(64 * 1024);
+        let (client_read, client_write) = tokio::io::split(client_stream);
+        let (server_read, server_write) = tokio::io::split(server_stream);
+        let attachment_mount = Arc::new(alan_kernel::MountFs::from_live_namespace(live_namespace));
+        let server_task = tokio::spawn(alan_ap::export_file_server(
+            attachment_mount,
+            tokio::io::BufReader::new(server_read),
+            server_write,
+        ));
+        let imported = Arc::new(alan_ap::ImportedFileServer::new(
+            tokio::io::BufReader::new(client_read),
+            client_write,
+        ));
+        let shell = alan_shell::Shell::new(alan_ap::InProcessTransport::new(imported));
 
-        let core_config = crate::Config::default();
+        let mut core_config = crate::Config::default();
+        core_config.memory.enabled = false;
         let generation_capabilities = crate::provider_capabilities_for_config(&core_config);
+        let store = TempDir::new().unwrap();
+        let store_bindings = crate::AgentRuntimeStoreBindings {
+            rollouts: store.path().join("rollouts"),
+            checkpoints: store.path().join("checkpoints"),
+            cache: store.path().join("cache"),
+            tmp: store.path().join("tmp"),
+            metadata: store.path().join("metadata"),
+        };
+        for path in [
+            &store_bindings.rollouts,
+            &store_bindings.checkpoints,
+            &store_bindings.cache,
+            &store_bindings.tmp,
+            &store_bindings.metadata,
+        ] {
+            std::fs::create_dir_all(path).unwrap();
+        }
         let config = AgentProcessConfig {
             agent_config: crate::AgentConfig::from(core_config),
+            store_bindings: Some(store_bindings),
             ..AgentProcessConfig::default()
         };
         let namespace_environment =
@@ -2660,9 +2150,20 @@ mod tests {
         wait_for_ui_turn_completion(&mut ui_events, Duration::from_secs(5)).await;
 
         let output = String::from_utf8(shell.cat("/agent/1/io/output").await.unwrap()).unwrap();
-        assert_eq!(output, "hello from namespace runtime");
+        assert_eq!(output, "first namespace response");
+
+        shell
+            .write("/agent/1/io/input", b"second input through files")
+            .await
+            .unwrap();
+        wait_for_ui_turn_completion(&mut ui_events, Duration::from_secs(5)).await;
+        let output = String::from_utf8(shell.cat("/agent/1/io/output").await.unwrap()).unwrap();
+        assert_eq!(output, "first namespace responsesecond namespace response");
+        assert_eq!(mock_probe.recorded_requests().len(), 2);
 
         controller.shutdown().await.unwrap();
+        drop(shell);
+        server_task.abort();
     }
 
     #[tokio::test]

@@ -7,18 +7,23 @@
 //! serialization (§5.6); a future wire transport substitutes here without
 //! changing servers or clients.
 
+use std::collections::HashMap;
+use std::marker::PhantomData;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use async_trait::async_trait;
 use tokio::io::{AsyncBufRead, AsyncWrite};
-use tokio::sync::{Mutex, mpsc};
-use tokio::task::JoinHandle;
+use tokio::sync::{Mutex, mpsc, oneshot};
+use tokio::task::{JoinHandle, JoinSet};
 
 use crate::wire::{
-    MAX_WIRE_FRAME_BYTES, read_request_frame, read_response_frame, write_request_frame,
-    write_response_frame,
+    MAX_WIRE_FRAME_BYTES, WireTag, read_tagged_request_frame, read_tagged_response_frame,
+    write_tagged_request_frame, write_tagged_response_frame,
 };
 use crate::{ErrorCode, Fid, FileKind, Offset, OpenMode, Qid, Request, Response, Stat, WireError};
+
+type PendingResponses = Arc<Mutex<HashMap<WireTag, oneshot::Sender<Result<Response, ErrorCode>>>>>;
 
 const MAX_WIRE_PAYLOAD_CHUNK_BYTES: usize = MAX_WIRE_FRAME_BYTES / 8;
 
@@ -210,9 +215,9 @@ impl InProcessTransport {
 
 /// Export a [`FileServer`] over the aP byte transport.
 ///
-/// The loop is intentionally simple in v1: one connection carries a serialized
-/// sequence of request frames and response-result frames. Multiplexing can be
-/// added above this without changing the [`FileServer`] contract.
+/// One connection carries tagged request/response frames. Requests execute
+/// independently so a blocking stream read does not prevent unrelated fids from
+/// making progress on the same attachment.
 pub async fn export_file_server<R, W>(
     server: Arc<dyn FileServer>,
     reader: R,
@@ -223,16 +228,31 @@ where
     W: AsyncWrite + Unpin,
 {
     let transport = InProcessTransport::new(server);
-    let (request_tx, mut request_rx) = mpsc::channel(1);
+    let (request_tx, mut request_rx) = mpsc::channel(32);
     let reader_task = AbortOnDrop::new(tokio::spawn(read_export_requests(reader, request_tx)));
+    let mut calls = JoinSet::new();
 
     let result = async {
-        while let Some(message) = request_rx.recv().await {
-            let ExportReaderMessage::Request(request) = message?;
-            let result = transport.call(request).await;
-            write_response_frame(&mut writer, &result).await?;
+        loop {
+            tokio::select! {
+                message = request_rx.recv() => {
+                    match message {
+                        Some(Ok(ExportReaderMessage::Request { tag, request })) => {
+                            let transport = transport.clone();
+                            calls.spawn(async move { (tag, transport.call(request).await) });
+                        }
+                        Some(Err(error)) => break Err(error),
+                        None => break Ok(()),
+                    }
+                }
+                result = calls.join_next(), if !calls.is_empty() => {
+                    let (tag, result) = result
+                        .expect("aP export call set was non-empty")
+                        .map_err(|error| WireError::Io(std::io::Error::other(error)))?;
+                    write_tagged_response_frame(&mut writer, tag, &result).await?;
+                }
+            }
         }
-        Ok(())
     }
     .await;
 
@@ -268,7 +288,7 @@ impl Drop for AbortOnDrop {
 }
 
 enum ExportReaderMessage {
-    Request(Request),
+    Request { tag: WireTag, request: Request },
 }
 
 async fn read_export_requests<R>(
@@ -278,10 +298,10 @@ async fn read_export_requests<R>(
     R: AsyncBufRead + Unpin,
 {
     loop {
-        match read_request_frame(&mut reader).await {
-            Ok(Some(request)) => {
+        match read_tagged_request_frame(&mut reader).await {
+            Ok(Some((tag, request))) => {
                 if request_tx
-                    .send(Ok(ExportReaderMessage::Request(request)))
+                    .send(Ok(ExportReaderMessage::Request { tag, request }))
                     .await
                     .is_err()
                 {
@@ -302,6 +322,7 @@ pub struct WireTransportClient<R, W> {
     reader: R,
     writer: W,
     in_flight: bool,
+    next_tag: WireTag,
 }
 
 impl<R, W> WireTransportClient<R, W>
@@ -314,6 +335,7 @@ where
             reader,
             writer,
             in_flight: false,
+            next_tag: 1,
         }
     }
 
@@ -337,10 +359,16 @@ where
         &mut self,
         request: Request,
     ) -> Result<Result<Response, ErrorCode>, WireError> {
-        write_request_frame(&mut self.writer, &request).await?;
-        read_response_frame(&mut self.reader)
+        let tag = self.next_tag;
+        self.next_tag = self.next_tag.wrapping_add(1).max(1);
+        write_tagged_request_frame(&mut self.writer, tag, &request).await?;
+        let (response_tag, result) = read_tagged_response_frame(&mut self.reader)
             .await?
-            .ok_or(WireError::Closed)
+            .ok_or(WireError::Closed)?;
+        if response_tag != tag {
+            return Err(WireError::Unsynchronized);
+        }
+        Ok(result)
     }
 
     /// Send one request and map transport failures back into aP error space.
@@ -353,26 +381,90 @@ where
 
 /// A remote aP tree imported as a normal [`FileServer`].
 ///
-/// V1 serializes requests through one connection. This preserves aP semantics and
-/// keeps request IDs out of the first wire slice; a later transport can add
-/// multiplexing without changing clients.
+/// Calls are multiplexed through one connection. A background response router
+/// pairs tagged results with callers, while a short writer lock keeps frames from
+/// interleaving. Waiting on one response never holds the writer or blocks another
+/// call.
 pub struct ImportedFileServer<R, W> {
-    client: Mutex<WireTransportClient<R, W>>,
+    writer: Mutex<W>,
+    pending: PendingResponses,
+    next_tag: AtomicU64,
+    closed: Arc<AtomicBool>,
+    reader_task: JoinHandle<()>,
+    reader: PhantomData<fn() -> R>,
 }
 
 impl<R, W> ImportedFileServer<R, W>
 where
-    R: AsyncBufRead + Unpin,
-    W: AsyncWrite + Unpin,
+    R: AsyncBufRead + Send + Unpin + 'static,
+    W: AsyncWrite + Send + Unpin + 'static,
 {
     pub fn new(reader: R, writer: W) -> Self {
+        let pending = Arc::new(Mutex::new(HashMap::new()));
+        let closed = Arc::new(AtomicBool::new(false));
+        let reader_task = tokio::spawn(route_imported_responses(
+            reader,
+            Arc::clone(&pending),
+            Arc::clone(&closed),
+        ));
         Self {
-            client: Mutex::new(WireTransportClient::new(reader, writer)),
+            writer: Mutex::new(writer),
+            pending,
+            next_tag: AtomicU64::new(1),
+            closed,
+            reader_task,
+            reader: PhantomData,
         }
     }
 
     async fn remote_call(&self, request: Request) -> Result<Response, ErrorCode> {
-        self.client.lock().await.call(request).await
+        if self.closed.load(Ordering::Acquire) {
+            return Err(ErrorCode::Io);
+        }
+
+        let tag = self.next_tag.fetch_add(1, Ordering::Relaxed);
+        let (result_tx, result_rx) = oneshot::channel();
+        self.pending.lock().await.insert(tag, result_tx);
+
+        let write_result = {
+            let mut writer = self.writer.lock().await;
+            if self.closed.load(Ordering::Acquire) {
+                Err(WireError::Closed)
+            } else {
+                write_tagged_request_frame(&mut *writer, tag, &request).await
+            }
+        };
+        if let Err(error) = write_result {
+            self.pending.lock().await.remove(&tag);
+            self.closed.store(true, Ordering::Release);
+            return Err(error.to_error_code());
+        }
+        result_rx.await.map_err(|_| ErrorCode::Io)?
+    }
+}
+
+impl<R, W> Drop for ImportedFileServer<R, W> {
+    fn drop(&mut self) {
+        self.reader_task.abort();
+    }
+}
+
+async fn route_imported_responses<R>(
+    mut reader: R,
+    pending: PendingResponses,
+    closed: Arc<AtomicBool>,
+) where
+    R: AsyncBufRead + Unpin,
+{
+    while let Ok(Some((tag, result))) = read_tagged_response_frame(&mut reader).await {
+        if let Some(waiter) = pending.lock().await.remove(&tag) {
+            let _ = waiter.send(result);
+        }
+    }
+
+    closed.store(true, Ordering::Release);
+    for (_, waiter) in pending.lock().await.drain() {
+        let _ = waiter.send(Err(ErrorCode::Io));
     }
 }
 

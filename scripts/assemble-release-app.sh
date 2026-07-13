@@ -17,6 +17,7 @@ DERIVED_DATA="${ALAN_XCODE_DERIVED_DATA:-$REPO_ROOT/target/xcode-derived}"
 CARGO_TARGET_DIR="${ALAN_CARGO_TARGET_DIR:-${CARGO_TARGET_DIR:-$REPO_ROOT/target}}"
 CARGO_BUILD_TARGET="aarch64-apple-darwin"
 CARGO_RELEASE_BIN="$CARGO_TARGET_DIR/$CARGO_BUILD_TARGET/release/alan"
+CARGO_RELEASE_HOST_BIN="$CARGO_TARGET_DIR/$CARGO_BUILD_TARGET/release/$ALAN_OS_HOST_NAME"
 SHELL_CORE_FFI_TARGET_DIR="${ALAN_SHELL_CORE_FFI_TARGET_DIR:-$REPO_ROOT/target/shell-core-ffi-release-unoptimized}"
 SHELL_CORE_FFI_BUILD_DYLIB="$SHELL_CORE_FFI_TARGET_DIR/release/libalan_shell_core_ffi.dylib"
 RELEASE_ARCH="arm64"
@@ -206,6 +207,8 @@ mkdir -p "$STAGING_DIR" "$ARTIFACT_DIR"
 printf 'Building release alan binary for %s channel (%s)...\n' \
     "$ALAN_CHANNEL_ID" "$CARGO_BUILD_TARGET"
 cargo build --release -p alan --target "$CARGO_BUILD_TARGET" --target-dir "$CARGO_TARGET_DIR"
+cargo build --release -p alan-os-host --bin "$ALAN_OS_HOST_NAME" \
+    --target "$CARGO_BUILD_TARGET" --target-dir "$CARGO_TARGET_DIR"
 
 printf 'Building release shell core FFI for %s channel...\n' "$ALAN_CHANNEL_ID"
 CARGO_PROFILE_RELEASE_OPT_LEVEL=0 \
@@ -253,9 +256,12 @@ printf 'Embedding alan binary into %s...\n' "$ALAN_APP_BUNDLE_NAME"
 mkdir -p "$EMBEDDED_BIN_DIR"
 cp "$CARGO_RELEASE_BIN" "$EMBEDDED_BIN_DIR/$ALAN_CLI_NAME"
 chmod +x "$EMBEDDED_BIN_DIR/$ALAN_CLI_NAME"
+cp "$CARGO_RELEASE_HOST_BIN" "$EMBEDDED_BIN_DIR/$ALAN_OS_HOST_NAME"
+chmod +x "$EMBEDDED_BIN_DIR/$ALAN_OS_HOST_NAME"
 
 printf 'Verifying embedded alan binary architecture...\n'
 thin_macho_to_arm64 "$EMBEDDED_BIN_DIR/$ALAN_CLI_NAME"
+thin_macho_to_arm64 "$EMBEDDED_BIN_DIR/$ALAN_OS_HOST_NAME"
 
 printf 'Verifying shell-core FFI dylib architecture...\n'
 thin_macho_to_arm64 "$SHELL_CORE_FFI_DYLIB"
@@ -267,6 +273,8 @@ thin_macho_to_arm64 "$PRIVILEGED_HELPER_EXECUTABLE"
 ASSEMBLED_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 printf 'Signing embedded alan binary...\n'
 sign_path "$EMBEDDED_BIN_DIR/$ALAN_CLI_NAME"
+printf 'Signing dedicated Alan OS Host binary...\n'
+sign_path "$EMBEDDED_BIN_DIR/$ALAN_OS_HOST_NAME"
 
 printf 'Thinning Sparkle framework to arm64...\n'
 thin_sparkle_to_arm64
@@ -288,6 +296,7 @@ codesign --verify --strict --verbose=2 "$PRIVILEGED_HELPER_EXECUTABLE"
 
 printf 'Recording signed embedded binary checksums...\n'
 ALAN_SHA="$(sha256 "$EMBEDDED_BIN_DIR/$ALAN_CLI_NAME")"
+ALAN_OS_HOST_SHA="$(sha256 "$EMBEDDED_BIN_DIR/$ALAN_OS_HOST_NAME")"
 SHELL_CORE_FFI_SHA="$(sha256 "$SHELL_CORE_FFI_DYLIB")"
 PRIVILEGED_HELPER_SHA="$(sha256 "$PRIVILEGED_HELPER_EXECUTABLE")"
 
@@ -306,6 +315,10 @@ cat >"$MANIFEST_PATH" <<EOF
     "$(json_escape "$ALAN_CLI_NAME")": {
       "path": "Contents/Resources/bin/$(json_escape "$ALAN_CLI_NAME")",
       "sha256": "$(json_escape "$ALAN_SHA")"
+    },
+    "$(json_escape "$ALAN_OS_HOST_NAME")": {
+      "path": "Contents/Resources/bin/$(json_escape "$ALAN_OS_HOST_NAME")",
+      "sha256": "$(json_escape "$ALAN_OS_HOST_SHA")"
     },
     "$(json_escape "$SHELL_CORE_FFI_DYLIB_NAME")": {
       "path": "Contents/Frameworks/$(json_escape "$SHELL_CORE_FFI_DYLIB_NAME")",

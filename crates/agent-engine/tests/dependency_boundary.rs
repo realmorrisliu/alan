@@ -82,7 +82,7 @@ fn runtime_state_and_handles_have_no_parallel_capability_or_event_authority() {
 #[test]
 fn namespace_environment_reaches_capabilities_only_through_files() {
     let source = read_runtime_source("agent_loop/namespace_environment.rs");
-    let production = source.split("\n#[cfg(test)]").next().unwrap();
+    let production = source.split("\n#[cfg(test)]\nmod tests").next().unwrap();
 
     for forbidden in ["LlmProvider", "ToolRegistry"] {
         assert!(!production.contains(forbidden));
@@ -122,4 +122,24 @@ fn child_supervision_has_no_runtime_receiver_fallback() {
     ] {
         assert!(source.contains(required), "child path missing {required}");
     }
+}
+
+#[test]
+fn engine_does_not_assemble_alan_os() {
+    let source = read_runtime_source("engine.rs");
+    let production = source.split("\n#[cfg(test)]\nmod tests").next().unwrap();
+    for forbidden in [
+        "ProcFs::new",
+        "SrvFs::new",
+        "AgentRootFs::new",
+        "LlmFs::new",
+        "build_root_namespace_environment",
+        "spawn_root_agent_process",
+    ] {
+        assert!(
+            !production.contains(forbidden),
+            "Agent Execution Engine must not assemble Alan OS through {forbidden}"
+        );
+    }
+    assert!(production.contains("spawn_with_namespace_environment"));
 }

@@ -15,7 +15,7 @@ use anyhow::{Context, Result, bail, ensure};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
-use crate::system_store::{HostStorePaths, SystemStorePaths};
+use alan_os_host::{HostStorePaths, SystemStorePaths};
 
 const LEGACY_STABLE_HOME: &str = ".alan";
 const LEGACY_DEV_HOME: &str = ".alan-dev";
@@ -228,7 +228,7 @@ pub fn migrate_legacy_connections(
 ) -> Result<ConnectionMigrationReport> {
     ensure_real_legacy_root_or_missing(&paths.alan_root)?;
     ensure!(
-        paths.channel == system_store.channel,
+        paths.channel.descriptor().id == system_store.channel_id,
         "legacy and System Store channels differ"
     );
 
@@ -968,8 +968,8 @@ mod tests {
         let data = root.join("data");
         fs::create_dir_all(&data).unwrap();
         (
-            SystemStorePaths::from_data_dir(&data, channel).unwrap(),
-            HostStorePaths::from_data_dir(&data, channel).unwrap(),
+            SystemStorePaths::from_data_dir(&data, channel.descriptor().id).unwrap(),
+            HostStorePaths::from_data_dir(&data, channel.descriptor().id).unwrap(),
         )
     }
 

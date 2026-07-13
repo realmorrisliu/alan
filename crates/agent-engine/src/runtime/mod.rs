@@ -40,10 +40,8 @@ pub use child_runs::{
 };
 pub use engine::{
     AgentConfig, AgentMachineDurabilityState, AgentProcessConfig, RuntimeController, RuntimeHandle,
-    RuntimeNamespaceLaunch, RuntimeNamespaceSurface, RuntimeStartupMetadata,
-    effective_core_config_for_runtime, spawn, spawn_with_llm_client,
-    spawn_with_llm_client_and_namespace_surface, spawn_with_llm_client_and_tools,
-    spawn_with_llm_client_and_tools_and_namespace_surface, spawn_with_namespace_surface,
+    RuntimeStartupMetadata, configure_runtime_tool_execution_binding,
+    effective_core_config_for_runtime, spawn_with_namespace_environment,
 };
 
 // Re-export agent loop types for internal use

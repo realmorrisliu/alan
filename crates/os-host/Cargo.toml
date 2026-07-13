@@ -1,0 +1,40 @@
+[package]
+name = "alan-os-host"
+description = "Alan OS system host lifecycle, fixed boot composition, and local aP attachment"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "alan-os-host"
+path = "src/bin/alan-os-host.rs"
+
+[[bin]]
+name = "alan-os-host-dev"
+path = "src/bin/alan-os-host-dev.rs"
+
+[dependencies]
+alan-ap = { path = "../ap" }
+alan-agent-engine.workspace = true
+alan-agentfs = { path = "../agentfs" }
+alan-hostfs.workspace = true
+alan-kernel = { path = "../kernel" }
+alan-llm.workspace = true
+alan-llmfs = { path = "../llmfs" }
+alan-routefs.workspace = true
+alan-shell = { path = "../shell" }
+anyhow.workspace = true
+async-trait.workspace = true
+dirs.workspace = true
+libc.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+alan-llm = { workspace = true, features = ["mock"] }
+tempfile.workspace = true
+tokio-util.workspace = true

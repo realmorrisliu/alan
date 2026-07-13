@@ -250,11 +250,11 @@ async fn agent_io_input_writes_to_the_proc_input_stream() {
 
     assert_eq!(
         String::from_utf8(shell.cat(&format!("/proc/{pid}/io/input")).await.unwrap()).unwrap(),
-        "shared input"
+        "12\nshared input"
     );
     assert_eq!(
         String::from_utf8(shell.cat(&format!("/agent/{pid}/io/input")).await.unwrap()).unwrap(),
-        "shared input"
+        "12\nshared input"
     );
     for path in [
         format!("/agent/{pid}/io/events"),
@@ -334,7 +334,7 @@ async fn direct_proc_input_writes_publish_agent_events() {
 
     assert_eq!(
         String::from_utf8(shell.cat(&format!("/agent/{pid}/io/input")).await.unwrap()).unwrap(),
-        "direct input"
+        "12\ndirect input"
     );
     for path in [
         format!("/agent/{pid}/events"),

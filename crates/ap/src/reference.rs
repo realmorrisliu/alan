@@ -105,6 +105,11 @@ impl Default for MemFs {
 }
 
 impl MemFs {
+    /// Create an empty read-only directory tree.
+    pub fn empty() -> Self {
+        Self::with_read_only_files(std::iter::empty())
+    }
+
     pub fn new() -> Self {
         // Root is node 0 so `Fid::ROOT` can be pre-bound to it.
         let nodes = vec![Node::Dir(BTreeMap::new())];
@@ -131,16 +136,22 @@ impl MemFs {
 
     /// Create a root containing exactly one read-only byte file.
     pub fn with_read_only_file(name: impl Into<String>, bytes: impl Into<Vec<u8>>) -> Self {
-        let name = name.into();
-        assert!(!name.is_empty() && !name.contains('/'));
+        Self::with_read_only_files([(name.into(), bytes.into())])
+    }
+
+    /// Create a root containing exactly the supplied read-only byte files.
+    pub fn with_read_only_files(files: impl IntoIterator<Item = (String, Vec<u8>)>) -> Self {
         let mut state = State {
             nodes: vec![Node::Dir(BTreeMap::new())],
             fids: HashMap::new(),
             versions: VersionTable::new(),
         };
-        let file = state.push(Node::Bytes(bytes.into()));
-        if let Node::Dir(entries) = &mut state.nodes[0] {
-            entries.insert(name, file);
+        for (name, bytes) in files {
+            assert!(!name.is_empty() && !name.contains('/'));
+            let file = state.push(Node::Bytes(bytes));
+            if let Node::Dir(entries) = &mut state.nodes[0] {
+                entries.insert(name, file);
+            }
         }
         state.fids.insert(Fid::ROOT, FidState::at(0));
         Self {
