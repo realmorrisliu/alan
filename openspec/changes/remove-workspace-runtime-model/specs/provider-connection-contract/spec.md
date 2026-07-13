@@ -21,3 +21,9 @@ It MUST NOT silently reselect the Connection Service default.
 - **WHEN** it launches a child without a Connection override
 - **THEN** child setup and runtime startup use the same explicit profile
 - **AND** absence of a service default does not make child startup fail
+
+#### Scenario: Child definition selects a different profile
+- **GIVEN** a child Agent definition selects a profile different from its parent's profile
+- **WHEN** the Agent Runtime Service launches the child
+- **THEN** it resolves the child-selected profile before constructing the child's LLM client
+- **AND** child setup and runtime startup use the same resolved provider settings

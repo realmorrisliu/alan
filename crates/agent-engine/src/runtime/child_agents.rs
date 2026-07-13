@@ -8,7 +8,8 @@ use super::delegation_capabilities::{
 };
 use super::engine::{
     AgentConfig, AgentProcessConfig, RuntimeController, RuntimeStartupMetadata,
-    runtime_host_capabilities_for_tools, spawn_with_namespace_environment,
+    effective_core_config_for_runtime, runtime_host_capabilities_for_tools,
+    spawn_with_namespace_environment,
 };
 use crate::llm::LlmClient;
 use crate::tape::{ContentPart, Message};
@@ -318,9 +319,10 @@ where
     } else {
         resolved_child_agent_config.core_config.memory.store_dir = None;
     }
-    let effective_child_core_config = resolved_child_agent_config.core_config.clone();
     child_config.agent_config = resolved_child_agent_config;
     child_config.core_config_source = crate::ConfigSourceKind::EnvOverride;
+    let effective_child_core_config = effective_core_config_for_runtime(&child_config)
+        .context("Failed to resolve effective child-agent runtime config")?;
     let child_namespace_plan = build_child_namespace_assembly_plan(
         parent,
         &spec,
@@ -3745,6 +3747,82 @@ tool_repeat_limit = 9
                 .as_ref()
                 .and_then(|config| config.connection_profile.as_deref()),
             Some(profile_id)
+        );
+    }
+
+    #[tokio::test]
+    async fn spawn_child_runtime_resolves_definition_connection_profile_before_llm_setup() {
+        let temp = TempDir::new().unwrap();
+        let requests = RecordedRequests::default();
+        let response = completed_response("Child used its definition profile.");
+        let mut parent = make_parent_state(&temp, requests.clone(), response.clone());
+        let metadata_path = temp.path().join("connections.toml");
+        let credentials_dir = temp.path().join("credentials");
+        let profile_id = "child-main";
+        let credential_id = "child-secret";
+        let connections = crate::ConnectionsFile {
+            credentials: BTreeMap::from([(
+                credential_id.to_string(),
+                crate::ConnectionCredential {
+                    kind: crate::CredentialKind::SecretString,
+                    provider_family: crate::config::LlmProvider::OpenAiResponses,
+                    label: "Child test credential".to_string(),
+                    backend: crate::default_credential_backend(crate::CredentialKind::SecretString)
+                        .to_string(),
+                },
+            )]),
+            profiles: BTreeMap::from([(
+                profile_id.to_string(),
+                crate::ConnectionProfile {
+                    provider: crate::config::LlmProvider::OpenAiResponses,
+                    label: Some("Child profile".to_string()),
+                    credential_id: Some(credential_id.to_string()),
+                    created_at: chrono::Utc::now(),
+                    updated_at: chrono::Utc::now(),
+                    source: "test".to_string(),
+                    settings: BTreeMap::from([(
+                        "model".to_string(),
+                        "gpt-child-profile".to_string(),
+                    )]),
+                },
+            )]),
+            ..crate::ConnectionsFile::default()
+        };
+        connections.save_to_path(&metadata_path).unwrap();
+        crate::SecretStore::from_directory(&credentials_dir)
+            .unwrap()
+            .save(credential_id, "sk-child")
+            .unwrap();
+        parent.runtime_config.connection_store =
+            Some(crate::ConnectionStoreBindings::new(metadata_path, credentials_dir).unwrap());
+        let root_dir = temp.path().join("definition");
+        std::fs::write(
+            root_dir.join("agent.toml"),
+            format!("connection_profile = \"{profile_id}\"\n"),
+        )
+        .unwrap();
+        let seen_config = Arc::new(Mutex::new(None::<crate::Config>));
+        let seen_config_for_factory = seen_config.clone();
+
+        let child =
+            spawn_child_runtime_with_client_factory(&parent, launch_spec(root_dir), |config| {
+                *seen_config_for_factory.lock().unwrap() = Some(config.clone());
+                Ok(LlmClient::new(RecordingProvider::new(
+                    requests.clone(),
+                    response.clone(),
+                )))
+            })
+            .await
+            .unwrap();
+        let result = child.join().await.unwrap();
+
+        assert_eq!(result.status, ChildRuntimeStatus::Completed);
+        let seen_config = seen_config.lock().unwrap().clone().unwrap();
+        assert_eq!(seen_config.connection_profile.as_deref(), Some(profile_id));
+        assert_eq!(seen_config.effective_model(), "gpt-child-profile");
+        assert_eq!(
+            seen_config.openai_responses_api_key.as_deref(),
+            Some("sk-child")
         );
     }
 
