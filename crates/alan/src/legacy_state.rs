@@ -10,7 +10,7 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
-use alan_agent_engine::{ConnectionsFile, InstallChannel};
+use alan_agent_engine::{ConnectionsFile, InstallChannel, default_credential_backend};
 use anyhow::{Context, Result, bail, ensure};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -264,6 +264,7 @@ pub fn import_authored_content(
 ) -> Result<AuthoredImportReport> {
     validate_import_name(name)?;
     validate_absolute_path("authored import source", source)?;
+    ensure_import_source_has_no_symlinked_ancestors(source)?;
     let source_metadata = fs::symlink_metadata(source)
         .with_context(|| format!("failed to inspect import source {}", source.display()))?;
     ensure!(
@@ -354,6 +355,41 @@ pub fn import_authored_content(
     })
 }
 
+fn ensure_import_source_has_no_symlinked_ancestors(source: &Path) -> Result<()> {
+    let mut current = PathBuf::new();
+    let mut normal_depth = 0usize;
+    let components = source.components().collect::<Vec<_>>();
+
+    for component in components.iter().take(components.len().saturating_sub(1)) {
+        current.push(component.as_os_str());
+        if matches!(*component, Component::Normal(_)) {
+            normal_depth += 1;
+        }
+        let Some(metadata) = optional_symlink_metadata(&current)? else {
+            continue;
+        };
+        if !metadata.file_type().is_symlink() {
+            continue;
+        }
+
+        // macOS exposes platform-owned root aliases such as /var and /tmp.
+        // Rebase that first component, but reject every deeper symlink where a
+        // Host user could redirect an import or its --delete-source target.
+        ensure!(
+            normal_depth == 1,
+            "authored import source contains symlinked path component: {}",
+            current.display()
+        );
+        current = fs::canonicalize(&current).with_context(|| {
+            format!(
+                "failed to resolve platform root alias in import source {}",
+                current.display()
+            )
+        })?;
+    }
+    Ok(())
+}
+
 fn remove_import_source_if_unchanged(source: &Path, expected_fingerprint: &[u8]) -> Result<()> {
     ensure!(
         tree_fingerprint(source)? == expected_fingerprint,
@@ -377,7 +413,7 @@ fn migrate_connection_metadata(source: &Path, target: &Path) -> Result<bool> {
         "legacy connection metadata must be a real file: {}",
         source.display()
     );
-    let (legacy, _) = ConnectionsFile::load_from_path(source)?;
+    let legacy = load_legacy_connections(source)?;
     let (current, _) = ConnectionsFile::load_from_path(target)?;
     let merged = merge_connections(current, legacy)?;
 
@@ -398,6 +434,44 @@ fn migrate_connection_metadata(source: &Path, target: &Path) -> Result<bool> {
     })?;
     prune_empty_parents(source.parent(), source.parent().and_then(Path::parent));
     Ok(true)
+}
+
+fn load_legacy_connections(source: &Path) -> Result<ConnectionsFile> {
+    let content = fs::read_to_string(source).with_context(|| {
+        format!(
+            "failed to read legacy connection metadata {}",
+            source.display()
+        )
+    })?;
+    let mut document: toml::Value = toml::from_str(&content).with_context(|| {
+        format!(
+            "failed to parse legacy connection metadata {}",
+            source.display()
+        )
+    })?;
+    let table = document.as_table_mut().with_context(|| {
+        format!(
+            "legacy connection metadata must be a TOML table: {}",
+            source.display()
+        )
+    })?;
+    table.remove("workspace_pins");
+    let mut connections: ConnectionsFile = document.try_into().with_context(|| {
+        format!(
+            "failed to decode legacy connection metadata {}",
+            source.display()
+        )
+    })?;
+    ensure!(
+        connections.version == ConnectionsFile::default().version,
+        "unsupported legacy connections file version {} in {}",
+        connections.version,
+        source.display()
+    );
+    for credential in connections.credentials.values_mut() {
+        credential.backend = default_credential_backend(credential.kind).to_string();
+    }
+    Ok(connections)
 }
 
 fn merge_connections(
@@ -876,7 +950,7 @@ fn path_exists_without_following(path: &Path) -> Result<bool> {
 mod tests {
     use super::*;
     use alan_agent_engine::{
-        ConnectionProfile, LlmProvider,
+        ConnectionCredential, ConnectionProfile, CredentialKind, LlmProvider,
         skills::{ResolvedCapabilityView, ScopedPackageDir, SkillScope, SkillsRegistry},
     };
     use chrono::Utc;
@@ -931,6 +1005,53 @@ mod tests {
                 .unwrap()
                 .0,
             legacy
+        );
+    }
+
+    #[test]
+    fn legacy_workspace_pins_are_dropped_during_connection_migration() {
+        let temp = TempDir::new().unwrap();
+        let home = temp.path().join("home");
+        fs::create_dir_all(&home).unwrap();
+        let paths = LegacyStatePaths::from_home_dir(&home, InstallChannel::Stable).unwrap();
+        fs::create_dir_all(&paths.alan_root).unwrap();
+        let mut legacy = connection_file("legacy-main");
+        legacy.credentials.insert(
+            "legacy-secret".to_string(),
+            ConnectionCredential {
+                kind: CredentialKind::SecretString,
+                provider_family: LlmProvider::OpenAiResponses,
+                label: "Legacy secret".to_string(),
+                backend: "alan_home_secret_store".to_string(),
+            },
+        );
+        let mut document = toml::Value::try_from(&legacy).unwrap();
+        document.as_table_mut().unwrap().insert(
+            "workspace_pins".to_string(),
+            toml::Value::Table(toml::map::Map::from_iter([(
+                "/legacy/project".to_string(),
+                toml::Value::String("legacy-main".to_string()),
+            )])),
+        );
+        fs::write(
+            paths.connections_metadata(),
+            toml::to_string_pretty(&document).unwrap(),
+        )
+        .unwrap();
+        let (system, host) = stores(temp.path(), InstallChannel::Stable);
+
+        let report = migrate_legacy_connections(&paths, &system, &host).unwrap();
+
+        assert!(report.metadata_migrated);
+        assert!(!paths.connections_metadata().exists());
+        let target = system.connections_metadata().unwrap();
+        let rendered = fs::read_to_string(&target).unwrap();
+        assert!(!rendered.contains("workspace_pins"));
+        let migrated = ConnectionsFile::load_from_path(&target).unwrap().0;
+        assert_eq!(migrated.default_profile.as_deref(), Some("legacy-main"));
+        assert_eq!(
+            migrated.credentials["legacy-secret"].backend,
+            default_credential_backend(CredentialKind::SecretString)
         );
     }
 

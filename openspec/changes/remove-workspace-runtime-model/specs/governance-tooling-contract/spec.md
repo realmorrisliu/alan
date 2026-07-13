@@ -12,6 +12,13 @@ capability.
 - **THEN** namespace access and native sandbox access derive from the same grant
 - **AND** no workspace routing classification is consulted
 
+#### Scenario: Tool Process selects an explicit mount when parent cwd is virtual
+- **GIVEN** an Agent Process cwd such as `/` has no Host backing
+- **WHEN** the Process receives an approved writable Host Mount at `/mnt/project`
+- **THEN** its native Tool Process binding uses `/mnt/project` as the Tool Process cwd
+- **AND** the Agent Process cwd remains unchanged
+- **AND** runtime scratch, Host cwd, and Host home gain no sandbox authority
+
 ## REMOVED Requirements
 
 ### Requirement: Workspace-local tools require explicit runtime binding

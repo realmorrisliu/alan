@@ -486,7 +486,7 @@ fn handle_mount_escalation_resolution(
             .as_ref()
             .map(|grant| {
                 state
-                    .namespace_environment()
+                    .environment
                     .apply_approved_mount_grant(&grant.approved_mount_grant())
             })
             .unwrap_or_else(|| {
@@ -510,16 +510,32 @@ fn handle_mount_escalation_resolution(
         .ok()
     });
     let namespace_applied = approved && namespace_application.namespace_applied;
+    let scratch_dir = state
+        .namespace_environment()
+        .tool_execution_binding()
+        .map(|binding| binding.scratch_dir)
+        .or_else(|| {
+            state
+                .runtime_config
+                .store_bindings
+                .as_ref()
+                .map(|stores| stores.tmp.clone())
+        });
     let tool_sandbox_projection_changed = namespace_applied
-        && native_grant
-            .is_some_and(|grant| state.namespace_environment().add_tool_host_mount(grant));
+        && native_grant.as_ref().is_some_and(|grant| {
+            state.environment.persist_approved_host_mount(grant.clone());
+            scratch_dir
+                .clone()
+                .is_some_and(|scratch| state.environment.sync_tool_execution_binding(scratch))
+        });
     let tool_sandbox_applied = namespace_applied
         && grant.as_ref().is_some_and(|grant| {
             let binding = state.namespace_environment().tool_execution_binding();
             binding.is_some_and(|binding| {
                 binding.host_mounts.iter().any(|mounted| {
                     mounted.namespace_path == grant.namespace_path
-                        && mounted.host_path == normalize_mount_grant_host_path(&grant.host_path)
+                        && normalize_mount_grant_host_path(&mounted.host_path)
+                            == normalize_mount_grant_host_path(&grant.host_path)
                 })
             })
         });
@@ -719,12 +735,22 @@ mod tests {
     }
 
     impl MountGrantApplicator for RecordingMountGrantApplicator {
-        fn apply_mount_grant(&self, grant: &ApprovedMountGrant) -> Result<()> {
+        fn apply_mount_grant(&self, grant: &ApprovedMountGrant) -> Result<Namespace> {
             self.grants.lock().unwrap().push(grant.clone());
             if let Some(message) = self.fail_with {
                 anyhow::bail!(message);
             }
-            Ok(())
+            let access = match grant.access {
+                ApprovedMountGrantAccess::ReadOnly => Access::ReadOnly,
+                ApprovedMountGrantAccess::ReadWrite => Access::ReadWrite,
+            };
+            let mut namespace = Namespace::new();
+            namespace.mount(
+                &grant.namespace_path,
+                InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::new())),
+                access,
+            );
+            Ok(namespace)
         }
     }
 
@@ -807,7 +833,7 @@ mod tests {
         }
     }
 
-    fn bind_test_source_mount(state: &RuntimeLoopState, source: &std::path::Path) {
+    fn bind_test_source_mount(state: &mut RuntimeLoopState, source: &std::path::Path) {
         let launch_context = crate::ProcessLaunchContext::new(
             Namespace::new(),
             alan_kernel::Credentials::user("test-agent"),
@@ -818,6 +844,10 @@ mod tests {
             crate::HostMountGrant::new("/mnt/source", source, alan_kernel::Access::ReadWrite)
                 .unwrap(),
         );
+        state.environment = state
+            .environment
+            .clone()
+            .with_launch_context(launch_context.clone());
         assert!(
             state.namespace_environment().set_tool_execution_binding(
                 crate::tools::ToolExecutionBinding::from_launch_context(
@@ -1289,7 +1319,7 @@ mod tests {
             AgentMachine::new_with_recorder_in_dir("mount-approve", "test-model", temp.path())
                 .await
                 .unwrap();
-        bind_test_source_mount(&state, host_mount_root.path());
+        bind_test_source_mount(&mut state, host_mount_root.path());
         state
             .turn_state
             .set_confirmation(mount_escalation_pending_confirmation_with(
@@ -1376,7 +1406,7 @@ mod tests {
         let mut state = create_test_state();
         state.environment =
             namespace_environment_with_mount_applicator_for_test(applicator.clone());
-        bind_test_source_mount(&state, host_mount_root.path());
+        bind_test_source_mount(&mut state, host_mount_root.path());
         state
             .turn_state
             .set_confirmation(mount_escalation_pending_confirmation_with(
@@ -1417,6 +1447,107 @@ mod tests {
         assert_eq!(grants[0].host_path, approved_host.path());
         assert_eq!(grants[0].access, ApprovedMountGrantAccess::ReadWrite);
         assert_eq!(grants[0].reason, "Need to edit project files");
+
+        let child_context = state
+            .namespace_environment()
+            .launch_context()
+            .expect("approved grant should persist in the Process Launch Context")
+            .child();
+        assert_eq!(
+            child_context.host_path("/mnt/project/file.txt"),
+            Some(approved_host.path().join("file.txt"))
+        );
+        assert!(
+            child_context
+                .namespace
+                .describe()
+                .iter()
+                .any(|(path, access)| path == "/mnt/project" && *access == Access::ReadWrite)
+        );
+    }
+
+    #[tokio::test]
+    async fn test_first_approved_mount_creates_process_tool_binding() {
+        let system_store = TempDir::new().unwrap();
+        let approved_host = TempDir::new().unwrap();
+        let applicator = Arc::new(RecordingMountGrantApplicator::default());
+        let mut state = create_test_state();
+        state.environment = namespace_environment_with_mount_applicator_for_test(applicator)
+            .with_launch_context(crate::ProcessLaunchContext::root());
+        state.runtime_config.store_bindings = Some(crate::AgentRuntimeStoreBindings {
+            rollouts: system_store.path().join("rollouts"),
+            checkpoints: system_store.path().join("checkpoints"),
+            cache: system_store.path().join("cache"),
+            tmp: system_store.path().join("tmp"),
+            metadata: system_store.path().join("metadata"),
+        });
+        state
+            .turn_state
+            .set_confirmation(mount_escalation_pending_confirmation_with(
+                approved_host.path().to_str().unwrap(),
+                "read_write",
+                "Need project files",
+            ));
+        let cancel = CancellationToken::new();
+        let mut emit = |_event: Event| async {};
+
+        handle_runtime_op_with_cancel(
+            &mut state,
+            Op::Resume {
+                request_id: "mount_escalation_call_mount".to_string(),
+                content: vec![ContentPart::structured(json!({"choice": "approve"}))],
+            },
+            &mut emit,
+            &cancel,
+        )
+        .await
+        .unwrap();
+
+        let binding = state
+            .namespace_environment()
+            .tool_execution_binding()
+            .expect("first approved Host Mount should create a Tool binding");
+        assert_eq!(
+            binding.cwd,
+            dunce::canonicalize(approved_host.path()).unwrap()
+        );
+        assert_eq!(binding.namespace_cwd, std::path::Path::new("/mnt/project"));
+        assert_eq!(
+            state
+                .namespace_environment()
+                .launch_context()
+                .expect("the Process Launch Context should remain available")
+                .cwd,
+            "/"
+        );
+        assert_eq!(binding.host_mounts.len(), 1);
+        assert_eq!(binding.host_mounts[0].namespace_path, "/mnt/project");
+        assert_eq!(
+            binding.host_mounts[0].resolve_host_path("/mnt/project/file.txt"),
+            Some(approved_host.path().join("file.txt"))
+        );
+        let sandbox = binding.sandbox_spec.as_ref().unwrap();
+        assert!(
+            !sandbox
+                .readable_roots
+                .iter()
+                .any(|root| root == &system_store.path().join("tmp"))
+        );
+        let execution = crate::tools::Sandbox::from_spec_with_backend(
+            sandbox.clone(),
+            crate::tools::SandboxBackendKind::HostMountPathGuard,
+        )
+        .exec("pwd", &binding.cwd)
+        .await
+        .unwrap();
+        assert_eq!(execution.exit_code, 0, "{execution:?}");
+        assert_eq!(
+            execution.stdout.trim(),
+            binding.cwd.to_string_lossy().as_ref()
+        );
+        let result = tool_result_json_for_call(&state, "call_mount");
+        assert_eq!(result["tool_sandbox_applied"], true);
+        assert_eq!(result["tool_sandbox_projection_changed"], true);
     }
 
     #[tokio::test]
@@ -1427,7 +1558,7 @@ mod tests {
         let mut state = create_test_state();
         state.environment =
             namespace_environment_with_mount_applicator_for_test(applicator.clone());
-        bind_test_source_mount(&state, host_mount_root.path());
+        bind_test_source_mount(&mut state, host_mount_root.path());
         state
             .turn_state
             .set_confirmation(mount_escalation_pending_confirmation_with(
@@ -1471,7 +1602,7 @@ mod tests {
         let mut state = create_test_state();
         state.environment =
             namespace_environment_with_mount_applicator_for_test(applicator.clone());
-        bind_test_source_mount(&state, host_mount_root.path());
+        bind_test_source_mount(&mut state, host_mount_root.path());
         state
             .turn_state
             .set_confirmation(mount_escalation_pending_confirmation_with(
@@ -1514,7 +1645,7 @@ mod tests {
         let applicator = Arc::new(RecordingMountGrantApplicator::default());
         let mut state = create_test_state();
         state.environment = namespace_environment_with_mount_applicator_for_test(applicator);
-        bind_test_source_mount(&state, host_mount_root.path());
+        bind_test_source_mount(&mut state, host_mount_root.path());
         let cancel = CancellationToken::new();
         let mut emit = |_event: Event| async {};
 
@@ -1553,13 +1684,66 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_reapproved_namespace_path_replaces_persisted_host_grant() {
+        let host_mount_root = TempDir::new().unwrap();
+        let first_host = TempDir::new().unwrap();
+        let replacement_host = TempDir::new().unwrap();
+        let applicator = Arc::new(RecordingMountGrantApplicator::default());
+        let mut state = create_test_state();
+        state.environment = namespace_environment_with_mount_applicator_for_test(applicator);
+        bind_test_source_mount(&mut state, host_mount_root.path());
+        let cancel = CancellationToken::new();
+        let mut emit = |_event: Event| async {};
+
+        for host in [first_host.path(), replacement_host.path()] {
+            state
+                .turn_state
+                .set_confirmation(mount_escalation_pending_confirmation_with(
+                    host.to_str().unwrap(),
+                    "read_write",
+                    "Replace project mount",
+                ));
+            handle_runtime_op_with_cancel(
+                &mut state,
+                Op::Resume {
+                    request_id: "mount_escalation_call_mount".to_string(),
+                    content: vec![ContentPart::structured(json!({"choice": "approve"}))],
+                },
+                &mut emit,
+                &cancel,
+            )
+            .await
+            .unwrap();
+        }
+
+        let launch_context = state
+            .namespace_environment()
+            .launch_context()
+            .expect("approved grant should remain in the Process Launch Context");
+        assert_eq!(
+            launch_context.host_path("/mnt/project/file.txt"),
+            Some(replacement_host.path().join("file.txt"))
+        );
+        assert_eq!(
+            state.namespace_environment().tool_sandbox_writable_roots(),
+            vec![
+                dunce::canonicalize(host_mount_root.path()).unwrap(),
+                dunce::canonicalize(replacement_host.path()).unwrap()
+            ]
+        );
+        let latest = tool_result_json_for_call(&state, "call_mount");
+        assert_eq!(latest["tool_sandbox_applied"], true);
+        assert_eq!(latest["tool_sandbox_projection_changed"], true);
+    }
+
+    #[tokio::test]
     async fn test_handle_mount_escalation_resume_read_only_grant_does_not_expand_tool_sandbox() {
         let host_mount_root = TempDir::new().unwrap();
         let approved_host = TempDir::new().unwrap();
         let applicator = Arc::new(RecordingMountGrantApplicator::default());
         let mut state = create_test_state();
         state.environment = namespace_environment_with_mount_applicator_for_test(applicator);
-        bind_test_source_mount(&state, host_mount_root.path());
+        bind_test_source_mount(&mut state, host_mount_root.path());
         state
             .turn_state
             .set_confirmation(mount_escalation_pending_confirmation_with(
@@ -1602,7 +1786,7 @@ mod tests {
             AgentMachine::new_with_recorder_in_dir("mount-reject", "test-model", temp.path())
                 .await
                 .unwrap();
-        bind_test_source_mount(&state, host_mount_root.path());
+        bind_test_source_mount(&mut state, host_mount_root.path());
         state
             .turn_state
             .set_confirmation(mount_escalation_pending_confirmation_with(

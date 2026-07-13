@@ -188,6 +188,55 @@ fn host_import_never_follows_a_symlinked_source_for_deletion() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn host_import_never_follows_a_symlinked_source_ancestor_for_deletion() {
+    use std::os::unix::fs::symlink;
+
+    let temp = TempDir::new().unwrap();
+    let home = temp.path().join("home");
+    let xdg_data = temp.path().join("data");
+    let real_parent = temp.path().join("real-parent");
+    let source = real_parent.join("skill");
+    let linked_parent = temp.path().join("linked-parent");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(&source).unwrap();
+    std::fs::write(source.join("SKILL.md"), "real authored content").unwrap();
+    symlink(&real_parent, &linked_parent).unwrap();
+
+    let output = alan_command(&home, &xdg_data)
+        .arg("host")
+        .arg("legacy-state")
+        .arg("import")
+        .arg("skill")
+        .arg(linked_parent.join("skill"))
+        .args(["--name", "ancestor-linked-skill", "--delete-source"])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success(), "{output:?}");
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("symlinked path component"),
+        "{output:?}"
+    );
+    assert!(source.join("SKILL.md").is_file());
+    assert!(
+        std::fs::symlink_metadata(&linked_parent)
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    let data = detected_data_dir(&home, &xdg_data);
+    let system = alan::SystemStorePaths::from_data_dir(&data, InstallChannel::Stable).unwrap();
+    assert!(
+        !system
+            .imported_skills()
+            .unwrap()
+            .join("ancestor-linked-skill")
+            .exists()
+    );
+}
+
 #[test]
 fn removed_commands_and_boot_agent_selector_are_not_parseable() {
     for args in [

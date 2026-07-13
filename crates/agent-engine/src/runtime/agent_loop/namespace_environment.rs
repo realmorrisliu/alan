@@ -188,9 +188,11 @@ impl ApprovedMountGrant {
 ///
 /// The engine owns the approval flow, but the host composition root owns
 /// host-backed file-server construction. Implementations must keep hostfs
-/// dependencies out of `alan-agent-engine`.
+/// dependencies out of `alan-agent-engine`. A successful call returns the full
+/// post-application namespace snapshot so later child launches inherit the same
+/// view without exposing Host file-server construction to the engine.
 pub trait MountGrantApplicator: std::fmt::Debug + Send + Sync {
-    fn apply_mount_grant(&self, grant: &ApprovedMountGrant) -> Result<()>;
+    fn apply_mount_grant(&self, grant: &ApprovedMountGrant) -> Result<alan_kernel::Namespace>;
 }
 
 /// Host-provided factory that can build a mount grant applicator once the engine
@@ -366,12 +368,43 @@ impl NamespaceRuntimeEnvironment {
         })
     }
 
-    pub(crate) fn add_tool_host_mount(&self, grant: crate::HostMountGrant) -> bool {
-        self.process_context.as_ref().is_some_and(|context| {
-            context
-                .tool_runner
-                .add_process_host_mount(context.pid, grant)
-        })
+    pub(crate) fn persist_approved_host_mount(&mut self, grant: crate::HostMountGrant) -> bool {
+        let Some(context) = self.launch_context.as_mut() else {
+            return false;
+        };
+        if let Some(index) = context
+            .host_mounts
+            .iter()
+            .position(|existing| existing.namespace_path == grant.namespace_path)
+        {
+            let changed = context.host_mounts[index] != grant;
+            context.host_mounts[index] = grant;
+            return changed;
+        }
+        context.host_mounts.push(grant);
+        true
+    }
+
+    pub(crate) fn sync_tool_execution_binding(&self, scratch_dir: PathBuf) -> bool {
+        let Some(launch_context) = self.launch_context.as_ref() else {
+            return false;
+        };
+        let Ok(binding) =
+            crate::tools::ToolExecutionBinding::from_launch_context(launch_context, scratch_dir)
+        else {
+            return false;
+        };
+        let Some(process_context) = self.process_context.as_ref() else {
+            return false;
+        };
+        let changed = process_context
+            .tool_runner
+            .process_binding(process_context.pid)
+            != Some(binding.clone());
+        process_context
+            .tool_runner
+            .register_process_binding(process_context.pid, binding);
+        changed
     }
 
     #[cfg(test)]
@@ -467,18 +500,23 @@ impl NamespaceRuntimeEnvironment {
     }
 
     pub fn apply_approved_mount_grant(
-        &self,
+        &mut self,
         grant: &ApprovedMountGrant,
     ) -> NamespaceMountApplication {
-        let Some(applicator) = self.mount_grant_applicator.as_ref() else {
+        let Some(applicator) = self.mount_grant_applicator.clone() else {
             return NamespaceMountApplication::unavailable(
                 "live namespace mount applicator unavailable",
             );
         };
-        applicator
-            .apply_mount_grant(grant)
-            .map(|()| NamespaceMountApplication::applied())
-            .unwrap_or_else(NamespaceMountApplication::failed)
+        match applicator.apply_mount_grant(grant) {
+            Ok(namespace) => {
+                if let Some(context) = self.launch_context.as_mut() {
+                    context.namespace = namespace;
+                }
+                NamespaceMountApplication::applied()
+            }
+            Err(error) => NamespaceMountApplication::failed(error),
+        }
     }
 
     pub async fn read_llm_connection_capabilities(&self) -> Result<NamespaceLlmCapabilities> {

@@ -1434,7 +1434,7 @@ impl ChildNamespaceAssemblyPlan {
         &self,
         scratch: PathBuf,
     ) -> Result<Option<crate::tools::ToolExecutionBinding>> {
-        if self.launch_context.host_cwd().is_none() {
+        if self.launch_context.host_mounts.is_empty() {
             return Ok(None);
         }
         Ok(Some(
@@ -2236,14 +2236,14 @@ mod tests {
     }
 
     impl MountGrantApplicator for RecordingMountGrantApplicator {
-        fn apply_mount_grant(&self, grant: &ApprovedMountGrant) -> anyhow::Result<()> {
+        fn apply_mount_grant(&self, grant: &ApprovedMountGrant) -> anyhow::Result<KernelNamespace> {
             let access = match grant.access {
                 ApprovedMountGrantAccess::ReadOnly => KernelAccess::ReadOnly,
                 ApprovedMountGrantAccess::ReadWrite => KernelAccess::ReadWrite,
             };
             self.live_namespace
                 .mount(&grant.namespace_path, memfs_transport(), access);
-            Ok(())
+            Ok(self.live_namespace.snapshot())
         }
     }
 
@@ -2469,6 +2469,32 @@ mod tests {
             cwd,
             launch_context,
         }
+    }
+
+    #[test]
+    fn inherited_mount_without_host_backed_cwd_uses_authorized_native_cwd() {
+        let source = TempDir::new().unwrap();
+        let scratch = TempDir::new().unwrap();
+        let mut plan = capability_plan(Some(source.path().to_path_buf()), &["read_file"]);
+        plan.cwd = None;
+        plan.launch_context.cwd = "/".to_string();
+
+        let binding = plan
+            .execution_binding(scratch.path().to_path_buf())
+            .unwrap()
+            .expect("an inherited Host Mount should create a child Tool binding");
+
+        assert_eq!(binding.cwd, dunce::canonicalize(source.path()).unwrap());
+        assert_eq!(binding.namespace_cwd, PathBuf::from("/mnt/source"));
+        assert_eq!(binding.host_mounts.len(), 1);
+        assert_eq!(binding.host_mounts[0].namespace_path, "/mnt/source");
+        let sandbox = binding.sandbox_spec.unwrap();
+        assert!(
+            !sandbox
+                .readable_roots
+                .iter()
+                .any(|root| root == &dunce::canonicalize(scratch.path()).unwrap())
+        );
     }
 
     #[tokio::test]
@@ -3409,7 +3435,7 @@ Body
         );
         let factory = Arc::new(RecordingMountGrantApplicatorFactory::default());
 
-        let launch = spawn_child_namespace_runtime_environment(
+        let mut launch = spawn_child_namespace_runtime_environment(
             &launch_procfs,
             &runtime_procfs,
             &plan,

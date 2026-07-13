@@ -21,6 +21,7 @@ pub use reified_namespace::{
     ReifiedNamespaceRunError, ReifiedNamespaceRunner, ReifiedScratchTmpMount,
     default_execution_substrate,
 };
+pub(crate) use sandbox::protected_path_component;
 pub use sandbox::{ExecResult, NetworkPosture, Sandbox, SandboxSpec};
 pub use sandbox_backend::{
     LinuxReificationCapability, LinuxReificationCapabilityReport, LinuxReificationStatus,

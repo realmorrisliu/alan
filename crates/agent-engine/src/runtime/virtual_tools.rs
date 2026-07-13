@@ -728,6 +728,13 @@ fn parse_mount_host_path(raw: &str) -> std::result::Result<PathBuf, String> {
     {
         return Err("host_path must not contain '.', '..', or empty components".to_string());
     }
+    let normalized =
+        dunce::canonicalize(path).unwrap_or_else(|_| dunce::simplified(path).to_path_buf());
+    if let Some(component) = crate::tools::protected_path_component(&normalized) {
+        return Err(format!(
+            "host_path must not directly target protected `{component}` state"
+        ));
+    }
     Ok(path.to_path_buf())
 }
 

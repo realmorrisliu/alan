@@ -2,7 +2,7 @@
 
 use super::{
     context::{ToolContext, ToolExecutionBinding},
-    sandbox::{SandboxSpec, protected_path_component},
+    sandbox::SandboxSpec,
 };
 use anyhow::{Context, Result};
 use jsonschema::{Draft, Validator};
@@ -434,10 +434,6 @@ impl ToolRegistry {
     }
 }
 
-fn normalize_sandbox_root(path: std::path::PathBuf) -> std::path::PathBuf {
-    dunce::canonicalize(&path).unwrap_or_else(|_| dunce::simplified(&path).to_path_buf())
-}
-
 impl Default for ToolRegistry {
     fn default() -> Self {
         Self::new()
@@ -518,60 +514,6 @@ impl ToolProcessRunner {
             .get(name)
             .map(|tool| tool.capability(arguments))
     }
-
-    pub(crate) fn add_process_host_mount(
-        &self,
-        pid: alan_kernel::Pid,
-        grant: crate::HostMountGrant,
-    ) -> bool {
-        let mut bindings = self
-            .inner
-            .process_bindings
-            .lock()
-            .expect("process binding mutex poisoned");
-        if let Some(binding) = bindings.get_mut(&pid) {
-            return add_host_mount(binding, grant);
-        }
-        drop(bindings);
-        self.inner
-            .default_binding
-            .lock()
-            .expect("default binding mutex poisoned")
-            .as_mut()
-            .is_some_and(|binding| add_host_mount(binding, grant))
-    }
-}
-
-fn add_host_mount(binding: &mut ToolExecutionBinding, grant: crate::HostMountGrant) -> bool {
-    let Some(mut spec) = binding.sandbox_spec.clone() else {
-        return false;
-    };
-    let normalized = normalize_sandbox_root(grant.host_path.clone());
-    if protected_path_component(&normalized).is_some() {
-        return false;
-    }
-    if spec
-        .host_mounts
-        .iter()
-        .any(|existing| existing.namespace_path == grant.namespace_path)
-    {
-        binding.sandbox_spec = Some(spec);
-        return false;
-    }
-    let mut normalized_grant = grant;
-    normalized_grant.host_path = normalized.clone();
-    spec.readable_roots.push(normalized.clone());
-    if normalized_grant.access == alan_kernel::Access::ReadWrite {
-        spec.writable_roots.push(normalized.clone());
-    }
-    spec.read_denylist = super::sandbox_backend::read_denylist_excluding_writable_roots(
-        &spec.read_denylist,
-        std::slice::from_ref(&normalized),
-    );
-    spec.host_mounts.push(normalized_grant.clone());
-    binding.host_mounts.push(normalized_grant);
-    binding.sandbox_spec = Some(spec);
-    true
 }
 
 #[async_trait::async_trait]
@@ -1135,7 +1077,7 @@ mod tests {
     }
 
     #[test]
-    fn approved_host_mount_updates_path_projection_and_sandbox_together() {
+    fn complete_process_binding_updates_path_projection_and_sandbox_together() {
         let source = tempfile::tempdir().unwrap();
         let approved = tempfile::tempdir().unwrap();
         let launch_context = crate::ProcessLaunchContext::new(
@@ -1169,7 +1111,15 @@ mod tests {
         )
         .unwrap();
 
-        assert!(runner.add_process_host_mount(alan_kernel::Pid(7), grant));
+        let updated_context = launch_context.with_host_mount(grant);
+        runner.register_process_binding(
+            alan_kernel::Pid(7),
+            ToolExecutionBinding::from_launch_context(
+                &updated_context,
+                source.path().join("scratch"),
+            )
+            .unwrap(),
+        );
         let binding = runner.process_binding(alan_kernel::Pid(7)).unwrap();
         assert!(
             binding

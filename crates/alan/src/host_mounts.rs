@@ -189,7 +189,7 @@ struct LiveNamespaceMountGrantApplicator {
 }
 
 impl MountGrantApplicator for LiveNamespaceMountGrantApplicator {
-    fn apply_mount_grant(&self, grant: &ApprovedMountGrant) -> Result<()> {
+    fn apply_mount_grant(&self, grant: &ApprovedMountGrant) -> Result<Namespace> {
         let namespace_path = canonical_namespace_path(&grant.namespace_path)?;
         let mut granted_paths = self
             .granted_paths
@@ -216,7 +216,7 @@ impl MountGrantApplicator for LiveNamespaceMountGrantApplicator {
             declaration.access,
         );
         granted_paths.insert(namespace_path);
-        Ok(())
+        Ok(self.live_namespace.snapshot())
     }
 }
 
@@ -420,7 +420,8 @@ mod tests {
                 ApprovedMountGrantAccess::ReadWrite,
                 "Need to inspect provider state",
             ))
-            .unwrap_err();
+            .err()
+            .expect("system mount shadowing must be rejected");
         assert!(
             exact
                 .to_string()
@@ -434,7 +435,8 @@ mod tests {
                 ApprovedMountGrantAccess::ReadOnly,
                 "Need to inspect provider state",
             ))
-            .unwrap_err();
+            .err()
+            .expect("nested system mount shadowing must be rejected");
         assert!(
             nested
                 .to_string()
