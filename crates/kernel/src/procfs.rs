@@ -108,6 +108,8 @@ struct ProcFid {
     write_buf: Vec<u8>,
     /// Whether this fid received a write, including an intentional empty input.
     wrote: bool,
+    /// Whether a buffered write failed; failed documents must never commit on clunk.
+    write_failed: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -124,7 +126,34 @@ impl ProcFid {
             clone_pid: None,
             write_buf: Vec::new(),
             wrote: false,
+            write_failed: false,
         }
+    }
+
+    fn buffer_write(
+        &mut self,
+        offset: Offset,
+        data: &[u8],
+        limit: usize,
+    ) -> Result<u32, ErrorCode> {
+        let Some(start) = usize::try_from(offset).ok() else {
+            self.write_failed = true;
+            return Err(ErrorCode::BadRequest);
+        };
+        let Some(end) = start.checked_add(data.len()) else {
+            self.write_failed = true;
+            return Err(ErrorCode::BadRequest);
+        };
+        if end > limit {
+            self.write_failed = true;
+            return Err(ErrorCode::BadRequest);
+        }
+        if self.write_buf.len() < end {
+            self.write_buf.resize(end, 0);
+        }
+        self.write_buf[start..end].copy_from_slice(data);
+        self.wrote = true;
+        Ok(data.len() as u32)
     }
 }
 
@@ -942,17 +971,7 @@ impl FileServer for ProcFs {
                     if f.clone_pid.is_none() {
                         return Err(ErrorCode::BadRequest);
                     }
-                    let start = usize::try_from(offset).map_err(|_| ErrorCode::BadRequest)?;
-                    let end = start.checked_add(data.len()).ok_or(ErrorCode::BadRequest)?;
-                    if end > MAX_EXEC_SPEC_BYTES {
-                        return Err(ErrorCode::BadRequest);
-                    }
-                    if f.write_buf.len() < end {
-                        f.write_buf.resize(end, 0);
-                    }
-                    f.write_buf[start..end].copy_from_slice(data);
-                    f.wrote = true;
-                    return Ok(data.len() as u32);
+                    return f.buffer_write(offset, data, MAX_EXEC_SPEC_BYTES);
                 }
                 // Generic process control (interrupt/cancel) routes through ctl.
                 Node::Ctl(pid) => {
@@ -977,17 +996,7 @@ impl FileServer for ProcFs {
                         return Err(ErrorCode::NoAccess);
                     }
                     let f = state.fids.get_mut(&fid_key).ok_or(ErrorCode::NotFound)?;
-                    let start = usize::try_from(offset).map_err(|_| ErrorCode::BadRequest)?;
-                    let end = start.checked_add(data.len()).ok_or(ErrorCode::BadRequest)?;
-                    if end > MAX_PROCESS_INPUT_BYTES {
-                        return Err(ErrorCode::BadRequest);
-                    }
-                    if f.write_buf.len() < end {
-                        f.write_buf.resize(end, 0);
-                    }
-                    f.write_buf[start..end].copy_from_slice(data);
-                    f.wrote = true;
-                    return Ok(data.len() as u32);
+                    return f.buffer_write(offset, data, MAX_PROCESS_INPUT_BYTES);
                 }
                 // Process output is a stream owned by `/proc`; process descriptors
                 // write to it, and readers tail it through `io/output`.
@@ -1090,6 +1099,12 @@ impl FileServer for ProcFs {
             let Some(f) = state.fids.remove(&self.fid_key(fid)) else {
                 return Err(ErrorCode::NotFound);
             };
+            if f.write_failed {
+                if let Some(pid) = f.clone_pid {
+                    state.table.discard(pid);
+                }
+                return Err(ErrorCode::BadRequest);
+            }
             // Commit-on-clunk: a clone fid commits its pending process here.
             if let Some(pid) = f.clone_pid {
                 match serde_json::from_slice::<ExecSpec>(&f.write_buf) {

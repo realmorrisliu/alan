@@ -382,6 +382,37 @@ async fn process_input_commits_one_framed_unit_on_clunk() {
 }
 
 #[tokio::test]
+async fn failed_oversize_process_input_is_not_committed_on_clunk() {
+    let fs = proc();
+    let pid = spawn(&fs, Fid(10)).await;
+    let input_fid = Fid(11);
+    fs.walk(
+        Fid::ROOT,
+        input_fid,
+        &[pid.clone(), "io".to_string(), "input".to_string()],
+    )
+    .await
+    .unwrap();
+    fs.open(input_fid, OpenMode::Write).await.unwrap();
+    fs.write(input_fid, 0, &vec![b'a'; 1 << 20]).await.unwrap();
+    assert_eq!(
+        fs.write(input_fid, 1 << 20, b"b").await,
+        Err(ErrorCode::BadRequest)
+    );
+    assert_eq!(fs.clunk(input_fid).await, Err(ErrorCode::BadRequest));
+
+    assert!(
+        tokio::time::timeout(
+            std::time::Duration::from_millis(20),
+            read_at(&fs, &[&pid, "io", "input"], Fid(12)),
+        )
+        .await
+        .is_err(),
+        "failed input write committed its accepted prefix"
+    );
+}
+
+#[tokio::test]
 async fn child_namespace_rebinds_proc_clone_to_the_child_spawn_context() {
     let runner = Arc::new(CaptureRunner::new());
     let fs = ProcFs::new().with_runner(runner.clone());
