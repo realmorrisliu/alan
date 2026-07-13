@@ -120,3 +120,22 @@ surface；超出边界的编辑器、browser content、浏览器权限和扩展�
 - **WHEN** 维护者检查 v0.2 content-container 模型
 - **THEN** v1 SHALL NOT 要求 browser ContentInstance kind、browser renderer、WKWebView host、browser profile/cookie policy、download manager 或 browser permission model
 - **AND** 模型 SHALL 保持通用 `ContentInstance`、content kind、payload、capability、renderer、lifecycle 和 PaneSlot 命名，使后续 browser change 可以新增 browser-specific descriptors，而不需要重命名 container contract
+
+### Requirement: Agent content references an Alan OS Process
+Alan for macOS SHALL support an Agent ContentInstance whose domain payload is an
+Agent Attachment reference and whose placement remains owned by Space, Tab,
+PaneSlot, and window presentation state.
+
+#### Scenario: Agent content moves between Panes
+- **WHEN** the user moves the ContentInstance
+- **THEN** its Process Reference remains unchanged
+- **AND** Alan OS Process lifecycle receives no mutation
+
+### Requirement: Multiple Agent content views may share a Process
+Alan for macOS SHALL allow more than one ContentInstance to attach to the same
+Process Reference. Each SHALL own renderer offsets and neither SHALL infer
+exclusive Process ownership.
+
+#### Scenario: One duplicate view closes
+- **WHEN** another view remains attached
+- **THEN** the Process and other view remain unaffected
