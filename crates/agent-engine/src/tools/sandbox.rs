@@ -290,7 +290,7 @@ impl Sandbox {
             ));
         }
 
-        match self.validate_command_paths(cmd, cwd, PathCheckMode::Full) {
+        match self.validate_command_paths(cmd, cwd, PathCheckMode::Full, None) {
             Ok(()) => None,
             Err(err) => {
                 let reason = err.to_string();
@@ -432,7 +432,14 @@ impl Sandbox {
         timeout: Option<Duration>,
         capability: Option<alan_agent_protocol::ToolCapability>,
     ) -> Result<ExecResult> {
-        if !self.is_writable(cwd) {
+        let read_only_command =
+            matches!(capability, Some(alan_agent_protocol::ToolCapability::Read));
+        let cwd_is_authorized = if read_only_command {
+            self.is_readable(cwd)
+        } else {
+            self.is_writable(cwd)
+        };
+        if !cwd_is_authorized {
             return Err(anyhow!(
                 "Working directory outside host_mount roots: {} (allowed roots: {})",
                 cwd.display(),
@@ -454,13 +461,13 @@ impl Sandbox {
             // safely contains (`bash -lc ...`, `python -c ...`). Path containment
             // and the protected-subpath check (incl. shell-wrapper-nested) still
             // run in ProtectedOnly mode.
-            self.validate_command_paths(cmd, cwd, PathCheckMode::ProtectedOnly)?;
+            self.validate_command_paths(cmd, cwd, PathCheckMode::ProtectedOnly, capability)?;
         } else {
             // No kernel protected-subpath enforcement (Landlock cannot carve a
             // protected subdir out of the writable tree, or the path-guard
             // fallback): keep the full shape parser so opaque writers — which could
             // hide a protected write the kernel won't deny — are rejected.
-            self.validate_command_paths(cmd, cwd, PathCheckMode::Full)?;
+            self.validate_command_paths(cmd, cwd, PathCheckMode::Full, capability)?;
         }
 
         // A command only reaches execution after policy/reviewer/human clearance.
@@ -674,7 +681,13 @@ impl Sandbox {
         Ok(dunce::canonicalize(path)?)
     }
 
-    fn validate_command_paths(&self, cmd: &str, cwd: &Path, mode: PathCheckMode) -> Result<()> {
+    fn validate_command_paths(
+        &self,
+        cmd: &str,
+        cwd: &Path,
+        mode: PathCheckMode,
+        capability: Option<alan_agent_protocol::ToolCapability>,
+    ) -> Result<()> {
         let protected_only = matches!(mode, PathCheckMode::ProtectedOnly);
         let normalized = normalize_shell_line_continuations(cmd);
         let trimmed = normalized.trim();
@@ -714,7 +727,12 @@ impl Sandbox {
         if protected_only {
             for words in &commands {
                 if let Some(inner) = shell_wrapper_inline_script(words) {
-                    self.validate_command_paths(&inner, cwd, PathCheckMode::ProtectedOnly)?;
+                    self.validate_command_paths(
+                        &inner,
+                        cwd,
+                        PathCheckMode::ProtectedOnly,
+                        capability,
+                    )?;
                 }
             }
         }
@@ -733,11 +751,11 @@ impl Sandbox {
             }
 
             for candidate in path_like_subtokens(&token) {
-                self.validate_command_path_candidate(candidate, cwd)?;
+                self.validate_command_path_candidate(candidate, cwd, capability)?;
             }
         }
 
-        self.validate_absolute_path_literals(&span_tokens)?;
+        self.validate_absolute_path_literals(&span_tokens, capability)?;
 
         Ok(())
     }
@@ -875,7 +893,12 @@ impl Sandbox {
     // permits reads by default, so an auto-approved read like `cat ~/.ssh/id_rsa`
     // would otherwise exfiltrate secrets into tool output. ProtectedOnly only drops
     // the syntactic *shape* checks (so wrappers may run), never path containment.
-    fn validate_command_path_candidate(&self, token: &str, cwd: &Path) -> Result<()> {
+    fn validate_command_path_candidate(
+        &self,
+        token: &str,
+        cwd: &Path,
+        capability: Option<alan_agent_protocol::ToolCapability>,
+    ) -> Result<()> {
         if token.is_empty() || token.starts_with('-') {
             return Ok(());
         }
@@ -903,14 +926,25 @@ impl Sandbox {
             let validation_path = self
                 .reified_namespace_path_to_host(&candidate)
                 .unwrap_or(candidate);
-            if !self.is_writable(&validation_path) {
+            let read_only_command =
+                matches!(capability, Some(alan_agent_protocol::ToolCapability::Read));
+            let path_is_authorized = if read_only_command {
+                self.is_readable(&validation_path)
+            } else {
+                self.is_writable(&validation_path)
+            };
+            if !path_is_authorized {
                 return Err(anyhow!(
                     "Command references path outside host_mount: {}",
                     token
                 ));
             }
             self.ensure_path_not_protected(&validation_path, "process path reference")?;
-            self.ensure_path_not_multiply_linked(&validation_path, "process path reference")?;
+            if read_only_command {
+                self.ensure_path_not_read_denied(&validation_path, "process path reference")?;
+            } else {
+                self.ensure_path_not_multiply_linked(&validation_path, "process path reference")?;
+            }
         }
 
         Ok(())
@@ -972,22 +1006,32 @@ impl Sandbox {
         None
     }
 
-    fn validate_absolute_path_literals(&self, tokens: &[ShellWordToken]) -> Result<()> {
+    fn validate_absolute_path_literals(
+        &self,
+        tokens: &[ShellWordToken],
+        capability: Option<alan_agent_protocol::ToolCapability>,
+    ) -> Result<()> {
         for token in tokens {
             for candidates in absolute_path_literal_candidates(&token.decoded) {
                 let literal = candidates
                     .iter()
                     .find(|candidate| {
-                        self.absolute_path_literal_is_allowed_or_in_host_mount(candidate)
+                        self.absolute_path_literal_is_allowed_or_in_host_mount(
+                            candidate, capability,
+                        )
                     })
                     .unwrap_or_else(|| &candidates[0]);
-                self.validate_absolute_path_literal(literal)?;
+                self.validate_absolute_path_literal(literal, capability)?;
             }
         }
         Ok(())
     }
 
-    fn absolute_path_literal_is_allowed_or_in_host_mount(&self, literal: &str) -> bool {
+    fn absolute_path_literal_is_allowed_or_in_host_mount(
+        &self,
+        literal: &str,
+        capability: Option<alan_agent_protocol::ToolCapability>,
+    ) -> bool {
         let literal_path = Path::new(literal);
         if is_allowed_absolute_command_path(literal_path) {
             return true;
@@ -995,10 +1039,18 @@ impl Sandbox {
         let validation_path = self
             .reified_namespace_path_to_host(literal_path)
             .unwrap_or_else(|| literal_path.to_path_buf());
-        self.is_writable(&validation_path)
+        if matches!(capability, Some(alan_agent_protocol::ToolCapability::Read)) {
+            self.is_readable(&validation_path)
+        } else {
+            self.is_writable(&validation_path)
+        }
     }
 
-    fn validate_absolute_path_literal(&self, literal: &str) -> Result<()> {
+    fn validate_absolute_path_literal(
+        &self,
+        literal: &str,
+        capability: Option<alan_agent_protocol::ToolCapability>,
+    ) -> Result<()> {
         let literal_path = Path::new(literal);
         if !literal_path.is_absolute() || is_allowed_absolute_command_path(literal_path) {
             return Ok(());
@@ -1009,13 +1061,23 @@ impl Sandbox {
         // Containment applies in every mode: the OS sandbox does not confine
         // reads, so an out-of-host_mount absolute path (e.g. a read of a secret)
         // must still be rejected by the parser.
-        if !self.is_writable(&validation_path) {
+        let read_only_command =
+            matches!(capability, Some(alan_agent_protocol::ToolCapability::Read));
+        let path_is_authorized = if read_only_command {
+            self.is_readable(&validation_path)
+        } else {
+            self.is_writable(&validation_path)
+        };
+        if !path_is_authorized {
             return Err(anyhow!(
                 "Command contains absolute path outside host_mount: {}",
                 literal
             ));
         }
         self.ensure_path_not_protected(&validation_path, "process path reference")?;
+        if read_only_command {
+            self.ensure_path_not_read_denied(&validation_path, "process path reference")?;
+        }
         Ok(())
     }
 

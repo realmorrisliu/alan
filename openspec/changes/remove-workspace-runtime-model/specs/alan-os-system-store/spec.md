@@ -31,3 +31,9 @@ No compatibility reader SHALL remain after migration.
 - **WHEN** cleanup finds a Skill under a former implicit Host-directory source
 - **THEN** it reports the source without deleting or loading it
 - **AND** removal is offered only after explicit import succeeds
+
+#### Scenario: Explicit legacy roots follow the active channel
+- **GIVEN** dev-channel inspection or cleanup receives an explicit Host project root
+- **WHEN** it resolves former generated and authored source locations
+- **THEN** it inspects `.alan-dev` and `.agents-dev` under that root
+- **AND** stable `.alan` and `.agents` content remains untouched

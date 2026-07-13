@@ -187,6 +187,89 @@ async fn sandbox_exec_accepts_cwd_under_secondary_writable_root() {
 }
 
 #[tokio::test]
+async fn sandbox_exec_read_capability_allows_read_only_mount_paths() {
+    let writable = TempDir::new().unwrap();
+    let read_only = TempDir::new().unwrap();
+    let sandbox = Sandbox::from_spec_with_backend(
+        SandboxSpec {
+            host_mounts: Vec::new(),
+            readable_roots: vec![
+                writable.path().to_path_buf(),
+                read_only.path().to_path_buf(),
+            ],
+            writable_roots: vec![writable.path().to_path_buf()],
+            read_denylist: Vec::new(),
+            network: NetworkPosture::Deny,
+        },
+        crate::tools::SandboxBackendKind::HostMountPathGuard,
+    );
+    let document = read_only.path().join("notes.txt");
+    tokio::fs::write(&document, "read-only mount\n")
+        .await
+        .unwrap();
+
+    let relative = sandbox
+        .exec_with_timeout_and_capability(
+            "cat ./notes.txt",
+            read_only.path(),
+            None,
+            Some(alan_agent_protocol::ToolCapability::Read),
+        )
+        .await
+        .unwrap();
+    assert_eq!(relative.stdout, "read-only mount\n");
+
+    let absolute = sandbox
+        .exec_with_timeout_and_capability(
+            &format!("cat '{}'", document.display()),
+            writable.path(),
+            None,
+            Some(alan_agent_protocol::ToolCapability::Read),
+        )
+        .await
+        .unwrap();
+    assert_eq!(absolute.stdout, "read-only mount\n");
+}
+
+#[tokio::test]
+async fn sandbox_exec_write_capability_rejects_read_only_mount_paths() {
+    let writable = TempDir::new().unwrap();
+    let read_only = TempDir::new().unwrap();
+    let sandbox = Sandbox::from_spec_with_backend(
+        SandboxSpec {
+            host_mounts: Vec::new(),
+            readable_roots: vec![
+                writable.path().to_path_buf(),
+                read_only.path().to_path_buf(),
+            ],
+            writable_roots: vec![writable.path().to_path_buf()],
+            read_denylist: Vec::new(),
+            network: NetworkPosture::Deny,
+        },
+        crate::tools::SandboxBackendKind::HostMountPathGuard,
+    );
+    let target = read_only.path().join("created.txt");
+
+    let result = sandbox
+        .exec_with_timeout_and_capability(
+            &format!("touch '{}'", target.display()),
+            writable.path(),
+            None,
+            Some(alan_agent_protocol::ToolCapability::Write),
+        )
+        .await;
+
+    assert!(result.is_err());
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("outside host_mount")
+    );
+    assert!(!target.exists());
+}
+
+#[tokio::test]
 async fn sandbox_protects_reserved_subpaths_under_secondary_writable_root() {
     let host_mount = TempDir::new().unwrap();
     let approved = TempDir::new().unwrap();

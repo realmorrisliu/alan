@@ -19,6 +19,18 @@ capability.
 - **AND** the Agent Process cwd remains unchanged
 - **AND** runtime scratch, Host cwd, and Host home gain no sandbox authority
 
+#### Scenario: Child Tool Process uses an inherited mount with a virtual cwd
+- **GIVEN** a child Agent Process inherits an explicit Host Mount while its cwd is `/`
+- **WHEN** the child Tool Process binding is assembled
+- **THEN** an authorized inherited mount becomes the native Tool Process cwd
+- **AND** the child receives no Host authority beyond its inherited grants
+
+#### Scenario: Read-only Host Mounts remain readable to read-class Tools
+- **GIVEN** a Process has an explicit read-only Host Mount at `/mnt/docs`
+- **WHEN** a read-class Tool Process reads an ordinary path operand under `/mnt/docs`
+- **THEN** the read is permitted by both namespace and native sandbox projection
+- **AND** mutation and redirection targets under `/mnt/docs` remain denied
+
 ## REMOVED Requirements
 
 ### Requirement: Workspace-local tools require explicit runtime binding

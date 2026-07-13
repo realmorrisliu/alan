@@ -348,16 +348,12 @@ where
     let runtime_procfs = launch_procfs
         .clone()
         .with_runner(Arc::new(tool_runner.clone()));
-    let child_tool_binding = if child_namespace_plan.launch_context.host_cwd().is_some() {
-        let scratch = child_config
+    let child_tool_binding = child_namespace_plan.runtime_execution_binding(
+        child_config
             .store_bindings
             .as_ref()
-            .map(|stores| stores.tmp.clone())
-            .context("child Agent Process with Host Mounts requires Agent Runtime Service store bindings")?;
-        child_namespace_plan.execution_binding(scratch)?
-    } else {
-        None
-    };
+            .map(|stores| stores.tmp.clone()),
+    )?;
     let agentfs = Arc::new(alan_agentfs::AgentFs::new());
     let llmfs = Arc::new(alan_llmfs::LlmFs::new());
     llmfs.register_connection(
@@ -1430,6 +1426,19 @@ struct ChildNamespaceAssemblyPlan {
 }
 
 impl ChildNamespaceAssemblyPlan {
+    fn runtime_execution_binding(
+        &self,
+        scratch: Option<PathBuf>,
+    ) -> Result<Option<crate::tools::ToolExecutionBinding>> {
+        if self.launch_context.host_mounts.is_empty() {
+            return Ok(None);
+        }
+        let scratch = scratch.context(
+            "child Agent Process with Host Mounts requires Agent Runtime Service store bindings",
+        )?;
+        self.execution_binding(scratch)
+    }
+
     fn execution_binding(
         &self,
         scratch: PathBuf,
@@ -2480,7 +2489,7 @@ mod tests {
         plan.launch_context.cwd = "/".to_string();
 
         let binding = plan
-            .execution_binding(scratch.path().to_path_buf())
+            .runtime_execution_binding(Some(scratch.path().to_path_buf()))
             .unwrap()
             .expect("an inherited Host Mount should create a child Tool binding");
 

@@ -128,8 +128,8 @@ pub fn inspect_legacy_state(
     let mut public_skill_roots = vec![paths.public_skills_root.clone()];
     for source in explicit_source_roots {
         validate_absolute_path("explicit legacy source root", source)?;
-        alan_roots.push(explicit_alan_root(source));
-        public_skill_roots.push(explicit_public_skills_root(source));
+        alan_roots.push(explicit_alan_root(source, paths.channel));
+        public_skill_roots.push(explicit_public_skills_root(source, paths.channel));
     }
     alan_roots.sort();
     alan_roots.dedup();
@@ -198,7 +198,7 @@ pub fn cleanup_legacy_state(
     let mut removed_generated_paths = Vec::new();
     let mut roots = vec![paths.alan_root.clone()];
     for source in explicit_source_roots {
-        roots.push(explicit_alan_root(source));
+        roots.push(explicit_alan_root(source, paths.channel));
     }
     roots.sort();
     roots.dedup();
@@ -611,18 +611,26 @@ fn write_sensitive_file_atomically(target: &Path, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
-fn explicit_alan_root(source: &Path) -> PathBuf {
+fn explicit_alan_root(source: &Path, channel: InstallChannel) -> PathBuf {
     match source.file_name().and_then(|name| name.to_str()) {
         Some(LEGACY_STABLE_HOME | LEGACY_DEV_HOME) => source.to_path_buf(),
-        _ => source.join(LEGACY_STABLE_HOME),
+        _ => source.join(match channel {
+            InstallChannel::Stable => LEGACY_STABLE_HOME,
+            InstallChannel::Dev => LEGACY_DEV_HOME,
+        }),
     }
 }
 
-fn explicit_public_skills_root(source: &Path) -> PathBuf {
+fn explicit_public_skills_root(source: &Path, channel: InstallChannel) -> PathBuf {
     match source.file_name().and_then(|name| name.to_str()) {
         Some("skills") => source.to_path_buf(),
         Some(LEGACY_STABLE_PUBLIC_SKILLS | LEGACY_DEV_PUBLIC_SKILLS) => source.join("skills"),
-        _ => source.join(LEGACY_STABLE_PUBLIC_SKILLS).join("skills"),
+        _ => source
+            .join(match channel {
+                InstallChannel::Stable => LEGACY_STABLE_PUBLIC_SKILLS,
+                InstallChannel::Dev => LEGACY_DEV_PUBLIC_SKILLS,
+            })
+            .join("skills"),
     }
 }
 
@@ -1309,6 +1317,58 @@ mod tests {
                 .authored_roots
                 .iter()
                 .any(|root| root.path == unrelated)
+        );
+    }
+
+    #[test]
+    fn dev_inspection_and_cleanup_use_dev_explicit_roots() {
+        let temp = TempDir::new().unwrap();
+        let home = temp.path().join("home");
+        let project = temp.path().join("project");
+        let dev_generated = project.join(".alan-dev/registry.json");
+        let stable_generated = project.join(".alan/registry.json");
+        let dev_skills = project.join(".agents-dev/skills");
+        let stable_skills = project.join(".agents/skills");
+        fs::create_dir_all(&home).unwrap();
+        fs::create_dir_all(dev_generated.parent().unwrap()).unwrap();
+        fs::create_dir_all(stable_generated.parent().unwrap()).unwrap();
+        fs::create_dir_all(dev_skills.join("dev-skill")).unwrap();
+        fs::create_dir_all(stable_skills.join("stable-skill")).unwrap();
+        fs::write(&dev_generated, "{}").unwrap();
+        fs::write(&stable_generated, "{}").unwrap();
+        fs::write(dev_skills.join("dev-skill/SKILL.md"), "dev").unwrap();
+        fs::write(stable_skills.join("stable-skill/SKILL.md"), "stable").unwrap();
+        let paths = LegacyStatePaths::from_home_dir(&home, InstallChannel::Dev).unwrap();
+
+        let inspection = inspect_legacy_state(&paths, std::slice::from_ref(&project)).unwrap();
+
+        assert!(inspection.generated_paths.contains(&dev_generated));
+        assert!(!inspection.generated_paths.contains(&stable_generated));
+        assert!(
+            inspection
+                .authored_roots
+                .iter()
+                .any(|root| root.path == dev_skills)
+        );
+        assert!(
+            !inspection
+                .authored_roots
+                .iter()
+                .any(|root| root.path == stable_skills)
+        );
+
+        let (system, host) = stores(temp.path(), InstallChannel::Dev);
+        let report =
+            cleanup_legacy_state(&paths, &system, &host, std::slice::from_ref(&project)).unwrap();
+
+        assert!(!dev_generated.exists());
+        assert!(stable_generated.exists());
+        assert!(report.removed_generated_paths.contains(&dev_generated));
+        assert!(
+            report
+                .authored_roots
+                .iter()
+                .any(|root| root.path == dev_skills)
         );
     }
 }
