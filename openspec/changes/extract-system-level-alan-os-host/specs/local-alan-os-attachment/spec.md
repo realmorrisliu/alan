@@ -3,7 +3,8 @@
 ### Requirement: Local attachment uses native aP wire
 The Alan OS Host SHALL export its ready namespace through the existing aP wire
 protocol on a channel-specific Unix domain socket in a platform runtime
-directory. It MUST NOT expose HTTP, WebSocket, Session, or relay protocols.
+directory. This SHALL remain the sole local attachment transport; Alan MUST NOT
+introduce a separate management transport beside aP.
 
 #### Scenario: Authorized local client attaches
 - **WHEN** a same-user client connects to the matching channel endpoint
