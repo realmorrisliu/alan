@@ -39,5 +39,5 @@
 
 - [x] 6.1 Submit one Host extraction PR after `remove-workspace-runtime-model` is merged and archived
 - [x] 6.2 Merge implementation PR #646 after current-HEAD Codex review, zero unresolved threads, green CI, and delayed recheck
-- [ ] 6.3 Merge this canonical-spec sync PR after syncing every Host and attachment delta and completing the same review gate
-- [ ] 6.4 Archive only after canonical sync is merged and `implement-minimal-service-manager` can consume the Host seam
+- [x] 6.3 Merge canonical-spec sync PR #647 after syncing every Host and attachment delta and completing the same review gate
+- [x] 6.4 Archive after canonical sync is merged; `implement-minimal-service-manager` can now consume the Host seam
