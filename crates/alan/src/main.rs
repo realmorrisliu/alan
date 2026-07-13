@@ -1269,12 +1269,9 @@ fn request_platform_host_start(
 fn dedicated_host_executable(channel: alan_agent_engine::InstallChannel) -> Result<PathBuf> {
     let name = channel.descriptor().os_host_name;
     if let Ok(current) = std::env::current_exe()
-        && let Some(directory) = current.parent()
+        && let Some(sibling) = sibling_executable(&current, name)
     {
-        let sibling = directory.join(name);
-        if sibling.is_file() {
-            return Ok(sibling);
-        }
+        return Ok(sibling);
     }
     if let Some(path) = std::env::var_os("PATH") {
         for directory in std::env::split_paths(&path) {
@@ -1285,6 +1282,14 @@ fn dedicated_host_executable(channel: alan_agent_engine::InstallChannel) -> Resu
         }
     }
     anyhow::bail!("dedicated Alan OS Host executable {name} was not found beside alan or on PATH")
+}
+
+fn sibling_executable(current: &Path, name: &str) -> Option<PathBuf> {
+    let current = current
+        .canonicalize()
+        .unwrap_or_else(|_| current.to_owned());
+    let sibling = current.parent()?.join(name);
+    sibling.is_file().then_some(sibling)
 }
 
 async fn wait_for_host_stop(paths: &alan_os_host::HostEndpointPaths) -> Result<()> {
@@ -1389,7 +1394,7 @@ fn print_legacy_cleanup(report: &legacy_state::LegacyCleanupReport, json: bool) 
 
 #[cfg(test)]
 mod tests {
-    use super::{Cli, os_host_launch_label};
+    use super::{Cli, os_host_launch_label, sibling_executable};
     use alan_agent_engine::InstallChannel;
     use clap::Parser;
 
@@ -1410,6 +1415,27 @@ mod tests {
         assert_eq!(
             os_host_launch_label(InstallChannel::Dev),
             "app.alanworks.macos.dev.os-host"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn sibling_executable_resolves_the_real_cli_behind_a_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let root = tempfile::tempdir().unwrap();
+        let bundle_bin = root.path().join("Alan.app/Contents/Resources/bin");
+        std::fs::create_dir_all(&bundle_bin).unwrap();
+        let cli = bundle_bin.join("alan");
+        let host = bundle_bin.join("alan-os-host");
+        std::fs::write(&cli, []).unwrap();
+        std::fs::write(&host, []).unwrap();
+        let link = root.path().join("installed-alan");
+        symlink(&cli, &link).unwrap();
+
+        assert_eq!(
+            sibling_executable(&link, "alan-os-host").unwrap(),
+            host.canonicalize().unwrap()
         );
     }
 }

@@ -40,6 +40,31 @@ impl Drop for PendingResponseGuard {
     }
 }
 
+struct ConnectionWriteGuard {
+    closed: Arc<AtomicBool>,
+    pending: PendingResponses,
+    completed: bool,
+}
+
+impl Drop for ConnectionWriteGuard {
+    fn drop(&mut self) {
+        if !self.completed {
+            close_imported_connection(&self.closed, &self.pending);
+        }
+    }
+}
+
+fn close_imported_connection(closed: &AtomicBool, pending: &PendingResponses) {
+    closed.store(true, Ordering::Release);
+    for (_, waiter) in pending
+        .lock()
+        .expect("pending response mutex poisoned")
+        .drain()
+    {
+        let _ = waiter.send(Err(ErrorCode::Io));
+    }
+}
+
 const MAX_WIRE_PAYLOAD_CHUNK_BYTES: usize = MAX_WIRE_FRAME_BYTES / 8;
 
 /// A file server: the backing implementation of one mountable tree.
@@ -453,11 +478,17 @@ where
             if self.closed.load(Ordering::Acquire) {
                 Err(WireError::Closed)
             } else {
-                write_tagged_request_frame(&mut *writer, tag, &request).await
+                let mut guard = ConnectionWriteGuard {
+                    closed: Arc::clone(&self.closed),
+                    pending: Arc::clone(&self.pending),
+                    completed: false,
+                };
+                let result = write_tagged_request_frame(&mut *writer, tag, &request).await;
+                guard.completed = result.is_ok();
+                result
             }
         };
         if let Err(error) = write_result {
-            self.closed.store(true, Ordering::Release);
             return Err(error.to_error_code());
         }
         result_rx.await.map_err(|_| ErrorCode::Io)?
@@ -487,14 +518,7 @@ async fn route_imported_responses<R>(
         }
     }
 
-    closed.store(true, Ordering::Release);
-    for (_, waiter) in pending
-        .lock()
-        .expect("pending response mutex poisoned")
-        .drain()
-    {
-        let _ = waiter.send(Err(ErrorCode::Io));
-    }
+    close_imported_connection(&closed, &pending);
 }
 
 #[async_trait]
@@ -638,7 +662,38 @@ where
 #[cfg(test)]
 mod imported_file_server_tests {
     use super::*;
-    use tokio::io::{BufReader, duplex};
+    use std::pin::Pin;
+    use std::task::{Context, Poll};
+    use tokio::io::{AsyncWrite, BufReader, duplex};
+    use tokio::sync::Notify;
+
+    struct PartialThenPendingWriter {
+        wrote_prefix: Arc<Notify>,
+        wrote_once: bool,
+    }
+
+    impl AsyncWrite for PartialThenPendingWriter {
+        fn poll_write(
+            mut self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+            bytes: &[u8],
+        ) -> Poll<std::io::Result<usize>> {
+            if self.wrote_once {
+                return Poll::Pending;
+            }
+            self.wrote_once = true;
+            self.wrote_prefix.notify_one();
+            Poll::Ready(Ok(bytes.len().min(1)))
+        }
+
+        fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+            Poll::Ready(Ok(()))
+        }
+
+        fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+            Poll::Ready(Ok(()))
+        }
+    }
 
     #[tokio::test]
     async fn cancelled_remote_call_removes_pending_response() {
@@ -675,5 +730,31 @@ mod imported_file_server_tests {
                 .expect("pending response mutex poisoned")
                 .is_empty()
         );
+    }
+
+    #[tokio::test]
+    async fn cancelled_partial_frame_write_closes_the_connection() {
+        let (client_read, server_stream) = duplex(4096);
+        let wrote_prefix = Arc::new(Notify::new());
+        let imported = Arc::new(ImportedFileServer::new(
+            BufReader::new(client_read),
+            PartialThenPendingWriter {
+                wrote_prefix: Arc::clone(&wrote_prefix),
+                wrote_once: false,
+            },
+        ));
+
+        let caller = Arc::clone(&imported);
+        let call =
+            tokio::spawn(async move { caller.remote_call(Request::Stat { fid: Fid(1) }).await });
+        wrote_prefix.notified().await;
+        call.abort();
+        assert!(call.await.unwrap_err().is_cancelled());
+        assert_eq!(
+            imported.remote_call(Request::Stat { fid: Fid(2) }).await,
+            Err(ErrorCode::Io)
+        );
+
+        drop(server_stream);
     }
 }
