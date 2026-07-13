@@ -336,3 +336,13 @@ metadata.
 - **WHEN** the operator edits it to use a new valid credential id
 - **THEN** matching credential metadata is registered before the profile is saved
 - **AND** setting the secret and testing the edited profile succeed
+
+### Requirement: Connection authority is file-service owned
+Connection Service SHALL be the only owner of profile metadata, defaults,
+selection, validation status, and callable connection publication. Host
+adapters SHALL own only native login and secret storage.
+
+#### Scenario: Host adapter restarts
+- **WHEN** Connection Service remains running
+- **THEN** profile identity and non-secret settings remain authoritative
+- **AND** the adapter can reconnect without reconstructing profiles

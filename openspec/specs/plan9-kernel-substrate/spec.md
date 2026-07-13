@@ -363,3 +363,13 @@ The `alan-kernel` crate SHALL depend only on `alan-ap`, the aP protocol contract
 - **WHEN** `alan-kernel` dependencies are reviewed
 - **THEN** they include `alan-ap` and exclude Agent Execution Engine, AgentFS service, provider, Memory Store, sandbox backend, renderer, and transport implementation crates
 - **AND** agents, providers, memory, and Tools appear to Alan Kernel only through Processes, descriptors, namespaces, mounts, and file-server trees
+
+### Requirement: Kernel boot creates the Service Manager Process
+Kernel bootstrap SHALL provide the Process and namespace primitives needed for
+Alan OS Host to create Service Manager as the first system Process. Kernel MUST
+remain ignorant of Boot Unit, service policy, and renderer transport details.
+
+#### Scenario: Host starts Service Manager
+- **WHEN** a fresh Kernel has no committed Processes
+- **THEN** Host creates Service Manager through normal Process creation
+- **AND** later services appear as ordinary Process table entries

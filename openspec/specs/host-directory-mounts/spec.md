@@ -72,3 +72,14 @@ Alan OS mount path and MUST NOT expose the raw Host path.
 - **WHEN** the CLI is launched with that directory as Host cwd
 - **THEN** the directory remains absent until the Host explicitly grants and
   mounts it
+
+### Requirement: Host Mount projection is service-mediated
+Alan OS SHALL route all runtime Host directory authorization, hostfs export,
+live namespace projection, revocation, and sandbox derivation through Host Mount
+Service. Host renderers MAY answer native authorization requests but MUST NOT
+maintain a second grant registry.
+
+#### Scenario: CLI authorizes a path
+- **WHEN** CLI Host Command Plane approves a Host directory
+- **THEN** its adapter returns the export to Host Mount Service
+- **AND** only the service publishes Alan OS-visible grant state
