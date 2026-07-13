@@ -1,30 +1,84 @@
-## 1. Implement Package Service ownership
+# Tasks
 
-- [ ] 1.1 Add `alan-package-service` with aP catalog, transaction, event, and lifecycle files
-- [ ] 1.2 Add the versioned `alan-package.yaml` parser and the single-root portable Skill adoption path with package-id, Skill export, and Tool export validation
-- [ ] 1.3 Persist catalog, content, provenance, digests, and transaction recovery only through Package Service's System Store binding
-- [ ] 1.4 Validate canonical paths, reject escaping symlinks and export collisions, and compute content digests inside the service boundary
-- [ ] 1.5 Implement atomic install, update-with-expected-digest, abort, and exact remove
+## 1. Replace the stale contract
 
-## 2. Boot and namespace integration
+- [ ] 1.1 Rewrite the proposal and design around Package Service, System Store,
+  explicit Host Mount input, `/srv/package`, `/lib/pkg`, and Process references.
+- [ ] 1.2 Remove every current-change promise of Alan home package stores,
+  workspace/AgentRoot/`~/.agents` providers, Host-side resolution, remote fetch,
+  and package-helper execution.
+- [ ] 1.3 Rewrite ADR-0030 so ADR-0052's explicit-source decision is reflected
+  in the accepted Quartermaster architecture.
+- [ ] 1.4 Strict-validate the change and the complete current OpenSpec surface.
 
-- [ ] 2.1 Add Package Service as a required Service Manager boot unit publishing `/srv/packages` and mount its client tree at `/mnt/packages`
-- [ ] 2.2 Pass the channel Package Service backing binding from `alan-os-host` without exposing the raw path to clients
-- [ ] 2.3 Project only Process-selected package content read-only at `/lib/pkg/<package-id>`
-- [ ] 2.4 Bind only explicit selected Tool exports into `/bin`, reject command collisions, and leave package-local helpers unpromoted
-- [ ] 2.5 Install required first-party Skill packages through the ordinary Package Service transaction path before readiness
+## 2. Implement Package Service ownership
 
-## 3. Shell and Skill integration
+- [ ] 2.1 Add Package Service domain types for package ids, source snapshots,
+  fingerprints, revisions, exports, references, lifecycle state, and results.
+- [ ] 2.2 Implement bounded snapshot validation and deterministic Skill
+  materialization for native `SKILL.md` roots and supported command Markdown.
+- [ ] 2.3 Implement the service-owned System Store with staged atomic commits,
+  restart recovery, integrity validation, and no persisted Host source paths.
+- [ ] 2.4 Implement `/srv/package/{catalog,status,ctl,result}` with
+  commit-on-clunk commands and bounded request results.
+- [ ] 2.5 Cover install/list/upgrade/uninstall, idempotence, collision,
+  retirement, live-reference retention, and preinstalled-package guards.
 
-- [ ] 3.1 Add the base-system `/bin/pkg` Tool with `install`, `list`, `show`, `update`, and `remove` against `/mnt/packages`
-- [ ] 3.2 Upload only an explicitly named namespace-readable source tree; do not add Git, registry, Host-path, or implicit-directory discovery
-- [ ] 3.3 Resolve installed Skill exports through Package Service and pass selected Skills to Agent Processes by descriptor
-- [ ] 3.4 Delete direct Agent Execution Engine package-root scanning and any Quartermaster/provider compatibility path
+## 3. Boot and project the service
 
-## 4. Verification and cleanup
+- [ ] 3.1 Add a required Package Service Boot Unit, executable, published
+  `/srv/package` handle, readiness checks, supervision, and restart tests.
+- [ ] 3.2 Bind the channel `services/packages` System Store subtree through the
+  Alan OS Host adapter without exposing its backing path to Alan OS records.
+- [ ] 3.3 Seed first-party Skill trees as deterministic preinstalled packages.
+- [ ] 3.4 Resolve explicit package references to immutable read-only handles and
+  project only those handles beneath `/lib/pkg/<package-id>`.
+- [ ] 3.5 Prove running Process snapshots retain referenced revisions across
+  upgrade/uninstall while new resolution observes the current catalog.
 
-- [ ] 4.1 Test malformed manifests, traversal, escaping symlinks, id and Tool collisions, digest mismatch, interrupted transactions, update races, and exact removal
-- [ ] 4.2 Test stable/dev System Store isolation, restart recovery, required-service failure, `/srv` invalidation, and no raw Host path exposure
-- [ ] 4.3 Test per-Process `/lib/pkg` and `/bin` selection, descriptor-only Skill exposure, and fail-closed behavior without Host scanning
-- [ ] 4.4 Test first-party and synthetic multi-Skill packages through the same install and resolution path
-- [ ] 4.5 Delete obsolete code, fixtures, docs, and vocabulary; run repository checks and strict OpenSpec validation
+## 4. Cut Agent Runtime over to explicit packages
+
+- [ ] 4.1 Add the explicit installed-package reference input to Process launch
+  assembly and keep descriptor-passed Skill/Agent Definition roots intact.
+- [ ] 4.2 Feed Agent Execution Engine only reference-derived installed Skill
+  roots and descriptor-derived roots.
+- [ ] 4.3 Remove direct `builtin_capability_packages()` injection and obsolete
+  path-enumeration helpers/tests.
+- [ ] 4.4 Explicitly reference the preinstalled first-party package set from the
+  Root Agent Process boot context.
+- [ ] 4.5 Add guards proving workspace, AgentRoot, `.agents`, Alan home, and
+  unreferenced System Store content are never scanned.
+
+## 5. Add the `q` Process command surface
+
+- [ ] 5.1 Bind `/bin/q` and implement its Process image over the Package Service
+  file surface.
+- [ ] 5.2 Complete Alan Shell's generic `/bin` command execution and output
+  collection without package-specific builtins.
+- [ ] 5.3 Implement `q install`, `q list`, `q upgrade`, and `q uninstall` with
+  stable human output, structured errors, explicit namespace paths, and no raw
+  Host-path output.
+- [ ] 5.4 Test command execution through `/proc`, malformed input, unavailable
+  service, permission failure, and non-zero exit behavior.
+
+## 6. Dogfood and document
+
+- [ ] 6.1 Add a synthetic multi-Skill distribution fixture with shared assets,
+  command Markdown conversion, and an unsupported runtime capability.
+- [ ] 6.2 Install the fixture from an explicit `/mnt` projection, inspect its
+  catalog and `/lib/pkg` view, resolve its Skills in a new Agent Process, and
+  verify the unsupported Skill remains visibly unavailable.
+- [ ] 6.3 Verify upgrade idempotence, changed-revision publication, retiring
+  uninstall, final deletion, restart recovery, and stable/dev isolation.
+- [ ] 6.4 Update current architecture, Skill, and operator documentation using
+  the canonical Package Service, Quartermaster, `q`, and System Store names.
+- [ ] 6.5 Add current-surface guards rejecting the removed Host-directory and
+  Alan-home package vocabulary.
+
+## 7. Final verification
+
+- [ ] 7.1 Run focused Package Service, Service Manager, Agent Engine, Shell, OS
+  Host, and Alan integration tests.
+- [ ] 7.2 Run `just fmt`, `just lint`, `just test`, `just check`, and `just build`.
+- [ ] 7.3 Run strict OpenSpec validation for every current capability/change and
+  record dogfood evidence in the implementation PR.

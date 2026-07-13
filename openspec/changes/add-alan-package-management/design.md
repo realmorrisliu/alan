@@ -1,212 +1,264 @@
-# Design: Package Service and System Store
+# add-alan-package-management — design
 
 ## Context
 
-The old change predated the current Alan OS ownership model. It treated package
-management as a Host-side resolver named Quartermaster, stored content under
-Alan home directories, registered workspace and AgentRoot directories as
-providers, and fed resolved paths directly into Agent Execution Engine. That
-would recreate the obsolete split between Host paths and Alan OS authority.
+The accepted Alan OS model now has a Standard Namespace, one Process ontology,
+Service Manager, explicit Host Mounts, channel System Stores, descriptor-passed
+Agent Definitions and Skills, and no workspace runtime identity. Package
+management must compose with those owners.
 
-The accepted architecture now has the necessary owners:
+Current code still has one package bypass: `ResolvedCapabilityView` appends
+compiled-in first-party packages through `builtin_capability_packages()`.
+There is otherwise no installed-package service, durable catalog, command
+surface, or `/lib/pkg` lifecycle.
 
-- Service Manager owns service lifecycle.
-- File-Server Services own durable domain state and expose aP trees.
-- the channel System Store provides opaque Host backing to those services.
-- Standard Namespace provides `/srv`, `/mnt`, `/lib`, and `/bin`.
-- Processes receive bounded namespace entries and descriptors.
-- Skills enter through installed packages or explicit descriptors; Host
-  directories are never implicit providers.
-
-This change supplies the missing package owner without adding another resolver,
-profile model, or Host API.
+The prior package-management draft predates the system model. Its implicit
+AgentRoot/workspace/`~/.agents` providers, `~/.alan/pkg` backing, Host-side Q
+resolver, and special helper execution path are rejected by ADR-0052 and are
+not migration inputs for this design.
 
 ## Goals
 
-- Put installed package lifecycle under one Alan OS File-Server Service.
-- Keep package persistence channel-isolated and service-owned.
-- Make install and management explicit, transactional, and inspectable.
-- Project package content through Alan OS namespaces without leaking Host paths.
-- Preserve the distinction between installed content and Process authority.
-- Delete the Quartermaster and implicit-source model.
+- Give installed packages one system owner and one durable lifecycle.
+- Make install inputs and runtime package access explicit namespace authority.
+- Remove the compiled-in first-party Skill resolution bypass.
+- Provide a useful v0 for installing, inspecting, upgrading, referencing, and
+  uninstalling Skill distribution packages.
+- Preserve Alan Kernel, Service Manager, Agent Runtime Service, AgentFS, Host
+  Mount, and System Store ownership boundaries.
 
 ## Non-goals
 
-- A universal package ecosystem, registry, dependency solver, or trust network.
-- Source-control operations or foreign-format conversion in Package Service.
-- Ambient package discovery from Host directories.
-- Installing services, boot units, apps, models, or MCP servers in this slice.
-- Giving every Process every installed package.
+- Ambient Host-directory discovery or compatibility overlays.
+- Remote URL fetching, Git credentials, registries, signing, lockfiles,
+  dependency solving, or semantic-version selection.
+- Tool/binary, MCP, service, model, workflow, or knowledge package types.
+- Executing package-local helper scripts through a special Host resolver.
+- Mutating the package set of an already-running Agent Process.
+- Making all installed packages visible to every Process.
+- Replacing explicit Skill or Agent Definition descriptors.
 
 ## Decisions
 
-### D1. Package Service is the sole installed-package owner
+### D1. Package Service is the sole installed-package authority
 
-Package Service owns installed package ids, validated content, computed content
-digests, provenance, active revisions, and lifecycle events. Provenance records
-the manifest schema, declared package version, content digest, operation, and
-time; it never persists the source namespace path. No Host object,
-Agent Execution Engine registry, or second package catalog may mutate or resolve
-installed state.
+The formal component is **Package Service**; **Quartermaster** is its product
+name and `q` is its command. Service Manager starts it from `/lib/boot`,
+supervises its Process, and publishes its mountable handle at `/srv/package`.
 
-Service Manager starts Package Service as a required boot unit and supervises
-it like every other File-Server Service. The service publishes `packages` at
-`/srv/packages`; Service Manager mounts the management tree at
-`/mnt/packages`.
+The service owns:
 
-The Package Service executable and `/bin/pkg` Tool are base-system boot
-artifacts. This narrow bootstrap does not create an alternate installed-package
-catalog. First-party Skill packages are ordinary Package Service installations.
+- package ids and catalog records;
+- imported immutable revisions and content fingerprints;
+- materialization manifests and generated adapter files;
+- explicit revision references;
+- transaction staging, publication, retirement, and deletion.
 
-### D2. The System Store is backing, not a public package path
+Alan Kernel knows none of these concepts. The Host only supplies the service's
+private System Store backing and native storage adapter.
 
-The Host grants Package Service one channel-specific backing binding under its
-System Store service subtree. Package Service alone defines the subtree format.
-Clients cannot name packages by `~/.alan`, `~/.alan-dev`, a workspace, or the
-raw System Store path.
+### D2. `q` is a Process over files, not a Host management authority
 
-Stable and dev therefore remain isolated without inventing package profiles.
-Live transactions are reopened or failed by Package Service after restart;
-Process namespaces and descriptors are rebuilt rather than persisted.
+`/bin/q` is mounted in the Shell namespace. Alan Shell resolves and spawns it
+through `/proc/clone`, waits on `/proc/<pid>`, and renders its output like any
+other command. The shell remains a generic aP client; it contains no
+package-specific management logic.
 
-### D3. Install input is an explicit Alan package tree
+The v1 same-address-space implementation may host the `q` Process image beside
+Package Service, but the image communicates through the service's aP file
+surface. Tests exercise the same serialized commands and results exposed at
+`/srv/package`.
 
-`pkg install <path>` accepts only a directory readable in the caller's Alan OS
-namespace. A normal package directory contains a declarative
-`alan-package.yaml` with:
-
-- a schema version;
-- one package id;
-- zero or more Skill export paths;
-- zero or more explicit Tool exports mapping a command name to an executable
-  path; and
-- an optional human-facing version.
-
-The service computes the content digest; it does not trust a caller-supplied
-digest as evidence. Export paths must be relative, canonical, inside the package
-tree, and free of escaping symlinks. Skill exports must satisfy
-`skill-system-contract`; Tool command names and executables must satisfy the
-existing `/bin` Tool contract.
-
-This is intentionally not a Git installer. A Host checkout must first be
-mounted explicitly, and foreign content must first be adapted into an Alan
-package tree outside Package Service. Remote fetching and adapters can be added
-as separate Tools later without changing package ownership.
-
-The sole manifest-free adoption path preserves the portable Skill contract. If
-the named source root has no `alan-package.yaml` but has one valid root
-`SKILL.md`, Package Service derives its existing normalized runtime `skill_id`
-from the source directory name and uses that value as the package id. It creates
-an internal manifest with one Skill export at `.` and no Tool exports. The
-derived id must satisfy the package-id grammar; otherwise the operator must add
-an explicit manifest. Adoption copies the entire portable Skill directory but
-does not mutate it or recursively discover nested Skills.
-
-### D4. Lifecycle is staged and atomic
-
-The `pkg` Tool copies the explicit source into a service-owned transaction area.
-The service validates the manifest, content, exports, package-id ownership, and
-namespace collisions before activation. Committing a transaction atomically
-switches the package id to the new content digest.
-
-The management tree is file-native:
+The stable service tree is:
 
 ```text
-/mnt/packages/
-├── catalog/<package-id>/
-│   ├── manifest
-│   ├── digest
-│   ├── provenance
-│   └── state
-├── transactions/<transaction-id>/
-│   ├── manifest
-│   ├── content/
-│   ├── ctl
-│   └── status
-└── events
+/srv/package/
+  catalog       # read-only JSON snapshot
+  status        # readiness and last transaction summary
+  ctl           # commit-on-clunk command input
+  result        # bounded result records keyed by request id
 ```
 
-`manifest`, `digest`, `provenance`, and `state` are snapshots. `events` is an
-offset-resumable append-only stream. A transaction commits or aborts through
-its adjacent `ctl`; partial upload never changes the active catalog.
+Shell-facing `q` verbs are `install`, `list`, `upgrade`, and `uninstall`.
+Internal reference acquisition/release operations use the same service surface
+but are not presented as a second end-user package manager.
 
-`update` is the same transaction with an existing package id and expected
-active digest. `remove` atomically removes the catalog entry and Package
-Service-owned content. It never deletes the original mounted source.
+### D3. Sources are namespace trees, never Host identities
 
-### D5. Installation and Process exposure are separate
+`q install <namespace-path>` and
+`q upgrade <package-id> <namespace-path>` require an absolute readable Alan OS
+path. A Host directory must first be authorized and projected by Host Mount,
+normally under `/mnt`. The `q` Process walks and reads the source through aP and
+submits an imported snapshot to Package Service.
 
-Installed content is not ambient authority. Namespace assembly explicitly
-selects package ids for a child Process:
+Package ids are 1–64 ASCII bytes matching
+`[a-z0-9]+(?:-[a-z0-9]+)*`. They are compared byte-for-byte without case
+folding or Unicode normalization. `q install` either validates an explicit
+`--name` exactly or derives the source leaf and rejects it when that leaf is not
+already canonical.
 
-- selected package content is mounted read-only at
-  `/lib/pkg/<package-id>`;
-- only explicitly exported and selected Tools are bound at `/bin/<tool>`;
-- package-local `bin/` and `scripts/` files remain ordinary package content;
-- unselected installed packages have no `/lib/pkg` or `/bin` entry in that
-  Process.
+The snapshot contains normalized relative paths, file bytes, and executable
+metadata where portable. It contains no absolute source path. Package Service
+rejects `.`/`..`, absolute entries, duplicate normalized paths, special files,
+escaping symlinks, and bounded-input violations before staging any revision.
+VCS control directories are excluded.
 
-Skill resolution asks Package Service to open a declared Skill export and
-passes the resulting bounded descriptor to an Agent Process. The agent runtime
-does not recursively scan `/lib/pkg` and does not receive all installed Skills
-merely because their content exists in the store.
+Remote URLs are not accepted in v0. A later network-fetch service may produce a
+namespace tree and pass it through this same import boundary; `q` must not gain
+ambient Host network or credential authority to implement fetching itself.
 
-This permits shared package resources under `/lib/pkg/<package-id>` while
-keeping Skill activation and Tool execution explicit.
+### D4. System Store data is service-private and revisioned
 
-### D6. Management belongs in Alan Shell
+Package Service owns the `services/packages` subtree of the active channel's
+System Store. A logical layout contains a catalog, transaction staging, and
+immutable revisions, but filenames and serialization below the service root
+are implementation detail.
 
-The base-system `/bin/pkg` Tool implements:
+Each installed package record contains:
 
-- `pkg install <namespace-path>`
-- `pkg list`
-- `pkg show <package-id>`
-- `pkg update <package-id> <namespace-path>`
-- `pkg remove <package-id>`
+- canonical package id;
+- current content fingerprint revision;
+- install kind (`preinstalled` or `installed`);
+- materializer version;
+- exported Skill roots and typed availability issues;
+- creation/update metadata without Host paths or credentials.
 
-The Tool reads and writes `/mnt/packages`; it has no private Host call and no
-second state store. `alan q`, `q`, and a package-management mode on Alan OS Host
-are removed from the design.
+Publication is stage → validate → fsync/close → atomic catalog switch. A failed
+transaction leaves the prior catalog and revision readable. Store corruption
+fails closed and is reported; it is not silently reconstructed from an ambient
+source.
 
-Alan for macOS needs no package-specific bridge. A future UI may invoke the
-same Tool or operate on the same mounted tree after attachment design is ready.
+### D5. A distribution package may export multiple ordinary Skill packages
 
-### D7. First-party packages use the ordinary path
+The install unit is one source snapshot. Materialization finds supported Skill
+inputs and emits zero or more ordinary directory-backed Skill package roots:
 
-Required first-party Skill packages ship as canonical Alan package artifacts.
-During Package Service bootstrap, missing or changed required packages are
-installed transactionally into its System Store subtree before the service is
-ready. They use the same manifest, catalog, projections, and Skill descriptors
-as third-party packages. Required packages may reject removal, but they do not
-gain a second discovery mechanism or privileged prompt behavior.
+- a directory containing `SKILL.md` is copied without rewriting its canonical
+  instruction file;
+- an explicitly named portable Skill root containing a valid root `SKILL.md`
+  needs no Alan-specific package manifest and is adopted as one distribution
+  package without mutating the source;
+- supported command-style `skills/*.md` files become one Skill package each,
+  preserving the body verbatim after a versioned Alan adapter preamble;
+- duplicate canonical Skill ids, invalid metadata, escaping links, and
+  ambiguous overlapping inputs reject the transaction.
 
-### D8. Migration deletes the old model
+The materialization manifest lists every exported relative path and every
+generated file. Shared assets may remain readable package content, but v0 does
+not turn scripts or `bin/` entries into Tools. A Skill that requires an absent
+Tool or runtime capability is installed but reported unavailable by the
+existing Skill availability machinery.
 
-Implementation removes Quartermaster naming, `q` commands, Host package stores,
-provider registries, workspace/AgentRoot/`.agents` source scanning, direct
-engine package resolution, and compatibility overlays. Existing authored Host
-content is reported for explicit import and is never silently copied or
-deleted, following `alan-os-system-store`.
+### D6. Runtime access is by explicit immutable package reference
 
-ADR-0030 is marked superseded by ADR-0052 and this change. The historical
-rationale remains in git history; current docs do not preserve its rejected
-runtime model as an alternative path.
+Installing a package changes the Package Service catalog only. It does not add
+authority to a running Process.
 
-## Failure behavior
+At Process creation, the parent or Boot Unit may pass explicit installed
+package references. Package Service resolves each reference to an immutable
+revision handle. The spawner projects those handles read-only at
+`/lib/pkg/<package-id>` and passes the manifest-selected Skill roots to Agent
+Runtime Service. Agent Execution Engine builds its capability view from those
+roots plus explicit Skill/Agent Definition descriptors.
 
-- Invalid manifests, escaped paths, duplicate ids, duplicate Tool names, and
-  unsupported exports fail before activation.
-- A required Package Service boot failure fails boot; a later crash invalidates
-  `/srv/packages` and follows Service Manager restart policy.
-- Interrupted transactions never replace active content.
-- A requested package, Skill export, or Tool export that is absent or not
-  selected fails closed; callers do not fall back to Host scanning.
-- Package backing corruption is reported by digest mismatch and the affected
-  package is unavailable until reinstalled.
+Rules:
 
-## Deferred
+- an unreferenced installed package is absent from the Process namespace;
+- a reference identifies a package id and immutable revision, not a backing
+  path;
+- package projection is read-only;
+- Process launch rejects duplicate runtime Skill ids across the complete
+  selected package-reference and descriptor set before capability assembly;
+- a child inherits only the parent's referenced mounts/descriptors unless the
+  parent explicitly narrows or adds authority through the normal launch path;
+- removing or upgrading a catalog entry does not rewrite a running Process's
+  namespace snapshot.
 
-Registry lookup, network fetch, signatures, dependencies, lockfiles, garbage
-collection beyond unreachable transaction cleanup, package-provided boot units,
-Agent Executables, apps, models, MCP servers, knowledge packs, and foreign
-format adapters each require separate pressure and contracts.
+The v1 Host adapter may translate a resolved revision handle to private backing
+for the existing path-based Skill loader. That translation is derived only
+from Package Service's explicit reference and must not become a general Host
+directory scanner or Agent-visible identity.
+
+### D7. First-party Skills are preinstalled packages
+
+Alan's embedded first-party Skill trees seed deterministic preinstalled
+Package Service revisions. Seeding is idempotent by package id, materializer
+version, and content fingerprint. A product update may publish a new revision;
+running Processes keep their prior immutable handle.
+
+The Root Agent Process Boot Unit explicitly references the first-party package
+set. Agent Execution Engine no longer appends
+`builtin_capability_packages()`. `builtin` remains a provenance/precedence tier
+for Skill resolution, not a separate injection path.
+
+### D8. Lifecycle is exact and conservative
+
+`q install`:
+
+- derives a canonical id from the source directory name or validates `--name`;
+- rejects a collision before publication unless the id and fingerprint are
+  already identical, in which case it is an idempotent success;
+- validates and materializes the full snapshot before the catalog changes.
+
+`q list` reports installed id, current revision, kind, exported Skills,
+reference count, and availability issues from Package Service state.
+
+`q upgrade` requires a new explicit namespace source. Identical content is an
+idempotent no-op. Changed content publishes a new immutable revision and moves
+the catalog's current pointer; existing references retain the old revision.
+
+`q uninstall` removes the package from future resolution immediately. If live
+references remain, its immutable revisions are retained and the command
+reports `retiring`; final deletion occurs after the last reference is released.
+Preinstalled packages cannot be uninstalled by v0 operator commands.
+
+### D9. Failure remains visible and typed
+
+Package Service rejects malformed snapshots, invalid ids, broken manifests,
+and store-integrity failures before publication. Materialization compatibility
+gaps that do not corrupt the package are recorded as typed availability issues
+and flow into existing Skill exposure reports. No unsupported foreign
+capability is silently rewritten into a weaker Alan behavior.
+
+## Rejected alternatives
+
+- **Scan workspace, AgentRoot, `~/.agents`, or Alan home directories.** This
+  recreates ambient Host authority and contradicts ADR-0052.
+- **Store packages in `~/.alan/pkg`.** System services own channel System Store
+  subtrees; an Alan home is not the product model.
+- **Let Agent Execution Engine own package lookup.** It would mix lifecycle
+  authority into the transition loop and preserve the current bypass.
+- **Expose all installed packages at `/lib/pkg`.** Installation is not Process
+  authority.
+- **Execute helper paths through a Host resolver.** Tools execute from `/bin`
+  under Process authority; package distribution cannot add a parallel path.
+- **Fetch Git URLs inside `q`.** Network and credentials require a separate
+  adapter/service boundary and are not necessary to prove package ownership.
+
+## Risks and mitigations
+
+- **The current Skill loader is Host-path based.** Keep the adapter narrow and
+  reference-derived, test that no raw path enters records/output, and replace
+  it when the loader becomes fully aP-native.
+- **Large source snapshots can exhaust memory.** Bound file count, per-file
+  size, and total import bytes; stage incrementally where the backing adapter
+  supports it.
+- **Package id collisions can confuse provenance.** Reject different content
+  under an occupied id unless the operator uses a distinct explicit name.
+- **Concurrent commands can race.** Serialize catalog commits and use request
+  ids with bounded retained results.
+
+## Verification strategy
+
+- Unit tests for ids, snapshot validation, materialization, fingerprints,
+  atomic catalog updates, lifecycle, and restart recovery.
+- File-server contract tests for `/srv/package` commit-on-clunk behavior.
+- Service Manager boot/readiness/restart tests for the Package Service Process.
+- Process tests proving referenced packages appear read-only at `/lib/pkg` and
+  unreferenced packages do not.
+- Agent-engine tests proving built-ins arrive only through explicit package
+  roots and descriptor-passed Skills still work.
+- Shell tests proving a generic `/bin/q` Process returns output through
+  `/proc/<pid>/io/output`.
+- Synthetic dogfood fixture with multiple Skills, shared assets, and one
+  unsupported capability; no third-party content is committed.

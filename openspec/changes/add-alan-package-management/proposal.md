@@ -2,88 +2,92 @@
 
 ## Why
 
-Alan OS can discover installed Skills, but it does not yet have a system owner
-that installs, inspects, updates, or removes the packages that contain them.
-The previous proposal filled that gap with a Host-side Quartermaster resolver,
-Alan-home stores, and implicit workspace or AgentRoot sources. Those concepts
-conflict with the system-level Host, Service Manager, Standard Namespace, and
-System Store that now exist.
+Alan OS has no system owner for installed packages. First-party Skills are still
+injected directly by Agent Execution Engine, while authored Skills can only
+enter through an Agent Definition descriptor. That leaves package lifecycle,
+provenance, namespace projection, and repeatable installation undefined.
 
-Alan OS needs one package lifecycle owner inside the OS. Host files should enter
-only through an explicit mount, installed state should belong to one durable
-service, and Process access should be expressed through namespace projections
-and descriptors.
+The previous draft filled that gap with Host-side source scanning, per-user
+Alan home directories, workspace overlays, and a Host execution resolver.
+Those mechanisms contradict the now-landed system-level Alan OS, explicit Host
+Mount, System Store, Service Manager, and descriptor-only Skill contracts.
+
+This change replaces that draft completely. It introduces a Package Service as
+an Alan OS system service and makes installed package content enter a Process
+only through an explicit Alan OS package reference.
 
 ## What Changes
 
-- Add **Package Service**, a required File-Server Service started and supervised
-  by Service Manager.
-- Make Package Service the sole owner of installed package identity, content,
-  provenance, lifecycle, and catalog state.
-- Persist package state only in Package Service's channel-isolated System Store
-  subtree. Raw Host backing paths are not package identity or a client API.
-- Publish the service at `/srv/packages` and mount its management tree at
-  `/mnt/packages`.
-- Add the Alan Shell Tool `/bin/pkg` for `install`, `list`, `show`, `update`,
-  and `remove`. It operates through the mounted service tree; no Host-side
-  package command or background management API is introduced.
-- Install only explicit, namespace-readable Alan package trees with a
-  declarative `alan-package.yaml`, or one bare portable Skill root containing
-  `SKILL.md`. Alan OS does not scan workspace, AgentRoot, `.agents`, Alan home,
-  or arbitrary Host directories for packages.
-- Stage, validate, and atomically activate package content. Updates replace one
-  installed revision; removal deletes only Package Service-owned state.
-- Project explicitly selected package content read-only at
-  `/lib/pkg/<package-id>`. Explicit Tool exports may be bound into `/bin`; files
-  under a package's `bin/` or `scripts/` do not become Tools implicitly.
-- Resolve installed Skills through Package Service, then pass selected Skills
-  to Agent Processes by descriptor. Installing a package does not expose all of
-  its Skills or Tools to every Process.
-- Install first-party Skill packages through the same manifest and lifecycle
-  rules as third-party packages.
-- Supersede ADR-0030's Quartermaster, `q`, Host-store, local-provider, and
-  engine-resolver decisions with the Package Service model accepted by
-  ADR-0052.
+- Add **Package Service (Quartermaster)** as a required File-Server Service,
+  started and supervised by Service Manager and published at `/srv/package`.
+- Give Package Service its own install-channel subtree in the System Store. The
+  service owns the catalog, immutable package revisions, materialized Skill
+  roots, provenance, and transactional lifecycle state.
+- Bind **`q`** into `/bin` as the Alan OS package command. `q` is an ordinary
+  Process launched from Alan Shell; it reaches package management through the
+  Package Service file surface. Package management is not an Alan OS boot
+  option and does not introduce a second Host-side authority.
+- Accept install and upgrade sources only as explicit readable paths in the
+  invoking Process namespace, normally beneath `/mnt` after Host Mount
+  authorization. Package Service imports the bytes and never persists a raw
+  Host path or scans ambient Host directories.
+- Materialize v0 Skill distribution packages into immutable revisions. Native
+  `SKILL.md` package roots are preserved; supported command-style Markdown is
+  converted with a versioned Alan adapter preamble. Unsupported runtime
+  capabilities remain explicit availability failures.
+- Project explicitly referenced installed package revisions read-only beneath
+  `/lib/pkg/<package-id>`. The backing System Store path and format are not
+  Agent-visible identity.
+- Resolve Skills from only two authorities: explicit installed package
+  references and explicit Skill/Agent Definition descriptors. Remove the
+  direct `builtin_capability_packages()` injection. First-party Skills are
+  seeded as ordinary preinstalled Package Service packages and referenced
+  explicitly by the Root Agent Process boot context.
+- Define exact `q install`, `q list`, `q upgrade`, and `q uninstall` lifecycle
+  behavior, including collision handling, content fingerprints, atomic
+  publication, live-Process snapshot semantics, and complete deletion after
+  references are released.
+- Keep v0 deliberately narrow: Skill packages only. Remote source fetching,
+  registries, signing, dependency solving, Tool package execution, live
+  namespace mutation, and foreign-agent export are separate future changes.
 
 ## Capabilities
 
 ### New Capabilities
 
-- `package-management-contract`: Package Service ownership, package artifact
-  validation, transactional lifecycle, management tree, namespace projections,
-  descriptor resolution, and Alan Shell operations.
+- `package-management-contract`: Package Service ownership, its `/srv/package`
+  interface, System Store data, namespace source intake, immutable revisions,
+  `/lib/pkg` projection, explicit package references, `q` lifecycle, and
+  failure semantics.
 
 ### Modified Capabilities
 
-- `alan-os-system-store`: Package Service owns all durable installed-package
-  state inside its service subtree.
-- `service-manager`: Package Service is a required supervised boot unit that
-  publishes `/srv/packages` before package-dependent Processes start.
-- `skill-system-contract`: installed Skill discovery resolves through Package
-  Service while explicit Skill and Agent Definition descriptors remain valid;
-  first-party packages use the ordinary installed-package path.
+- `alan-os-system-store`: Package Service owns all durable package data in its
+  channel service subtree and never exposes the backing path as identity.
+- `service-manager`: Package Service becomes a required supervised service;
+  Service Manager publishes `/srv/package`, binds `/bin/q`, and projects only
+  explicit immutable package references.
+- `skill-system-contract`: installed package resolution becomes explicit,
+  first-party Skills become preinstalled packages, and the direct built-in
+  injection path is removed.
 
 ## Impact
 
-- New `alan-package-service` crate implementing the aP file tree and durable
-  package transactions.
-- `alan-service-manager` starts Package Service, supplies its System Store
-  binding, and composes its `/srv`, `/mnt`, `/lib/pkg`, and `/bin` surfaces.
-- `alan-os-host` passes only the Package Service backing binding; it does not
-  own package semantics.
-- `alan-shell` provides the `pkg` Tool against `/mnt/packages`.
-- `alan-agent-engine` stops resolving package content from Host roots and
-  accepts only Package Service-backed or explicitly passed Skill descriptors.
-- `AGENTS.md` and `CONTEXT.md` define Package Service as the canonical component
-  name.
-- Legacy Quartermaster/Q code and implicit Host-directory package readers are
-  deleted rather than retained behind compatibility adapters.
+- `crates/service-manager` and Alan OS boot units: Package Service lifecycle,
+  publication, readiness, and package command execution.
+- `crates/os-host`: Package Service System Store binding and native backing
+  adapter only; no package policy or source discovery.
+- `crates/agent-engine`: explicit installed-package inputs replace built-in
+  injection while descriptor-passed Skills remain supported.
+- `crates/shell`: generic command execution is completed so `/bin/q` can run as
+  an ordinary Process without adding package-specific shell builtins.
+- `docs/adr/0030-quartermaster-package-management.md`: rewritten to the landed
+  system-service and explicit-reference model; ADR-0052 remains authoritative
+  over the rejected Host-directory source model.
 
-## Out of Scope
+## Compatibility
 
-- Registries, dependency solving, lockfiles, signatures, and remote fetching.
-- Git-specific lifecycle or credentials.
-- Automatic conversion of Claude Code, Codex, or other foreign package formats.
-- Dynamic installation of boot units, Agent Executables, apps, models, MCP
-  servers, or knowledge packs.
-- A Host CLI package-management surface or Alan for macOS package UI.
+This is an internal breaking change. Alan is in early development and no
+compatibility scan of `~/.alan`, `~/.alan-dev`, `~/.agents`, AgentRoot, or
+workspace directories is retained. Existing authored Skills continue to work
+when passed by an explicit Skill or Agent Definition descriptor.

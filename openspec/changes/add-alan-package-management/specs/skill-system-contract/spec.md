@@ -1,68 +1,96 @@
+# skill-system-contract Delta
+
 ## MODIFIED Requirements
 
 ### Requirement: Discovery is separate from exposure
-alan SHALL discover skill packages only from Package Service Skill exports
-explicitly selected for the current Process and explicitly supplied Skill or
-Agent Definition descriptors, without making discovery itself imply runtime
-exposure. It MUST NOT discover every installed package, enumerate Host
-directories, or maintain an Agent Execution Engine package registry as an
-installed-package source.
+
+alan SHALL discover skill packages only from explicitly referenced installed
+Alan OS packages and explicitly supplied Skill or Agent Definition descriptors,
+without making discovery itself imply runtime exposure.
 
 Rules:
 
 - Every discovered package enters the resolved capability view.
-- Packages remain visible to catalog tooling even when their exported skills are
-  disabled or unavailable.
-- Built-in first-party packages are not a separate package kind; `first-party`
-  is package provenance and a precedence tier, not a different runtime contract.
-- Package Service resolves only manifest-declared Skill exports selected for
-  the current Process.
-- Explicit Skill and Agent Definition descriptors remain valid without
-  installing their source as a package.
+- Packages remain visible to catalog tooling even when their exported Skills
+  are disabled or unavailable.
+- First-party packages are ordinary preinstalled Package Service packages;
+  `builtin` is a provenance and precedence tier, not a second discovery path.
+- Agent Execution Engine does not append compiled-in packages or scan ambient
+  Host directories.
 
 #### Scenario: First-party package is discovered
-- **WHEN** a first-party installed Skill export is selected for a Process
-- **THEN** it follows the ordinary directory-backed skill package contract
-- **AND** first-party provenance does not by itself imply enablement or implicit
-  prompt listing
 
-#### Scenario: Installed package is not selected
-- **WHEN** Package Service has an installed Skill package that is not selected
-  for the current Process
-- **THEN** alan does not add its Skill exports to the resolved capability view
+- **WHEN** the Root Agent Process receives an explicit reference to a
+  first-party preinstalled package
+- **THEN** it follows the ordinary directory-backed Skill package contract
+- **AND** first-party provenance does not by itself imply enablement or prompt
+  listing
 
-#### Scenario: Host directory contains a Skill
-- **WHEN** a mounted Host directory contains `SKILL.md` but is neither installed
-  nor passed by descriptor
-- **THEN** alan does not discover the Skill
-- **AND** no compatibility source scan occurs
+#### Scenario: No discovery bypass exists
+
+- **WHEN** alan assembles an Agent Process capability view
+- **THEN** every Skill root came from an explicit installed-package reference
+  or an explicit descriptor
+- **AND** no workspace, AgentRoot, `.agents`, Alan home, or compiled-in append
+  contributes another package
 
 ### Requirement: First-party packages are ordinary skill packages
-alan SHALL ship first-party Skill packages as ordinary Package Service-installed
-directory-backed Skill packages, not privileged always-active instruction blobs
-or an engine-local built-in source.
+
+alan SHALL ship first-party packages as ordinary directory-backed Skill
+packages seeded into Package Service and explicitly referenced by the Root
+Agent Process boot context, not as privileged always-active instruction blobs
+or a compiled-in resolution append.
 
 Rules:
 
-- First-party distribution is package provenance, not a different contract.
+- Preinstalled distribution is a packaging detail, not a different runtime
+  contract.
 - First-party packages may carry the same `scripts/`, `references/`, `assets/`,
   `bin/`, `evals/`, `eval-viewer/`, `agents/`, and compatibility metadata as an
   external package.
 - First-party provenance does not imply implicit listing or explicit enablement
   overrides.
-- Any behavior that alan needs unconditionally lives in the base prompt, Tool
-  descriptions, or dedicated runtime policy rather than in always-active Skills.
+- Any behavior alan needs unconditionally lives in the base prompt, Tool
+  descriptions, or dedicated runtime policy.
 
 #### Scenario: First-party package is rendered in prompt context
-- **WHEN** a first-party installed Skill package is enabled, available, and
-  implicitly invokable
-- **THEN** it appears through the same prompt catalog contract as third-party
-  packages
+
+- **WHEN** a referenced first-party Skill is enabled, available, and implicitly
+  invokable
+- **THEN** it appears through the same prompt catalog contract as an installed
+  third-party Skill
 - **AND** unconditional runtime behavior is not hidden in first-party Skill
   instructions
 
-#### Scenario: First-party package is missing from an empty store
-- **WHEN** Package Service starts without a required first-party Skill package
-- **THEN** it installs the canonical artifact through the ordinary transaction
-  path before reporting ready
-- **AND** Agent Execution Engine does not append a compiled-in substitute
+#### Scenario: First-party package is not referenced
+
+- **WHEN** an Agent Process is created without a first-party package reference
+- **THEN** that package is absent from its capability view
+- **AND** Agent Execution Engine does not restore it through a built-in append
+
+### Requirement: Skills enter through installed packages or descriptors
+
+Alan SHALL resolve Skills only from explicit installed Alan OS package
+references and explicit Skill/Agent Definition descriptors. It MUST NOT scan
+AgentRoot, workspace, `.agents`, Alan home, System Store backing, or other Host
+directories as implicit providers. Installing a package SHALL NOT expose it to
+a Process that lacks a reference.
+
+#### Scenario: Host directory contains a Skill
+
+- **WHEN** a mounted Host directory contains `SKILL.md`
+- **THEN** the Skill remains ordinary file content until explicitly installed
+  or passed by descriptor
+
+#### Scenario: Installed package is not referenced
+
+- **WHEN** Package Service has an installed Skill package but an Agent Process
+  launch omits its package reference
+- **THEN** the Skill is absent from that Agent's resolved capability view
+
+#### Scenario: Explicit descriptor contains a Skill
+
+- **WHEN** a Process receives a valid Skill or Agent Definition descriptor
+- **THEN** alan may resolve the confined Skill roots from that descriptor
+- **AND** descriptor resolution does not register the Host directory as a
+  package source
