@@ -1210,7 +1210,7 @@ private struct ShellAgentContentView: View {
                     .fill(statusColor)
                     .frame(width: 7, height: 7)
                 Text(processStatus)
-                    .font(.system(size: 11, weight: .medium))
+                    .font(ShellType.pro(ShellType.caption, weight: .medium))
                     .foregroundStyle(ShellPalette.mutedInk)
                 Spacer()
                 Menu {
@@ -1233,7 +1233,7 @@ private struct ShellAgentContentView: View {
                     .buttonStyle(.borderless)
                     .disabled(!isProcessRunning)
             }
-            .padding(.horizontal, 14)
+            .padding(.horizontal, ShellSpacing.row)
             .frame(height: 34)
 
             Divider().opacity(0.45)
@@ -1250,12 +1250,12 @@ private struct ShellAgentContentView: View {
                         if !activity.isEmpty {
                             Divider().opacity(0.4)
                             Text("Activity")
-                                .font(.system(size: 10, weight: .semibold))
+                                .font(ShellType.pro(ShellType.monoCaption, weight: .semibold))
                                 .textCase(.uppercase)
                                 .foregroundStyle(ShellPalette.mutedInk)
                             ForEach(Array(activity.enumerated()), id: \.offset) { entry in
                                 Text(entry.element)
-                                    .font(.system(size: 11, design: .monospaced))
+                                    .font(ShellType.mono(ShellType.monoLabel))
                                     .foregroundStyle(ShellPalette.mutedInk)
                                     .textSelection(.enabled)
                             }
@@ -1264,7 +1264,7 @@ private struct ShellAgentContentView: View {
                         Color.clear.frame(height: 1).id("agent-output-bottom")
                     }
                     .frame(maxWidth: .infinity, alignment: .topLeading)
-                    .padding(14)
+                    .padding(ShellSpacing.row)
                 }
                 .onChange(of: output) { _, _ in
                     guard presentation.followsOutput else { return }
@@ -1278,20 +1278,20 @@ private struct ShellAgentContentView: View {
 
             ForEach(Array(continuityNotices.enumerated()), id: \.offset) { notice in
                 Text(notice.element)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.orange)
+                    .font(ShellType.pro(ShellType.caption))
+                    .foregroundStyle(ShellSignal.action)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 14)
-                    .padding(.bottom, 4)
+                    .padding(.horizontal, ShellSpacing.row)
+                    .padding(.bottom, ShellSpacing.tight)
             }
 
             if let visibleError {
                 Text(visibleError)
-                    .font(.system(size: 11))
+                    .font(ShellType.pro(ShellType.caption))
                     .foregroundStyle(.red)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 14)
-                    .padding(.bottom, 6)
+                    .padding(.horizontal, ShellSpacing.row)
+                    .padding(.bottom, ShellSpacing.control)
             }
 
             HStack(spacing: 8) {
@@ -1306,7 +1306,7 @@ private struct ShellAgentContentView: View {
                             || input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                     )
             }
-            .padding(10)
+            .padding(ShellSpacing.control)
             .background(ShellPalette.workspace)
         }
         .background(ShellPalette.workspace)
@@ -1346,19 +1346,19 @@ private struct ShellAgentContentView: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Text(request.kind.isEmpty ? "Agent request" : request.kind)
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(ShellType.pro(ShellType.caption, weight: .semibold))
                 Spacer()
                 Text(request.id)
-                    .font(.system(size: 10, design: .monospaced))
+                    .font(ShellType.mono(ShellType.monoCaption))
                     .foregroundStyle(ShellPalette.mutedInk)
             }
             Text(request.prompt)
-                .font(.system(size: 12))
+                .font(ShellType.pro(ShellType.row))
                 .lineLimit(8)
                 .textSelection(.enabled)
             if !request.options.isEmpty {
                 Text(request.options)
-                    .font(.system(size: 10, design: .monospaced))
+                    .font(ShellType.mono(ShellType.monoCaption))
                     .foregroundStyle(ShellPalette.mutedInk)
                     .lineLimit(8)
                     .textSelection(.enabled)
@@ -1373,7 +1373,7 @@ private struct ShellAgentContentView: View {
                     .disabled(requestResponse.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
-        .padding(10)
+        .padding(ShellSpacing.control)
         .background(ShellPalette.workspace)
         .overlay(alignment: .top) { Divider().opacity(0.45) }
     }
