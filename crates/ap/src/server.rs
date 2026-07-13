@@ -9,8 +9,8 @@
 
 use std::collections::HashMap;
 use std::marker::PhantomData;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex as StdMutex};
 
 use async_trait::async_trait;
 use tokio::io::{AsyncBufRead, AsyncWrite};
@@ -23,7 +23,22 @@ use crate::wire::{
 };
 use crate::{ErrorCode, Fid, FileKind, Offset, OpenMode, Qid, Request, Response, Stat, WireError};
 
-type PendingResponses = Arc<Mutex<HashMap<WireTag, oneshot::Sender<Result<Response, ErrorCode>>>>>;
+type PendingResponses =
+    Arc<StdMutex<HashMap<WireTag, oneshot::Sender<Result<Response, ErrorCode>>>>>;
+
+struct PendingResponseGuard {
+    pending: PendingResponses,
+    tag: WireTag,
+}
+
+impl Drop for PendingResponseGuard {
+    fn drop(&mut self) {
+        self.pending
+            .lock()
+            .expect("pending response mutex poisoned")
+            .remove(&self.tag);
+    }
+}
 
 const MAX_WIRE_PAYLOAD_CHUNK_BYTES: usize = MAX_WIRE_FRAME_BYTES / 8;
 
@@ -400,7 +415,7 @@ where
     W: AsyncWrite + Send + Unpin + 'static,
 {
     pub fn new(reader: R, writer: W) -> Self {
-        let pending = Arc::new(Mutex::new(HashMap::new()));
+        let pending = Arc::new(StdMutex::new(HashMap::new()));
         let closed = Arc::new(AtomicBool::new(false));
         let reader_task = tokio::spawn(route_imported_responses(
             reader,
@@ -424,7 +439,14 @@ where
 
         let tag = self.next_tag.fetch_add(1, Ordering::Relaxed);
         let (result_tx, result_rx) = oneshot::channel();
-        self.pending.lock().await.insert(tag, result_tx);
+        self.pending
+            .lock()
+            .expect("pending response mutex poisoned")
+            .insert(tag, result_tx);
+        let _pending_guard = PendingResponseGuard {
+            pending: Arc::clone(&self.pending),
+            tag,
+        };
 
         let write_result = {
             let mut writer = self.writer.lock().await;
@@ -435,7 +457,6 @@ where
             }
         };
         if let Err(error) = write_result {
-            self.pending.lock().await.remove(&tag);
             self.closed.store(true, Ordering::Release);
             return Err(error.to_error_code());
         }
@@ -457,13 +478,21 @@ async fn route_imported_responses<R>(
     R: AsyncBufRead + Unpin,
 {
     while let Ok(Some((tag, result))) = read_tagged_response_frame(&mut reader).await {
-        if let Some(waiter) = pending.lock().await.remove(&tag) {
+        if let Some(waiter) = pending
+            .lock()
+            .expect("pending response mutex poisoned")
+            .remove(&tag)
+        {
             let _ = waiter.send(result);
         }
     }
 
     closed.store(true, Ordering::Release);
-    for (_, waiter) in pending.lock().await.drain() {
+    for (_, waiter) in pending
+        .lock()
+        .expect("pending response mutex poisoned")
+        .drain()
+    {
         let _ = waiter.send(Err(ErrorCode::Io));
     }
 }
@@ -603,5 +632,48 @@ where
             Response::Clunk => Ok(()),
             _ => Err(ErrorCode::BadRequest),
         }
+    }
+}
+
+#[cfg(test)]
+mod imported_file_server_tests {
+    use super::*;
+    use tokio::io::{BufReader, duplex};
+
+    #[tokio::test]
+    async fn cancelled_remote_call_removes_pending_response() {
+        let (client_stream, server_stream) = duplex(4096);
+        let (client_read, client_write) = tokio::io::split(client_stream);
+        let (server_read, _server_write) = tokio::io::split(server_stream);
+        let imported = Arc::new(ImportedFileServer::new(
+            BufReader::new(client_read),
+            client_write,
+        ));
+
+        let caller = Arc::clone(&imported);
+        let call =
+            tokio::spawn(async move { caller.remote_call(Request::Stat { fid: Fid(1) }).await });
+        read_tagged_request_frame(&mut BufReader::new(server_read))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            imported
+                .pending
+                .lock()
+                .expect("pending response mutex poisoned")
+                .len(),
+            1
+        );
+
+        call.abort();
+        assert!(call.await.unwrap_err().is_cancelled());
+        assert!(
+            imported
+                .pending
+                .lock()
+                .expect("pending response mutex poisoned")
+                .is_empty()
+        );
     }
 }

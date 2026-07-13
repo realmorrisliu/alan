@@ -1288,13 +1288,14 @@ fn dedicated_host_executable(channel: alan_agent_engine::InstallChannel) -> Resu
 }
 
 async fn wait_for_host_stop(paths: &alan_os_host::HostEndpointPaths) -> Result<()> {
-    for _ in 0..100 {
+    // Runtime shutdown can use ten seconds for graceful drain plus five seconds to abort.
+    for _ in 0..400 {
         if !paths.status.exists() && !paths.socket.exists() {
             return Ok(());
         }
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
-    anyhow::bail!("Alan OS Host did not stop within five seconds")
+    anyhow::bail!("Alan OS Host did not stop within twenty seconds")
 }
 
 fn print_host_status(status: &alan_os_host::HostStatus, json: bool) -> Result<()> {
