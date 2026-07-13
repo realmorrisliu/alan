@@ -1,6 +1,6 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, ensure};
 
 use crate::{
     AGENT_DEFINITION_DESCRIPTOR, ConfigSourceKind, ProcessLaunchContext,
@@ -28,7 +28,7 @@ impl ResolvedAgentDefinition {
         let Some(descriptor) = launch_context.descriptor(AGENT_DEFINITION_DESCRIPTOR) else {
             return Ok(Self::empty(base_skill_overrides));
         };
-        let root_dir = launch_context
+        let declared_root = launch_context
             .host_path(&descriptor.path)
             .with_context(|| {
                 format!(
@@ -36,6 +36,28 @@ impl ResolvedAgentDefinition {
                     descriptor.path
                 )
             })?;
+        let canonical_root = std::fs::canonicalize(&declared_root).with_context(|| {
+            format!(
+                "failed to resolve Agent Definition descriptor {}",
+                descriptor.path
+            )
+        })?;
+        let resolved_namespace_path = launch_context
+            .namespace_path(&canonical_root)
+            .with_context(|| {
+                format!(
+                    "Agent Definition descriptor {} escapes its explicit Host Mount",
+                    descriptor.path
+                )
+            })?;
+        ensure!(
+            resolved_namespace_path == descriptor.path,
+            "Agent Definition descriptor {} resolves to a different Alan OS path: {}",
+            descriptor.path,
+            resolved_namespace_path
+        );
+        validate_definition_tree(&declared_root)?;
+        let root_dir = declared_root;
         let config_path = root_dir.join("agent.toml");
         let persona_dir = root_dir.join("persona");
         let skills_dir = root_dir.join("skills");
@@ -74,6 +96,57 @@ impl ResolvedAgentDefinition {
             policy_path: None,
         }
     }
+}
+
+fn validate_definition_tree(root_dir: &Path) -> Result<()> {
+    let root_metadata = std::fs::symlink_metadata(root_dir).with_context(|| {
+        format!(
+            "failed to inspect Agent Definition tree {}",
+            root_dir.display()
+        )
+    })?;
+    ensure!(
+        root_metadata.file_type().is_dir() && !root_metadata.file_type().is_symlink(),
+        "Agent Definition descriptor must reference a real directory: {}",
+        root_dir.display()
+    );
+
+    let mut pending = vec![root_dir.to_path_buf()];
+    while let Some(directory) = pending.pop() {
+        let entries = std::fs::read_dir(&directory).with_context(|| {
+            format!(
+                "failed to read Agent Definition tree {}",
+                directory.display()
+            )
+        })?;
+        for entry in entries {
+            let entry = entry.with_context(|| {
+                format!(
+                    "failed to read Agent Definition tree {}",
+                    directory.display()
+                )
+            })?;
+            let path = entry.path();
+            let metadata = std::fs::symlink_metadata(&path).with_context(|| {
+                format!("failed to inspect Agent Definition path {}", path.display())
+            })?;
+            ensure!(
+                !metadata.file_type().is_symlink(),
+                "Agent Definition tree must not contain symlinks: {}",
+                path.display()
+            );
+            if metadata.file_type().is_dir() {
+                pending.push(path);
+            } else {
+                ensure!(
+                    metadata.file_type().is_file(),
+                    "Agent Definition tree contains an unsupported file type: {}",
+                    path.display()
+                );
+            }
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -132,5 +205,61 @@ mod tests {
 
         assert!(resolved.root_dir.is_none());
         assert!(resolved.persona_dirs.is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn definition_descriptor_cannot_escape_its_host_mount_through_a_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let host = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::write(outside.path().join("agent.toml"), "model = \"secret\"\n").unwrap();
+        symlink(outside.path(), host.path().join("definition")).unwrap();
+        let context = ProcessLaunchContext::root()
+            .with_host_mount(
+                HostMountGrant::new("/mnt/import", host.path(), Access::ReadOnly).unwrap(),
+            )
+            .with_descriptor(
+                AGENT_DEFINITION_DESCRIPTOR,
+                ProcessDescriptor::new("/mnt/import/definition").unwrap(),
+            );
+
+        let error =
+            ResolvedAgentDefinition::from_launch_context(&context, &[], ConfigSourceKind::Default)
+                .unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("escapes its explicit Host Mount")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn definition_tree_rejects_nested_symlinks() {
+        use std::os::unix::fs::symlink;
+
+        let host = tempfile::tempdir().unwrap();
+        let definition = host.path().join("definition");
+        std::fs::create_dir_all(definition.join("persona")).unwrap();
+        let outside = host.path().join("outside.md");
+        std::fs::write(&outside, "secret").unwrap();
+        symlink(&outside, definition.join("persona/SOUL.md")).unwrap();
+        let context = ProcessLaunchContext::root()
+            .with_host_mount(
+                HostMountGrant::new("/mnt/import", host.path(), Access::ReadOnly).unwrap(),
+            )
+            .with_descriptor(
+                AGENT_DEFINITION_DESCRIPTOR,
+                ProcessDescriptor::new("/mnt/import/definition").unwrap(),
+            );
+
+        let error =
+            ResolvedAgentDefinition::from_launch_context(&context, &[], ConfigSourceKind::Default)
+                .unwrap_err();
+
+        assert!(error.to_string().contains("must not contain symlinks"));
     }
 }
