@@ -1,459 +1,330 @@
+# package-management-contract Specification
+
+## Purpose
+
+Define Package Service as Alan OS's installed-package authority, including
+explicit namespace source intake, System Store lifecycle, immutable revisions,
+Process-scoped `/lib/pkg` projection, and the Quartermaster `q` command.
+
 ## ADDED Requirements
 
-### Requirement: Quartermaster is the sole skill-resolution authority
-Alan SHALL resolve an agent's skill capability set through Quartermaster and
-SHALL NOT enumerate skill source directories independently of it. Every skill
-reachable by an agent SHALL be a Q package supplied by one of three provider
-kinds:
+### Requirement: Package Service is a supervised system service
 
-- **Pre-installed provider**: Alan's first-party built-in skills, reseeded into
-  the package store.
-- **Local-source provider**: `AgentRoot`, workspace, and user `.agents/skills/`
-  skills, registered with Q at their existing location without being copied
-  into the global store.
-- **Distribution provider**: external repositories installed into the store.
+Alan OS SHALL run Package Service as a required File-Server Service started and
+supervised by Service Manager. Its Process SHALL publish the mountable
+`/srv/package` handle and SHALL report readiness through `/proc` and `/srv`.
 
-There SHALL be no bypass discovery source. This requirement governs the
-discovery *source* only; skill loading, exposure resolution, and the
-one-skill-per-package rule are unchanged. Agent runtime self-discovery by
-walking `/lib/pkg` is out of scope for this slice; the engine obtains its
-resolved set through Q's host-side resolution interface.
+#### Scenario: Alan OS boots successfully
 
-#### Scenario: Engine resolves skills through Q
-- **WHEN** the engine assembles an agent's skill capability set
-- **THEN** it obtains the set from Quartermaster's resolution
-- **AND** it does not separately scan built-in, `AgentRoot`, or `.agents/skills/`
-  directories as independent sources
+- **WHEN** Service Manager completes required Boot Units
+- **THEN** the Package Service Process is running under Service Manager
+- **AND** `/srv/package` is present before dependent Shell or Agent Processes
+  are declared ready
 
-#### Scenario: Built-in skills are pre-installed packages
-- **WHEN** Alan starts with no external packages installed
-- **THEN** its first-party built-in skills are present as Q pre-installed
-  packages
-- **AND** they are resolved through Q like any other package
+#### Scenario: Package Service exhausts restart policy
 
-#### Scenario: Agent-root skills are local-source providers
-- **WHEN** an `AgentRoot` ships `skills/`
-- **THEN** Q registers them as a local-source provider at their existing
-  location
-- **AND** they are not copied into the global store
+- **WHEN** Package Service repeatedly exits beyond its bounded restart budget
+- **THEN** Service Manager reports the required unit failed
+- **AND** Alan OS does not claim full system readiness
 
-### Requirement: Distribution packages are the unit of external adoption
-Alan SHALL define a distribution package as an external source tree (git
-repository or local directory) pinned to a source revision token (git commit
-for a remote git source, content fingerprint for every local directory), held
-in a per-install-channel package store, from which Alan
-materializes skill packages that Q resolves. Distribution packages sit above
-the skill package contract: every materialized unit is an ordinary
-single-skill package, and this contract SHALL NOT alter skill loading or
-exposure rules.
+### Requirement: Package Service owns its durable state
 
-#### Scenario: Repository installed as one package
-- **WHEN** `q install` is given a git URL or local directory
-- **THEN** Alan records one distribution package backed by a checkout in the
-  package store
-- **AND** each materialized skill is a valid single-skill package under the
-  existing skill package contract
+Package Service SHALL own the package subtree of the active install-channel
+System Store, including catalog records, staged transactions, immutable
+revisions, materialization manifests, and reference-retirement state. No raw
+backing path SHALL be part of package identity or an Agent-visible record.
 
-#### Scenario: Default package id is unique
-- **WHEN** `q install` strips a terminal `.git` suffix from the source basename,
-  lowercases it, replaces each run outside `[A-Za-z0-9]` with `-`, and trims
-  edge hyphens
-- **THEN** that id identifies the store entry and `/lib/pkg/<package-id>/`
-- **AND** the result matches `[a-z0-9]+(?:-[a-z0-9]+)*`
-- **AND** `--name <package-id>` is rejected unless it already matches that
-  grammar; it is not normalized, and path separators, `.`, `..`, and empty
-  values are invalid
-- **AND** if the id is already owned by a different source, install writes
-  nothing and requires an explicit non-conflicting `--name <package-id>`
+#### Scenario: Stable and dev install the same package id
 
-#### Scenario: Package identity is distinct from skill identity
-- **WHEN** a local-source provider intentionally overlays a built-in, global,
-  or distribution provider's skill id
-- **THEN** each provider retains a distinct, stable, provider-scoped, path-safe
-  Q package id and therefore a distinct `/lib/pkg/<package-id>/` projection
-- **AND** the exported skill id remains unchanged for precedence resolution
-- **AND** the Q package id contains no raw host path or credential material
-- **AND** this coexistence rule does not override distribution-install
-  collision handling: a colliding skill from a second distribution manifest
-  is still skipped
+- **WHEN** stable and dev Package Services install the same package id
+- **THEN** each service updates only its own channel System Store subtree
+- **AND** neither channel can resolve the other channel's revision
 
-#### Scenario: Package source identity is stable
-- **WHEN** Q compares an install with an existing package id
-- **THEN** source identity is the canonical git URL with userinfo, query,
-  fragment, and an optional terminal `.git` suffix removed for a git source,
-  or the canonical absolute path for a local source
-- **AND** fetch credentials are transient inputs that never enter provenance,
-  reports, logs, or store files
+#### Scenario: Agent inspects package metadata
 
-#### Scenario: VCS metadata is not package content
-- **WHEN** Q installs or upgrades a git source
-- **THEN** it resolves the revision in a private staging clone and stores an
-  exported working tree without `.git` or other VCS control metadata
-- **AND** clone-local config, credentials, and remote URLs are not readable
-  under `/lib/pkg/<package-id>/`
+- **WHEN** an Agent reads Package Service catalog data or projected content
+- **THEN** it sees package ids, revisions, exports, and Alan OS paths
+- **AND** it does not see the System Store backing path
 
-#### Scenario: Local git export excludes incidental secrets
-- **WHEN** Q installs a local directory inside a git worktree
-- **THEN** the default export contains tracked files and tracked working-tree
-  modifications only
-- **AND** ignored and untracked files are excluded unless the operator names
-  them through an explicit include that passes path and symlink validation
+### Requirement: Package Service exposes one file-native control surface
 
-#### Scenario: Non-git local export is allowlisted
-- **WHEN** Q installs a local directory outside version control
-- **THEN** the default export contains command-style `skills/*.md` files and
-  portable package roots detected through `**/SKILL.md`
-- **AND** additional helpers or resources enter the export only through an
-  explicit include that passes path and symlink validation
+Package Service SHALL expose `catalog`, `status`, `ctl`, and bounded
+request-keyed `result` data through `/srv/package`. Mutating commands SHALL
+commit on clunk and malformed or unauthorized commands SHALL make the clunk
+fail without a partial catalog change.
 
-#### Scenario: Store is channel-scoped
-- **WHEN** a package is installed under a given install channel
-- **THEN** its store backing lives under that channel's Alan home — the
-  stable channel SHALL use `~/.alan/pkg/`, the dev channel
-  `~/.alan-dev/pkg/` — and does not affect other channels
-- **AND** channel isolation of resolved skills is inherited from the
-  channel-scoped backing, with no write to `~/.agents/skills/`
+#### Scenario: Valid command commits
 
-#### Scenario: Backing is reachable only through the runtime
-- **WHEN** an agent-authored command references the store backing by host path
-- **THEN** the execution guard denies it as it denies any Alan-home read,
-  while the same content remains readable and executable through
-  `/lib/pkg/<package>/`
+- **WHEN** a caller writes one valid request document to `/srv/package/ctl` and
+  clunks the fid
+- **THEN** Package Service commits exactly one transaction
+- **AND** the matching result can be read by request id
 
-### Requirement: Install materializes skills from the store
-`q install` SHALL fetch the source into the package store and materialize skill
-packages **inside the store entry** (never into `~/.agents/skills/` or any
-other public skill source), where they are resolved as a distribution provider.
-Channel isolation is inherited from the channel-scoped store backing. Two
-materialization forms are supported in v0 / slice 1:
+#### Scenario: Invalid command is written
 
-- **Conversion**: a Claude Code command-style single `skills/*.md` file (body
-  text, optionally using `$ARGUMENTS`, without portable `SKILL.md` frontmatter)
-  becomes a directory-backed Alan skill package. Markdown outside that default
-  root is considered only through an explicit include; README and docs content
-  is never converted by a recursive Markdown scan.
-- **Adoption**: a directory matched by the portable `**/SKILL.md` convention
-  and containing a valid `SKILL.md` is
-  validated against the existing skill package contract and registered in
-  place as a manifest-selected root inside the exported `source/` tree, without
-  content edits or a second copy.
+- **WHEN** a caller writes an unknown, malformed, oversized, or duplicate
+  request document
+- **THEN** clunk fails
+- **AND** catalog and revision state remain unchanged
 
-Materialization SHALL NOT modify the source location. Q SHALL record the
-accepted skill package roots in the materialization manifest and SHALL resolve
-only those roots through the distribution provider; it SHALL NOT recursively
-scan the package's merged `/lib/pkg` content view for skills. A skill-id
-collision encountered while installing a distribution package, where the
-destination is owned by another distribution manifest, SHALL warn and skip
-rather than overwrite, including when `--force` is present. This install-time
-ownership rule SHALL NOT suppress local-source overlays: existing scope and
-ordering precedence for AgentRoot/workspace/public skills with the same skill
-id remains unchanged. When both source forms in
-one distribution package yield the same skill id, conversion from the
-command-style file SHALL win and the duplicate portable package SHALL be
-skipped with a report entry.
+### Requirement: Install sources are explicit namespace snapshots
 
-#### Scenario: Command-style file is converted
-- **WHEN** the package source contains a command-style `skills/*.md` skill file
-  or an explicitly included command-style file
-- **THEN** materialization creates a skill package whose `SKILL.md` carries
-  derived `name` and `description` frontmatter
-- **AND** the package is resolvable through Quartermaster as a distribution
-  provider
+`q install` and `q upgrade` SHALL accept source content only from an absolute
+readable path in the invoking Process namespace. The `q` Process SHALL import
+normalized relative paths and bytes through aP. Package Service MUST NOT scan
+workspace, AgentRoot, `.agents`, Alan home, or any other Host directory and
+MUST NOT persist a raw Host path, URL credential, or VCS control directory.
 
-#### Scenario: Portable package is adopted
-- **WHEN** the package source contains a directory matched by `**/SKILL.md`
-  with a valid `SKILL.md`
-- **THEN** materialization validates it with the same rules used for discovery
-- **AND** registers that directory in place as a manifest-selected skill root
-  without copying or modifying its body
+#### Scenario: Host content is installed
 
-#### Scenario: Skill-id collision
-- **WHEN** materialization would write over a skill package not owned by this
-  distribution package's manifest
-- **THEN** the skill is skipped with a warning naming both parties
-- **AND** `--force` does not transfer ownership or mutate the other package's
-  provider entry or manifest
+- **WHEN** a user authorizes a Host Mount at `/mnt/import` and runs
+  `q install /mnt/import/package`
+- **THEN** `q` reads the source through its namespace
+- **AND** Package Service persists an imported revision without the raw Host
+  path
 
-#### Scenario: Local-source overlay remains compatible
-- **WHEN** a workspace or AgentRoot local-source skill intentionally reuses a
-  built-in, global, or distribution skill id
-- **THEN** Q retains both packages in the resolved view
-- **AND** each package remains inspectable at its distinct provider-scoped Q
-  package id under `/lib/pkg`
-- **AND** existing scope and ordering precedence selects the local overlay as
-  it did before the Q cutover
+#### Scenario: Ambient Host directory contains Skills
 
-#### Scenario: Same skill in both source forms
-- **WHEN** one distribution package contains a command-style file and a
-  portable package that resolve to the same skill id
-- **THEN** the command-style file is converted with Alan's adapter preamble,
-  the portable duplicate is skipped, and the report records the choice
+- **WHEN** a workspace, AgentRoot, `.agents`, or Alan home directory contains
+  `SKILL.md` but is not explicitly mounted and passed to `q`
+- **THEN** Package Service does not inspect or install it
 
-#### Scenario: Skipped source package is not discovered
-- **WHEN** a portable `SKILL.md` in `source/` is skipped because a converted
-  skill with the same id won
-- **THEN** that source path is absent from the manifest-selected skill roots
-- **AND** Q does not expose it to the loader even though it remains readable as
-  package content under `/lib/pkg/<package-id>/`
+#### Scenario: Remote URL is supplied
 
-#### Scenario: Invalid source is rejected
-- **WHEN** the source is neither a readable git repository nor a local
-  directory containing materializable skills
-- **THEN** the install fails with a diagnostic and writes nothing to the store
-  or skill sources
+- **WHEN** `q install` receives an HTTP, SSH, or Git URL instead of a namespace
+  path
+- **THEN** v0 rejects the source as unsupported
+- **AND** `q` does not fetch through ambient Host network or credentials
 
-### Requirement: Resolved Q providers are projected per Agent Process
-Alan SHALL project only the Q packages resolved for the current Agent Process
-read-only at `/lib/pkg/<package-id>` in that Process's Alan OS namespace.
-Store-backed pre-installed and distribution providers SHALL use the
-host-directory mount machinery over their store entries. Resolved local-source
-providers SHALL use read-only namespace binds to their authored package roots
-without copying them into the store. Packages outside the current Q resolved
-set SHALL NOT be readable through that Process's `/lib/pkg` view.
-`/lib/pkg/<package-id>/` is the canonical
-address for package content: contracts, generated skill content, and reports
-SHALL reference package content by namespace path, never by host backing path.
-When a tool execution references a path under `/lib/pkg`, the execution backend
-SHALL resolve it through the owning provider's projection to backing content.
+### Requirement: Source snapshots are bounded and confined
 
-Package content SHALL exclude VCS control metadata. In particular, `.git`
-directories and clone-local configuration SHALL never be projected.
+Package Service SHALL reject absolute entries, parent traversal, duplicate
+normalized paths, special files, excessive file counts, excessive per-file
+size, and excessive total bytes before publication.
+Snapshot entries SHALL represent regular files only. A source File-Server
+adapter SHALL reject walking or reading a symbolic link without following its
+target, and `q` SHALL abort the import on that rejection rather than serialize
+dereferenced target bytes. VCS control metadata SHALL not enter an installed
+revision.
 
-Store-backed helper execution SHALL require an enforcing sandbox backend that
-allows reads from the resolved package entry while denying every other path
-under the channel Alan home. If the backend cannot enforce that read boundary,
-helper execution SHALL fail closed as unavailable and SHALL NOT fall back to an
-ordinary host spawn.
+#### Scenario: Source symlink escapes its tree
 
-#### Scenario: Package content is readable through the namespace
-- **WHEN** a store-backed or local-source Q package is resolved
-- **THEN** an Agent Process can read its files under `/lib/pkg/<package>/`
+- **WHEN** the selected source tree contains a symbolic link, whether its
+  target is inside or outside the selected subtree
+- **THEN** the source adapter does not expose target bytes through that entry
+- **AND** `q` fails the import before catalog publication
 
-#### Scenario: Local-source package is bound without copying
-- **WHEN** Q resolves an AgentRoot, workspace, or public local-source package
-- **THEN** `/lib/pkg/<package-id>/` is a read-only bind of its authored root
-- **AND** no package content is copied into the channel store
+#### Scenario: Source includes a Git control directory
 
-#### Scenario: Unresolved local source is not visible
-- **WHEN** a workspace or AgentRoot package is outside an Agent Process's Q
-  resolved set
-- **THEN** that Process has no `/lib/pkg` bind for the package
+- **WHEN** an imported tree contains `.git` metadata
+- **THEN** that metadata is excluded from the snapshot and projection
+- **AND** clone-local credentials cannot enter package content
 
-#### Scenario: Helper executes via the canonical path
-- **WHEN** a materialized skill invokes an interpreter on
-  `/lib/pkg/<package>/tools/<helper>`
-- **THEN** the execution backend resolves the path through the store
-  projection and the helper runs against the installed package content
+### Requirement: Package ids and revisions are deterministic
 
-#### Scenario: Symlink escape is denied
-- **WHEN** a package helper path is a symlink whose canonical target is outside
-  that package's canonical store entry
-- **THEN** install rejects the escaping link or execution denies the target
-- **AND** the runtime does not grant the store-path guard exception
+Package ids SHALL be 1–64 ASCII bytes matching
+`[a-z0-9]+(?:-[a-z0-9]+)*` and SHALL be compared byte-for-byte without case
+folding or Unicode normalization. `q` SHALL derive the default id from the
+source leaf name or validate an explicit `--name` without normalizing an
+invalid value. A revision SHALL be a deterministic fingerprint of normalized
+imported bytes, metadata, and materializer version.
 
-#### Scenario: Read confinement backend is unavailable
-- **WHEN** the active sandbox backend cannot enforce package-entry-only reads
-  within the channel Alan home
-- **THEN** execution of a store-backed helper is unavailable
-- **AND** the helper is not spawned with broader host read access
+#### Scenario: Source leaf is not a canonical package id
 
-#### Scenario: Host backing stays out of content
-- **WHEN** conversion generates a preamble or a report references package
+- **WHEN** `q install` derives a leaf containing uppercase, Unicode,
+  separators, repeated dashes, or more than 64 bytes
+- **THEN** installation fails before publication
+- **AND** the diagnostic asks for a canonical explicit `--name`
+
+#### Scenario: Different source occupies the derived id
+
+- **WHEN** install derives an id already occupied by different content
+- **THEN** install fails before write and asks for another explicit name
+
+#### Scenario: Identical source is installed twice
+
+- **WHEN** package id and fingerprint already match the current revision
+- **THEN** install succeeds idempotently
+- **AND** no duplicate revision or catalog mutation is created
+
+### Requirement: Materialization exports ordinary Skill packages
+
+A v0 distribution package SHALL export zero or more ordinary directory-backed
+Skill packages. Package Service SHALL preserve native `SKILL.md` instruction
+content, convert supported command-style Markdown with a versioned Alan adapter
+preamble, reject ambiguous or duplicate Skill ids, and record all generated
+and exported files in its materialization manifest.
+
+An explicitly named portable Skill directory with a valid root `SKILL.md`
+SHALL be installable without an Alan-specific manifest. Package Service SHALL
+adopt the complete confined directory as one distribution package, derive the
+existing normalized runtime Skill id from the source directory name, and SHALL
+NOT mutate the source or recursively infer additional exports beneath that
+portable root.
+
+#### Scenario: Native Skill package is imported
+
+- **WHEN** a confined source subtree contains a valid `SKILL.md`
+- **THEN** its Skill package is exported without rewriting `SKILL.md`
+- **AND** its relative package assets remain readable in the installed revision
+
+#### Scenario: Bare portable Skill is installed
+
+- **WHEN** the selected source root has one valid root `SKILL.md` and no Alan
+  package manifest
+- **THEN** Package Service installs it as one native Skill export
+- **AND** no Alan-specific file is required in or written to the source
+
+#### Scenario: Command-style Skill is imported
+
+- **WHEN** a supported `skills/<name>.md` source is materialized
+- **THEN** Package Service emits one directory-backed Skill package
+- **AND** the original body follows a versioned Alan adapter preamble verbatim
+
+#### Scenario: Package contains helper scripts
+
+- **WHEN** a materialized Skill references package-local scripts or `bin/`
   content
-- **THEN** the reference uses the `/lib/pkg` namespace path and no host
-  backing path appears
+- **THEN** the files may remain readable package assets
+- **AND** v0 does not register or execute them as Alan OS Tools
 
-### Requirement: Conversion preserves the source body verbatim
-Conversion SHALL preserve the source body byte-for-byte inside the generated
-`SKILL.md` and SHALL NOT rewrite, translate, or delete source prose. The only
-generated additions are frontmatter and the adapter preamble.
+### Requirement: Compatibility gaps remain visible
 
-#### Scenario: Upstream diff stays meaningful
-- **WHEN** a converted skill is compared against its source file
-- **THEN** the source body appears unmodified as a contiguous block, so
-  upstream changes can be diffed and re-materialized mechanically
+Package Service SHALL record unsupported Tool and runtime-capability
+requirements as typed availability issues consumed by the existing Skill
+resolution machinery. It MUST NOT silently emulate, delete, or weaken an
+unsupported requirement.
 
-### Requirement: Conversion injects a standard adapter preamble
-Conversion SHALL inject one standard, versioned adapter preamble between the
-generated frontmatter and the verbatim body. The preamble SHALL:
+#### Scenario: Foreign web capability is required
 
-- define `$ARGUMENTS` as the user's current request in the conversation;
-- map known foreign tool vocabulary to the closest Alan surface when an
-  equivalent exists;
-- explicitly declare foreign vocabulary with no Alan equivalent as unavailable
-  and instruct the skill to state that limitation to the user instead of
-  improvising a substitute;
-- resolve upstream-relative helper references (for example repository-root
-  `tools/*.py`) to the package's canonical namespace path under
-  `/lib/pkg/<package>/`, never to a host path.
+- **WHEN** a materialized Skill declares a web capability unavailable in its
+  Agent Process
+- **THEN** the Skill remains installed but unavailable
+- **AND** package and Skill inspection identify the missing capability
 
-The known-vocabulary mapping SHALL be converter data versioned with the
-converter. Unknown tool-like tokens SHALL NOT be silently mapped.
+### Requirement: Installed content is projected by explicit reference
 
-#### Scenario: Foreign vocabulary with an Alan equivalent
-- **WHEN** the source references a foreign surface with an Alan equivalent
-  (for example file tools or shell execution)
-- **THEN** the preamble names the Alan surface to use
+Installing a package SHALL NOT itself grant Process access. At Process
+creation, an explicit package reference SHALL resolve to one immutable revision
+handle projected read-only at `/lib/pkg/<package-id>`. Unreferenced installed
+packages SHALL be absent from that Process namespace. Before capability-view
+assembly, Process launch SHALL reject duplicate runtime Skill ids across the
+complete selected installed-package and explicit-descriptor set. Packages with
+colliding Skill ids MAY remain installed when they are not selected together.
 
-#### Scenario: Foreign vocabulary without an Alan equivalent
-- **WHEN** the source references a foreign surface with no Alan equivalent
-  (for example web search or Team orchestration tools)
-- **THEN** the preamble declares the capability unavailable rather than
-  mapping it to an unrelated surface
+#### Scenario: Selected packages export the same runtime Skill id
 
-#### Scenario: Shared helper stays resolvable
-- **WHEN** the source invokes a repository-root helper shipped in the same
+- **WHEN** one Process launch selects two package or descriptor roots whose
+  Skill ids normalize to the same runtime id
+- **THEN** launch fails before Agent capability assembly
+- **AND** neither package is made ambient or silently given precedence
+
+#### Scenario: Process receives a package reference
+
+- **WHEN** a parent or Boot Unit creates a Process with a valid installed
+  package reference
+- **THEN** the referenced revision is readable at `/lib/pkg/<package-id>`
+- **AND** only manifest-selected Skill roots enter Agent capability resolution
+
+#### Scenario: Process omits a package reference
+
+- **WHEN** a package exists in the channel catalog but is not referenced at
+  Process creation
+- **THEN** the Process cannot read `/lib/pkg/<package-id>`
+- **AND** its Agent capability view does not contain that package's Skills
+
+#### Scenario: Process attempts to write package content
+
+- **WHEN** a Process opens a projected package file for write
+- **THEN** the namespace denies the operation
+
+### Requirement: Package references are immutable Process authority
+
+A resolved package reference SHALL identify an immutable revision. Upgrade or
+uninstall SHALL affect future resolution but SHALL NOT rewrite an already
+running Process namespace or capability view.
+
+#### Scenario: Package is upgraded while an Agent runs
+
+- **WHEN** Package Service publishes a new current revision
+- **THEN** the running Agent keeps its referenced old revision
+- **AND** a newly created Agent can resolve the new current revision
+
+#### Scenario: Child inherits package authority
+
+- **WHEN** a parent Process creates a child without changing package mounts or
+  descriptors
+- **THEN** the child inherits the parent's package-reference snapshot
+- **AND** it gains no other installed package
+
+### Requirement: First-party Skills are preinstalled packages
+
+Alan OS SHALL seed first-party Skill trees as deterministic, ordinary
+preinstalled Package Service packages. The Root Agent Process Boot Unit SHALL
+reference them explicitly. Agent Execution Engine MUST NOT append a separate
+compiled-in built-in package set during capability resolution.
+
+#### Scenario: Empty channel boots after installation
+
+- **WHEN** Package Service opens an empty channel store
+- **THEN** it seeds the current first-party package revisions idempotently
+- **AND** Root Agent references resolve through the ordinary package path
+
+#### Scenario: Capability view is assembled
+
+- **WHEN** Agent Execution Engine builds the Root Agent capability view
+- **THEN** every first-party Skill came from an explicit Package Service
+  reference
+- **AND** no `builtin_capability_packages()` bypass adds another copy
+
+### Requirement: Quartermaster is an Alan OS command
+
+Alan OS SHALL bind `q` at `/bin/q`. Alan Shell SHALL launch it as an ordinary
+Process through `/proc/clone` and render its output from
+`/proc/<pid>/io/output`.
+Package-specific command semantics SHALL stay out of Alan Shell.
+
+#### Scenario: User lists packages in Alan Shell
+
+- **WHEN** the user runs `q list`
+- **THEN** Alan Shell resolves `/bin/q`, spawns a Process, and waits for its exit
+- **AND** the output is derived from Package Service catalog data
+
+#### Scenario: Package Service is unavailable
+
+- **WHEN** `/bin/q` cannot reach the Package Service handle
+- **THEN** the `q` Process exits non-zero with a bounded diagnostic
+- **AND** Alan Shell remains attached to Alan OS
+
+### Requirement: Package lifecycle is atomic and exact
+
+`q install`, `q upgrade`, and `q uninstall` SHALL stage and validate all state
+before atomically changing the current catalog. Upgrade SHALL require a new
+explicit namespace source. Uninstall SHALL remove future resolution
+immediately, retain revisions while live references exist, and delete managed
+content after the final reference is released. Preinstalled packages SHALL not
+be operator-uninstallable in v0.
+
+#### Scenario: Upgrade source is unchanged
+
+- **WHEN** `q upgrade` imports the current fingerprint
+- **THEN** it reports an idempotent no-op
+- **AND** the current revision and catalog generation do not change
+
+#### Scenario: Upgrade fails validation
+
+- **WHEN** a new source snapshot fails materialization or integrity checks
+- **THEN** the previous current revision remains resolvable
+- **AND** no partial new revision is published
+
+#### Scenario: Installed package has live references
+
+- **WHEN** `q uninstall` removes a package that running Processes reference
+- **THEN** future resolution fails and the package reports `retiring`
+- **AND** referenced immutable content remains until the last reference closes
+
+#### Scenario: Preinstalled package is uninstalled
+
+- **WHEN** an operator invokes `q uninstall` for a first-party preinstalled
   package
-- **THEN** the materialized skill can invoke that helper at
-  `/lib/pkg/<package>/...` without the user's original clone present
-
-### Requirement: Recognized capability needs become typed dependencies
-Conversion SHALL scan the source for known foreign vocabulary. A vocabulary
-item with a real Alan tool or executable equivalent SHALL emit a corresponding
-`capabilities.required_tools` entry. A foreign surface with no Alan equivalent
-SHALL emit a `compatibility.dependencies` entry of kind `runtime_capability`;
-the dependency name SHALL describe the Alan capability needed (for example
-`web_access` or `multi_agent_orchestration`), not a foreign executable name.
-Missing dependencies SHALL surface through the existing skill availability
-reporting instead of degrading silently at runtime.
-
-#### Scenario: Missing capability is visible, not silent
-- **WHEN** a materialized skill declares a required tool or runtime capability
-  the host does not provide
-- **THEN** the install report lists the missing capability
-- **AND** the runtime's existing availability reporting surfaces the same
-  issue for the materialized skill
-
-#### Scenario: Unsupported surface cannot be satisfied by PATH
-- **WHEN** source vocabulary requires web access but Alan has no `web_access`
-  runtime capability
-- **THEN** conversion emits an unsatisfied `runtime_capability` dependency
-- **AND** an unrelated executable named `web_search` or `web_access` on PATH
-  does not make the skill available
-
-#### Scenario: Unknown vocabulary is reported
-- **WHEN** the scan finds tool-like tokens outside the known-vocabulary table
-- **THEN** they are listed in the install report for human review and produce
-  no frontmatter entries
-
-### Requirement: Packages record provenance and a managed-content manifest
-The package store SHALL record, per distribution package: provenance (source
-repository when resolvable, the source revision token — commit for remote git
-sources, content fingerprint for every local path source — and converter
-version) and a manifest listing every exported source file and every generated
-materialized file with a content hash, plus the selected skill roots. The
-manifest SHALL also identify the fixed Q-owned metadata files (including the
-manifest itself and provenance) that are managed but cannot self-hash. The store's
-provider registry and manifest are authoritative for ownership; a materialized
-skill package's `package.yaml` MAY additionally carry a `provenance` block
-naming the owning distribution package. Provenance and manifest are management
-metadata and SHALL NOT alter runtime skill behavior.
-
-Persisted and displayed git provenance SHALL use only the sanitized source
-identity; credentials, URL userinfo, query strings, and fragments SHALL NOT be
-stored or rendered.
-
-#### Scenario: Provenance is written on install
-- **WHEN** any install completes
-- **THEN** the store entry contains provenance and a manifest inventorying all
-  exported and generated content, Q-owned metadata, and selected skill roots
-
-#### Scenario: Source outside version control
-- **WHEN** the source is not inside a git repository
-- **THEN** repository and commit fields are recorded as absent and the install
-  still succeeds
-
-### Requirement: Upgrade is idempotent and protects local modifications
-`q upgrade` SHALL detect source change by a **source revision token**: the
-source commit for a remote git source, and a content fingerprint (hash of the
-actual allowlisted exported source tree) for every local directory source,
-even when that directory is inside a git repository. `q upgrade` SHALL:
-
-- be a no-op only when the recorded source revision token and converter version
-  are both unchanged;
-- re-fetch and re-materialize when the source revision token or converter
-  version changed — for any local directory this means a re-computed
-  content fingerprint that differs from the recorded one;
-- warn and skip managed files whose destination no longer matches the manifest content
-  hash (local edits), preserving the edits unless the user passes an explicit
-  force flag.
-
-#### Scenario: Unchanged package upgraded
-- **WHEN** upgrade runs with the same source revision token and converter version
-- **THEN** the destination is left untouched and the report says the package
-  is up to date
-
-#### Scenario: Upstream advanced
-- **WHEN** the source repository has new commits
-- **THEN** upgrade re-materializes the package and updates provenance and
-  manifest
-
-#### Scenario: Local source is edited without a commit change
-- **WHEN** a package installed from a local directory is upgraded after tracked
-  content, tracked modifications, or explicitly included untracked content
-  changed, regardless of git HEAD
-- **THEN** the re-computed content fingerprint differs from the recorded one
-- **AND** upgrade re-materializes rather than reporting the package up to date
-
-#### Scenario: Locally modified managed content
-- **WHEN** an exported source file or generated materialized file differs from
-  its manifest hash
-- **THEN** upgrade warns, skips that file, and preserves the local edits
-- **AND** an explicit force flag is required to overwrite
-
-### Requirement: Uninstall is exact and complete
-`q uninstall` SHALL remove exactly the exported and generated files listed in
-the package's manifest, the fixed Q-owned metadata set, and the package's store
-entry, and nothing else. Because managed files live inside the store entry,
-uninstall SHALL check for divergence **before**
-removing the entry: it SHALL walk the complete entry and compare it with the
-manifest and Q-owned metadata set. Any manifest-listed file diverging from its
-hash and any unmanifested file SHALL be reported and preserved by relocating
-it out of the store entry (or by leaving the entry in place around preserved
-files), never deleted with the entry, unless the user passes an explicit force
-flag. Without force, Q removes the entry directory only after it is empty.
-With force, the entire entry is removed.
-
-#### Scenario: Clean uninstall
-- **WHEN** uninstall runs for an installed package with no diverged or
-  unmanifested files
-- **THEN** all exported source files, generated files, Q-owned metadata, and
-  the store entry are removed
-- **AND** files not owned by the managed-content inventory are untouched
-
-#### Scenario: Locally modified file at uninstall
-- **WHEN** a manifest-listed file inside the store entry diverges from its
-  recorded hash
-- **THEN** uninstall preserves that file by moving it out of the entry before
-  removing the rest, reports it, and does not delete it
-- **AND** removing it anyway requires an explicit force flag
-
-#### Scenario: Unmanifested file at uninstall
-- **WHEN** the store entry contains a file absent from the manifest and the
-  known Q-owned metadata set
-- **THEN** uninstall preserves that file outside the entry or leaves it in
-  place, reports it, and does not remove a non-empty entry directory
-- **AND** deleting it requires an explicit force flag
-
-### Requirement: List reports installed packages
-`q list` SHALL report each installed distribution package with its
-provenance and a summary of materialized skills, including every availability
-issue from required tools, typed runtime capabilities, environment dependencies,
-version gates, or unresolved execution.
-
-#### Scenario: Packages are listed
-- **WHEN** `q list` runs
-- **THEN** each installed package appears with source, commit, and
-  materialized-skill summary
-- **AND** every unavailable skill includes the same typed availability issues
-  surfaced by `skill_availability_issues`
-
-### Requirement: Package operations produce a human-readable report
-Every install/upgrade/uninstall run SHALL produce a report covering: skills
-materialized, updated, or skipped (with reasons), required tools emitted,
-missing host capabilities, unknown vocabulary, and skill-id collisions.
-
-#### Scenario: Report accompanies the operation
-- **WHEN** any package operation completes or partially completes
-- **THEN** the report states what changed, what was skipped and why, and which
-  declared capabilities the host cannot currently satisfy
+- **THEN** the command fails without changing the catalog
