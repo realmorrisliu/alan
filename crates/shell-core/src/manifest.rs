@@ -536,6 +536,7 @@ fn restored_content_instance(
             ContentKind::Terminal => ContentKind::Terminal.default_capabilities(),
             ContentKind::Markdown => vec![ContentCapability::MarkdownReadOnlyViewer],
             ContentKind::Settings => vec![ContentCapability::SettingsSurface],
+            ContentKind::Agent => ContentKind::Agent.default_capabilities(),
         },
         payload,
         terminal_metadata,

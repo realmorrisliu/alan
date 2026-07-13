@@ -1,4 +1,5 @@
 use alan_shell_core::{
+    AgentAttachment, AgentContentPresentation, AgentProcessReference, AgentStreamOffsets,
     ContentInstance, ContentKind, ContentLifecycleState, ManifestSyncHint, PaneSlot, PaneTreeNode,
     ReducerErrorCode, ReducerOperation, RuntimeIntent, ShellAttentionState, ShellContentPayload,
     ShellLaunchTarget, ShellTabActiveTaskState, Space, SplitDirection, SplitPlacement, Tab,
@@ -574,6 +575,7 @@ fn content_reducers_open_split_and_focus_existing_settings_content() {
                     "title": "Guide.md"
                 })),
                 settings: None,
+                agent: None,
             },
             reserved_pane_slot_ids: Vec::new(),
         })
@@ -613,6 +615,7 @@ fn content_reducers_open_split_and_focus_existing_settings_content() {
                     "surface_id": "settings_main",
                     "title": "Settings"
                 })),
+                agent: None,
             },
             reserved_pane_slot_ids: Vec::new(),
         })
@@ -634,6 +637,7 @@ fn content_reducers_open_split_and_focus_existing_settings_content() {
                     "surface_id": "settings_main",
                     "title": "Settings"
                 })),
+                agent: None,
             },
             reserved_pane_slot_ids: Vec::new(),
         })
@@ -663,6 +667,7 @@ fn content_reducers_open_split_and_focus_existing_settings_content() {
                     "title": "Split Notes"
                 })),
                 settings: None,
+                agent: None,
             },
             reserved_pane_slot_ids: Vec::new(),
         })
@@ -1166,6 +1171,60 @@ fn split_reducer_rejects_unsupported_non_terminal_content() {
         .unwrap_err();
 
     assert_eq!(error.code, ReducerErrorCode::UnsupportedContent);
+}
+
+#[test]
+fn agent_renderer_progress_updates_only_the_mounted_content_payload() {
+    let mut state = base_state();
+    state.contents[0] = ContentInstance {
+        content_id: "content_pane_1".to_string(),
+        kind: ContentKind::Agent,
+        title: "Agent 7".to_string(),
+        icon_name: None,
+        capabilities: ContentKind::Agent.default_capabilities(),
+        payload: ShellContentPayload {
+            agent: Some(AgentAttachment {
+                process: AgentProcessReference {
+                    boot_id: "boot-a".to_string(),
+                    pid: 7,
+                },
+                offsets: AgentStreamOffsets::default(),
+                presentation: AgentContentPresentation::default(),
+            }),
+            ..ShellContentPayload::default()
+        },
+        terminal_metadata: None,
+        lifecycle: ContentLifecycleState::Active,
+        renderer_state: Default::default(),
+    };
+    let offsets = AgentStreamOffsets {
+        output: 42,
+        requests: 3,
+        actions: 5,
+        ui: 8,
+    };
+    let presentation = AgentContentPresentation {
+        follows_output: true,
+    };
+
+    let result = state
+        .reduce(ReducerOperation::UpdateAgentRendererState {
+            pane_slot_id: "pane_1".to_string(),
+            offsets: offsets.clone(),
+            presentation: presentation.clone(),
+        })
+        .expect("Agent renderer progress update succeeds");
+    let attachment = result.state.contents[0]
+        .payload
+        .agent
+        .as_ref()
+        .expect("Agent attachment remains present");
+
+    assert_eq!(attachment.process.boot_id, "boot-a");
+    assert_eq!(attachment.process.pid, 7);
+    assert_eq!(attachment.offsets, offsets);
+    assert_eq!(attachment.presentation, presentation);
+    assert_eq!(result.changed_ids.updated_content_ids, ["content_pane_1"]);
 }
 
 fn sample_activity() -> TerminalActivitySnapshot {

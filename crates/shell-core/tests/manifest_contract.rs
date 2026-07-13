@@ -1,12 +1,80 @@
 use alan_shell_core::{
+    AgentAttachment, AgentContentPresentation, AgentProcessReference, AgentStreamOffsets,
     ContentKind, PaneTreeNode, ShellContentPayload, ShellContentRestoreRecord,
     ShellContentTabRestoreSnapshot, ShellContentWorkspaceManifest,
     ShellContentWorkspaceSpaceRecord, ShellContentWorkspaceTabRecord, ShellLaunchTarget,
     ShellPaneSlotRestoreRecord, ShellTabActiveTaskState, TabKind,
 };
 use chrono::{DateTime, Utc};
+use serde_json::json;
 
 const REFERENCE_TIME: &str = "2027-01-15T08:00:00Z";
+
+#[test]
+fn agent_attachment_persists_only_reference_offsets_and_presentation() {
+    let payload = ShellContentPayload {
+        agent: Some(AgentAttachment {
+            process: AgentProcessReference {
+                boot_id: "boot-a".to_string(),
+                pid: 42,
+            },
+            offsets: AgentStreamOffsets {
+                output: 10,
+                requests: 20,
+                actions: 30,
+                ui: 40,
+            },
+            presentation: AgentContentPresentation {
+                follows_output: true,
+            },
+        }),
+        ..Default::default()
+    };
+
+    let encoded = serde_json::to_value(&payload).unwrap();
+    assert_eq!(
+        encoded,
+        json!({
+            "agent": {
+                "process": { "boot_id": "boot-a", "pid": 42 },
+                "offsets": { "output": 10, "requests": 20, "actions": 30, "ui": 40 },
+                "presentation": { "follows_output": true }
+            }
+        })
+    );
+    let text = encoded.to_string();
+    for forbidden in [
+        "tape",
+        "machine",
+        "provider",
+        "tool",
+        "socket",
+        "host_path",
+        "secret",
+    ] {
+        assert!(
+            !text.contains(forbidden),
+            "manifest leaked forbidden Agent state: {forbidden}"
+        );
+    }
+
+    let forbidden_agent_state = json!({
+        "agent": {
+            "process": { "boot_id": "boot-a", "pid": 42 },
+            "offsets": { "output": 0, "requests": 0, "actions": 0, "ui": 0 },
+            "presentation": { "follows_output": true },
+            "tape": ["must not persist"]
+        }
+    });
+    assert!(serde_json::from_value::<ShellContentPayload>(forbidden_agent_state).is_err());
+    assert!(
+        serde_json::from_value::<ShellContentPayload>(json!({
+            "agent": null,
+            "socket": "/tmp/authority.sock"
+        }))
+        .is_err()
+    );
+}
 
 #[test]
 fn default_manifest_materializes_single_terminal_workspace() {

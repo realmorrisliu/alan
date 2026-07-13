@@ -345,6 +345,29 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         terminalContentLifecycle.finalizeAllRuntimes(registry: terminalRuntimeRegistry)
     }
 
+    /// Persist only renderer-owned Agent offsets and presentation. Process identity is immutable.
+    func updateAgentRendererState(
+        paneID: String,
+        offsets: AlanAgentStreamOffsets,
+        presentation: AlanAgentContentPresentation
+    ) {
+        do {
+            let result = try reducerCoordinator.apply(
+                state: shellState,
+                operation: .updateAgentRendererState(
+                    paneSlotID: paneID,
+                    offsets: offsets,
+                    presentation: presentation
+                )
+            )
+            applyMutationResult(result)
+        } catch {
+            recordControlPlaneDiagnostic(
+                "Agent renderer state update failed for \(paneID): \(error)"
+            )
+        }
+    }
+
     static func live(
         fileManager: FileManager = .default,
         windowContext: ShellWindowContext? = nil,
@@ -1256,6 +1279,17 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
                         reservedPaneSlotIDs: reservedPaneSlotIDs
                     )
                 )
+            case .agent(let attachment, let title):
+                result = try reducerCoordinator.apply(
+                    state: shellState,
+                    operation: .openContentTab(
+                        spaceID: spaceID,
+                        kind: .agent,
+                        title: title ?? "Agent \(attachment.process.pid)",
+                        payload: .agent(attachment),
+                        reservedPaneSlotIDs: reservedPaneSlotIDs
+                    )
+                )
             }
         } catch {
             return nil
@@ -1382,6 +1416,15 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     }
 
     @discardableResult
+    func openAgentTab(
+        attachment: AlanAgentAttachment,
+        in spaceID: String? = nil,
+        title: String? = nil
+    ) -> String? {
+        openContentTab(.agent(attachment: attachment, title: title), in: spaceID)
+    }
+
+    @discardableResult
     func splitFocusedPane(
         direction: ShellSplitDirection,
         contentIntent: ShellContentIntent? = nil,
@@ -1481,6 +1524,18 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
                             kind: .settings,
                             title: content.title,
                             payload: content.payload,
+                            reservedPaneSlotIDs: reservedPaneSlotIDs
+                        )
+                    )
+                case .agent(let attachment, let title):
+                    result = try reducerCoordinator.apply(
+                        state: shellState,
+                        operation: .splitContentPane(
+                            paneSlotID: paneID,
+                            placement: placement,
+                            kind: .agent,
+                            title: title ?? "Agent \(attachment.process.pid)",
+                            payload: .agent(attachment),
                             reservedPaneSlotIDs: reservedPaneSlotIDs
                         )
                     )

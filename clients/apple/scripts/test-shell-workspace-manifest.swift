@@ -64,12 +64,100 @@ private enum ShellWorkspaceManifestTests {
         try verifiesMaterializerPreservesEmptySelectedSpaceWithOtherTabs()
         try verifiesMaterializerPreservesInactiveSpaceSelection()
         try verifiesShellCoreFFIMaterializerPreservesPayloadProfileAndTranscript()
+        try verifiesAgentAttachmentsRoundTripWithoutRuntimeAuthority()
         try verifiesManifestRoundTripPreservesSpaceLocalSelection()
         try verifiesPinnedSnapshotWinsOverLaterLiveSnapshot()
         try verifiesPinnedSplitSnapshotRestoresSplitTree()
         try verifiesUnpinnedTabPruningUsesTtlAndActiveTask()
         try verifiesSelectedTabPruningCanLeaveSelectedSpaceEmpty()
         print("Shell workspace manifest tests passed.")
+    }
+
+    private static func verifiesAgentAttachmentsRoundTripWithoutRuntimeAuthority() throws {
+        var manifest = try defaultManifestWithShellCore(
+            windowID: "window_agent",
+            defaultWorkingDirectory: "/unused",
+            now: referenceDate
+        )
+        let reference = AlanOSProcessReference(bootID: "boot-live", pid: 42)
+        let first = AlanAgentAttachment(
+            process: reference,
+            offsets: AlanAgentStreamOffsets(output: 10, requests: 20, actions: 30, ui: 40),
+            presentation: .default
+        )
+        let second = AlanAgentAttachment(
+            process: reference,
+            offsets: AlanAgentStreamOffsets(output: 100, requests: 200, actions: 300, ui: 400),
+            presentation: AlanAgentContentPresentation(followsOutput: false)
+        )
+        let snapshot = ShellContentTabRestoreSnapshot(
+            paneTree: ShellPaneSlotTreeNode(
+                nodeID: "node_agent_split",
+                kind: .split,
+                direction: .vertical,
+                paneSlotID: nil,
+                children: [
+                    ShellPaneSlotTreeNode(
+                        nodeID: "node_agent_left",
+                        kind: .pane,
+                        direction: nil,
+                        paneSlotID: "pane_agent_left",
+                        children: nil
+                    ),
+                    ShellPaneSlotTreeNode(
+                        nodeID: "node_agent_right",
+                        kind: .pane,
+                        direction: nil,
+                        paneSlotID: "pane_agent_right",
+                        children: nil
+                    ),
+                ]
+            ),
+            paneSlots: [
+                ShellPaneSlotRestoreRecord(
+                    paneSlotID: "pane_agent_left",
+                    contentID: "content_agent_left"
+                ),
+                ShellPaneSlotRestoreRecord(
+                    paneSlotID: "pane_agent_right",
+                    contentID: "content_agent_right"
+                ),
+            ],
+            contents: [
+                ShellContentRestoreRecord(
+                    contentID: "content_agent_left",
+                    kind: .agent,
+                    title: "Agent 42",
+                    payload: .agent(first)
+                ),
+                ShellContentRestoreRecord(
+                    contentID: "content_agent_right",
+                    kind: .agent,
+                    title: "Agent 42 detail",
+                    payload: .agent(second)
+                ),
+            ]
+        )
+        manifest.spaces[0].tabs[0].liveSnapshot = snapshot
+
+        let encoded = try JSONEncoder().encode(manifest)
+        let text = String(decoding: encoded, as: UTF8.self)
+        for forbidden in ["tape", "provider", "tool_state", "socket_path", "host_path", "secret"] {
+            expect(!text.contains(forbidden), "Agent manifest must not persist \(forbidden)")
+        }
+
+        let state = try materializeManifestWithShellCore(
+            manifest: manifest,
+            defaultWorkingDirectory: "/fallback",
+            now: referenceDate
+        )
+        let attachments = (state.contents ?? []).compactMap { $0.payload.agent }
+        expect(attachments.count == 2, "two Agent renderers must restore independently")
+        expect(attachments.allSatisfy { $0.process == reference }, "duplicate views must share Process Reference")
+        expect(
+            Set(attachments.map { $0.offsets.output }) == Set([10, 100]),
+            "duplicate views must retain independent caller offsets"
+        )
     }
 
     private static func verifiesMissingManifestCreatesCurrentDefault() throws {

@@ -131,12 +131,14 @@ enum ShellContentKind: String, Codable, CaseIterable {
     case terminal
     case markdown
     case settings
+    case agent
 }
 
 enum ShellContentIntent {
     case terminal(launchTarget: ShellLaunchTarget, title: String?, workingDirectory: String?)
     case markdown(fileURL: URL, title: String?)
     case settings(title: String?)
+    case agent(attachment: AlanAgentAttachment, title: String?)
 }
 
 enum ShellContentCapability: String, Codable, CaseIterable {
@@ -146,6 +148,10 @@ enum ShellContentCapability: String, Codable, CaseIterable {
     case terminalRuntimeMetadata = "terminal_runtime_metadata"
     case markdownReadOnlyViewer = "markdown_read_only_viewer"
     case settingsSurface = "settings_surface"
+    case agentInput = "agent_input"
+    case agentRequestResponse = "agent_request_response"
+    case agentMachineControl = "agent_machine_control"
+    case agentStopProcess = "agent_stop_process"
 }
 
 enum ShellContentLifecycleState: String, Codable, CaseIterable {
@@ -522,27 +528,69 @@ struct ShellSettingsContentPayload: Codable, Equatable {
     }
 }
 
+struct AlanOSProcessReference: Codable, Equatable, Hashable {
+    let bootID: String
+    let pid: UInt64
+
+    private enum CodingKeys: String, CodingKey {
+        case bootID = "boot_id"
+        case pid
+    }
+}
+
+struct AlanAgentStreamOffsets: Codable, Equatable {
+    var output: UInt64
+    var requests: UInt64
+    var actions: UInt64
+    var ui: UInt64
+
+    static let zero = AlanAgentStreamOffsets(output: 0, requests: 0, actions: 0, ui: 0)
+}
+
+struct AlanAgentContentPresentation: Codable, Equatable {
+    var followsOutput: Bool
+
+    static let `default` = AlanAgentContentPresentation(followsOutput: true)
+
+    private enum CodingKeys: String, CodingKey {
+        case followsOutput = "follows_output"
+    }
+}
+
+/// The only Agent state shell persistence may own.
+struct AlanAgentAttachment: Codable, Equatable {
+    let process: AlanOSProcessReference
+    var offsets: AlanAgentStreamOffsets
+    var presentation: AlanAgentContentPresentation
+}
+
 struct ShellContentPayload: Codable, Equatable {
     let terminal: ShellTerminalContentPayload?
     let markdown: ShellMarkdownContentPayload?
     let settings: ShellSettingsContentPayload?
+    let agent: AlanAgentAttachment?
 
     private enum CodingKeys: String, CodingKey {
         case terminal
         case markdown
         case settings
+        case agent
     }
 
     static func terminal(_ payload: ShellTerminalContentPayload) -> ShellContentPayload {
-        ShellContentPayload(terminal: payload, markdown: nil, settings: nil)
+        ShellContentPayload(terminal: payload, markdown: nil, settings: nil, agent: nil)
     }
 
     static func markdown(_ payload: ShellMarkdownContentPayload) -> ShellContentPayload {
-        ShellContentPayload(terminal: nil, markdown: payload, settings: nil)
+        ShellContentPayload(terminal: nil, markdown: payload, settings: nil, agent: nil)
     }
 
     static func settings(_ payload: ShellSettingsContentPayload) -> ShellContentPayload {
-        ShellContentPayload(terminal: nil, markdown: nil, settings: payload)
+        ShellContentPayload(terminal: nil, markdown: nil, settings: payload, agent: nil)
+    }
+
+    static func agent(_ attachment: AlanAgentAttachment) -> ShellContentPayload {
+        ShellContentPayload(terminal: nil, markdown: nil, settings: nil, agent: attachment)
     }
 }
 
@@ -602,6 +650,8 @@ struct ShellContentInstance: Identifiable, Codable, Equatable {
             return [.markdownReadOnlyViewer]
         case .settings:
             return [.settingsSurface]
+        case .agent:
+            return [.agentInput, .agentRequestResponse, .agentMachineControl, .agentStopProcess]
         }
     }
 }
@@ -2017,6 +2067,8 @@ private extension ShellPane {
             return "markdown viewer ready"
         case .settings:
             return "settings surface ready"
+        case .agent:
+            return "Agent attachment ready"
         }
     }
 }

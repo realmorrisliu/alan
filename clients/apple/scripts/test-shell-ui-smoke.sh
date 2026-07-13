@@ -987,7 +987,7 @@ run_restart_restore_step() {
 
     wait_for_file "$pwd_file" "restart restore cwd proof file"
     cwd_result=$(cat "$pwd_file")
-    [[ "$cwd_result" == "$RESTART_RESTORE_CWD" ]] \
+    [[ "$cwd_result" == "$RESTART_RESTORE_CWD" || "$cwd_result" -ef "$RESTART_RESTORE_CWD" ]] \
         || fail "restored terminal cwd mismatch: expected $RESTART_RESTORE_CWD, got ${cwd_result:-<empty>}"
 
     append_manifest "restart_restore_after_input=$after_token"

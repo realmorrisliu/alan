@@ -77,6 +77,14 @@ struct AlanMacShellCommands: Commands {
                 openSettingsTab()
             }
 
+            Button("Open Root Agent") {
+                openRootAgent()
+            }
+
+            Button("Attach Agent Process…") {
+                attachAgentProcess()
+            }
+
             Button("Find") {
                 host.openTerminalSearch(source: .menuBar)
             }
@@ -247,6 +255,65 @@ struct AlanMacShellCommands: Commands {
         openWindow(id: "main")
         _ = host.openSettingsTab()
         AlanMacPrimaryWindowPresenter.focusExistingWindowSoon()
+    }
+
+    private func attachAgentProcess() {
+        guard let session = AlanOSAttachmentController.shared.session else {
+            let alert = NSAlert()
+            alert.messageText = "Alan OS is unavailable"
+            alert.informativeText = "Wait for Alan for macOS to attach to the matching system Host."
+            alert.runModal()
+            return
+        }
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
+        field.placeholderString = "Process ID"
+        let alert = NSAlert()
+        alert.messageText = "Attach Agent Process"
+        alert.informativeText = "Enter an Alan OS PID. Closing the resulting view will only detach it."
+        alert.accessoryView = field
+        alert.addButton(withTitle: "Attach")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn,
+              let pid = UInt64(field.stringValue),
+              pid > 0
+        else { return }
+
+        let reference = AlanOSProcessReference(bootID: session.status.bootID, pid: pid)
+        Task { @MainActor in
+            do {
+                _ = try await session.validate(reference)
+                let attachment = AlanAgentAttachment(
+                    process: reference,
+                    offsets: .zero,
+                    presentation: .default
+                )
+                _ = host.openAgentTab(attachment: attachment)
+            } catch {
+                let failure = NSAlert(error: error)
+                failure.messageText = "Agent Process is unavailable"
+                failure.runModal()
+            }
+        }
+    }
+
+    private func openRootAgent() {
+        guard let session = AlanOSAttachmentController.shared.session else {
+            let alert = NSAlert()
+            alert.messageText = "Alan OS is unavailable"
+            alert.informativeText = "Wait for Alan for macOS to attach to the matching system Host."
+            alert.runModal()
+            return
+        }
+        Task { @MainActor in
+            do {
+                let attachment = try await session.rootAgentAttachment()
+                _ = host.openAgentTab(attachment: attachment, title: "Root Agent")
+            } catch {
+                let failure = NSAlert(error: error)
+                failure.messageText = "Root Agent is unavailable"
+                failure.runModal()
+            }
+        }
     }
 
     private func summonPrimaryShellWindow() {

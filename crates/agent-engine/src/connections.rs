@@ -128,9 +128,20 @@ pub struct ProviderDescriptor {
     pub default_settings: &'static [(&'static str, &'static str)],
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct SecretStore {
     credentials_dir: PathBuf,
+    resolved_secrets: BTreeMap<String, String>,
+}
+
+impl std::fmt::Debug for SecretStore {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("SecretStore")
+            .field("credentials_dir", &self.credentials_dir)
+            .field("resolved_secret_count", &self.resolved_secrets.len())
+            .finish()
+    }
 }
 
 impl SecretStore {
@@ -138,17 +149,36 @@ impl SecretStore {
         validate_safe_absolute_path("Host credential directory", credentials_dir)?;
         Ok(Self {
             credentials_dir: credentials_dir.to_path_buf(),
+            resolved_secrets: BTreeMap::new(),
         })
     }
+
+    pub fn with_resolved_secret(
+        credentials_dir: &Path,
+        credential_id: &str,
+        secret: String,
+    ) -> anyhow::Result<Self> {
+        let mut store = Self::from_directory(credentials_dir)?;
+        let credential_id = validated_identifier_component("credential id", credential_id)?;
+        store
+            .resolved_secrets
+            .insert(credential_id.to_string(), secret);
+        Ok(store)
+    }
+
     #[cfg(test)]
     pub fn new(root_dir: PathBuf) -> Self {
         Self {
             credentials_dir: root_dir,
+            resolved_secrets: BTreeMap::new(),
         }
     }
 
     pub fn load(&self, credential_id: &str) -> anyhow::Result<Option<String>> {
         let credential_id = validated_identifier_component("credential id", credential_id)?;
+        if let Some(secret) = self.resolved_secrets.get(credential_id) {
+            return Ok(Some(secret.clone()));
+        }
         let secrets = self.read_secret_file()?;
         Ok(secrets.secrets.get(credential_id).cloned())
     }
@@ -824,6 +854,21 @@ mod tests {
         assert_eq!(store.load("kimi").unwrap().as_deref(), Some("sk-test"));
         assert!(store.delete("kimi").unwrap());
         assert_eq!(store.load("kimi").unwrap(), None);
+    }
+
+    #[test]
+    fn secret_store_accepts_one_host_resolved_secret_without_platform_logic() {
+        let temp = TempDir::new().unwrap();
+        let store =
+            SecretStore::with_resolved_secret(temp.path(), "native", "host-secret".to_string())
+                .unwrap();
+
+        assert_eq!(
+            store.load("native").unwrap().as_deref(),
+            Some("host-secret")
+        );
+        assert_eq!(store.load("missing").unwrap(), None);
+        assert!(!format!("{store:?}").contains("host-secret"));
     }
 
     #[test]

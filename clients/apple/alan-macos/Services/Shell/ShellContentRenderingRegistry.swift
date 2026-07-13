@@ -5,6 +5,7 @@ enum ShellContentRenderKind: String, Codable, CaseIterable, Equatable {
     case terminal
     case markdown
     case settings
+    case agent
     case unavailable
 }
 
@@ -72,6 +73,8 @@ enum ShellContentRenderingRegistry {
             return .markdown
         case .settings:
             return .settings
+        case .agent:
+            return .agent
         }
     }
 
@@ -89,6 +92,8 @@ enum ShellContentRenderingRegistry {
             return "doc.text"
         case .settings:
             return "gearshape"
+        case .agent:
+            return "sparkles"
         }
     }
 }

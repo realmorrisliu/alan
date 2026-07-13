@@ -184,7 +184,7 @@ struct ShellCorePortableContentInstance: Codable {
             forKey: .capabilities
         ) ?? ShellContentInstance.defaultCapabilities(for: kind)
         payload = try container.decodeIfPresent(ShellContentPayload.self, forKey: .payload)
-            ?? ShellContentPayload(terminal: nil, markdown: nil, settings: nil)
+            ?? ShellContentPayload(terminal: nil, markdown: nil, settings: nil, agent: nil)
         lifecycle = try container.decodeIfPresent(
             ShellContentLifecycleState.self,
             forKey: .lifecycle
@@ -221,6 +221,11 @@ struct ShellCorePortableContentInstance: Codable {
             return ShellContentRendererState(phase: "ready", detail: detail)
         case .settings:
             return ShellContentRendererState(phase: "ready", detail: payload.settings?.surfaceID)
+        case .agent:
+            return ShellContentRendererState(
+                phase: payload.agent == nil ? "unavailable" : "ready",
+                detail: payload.agent.map { "Process \($0.process.pid)" }
+            )
         }
     }
 }

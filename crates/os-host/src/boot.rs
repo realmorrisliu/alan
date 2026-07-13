@@ -21,7 +21,48 @@ pub struct HostBootConfig(ServiceManagerConfig);
 #[derive(Debug)]
 struct ProductLlmClientFactory {
     credentials_dir: std::path::PathBuf,
+    keychain_service: Option<String>,
     managed_auth: Option<std::path::PathBuf>,
+}
+
+#[cfg(target_os = "macos")]
+fn load_macos_keychain_secret(service: &str, credential_id: &str) -> Result<Option<String>> {
+    let output = std::process::Command::new("/usr/bin/security")
+        .args([
+            "find-generic-password",
+            "-s",
+            service,
+            "-a",
+            credential_id,
+            "-w",
+        ])
+        .output()
+        .context("read macOS Keychain credential")?;
+    if !output.status.success() {
+        let detail = String::from_utf8_lossy(&output.stderr);
+        if detail.contains("could not be found") {
+            return Ok(None);
+        }
+        bail!(
+            "macOS Keychain rejected credential lookup: {}",
+            detail.trim()
+        );
+    }
+    let secret = String::from_utf8(output.stdout)
+        .context("macOS Keychain credential is not UTF-8")?
+        .trim_end_matches(['\r', '\n'])
+        .to_string();
+    Ok((!secret.is_empty()).then_some(secret))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn load_macos_keychain_secret(_service: &str, _credential_id: &str) -> Result<Option<String>> {
+    Ok(None)
+}
+
+#[cfg(target_os = "macos")]
+fn macos_keychain_service(channel_id: &str) -> String {
+    format!("app.alanworks.macos.{channel_id}.connections")
 }
 
 struct UnconfiguredLlmProvider;
@@ -59,9 +100,26 @@ impl LlmClientFactory for ProductLlmClientFactory {
             return Ok(LlmClient::new(UnconfiguredLlmProvider));
         };
         let mut core_config = base_config.clone();
+        let resolved = connections.resolve_profile(Some(selected_profile))?;
+        let secret_store = match (
+            self.keychain_service.as_deref(),
+            resolved.credential_id.as_deref(),
+        ) {
+            (Some(service), Some(credential_id)) => {
+                match load_macos_keychain_secret(service, credential_id)? {
+                    Some(secret) => SecretStore::with_resolved_secret(
+                        &self.credentials_dir,
+                        credential_id,
+                        secret,
+                    )?,
+                    None => SecretStore::from_directory(&self.credentials_dir)?,
+                }
+            }
+            _ => SecretStore::from_directory(&self.credentials_dir)?,
+        };
         connections.apply_profile_to_config(
             Some(selected_profile),
-            &SecretStore::from_directory(&self.credentials_dir)?,
+            &secret_store,
             &mut core_config,
         )?;
         LlmClient::from_core_config_with_chatgpt_auth_storage_path(
@@ -130,6 +188,16 @@ impl HostBootConfig {
         let tools = ToolRegistry::with_config(Arc::new(process.agent_config.core_config.clone()));
         let llm_factory = Arc::new(ProductLlmClientFactory {
             credentials_dir: connection_store.credentials_dir.clone(),
+            keychain_service: {
+                #[cfg(target_os = "macos")]
+                {
+                    Some(macos_keychain_service(channel_id))
+                }
+                #[cfg(not(target_os = "macos"))]
+                {
+                    None
+                }
+            },
             managed_auth: Some(host_store.managed_auth),
         });
 
@@ -173,6 +241,7 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let factory = ProductLlmClientFactory {
             credentials_dir: temp.path().to_path_buf(),
+            keychain_service: None,
             managed_auth: None,
         };
 
@@ -184,6 +253,19 @@ mod tests {
         assert_eq!(
             client.chat(None, "hello").await.unwrap_err().to_string(),
             "no Connection Service profile selected"
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn keychain_adapter_is_channel_isolated() {
+        assert_eq!(
+            macos_keychain_service("stable"),
+            "app.alanworks.macos.stable.connections"
+        );
+        assert_eq!(
+            macos_keychain_service("dev"),
+            "app.alanworks.macos.dev.connections"
         );
     }
 }

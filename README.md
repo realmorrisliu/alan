@@ -10,9 +10,10 @@ early development and currently contains three usable layers:
 - local hosts: a file-backed Rust terminal UI, direct management commands, and
   the native Alan for macOS terminal workspace.
 
-The complete Service Manager boot path and the final Alan for macOS-to-Alan OS
-attachment are not implemented yet. The attachment decision is deliberately
-deferred by [ADR-0029](docs/adr/0029-remove-daemon-era-surfaces-before-replacement-design.md).
+The dedicated system Host boots the Service Manager and Root Agent Process.
+Alan for macOS attaches to the matching stable/dev Host over its protected aP
+endpoint; it renders Agent Processes by boot ID and PID without owning their
+lifecycle or embedding Alan OS.
 
 ## Execution model
 

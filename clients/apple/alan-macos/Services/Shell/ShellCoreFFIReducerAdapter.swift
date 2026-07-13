@@ -104,6 +104,11 @@ enum ShellCoreReducerOperation: Encodable {
     case movePaneToNewTab(paneSlotID: String, title: String?)
     case movePaneToTab(paneSlotID: String, targetTabID: String, direction: ShellSplitDirection)
     case setAttention(paneSlotID: String, attention: ShellAttentionState)
+    case updateAgentRendererState(
+        paneSlotID: String,
+        offsets: AlanAgentStreamOffsets,
+        presentation: AlanAgentContentPresentation
+    )
 
     private enum CodingKeys: String, CodingKey {
         case type
@@ -130,6 +135,8 @@ enum ShellCoreReducerOperation: Encodable {
         case placement
         case kind
         case payload
+        case offsets
+        case presentation
     }
 
     func encode(to encoder: Encoder) throws {
@@ -295,6 +302,11 @@ enum ShellCoreReducerOperation: Encodable {
             try container.encode("set_attention", forKey: .type)
             try container.encode(paneSlotID, forKey: .paneSlotID)
             try container.encode(attention, forKey: .attention)
+        case .updateAgentRendererState(let paneSlotID, let offsets, let presentation):
+            try container.encode("update_agent_renderer_state", forKey: .type)
+            try container.encode(paneSlotID, forKey: .paneSlotID)
+            try container.encode(offsets, forKey: .offsets)
+            try container.encode(presentation, forKey: .presentation)
         }
     }
 }

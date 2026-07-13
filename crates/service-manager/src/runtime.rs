@@ -7,7 +7,8 @@ use std::time::{Duration, Instant};
 
 use alan_agent_engine::{
     AgentProcessConfig, ConnectionsFile, LlmClient, ProcessLaunchContext, RuntimeController,
-    ToolRegistry, configure_runtime_tool_execution_binding, spawn_with_namespace_environment,
+    ToolRegistry, configure_runtime_tool_execution_binding, provider_capabilities_for_config,
+    spawn_with_namespace_environment,
 };
 use alan_ap::{Fid, FileServer, InProcessTransport, OpenMode};
 use alan_kernel::{Access, Credentials, LiveNamespace, Namespace, Pid, Status};
@@ -190,11 +191,26 @@ impl ServiceManager {
         config
             .tools
             .set_config(Arc::new(config.process.agent_config.core_config.clone()));
-        let llm_client =
-            config
-                .llm_factory
-                .create(&connection_base_config, selected_profile, &connections)?;
-        let generation_capabilities = llm_client.capabilities();
+        let bootstrap = match config.llm_factory.create(
+            &connection_base_config,
+            selected_profile,
+            &connections,
+        ) {
+            Ok(client) => Some((llm_connection.clone(), client)),
+            Err(_) => {
+                tracing::warn!(
+                    profile_id = %llm_connection,
+                    "LLM connection is unavailable during boot; Alan OS will continue without a callable provider"
+                );
+                None
+            }
+        };
+        let generation_capabilities = bootstrap
+            .as_ref()
+            .map(|(_, client)| client.capabilities())
+            .unwrap_or_else(|| {
+                provider_capabilities_for_config(&config.process.agent_config.core_config)
+            });
         let host_capabilities = alan_agent_engine::skills::build_skill_host_capabilities(
             config.tools.list_tools().into_iter().map(str::to_string),
             true,
@@ -204,7 +220,7 @@ impl ServiceManager {
             manifest,
             connection_service,
             llm_connection,
-            llm_client,
+            bootstrap,
             llm_factory: config.llm_factory.clone(),
             connection_base_config,
             host_mount_adapter: config.host_mount_adapter.clone(),
@@ -396,7 +412,7 @@ struct AssembleInputs<'a> {
     manifest: BootManifest,
     connection_service: Arc<ConnectionService>,
     llm_connection: String,
-    llm_client: LlmClient,
+    bootstrap: Option<(String, LlmClient)>,
     llm_factory: Arc<dyn LlmClientFactory>,
     connection_base_config: alan_agent_engine::Config,
     host_mount_adapter: Arc<dyn HostMountExportAdapter>,
@@ -801,7 +817,7 @@ async fn assemble_environment(inputs: AssembleInputs<'_>) -> Result<AssembledEnv
         manifest,
         connection_service,
         llm_connection,
-        llm_client,
+        bootstrap,
         llm_factory,
         connection_base_config,
         host_mount_adapter,
@@ -815,8 +831,7 @@ async fn assemble_environment(inputs: AssembleInputs<'_>) -> Result<AssembledEnv
             llmfs.clone(),
             llm_factory,
             connection_base_config,
-            llm_connection.clone(),
-            llm_client,
+            bootstrap,
         )
         .await?;
     let routefs = Arc::new(alan_routefs::RouteFs::new());
@@ -1430,7 +1445,87 @@ async fn verify_readiness(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alan_agent_engine::{
+        ConnectionCredential, ConnectionProfile, ConnectionStoreBindings, CredentialKind,
+        LlmProvider as ConnectionProvider,
+    };
     use alan_llm::MockLlmProvider;
+
+    #[derive(Debug)]
+    struct MissingSecretFactory;
+
+    impl LlmClientFactory for MissingSecretFactory {
+        fn create(
+            &self,
+            _base_config: &alan_agent_engine::Config,
+            _selected_profile: Option<&str>,
+            _connections: &ConnectionsFile,
+        ) -> Result<LlmClient> {
+            anyhow::bail!("selected profile is missing a secret")
+        }
+    }
+
+    #[tokio::test]
+    async fn unavailable_default_connection_does_not_prevent_system_boot() {
+        let temp = tempfile::tempdir().unwrap();
+        let metadata = temp.path().join("connections.toml");
+        let credential_id = "missing-secret".to_string();
+        let profile_id = "default-profile".to_string();
+        let now = chrono::Utc::now();
+        let connections = ConnectionsFile {
+            version: 1,
+            default_profile: Some(profile_id.clone()),
+            credentials: [(
+                credential_id.clone(),
+                ConnectionCredential {
+                    kind: CredentialKind::SecretString,
+                    provider_family: ConnectionProvider::OpenAiResponses,
+                    label: "Missing secret".to_string(),
+                    backend: "host_credential_store".to_string(),
+                },
+            )]
+            .into_iter()
+            .collect(),
+            profiles: [(
+                profile_id.clone(),
+                ConnectionProfile {
+                    provider: ConnectionProvider::OpenAiResponses,
+                    label: None,
+                    credential_id: Some(credential_id),
+                    created_at: now,
+                    updated_at: now,
+                    source: "managed".to_string(),
+                    settings: BTreeMap::new(),
+                },
+            )]
+            .into_iter()
+            .collect(),
+        };
+        connections.save_to_path(&metadata).unwrap();
+
+        let mut config = ServiceManagerConfig::ephemeral(
+            "test",
+            AgentProcessConfig::default(),
+            LlmClient::new(MockLlmProvider::new()),
+            ToolRegistry::new(),
+        );
+        config.connection_store =
+            Some(ConnectionStoreBindings::new(metadata, temp.path().join("credentials")).unwrap());
+        config.llm_factory = Arc::new(MissingSecretFactory);
+
+        let manager = ServiceManager::boot(config).await.unwrap();
+        let (_, _, namespace) = manager.local_entry().create_and_handoff().await.unwrap();
+        let shell = alan_shell::Shell::new(InProcessTransport::new(namespace));
+        let status =
+            String::from_utf8(shell.cat("/mnt/connections/status").await.unwrap()).unwrap();
+        assert!(status.contains("ready=0") && status.contains("unavailable=1"));
+        assert_eq!(
+            shell.cat("/mnt/connections/validation").await.unwrap(),
+            br#"{"default-profile":"unavailable"}"#
+        );
+        assert_eq!(shell.cat(BOOT_STATE_PATH).await.unwrap(), b"ready\n");
+        manager.shutdown().await.unwrap();
+    }
 
     #[tokio::test]
     async fn root_agent_is_replaced_without_pid_continuity() {
