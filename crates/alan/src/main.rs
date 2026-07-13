@@ -686,8 +686,11 @@ async fn main() -> Result<()> {
                         name,
                         delete_source,
                     } => {
-                        let source = std::fs::canonicalize(&source).with_context(|| {
-                            format!("failed to resolve import source {}", source.display())
+                        let source = std::path::absolute(&source).with_context(|| {
+                            format!(
+                                "failed to make import source absolute: {}",
+                                source.display()
+                            )
                         })?;
                         let system = system_store::SystemStorePaths::detect(channel)?;
                         let kind = match kind {

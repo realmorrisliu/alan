@@ -140,6 +140,54 @@ fn host_import_installs_verified_skill_before_deleting_source() {
     assert!(String::from_utf8_lossy(&output.stdout).contains("source deleted after verification"));
 }
 
+#[cfg(unix)]
+#[test]
+fn host_import_never_follows_a_symlinked_source_for_deletion() {
+    use std::os::unix::fs::symlink;
+
+    let temp = TempDir::new().unwrap();
+    let home = temp.path().join("home");
+    let xdg_data = temp.path().join("data");
+    let source = temp.path().join("real-skill");
+    let source_link = temp.path().join("skill-link");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(&source).unwrap();
+    std::fs::write(source.join("SKILL.md"), "real authored content").unwrap();
+    symlink(&source, &source_link).unwrap();
+
+    let output = alan_command(&home, &xdg_data)
+        .arg("host")
+        .arg("legacy-state")
+        .arg("import")
+        .arg("skill")
+        .arg(&source_link)
+        .args(["--name", "linked-skill", "--delete-source"])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success(), "{output:?}");
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("must be a real directory"),
+        "{output:?}"
+    );
+    assert!(source.join("SKILL.md").is_file());
+    assert!(
+        std::fs::symlink_metadata(&source_link)
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    let data = detected_data_dir(&home, &xdg_data);
+    let system = alan::SystemStorePaths::from_data_dir(&data, InstallChannel::Stable).unwrap();
+    assert!(
+        !system
+            .imported_skills()
+            .unwrap()
+            .join("linked-skill")
+            .exists()
+    );
+}
+
 #[test]
 fn removed_commands_and_boot_agent_selector_are_not_parseable() {
     for args in [
