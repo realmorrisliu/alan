@@ -1173,6 +1173,7 @@ impl HostStartAttempt {
     }
 }
 
+#[cfg(any(target_os = "macos", test))]
 fn os_host_launch_label(channel: alan_agent_engine::InstallChannel) -> String {
     format!("{}.os-host", channel.descriptor().bundle_identifier)
 }
