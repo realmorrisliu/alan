@@ -931,7 +931,7 @@ fn configure_runtime_tool_execution_binding(
     config: &AgentProcessConfig,
     tools: &mut crate::tools::ToolRegistry,
 ) -> Result<()> {
-    if config.launch_context.host_cwd().is_some() {
+    if !config.launch_context.host_mounts.is_empty() {
         let scratch_dir = config
             .store_bindings
             .as_ref()
@@ -2835,6 +2835,46 @@ mod tests {
         assert!(config.launch_context.descriptors.is_empty());
         assert!(config.store_bindings.is_none());
         assert!(config.memory_store_backing.is_none());
+    }
+
+    #[test]
+    fn runtime_tool_binding_uses_host_mount_when_process_cwd_is_virtual() {
+        let temp = TempDir::new().unwrap();
+        let source = temp.path().join("source");
+        std::fs::create_dir_all(&source).unwrap();
+        let mut launch_context = crate::ProcessLaunchContext::root();
+        launch_context.namespace.mount(
+            "/mnt/source",
+            InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::new())),
+            alan_kernel::Access::ReadWrite,
+        );
+        launch_context = launch_context.with_host_mount(
+            crate::HostMountGrant::new("/mnt/source", &source, alan_kernel::Access::ReadWrite)
+                .unwrap(),
+        );
+        let store_root = temp.path().join("system-store");
+        let config = AgentProcessConfig {
+            launch_context,
+            store_bindings: Some(crate::AgentRuntimeStoreBindings {
+                rollouts: store_root.join("rollouts"),
+                checkpoints: store_root.join("checkpoints"),
+                cache: store_root.join("cache"),
+                tmp: store_root.join("tmp"),
+                metadata: store_root.join("metadata"),
+            }),
+            ..AgentProcessConfig::default()
+        };
+        let mut tools = crate::tools::ToolRegistry::new();
+
+        configure_runtime_tool_execution_binding(&config, &mut tools).unwrap();
+
+        let binding = tools
+            .default_execution_binding()
+            .expect("an explicit Host Mount must create a runtime Tool binding");
+        assert_eq!(binding.cwd, dunce::canonicalize(&source).unwrap());
+        assert_eq!(binding.namespace_cwd, PathBuf::from("/mnt/source"));
+        assert_eq!(config.launch_context.cwd, "/");
+        assert_eq!(binding.host_mounts, config.launch_context.host_mounts);
     }
 
     #[test]

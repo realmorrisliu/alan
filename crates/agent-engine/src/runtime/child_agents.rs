@@ -320,7 +320,6 @@ where
     }
     let effective_child_core_config = resolved_child_agent_config.core_config.clone();
     child_config.agent_config = resolved_child_agent_config;
-    child_config.agent_config.core_config.connection_profile = None;
     child_config.core_config_source = crate::ConfigSourceKind::EnvOverride;
     let child_namespace_plan = build_child_namespace_assembly_plan(
         parent,
@@ -2041,6 +2040,7 @@ mod tests {
     };
     use alan_llm::LlmProvider;
     use serde_json::json;
+    use std::collections::BTreeMap;
     use std::sync::{Arc, Mutex};
     use tempfile::TempDir;
 
@@ -3671,6 +3671,81 @@ tool_repeat_limit = 9
         let seen_config = seen_config.lock().unwrap().clone().unwrap();
         assert_eq!(seen_config.effective_model(), "gpt-5.4");
         assert_eq!(seen_config.tool_repeat_limit, 9);
+    }
+
+    #[tokio::test]
+    async fn spawn_child_runtime_preserves_explicit_connection_profile() {
+        let temp = TempDir::new().unwrap();
+        let requests = RecordedRequests::default();
+        let response = completed_response("Child used the explicit profile.");
+        let mut parent = make_parent_state(&temp, requests.clone(), response.clone());
+        let metadata_path = temp.path().join("connections.toml");
+        let credentials_dir = temp.path().join("credentials");
+        let profile_id = "explicit-main";
+        let credential_id = "explicit-secret";
+        let connections = crate::ConnectionsFile {
+            credentials: BTreeMap::from([(
+                credential_id.to_string(),
+                crate::ConnectionCredential {
+                    kind: crate::CredentialKind::SecretString,
+                    provider_family: crate::config::LlmProvider::OpenAiResponses,
+                    label: "Explicit test credential".to_string(),
+                    backend: crate::default_credential_backend(crate::CredentialKind::SecretString)
+                        .to_string(),
+                },
+            )]),
+            profiles: BTreeMap::from([(
+                profile_id.to_string(),
+                crate::ConnectionProfile {
+                    provider: crate::config::LlmProvider::OpenAiResponses,
+                    label: Some("Explicit profile".to_string()),
+                    credential_id: Some(credential_id.to_string()),
+                    created_at: chrono::Utc::now(),
+                    updated_at: chrono::Utc::now(),
+                    source: "test".to_string(),
+                    settings: BTreeMap::from([("model".to_string(), "gpt-5.4".to_string())]),
+                },
+            )]),
+            ..crate::ConnectionsFile::default()
+        };
+        connections.save_to_path(&metadata_path).unwrap();
+        crate::SecretStore::from_directory(&credentials_dir)
+            .unwrap()
+            .save(credential_id, "sk-explicit")
+            .unwrap();
+        let connection_store =
+            crate::ConnectionStoreBindings::new(metadata_path, credentials_dir).unwrap();
+        parent.core_config.connection_profile = Some(profile_id.to_string());
+        parent
+            .core_config
+            .resolve_connection_profile(&connection_store)
+            .unwrap();
+        parent.runtime_config.connection_store = Some(connection_store);
+        let root_dir = temp.path().join("definition");
+        let seen_config = Arc::new(Mutex::new(None::<crate::Config>));
+        let seen_config_for_factory = seen_config.clone();
+
+        let child =
+            spawn_child_runtime_with_client_factory(&parent, launch_spec(root_dir), |config| {
+                *seen_config_for_factory.lock().unwrap() = Some(config.clone());
+                Ok(LlmClient::new(RecordingProvider::new(
+                    requests.clone(),
+                    response.clone(),
+                )))
+            })
+            .await
+            .unwrap();
+        let result = child.join().await.unwrap();
+
+        assert_eq!(result.status, ChildRuntimeStatus::Completed);
+        assert_eq!(
+            seen_config
+                .lock()
+                .unwrap()
+                .as_ref()
+                .and_then(|config| config.connection_profile.as_deref()),
+            Some(profile_id)
+        );
     }
 
     #[tokio::test]

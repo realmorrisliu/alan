@@ -10,3 +10,14 @@ compatibility reader SHALL remain.
 - **WHEN** upgrade finds a valid legacy profile and credential reference
 - **THEN** the metadata is imported and verified before the old file is deleted
 - **AND** secret bytes are never copied into System Store
+
+### Requirement: Child Agent Processes preserve the selected Connection profile
+Child Agent Process launch SHALL preserve the effective explicit Connection
+profile unless the child definition or launch request selects a different one.
+It MUST NOT silently reselect the Connection Service default.
+
+#### Scenario: Parent uses a non-default explicit profile
+- **GIVEN** a parent Agent Process uses an explicit profile that is not the service default
+- **WHEN** it launches a child without a Connection override
+- **THEN** child setup and runtime startup use the same explicit profile
+- **AND** absence of a service default does not make child startup fail
