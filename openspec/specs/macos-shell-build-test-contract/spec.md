@@ -701,14 +701,17 @@ guards when dev channel packaging changes.
 
 ### Requirement: Channel isolation has focused verification
 
-Changes to install-channel resolution SHALL include focused validation that stable and dev channels resolve distinct Alan homes, configuration, credential, agent-definition, model, singleton, shell-control, and app-install boundaries.
+Changes to install-channel resolution SHALL include focused validation that
+stable and dev channels resolve distinct System Store, Host Store,
+shell-control, singleton, and app-install boundaries.
 
 #### Scenario: Channel paths are checked
 
 - **WHEN** channel-aware path resolution changes
-- **THEN** focused tests verify stable channel state resolves under `~/.alan`
-- **AND** focused tests verify dev channel state resolves under `~/.alan-dev`
-- **AND** tests cover connections, credentials, agents, models, managed auth, registry, global public Skill sources, and other state owned by surviving components
+- **THEN** focused tests verify stable channel state resolves under `~/Library/Application Support/Alan/System Store/stable` and `Host Store/stable`
+- **AND** focused tests verify dev channel state resolves under `~/Library/Application Support/Alan/System Store/dev` and `Host Store/dev`
+- **AND** tests cover Connection Service metadata, credentials, managed auth,
+  Agent Definitions, imported Skills, and runtime evidence owned by surviving services
 
 #### Scenario: Shell-control namespaces are checked
 
@@ -720,7 +723,7 @@ Changes to install-channel resolution SHALL include focused validation that stab
 
 - **WHEN** dev channel support is considered ready for local use
 - **THEN** maintainers can run an automated or documented manual smoke with stable Alan and Alan Dev installed together
-- **AND** the smoke verifies distinct bundle identifiers, commands, configuration, credentials, and Alan-home state
+- **AND** the smoke verifies distinct bundle identifiers, commands, System Stores, Host Stores, and shell-control state
 
 ### Requirement: Apple quality gate includes focused macOS shell tests
 The Apple client SHALL provide repeatable commands for focused macOS shell tests

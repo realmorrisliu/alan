@@ -36,12 +36,12 @@ Tool sandbox path checks SHALL treat every configured `SandboxSpec.writable_root
 entry as an allowed execution root. OS sandbox profile generation SHALL continue
 to receive the complete writable root list.
 
-#### Scenario: Workspace-local tool can access an approved writable root
-- **WHEN** the active tool sandbox writable roots contain the workspace root and an approved host root
-- **THEN** a workspace-local tool path under the approved host root passes sandbox containment checks
+#### Scenario: Tool can access an approved writable root
+- **WHEN** the active Tool sandbox writable roots contain an approved Host Mount backing
+- **THEN** a Tool path under that root passes sandbox containment checks
 - **AND** a path outside every writable root is still rejected
 
 #### Scenario: Bash can run from an approved writable root
-- **WHEN** the active tool sandbox writable roots contain the workspace root and an approved host root
+- **WHEN** the active Tool sandbox writable roots contain an approved Host Mount backing
 - **THEN** bash execution with cwd under the approved host root passes sandbox cwd containment checks
 - **AND** bash execution with cwd outside every writable root is rejected

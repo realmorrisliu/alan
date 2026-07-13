@@ -27,7 +27,7 @@ metadata:
    way to lock in the fix.
 8. Record command-output summaries with explicit pass, mixed, blocked, failed,
    or not-run outcomes and note unresolved risks.
-9. Keep shell commands simple and workspace-safe: avoid `&&`, shell globs, and
+9. Keep shell commands simple and Host-Mount-safe: avoid `&&`, shell globs, and
    brace expansion; use separate tool calls when you need multiple reads or
    checks.
 10. Prefer repo-local runners or interpreters when available, such as

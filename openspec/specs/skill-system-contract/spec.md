@@ -80,10 +80,9 @@ Compatibility tiers:
 
 - Tier 1 portable runtime compatibility discovers and runs public skill
   directories centered on `SKILL.md`, including optional `bin/`, `scripts/`,
-  `references/`, and `assets/`, under the channel-selected global public skill
-  source, `<workspace>/.agents/skills/`, and alan `AgentRoot` `skills/`
-  directories. The stable global public skill source is `~/.agents/skills/`;
-  the dev global public skill source is `~/.agents-dev/skills/`.
+  `references/`, and `assets/`, only when the package is installed in Alan OS
+  or supplied by an explicit Skill or Agent Definition descriptor. Host
+  directories are not implicit sources.
 - Tier 2 compatibility metadata may consume public metadata such as
   `agents/openai.yaml` for UI-facing metadata or policy hints like
   `allow_implicit_invocation`; unknown fields remain fail-open.
@@ -93,8 +92,8 @@ Compatibility tiers:
   viewers.
 
 #### Scenario: Public skill directory is installed
-- **WHEN** a portable public skill package is installed under a supported skill
-  source
+- **WHEN** a portable public skill package is installed in Alan OS or supplied
+  by descriptor
 - **THEN** alan discovers and can run the package without alan-specific
   manifests
 
@@ -182,9 +181,9 @@ not preserved in resolved runtime metadata.
 - **AND** `SKILL.md` remains the portable selection and instruction source
 
 ### Requirement: Discovery is separate from exposure
-alan SHALL discover skill packages from built-in first-party packages,
-`AgentRoot` `skills/` directories, and public `.agents/skills/` directories
-without making discovery itself imply runtime exposure.
+alan SHALL discover skill packages from installed first-party or third-party
+packages and explicitly supplied Skill or Agent Definition descriptors without
+making discovery itself imply runtime exposure.
 
 Rules:
 
@@ -201,7 +200,7 @@ Rules:
   prompt listing
 
 ### Requirement: Skill exposure is resolved before prompt rendering
-alan SHALL resolve skill availability, overrides, built-in package sources, and
+alan SHALL resolve skill availability, overrides, installed package references, and
 package-local launch targets before rendering the active prompt catalog.
 
 Stable runtime exposure fields are:
@@ -259,13 +258,13 @@ Rules:
 
 - Overrides are keyed by runtime `skill` id.
 - `enabled` and `allow_implicit_invocation` are independent override fields.
-- Later `AgentRoot` overlays override earlier values field-by-field for the
-  same skill without discarding unrelated overrides for other skills.
+- The explicitly supplied Agent Definition owns its override set; Alan does not
+  merge Host-directory overlay chains.
 - Package-level overrides are not part of the stable contract.
 
-#### Scenario: Overlay override is resolved
-- **WHEN** multiple resolved `AgentRoot` layers define skill overrides
-- **THEN** alan merges them by runtime `skill` id and field
+#### Scenario: Definition-local override is resolved
+- **WHEN** the explicit Agent Definition declares skill overrides
+- **THEN** alan applies them by runtime `skill` id and field
 - **AND** package-level mount or exposure policy is not used
 
 ### Requirement: Selection is description-driven
@@ -319,9 +318,8 @@ Rules:
 - Delegated implicit skills include enough metadata for direct tool use:
   `skill_id`, delegated `target`, and the instruction to call
   `invoke_delegated_skill`.
-- When delegated work targets a different local workspace, catalog guidance may
-  include explicit launch-scope inputs such as `workspace_root` and optional
-  nested `cwd`.
+- When delegated work needs different authority, catalog guidance may include
+  explicit descriptors, inherited mounts, and a namespace `cwd`.
 - Core behavior that must always be present belongs in the base prompt or tool
   descriptions, not in always-active skills.
 
@@ -499,9 +497,8 @@ Rules:
   prior active-skill injection step.
 - Delegated launch uses a package-local `SpawnTarget` and a fresh launch-root
   runtime.
-- Delegated launch may carry explicit workspace-binding inputs such as
-  `workspace_root` and optional nested `cwd` when delegated work should run in a
-  different local workspace than the parent runtime.
+- Delegated launch may carry explicit Process Launch Context inputs such as
+  descriptors, inherited mounts, and a namespace `cwd`.
 - Parent runtime tape records a bounded delegated result rather than replaying
   the launch-root transcript.
 - Launch-root rollout remains separately inspectable out of band.
@@ -650,40 +647,6 @@ Explicit non-goals:
 - **THEN** the change updates this capability through OpenSpec before relying
   on the behavior in implementation or documentation
 
-### Requirement: Global public skill sources are channel-scoped
-Alan SHALL resolve and mutate global public skill install sources according to
-the active install channel. The stable channel SHALL keep `~/.agents/skills/`;
-the dev channel SHALL use a separate global public skill source.
-
-#### Scenario: Stable global public skills are discovered
-- **WHEN** stable-channel Alan discovers global public skill packages
-- **THEN** it discovers packages under `~/.agents/skills/`
-- **AND** existing stable public skill compatibility remains unchanged
-
-#### Scenario: Dev global public skills are discovered
-- **WHEN** dev-channel Alan discovers global public skill packages
-- **THEN** it discovers packages under `~/.agents-dev/skills/`
-- **AND** it does not discover `~/.agents/skills/` as an implicit fallback
-
-#### Scenario: Dev installs a global skill
-- **WHEN** a dev-channel command installs or updates a global public skill package
-- **THEN** it writes under `~/.agents-dev/skills/`
-- **AND** it does not create, modify, or remove packages under `~/.agents/skills/`
-
-### Requirement: Workspace skill sources remain workspace-authored
-Install-channel isolation SHALL NOT change the portable workspace public skill
-source path.
-
-#### Scenario: Workspace public skills are discovered
-- **WHEN** either channel discovers portable public skill packages in a workspace
-- **THEN** `<workspace>/.agents/skills/` remains the workspace public skill source
-- **AND** packages discovered there are treated as workspace-authored content rather than channel-private global data
-
-#### Scenario: Workspace skill writes generated output
-- **WHEN** a workspace skill run writes generated runtime output, evaluation cache, or logs through Alan-managed paths
-- **THEN** those generated outputs are channel-scoped
-- **AND** the source skill package under `<workspace>/.agents/skills/` remains unchanged unless the user explicitly edits or installs into that workspace source
-
 ### Requirement: Skill vocabulary is owned by packages and resolution
 Alan SHALL use stable Skill, Skill Package, Registry, Resolver, Active Skill, Exposure Mode,
 Invocation Mode, and Resource vocabulary across packages, prompt assembly, direct CLI, namespace
@@ -711,3 +674,13 @@ availability, delegation, CLI behavior, namespace projection, authoring, and cur
 #### Scenario: A removed management surface returns
 - **WHEN** a Skill test or current document adds a background API as a required management owner
 - **THEN** validation rejects the change
+
+### Requirement: Skills enter through installed packages or descriptors
+Alan SHALL resolve Skills only from installed Alan OS packages and explicit
+Skill/Agent Definition descriptors. It MUST NOT scan AgentRoot, workspace,
+`.agents`, Alan home, or other Host directories as implicit providers.
+
+#### Scenario: Host directory contains a Skill
+- **WHEN** a mounted Host directory contains `SKILL.md`
+- **THEN** the Skill remains ordinary file content until explicitly imported or
+  passed by descriptor

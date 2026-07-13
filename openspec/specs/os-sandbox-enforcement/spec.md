@@ -18,15 +18,15 @@ Tool execution SHALL be constrained by a selectable sandbox backend behind a com
 
 #### Scenario: Fallback to the path guard
 - **WHEN** no OS sandbox backend is available
-- **THEN** backend selection falls back to the workspace path guard
+- **THEN** backend selection falls back to the namespace and Host Mount path guard
 
 ### Requirement: Kernel-enforced confinement independent of command syntax
 When an OS sandbox backend is active, the operating system SHALL enforce
 filesystem writes to the writable roots of the active `SandboxSpec` and control
-network access regardless of how a command is written. The workspace is the seed
-writable root, and additional human/config-declared writable host directory
-mounts SHALL also be writable roots. Read-only host directory mounts SHALL NOT
-grant native-subprocess write authority.
+network access regardless of how a command is written. Exact writable Host
+Mount grants SHALL become writable roots; no ambient Host directory SHALL seed
+the sandbox. Read-only Host Mounts SHALL NOT grant native-subprocess write
+authority.
 
 #### Scenario: Internal-write command is confined
 - **WHEN** a command writes outside the active `SandboxSpec` writable roots
@@ -91,8 +91,8 @@ Alan SHALL derive a `SandboxSpec` from the concrete Process namespace, descripto
 network policy, executable, and delegated mounts. The spec SHALL be attributable to that Process and
 SHALL contain the complete inputs needed by the selected OS sandbox backend.
 
-#### Scenario: A Tool Process receives workspace-only confinement
-- **WHEN** a Tool Process is spawned with only a workspace mount and no network authority
+#### Scenario: A Tool Process receives explicit-mount-only confinement
+- **WHEN** a Tool Process is spawned with one writable Host Mount and no network authority
 - **THEN** the selected OS sandbox backend receives a matching `SandboxSpec`
 - **AND** the Process namespace, descriptors, credentials, and policy determine its confinement
 
@@ -105,8 +105,8 @@ broad reads with selected deny paths SHALL NOT claim sensitive-read denylist
 enforcement.
 
 #### Scenario: Default sandbox spec includes sensitive paths
-- **WHEN** a sandbox spec is seeded from a workspace root on a host with a known user home directory
-- **THEN** the spec includes read-deny entries for Alan home stores, common credential stores, macOS keychains, and browser profile directories
+- **WHEN** a sandbox spec is assembled for a Process on a host with a known user home directory
+- **THEN** the spec includes read-deny entries for Alan Host Stores, common credential stores, macOS keychains, and browser profile directories
 
 #### Scenario: Seatbelt profile denies sensitive reads
 - **WHEN** a macOS Seatbelt profile is generated from a sandbox spec with read-deny entries
@@ -190,5 +190,5 @@ unavailable.
 
 #### Scenario: Backend audit names the active path
 - **WHEN** a native subprocess is evaluated or executed
-- **THEN** the decision audit identifies whether the active Linux path is `linux_reified_namespace`, `landlock`, or `workspace_path_guard`
+- **THEN** the decision audit identifies whether the active Linux path is `linux_reified_namespace`, `landlock`, or `host_mount_path_guard`
 - **AND** the audit distinguishes reified namespace paths from projected host paths

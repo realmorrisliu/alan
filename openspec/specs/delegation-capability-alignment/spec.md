@@ -8,18 +8,19 @@ capability decisions.
 ### Requirement: Task Requirements Are Classified In Namespace Vocabulary
 The runtime SHALL classify the material capabilities a delegated task requires
 before spawning the child, using a vocabulary whose terms map directly onto
-namespace mounts and `/bin` bindings (workspace read/write scope, shell,
+namespace mounts and `/bin` bindings (Host Mount read/write scope, shell,
 network/GitHub-capable tools, browser, LLM connection, side effects).
 
 #### Scenario: GitHub issue review requires GitHub-capable bindings
 - **WHEN** a user asks alan to inspect and review a GitHub issue in another
   repository via delegated work
-- **THEN** the classified requirements include target-workspace read access and
+- **THEN** the classified requirements include read access to the target
+  repository through a Host Mount and
   a GitHub- or network-capable tool binding, before any child is spawned
 
-#### Scenario: Local inspection classifies as workspace-read only
-- **WHEN** a delegated task only inspects local files in another workspace
-- **THEN** the classified requirements name a read-scoped workspace mount and no
+#### Scenario: Local inspection classifies as Host-Mount-read only
+- **WHEN** a delegated task only inspects local files in another repository tree
+- **THEN** the classified requirements name a read-scoped Host Mount and no
   network capability
 
 ### Requirement: Delegated Spawn Requires Namespace Satisfaction

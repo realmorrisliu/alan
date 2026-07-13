@@ -50,7 +50,7 @@
 
 ## 8. Review and archive readiness
 
-- [ ] 8.1 Submit the implementation as its own PR and complete current-HEAD Codex review, zero unresolved threads, green CI, and delayed recheck
-- [ ] 8.2 After merge, sync every delta into canonical specs and remove superseded workspace capability text
+- [x] 8.1 Merge implementation PR #643 after current-HEAD Codex review, zero unresolved threads, green CI, and delayed recheck
+- [ ] 8.2 Merge the canonical-spec sync PR after removing superseded workspace capability text and completing current-HEAD Codex review, zero unresolved threads, green CI, and delayed recheck
 - [x] 8.3 Verify `add-alan-package-management` remains blocked and explicitly depends on the next two changes
 - [ ] 8.4 Archive only after implementation and canonical-spec sync are merged and strictly valid

@@ -51,15 +51,16 @@ runtime launch contracts, harness fixtures, and delivery summaries.
 
 Stable terms:
 
-- **Coding steward**: the parent alan runtime that owns goal intake, workspace
+- **Coding steward**: the parent alan runtime that owns goal intake, repository
   discovery, routing, approvals, and result integration.
 - **Repo worker**: a child runtime launched into a specific repo, directory, or
   project to perform bounded coding work.
 - **Coding launch**: a `SpawnSpec` used specifically for repo-scoped coding
   execution.
 - **Bound handles**: explicit parent-side state the child receives, such as
-  `workspace`, `approval_scope`, `plan`, `conversation_snapshot`,
-  `tool_results`, or `memory`.
+  `approval_scope`, `plan`, `conversation_snapshot`, `tool_results`, or
+  `memory`. Host file authority travels separately in the Process Launch
+  Context as explicit Host Mount grants.
 - **Bounded result integration**: parent consumption of child outcomes through
   terminal status, output summaries, runtime metadata, and explicit structured
   outputs rather than full child-transcript inheritance.
@@ -72,26 +73,26 @@ Stable terms:
   integration
 
 ### Requirement: Coding product model uses parent steward plus bounded repo workers
-alan SHALL model coding work as a home-root steward that delegates bounded
-repo-local execution to fresh child runtimes instead of as one default
+alan SHALL model coding work as a parent steward that delegates bounded
+repo-local execution to fresh child Agent Processes instead of as one default
 single-repo coding shell.
 
 Required product sequence:
 
 1. the parent steward accepts the user's coding-oriented goal
-2. the parent discovers or selects the correct workspace
-3. the parent launches one or more repo workers through explicit `SpawnSpec`
-   contracts
+2. the parent discovers or selects the correct repository or directory
+3. the parent launches one or more repo workers through explicit Process Launch
+   Context contracts
 4. each repo worker performs bounded repo-scoped coding work
 5. the parent integrates results, handles approvals, and decides whether more
    routing or child launches are needed
 
 Boundary rules:
 
-- Runtime parent-child relations apply to `AgentInstance` launches.
-- `AgentRoot` overlays remain definition layering only.
-- Coding product behavior must not blur runtime parent-child relations with
-  `AgentRoot` overlay semantics.
+- Runtime parent-child relations apply to Agent Process launches.
+- Agent Definitions are explicit launch inputs, not Host-directory overlays.
+- Coding product behavior must not blur Process lineage with Agent Definition
+  resolution.
 - External benchmark results measure coding quality but do not define product
   behavior, repo-specific heuristics, task-specific prompts, or benchmark-only
   special cases.
@@ -101,7 +102,7 @@ Boundary rules:
 #### Scenario: Single-repo bug fix is delegated
 - **WHEN** a user asks alan to perform a repo-local bug fix
 - **THEN** the parent steward selects the repo and launches a repo worker with
-  explicit workspace and approval scope
+  an explicit Host Mount and approval scope
 - **AND** the worker performs the inspect -> plan -> edit -> verify -> deliver
   loop inside that delegated scope
 
@@ -118,10 +119,10 @@ execution.
 The parent coding steward owns:
 
 1. broad goal intake and clarification
-2. workspace discovery, comparison, and selection
+2. repository discovery, comparison, and selection
 3. task routing across repos, directories, or projects
 4. launch-shape decisions for child runtimes
-5. approval ownership for risky cross-workspace or external actions
+5. approval ownership for risky cross-repository or external actions
 6. result integration, dedupe, and follow-up planning
 7. deciding whether the task remains repo-local or has expanded into broader
    orchestration
@@ -130,18 +131,18 @@ The child repo worker owns:
 
 1. inspect -> plan -> edit -> verify -> deliver inside the delegated repo or
    directory
-2. repo-local side effects within the bound workspace scope
+2. repo-local side effects within the granted Host Mount scope
 3. maintaining a bounded coding transcript for the delegated task
 4. producing a delivery summary with verification and residual-risk status
 5. returning control when complete, blocked, or attempting to expand beyond
    delegated scope
 
 The parent steward is not the default place for every repo-local edit loop. The
-child worker must not silently broaden workspace, approval, credential, or
-external-action scope beyond what the launch contract granted.
+child worker must not silently broaden namespace, Host Mount, approval,
+credential, or external-action scope beyond what the launch contract granted.
 
 #### Scenario: Worker attempts to leave delegated scope
-- **WHEN** a repo worker needs to mutate outside the bound workspace or perform
+- **WHEN** a repo worker needs to mutate outside its granted Host Mount or perform
   a credential, publish, deploy, or external action
 - **THEN** it returns control or escalates according to governance rather than
   silently expanding its scope
@@ -204,7 +205,7 @@ Recommended launch inputs:
 - `launch.task` describes the delegated coding objective and hard constraints.
 - `launch.cwd` points at the repo root or narrower task-local directory where
   commands should execute.
-- `launch.workspace_root` points at the repo or project root that defines the
+- The Process Launch Context carries the explicit Host Mount that defines the
   worker's writable boundary.
 - `launch.timeout_secs` defaults to a bounded value for productized coding
   paths unless intentionally omitted.
@@ -216,7 +217,7 @@ Recommended launch inputs:
 #### Scenario: Coding launch is prepared
 - **WHEN** the parent steward launches a repo worker
 - **THEN** the child starts with a fresh runtime and receives only explicit
-  launch inputs and bound handles
+  launch inputs, mounts, descriptors, and bound handles
 
 #### Scenario: Deprecated reasoning shortcut is supplied
 - **WHEN** a coding launch attempts to use `launch.budget_tokens`
@@ -273,7 +274,7 @@ repo worker's bounded repo-local coding loop.
 
 Parent steward fast path:
 
-1. workspace discovery and comparison
+1. repository discovery and comparison
 2. safe read-heavy repo selection
 3. planning and routing decisions
 4. spawn preparation and bounded result integration
@@ -281,13 +282,13 @@ Parent steward fast path:
 Repo-worker fast path:
 
 1. repo-local reads and searches
-2. repo-local edits inside the bound workspace
+2. repo-local edits inside the granted Host Mount
 3. targeted deterministic verification
 4. bounded delivery summaries and residual-risk reporting
 
 The parent steward must not silently mutate multiple repos or publish
 externally under a generic coding-task interpretation. The repo-worker fast
-path ends when the task crosses trust, workspace, credential, or publish
+path ends when the task crosses trust, Host Mount, credential, or publish
 boundaries.
 
 #### Scenario: Steward task becomes mutating cross-repo work
@@ -302,7 +303,7 @@ repo-local coding work.
 
 Minimum boundary classes:
 
-1. cross-workspace mutation beyond delegated repo scope
+1. cross-repository mutation beyond delegated Host Mount scope
 2. network or external publishing actions
 3. credential exploration or modification
 4. shared deploy or infrastructure changes
@@ -341,7 +342,7 @@ Current matcher surface:
 Path-prefix rules:
 
 - `match_path_prefix` is evaluated against common file-oriented arguments such
-  as `path`, `paths`, `directory`, `cwd`, and `workspace_root`.
+  as `path`, `paths`, `directory`, and `cwd`.
 - Before matching, alan lexically normalizes `.` and `..` segments.
 - Relative policy prefixes may match absolute tool paths on component
   boundaries.
@@ -353,11 +354,11 @@ Path-prefix rules:
 Known limits:
 
 - Bash payloads are not fully path-classified.
-- Cross-workspace intent is inferred mainly from launch shape and path guard
+- Cross-repository intent is inferred mainly from launch shape and Host Mount guard
   rather than a dedicated policy dimension.
 - Trust-boundary metadata such as `owner_boundary` or `blast_radius` is not yet
   modeled as first-class policy fields.
-- The current backend remains `workspace_path_guard`, which is best-effort
+- The current backend remains `host_mount_path_guard`, which is best-effort
   rather than strict containment.
 
 #### Scenario: Shell command needs path-sensitive policy
@@ -395,7 +396,7 @@ external benchmark adapters as separate layers.
 Validation ladder:
 
 1. **Coding steward harness** validates parent-side orchestration behavior: delegated launch
-   contracts, workspace-root versus nested-cwd binding, default non-inheritance, explicit handle
+   contracts, Host Mount root versus nested namespace-cwd binding, default non-inheritance, explicit handle
    handoff, bounded result integration, and fail-safe behavior when delegated execution or artifact
    routing is unavailable.
 2. **Repo-worker harness** validates bounded child behavior: minimum

@@ -192,9 +192,9 @@ providers when the provider/model explicitly declares support.
 
 ### Requirement: Request control intent separates Process and turn ownership
 Alan SHALL represent Agent Process request-control intent separately from per-turn intent and from
-the normalized controls passed to a provider. Process intent SHALL be resolved from the AgentRoot,
-workspace overlays, connection/model catalog, and spawn inputs; turn intent MAY override only the
-current transition.
+the normalized controls passed to a provider. Process intent SHALL be resolved from the explicit
+Agent Definition descriptor or installed reference, connection/model catalog, and spawn inputs;
+turn intent MAY override only the current transition.
 
 #### Scenario: A turn overrides Process reasoning effort
 - **WHEN** an Agent Process resolves medium reasoning effort and one turn explicitly requests low
@@ -211,8 +211,8 @@ Agent Machine state and rollout/checkpoint evidence.
 - **AND** the projected values come from the canonical runtime resolver
 
 ### Requirement: Request control tests guard durable owners
-Tests SHALL cover Agent Process intent, per-turn override, AgentRoot configuration, model catalog
-default, provider projection, and Agent Machine/rollout observability. They SHALL fail if a renderer,
+Tests SHALL cover Agent Process intent, per-turn override, Agent Definition configuration, model
+catalog default, provider projection, and Agent Machine/rollout observability. They SHALL fail if a renderer,
 transport adapter, or provider adapter independently recomputes resolver-owned defaults.
 
 #### Scenario: Resolver ownership drifts

@@ -29,7 +29,7 @@ Mount visibility and access SHALL be fixed when the Process namespace is assembl
 authorized external actor applies an explicit namespace change. An Agent Process SHALL NOT amplify
 its mounts through an internal mount tool.
 
-#### Scenario: Agent Process starts with only a workspace
-- **WHEN** the child namespace contains only the delegated workspace and standard system mounts
+#### Scenario: Agent Process starts with only an explicit Host Mount
+- **WHEN** the child namespace contains only one delegated Host Mount and the standard namespace
 - **THEN** the host sandbox contains the matching projection
 - **AND** the Agent Process cannot add an undelegated mount

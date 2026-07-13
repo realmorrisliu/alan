@@ -13,7 +13,6 @@ capabilities:
     risk_level: B
     idempotency: optional
 permissions:
-  fs: workspace_only
   network: allowlist
   process: allowlist
 healthcheck:

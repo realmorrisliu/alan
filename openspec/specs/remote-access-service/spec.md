@@ -24,7 +24,7 @@ the entry service as a steady-state proxy.
 The Remote Access Service SHALL export a minimal aP Remote Bootstrap Tree as its only entry surface.
 Fresh entry SHALL allocate a bootstrap instance through clone-via-open at `new/clone`, exposing
 `request`, `status`, `handoff`, and `ctl`. Reattachment SHALL be discovered by walking `leases/`,
-whose entries expose only neutral lease metadata and no workspace or app-continuation view.
+whose entries expose only neutral lease metadata and no project or app-continuation view.
 
 #### Scenario: Fresh entry is allocated by clone-via-open
 - **WHEN** a remote client opens `new/clone`
@@ -62,7 +62,7 @@ reattachment.
 #### Scenario: Fresh remote entry lands neutrally
 - **WHEN** a fresh remote attach completes
 - **THEN** the client enters a new general shell Process with the user's standard login namespace
-- **AND** no app, workspace, or prior task surface is implicitly restored
+- **AND** no app, project, or prior task surface is implicitly restored
 - **AND** Agent Processes run only when explicitly spawned beneath the entry lineage
 
 ### Requirement: Leases bound continuity and recovery never re-drive execution
@@ -115,8 +115,8 @@ to that lineage.
 ### Requirement: Attachment scope defaults to the user namespace with an explicit threat model
 In the single-user phase, the default attachment scope SHALL be the signed-in user's full namespace.
 Product and operator surfaces SHALL state that authority plainly and identify short-lived tickets,
-bounded leases, and lineage revocation as containment. Narrower process-lineage, workspace, or app
-projection SHALL require a separate accepted capability and SHALL NOT be implied.
+bounded leases, and lineage revocation as containment. Narrower process-lineage, mounted-domain,
+or app projection SHALL require a separate accepted capability and SHALL NOT be implied.
 
 #### Scenario: Attachment scope is documented
 - **WHEN** a current surface describes remote attachment authority
