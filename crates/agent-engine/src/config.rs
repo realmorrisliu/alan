@@ -632,9 +632,12 @@ impl Config {
     fn load_from_override(
         override_path: Option<std::path::PathBuf>,
     ) -> anyhow::Result<LoadedConfig> {
-        if let Some(config_path) = override_path
-            && config_path.exists()
-        {
+        if let Some(config_path) = override_path {
+            anyhow::ensure!(
+                config_path.is_absolute(),
+                "ALAN_CONFIG_PATH must be an absolute path: {}",
+                config_path.display()
+            );
             let config = Self::from_file(&config_path)?;
             tracing::info!(path = %config_path.display(), "Loaded configuration from file");
             return Ok(LoadedConfig {
@@ -1271,6 +1274,29 @@ mod tests {
         assert!(config.memory.strict_store);
         assert!(config.memory.store_dir.is_none());
         assert!(!config.durability.required);
+    }
+
+    #[test]
+    fn explicit_config_override_must_be_an_existing_absolute_file() {
+        let missing = std::env::temp_dir().join(format!(
+            "alan-missing-config-{}.toml",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let error = Config::load_from_override(Some(missing.clone())).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("failed to read configuration file"),
+            "unexpected missing-file error: {error:#}"
+        );
+
+        let error = Config::load_from_override(Some("agent.toml".into())).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("ALAN_CONFIG_PATH must be an absolute path"),
+            "unexpected relative-path error: {error:#}"
+        );
     }
 
     #[test]
