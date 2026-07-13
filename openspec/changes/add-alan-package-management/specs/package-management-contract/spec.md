@@ -99,8 +99,8 @@ MUST NOT persist a raw Host path, URL credential, or VCS control directory.
 ### Requirement: Source snapshots are bounded and confined
 
 Package Service SHALL reject absolute entries, parent traversal, duplicate
-normalized paths, special files, escaping symbolic links, excessive file
-counts, excessive per-file size, and excessive total bytes before publication.
+normalized paths, special files, excessive file counts, excessive per-file
+size, and excessive total bytes before publication.
 Snapshot entries SHALL represent regular files only. A source File-Server
 adapter SHALL reject walking or reading a symbolic link without following its
 target, and `q` SHALL abort the import on that rejection rather than serialize
