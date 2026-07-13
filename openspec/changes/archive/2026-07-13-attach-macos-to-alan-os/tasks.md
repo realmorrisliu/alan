@@ -53,4 +53,4 @@
 - [x] 8.1 Submit after `implement-minimal-service-manager` is merged and archived
 - [x] 8.2 Complete current-HEAD Codex review, zero unresolved threads, green CI, and delayed recheck before merge
 - [x] 8.3 Sync macOS attachment deltas into canonical specs after implementation merge
-- [ ] 8.4 Archive only after source tests, rendered verification, implementation merge, and canonical sync are complete
+- [x] 8.4 Archive only after source tests, rendered verification, implementation merge, and canonical sync are complete
