@@ -6,9 +6,26 @@ use alan_auth::{AuthStorage, AuthStore, ChatgptIdTokenInfo, ChatgptTokenData, St
 use base64::Engine;
 use chrono::Utc;
 use serde_json::json;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use tempfile::TempDir;
+
+fn detected_data_dir(home: &Path, xdg_data: &Path) -> PathBuf {
+    if cfg!(target_os = "macos") {
+        home.join("Library/Application Support")
+    } else {
+        xdg_data.to_path_buf()
+    }
+}
+
+fn alan_command(home: &Path, xdg_data: &Path) -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_alan"));
+    command
+        .env("HOME", home)
+        .env("XDG_DATA_HOME", xdg_data)
+        .env("ALAN_INSTALL_CHANNEL", "stable");
+    command
+}
 
 fn build_jwt(payload: serde_json::Value) -> String {
     let header =
@@ -17,10 +34,8 @@ fn build_jwt(payload: serde_json::Value) -> String {
     format!("{header}.{payload}.sig")
 }
 
-fn seed_chatgpt_auth(home: &Path) {
-    let data_dir = home.join("Library/Application Support");
-    let host_store =
-        alan::HostStorePaths::from_data_dir(&data_dir, InstallChannel::Stable).unwrap();
+fn seed_chatgpt_auth(data_dir: &Path) {
+    let host_store = alan::HostStorePaths::from_data_dir(data_dir, InstallChannel::Stable).unwrap();
     std::fs::create_dir_all(host_store.managed_auth.parent().unwrap()).unwrap();
     let storage = AuthStorage::new(host_store.managed_auth).unwrap();
     let id_token = build_jwt(json!({
@@ -54,10 +69,9 @@ fn seed_chatgpt_auth(home: &Path) {
         .unwrap();
 }
 
-fn seed_chatgpt_connection(home: &Path) {
-    let data_dir = home.join("Library/Application Support");
+fn seed_chatgpt_connection(data_dir: &Path) {
     let system_store =
-        alan::SystemStorePaths::from_data_dir(&data_dir, InstallChannel::Stable).unwrap();
+        alan::SystemStorePaths::from_data_dir(data_dir, InstallChannel::Stable).unwrap();
     let mut connections = ConnectionsFile {
         version: 1,
         default_profile: Some("chatgpt-main".to_string()),
@@ -101,13 +115,14 @@ fn seed_chatgpt_connection(home: &Path) {
 fn connection_show_reports_managed_chatgpt_login() {
     let temp = TempDir::new().unwrap();
     let home = temp.path().join("home");
+    let xdg_data = temp.path().join("data");
     std::fs::create_dir_all(&home).unwrap();
-    seed_chatgpt_auth(&home);
-    seed_chatgpt_connection(&home);
+    let data_dir = detected_data_dir(&home, &xdg_data);
+    seed_chatgpt_auth(&data_dir);
+    seed_chatgpt_connection(&data_dir);
 
-    let output = Command::new(env!("CARGO_BIN_EXE_alan"))
+    let output = alan_command(&home, &xdg_data)
         .args(["connection", "show", "chatgpt-main"])
-        .env("HOME", &home)
         .output()
         .unwrap();
 
@@ -125,13 +140,14 @@ fn connection_show_reports_managed_chatgpt_login() {
 fn connection_logout_removes_managed_chatgpt_login() {
     let temp = TempDir::new().unwrap();
     let home = temp.path().join("home");
+    let xdg_data = temp.path().join("data");
     std::fs::create_dir_all(&home).unwrap();
-    seed_chatgpt_auth(&home);
-    seed_chatgpt_connection(&home);
+    let data_dir = detected_data_dir(&home, &xdg_data);
+    seed_chatgpt_auth(&data_dir);
+    seed_chatgpt_connection(&data_dir);
 
-    let logout = Command::new(env!("CARGO_BIN_EXE_alan"))
+    let logout = alan_command(&home, &xdg_data)
         .args(["connection", "logout", "chatgpt-main"])
-        .env("HOME", &home)
         .output()
         .unwrap();
     assert!(logout.status.success(), "{logout:?}");
@@ -139,9 +155,8 @@ fn connection_logout_removes_managed_chatgpt_login() {
         String::from_utf8_lossy(&logout.stdout).contains("Removed credentials for chatgpt-main.")
     );
 
-    let status = Command::new(env!("CARGO_BIN_EXE_alan"))
+    let status = alan_command(&home, &xdg_data)
         .args(["connection", "show", "chatgpt-main"])
-        .env("HOME", &home)
         .output()
         .unwrap();
     assert!(status.status.success(), "{status:?}");
@@ -152,19 +167,19 @@ fn connection_logout_removes_managed_chatgpt_login() {
 fn connection_default_and_current_use_system_metadata() {
     let temp = TempDir::new().unwrap();
     let home = temp.path().join("home");
+    let xdg_data = temp.path().join("data");
     std::fs::create_dir_all(&home).unwrap();
-    seed_chatgpt_connection(&home);
+    let data_dir = detected_data_dir(&home, &xdg_data);
+    seed_chatgpt_connection(&data_dir);
 
-    let set_default = Command::new(env!("CARGO_BIN_EXE_alan"))
+    let set_default = alan_command(&home, &xdg_data)
         .args(["connection", "default", "set", "chatgpt-main"])
-        .env("HOME", &home)
         .output()
         .unwrap();
     assert!(set_default.status.success(), "{set_default:?}");
 
-    let current = Command::new(env!("CARGO_BIN_EXE_alan"))
+    let current = alan_command(&home, &xdg_data)
         .args(["connection", "current"])
-        .env("HOME", &home)
         .output()
         .unwrap();
     assert!(current.status.success(), "{current:?}");
