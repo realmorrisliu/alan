@@ -725,6 +725,11 @@ private struct AlanConnectionMetadata: Decodable {
     let profiles: [String: Profile]
 }
 
+/// CLI-created requests are completed by that CLI process, not by the renderer adapter.
+func alanOSNativeAdapterOwnsConnectionRequest(_ requestID: String) -> Bool {
+    !requestID.hasPrefix("cli-")
+}
+
 /// Observes service-owned request files and supplies only native capabilities.
 /// It never owns mount grants, Connection profiles, defaults, or Process lifecycle.
 @MainActor
@@ -810,7 +815,10 @@ final class AlanOSNativeCapabilityAdapter {
               ),
               let request = requests.values
                 .sorted(by: { $0.id < $1.id })
-                .first(where: { !inFlight.contains("connection:\($0.id)") })
+                .first(where: {
+                    alanOSNativeAdapterOwnsConnectionRequest($0.id)
+                        && !inFlight.contains("connection:\($0.id)")
+                })
         else { return }
         let key = "connection:\(request.id)"
         inFlight.insert(key)

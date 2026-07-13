@@ -186,6 +186,17 @@ private func testStreamOverlapAndGap() throws {
     }
 }
 
+private func testNativeConnectionRequestOwnership() throws {
+    try require(
+        !alanOSNativeAdapterOwnsConnectionRequest("cli-1234"),
+        "renderer must not claim CLI-owned native requests"
+    )
+    try require(
+        alanOSNativeAdapterOwnsConnectionRequest("agent-1234"),
+        "renderer must handle non-CLI native requests"
+    )
+}
+
 private func testProtectedStatusDiscovery() throws {
     let fileManager = FileManager.default
     let temporary = try temporaryDirectory()
@@ -255,6 +266,7 @@ private func testAPAttachAndNamespaceValidation() async throws {
 private enum AlanOSAttachmentTests {
     static func main() async throws {
         try testStreamOverlapAndGap()
+        try testNativeConnectionRequestOwnership()
         try testProtectedStatusDiscovery()
         try await testAPAttachAndNamespaceValidation()
         print("Alan OS attachment tests passed.")
