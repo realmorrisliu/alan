@@ -344,18 +344,27 @@ pub fn import_authored_content(
     }
 
     if delete_source {
-        fs::remove_dir_all(&canonical_source).with_context(|| {
-            format!(
-                "import succeeded but source deletion failed for {}",
-                canonical_source.display()
-            )
-        })?;
+        remove_import_source_if_unchanged(&canonical_source, &source_fingerprint)?;
     }
 
     Ok(AuthoredImportReport {
         source: canonical_source,
         destination,
         source_deleted: delete_source,
+    })
+}
+
+fn remove_import_source_if_unchanged(source: &Path, expected_fingerprint: &[u8]) -> Result<()> {
+    ensure!(
+        tree_fingerprint(source)? == expected_fingerprint,
+        "import source changed after verification; installed content was kept and source was not deleted: {}",
+        source.display()
+    );
+    fs::remove_dir_all(source).with_context(|| {
+        format!(
+            "import succeeded but source deletion failed for {}",
+            source.display()
+        )
     })
 }
 
@@ -1109,6 +1118,28 @@ mod tests {
         assert_eq!(
             registry.get(&"imported-skill".to_string()).unwrap().scope,
             SkillScope::Installed
+        );
+    }
+
+    #[test]
+    fn changed_import_source_is_never_deleted() {
+        let temp = TempDir::new().unwrap();
+        let source = temp.path().join("host-skill");
+        fs::create_dir_all(&source).unwrap();
+        fs::write(source.join("SKILL.md"), "original").unwrap();
+        let fingerprint = tree_fingerprint(&source).unwrap();
+        fs::write(source.join("new-note.md"), "added after import").unwrap();
+
+        let error = remove_import_source_if_unchanged(&source, &fingerprint).unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("source changed after verification")
+        );
+        assert_eq!(
+            fs::read_to_string(source.join("new-note.md")).unwrap(),
+            "added after import"
         );
     }
 
