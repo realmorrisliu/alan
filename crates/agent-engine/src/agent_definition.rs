@@ -48,9 +48,9 @@ impl ResolvedAgentDefinition {
         base_skill_overrides: &[SkillOverride],
         base_source: ConfigSourceKind,
     ) -> Result<Self> {
-        let package_capabilities = resolve_package_references(launch_context)?;
+        let (package_capabilities, package_errors) = resolve_package_references(launch_context)?;
         let Some(descriptor) = launch_context.descriptor(AGENT_DEFINITION_DESCRIPTOR) else {
-            return Self::empty(base_skill_overrides, package_capabilities);
+            return Self::empty(base_skill_overrides, package_capabilities, package_errors);
         };
         if let Some(file_tree) = descriptor.file_tree.as_ref() {
             return Self::from_file_tree(
@@ -59,6 +59,7 @@ impl ResolvedAgentDefinition {
                 base_skill_overrides,
                 base_source,
                 package_capabilities,
+                package_errors,
             );
         }
         let declared_root = launch_context
@@ -116,6 +117,7 @@ impl ResolvedAgentDefinition {
                     scope: SkillScope::Descriptor,
                 }],
                 package_capabilities,
+                package_errors,
             ),
             skill_overrides,
             policy_path: policy_path.exists().then_some(policy_path),
@@ -133,13 +135,18 @@ impl ResolvedAgentDefinition {
     fn empty(
         base_skill_overrides: &[SkillOverride],
         package_capabilities: Vec<crate::skills::CapabilityPackage>,
+        package_errors: Vec<crate::skills::SkillError>,
     ) -> Result<Self> {
         let resolved = Self {
             root_dir: None,
             namespace_root: None,
             config_path: None,
             persona_dirs: Vec::new(),
-            capability_view: capability_view_with_packages(Vec::new(), package_capabilities),
+            capability_view: capability_view_with_packages(
+                Vec::new(),
+                package_capabilities,
+                package_errors,
+            ),
             skill_overrides: base_skill_overrides.to_vec(),
             policy_path: None,
             config_content: None,
@@ -159,6 +166,7 @@ impl ResolvedAgentDefinition {
         base_skill_overrides: &[SkillOverride],
         base_source: ConfigSourceKind,
         mut package_capabilities: Vec<crate::skills::CapabilityPackage>,
+        mut package_errors: Vec<crate::skills::SkillError>,
     ) -> Result<Self> {
         let config_content = (base_source != ConfigSourceKind::EnvOverride)
             .then(|| file_tree.text("agent.toml"))
@@ -181,14 +189,16 @@ impl ResolvedAgentDefinition {
                 continue;
             }
             let namespace_root = Path::new(&descriptor.path).join(&prefix);
-            package_capabilities.push(capability_package_from_descriptor(
+            let (package, errors) = capability_package_from_descriptor(
                 format!("skill:{skill_id}"),
                 &skill_id,
                 namespace_root.clone(),
                 SkillScope::Descriptor,
                 Vec::new(),
                 &tree,
-            )?);
+            )?;
+            package_capabilities.push(package);
+            package_errors.extend(errors);
         }
         let persona_context = crate::prompts::render_definition_persona_context_from_file_tree(
             file_tree,
@@ -199,7 +209,11 @@ impl ResolvedAgentDefinition {
             namespace_root: Some(PathBuf::from(&descriptor.path)),
             config_path: None,
             persona_dirs: Vec::new(),
-            capability_view: capability_view_with_packages(Vec::new(), package_capabilities),
+            capability_view: capability_view_with_packages(
+                Vec::new(),
+                package_capabilities,
+                package_errors,
+            ),
             skill_overrides,
             policy_path: file_tree
                 .contains_file("policy.yaml")
@@ -218,8 +232,12 @@ impl ResolvedAgentDefinition {
 
 fn resolve_package_references(
     launch_context: &ProcessLaunchContext,
-) -> Result<Vec<crate::skills::CapabilityPackage>> {
+) -> Result<(
+    Vec<crate::skills::CapabilityPackage>,
+    Vec<crate::skills::SkillError>,
+)> {
     let mut packages = Vec::new();
+    let mut errors = Vec::new();
     let mut selected_packages = std::collections::BTreeSet::new();
     for reference in &launch_context.package_references {
         ensure!(
@@ -257,14 +275,16 @@ fn resolve_package_references(
                     format!("installed:{}:{}", reference.package_id, skill.skill_id)
                 }
             };
-            packages.push(capability_package_from_descriptor(
+            let (package, sidecar_errors) = capability_package_from_descriptor(
                 package_id,
                 &skill.skill_id,
                 namespace_root.clone(),
                 scope,
                 skill.dependencies.clone(),
                 &skill.descriptor,
-            )?);
+            )?;
+            packages.push(package);
+            errors.extend(sidecar_errors);
             ensure!(
                 packages
                     .last()
@@ -274,7 +294,7 @@ fn resolve_package_references(
             );
         }
     }
-    Ok(packages)
+    Ok((packages, errors))
 }
 
 fn capability_package_from_descriptor(
@@ -284,7 +304,10 @@ fn capability_package_from_descriptor(
     scope: SkillScope,
     dependencies: Vec<crate::skills::SkillTypedDependency>,
     descriptor: &crate::ProcessFileTree,
-) -> Result<crate::skills::CapabilityPackage> {
+) -> Result<(
+    crate::skills::CapabilityPackage,
+    Vec<crate::skills::SkillError>,
+)> {
     let document = descriptor
         .text("SKILL.md")?
         .context("Skill descriptor has no SKILL.md")?;
@@ -304,19 +327,32 @@ fn capability_package_from_descriptor(
         "package `{package_id}` declares Skill `{expected_skill_id}` but its runtime id is `{}`",
         metadata.id
     );
-    let package_sidecar = descriptor
-        .text(crate::skills::PACKAGE_SIDECAR_FILE)?
-        .map(crate::skills::parse_package_sidecar)
-        .transpose()?;
-    let skill_sidecar = descriptor
-        .text(crate::skills::SKILL_SIDECAR_FILE)?
-        .map(crate::skills::parse_skill_sidecar)
-        .transpose()?;
-    let compatible_metadata = descriptor
-        .text("agents/openai.yaml")?
-        .map(|content| crate::skills::parse_compatibility_metadata(content, &namespace_root))
-        .transpose()?
-        .flatten();
+    let mut errors = Vec::new();
+    let package_sidecar = parse_optional_descriptor_metadata(
+        descriptor,
+        crate::skills::PACKAGE_SIDECAR_FILE,
+        &namespace_root,
+        &package_id,
+        &mut errors,
+        crate::skills::parse_package_sidecar,
+    );
+    let skill_sidecar = parse_optional_descriptor_metadata(
+        descriptor,
+        crate::skills::SKILL_SIDECAR_FILE,
+        &namespace_root,
+        &package_id,
+        &mut errors,
+        crate::skills::parse_skill_sidecar,
+    );
+    let compatible_metadata = parse_optional_descriptor_metadata(
+        descriptor,
+        "agents/openai.yaml",
+        &namespace_root,
+        &package_id,
+        &mut errors,
+        |content| crate::skills::parse_compatibility_metadata(content, &namespace_root),
+    )
+    .flatten();
     let child_agents = descriptor
         .child_dirs("agents")
         .into_iter()
@@ -344,7 +380,7 @@ fn capability_package_from_descriptor(
             .contains_dir(name)
             .then(|| namespace_root.join(name))
     };
-    Ok(crate::skills::CapabilityPackage {
+    let package = crate::skills::CapabilityPackage {
         id: package_id,
         scope,
         root_dir: None,
@@ -366,15 +402,52 @@ fn capability_package_from_descriptor(
         package_sidecar,
         skill_sidecar,
         compatible_metadata,
-    })
+    };
+    Ok((package, errors))
+}
+
+fn parse_optional_descriptor_metadata<T, E>(
+    descriptor: &crate::ProcessFileTree,
+    relative_path: &str,
+    namespace_root: &Path,
+    package_id: &str,
+    errors: &mut Vec<crate::skills::SkillError>,
+    parse: impl FnOnce(&str) -> std::result::Result<T, E>,
+) -> Option<T>
+where
+    E: std::fmt::Display,
+{
+    let path = namespace_root.join(relative_path);
+    let result = descriptor
+        .text(relative_path)
+        .map_err(|error| error.to_string())
+        .and_then(|content| match content {
+            Some(content) => parse(content).map(Some).map_err(|error| error.to_string()),
+            None => Ok(None),
+        });
+    match result {
+        Ok(value) => value,
+        Err(message) => {
+            tracing::warn!(
+                path = %path.display(),
+                package_id,
+                error = %message,
+                "Failed to load descriptor sidecar metadata; continuing without its overlay"
+            );
+            errors.push(crate::skills::SkillError { path, message });
+            None
+        }
+    }
 }
 
 fn capability_view_with_packages(
     package_dirs: Vec<ScopedPackageDir>,
     packages: Vec<crate::skills::CapabilityPackage>,
+    errors: Vec<crate::skills::SkillError>,
 ) -> ResolvedCapabilityView {
     let mut view = ResolvedCapabilityView::from_package_dirs(package_dirs);
     view.packages.extend(packages);
+    view.descriptor_errors.extend(errors);
     view
 }
 
@@ -443,6 +516,19 @@ mod tests {
             "SKILL.md".to_string(),
             format!("---\nname: {id}\ndescription: Test Skill.\n---\n").into_bytes(),
         )]))
+        .unwrap()
+    }
+
+    fn package_descriptor_with_malformed_sidecars(id: &str) -> crate::ProcessFileTree {
+        crate::ProcessFileTree::new(std::collections::BTreeMap::from([
+            (
+                "SKILL.md".to_string(),
+                format!("---\nname: {id}\ndescription: Test Skill.\n---\n").into_bytes(),
+            ),
+            ("package.yaml".to_string(), b"not: [valid".to_vec()),
+            ("skill.yaml".to_string(), b"not: [valid".to_vec()),
+            ("agents/openai.yaml".to_string(), b"not: [valid".to_vec()),
+        ]))
         .unwrap()
     }
 
@@ -719,6 +805,56 @@ mod tests {
                 .path
                 .ends_with("unreferenced/SKILL.md")
         }));
+    }
+
+    #[test]
+    fn malformed_package_descriptor_sidecars_are_non_fatal_registry_errors() {
+        let handle = package_handle();
+        let reference = ProcessPackageReference::new(
+            "review-pack",
+            "f".repeat(64),
+            ProcessPackageKind::Installed,
+            "/lib/pkg/review-pack",
+            vec![
+                ProcessPackageSkillReference::new(
+                    "reviewer",
+                    "skills/reviewer",
+                    Vec::new(),
+                    package_descriptor_with_malformed_sidecars("reviewer"),
+                )
+                .unwrap(),
+            ],
+            handle.clone(),
+        )
+        .unwrap();
+        let mut context = ProcessLaunchContext::root().with_package_reference(reference);
+        context
+            .namespace
+            .mount("/lib/pkg/review-pack", handle, Access::ReadOnly);
+
+        let resolved =
+            ResolvedAgentDefinition::from_launch_context(&context, &[], ConfigSourceKind::Default)
+                .unwrap();
+        let registry = crate::skills::SkillsRegistry::load_capability_view(
+            &resolved.capability_view,
+            &resolved.skill_overrides,
+        )
+        .unwrap();
+
+        assert!(registry.get(&"reviewer".to_string()).is_some());
+        let error_paths = registry
+            .errors()
+            .iter()
+            .map(|error| error.path.as_path())
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(
+            error_paths,
+            std::collections::BTreeSet::from([
+                Path::new("/lib/pkg/review-pack/skills/reviewer/agents/openai.yaml"),
+                Path::new("/lib/pkg/review-pack/skills/reviewer/package.yaml"),
+                Path::new("/lib/pkg/review-pack/skills/reviewer/skill.yaml"),
+            ])
+        );
     }
 
     #[test]

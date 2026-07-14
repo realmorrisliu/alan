@@ -94,6 +94,7 @@ impl ResolvedCapabilityView {
                 })
                 .cloned(),
         );
+        refreshed.descriptor_errors = self.descriptor_errors.clone();
         refreshed
     }
 

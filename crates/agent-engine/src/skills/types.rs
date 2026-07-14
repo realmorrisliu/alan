@@ -179,6 +179,7 @@ pub struct ResolvedCapabilityView {
     pub package_roots: Vec<ScopedPackageRoot>,
     pub packages: Vec<CapabilityPackage>,
     pub errors: Vec<SkillError>,
+    pub descriptor_errors: Vec<SkillError>,
     pub tracked_paths: Vec<PathBuf>,
 }
 

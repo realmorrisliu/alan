@@ -149,6 +149,7 @@ impl SkillsRegistry {
         skill_overrides: &[SkillOverride],
     ) -> Result<(), SkillsError> {
         self.errors.extend(capability_view.errors);
+        self.errors.extend(capability_view.descriptor_errors);
         self.tracked_paths.extend(capability_view.tracked_paths);
         let overrides_by_skill: HashMap<String, SkillOverride> = skill_overrides
             .iter()
@@ -539,6 +540,7 @@ Body
                 compatible_metadata: None,
             }],
             errors: Vec::new(),
+            descriptor_errors: Vec::new(),
             tracked_paths: Vec::new(),
         }
     }
