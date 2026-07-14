@@ -860,12 +860,11 @@ impl PackageService {
                     {
                         continue;
                     }
-                    let skill_id = path
+                    let skill_name = path
                         .file_stem()
                         .and_then(|value| value.to_str())
-                        .context("command Skill name is not UTF-8")?
-                        .to_ascii_lowercase()
-                        .replace('_', "-");
+                        .context("command Skill name is not UTF-8")?;
+                    let skill_id = name_to_id(skill_name);
                     validate_package_id(&skill_id)?;
                     ensure!(
                         skill_ids.insert(skill_id.clone()),
@@ -2206,6 +2205,39 @@ mod tests {
                 .files
                 .iter()
                 .any(|file| { file.path == "source/skills/research.md" && !file.generated })
+        );
+    }
+
+    #[test]
+    fn command_skill_names_use_canonical_normalization() {
+        let service = PackageService::ephemeral("test").unwrap();
+        let record = service
+            .execute(PackageCommand::Install {
+                request_id: "command-normalization".to_string(),
+                package_id: "command-normalization-pack".to_string(),
+                snapshot: PackageSnapshot {
+                    source_name: "command-normalization-pack".to_string(),
+                    entries: ["repo.review.md", "release check.md", "foo__bar.md"]
+                        .into_iter()
+                        .map(|name| PackageSnapshotEntry {
+                            path: format!("skills/{name}"),
+                            bytes: b"Command body.".to_vec(),
+                            executable: false,
+                        })
+                        .collect(),
+                },
+            })
+            .unwrap()
+            .package
+            .unwrap();
+
+        assert_eq!(
+            record
+                .exports
+                .iter()
+                .map(|export| export.skill_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["foo-bar", "release-check", "repo-review"]
         );
     }
 
