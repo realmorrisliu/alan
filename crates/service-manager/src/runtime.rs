@@ -1479,7 +1479,9 @@ fn overlaps_package_namespace(path: &str) -> bool {
 }
 
 fn namespace_paths_overlap(left: &str, right: &str) -> bool {
-    left == right
+    left == "/"
+        || right == "/"
+        || left == right
         || left
             .strip_prefix(right)
             .is_some_and(|suffix| suffix.starts_with('/'))
@@ -1788,6 +1790,51 @@ mod tests {
             error
                 .to_string()
                 .contains("namespace mounts overlapping /lib/pkg are not accepted")
+        );
+    }
+
+    #[tokio::test]
+    async fn boot_rejects_root_namespace_mount_covering_package_namespace() {
+        let mut config = ServiceManagerConfig::ephemeral(
+            "test",
+            AgentProcessConfig::default(),
+            LlmClient::new(MockLlmProvider::new()),
+            ToolRegistry::new(),
+        );
+        config.process.launch_context.namespace.mount(
+            "/",
+            InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::empty())),
+            Access::ReadOnly,
+        );
+
+        let error = ServiceManager::boot(config).await.err().unwrap();
+
+        assert!(
+            error
+                .to_string()
+                .contains("namespace mounts overlapping /lib/pkg are not accepted")
+        );
+    }
+
+    #[tokio::test]
+    async fn boot_rejects_root_host_grant_covering_package_namespace() {
+        let host = tempfile::tempdir().unwrap();
+        let mut config = ServiceManagerConfig::ephemeral(
+            "test",
+            AgentProcessConfig::default(),
+            LlmClient::new(MockLlmProvider::new()),
+            ToolRegistry::new(),
+        );
+        config.process.launch_context.host_mounts.push(
+            alan_agent_engine::HostMountGrant::new("/", host.path(), Access::ReadOnly).unwrap(),
+        );
+
+        let error = ServiceManager::boot(config).await.err().unwrap();
+
+        assert!(
+            error
+                .to_string()
+                .contains("Host Mount grants overlapping /lib/pkg are not accepted")
         );
     }
 
