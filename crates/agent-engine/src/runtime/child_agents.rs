@@ -505,10 +505,16 @@ fn build_child_launch_context(
     launch_context.descriptors.clear();
 
     if !spec.has_handle(SpawnHandle::HostMounts) {
+        let package_projection_paths = launch_context
+            .package_references
+            .iter()
+            .map(|reference| reference.namespace_path.clone())
+            .collect::<std::collections::BTreeSet<_>>();
         let inherited_mounts = std::mem::take(&mut launch_context.host_mounts);
         if let Some(cwd) = child_cwd.as_deref()
             && inherited_mounts
                 .iter()
+                .filter(|grant| !package_projection_paths.contains(&grant.namespace_path))
                 .any(|grant| grant.resolve_host_path(cwd).is_some())
         {
             bail!("Child-agent launch cwd '{cwd}' requires the explicit host_mounts handle.");
@@ -516,11 +522,16 @@ fn build_child_launch_context(
         if child_cwd.is_none()
             && inherited_mounts
                 .iter()
+                .filter(|grant| !package_projection_paths.contains(&grant.namespace_path))
                 .any(|grant| grant.resolve_host_path(&launch_context.cwd).is_some())
         {
             launch_context.cwd = "/".to_string();
         }
         for grant in inherited_mounts {
+            if package_projection_paths.contains(&grant.namespace_path) {
+                launch_context.host_mounts.push(grant);
+                continue;
+            }
             if parent_definition_path.as_deref() == Some(&grant.namespace_path) {
                 launch_context.host_mounts.push(grant);
                 continue;
@@ -4171,6 +4182,80 @@ model_reasoning_effort = "high"
                 .map(String::as_str)
                 .collect::<Vec<_>>(),
             vec![crate::AGENT_DEFINITION_DESCRIPTOR]
+        );
+    }
+
+    #[test]
+    fn child_launch_context_keeps_package_projection_with_inherited_reference() {
+        let package = TempDir::new().unwrap();
+        let skill_root = package.path().join("skills/inherited");
+        std::fs::create_dir_all(&skill_root).unwrap();
+        std::fs::write(
+            skill_root.join("SKILL.md"),
+            "---\nname: inherited\ndescription: Inherited package Skill.\n---\n",
+        )
+        .unwrap();
+
+        let mut namespace = KernelNamespace::new();
+        namespace.mount(
+            "/lib/pkg/parent-pack",
+            memfs_transport(),
+            KernelAccess::ReadOnly,
+        );
+        let package_reference = crate::ProcessPackageReference::new(
+            "parent-pack",
+            "a".repeat(64),
+            crate::ProcessPackageKind::Installed,
+            "/lib/pkg/parent-pack",
+            vec![
+                crate::ProcessPackageSkillReference::new(
+                    "inherited",
+                    "skills/inherited",
+                    Vec::new(),
+                )
+                .unwrap(),
+            ],
+        )
+        .unwrap();
+        let parent = crate::ProcessLaunchContext::new(
+            namespace,
+            KernelCredentials::user("parent-agent"),
+            "/lib/pkg/parent-pack",
+        )
+        .unwrap()
+        .with_host_mount(
+            crate::HostMountGrant::new(
+                "/lib/pkg/parent-pack",
+                package.path(),
+                KernelAccess::ReadOnly,
+            )
+            .unwrap(),
+        )
+        .with_package_reference(package_reference);
+        let mut spec = launch_spec(package.path().join("unused-definition"));
+        spec.handles.clear();
+
+        let child = build_child_launch_context(&parent, &spec, None, None).unwrap();
+
+        assert_eq!(child.cwd, "/lib/pkg/parent-pack");
+        assert_eq!(child.package_references, parent.package_references);
+        assert!(child.namespace.resolve("/lib/pkg/parent-pack").is_ok());
+        assert!(
+            child
+                .host_mounts
+                .iter()
+                .any(|grant| grant.namespace_path == "/lib/pkg/parent-pack")
+        );
+        let resolved = crate::ResolvedAgentDefinition::from_launch_context(
+            &child,
+            &[],
+            crate::ConfigSourceKind::Default,
+        )
+        .unwrap();
+        assert_eq!(resolved.capability_view.packages.len(), 1);
+        assert_eq!(
+            resolved.capability_view.packages[0].id,
+            "installed:parent-pack:inherited"
         );
     }
 
