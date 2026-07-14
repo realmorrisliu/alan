@@ -280,9 +280,6 @@ async fn snapshot_namespace_tree(
                     "source File-Server returned an invalid directory entry".to_string(),
                 ));
             }
-            if child == ".git" {
-                continue;
-            }
             let child_absolute = format!("{absolute}/{child}");
             let child_relative = if relative.is_empty() {
                 child.clone()
@@ -292,6 +289,9 @@ async fn snapshot_namespace_tree(
             let remaining_nodes = MAX_SOURCE_NODES - discovered_nodes;
             match list_source_directory(shell, &child_absolute, remaining_nodes).await {
                 Ok(grandchildren) => {
+                    if child == ".git" {
+                        continue;
+                    }
                     discovered_nodes += grandchildren.len();
                     pending.push((child_absolute, child_relative, grandchildren));
                 }
@@ -316,6 +316,9 @@ async fn snapshot_namespace_tree(
                         return Err(QError::Operation(
                             "package source contains a non-file leaf".to_string(),
                         ));
+                    }
+                    if child == ".git" {
+                        continue;
                     }
                     if stat.length > MAX_SOURCE_FILE_BYTES {
                         return Err(QError::Operation(
@@ -900,6 +903,44 @@ mod tests {
             )
             .await
             .unwrap();
+        assert_eq!(result.exit_code, 1);
+        let output = String::from_utf8(result.output).unwrap();
+        assert!(
+            output.contains("NoAccess") || output.contains("NotFound"),
+            "{output}"
+        );
+        assert!(service.catalog().packages.is_empty());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn q_rejects_a_git_symlink_before_excluding_vcs_metadata() {
+        use std::os::unix::fs::symlink;
+
+        let source = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(source.path().join("safe")).unwrap();
+        std::fs::write(
+            source.path().join("safe/SKILL.md"),
+            "---\nname: Safe\ndescription: Safe Skill.\n---\n",
+        )
+        .unwrap();
+        symlink("safe", source.path().join(".git")).unwrap();
+        let service = crate::PackageService::ephemeral("test").unwrap();
+        let shell = q_shell(&service, Some(source.path()), Access::ReadWrite);
+
+        let result = shell
+            .run(
+                QUARTERMASTER_EXECUTABLE,
+                &[
+                    "install".to_string(),
+                    "--name".to_string(),
+                    "git-symlink-pack".to_string(),
+                    "/mnt/fixture".to_string(),
+                ],
+            )
+            .await
+            .unwrap();
+
         assert_eq!(result.exit_code, 1);
         let output = String::from_utf8(result.output).unwrap();
         assert!(
