@@ -462,6 +462,7 @@ impl FileServer for ServiceManagerFs {
             name: String::new(),
             qid: qid(&node),
             length,
+            executable: false,
             writable: node == Node::Ctl,
         })
     }

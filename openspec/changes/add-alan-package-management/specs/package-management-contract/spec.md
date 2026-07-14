@@ -104,8 +104,9 @@ size, and excessive total bytes before publication.
 Snapshot entries SHALL represent regular files only. A source File-Server
 adapter SHALL reject walking or reading a symbolic link without following its
 target, and `q` SHALL abort the import on that rejection rather than serialize
-dereferenced target bytes. VCS control metadata SHALL not enter an installed
-revision.
+dereferenced target bytes. Snapshot import SHALL preserve executable metadata
+reported by the source File-Server. VCS control metadata SHALL not enter an
+installed revision.
 
 #### Scenario: Source symlink escapes its tree
 

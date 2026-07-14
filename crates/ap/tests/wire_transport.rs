@@ -114,6 +114,7 @@ fn every_request_and_response_result_survives_byte_framing() {
         name: "file".into(),
         qid: qid(FileKind::File, 1),
         length: 7,
+        executable: false,
         writable: true,
     };
     let responses = [
@@ -188,6 +189,7 @@ impl FileServer for OneFile {
                 name: "file".into(),
                 qid: qid(FileKind::File, 1),
                 length: b"hello over aP".len() as u64,
+                executable: false,
                 writable: false,
             })
         } else {
@@ -307,6 +309,7 @@ impl FileServer for StreamFile {
                 name: "stream".into(),
                 qid: qid(FileKind::Stream, 1),
                 length: self.stream.len().await,
+                executable: false,
                 writable: false,
             })
         } else {
@@ -698,6 +701,7 @@ impl FileServer for LargeReadFile {
             name: "large".into(),
             qid: qid(FileKind::File, 1),
             length: MAX_WIRE_FRAME_BYTES as u64,
+            executable: false,
             writable: false,
         })
     }

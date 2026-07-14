@@ -323,6 +323,7 @@ impl FileServer for LocalEntryService {
             name: String::new(),
             qid: qid(&node),
             length,
+            executable: false,
             writable: matches!(node, Node::Ctl(_)),
         })
     }

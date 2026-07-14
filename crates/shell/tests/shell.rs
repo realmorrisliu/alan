@@ -149,6 +149,7 @@ impl FileServer for EchoFs {
             name: String::new(),
             qid: qid(node.kind()),
             length,
+            executable: false,
             writable: true,
         })
     }
@@ -250,6 +251,7 @@ impl FileServer for CloseTrackingStreamFs {
             } else {
                 b"stream".len() as u64
             },
+            executable: false,
             writable: false,
         })
     }
@@ -547,6 +549,7 @@ impl FileServer for ChunkFs {
             name: String::new(),
             qid: qid(FileKind::File),
             length: self.state.lock().await.buf.len() as u64,
+            executable: false,
             writable: true,
         })
     }
@@ -589,6 +592,7 @@ impl FileServer for LiarFs {
             name: String::new(),
             qid: qid(FileKind::File),
             length: 0,
+            executable: false,
             writable: true,
         })
     }
@@ -629,6 +633,7 @@ impl FileServer for RejectWriteFs {
             name: String::new(),
             qid: qid(FileKind::File),
             length: 0,
+            executable: false,
             writable: true,
         })
     }

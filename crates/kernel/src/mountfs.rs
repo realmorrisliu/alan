@@ -522,6 +522,7 @@ impl FileServer for MountFs {
                     name: String::new(),
                     qid: synthetic_qid(&path, self.ns.generation()),
                     length,
+                    executable: false,
                     writable: false,
                 })
             }

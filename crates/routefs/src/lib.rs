@@ -480,6 +480,7 @@ impl FileServer for RouteFs {
             name: String::new(),
             qid: state.qid(&node),
             length,
+            executable: false,
             writable: is_writable(&node),
         })
     }

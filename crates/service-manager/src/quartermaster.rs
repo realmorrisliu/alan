@@ -355,7 +355,7 @@ async fn snapshot_namespace_tree(
                     entries.push(PackageSnapshotEntry {
                         path: child_relative,
                         bytes,
-                        executable: false,
+                        executable: stat.executable,
                     });
                 }
                 Err(code) => {
@@ -687,6 +687,16 @@ mod tests {
         )
         .unwrap();
         std::fs::write(source.path().join("shared/data.txt"), "shared").unwrap();
+        std::fs::write(source.path().join("shared/tool.sh"), "#!/bin/sh\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(
+                source.path().join("shared/tool.sh"),
+                std::fs::Permissions::from_mode(0o755),
+            )
+            .unwrap();
+        }
         std::fs::write(
             source.path().join("skills/web.md"),
             "Use WebSearch and preserve this body.",
@@ -733,6 +743,14 @@ mod tests {
         assert_eq!(
             package_shell.cat("/source/shared/data.txt").await.unwrap(),
             b"shared"
+        );
+        #[cfg(unix)]
+        assert!(
+            package_shell
+                .stat("/source/shared/tool.sh")
+                .await
+                .unwrap()
+                .executable
         );
 
         let listed = shell

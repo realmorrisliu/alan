@@ -287,6 +287,7 @@ impl FileServer for SrvFs {
             name: String::new(),
             qid: self.qid_of(&node).await,
             length,
+            executable: false,
             writable: false,
         })
     }

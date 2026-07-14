@@ -1329,6 +1329,7 @@ impl FileServer for RacingWalkFs {
                 name: "file".to_string(),
                 qid: Self::qid(),
                 length: 0,
+                executable: false,
                 writable: true,
             })
         } else {
@@ -1446,6 +1447,7 @@ impl FileServer for DelayedFailWalkFs {
                 name: "file".to_string(),
                 qid: Self::qid(),
                 length: 0,
+                executable: false,
                 writable: false,
             })
         } else {
@@ -1583,6 +1585,7 @@ impl FileServer for RacingCreateFs {
                     FileKind::File
                 }),
                 length: 0,
+                executable: false,
                 writable: true,
             })
         } else {

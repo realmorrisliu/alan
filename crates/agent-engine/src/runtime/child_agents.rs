@@ -1537,11 +1537,21 @@ struct ChildNamespaceAssemblyPlan {
 }
 
 impl ChildNamespaceAssemblyPlan {
+    fn tool_host_mounts(&self) -> impl Iterator<Item = &crate::HostMountGrant> {
+        self.launch_context.host_mounts.iter().filter(|grant| {
+            !self
+                .launch_context
+                .package_references
+                .iter()
+                .any(|reference| reference.namespace_path == grant.namespace_path)
+        })
+    }
+
     fn runtime_execution_binding(
         &self,
         scratch: Option<PathBuf>,
     ) -> Result<Option<crate::tools::ToolExecutionBinding>> {
-        if self.launch_context.host_mounts.is_empty() {
+        if self.tool_host_mounts().next().is_none() {
             return Ok(None);
         }
         let scratch = scratch.context(
@@ -1554,11 +1564,13 @@ impl ChildNamespaceAssemblyPlan {
         &self,
         scratch: PathBuf,
     ) -> Result<Option<crate::tools::ToolExecutionBinding>> {
-        if self.launch_context.host_mounts.is_empty() {
+        if self.tool_host_mounts().next().is_none() {
             return Ok(None);
         }
+        let mut launch_context = self.launch_context.clone();
+        launch_context.host_mounts = self.tool_host_mounts().cloned().collect();
         Ok(Some(
-            crate::tools::ToolExecutionBinding::from_launch_context(&self.launch_context, scratch)?,
+            crate::tools::ToolExecutionBinding::from_launch_context(&launch_context, scratch)?,
         ))
     }
     fn bin_tool_names(&self) -> impl Iterator<Item = &str> {
@@ -2725,6 +2737,25 @@ mod tests {
                 .iter()
                 .any(|root| root == &dunce::canonicalize(scratch.path()).unwrap())
         );
+    }
+
+    #[test]
+    fn package_projection_does_not_create_host_tool_authority() {
+        let package = TempDir::new().unwrap();
+        let mut plan = capability_plan(Some(package.path().to_path_buf()), &["read_file"]);
+        plan.launch_context.host_mounts[0].namespace_path = "/lib/pkg/example".to_string();
+        plan.launch_context.package_references.push(
+            crate::ProcessPackageReference::new(
+                "example",
+                "a".repeat(64),
+                crate::ProcessPackageKind::Installed,
+                "/lib/pkg/example",
+                Vec::new(),
+            )
+            .unwrap(),
+        );
+
+        assert!(plan.runtime_execution_binding(None).unwrap().is_none());
     }
 
     #[tokio::test]

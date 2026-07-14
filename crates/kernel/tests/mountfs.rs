@@ -189,6 +189,7 @@ impl FileServer for CreateFs {
                 path: 0,
             },
             length,
+            executable: false,
             writable,
         })
     }
@@ -310,6 +311,7 @@ impl FileServer for StaticFileFs {
                 path: 0,
             },
             length: self.content.len() as u64,
+            executable: false,
             writable: false,
         })
     }
@@ -684,6 +686,7 @@ impl FileServer for StreamFs {
                 path: 0,
             },
             length: self.stream.len().await,
+            executable: false,
             writable: false,
         })
     }
@@ -838,6 +841,7 @@ impl FileServer for DirFs {
                 path: 0,
             },
             length: 0,
+            executable: false,
             writable: false,
         })
     }
@@ -909,6 +913,7 @@ impl FileServer for FailReadDirFs {
                 path: 0,
             },
             length: 0,
+            executable: false,
             writable: false,
         })
     }

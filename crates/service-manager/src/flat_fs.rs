@@ -179,6 +179,7 @@ impl FileServer for FlatServiceFs {
             name: String::new(),
             qid: qid(&node),
             length,
+            executable: false,
             writable: matches!(&node, Node::File(name) if self.writable(name)),
         })
     }

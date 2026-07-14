@@ -75,6 +75,9 @@ pub struct Stat {
     pub qid: Qid,
     /// Byte length for files; for streams, the highest offset currently retained.
     pub length: u64,
+    /// Whether a regular file is executable.
+    #[serde(default)]
+    pub executable: bool,
     /// Whether this fid's mount grants write authority.
     pub writable: bool,
 }

@@ -320,6 +320,7 @@ impl FileServer for MemFs {
             name: String::new(),
             qid: state.qid(&node),
             length,
+            executable: false,
             writable: matches!(node, Node::File(_)),
         })
     }

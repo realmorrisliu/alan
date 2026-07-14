@@ -322,6 +322,7 @@ impl FileServer for HostDirFs {
                 name: String::new(),
                 qid,
                 length,
+                executable: false,
                 writable: false,
             });
         }
@@ -341,6 +342,7 @@ impl FileServer for HostDirFs {
             name: rel.last().cloned().unwrap_or_default(),
             qid,
             length,
+            executable: kind == HostEntryKind::File && stat.st_mode as libc::mode_t & 0o111 != 0,
             writable: self.access.writable() && qid.kind == FileKind::File,
         })
     }
