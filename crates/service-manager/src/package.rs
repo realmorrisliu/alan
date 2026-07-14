@@ -534,7 +534,7 @@ impl PackageService {
             created_at: existing.as_ref().map_or(now, |record| record.created_at),
             updated_at: now,
         })?;
-        self.gc_package_revisions(package_id)?;
+        self.gc_package_revisions_after_commit(package_id, "seed preinstalled package");
         Ok(())
     }
 
@@ -696,7 +696,7 @@ impl PackageService {
             updated_at: now,
         };
         self.publish_record(record.clone())?;
-        self.gc_package_revisions(&package_id)?;
+        self.gc_package_revisions_after_commit(&package_id, "install package");
         Ok(PackageCommandResult {
             request_id,
             success: true,
@@ -750,7 +750,7 @@ impl PackageService {
             ..existing
         };
         self.publish_record(record.clone())?;
-        self.gc_package_revisions(&package_id)?;
+        self.gc_package_revisions_after_commit(&package_id, "upgrade package");
         Ok(PackageCommandResult {
             request_id,
             success: true,
@@ -852,6 +852,17 @@ impl PackageService {
         let leases = state.leases.clone();
         drop(state);
         gc_one_package_revisions(&self.store_root, package_id, &catalog, &leases)
+    }
+
+    fn gc_package_revisions_after_commit(&self, package_id: &str, action: &str) {
+        if let Err(error) = self.gc_package_revisions(package_id) {
+            tracing::warn!(
+                package_id,
+                action,
+                error = %error,
+                "Package revision cleanup failed after catalog commit; leaving stale revisions for later recovery"
+            );
+        }
     }
 
     fn materialize(
@@ -1185,7 +1196,9 @@ fn parse_skill_dependencies(skill_id: &str, document: &[u8]) -> Result<Vec<Skill
         metadata.id == skill_id,
         "native Skill runtime identity is not deterministic"
     );
-    Ok(metadata.compatibility.dependencies)
+    Ok(alan_agent_engine::skills::skill_declared_dependencies(
+        &metadata,
+    ))
 }
 
 fn detect_availability_dependencies(document: &[u8]) -> Vec<SkillTypedDependency> {
@@ -1944,6 +1957,36 @@ mod tests {
     }
 
     #[test]
+    fn native_required_tools_are_recorded_as_package_dependencies() {
+        let service = PackageService::ephemeral("test").unwrap();
+        let result = service
+            .execute(PackageCommand::Install {
+                request_id: "required-tools-install".to_string(),
+                package_id: "required-tools-pack".to_string(),
+                snapshot: PackageSnapshot {
+                    source_name: "required-tools-distribution".to_string(),
+                    entries: vec![PackageSnapshotEntry {
+                        path: "research/SKILL.md".to_string(),
+                        bytes: b"---\nname: research\ndescription: Test Skill.\ncapabilities:\n  required_tools:\n    - rg\ncompatibility:\n  dependencies:\n    - type: env_var\n      name: RESEARCH_TOKEN\n    - type: tool\n      name: rg\n---\n"
+                            .to_vec(),
+                        executable: false,
+                    }],
+                },
+            })
+            .unwrap();
+
+        assert!(result.success, "{}", result.message);
+        assert_eq!(
+            result.package.unwrap().exports[0]
+                .dependencies
+                .iter()
+                .map(SkillTypedDependency::identity_key)
+                .collect::<Vec<_>>(),
+            vec!["env_var:RESEARCH_TOKEN", "tool:rg"]
+        );
+    }
+
+    #[test]
     fn install_rejects_a_stale_file_at_the_revision_path() {
         let service = PackageService::ephemeral("test").unwrap();
         let snapshot = native_snapshot("stale-file", "body");
@@ -2235,6 +2278,46 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn upgrade_reports_success_when_post_commit_revision_cleanup_fails() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let service = PackageService::ephemeral("test").unwrap();
+        let installed = service
+            .execute(PackageCommand::Install {
+                request_id: "cleanup-install".to_string(),
+                package_id: "cleanup-pack".to_string(),
+                snapshot: native_snapshot("research", "current"),
+            })
+            .unwrap();
+        assert!(installed.success);
+        let locked_revision = service
+            .store_root
+            .join("revisions/cleanup-pack")
+            .join("stale-locked-revision");
+        fs::create_dir(&locked_revision).unwrap();
+        fs::write(locked_revision.join("retained"), b"stale").unwrap();
+        fs::set_permissions(&locked_revision, fs::Permissions::from_mode(0o000)).unwrap();
+
+        let upgraded = service
+            .execute(PackageCommand::Upgrade {
+                request_id: "cleanup-upgrade".to_string(),
+                package_id: "cleanup-pack".to_string(),
+                snapshot: native_snapshot("research", "upgraded"),
+            })
+            .unwrap();
+
+        assert!(upgraded.success, "{}", upgraded.message);
+        let upgraded_revision = upgraded.package.unwrap().revision;
+        assert_eq!(
+            service.resolve("cleanup-pack").unwrap().revision,
+            upgraded_revision
+        );
+        fs::set_permissions(&locked_revision, fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(locked_revision.exists());
     }
 
     #[test]

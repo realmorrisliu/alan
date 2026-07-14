@@ -1841,7 +1841,9 @@ fn validate_non_empty_dependency_name(kind: &str, name: &str) -> Result<(), Skil
     Ok(())
 }
 
-fn collect_skill_dependencies(metadata: &SkillMetadata) -> Vec<SkillTypedDependency> {
+/// Collect every dependency declared by portable Skill metadata, including
+/// legacy `capabilities.required_tools`, with duplicate identities removed.
+pub fn skill_declared_dependencies(metadata: &SkillMetadata) -> Vec<SkillTypedDependency> {
     let mut dependencies = Vec::new();
     let mut seen = BTreeSet::new();
 
@@ -1873,7 +1875,7 @@ pub fn skill_availability_issues(
 ) -> Vec<SkillAvailabilityIssue> {
     let mut issues = Vec::new();
 
-    let missing_dependencies: Vec<SkillDependencyIssue> = collect_skill_dependencies(metadata)
+    let missing_dependencies: Vec<SkillDependencyIssue> = skill_declared_dependencies(metadata)
         .into_iter()
         .filter_map(|dependency| match dependency {
             SkillTypedDependency::EnvVar { name, description }
