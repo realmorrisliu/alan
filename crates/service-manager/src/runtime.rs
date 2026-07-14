@@ -55,6 +55,12 @@ impl SwitchableFileServer {
     async fn deactivate(&self) {
         *self.inner.write().await = None;
     }
+
+    async fn while_bound<T>(&self, action: impl FnOnce() -> Result<T>) -> Result<T> {
+        let inner = self.inner.read().await;
+        ensure!(inner.is_some(), "Package Service is unavailable");
+        action()
+    }
 }
 
 #[async_trait]
@@ -236,6 +242,7 @@ pub struct ServiceManager {
     host_mount: Arc<HostMountService>,
     connection: Arc<ConnectionService>,
     package: Arc<PackageService>,
+    package_handle: Arc<SwitchableFileServer>,
     supervisor_shutdown: tokio::sync::oneshot::Sender<()>,
     supervisor_task: tokio::task::JoinHandle<Result<()>>,
 }
@@ -376,6 +383,7 @@ impl ServiceManager {
         let host_mount = assembled.host_mount.clone();
         let connection = assembled.connection.clone();
         let package = assembled.package.clone();
+        let package_handle = assembled.package_handle.clone();
         let root = assembled.root.clone();
         let mut runtime = SupervisorRuntime {
             manifest: assembled.manifest,
@@ -461,6 +469,7 @@ impl ServiceManager {
             host_mount,
             connection,
             package,
+            package_handle,
             supervisor_shutdown,
             supervisor_task,
         })
@@ -486,12 +495,14 @@ impl ServiceManager {
     }
 
     /// Resolve and retain one installed package revision in a future Process launch context.
-    pub fn reference_package(
+    pub async fn reference_package(
         &self,
         launch_context: &mut ProcessLaunchContext,
         package_id: &str,
     ) -> Result<()> {
-        project_package_reference(&self.package, launch_context, package_id)
+        self.package_handle
+            .while_bound(|| project_package_reference(&self.package, launch_context, package_id))
+            .await
     }
 
     pub fn manager_pid(&self) -> Pid {
@@ -2193,6 +2204,15 @@ published_handles = ["test-service"]
         ))
         .await
         .unwrap();
+        let mut retained_context = ProcessLaunchContext::root();
+        manager
+            .reference_package(&mut retained_context, "alan-memory")
+            .await
+            .unwrap();
+        let retained_package = alan_shell::Shell::new(InProcessTransport::new(Arc::new(
+            alan_kernel::MountFs::new(retained_context.namespace.clone()),
+        )));
+        assert!(retained_package.ls("/lib/pkg/alan-memory").await.is_ok());
         let (_, _, namespace) = manager.local_entry().create_and_handoff().await.unwrap();
         let shell = alan_shell::Shell::new(InProcessTransport::new(namespace));
         assert_eq!(
@@ -2228,6 +2248,14 @@ published_handles = ["test-service"]
         })
         .await
         .expect("Package Service handle was not invalidated");
+        let mut unavailable_context = ProcessLaunchContext::root();
+        let error = manager
+            .reference_package(&mut unavailable_context, "alan-memory")
+            .await
+            .unwrap_err();
+        assert_eq!(error.to_string(), "Package Service is unavailable");
+        assert!(unavailable_context.package_references.is_empty());
+        assert!(retained_package.ls("/lib/pkg/alan-memory").await.is_ok());
         let unavailable = shell
             .run(QUARTERMASTER_EXECUTABLE, &["list".to_string()])
             .await
@@ -2259,6 +2287,11 @@ published_handles = ["test-service"]
                 .any(|handle| handle == "package")
         );
         assert!(shell.ls("/mnt/package").await.is_ok());
+        manager
+            .reference_package(&mut unavailable_context, "alan-memory")
+            .await
+            .unwrap();
+        assert_eq!(unavailable_context.package_references.len(), 1);
         let list = shell
             .run(QUARTERMASTER_EXECUTABLE, &["list".to_string()])
             .await
