@@ -161,6 +161,7 @@ impl ResolvedAgentDefinition {
             None => base_skill_overrides.to_vec(),
         };
         for name in file_tree.child_dirs("skills") {
+            let skill_id = crate::skills::name_to_id(&name);
             let prefix = format!("skills/{name}");
             let tree = file_tree.subtree(&prefix)?;
             if !tree.contains_file("SKILL.md") {
@@ -168,8 +169,8 @@ impl ResolvedAgentDefinition {
             }
             let namespace_root = Path::new(&descriptor.path).join(&prefix);
             package_capabilities.push(capability_package_from_descriptor(
-                format!("skill:{name}"),
-                &name,
+                format!("skill:{skill_id}"),
+                &skill_id,
                 namespace_root.clone(),
                 SkillScope::Descriptor,
                 Vec::new(),
@@ -541,6 +542,69 @@ mod tests {
                 .is_some_and(|tree| tree.contains_file("agent.toml"))
         );
         assert!(context.host_mounts.is_empty());
+    }
+
+    #[test]
+    fn file_tree_and_host_definitions_canonicalize_local_skill_ids_identically() {
+        let host = tempfile::tempdir().unwrap();
+        let definition = host.path().join("definition");
+        std::fs::create_dir_all(definition.join("skills/Repo Review")).unwrap();
+        std::fs::write(
+            definition.join("skills/Repo Review/SKILL.md"),
+            "---\nname: Repo Review\ndescription: Review changes.\n---\n",
+        )
+        .unwrap();
+        let host_context = ProcessLaunchContext::root()
+            .with_host_mount(
+                HostMountGrant::new("/mnt/import", host.path(), Access::ReadOnly).unwrap(),
+            )
+            .with_descriptor(
+                AGENT_DEFINITION_DESCRIPTOR,
+                ProcessDescriptor::new("/mnt/import/definition").unwrap(),
+            );
+        let tree = crate::ProcessFileTree::new(std::collections::BTreeMap::from([(
+            "skills/Repo Review/SKILL.md".to_string(),
+            b"---\nname: Repo Review\ndescription: Review changes.\n---\n".to_vec(),
+        )]))
+        .unwrap();
+        let tree_context = ProcessLaunchContext::root().with_descriptor(
+            AGENT_DEFINITION_DESCRIPTOR,
+            ProcessDescriptor::with_file_tree("/lib/pkg/review/agents/root", tree).unwrap(),
+        );
+
+        let host_resolved = ResolvedAgentDefinition::from_launch_context(
+            &host_context,
+            &[],
+            ConfigSourceKind::Default,
+        )
+        .unwrap();
+        let tree_resolved = ResolvedAgentDefinition::from_launch_context(
+            &tree_context,
+            &[],
+            ConfigSourceKind::Default,
+        )
+        .unwrap();
+
+        assert_eq!(
+            tree_resolved.capability_view.packages[0].id,
+            host_resolved.capability_view.packages[0].id
+        );
+        assert_eq!(
+            tree_resolved.capability_view.packages[0].id,
+            "skill:repo-review"
+        );
+        let host_registry = crate::skills::SkillsRegistry::load_capability_view(
+            &host_resolved.capability_view,
+            &host_resolved.skill_overrides,
+        )
+        .unwrap();
+        let tree_registry = crate::skills::SkillsRegistry::load_capability_view(
+            &tree_resolved.capability_view,
+            &tree_resolved.skill_overrides,
+        )
+        .unwrap();
+        assert!(host_registry.has(&"repo-review".to_string()));
+        assert!(tree_registry.has(&"repo-review".to_string()));
     }
 
     #[test]
