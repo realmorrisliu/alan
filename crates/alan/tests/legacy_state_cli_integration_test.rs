@@ -110,148 +110,6 @@ fn host_cleanup_deletes_generated_state_and_reports_authored_roots() {
 }
 
 #[test]
-fn host_import_installs_verified_skill_before_deleting_source() {
-    let temp = TempDir::new().unwrap();
-    let home = temp.path().join("home");
-    let xdg_data = temp.path().join("data");
-    let source = temp.path().join("review-skill");
-    std::fs::create_dir_all(&source).unwrap();
-    std::fs::write(
-        source.join("SKILL.md"),
-        "---\nname: reviewer\ndescription: Review code\n---\n",
-    )
-    .unwrap();
-
-    let output = alan_command(&home, &xdg_data)
-        .arg("host")
-        .arg("legacy-state")
-        .arg("import")
-        .arg("skill")
-        .arg(&source)
-        .args(["--name", "reviewer", "--delete-source"])
-        .output()
-        .unwrap();
-
-    assert!(output.status.success(), "{output:?}");
-    let data = detected_data_dir(&home, &xdg_data);
-    let system = alan_os_host::SystemStorePaths::from_data_dir(
-        &data,
-        InstallChannel::Stable.descriptor().id,
-    )
-    .unwrap();
-    let catalog: alan_service_manager::PackageCatalog = serde_json::from_slice(
-        &std::fs::read(system.packages().unwrap().join("catalog.json")).unwrap(),
-    )
-    .unwrap();
-    assert!(catalog.packages.contains_key("reviewer"));
-    assert!(!source.exists());
-    assert!(String::from_utf8_lossy(&output.stdout).contains("source deleted after verification"));
-}
-
-#[cfg(unix)]
-#[test]
-fn host_import_never_follows_a_symlinked_source_for_deletion() {
-    use std::os::unix::fs::symlink;
-
-    let temp = TempDir::new().unwrap();
-    let home = temp.path().join("home");
-    let xdg_data = temp.path().join("data");
-    let source = temp.path().join("real-skill");
-    let source_link = temp.path().join("skill-link");
-    std::fs::create_dir_all(&home).unwrap();
-    std::fs::create_dir_all(&source).unwrap();
-    std::fs::write(source.join("SKILL.md"), "real authored content").unwrap();
-    symlink(&source, &source_link).unwrap();
-
-    let output = alan_command(&home, &xdg_data)
-        .arg("host")
-        .arg("legacy-state")
-        .arg("import")
-        .arg("skill")
-        .arg(&source_link)
-        .args(["--name", "linked-skill", "--delete-source"])
-        .output()
-        .unwrap();
-
-    assert!(!output.status.success(), "{output:?}");
-    assert!(
-        String::from_utf8_lossy(&output.stderr).contains("must be a real directory"),
-        "{output:?}"
-    );
-    assert!(source.join("SKILL.md").is_file());
-    assert!(
-        std::fs::symlink_metadata(&source_link)
-            .unwrap()
-            .file_type()
-            .is_symlink()
-    );
-    let data = detected_data_dir(&home, &xdg_data);
-    let system = alan_os_host::SystemStorePaths::from_data_dir(
-        &data,
-        InstallChannel::Stable.descriptor().id,
-    )
-    .unwrap();
-    let catalog_path = system.packages().unwrap().join("catalog.json");
-    if catalog_path.exists() {
-        let catalog: alan_service_manager::PackageCatalog =
-            serde_json::from_slice(&std::fs::read(catalog_path).unwrap()).unwrap();
-        assert!(!catalog.packages.contains_key("linked-skill"));
-    }
-}
-
-#[cfg(unix)]
-#[test]
-fn host_import_never_follows_a_symlinked_source_ancestor_for_deletion() {
-    use std::os::unix::fs::symlink;
-
-    let temp = TempDir::new().unwrap();
-    let home = temp.path().join("home");
-    let xdg_data = temp.path().join("data");
-    let real_parent = temp.path().join("real-parent");
-    let source = real_parent.join("skill");
-    let linked_parent = temp.path().join("linked-parent");
-    std::fs::create_dir_all(&home).unwrap();
-    std::fs::create_dir_all(&source).unwrap();
-    std::fs::write(source.join("SKILL.md"), "real authored content").unwrap();
-    symlink(&real_parent, &linked_parent).unwrap();
-
-    let output = alan_command(&home, &xdg_data)
-        .arg("host")
-        .arg("legacy-state")
-        .arg("import")
-        .arg("skill")
-        .arg(linked_parent.join("skill"))
-        .args(["--name", "ancestor-linked-skill", "--delete-source"])
-        .output()
-        .unwrap();
-
-    assert!(!output.status.success(), "{output:?}");
-    assert!(
-        String::from_utf8_lossy(&output.stderr).contains("symlinked path component"),
-        "{output:?}"
-    );
-    assert!(source.join("SKILL.md").is_file());
-    assert!(
-        std::fs::symlink_metadata(&linked_parent)
-            .unwrap()
-            .file_type()
-            .is_symlink()
-    );
-    let data = detected_data_dir(&home, &xdg_data);
-    let system = alan_os_host::SystemStorePaths::from_data_dir(
-        &data,
-        InstallChannel::Stable.descriptor().id,
-    )
-    .unwrap();
-    let catalog_path = system.packages().unwrap().join("catalog.json");
-    if catalog_path.exists() {
-        let catalog: alan_service_manager::PackageCatalog =
-            serde_json::from_slice(&std::fs::read(catalog_path).unwrap()).unwrap();
-        assert!(!catalog.packages.contains_key("ancestor-linked-skill"));
-    }
-}
-
-#[test]
 fn removed_commands_and_boot_agent_selector_are_not_parseable() {
     for args in [
         vec!["init", "--help"],
@@ -267,4 +125,26 @@ fn removed_commands_and_boot_agent_selector_are_not_parseable() {
         assert!(stderr.contains("Host Mount"), "{stderr}");
         assert!(stderr.contains("Alan Shell"), "{stderr}");
     }
+}
+
+#[test]
+fn legacy_skill_import_is_not_parseable() {
+    let output = Command::new(env!("CARGO_BIN_EXE_alan"))
+        .args([
+            "host",
+            "legacy-state",
+            "import",
+            "skill",
+            "/tmp/legacy-skill",
+            "--name",
+            "legacy-skill",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success(), "{output:?}");
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("invalid value 'skill'"),
+        "{output:?}"
+    );
 }

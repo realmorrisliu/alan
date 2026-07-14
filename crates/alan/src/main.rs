@@ -126,7 +126,6 @@ enum LegacyStateAction {
 #[derive(Clone, Copy, ValueEnum)]
 enum LegacyImportKind {
     AgentDefinition,
-    Skill,
     MemoryStore,
 }
 
@@ -790,21 +789,9 @@ async fn main() -> Result<()> {
                             LegacyImportKind::AgentDefinition => {
                                 legacy_state::AuthoredImportKind::AgentDefinition
                             }
-                            LegacyImportKind::Skill => legacy_state::AuthoredImportKind::Skill,
                             LegacyImportKind::MemoryStore => {
                                 legacy_state::AuthoredImportKind::MemoryStore
                             }
-                        };
-                        let package_shell = if kind == legacy_state::AuthoredImportKind::Skill {
-                            let attachment =
-                                alan_os_host::LocalAttachment::detect(channel.descriptor().id)?;
-                            attachment
-                                .connect()
-                                .await
-                                .ok()
-                                .map(|attached| alan_shell::Shell::new(attached.root))
-                        } else {
-                            None
                         };
                         let report = legacy_state::import_authored_content(
                             kind,
@@ -812,9 +799,7 @@ async fn main() -> Result<()> {
                             &name,
                             delete_source,
                             &system,
-                            package_shell.as_ref(),
-                        )
-                        .await?;
+                        )?;
                         println!("imported: {}", report.destination.display());
                         if report.source_deleted {
                             println!(
@@ -1312,11 +1297,18 @@ fn print_legacy_cleanup(report: &legacy_state::LegacyCleanupReport, json: bool) 
         println!("removed generated: {}", path.display());
     }
     for root in &report.authored_roots {
-        println!(
-            "preserved authored {:?}: {} (use `alan host legacy-state import` explicitly)",
-            root.kind,
-            root.path.display()
-        );
+        if root.kind == legacy_state::AuthoredRootKind::Skills {
+            println!(
+                "preserved authored Skills: {} (install through `q` in Alan Shell)",
+                root.path.display()
+            );
+        } else {
+            println!(
+                "preserved authored {:?}: {} (use `alan host legacy-state import` explicitly)",
+                root.kind,
+                root.path.display()
+            );
+        }
     }
     if report == &legacy_state::LegacyCleanupReport::default() {
         println!("no recognized legacy state");

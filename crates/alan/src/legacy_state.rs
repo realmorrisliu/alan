@@ -5,14 +5,11 @@
 //! it never discovers repositories or authored trees recursively.
 
 use std::{
-    collections::BTreeMap,
     fs,
     path::{Component, Path, PathBuf},
 };
 
 use alan_agent_engine::InstallChannel;
-use alan_ap::InProcessTransport;
-use alan_shell::Shell;
 use anyhow::{Context, Result, bail, ensure};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -104,7 +101,6 @@ pub struct LegacyCleanupReport {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AuthoredImportKind {
     AgentDefinition,
-    Skill,
     MemoryStore,
 }
 
@@ -228,13 +224,12 @@ fn migrate_legacy_connections(
     )
 }
 
-pub async fn import_authored_content(
+pub fn import_authored_content(
     kind: AuthoredImportKind,
     source: &Path,
     name: &str,
     delete_source: bool,
     system_store: &SystemStorePaths,
-    package_shell: Option<&Shell>,
 ) -> Result<AuthoredImportReport> {
     validate_import_name(name)?;
     validate_absolute_path("authored import source", source)?;
@@ -272,21 +267,8 @@ pub async fn import_authored_content(
         "import source and System Store must not overlap"
     );
 
-    if kind == AuthoredImportKind::Skill {
-        if let Some(package_shell) = package_shell {
-            return import_authored_skill(source, name, delete_source, package_shell).await;
-        }
-        let package_service = alan_service_manager::PackageService::open(
-            &system_store.channel_id,
-            system_store.packages()?,
-        )?;
-        let package_shell = package_service_shell(&package_service);
-        return import_authored_skill(source, name, delete_source, &package_shell).await;
-    }
-
     let destination_parent = match kind {
         AuthoredImportKind::AgentDefinition => system_store.agent_definitions()?,
-        AuthoredImportKind::Skill => unreachable!("Skill imports use Package Service"),
         AuthoredImportKind::MemoryStore => system_store.memory_stores()?,
     };
     fs::create_dir_all(&destination_parent).with_context(|| {
@@ -343,63 +325,6 @@ pub async fn import_authored_content(
     Ok(AuthoredImportReport {
         source: canonical_source,
         destination,
-        source_deleted: delete_source,
-    })
-}
-
-fn package_service_shell(service: &std::sync::Arc<alan_service_manager::PackageService>) -> Shell {
-    let mut namespace = alan_kernel::Namespace::new();
-    namespace.mount(
-        "/mnt/package",
-        InProcessTransport::new(service.file_server()),
-        alan_kernel::Access::ReadWrite,
-    );
-    Shell::new(InProcessTransport::new(std::sync::Arc::new(
-        alan_kernel::MountFs::new(namespace),
-    )))
-}
-
-async fn import_authored_skill(
-    source: &Path,
-    package_id: &str,
-    delete_source: bool,
-    package_shell: &Shell,
-) -> Result<AuthoredImportReport> {
-    let canonical_source = fs::canonicalize(source)
-        .with_context(|| format!("failed to resolve import source {}", source.display()))?;
-    let source_fingerprint = tree_fingerprint(&canonical_source)?;
-    let snapshot = alan_service_manager::PackageSnapshot::from_directory(&canonical_source)?;
-    let request_id = format!("legacy-import-{}", uuid::Uuid::new_v4().simple());
-    let command = alan_service_manager::PackageCommand::Install {
-        request_id: request_id.clone(),
-        package_id: package_id.to_string(),
-        snapshot,
-    };
-    package_shell
-        .write("/mnt/package/ctl", &serde_json::to_vec(&command)?)
-        .await
-        .map_err(|code| anyhow::anyhow!("submit Package Service import: {code:?}"))?;
-    let results: BTreeMap<String, alan_service_manager::PackageCommandResult> =
-        serde_json::from_slice(
-            &package_shell
-                .cat("/mnt/package/result")
-                .await
-                .map_err(|code| anyhow::anyhow!("read Package Service import: {code:?}"))?,
-        )?;
-    let result = results
-        .get(&request_id)
-        .context("Package Service returned no matching import result")?;
-    ensure!(
-        result.success,
-        "Package Service import failed: {}",
-        result.message
-    );
-    if delete_source {
-        remove_import_source_if_unchanged(&canonical_source, &source_fingerprint)?;
-    }
-    Ok(AuthoredImportReport {
-        source: canonical_source,
-        destination: PathBuf::from(format!("/lib/pkg/{package_id}")),
         source_deleted: delete_source,
     })
 }
@@ -638,10 +563,6 @@ fn validate_import_shape(kind: AuthoredImportKind, source: &Path) -> Result<()> 
                 .iter()
                 .any(|entry| source.join(entry).exists()),
             "Agent Definition import must contain agent.toml, persona, skills, or policy.yaml"
-        ),
-        AuthoredImportKind::Skill => ensure!(
-            source.join("SKILL.md").is_file(),
-            "Skill import must contain SKILL.md"
         ),
         AuthoredImportKind::MemoryStore => {}
     }
@@ -1045,74 +966,6 @@ mod tests {
         assert!(outside.join("runtime/stable/rollouts/keep").is_file());
     }
 
-    #[tokio::test]
-    async fn explicit_skill_import_is_verified_and_loadable_as_installed() {
-        let temp = TempDir::new().unwrap();
-        let source = temp.path().join("host-skill");
-        fs::create_dir_all(&source).unwrap();
-        fs::write(
-            source.join("SKILL.md"),
-            "---\nname: imported-skill\ndescription: Explicitly imported\n---\nBody\n",
-        )
-        .unwrap();
-        let (system, _) = stores(temp.path(), InstallChannel::Stable);
-        let service = alan_service_manager::PackageService::open(
-            &system.channel_id,
-            system.packages().unwrap(),
-        )
-        .unwrap();
-        let package_shell = package_service_shell(&service);
-
-        let report = import_authored_content(
-            AuthoredImportKind::Skill,
-            &source,
-            "imported-skill",
-            true,
-            &system,
-            Some(&package_shell),
-        )
-        .await
-        .unwrap();
-        let lease = service.acquire("imported-skill").unwrap();
-        let export = &lease.record().exports[0];
-
-        assert!(report.source_deleted);
-        assert!(!source.exists());
-        assert_eq!(report.destination, PathBuf::from("/lib/pkg/imported-skill"));
-        assert_eq!(export.skill_id, "host-skill");
-        assert!(lease.file_server().is_ok());
-    }
-
-    #[tokio::test]
-    async fn skill_import_cannot_delete_managed_package_content() {
-        let temp = TempDir::new().unwrap();
-        let (system, _) = stores(temp.path(), InstallChannel::Stable);
-        let source = system
-            .packages()
-            .unwrap()
-            .join("revisions/existing/content/skills/managed");
-        fs::create_dir_all(&source).unwrap();
-        fs::write(
-            source.join("SKILL.md"),
-            "---\nname: managed\ndescription: Managed package Skill.\n---\n",
-        )
-        .unwrap();
-
-        let error = import_authored_content(
-            AuthoredImportKind::Skill,
-            &source,
-            "managed-copy",
-            true,
-            &system,
-            None,
-        )
-        .await
-        .unwrap_err();
-
-        assert!(error.to_string().contains("must not overlap"));
-        assert!(source.join("SKILL.md").is_file());
-    }
-
     #[test]
     fn changed_import_source_is_never_deleted() {
         let temp = TempDir::new().unwrap();
@@ -1136,8 +989,8 @@ mod tests {
     }
 
     #[cfg(unix)]
-    #[tokio::test]
-    async fn explicit_import_rejects_symlinks_without_installing() {
+    #[test]
+    fn explicit_import_rejects_symlinks_without_installing() {
         use std::os::unix::fs::symlink;
 
         let temp = TempDir::new().unwrap();
@@ -1153,9 +1006,7 @@ mod tests {
             "default",
             false,
             &system,
-            None,
         )
-        .await
         .unwrap_err();
 
         assert!(error.to_string().contains("contains a symlink"));
