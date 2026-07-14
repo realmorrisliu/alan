@@ -245,12 +245,10 @@ fn resolve_package_references(
             "duplicate package reference `{}`",
             reference.package_id
         );
+        let exact_mounts = launch_context.namespace.union_at(&reference.namespace_path);
         ensure!(
-            launch_context
-                .namespace
-                .resolve(&reference.namespace_path)
-                .is_ok(),
-            "package reference {} is not mounted in the Process namespace",
+            exact_mounts.len() == 1 && exact_mounts[0].access == alan_kernel::Access::ReadOnly,
+            "package reference {} requires one exact read-only Process namespace mount",
             reference.namespace_path
         );
         let scope = match reference.kind {
@@ -805,6 +803,53 @@ mod tests {
                 .path
                 .ends_with("unreferenced/SKILL.md")
         }));
+    }
+
+    #[test]
+    fn package_reference_requires_its_exact_read_only_namespace_mount() {
+        let handle = package_handle();
+        let reference = ProcessPackageReference::new(
+            "review-pack",
+            "e".repeat(64),
+            ProcessPackageKind::Installed,
+            "/lib/pkg/review-pack",
+            vec![
+                ProcessPackageSkillReference::new(
+                    "reviewer",
+                    "skills/reviewer",
+                    Vec::new(),
+                    package_descriptor("reviewer"),
+                )
+                .unwrap(),
+            ],
+            handle.clone(),
+        )
+        .unwrap();
+        let mut context = ProcessLaunchContext::root().with_package_reference(reference);
+
+        let error =
+            ResolvedAgentDefinition::from_launch_context(&context, &[], ConfigSourceKind::Default)
+                .unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("requires one exact read-only Process namespace mount")
+        );
+
+        context.namespace.mount(
+            "/lib/pkg/review-pack",
+            handle,
+            alan_kernel::Access::ReadWrite,
+        );
+        let error =
+            ResolvedAgentDefinition::from_launch_context(&context, &[], ConfigSourceKind::Default)
+                .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("requires one exact read-only Process namespace mount")
+        );
     }
 
     #[test]
