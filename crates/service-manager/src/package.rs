@@ -521,7 +521,7 @@ impl PackageService {
 
     pub(crate) fn execute(&self, command: PackageCommand) -> Result<PackageCommandResult> {
         let _operation = self.operation.lock().expect("package operation poisoned");
-        validate_request_id(command.request_id())?;
+        validate_command(&command)?;
         let request_id = command.request_id().to_string();
         {
             let state = self.state.lock().expect("package state poisoned");
@@ -586,8 +586,6 @@ impl PackageService {
         package_id: String,
         snapshot: PackageSnapshot,
     ) -> Result<PackageCommandResult> {
-        validate_package_id(&package_id)?;
-        validate_snapshot(&snapshot)?;
         let revision = fingerprint(&snapshot)?;
         if let Some(existing) = self
             .state
@@ -649,8 +647,6 @@ impl PackageService {
         package_id: String,
         snapshot: PackageSnapshot,
     ) -> Result<PackageCommandResult> {
-        validate_package_id(&package_id)?;
-        validate_snapshot(&snapshot)?;
         let existing = self
             .state
             .lock()
@@ -700,7 +696,6 @@ impl PackageService {
     }
 
     fn uninstall(&self, request_id: String, package_id: String) -> Result<PackageCommandResult> {
-        validate_package_id(&package_id)?;
         let mut next = self.catalog();
         let existing = next
             .packages
@@ -1011,6 +1006,27 @@ fn validate_request_id(value: &str) -> Result<()> {
         "invalid package request id"
     );
     Ok(())
+}
+
+fn validate_command(command: &PackageCommand) -> Result<()> {
+    validate_request_id(command.request_id())?;
+    match command {
+        PackageCommand::Install {
+            package_id,
+            snapshot,
+            ..
+        }
+        | PackageCommand::Upgrade {
+            package_id,
+            snapshot,
+            ..
+        } => {
+            validate_package_id(package_id)?;
+            validate_snapshot(snapshot)
+        }
+        PackageCommand::Uninstall { package_id, .. } => validate_package_id(package_id),
+        PackageCommand::List { .. } => Ok(()),
+    }
 }
 
 fn validate_snapshot(snapshot: &PackageSnapshot) -> Result<()> {
@@ -2421,27 +2437,26 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn file_surface_records_bounded_domain_failures_by_request_id() {
+    async fn file_surface_rejects_invalid_commands_on_clunk() {
         let service = PackageService::ephemeral("test").unwrap();
         let shell = Shell::new(InProcessTransport::new(service.file_server()));
-        shell
-            .write(
-                "/ctl",
-                &serde_json::to_vec(&PackageCommand::Install {
-                    request_id: "failed-install".to_string(),
-                    package_id: "INVALID".to_string(),
-                    snapshot: native_snapshot("failed", "body"),
-                })
-                .unwrap(),
-            )
-            .await
-            .unwrap();
+        assert_eq!(
+            shell
+                .write(
+                    "/ctl",
+                    &serde_json::to_vec(&PackageCommand::Install {
+                        request_id: "failed-install".to_string(),
+                        package_id: "INVALID".to_string(),
+                        snapshot: native_snapshot("failed", "body"),
+                    })
+                    .unwrap(),
+                )
+                .await,
+            Err(ErrorCode::BadRequest)
+        );
         let results: BTreeMap<String, PackageCommandResult> =
             serde_json::from_slice(&shell.cat("/result").await.unwrap()).unwrap();
-        let result = results.get("failed-install").unwrap();
-        assert!(!result.success);
-        assert_eq!(result.action, "install");
-        assert!(result.message.len() <= 1_025);
+        assert!(!results.contains_key("failed-install"));
     }
 
     #[tokio::test]
