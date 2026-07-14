@@ -166,6 +166,16 @@ impl ServiceManager {
                 .all(|grant| !is_package_namespace_path(&grant.namespace_path)),
             "raw /lib/pkg Host Mount grants are not accepted"
         );
+        ensure!(
+            config
+                .process
+                .launch_context
+                .namespace
+                .describe()
+                .iter()
+                .all(|(path, _)| !is_package_namespace_path(path)),
+            "raw /lib/pkg namespace mounts are not accepted"
+        );
         configure_runtime_tool_execution_binding(&config.process, &mut config.tools)?;
 
         let boot_id = Uuid::new_v4();
@@ -1631,6 +1641,29 @@ mod tests {
         ) -> Result<LlmClient> {
             anyhow::bail!("selected profile is missing a secret")
         }
+    }
+
+    #[tokio::test]
+    async fn boot_rejects_ambient_package_namespace_mounts() {
+        let mut config = ServiceManagerConfig::ephemeral(
+            "test",
+            AgentProcessConfig::default(),
+            LlmClient::new(MockLlmProvider::new()),
+            ToolRegistry::new(),
+        );
+        config.process.launch_context.namespace.mount(
+            "/lib/pkg/ambient",
+            InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::empty())),
+            Access::ReadOnly,
+        );
+
+        let error = ServiceManager::boot(config).await.err().unwrap();
+
+        assert!(
+            error
+                .to_string()
+                .contains("raw /lib/pkg namespace mounts are not accepted")
+        );
     }
 
     #[tokio::test]
