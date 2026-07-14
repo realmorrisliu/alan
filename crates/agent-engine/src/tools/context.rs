@@ -417,6 +417,14 @@ mod tests {
                     alan_kernel::Access::ReadWrite,
                 )
                 .unwrap(),
+            )
+            .with_host_mount(
+                crate::HostMountGrant::new(
+                    "/agent-definition",
+                    package.path().join("skills/example"),
+                    alan_kernel::Access::ReadOnly,
+                )
+                .unwrap(),
             );
         launch_context.add_package_reference(
             crate::ProcessPackageReference::new(
@@ -446,7 +454,10 @@ mod tests {
                 .any(|root| root.starts_with(package.path()))
         );
 
-        launch_context.host_mounts.truncate(1);
+        launch_context.host_mounts.retain(|grant| {
+            grant.namespace_path == "/lib/pkg/example"
+                || grant.namespace_path == "/agent-definition"
+        });
         let error = ToolExecutionBinding::from_launch_context(
             &launch_context,
             PathBuf::from("/tmp/scratch"),

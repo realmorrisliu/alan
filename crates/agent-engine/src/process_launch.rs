@@ -261,11 +261,19 @@ impl ProcessLaunchContext {
     /// Process namespace, but that implementation detail must not grant native Tools direct
     /// access to Package Store paths.
     pub fn tool_host_mounts(&self) -> impl Iterator<Item = &HostMountGrant> {
-        self.host_mounts.iter().filter(|grant| {
-            !self
-                .package_references
-                .iter()
-                .any(|reference| reference.namespace_path == grant.namespace_path)
+        let package_roots = self
+            .host_mounts
+            .iter()
+            .filter(|grant| {
+                self.package_references
+                    .iter()
+                    .any(|reference| reference.namespace_path == grant.namespace_path)
+            })
+            .map(|grant| normalized_host_path(&grant.host_path))
+            .collect::<Vec<_>>();
+        self.host_mounts.iter().filter(move |grant| {
+            let host_path = normalized_host_path(&grant.host_path);
+            !package_roots.iter().any(|root| host_path.starts_with(root))
         })
     }
 
@@ -349,6 +357,27 @@ impl ProcessLaunchContext {
             cwd: self.cwd.clone(),
             retained_authorities: self.retained_authorities.clone(),
         }
+    }
+}
+
+fn normalized_host_path(path: &Path) -> PathBuf {
+    let mut ancestor = path;
+    let mut suffix = Vec::new();
+    loop {
+        if let Ok(mut canonical) = dunce::canonicalize(ancestor) {
+            for component in suffix.iter().rev() {
+                canonical.push(component);
+            }
+            return canonical;
+        }
+        let Some(name) = ancestor.file_name() else {
+            return dunce::simplified(path).to_path_buf();
+        };
+        suffix.push(name.to_os_string());
+        let Some(parent) = ancestor.parent() else {
+            return dunce::simplified(path).to_path_buf();
+        };
+        ancestor = parent;
     }
 }
 
