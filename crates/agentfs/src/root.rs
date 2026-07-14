@@ -898,6 +898,7 @@ impl FileServer for AgentRootFs {
                     name: String::new(),
                     qid: root_qid(&listing),
                     length: listing.join("\n").len() as u64,
+                    executable: false,
                     writable: false,
                 })
             }
@@ -913,6 +914,7 @@ impl FileServer for AgentRootFs {
                     name: "children".to_string(),
                     qid: agent_children_qid(&pid, &listing),
                     length: listing.join("\n").len() as u64,
+                    executable: false,
                     writable: false,
                 })
             }

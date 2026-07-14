@@ -13,6 +13,10 @@ pub(crate) trait FlatFileService: Send + Sync {
     fn files(&self) -> &'static [(&'static str, bool)];
     fn read(&self, name: &str) -> Result<Vec<u8>, ErrorCode>;
     async fn commit(&self, name: &str, bytes: &[u8]) -> Result<(), ErrorCode>;
+
+    fn max_write_bytes(&self) -> usize {
+        MAX_WRITE_BYTES
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -25,6 +29,7 @@ struct FidState {
     node: Node,
     mode: Option<OpenMode>,
     write_buf: Vec<u8>,
+    write_failed: bool,
 }
 
 pub(crate) struct FlatServiceFs {
@@ -106,6 +111,7 @@ impl FileServer for FlatServiceFs {
                 node,
                 mode: None,
                 write_buf: Vec::new(),
+                write_failed: false,
             },
         );
         Ok(qid)
@@ -158,9 +164,25 @@ impl FileServer for FlatServiceFs {
         if state.mode != Some(OpenMode::Write) || !self.writable(name) {
             return Err(ErrorCode::NoAccess);
         }
-        let start = usize::try_from(offset).map_err(|_| ErrorCode::BadRequest)?;
-        let end = start.checked_add(data.len()).ok_or(ErrorCode::BadRequest)?;
-        if end > MAX_WRITE_BYTES {
+        if state.write_failed {
+            return Err(ErrorCode::BadRequest);
+        }
+        let start = match usize::try_from(offset) {
+            Ok(start) => start,
+            Err(_) => {
+                state.write_failed = true;
+                return Err(ErrorCode::BadRequest);
+            }
+        };
+        let end = match start.checked_add(data.len()) {
+            Some(end) => end,
+            None => {
+                state.write_failed = true;
+                return Err(ErrorCode::BadRequest);
+            }
+        };
+        if end > self.service.max_write_bytes() {
+            state.write_failed = true;
             return Err(ErrorCode::BadRequest);
         }
         state.write_buf.resize(state.write_buf.len().max(end), 0);
@@ -175,6 +197,7 @@ impl FileServer for FlatServiceFs {
             name: String::new(),
             qid: qid(&node),
             length,
+            executable: false,
             writable: matches!(&node, Node::File(name) if self.writable(name)),
         })
     }
@@ -205,6 +228,7 @@ impl FileServer for FlatServiceFs {
             .ok_or(ErrorCode::NotFound)?;
         if let Node::File(name) = state.node
             && state.mode == Some(OpenMode::Write)
+            && !state.write_failed
         {
             self.service.commit(&name, &state.write_buf).await?;
         }

@@ -2175,15 +2175,21 @@ impl NamespaceClient {
     }
 
     async fn read_all_opened(&self, fid: Fid) -> Result<Vec<u8>> {
-        let length = self.stat(fid).await?.length;
+        let stat = self.stat(fid).await?;
+        let bounded_length =
+            matches!(stat.qid.kind, FileKind::File | FileKind::Stream).then_some(stat.length);
         let mut offset = 0_u64;
         let mut data = Vec::new();
-        while offset < length {
-            let remaining = length - offset;
-            let count = remaining.min(64 * 1024) as u32;
+        loop {
+            let count = bounded_length
+                .map(|length| length.saturating_sub(offset).min(64 * 1024) as u32)
+                .unwrap_or(64 * 1024);
+            if count == 0 {
+                break;
+            }
             let chunk = self.read_at(fid, offset, count).await?;
             if chunk.is_empty() {
-                bail!("file ended before stat length was reached");
+                break;
             }
             offset += chunk.len() as u64;
             data.extend_from_slice(&chunk);
@@ -2723,6 +2729,8 @@ mod tests {
 
     struct ScriptedReadFs {
         data: Vec<u8>,
+        kind: FileKind,
+        stat_length: Option<u64>,
         clunk_count: AtomicUsize,
     }
 
@@ -2730,6 +2738,17 @@ mod tests {
         fn new(data: impl Into<Vec<u8>>) -> Self {
             Self {
                 data: data.into(),
+                kind: FileKind::Stream,
+                stat_length: None,
+                clunk_count: AtomicUsize::new(0),
+            }
+        }
+
+        fn shrinking_file(data: impl Into<Vec<u8>>, reported_length: u64) -> Self {
+            Self {
+                data: data.into(),
+                kind: FileKind::File,
+                stat_length: Some(reported_length),
                 clunk_count: AtomicUsize::new(0),
             }
         }
@@ -2743,11 +2762,11 @@ mod tests {
             _newfid: Fid,
             _names: &[String],
         ) -> std::result::Result<Qid, ErrorCode> {
-            Ok(BlockingReadFs::qid(FileKind::Stream))
+            Ok(BlockingReadFs::qid(self.kind))
         }
 
         async fn open(&self, _fid: Fid, _mode: OpenMode) -> std::result::Result<Qid, ErrorCode> {
-            Ok(BlockingReadFs::qid(FileKind::Stream))
+            Ok(BlockingReadFs::qid(self.kind))
         }
 
         async fn read(
@@ -2774,7 +2793,15 @@ mod tests {
         }
 
         async fn stat(&self, _fid: Fid) -> std::result::Result<Stat, ErrorCode> {
-            Err(ErrorCode::Unsupported)
+            self.stat_length
+                .map(|length| Stat {
+                    name: "status".to_string(),
+                    qid: BlockingReadFs::qid(self.kind),
+                    length,
+                    executable: false,
+                    writable: false,
+                })
+                .ok_or(ErrorCode::Unsupported)
         }
 
         async fn create(
@@ -2795,6 +2822,30 @@ mod tests {
             self.clunk_count.fetch_add(1, AtomicOrdering::SeqCst);
             Ok(())
         }
+    }
+
+    #[tokio::test]
+    async fn read_file_accepts_regular_file_shrinking_after_stat() {
+        let fs = Arc::new(ScriptedReadFs::shrinking_file(b"exited\n", 8));
+        let client = NamespaceClient::new(InProcessTransport::new(fs.clone()));
+
+        assert_eq!(
+            client.read_file("/proc/10/status").await.unwrap(),
+            b"exited\n"
+        );
+        assert_eq!(fs.clunk_count.load(AtomicOrdering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn read_file_stops_at_reported_regular_file_length() {
+        let fs = Arc::new(ScriptedReadFs::shrinking_file(b"ready\nignored", 6));
+        let client = NamespaceClient::new(InProcessTransport::new(fs.clone()));
+
+        assert_eq!(
+            client.read_file("/proc/10/status").await.unwrap(),
+            b"ready\n"
+        );
+        assert_eq!(fs.clunk_count.load(AtomicOrdering::SeqCst), 1);
     }
 
     #[tokio::test]

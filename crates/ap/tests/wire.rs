@@ -76,6 +76,7 @@ fn stat_survives_roundtrip() {
             path: 42,
         },
         length: 1024,
+        executable: true,
         writable: false,
     };
     assert_eq!(roundtrip(&stat), stat);
@@ -137,6 +138,7 @@ fn every_response_operation_survives_roundtrip() {
                 name: "child".into(),
                 qid,
                 length: 5,
+                executable: false,
                 writable: true,
             },
         },

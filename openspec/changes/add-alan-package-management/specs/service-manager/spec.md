@@ -8,7 +8,8 @@ Service Manager SHALL start Package Service as a required File-Server Service,
 grant only its channel System Store binding and required preinstalled package
 sources, and require publication of `/srv/package` before package-dependent
 Processes become ready. It SHALL compose only explicitly referenced immutable
-package projections into child namespaces.
+package handles into child namespaces and descriptors. It MUST NOT translate a
+package handle into a Host Mount grant for Agent Runtime Service.
 
 #### Scenario: Package Service becomes ready
 

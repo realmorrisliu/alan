@@ -32,7 +32,7 @@ symbols_file="$(mktemp /tmp/alan-workspace-runtime-symbols.XXXXXX)"
 matches_file="$(mktemp /tmp/alan-workspace-runtime-paths.XXXXXX)"
 trap 'rm -f "$symbols_file" "$matches_file"' EXIT
 
-symbol_pattern='WorkspaceRuntimeConfig|PersistedWorkspaceConfig|WorkspaceRegistry|AgentRootLayout|AlanHomePaths|ToolLocality|WorkspaceTool|workspace_alan_dir|workspace_runtime_dir|global_public_skills|workspace_policy_file|Commands::(Workspace|Init)'
+symbol_pattern='WorkspaceRuntimeConfig|PersistedWorkspaceConfig|WorkspaceRegistry|AgentRootLayout|AlanHomePaths|ToolLocality|WorkspaceTool|workspace_alan_dir|workspace_runtime_dir|global_public_skills|workspace_policy_file|Commands::(Workspace|Init)|builtin_capability_packages|BUILTIN_PACKAGE_DESCRIPTOR_PREFIX|INSTALLED_PACKAGE_DESCRIPTOR_PREFIX|imported_skills'
 if rg -n "$symbol_pattern" crates \
     --glob '*.rs' \
     --glob '!crates/agent-engine/skills/swebench/**' \
@@ -41,7 +41,7 @@ if rg -n "$symbol_pattern" crates \
     fail "retired workspace-runtime symbol found"
 fi
 
-implicit_path_pattern='\.alan/runtime|\.alan/agents|\.agents/skills|\.agents-dev/skills|~/.alan($|[^[:alnum:]_-])|~/.alan-dev($|[^[:alnum:]_-])'
+implicit_path_pattern='\.alan/runtime|\.alan/agents|\.agents/skills|\.agents-dev/skills|imports/skills|~/.alan($|[^[:alnum:]_-])|~/.alan-dev($|[^[:alnum:]_-])'
 if rg -n "$implicit_path_pattern" crates --glob '*.rs' >"$matches_file"; then
     violations=()
     while IFS=: read -r file line text; do

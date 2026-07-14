@@ -303,6 +303,7 @@ impl FileServer for MemFs {
             name: String::new(),
             qid,
             length,
+            executable: false,
             writable: matches!(f.mode, Some(OpenMode::Write | OpenMode::ReadWrite)),
         })
     }

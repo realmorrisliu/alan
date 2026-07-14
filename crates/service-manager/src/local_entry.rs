@@ -7,7 +7,7 @@ use alan_kernel::{Access, Credentials, LiveNamespace, MountFs, Pid, ProcFs};
 use async_trait::async_trait;
 use tokio::sync::Mutex;
 
-use crate::runtime::spawn_process;
+use crate::{quartermaster::SystemProcessRunner, runtime::spawn_process};
 
 const SHELL_EXECUTABLE: &str = "/bin/alan-shell";
 const MAX_CTL_BYTES: usize = 1024;
@@ -117,9 +117,13 @@ impl LocalEntryService {
         self.procfs
             .bind_live_namespace(pid, namespace.clone())
             .await;
+        let command_procfs = self
+            .procfs
+            .clone()
+            .with_runner(Arc::new(SystemProcessRunner::new(None)));
         namespace.replace_mount(
             "/proc",
-            alan_ap::InProcessTransport::new(Arc::new(self.procfs.for_live_spawner(
+            alan_ap::InProcessTransport::new(Arc::new(command_procfs.for_live_spawner(
                 Some(pid),
                 namespace.clone(),
                 Credentials::user("alan"),
@@ -319,6 +323,7 @@ impl FileServer for LocalEntryService {
             name: String::new(),
             qid: qid(&node),
             length,
+            executable: false,
             writable: matches!(node, Node::Ctl(_)),
         })
     }

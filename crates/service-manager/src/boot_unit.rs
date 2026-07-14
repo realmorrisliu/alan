@@ -199,6 +199,7 @@ impl BootManifest {
         Self::parse([
             include_str!("../system/boot/route.toml"),
             include_str!("../system/boot/connection.toml"),
+            include_str!("../system/boot/package.toml"),
             include_str!("../system/boot/agent-runtime.toml"),
             include_str!("../system/boot/host-mount.toml"),
             include_str!("../system/boot/local-entry.toml"),
@@ -214,13 +215,14 @@ impl BootManifest {
         self.units.get(name)
     }
 
-    pub fn documents() -> [(&'static str, &'static str); 6] {
+    pub fn documents() -> [(&'static str, &'static str); 7] {
         [
             ("route.toml", include_str!("../system/boot/route.toml")),
             (
                 "connection.toml",
                 include_str!("../system/boot/connection.toml"),
             ),
+            ("package.toml", include_str!("../system/boot/package.toml")),
             (
                 "agent-runtime.toml",
                 include_str!("../system/boot/agent-runtime.toml"),

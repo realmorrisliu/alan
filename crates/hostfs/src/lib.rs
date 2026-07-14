@@ -322,6 +322,7 @@ impl FileServer for HostDirFs {
                 name: String::new(),
                 qid,
                 length,
+                executable: false,
                 writable: false,
             });
         }
@@ -341,6 +342,7 @@ impl FileServer for HostDirFs {
             name: rel.last().cloned().unwrap_or_default(),
             qid,
             length,
+            executable: kind == HostEntryKind::File && stat.st_mode as libc::mode_t & 0o111 != 0,
             writable: self.access.writable() && qid.kind == FileKind::File,
         })
     }
@@ -455,7 +457,11 @@ fn open_existing_handle(
     final_access: libc::c_int,
 ) -> Result<HostHandle, ErrorCode> {
     validate_rel(rel)?;
-    let mut current = root_dir.try_clone().map_err(|_| ErrorCode::Io)?;
+    // `try_clone`/`dup` shares the directory cursor with `root_dir`. A listing
+    // would therefore consume the anchor's cursor and make later root listings
+    // appear empty. Re-open `.` relative to the stable anchor so every operation
+    // owns an independent open-file description and directory cursor.
+    let mut current = reopen_root_dir(root_dir)?;
     let mut metadata = current.metadata().map_err(|_| ErrorCode::Io)?;
     if rel.is_empty() {
         return Ok(HostHandle {
@@ -654,6 +660,22 @@ fn open_root_dir(path: &Path) -> Result<std::fs::File, ErrorCode> {
         libc::open(
             path.as_ptr(),
             libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC | libc::O_NOFOLLOW,
+        )
+    };
+    if fd < 0 {
+        return Err(map_open_error(std::io::Error::last_os_error()));
+    }
+    Ok(unsafe { std::fs::File::from_raw_fd(fd) })
+}
+
+fn reopen_root_dir(root_dir: &std::fs::File) -> Result<std::fs::File, ErrorCode> {
+    let dot = CString::new(".").expect("a literal dot has no NUL byte");
+    let fd = unsafe {
+        libc::openat(
+            root_dir.as_raw_fd(),
+            dot.as_ptr(),
+            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC | libc::O_NOFOLLOW,
+            0,
         )
     };
     if fd < 0 {
@@ -946,6 +968,9 @@ mod tests {
 
         let listing = fs.read(Fid::ROOT, 0, 1024).await.unwrap();
         assert_eq!(String::from_utf8(listing).unwrap(), "a.txt\nb.txt");
+
+        let repeated = fs.read(Fid::ROOT, 0, 1024).await.unwrap();
+        assert_eq!(String::from_utf8(repeated).unwrap(), "a.txt\nb.txt");
     }
 
     #[tokio::test]

@@ -326,6 +326,7 @@ impl FileServer for HangingContainerEventFs {
             name: name.to_string(),
             qid: qid_for_hanging_node(node),
             length: 0,
+            executable: false,
             writable: true,
         })
     }
@@ -432,6 +433,7 @@ impl FileServer for IncompleteGenericProcessFs {
             name: String::new(),
             qid: qid_for_incomplete_generic_node(node),
             length: 0,
+            executable: false,
             writable: matches!(node, IncompleteGenericNode::Ctl),
         })
     }

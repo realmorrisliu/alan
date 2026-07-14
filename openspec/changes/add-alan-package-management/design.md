@@ -169,6 +169,8 @@ Rules:
 - an unreferenced installed package is absent from the Process namespace;
 - a reference identifies a package id and immutable revision, not a backing
   path;
+- a reference retains the immutable File-Server handle used for namespace and
+  descriptor reads; the handle is never represented as a Host Mount grant;
 - package projection is read-only;
 - Process launch rejects duplicate runtime Skill ids across the complete
   selected package-reference and descriptor set before capability assembly;
@@ -177,10 +179,11 @@ Rules:
 - removing or upgrading a catalog entry does not rewrite a running Process's
   namespace snapshot.
 
-The v1 Host adapter may translate a resolved revision handle to private backing
-for the existing path-based Skill loader. That translation is derived only
-from Package Service's explicit reference and must not become a general Host
-directory scanner or Agent-visible identity.
+Agent Runtime Service loads manifest-selected `SKILL.md`, sidecar, resource,
+and child-agent export files through the Process namespace/aP descriptor. It
+MUST NOT translate a package reference to a Host path or place Package Store
+backing in `ProcessLaunchContext.host_mounts`. Host Mount authority and package
+authority therefore have no shared runtime representation.
 
 ### D7. First-party Skills are preinstalled packages
 
@@ -240,9 +243,10 @@ capability is silently rewritten into a weaker Alan behavior.
 
 ## Risks and mitigations
 
-- **The current Skill loader is Host-path based.** Keep the adapter narrow and
-  reference-derived, test that no raw path enters records/output, and replace
-  it when the loader becomes fully aP-native.
+- **Descriptor-native loading must preserve existing Skill semantics.** Reuse
+  the namespace/aP reader for metadata, sidecars, resources, and child-agent
+  exports; keep Agent-visible paths under `/lib/pkg` and test parity without a
+  Package Store Host grant.
 - **Large source snapshots can exhaust memory.** Bound file count, per-file
   size, and total import bytes; stage incrementally where the backing adapter
   supports it.

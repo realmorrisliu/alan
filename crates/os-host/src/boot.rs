@@ -205,6 +205,7 @@ impl HostBootConfig {
             channel_id,
             process,
             Some(connection_store),
+            Some(system_store.packages()?),
             llm_factory,
             Arc::new(crate::host_mounts::NativeHostMountExportAdapter),
             tools,

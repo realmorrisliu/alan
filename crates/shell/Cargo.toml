@@ -1,6 +1,6 @@
 [package]
 name = "alan-shell"
-description = "Alan Shell — the aP-only client: generic file builtins (ls/cat/echo/tail/spawn) over the namespace, with no agent-specific commands. Depends only on alan-ap."
+description = "Alan Shell — the aP-only client: generic file builtins and /bin Process execution over the namespace, with no agent-specific commands. Depends only on alan-ap among Alan crates."
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -8,6 +8,7 @@ license.workspace = true
 
 [dependencies]
 alan-ap = { path = "../ap" }
+serde_json.workspace = true
 tokio = { workspace = true }
 
 [dev-dependencies]
@@ -16,5 +17,4 @@ alan-kernel = { path = "../kernel" }
 alan-llm = { path = "../llm", features = ["mock"] }
 alan-llmfs = { path = "../llmfs" }
 async-trait.workspace = true
-serde_json.workspace = true
 tokio = { workspace = true }

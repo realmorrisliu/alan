@@ -15,6 +15,7 @@ pub use definition::ensure_definition_bootstrap_files_at;
 pub(crate) use definition::{
     definition_persona_tracked_paths, definition_persona_tracked_paths_from_dirs,
     render_definition_persona_context, render_definition_persona_context_from_dirs,
+    render_definition_persona_context_from_file_tree,
 };
 pub use loader::PromptLoader;
 pub use memory::{MEMORY_DAILY_DIRNAME, ensure_memory_store_layout_at};

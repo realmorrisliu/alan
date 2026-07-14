@@ -1150,6 +1150,7 @@ impl FileServer for LlmFs {
             name: String::new(),
             qid,
             length,
+            executable: false,
             writable,
         })
     }

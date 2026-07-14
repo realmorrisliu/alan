@@ -38,7 +38,11 @@ Processes can mount or bind into their namespace.
 **Package Service** — The File-Server Service that owns installed package
 content, catalog state, lifecycle, and namespace projections. It persists only
 through its channel System Store subtree and never discovers Host directories
-implicitly.
+implicitly. Its mountable control surface is published at `/srv/package`.
+
+**Quartermaster / `q`** — The product name and `/bin/q` command for package
+management. `q` is an ordinary Process over the Package Service file surface;
+it is not a Host command plane or a second package authority.
 
 **Service Handle Registry (`/srv`)** — The rendezvous tree where a running file
 server posts a mountable handle. Service state belongs in the service's own
@@ -56,9 +60,9 @@ _Avoid_: Alan home, Workspace state directory, global state file
 lifecycle, streams, status, and exit state.
 
 **Process Launch Context** — The parent namespace snapshot plus explicit
-mounts, descriptors, credentials, and initial namespace current directory used
-to create a Process. It carries execution context without assigning a workspace
-identity.
+mounts, descriptors, immutable package references, credentials, and initial
+namespace current directory used to create a Process. It carries execution
+context without assigning a workspace identity.
 _Avoid_: Workspace binding, Workspace runtime
 
 **Process Reference** — An Alan OS boot identity plus PID that names one
@@ -138,8 +142,9 @@ requests, actions, children, machine state, plans, notices, and streams.
 Permissions come from descriptors, access rights, policy, and the selected
 execution backend.
 
-**Skill** — A manual-like knowledge package passed to Agent Processes. A Skill
-does not execute by itself.
+**Skill** — A manual-like knowledge package passed to Agent Processes through
+an explicit installed-package reference or descriptor. A Skill does not execute
+by itself.
 
 **Memory Stores** — File trees that own personal, system-continuity, app, and
 mounted-domain memory authority.

@@ -92,7 +92,53 @@ pub(crate) struct BuiltinPackageAsset {
 #[derive(Debug, Clone)]
 pub(crate) struct MaterializedBuiltinPackage {
     pub root_dir: PathBuf,
-    pub skill_path: PathBuf,
+}
+
+/// Embedded first-party Skill tree offered to Package Service for deterministic seeding.
+#[derive(Debug, Clone)]
+pub struct PreinstalledSkillPackageSource {
+    pub package_id: String,
+    pub root_dir: PathBuf,
+}
+
+/// Materialize the product's first-party Skill trees for Package Service import.
+///
+/// Returning source trees does not add them to any Agent capability view. The
+/// caller must seed and explicitly reference them through Package Service.
+pub fn preinstalled_skill_package_sources() -> Vec<PreinstalledSkillPackageSource> {
+    BUILTIN_PACKAGE_ASSETS
+        .iter()
+        .map(|asset| {
+            let materialized = materialized_builtin_package(asset);
+            PreinstalledSkillPackageSource {
+                package_id: asset
+                    .package_id
+                    .strip_prefix("builtin:")
+                    .unwrap_or(asset.package_id)
+                    .to_string(),
+                root_dir: materialized.root_dir,
+            }
+        })
+        .collect()
+}
+
+#[cfg(test)]
+pub(crate) fn preinstalled_package_roots_for_tests() -> Vec<ScopedPackageRoot> {
+    preinstalled_skill_package_sources()
+        .into_iter()
+        .map(|source| ScopedPackageRoot {
+            package_id: format!("builtin:{}", source.package_id),
+            path: source.root_dir,
+            namespace_root: None,
+            scope: SkillScope::Builtin,
+            dependencies: Vec::new(),
+        })
+        .collect()
+}
+
+#[cfg(test)]
+pub(crate) fn preinstalled_capability_view_for_tests() -> ResolvedCapabilityView {
+    ResolvedCapabilityView::from_package_sources(Vec::new(), preinstalled_package_roots_for_tests())
 }
 
 static MATERIALIZED_BUILTIN_PACKAGES: OnceLock<HashMap<&'static str, MaterializedBuiltinPackage>> =
@@ -167,7 +213,6 @@ fn materialize_builtin_packages() -> HashMap<&'static str, MaterializedBuiltinPa
         packages.insert(
             asset.package_id,
             MaterializedBuiltinPackage {
-                skill_path: canonical_root.join("SKILL.md"),
                 root_dir: canonical_root,
             },
         );
@@ -540,7 +585,7 @@ Body
 
     #[test]
     fn test_list_skills_keeps_enabled_non_implicit_skills_visible() {
-        let capability_view = ResolvedCapabilityView::from_package_dirs(Vec::new());
+        let capability_view = preinstalled_capability_view_for_tests();
         let registry = SkillsRegistry::load_capability_view(
             &capability_view,
             &[SkillOverride {
@@ -558,7 +603,7 @@ Body
 
     #[test]
     fn test_list_skills_surfaces_disabled_skills_for_operator_visibility() {
-        let capability_view = ResolvedCapabilityView::from_package_dirs(Vec::new());
+        let capability_view = preinstalled_capability_view_for_tests();
         let registry = SkillsRegistry::load_capability_view(
             &capability_view,
             &[SkillOverride {

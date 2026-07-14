@@ -188,6 +188,28 @@ pub fn load_package_sidecar(
     load_optional_yaml(&package_sidecar_path(package_root))
 }
 
+pub fn parse_skill_sidecar(content: &str) -> Result<AlanSkillSidecar, SkillsError> {
+    Ok(serde_yaml::from_str(content)?)
+}
+
+pub fn parse_package_sidecar(content: &str) -> Result<AlanPackageSidecar, SkillsError> {
+    Ok(serde_yaml::from_str(content)?)
+}
+
+pub fn parse_compatibility_metadata(
+    content: &str,
+    package_root: &Path,
+) -> Result<Option<CompatibleSkillMetadata>, SkillsError> {
+    let mut parsed: OpenAiMetadataFile = serde_yaml::from_str(content)?;
+    normalize_compatibility_interface_paths(package_root, &mut parsed.interface);
+    let metadata = CompatibleSkillMetadata {
+        interface: parsed.interface,
+        dependencies: parsed.dependencies,
+        policy: parsed.policy,
+    };
+    Ok((!metadata.is_empty()).then_some(metadata))
+}
+
 pub fn load_compatibility_metadata(
     package_root: &Path,
 ) -> Result<Option<CompatibleSkillMetadata>, SkillsError> {

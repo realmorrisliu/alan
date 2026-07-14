@@ -66,7 +66,8 @@ explicit Host import:
 alan skills init /path/to/my-skill
 alan skills validate /path/to/my-skill
 alan skills eval /path/to/my-skill --output-dir target/skills-eval/my-skill
-alan host legacy-state import skill /path/to/my-skill --name my-skill
+# In Alan Shell, after authorizing the Host directory at /mnt/import:
+q install --name my-skill /mnt/import/my-skill
 ```
 
 ## Builtin packages

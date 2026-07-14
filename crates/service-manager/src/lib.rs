@@ -2,7 +2,8 @@
 //!
 //! Alan OS Host creates the Kernel and starts one [`ServiceManager`] Process.
 //! This crate owns every later system Process, Boot Unit state, readiness,
-//! supervision, local entry, Host Mount grants, and Connection metadata.
+//! supervision, local entry, Host Mount grants, Connection metadata, and
+//! Package Service lifecycle.
 
 mod boot_unit;
 mod connection;
@@ -10,6 +11,8 @@ mod control_fs;
 mod flat_fs;
 mod host_mount;
 mod local_entry;
+mod package;
+mod quartermaster;
 mod runtime;
 
 pub use boot_unit::{
@@ -26,6 +29,11 @@ pub use host_mount::{
     HostMountGrantRecord, HostMountRequest, HostMountService, UnavailableHostMountExportAdapter,
 };
 pub use local_entry::LocalEntryService;
+pub use package::{
+    PackageCatalog, PackageCommand, PackageCommandResult, PackageExport, PackageKind,
+    PackageRecord, PackageReferenceLease, PackageService, PackageSnapshot, PackageSnapshotEntry,
+    PackageState,
+};
 pub use runtime::{
     BOOT_ID_PATH, BOOT_STATE_PATH, LlmClientFactory, ServiceManager, ServiceManagerConfig,
 };

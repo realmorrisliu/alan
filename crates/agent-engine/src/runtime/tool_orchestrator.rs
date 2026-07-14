@@ -1533,6 +1533,7 @@ mod tests {
                     BinNode::Root => BUILTIN_BIN_TOOLS.join("\n").len() as u64,
                     BinNode::Tool(_) => 0,
                 },
+                executable: false,
                 writable: false,
             })
         }

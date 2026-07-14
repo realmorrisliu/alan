@@ -689,6 +689,7 @@ pub(crate) struct PromptAssemblyCache {
     fixed_capability_view: Option<ResolvedCapabilityView>,
     skill_overrides: Vec<SkillOverride>,
     definition_persona_dirs: Vec<PathBuf>,
+    fixed_definition_persona_section: Option<String>,
     memory_store_dir: Option<PathBuf>,
     host_capabilities: SkillHostCapabilities,
     skills_snapshot: Option<CachedSkillsRegistry>,
@@ -704,6 +705,7 @@ impl PromptAssemblyCache {
             fixed_capability_view: None,
             skill_overrides: Vec::new(),
             definition_persona_dirs,
+            fixed_definition_persona_section: None,
             memory_store_dir: None,
             host_capabilities: SkillHostCapabilities::default(),
             skills_snapshot: None,
@@ -737,6 +739,7 @@ impl PromptAssemblyCache {
             fixed_capability_view: Some(fixed_capability_view),
             skill_overrides,
             definition_persona_dirs,
+            fixed_definition_persona_section: None,
             memory_store_dir: None,
             host_capabilities,
             skills_snapshot: None,
@@ -751,6 +754,10 @@ impl PromptAssemblyCache {
             self.definition_persona_dirs = definition_persona_dirs;
             self.definition_persona_snapshot = None;
         }
+    }
+
+    pub(crate) fn set_fixed_definition_persona_section(&mut self, section: Option<String>) {
+        self.fixed_definition_persona_section = section;
     }
 
     pub(crate) fn set_memory_store_dir(&mut self, memory_store_dir: Option<PathBuf>) {
@@ -978,6 +985,9 @@ impl PromptAssemblyCache {
     }
 
     fn definition_persona_section_with_cache(&mut self) -> (Option<String>, bool) {
+        if let Some(section) = self.fixed_definition_persona_section.as_ref() {
+            return (Some(section.clone()), true);
+        }
         if self.definition_persona_dirs.is_empty() {
             return (None, true);
         }
@@ -1106,10 +1116,13 @@ description: {description}
     fn capability_view_for_definition_root(
         definition_root: &std::path::Path,
     ) -> ResolvedCapabilityView {
-        ResolvedCapabilityView::from_package_dirs(vec![ScopedPackageDir {
-            path: definition_root.join("skills"),
-            scope: SkillScope::Descriptor,
-        }])
+        ResolvedCapabilityView::from_package_sources(
+            vec![ScopedPackageDir {
+                path: definition_root.join("skills"),
+                scope: SkillScope::Descriptor,
+            }],
+            crate::skills::preinstalled_package_roots_for_tests(),
+        )
     }
 
     fn prompt_cache_for_definition_root(
@@ -2064,27 +2077,29 @@ Use this skill when asked.
         std::fs::create_dir_all(&definition_root).unwrap();
         create_definition_skill(
             &definition_root,
-            "skill-creator",
-            "Skill Creator",
+            "ambiguous-helper",
+            "Ambiguous Helper",
             "Creates new skills",
             "# Instructions\nUse this skill when asked.",
         );
-        create_definition_child_agent(&definition_root, "skill-creator", "creator");
-        create_definition_child_agent(&definition_root, "skill-creator", "grader");
+        create_definition_child_agent(&definition_root, "ambiguous-helper", "creator");
+        create_definition_child_agent(&definition_root, "ambiguous-helper", "grader");
 
         let mut cache = PromptAssemblyCache::with_fixed_capability_view(
             capability_view_for_definition_root(&definition_root),
             Vec::new(),
             SkillHostCapabilities::with_tools(["bash"]).with_runtime_defaults(),
         );
-        let mentioned = vec![ContentPart::text("please use $skill-creator for this task")];
+        let mentioned = vec![ContentPart::text(
+            "please use $ambiguous-helper for this task",
+        )];
         let prompt = cache.build(Some(&mentioned));
 
-        assert!(!prompt.system_prompt.contains("## Skill: Skill Creator"));
+        assert!(!prompt.system_prompt.contains("## Skill: Ambiguous Helper"));
         assert!(
             prompt
                 .system_prompt
-                .contains("Skill '$skill-creator' is unavailable")
+                .contains("Skill '$ambiguous-helper' is unavailable")
         );
         assert!(
             prompt

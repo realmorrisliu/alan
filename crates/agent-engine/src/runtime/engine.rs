@@ -481,6 +481,31 @@ impl AgentConfig {
         })
     }
 
+    pub fn with_definition_overlay_content(
+        &self,
+        content: &str,
+        source: &std::path::Path,
+    ) -> anyhow::Result<Self> {
+        let mut merge_base_core_config = self.core_config.clone();
+        if self.explicit_runtime_overrides.request_control_intent {
+            merge_base_core_config.model_reasoning_effort = None;
+        }
+        let mut core_config =
+            merge_base_core_config.with_definition_overlay_content(content, source)?;
+        let mut runtime_config = merge_runtime_config_from_core_overlay(
+            &merge_base_core_config,
+            &core_config,
+            &self.runtime_config,
+            self.explicit_runtime_overrides,
+        );
+        self.reapply_explicit_runtime_overrides(&mut core_config, &mut runtime_config);
+        Ok(Self {
+            core_config,
+            runtime_config,
+            explicit_runtime_overrides: self.explicit_runtime_overrides,
+        })
+    }
+
     fn reapply_explicit_runtime_overrides(
         &self,
         core_config: &mut crate::config::Config,
@@ -784,10 +809,7 @@ pub fn effective_core_config_for_runtime(
         &config.agent_config.core_config.resolved_skill_overrides(),
         config.core_config_source,
     )?;
-    let mut agent_config = config.agent_config.clone();
-    if let Some(config_path) = resolved_agent_definition.config_path.as_ref() {
-        agent_config = agent_config.with_definition_overlays(std::slice::from_ref(config_path))?;
-    }
+    let agent_config = resolved_agent_definition.apply_to_agent_config(&config.agent_config)?;
     let mut core_config = agent_config.core_config.clone();
     if let Some(memory_store) = config.memory_store_backing.as_ref() {
         let memory_descriptor = config
@@ -845,10 +867,7 @@ fn spawn_with_prepared_runtime_environment(
         &config.agent_config.core_config.resolved_skill_overrides(),
         config.core_config_source,
     )?;
-    let mut agent_config = config.agent_config.clone();
-    if let Some(config_path) = resolved_agent_definition.config_path.as_ref() {
-        agent_config = agent_config.with_definition_overlays(std::slice::from_ref(config_path))?;
-    }
+    let agent_config = resolved_agent_definition.apply_to_agent_config(&config.agent_config)?;
     let mut core_config = agent_config.core_config.clone();
     if let Some(memory_store) = config.memory_store_backing.as_ref() {
         let memory_descriptor = config
@@ -868,11 +887,18 @@ fn spawn_with_prepared_runtime_environment(
     runtime_config.store_bindings = config.store_bindings.clone();
     runtime_config.memory_store_backing = config.memory_store_backing.clone();
     runtime_config.policy_engine =
-        crate::policy::PolicyEngine::load_for_governance_with_default_policy_path(
-            resolved_agent_definition.root_dir.as_deref(),
-            resolved_agent_definition.policy_path.as_deref(),
-            &runtime_config.governance,
-        );
+        if let Some(tree) = resolved_agent_definition.descriptor_tree.as_ref() {
+            crate::policy::PolicyEngine::load_for_governance_from_file_tree(
+                tree,
+                &runtime_config.governance,
+            )
+        } else {
+            crate::policy::PolicyEngine::load_for_governance_with_default_policy_path(
+                resolved_agent_definition.root_dir.as_deref(),
+                resolved_agent_definition.policy_path.as_deref(),
+                &runtime_config.governance,
+            )
+        };
     let prompt_cache_persona_dirs = resolved_agent_definition.persona_dirs.clone();
     if core_config.memory.enabled
         && let Some(memory_dir) = core_config.memory.store_dir.as_deref()
@@ -898,6 +924,8 @@ fn spawn_with_prepared_runtime_environment(
             prompt_cache_persona_dirs.clone(),
             host_capabilities,
         );
+    prompt_cache
+        .set_fixed_definition_persona_section(resolved_agent_definition.persona_context.clone());
     prompt_cache.set_memory_store_dir(
         core_config
             .memory
@@ -2342,6 +2370,34 @@ mod tests {
         assert_eq!(binding.namespace_cwd, PathBuf::from("/mnt/source"));
         assert_eq!(config.launch_context.cwd, "/");
         assert_eq!(binding.host_mounts, config.launch_context.host_mounts);
+    }
+
+    #[test]
+    fn package_projection_alone_does_not_require_runtime_tool_binding() {
+        let mut launch_context = crate::ProcessLaunchContext::root();
+        launch_context.add_package_reference(
+            crate::ProcessPackageReference::new(
+                "example",
+                "a".repeat(64),
+                crate::ProcessPackageKind::Installed,
+                "/lib/pkg/example",
+                Vec::new(),
+                alan_ap::InProcessTransport::new(std::sync::Arc::new(
+                    alan_ap::reference::MemFs::new(),
+                )),
+            )
+            .unwrap(),
+        );
+        let config = AgentProcessConfig {
+            launch_context,
+            store_bindings: None,
+            ..AgentProcessConfig::default()
+        };
+        let mut tools = crate::tools::ToolRegistry::new();
+
+        configure_runtime_tool_execution_binding(&config, &mut tools).unwrap();
+
+        assert!(tools.default_execution_binding().is_none());
     }
 
     #[test]

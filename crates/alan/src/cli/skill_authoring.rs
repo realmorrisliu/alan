@@ -1043,6 +1043,7 @@ fn discover_child_agent_exports(
                 ),
                 name,
                 root_dir: canonical_root,
+                file_tree: None,
             })
         })
         .collect();

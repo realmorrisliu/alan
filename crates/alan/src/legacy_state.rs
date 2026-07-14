@@ -101,7 +101,6 @@ pub struct LegacyCleanupReport {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AuthoredImportKind {
     AgentDefinition,
-    Skill,
     MemoryStore,
 }
 
@@ -244,9 +243,27 @@ pub fn import_authored_content(
     );
     validate_import_shape(kind, source)?;
 
+    let canonical_source = fs::canonicalize(source)
+        .with_context(|| format!("failed to resolve import source {}", source.display()))?;
+    ensure!(
+        canonical_source.parent().is_some(),
+        "authored import source must not be a filesystem root"
+    );
+    let canonical_store = canonicalize_prospective_path(&system_store.root)?;
+    ensure!(
+        !canonical_source.starts_with(&canonical_store)
+            && !canonical_store.starts_with(&canonical_source),
+        "import source and System Store must not overlap"
+    );
+    fs::create_dir_all(&system_store.root).with_context(|| {
+        format!(
+            "failed to create System Store {}",
+            system_store.root.display()
+        )
+    })?;
+
     let destination_parent = match kind {
         AuthoredImportKind::AgentDefinition => system_store.agent_definitions()?,
-        AuthoredImportKind::Skill => system_store.imported_skills()?,
         AuthoredImportKind::MemoryStore => system_store.memory_stores()?,
     };
     fs::create_dir_all(&destination_parent).with_context(|| {
@@ -260,24 +277,6 @@ pub fn import_authored_content(
         !path_exists_without_following(&destination)?,
         "import destination already exists: {}",
         destination.display()
-    );
-
-    let canonical_source = fs::canonicalize(source)
-        .with_context(|| format!("failed to resolve import source {}", source.display()))?;
-    ensure!(
-        canonical_source.parent().is_some(),
-        "authored import source must not be a filesystem root"
-    );
-    let canonical_store = fs::canonicalize(&system_store.root).with_context(|| {
-        format!(
-            "failed to resolve System Store {}",
-            system_store.root.display()
-        )
-    })?;
-    ensure!(
-        !canonical_source.starts_with(&canonical_store)
-            && !canonical_store.starts_with(&canonical_source),
-        "import source and System Store must not overlap"
     );
 
     let staging = destination_parent.join(format!(
@@ -560,10 +559,6 @@ fn validate_import_shape(kind: AuthoredImportKind, source: &Path) -> Result<()> 
                 .any(|entry| source.join(entry).exists()),
             "Agent Definition import must contain agent.toml, persona, skills, or policy.yaml"
         ),
-        AuthoredImportKind::Skill => ensure!(
-            source.join("SKILL.md").is_file(),
-            "Skill import must contain SKILL.md"
-        ),
         AuthoredImportKind::MemoryStore => {}
     }
     Ok(())
@@ -693,6 +688,16 @@ fn validate_absolute_path(label: &str, path: &Path) -> Result<()> {
     Ok(())
 }
 
+fn canonicalize_prospective_path(path: &Path) -> Result<PathBuf> {
+    let mut ancestor = path;
+    while optional_symlink_metadata(ancestor)?.is_none() {
+        ancestor = ancestor.parent().context("path has no existing ancestor")?;
+    }
+    let canonical_ancestor = fs::canonicalize(ancestor)
+        .with_context(|| format!("failed to resolve path ancestor {}", ancestor.display()))?;
+    Ok(canonical_ancestor.join(path.strip_prefix(ancestor)?))
+}
+
 fn optional_symlink_metadata(path: &Path) -> Result<Option<fs::Metadata>> {
     match fs::symlink_metadata(path) {
         Ok(metadata) => Ok(Some(metadata)),
@@ -711,7 +716,6 @@ mod tests {
     use alan_agent_engine::{
         ConnectionCredential, ConnectionProfile, ConnectionsFile, CredentialKind, LlmProvider,
         default_credential_backend,
-        skills::{ResolvedCapabilityView, ScopedPackageDir, SkillScope, SkillsRegistry},
     };
     use chrono::Utc;
     use tempfile::TempDir;
@@ -968,41 +972,6 @@ mod tests {
     }
 
     #[test]
-    fn explicit_skill_import_is_verified_and_loadable_as_installed() {
-        let temp = TempDir::new().unwrap();
-        let source = temp.path().join("host-skill");
-        fs::create_dir_all(&source).unwrap();
-        fs::write(
-            source.join("SKILL.md"),
-            "---\nname: imported-skill\ndescription: Explicitly imported\n---\nBody\n",
-        )
-        .unwrap();
-        let (system, _) = stores(temp.path(), InstallChannel::Stable);
-
-        let report = import_authored_content(
-            AuthoredImportKind::Skill,
-            &source,
-            "imported-skill",
-            true,
-            &system,
-        )
-        .unwrap();
-        let view = ResolvedCapabilityView::from_package_dirs(vec![ScopedPackageDir {
-            path: system.imported_skills().unwrap(),
-            scope: SkillScope::Installed,
-        }]);
-        let registry = SkillsRegistry::load_capability_view(&view, &[]).unwrap();
-
-        assert!(report.source_deleted);
-        assert!(!source.exists());
-        assert!(report.destination.join("SKILL.md").is_file());
-        assert_eq!(
-            registry.get(&"imported-skill".to_string()).unwrap().scope,
-            SkillScope::Installed
-        );
-    }
-
-    #[test]
     fn changed_import_source_is_never_deleted() {
         let temp = TempDir::new().unwrap();
         let source = temp.path().join("host-skill");
@@ -1022,6 +991,28 @@ mod tests {
             fs::read_to_string(source.join("new-note.md")).unwrap(),
             "added after import"
         );
+    }
+
+    #[test]
+    fn overlapping_import_does_not_create_the_system_store() {
+        let temp = TempDir::new().unwrap();
+        let source = temp.path().join("host-definition");
+        fs::create_dir_all(source.join("persona")).unwrap();
+        let system =
+            SystemStorePaths::from_data_dir(&source, InstallChannel::Stable.descriptor().id)
+                .unwrap();
+
+        let error = import_authored_content(
+            AuthoredImportKind::AgentDefinition,
+            &source,
+            "default",
+            false,
+            &system,
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("must not overlap"));
+        assert!(!system.root.exists());
     }
 
     #[cfg(unix)]

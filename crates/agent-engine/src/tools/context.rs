@@ -52,20 +52,22 @@ impl ToolExecutionBinding {
         context: &crate::ProcessLaunchContext,
         scratch_dir: PathBuf,
     ) -> Result<Self> {
+        let mut tool_context = context.clone();
+        tool_context.host_mounts = context.host_mounts.clone();
         // A namespace cwd such as `/` may have no Host backing even after the
         // Process receives an explicit mount. Native adapters still need an OS
         // cwd inside their sandbox authority. Prefer the first writable Host
         // Mount so Bash can start; a read-only mount remains a valid fallback
         // for read-only Tools. That selected mount is the Tool Process cwd;
         // runtime scratch is storage, not Host authority.
-        let (cwd, namespace_cwd) = if let Some(cwd) = context.host_cwd() {
-            (cwd, PathBuf::from(&context.cwd))
+        let (cwd, namespace_cwd) = if let Some(cwd) = tool_context.host_cwd() {
+            (cwd, PathBuf::from(&tool_context.cwd))
         } else {
-            let grant = context
+            let grant = tool_context
                 .host_mounts
                 .iter()
                 .find(|grant| grant.access == alan_kernel::Access::ReadWrite)
-                .or_else(|| context.host_mounts.first())
+                .or_else(|| tool_context.host_mounts.first())
                 .context("Process has no explicit Host Mount for native Tool execution")?;
             (
                 dunce::canonicalize(&grant.host_path)
@@ -76,9 +78,9 @@ impl ToolExecutionBinding {
         Ok(Self {
             cwd,
             namespace_cwd,
-            host_mounts: context.host_mounts.clone(),
+            host_mounts: tool_context.host_mounts.clone(),
             scratch_dir,
-            sandbox_spec: Some(SandboxSpec::from_host_mounts(&context.host_mounts)),
+            sandbox_spec: Some(SandboxSpec::from_host_mounts(&tool_context.host_mounts)),
         })
     }
 
@@ -393,6 +395,55 @@ mod tests {
 
         assert_eq!(projected, "failed to read /mnt/source/private.txt");
         assert!(!projected.contains(source.path().to_string_lossy().as_ref()));
+    }
+
+    #[test]
+    fn package_handle_does_not_create_native_tool_authority() {
+        let project = tempfile::tempdir().unwrap();
+        let mut launch_context = crate::ProcessLaunchContext::root().with_host_mount(
+            crate::HostMountGrant::new(
+                "/mnt/project",
+                project.path(),
+                alan_kernel::Access::ReadWrite,
+            )
+            .unwrap(),
+        );
+        launch_context.add_package_reference(
+            crate::ProcessPackageReference::new(
+                "example",
+                "a".repeat(64),
+                crate::ProcessPackageKind::Installed,
+                "/lib/pkg/example",
+                Vec::new(),
+                alan_ap::InProcessTransport::new(std::sync::Arc::new(
+                    alan_ap::reference::MemFs::new(),
+                )),
+            )
+            .unwrap(),
+        );
+
+        let binding = ToolExecutionBinding::from_launch_context(
+            &launch_context,
+            PathBuf::from("/tmp/scratch"),
+        )
+        .unwrap();
+
+        assert_eq!(binding.host_mounts.len(), 1);
+        assert_eq!(binding.host_mounts[0].namespace_path, "/mnt/project");
+        assert_eq!(binding.cwd, dunce::canonicalize(project.path()).unwrap());
+        assert!(binding.sandbox_spec.is_some());
+
+        launch_context.host_mounts.clear();
+        let error = ToolExecutionBinding::from_launch_context(
+            &launch_context,
+            PathBuf::from("/tmp/scratch"),
+        )
+        .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("no explicit Host Mount for native Tool execution")
+        );
     }
 
     #[tokio::test]

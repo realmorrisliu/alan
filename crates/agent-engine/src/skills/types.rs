@@ -2,8 +2,8 @@
 
 use semver::{BuildMetadata, Version};
 use serde::{Deserialize, Deserializer, Serialize};
-use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
+use std::{collections::BTreeSet, sync::Arc};
 
 /// Skill unique identifier (lowercase, hyphenated).
 pub type SkillId = String;
@@ -52,11 +52,25 @@ pub struct ScopedPackageDir {
     pub scope: SkillScope,
 }
 
+/// One explicitly referenced Skill package root with its owning package id.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScopedPackageRoot {
+    pub package_id: CapabilityPackageId,
+    pub path: PathBuf,
+    pub namespace_root: Option<PathBuf>,
+    pub scope: SkillScope,
+    pub dependencies: Vec<SkillTypedDependency>,
+}
+
 /// Skill content source.
 #[derive(Debug, Clone)]
 pub enum SkillContentSource {
     File(PathBuf),
-    Embedded(&'static str),
+    Embedded(Arc<str>),
+    Descriptor {
+        content: Arc<str>,
+        file_tree: crate::ProcessFileTree,
+    },
 }
 
 impl Default for SkillContentSource {
@@ -100,6 +114,8 @@ pub struct CapabilityChildAgentExport {
     pub name: String,
     pub root_dir: PathBuf,
     pub handle: alan_agent_protocol::SpawnTarget,
+    #[serde(skip, default)]
+    pub file_tree: Option<crate::ProcessFileTree>,
 }
 
 impl CapabilityChildAgentExport {
@@ -147,16 +163,23 @@ pub struct CapabilityPackage {
     pub id: CapabilityPackageId,
     pub scope: SkillScope,
     pub root_dir: Option<PathBuf>,
+    pub namespace_root: Option<PathBuf>,
     pub exports: CapabilityPackageExports,
     pub portable_skill: PortableSkill,
+    pub dependencies: Vec<SkillTypedDependency>,
+    pub package_sidecar: Option<AlanPackageSidecar>,
+    pub skill_sidecar: Option<AlanSkillSidecar>,
+    pub compatible_metadata: Option<CompatibleSkillMetadata>,
 }
 
 /// Runtime-facing resolved capability view assembled from package sources.
 #[derive(Debug, Clone, Default)]
 pub struct ResolvedCapabilityView {
     pub package_dirs: Vec<ScopedPackageDir>,
+    pub package_roots: Vec<ScopedPackageRoot>,
     pub packages: Vec<CapabilityPackage>,
     pub errors: Vec<SkillError>,
+    pub descriptor_errors: Vec<SkillError>,
     pub tracked_paths: Vec<PathBuf>,
 }
 
@@ -1591,6 +1614,8 @@ pub enum SkillsError {
     NotFound(SkillId),
     #[error("Invalid capabilities declaration: {0}")]
     InvalidCapabilities(String),
+    #[error("Duplicate runtime Skill id: {0}")]
+    DuplicateSkill(SkillId),
 }
 
 impl From<std::io::Error> for SkillsError {
@@ -1816,7 +1841,9 @@ fn validate_non_empty_dependency_name(kind: &str, name: &str) -> Result<(), Skil
     Ok(())
 }
 
-fn collect_skill_dependencies(metadata: &SkillMetadata) -> Vec<SkillTypedDependency> {
+/// Collect every dependency declared by portable Skill metadata, including
+/// legacy `capabilities.required_tools`, with duplicate identities removed.
+pub fn skill_declared_dependencies(metadata: &SkillMetadata) -> Vec<SkillTypedDependency> {
     let mut dependencies = Vec::new();
     let mut seen = BTreeSet::new();
 
@@ -1848,7 +1875,7 @@ pub fn skill_availability_issues(
 ) -> Vec<SkillAvailabilityIssue> {
     let mut issues = Vec::new();
 
-    let missing_dependencies: Vec<SkillDependencyIssue> = collect_skill_dependencies(metadata)
+    let missing_dependencies: Vec<SkillDependencyIssue> = skill_declared_dependencies(metadata)
         .into_iter()
         .filter_map(|dependency| match dependency {
             SkillTypedDependency::EnvVar { name, description }

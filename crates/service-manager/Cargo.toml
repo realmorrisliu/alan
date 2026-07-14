@@ -1,6 +1,6 @@
 [package]
 name = "alan-service-manager"
-description = "Alan OS boot units, system service lifecycle, readiness, and bounded supervision."
+description = "Alan OS boot units, system service lifecycle, Package Service, readiness, and bounded supervision."
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -11,6 +11,7 @@ alan-ap = { path = "../ap" }
 alan-agent-engine.workspace = true
 alan-agentfs = { path = "../agentfs" }
 alan-kernel = { path = "../kernel" }
+alan-hostfs.workspace = true
 alan-llm.workspace = true
 alan-llmfs = { path = "../llmfs" }
 alan-routefs.workspace = true
@@ -20,6 +21,11 @@ async-trait.workspace = true
 chrono.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+serde_yaml.workspace = true
+sha2.workspace = true
+hex.workspace = true
+libc.workspace = true
+tempfile.workspace = true
 tokio.workspace = true
 toml = "1.1"
 tracing.workspace = true

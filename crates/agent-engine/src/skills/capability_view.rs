@@ -2,19 +2,25 @@ use crate::skills::loader;
 use crate::skills::types::{
     CapabilityChildAgentExport, CapabilityPackage, CapabilityPackageExports,
     CapabilityPackageResources, PortableSkill, ResolvedCapabilityView, ScopedPackageDir,
-    SkillContentSource, SkillScope,
+    ScopedPackageRoot, SkillContentSource,
 };
-use crate::skills::{BUILTIN_PACKAGE_ASSETS, materialized_builtin_package};
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 impl ResolvedCapabilityView {
     pub fn from_package_dirs(package_dirs: Vec<ScopedPackageDir>) -> Self {
+        Self::from_package_sources(package_dirs, Vec::new())
+    }
+
+    pub fn from_package_sources(
+        package_dirs: Vec<ScopedPackageDir>,
+        package_roots: Vec<ScopedPackageRoot>,
+    ) -> Self {
         let mut view = Self {
             package_dirs,
+            package_roots,
             ..Self::default()
         };
-
-        view.packages.extend(builtin_capability_packages());
 
         let package_dirs = view.package_dirs.clone();
         for package_dir in package_dirs {
@@ -30,12 +36,40 @@ impl ResolvedCapabilityView {
                     scope: package_dir.scope,
                     exports: package_exports_for_root_dir(&package_id, root_dir.as_deref()),
                     root_dir,
+                    namespace_root: None,
                     portable_skill: PortableSkill {
                         path: skill.path.clone(),
                         source: SkillContentSource::File(skill.path),
                     },
+                    dependencies: Vec::new(),
+                    package_sidecar: None,
+                    skill_sidecar: None,
+                    compatible_metadata: None,
                 });
             }
+        }
+
+        for package_root in view.package_roots.clone() {
+            let skill_path = package_root.path.join("SKILL.md");
+            view.tracked_paths.push(skill_path.clone());
+            view.packages.push(CapabilityPackage {
+                id: package_root.package_id.clone(),
+                scope: package_root.scope,
+                exports: package_exports_for_root_dir(
+                    &package_root.package_id,
+                    Some(&package_root.path),
+                ),
+                root_dir: Some(package_root.path),
+                namespace_root: package_root.namespace_root,
+                portable_skill: PortableSkill {
+                    path: skill_path.clone(),
+                    source: SkillContentSource::File(skill_path),
+                },
+                dependencies: package_root.dependencies,
+                package_sidecar: None,
+                skill_sidecar: None,
+                compatible_metadata: None,
+            });
         }
 
         view.tracked_paths.sort();
@@ -44,7 +78,24 @@ impl ResolvedCapabilityView {
     }
 
     pub fn refresh(&self) -> Self {
-        Self::from_package_dirs(self.package_dirs.clone())
+        let mut refreshed =
+            Self::from_package_sources(self.package_dirs.clone(), self.package_roots.clone());
+        let discovered_ids = refreshed
+            .packages
+            .iter()
+            .map(|package| package.id.clone())
+            .collect::<BTreeSet<_>>();
+        refreshed.packages.extend(
+            self.packages
+                .iter()
+                .filter(|package| {
+                    !matches!(package.portable_skill.source, SkillContentSource::File(_))
+                        && !discovered_ids.contains(&package.id)
+                })
+                .cloned(),
+        );
+        refreshed.descriptor_errors = self.descriptor_errors.clone();
+        refreshed
     }
 
     pub fn package(&self, package_id: &str) -> Option<&CapabilityPackage> {
@@ -54,10 +105,42 @@ impl ResolvedCapabilityView {
             .find(|package| package.id == package_id)
     }
 
+    /// Reject ambiguous runtime Skill identities before registry assembly.
+    pub fn validate_unique_runtime_skill_ids(&self) -> Result<(), crate::skills::SkillsError> {
+        let mut ids = BTreeSet::new();
+        for package in &self.packages {
+            let metadata = match &package.portable_skill.source {
+                SkillContentSource::File(path) => loader::load_skill_metadata(path, package.scope)?,
+                SkillContentSource::Embedded(content)
+                | SkillContentSource::Descriptor { content, .. } => {
+                    loader::parse_skill_metadata_with_source(
+                        content,
+                        &package.portable_skill.path,
+                        package.scope,
+                        package.portable_skill.source.clone(),
+                        Some(package.id.clone()),
+                    )?
+                }
+            };
+            if !ids.insert(metadata.id.clone()) {
+                return Err(crate::skills::SkillsError::DuplicateSkill(metadata.id));
+            }
+        }
+        Ok(())
+    }
+
     pub fn resolve_child_agent_target(
         &self,
         target: &alan_agent_protocol::SpawnTarget,
     ) -> Option<PathBuf> {
+        self.resolve_child_agent_export(target)
+            .map(|export| export.root_dir.clone())
+    }
+
+    pub fn resolve_child_agent_export(
+        &self,
+        target: &alan_agent_protocol::SpawnTarget,
+    ) -> Option<&CapabilityChildAgentExport> {
         let alan_agent_protocol::SpawnTarget::PackageChildAgent {
             package_id,
             export_name,
@@ -68,30 +151,7 @@ impl ResolvedCapabilityView {
 
         self.package(package_id)
             .and_then(|package| package.exports.child_agent_export(export_name))
-            .map(|export| export.root_dir.clone())
     }
-}
-
-fn builtin_capability_packages() -> Vec<CapabilityPackage> {
-    BUILTIN_PACKAGE_ASSETS
-        .iter()
-        .map(|asset| {
-            let materialized = materialized_builtin_package(asset);
-            CapabilityPackage {
-                id: asset.package_id.to_string(),
-                scope: SkillScope::Builtin,
-                exports: package_exports_for_root_dir(
-                    asset.package_id,
-                    Some(materialized.root_dir.as_path()),
-                ),
-                root_dir: Some(materialized.root_dir.clone()),
-                portable_skill: PortableSkill {
-                    path: materialized.skill_path.clone(),
-                    source: SkillContentSource::File(materialized.skill_path),
-                },
-            }
-        })
-        .collect()
 }
 
 fn package_exports_for_root_dir(
@@ -144,6 +204,7 @@ fn child_agent_exports(package_id: &str, root_dir: &Path) -> Vec<CapabilityChild
                 handle: CapabilityChildAgentExport::package_handle(package_id, &name),
                 name,
                 root_dir: canonical_root,
+                file_tree: None,
             })
         })
         .collect();
@@ -165,11 +226,12 @@ fn existing_dir(path: PathBuf) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::skills::SkillScope;
     use tempfile::TempDir;
 
     #[test]
     fn resolved_capability_view_includes_builtin_packages() {
-        let view = ResolvedCapabilityView::from_package_dirs(Vec::new());
+        let view = crate::skills::preinstalled_capability_view_for_tests();
         let package_ids: Vec<_> = view
             .packages
             .iter()
@@ -186,7 +248,7 @@ mod tests {
 
     #[test]
     fn resolved_capability_view_materializes_all_builtin_packages_as_directory_backed() {
-        let view = ResolvedCapabilityView::from_package_dirs(Vec::new());
+        let view = crate::skills::preinstalled_capability_view_for_tests();
 
         for package in view
             .packages
@@ -199,13 +261,16 @@ mod tests {
                 SkillContentSource::Embedded(_) => {
                     panic!("builtin package {} should be directory-backed", package.id)
                 }
+                SkillContentSource::Descriptor { .. } => {
+                    panic!("builtin package {} should be directory-backed", package.id)
+                }
             }
         }
     }
 
     #[test]
     fn builtin_skill_creator_package_exposes_directory_backed_resources() {
-        let view = ResolvedCapabilityView::from_package_dirs(Vec::new());
+        let view = crate::skills::preinstalled_capability_view_for_tests();
         let package = view
             .packages
             .iter()
@@ -257,7 +322,7 @@ mod tests {
 
     #[test]
     fn builtin_repo_coding_package_exposes_repo_worker_resources() {
-        let view = ResolvedCapabilityView::from_package_dirs(Vec::new());
+        let view = crate::skills::preinstalled_capability_view_for_tests();
         let package = view
             .packages
             .iter()
@@ -315,7 +380,7 @@ mod tests {
 
     #[test]
     fn builtin_swebench_package_exposes_operator_resources() {
-        let view = ResolvedCapabilityView::from_package_dirs(Vec::new());
+        let view = crate::skills::preinstalled_capability_view_for_tests();
         let package = view
             .packages
             .iter()
