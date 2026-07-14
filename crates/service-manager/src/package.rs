@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File};
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex, Weak};
 
@@ -1271,14 +1271,36 @@ fn verify_materialized_revision(root: &Path, revision: &str) -> Result<Materiali
 
 fn fingerprint_directory(root: &Path) -> Result<String> {
     ensure!(root.is_dir(), "materialized package tree is missing");
-    let snapshot = PackageSnapshot::from_directory_named(root, "materialized".to_string())?;
     let mut digest = Sha256::new();
-    for entry in snapshot.entries {
-        digest.update((entry.path.len() as u64).to_be_bytes());
-        digest.update(entry.path.as_bytes());
-        digest.update([u8::from(entry.executable)]);
-        digest.update((entry.bytes.len() as u64).to_be_bytes());
-        digest.update(entry.bytes);
+    for relative in list_relative_files(root)? {
+        let path = root.join(&relative);
+        let mut file = File::open(&path)?;
+        let metadata = file.metadata()?;
+        ensure!(
+            metadata.file_type().is_file(),
+            "materialized tree contains a special file"
+        );
+        digest.update((relative.len() as u64).to_be_bytes());
+        digest.update(relative.as_bytes());
+        digest.update([u8::from(executable_bit(&metadata))]);
+        digest.update(metadata.len().to_be_bytes());
+
+        let mut remaining = metadata.len();
+        let mut buffer = [0u8; 8 * 1024];
+        while remaining > 0 {
+            let wanted = usize::try_from(remaining.min(buffer.len() as u64))?;
+            let read = file.read(&mut buffer[..wanted])?;
+            ensure!(
+                read > 0,
+                "materialized file changed while being fingerprinted"
+            );
+            digest.update(&buffer[..read]);
+            remaining -= read as u64;
+        }
+        ensure!(
+            file.read(&mut buffer[..1])? == 0,
+            "materialized file changed while being fingerprinted"
+        );
     }
     Ok(hex::encode(digest.finalize()))
 }
@@ -1546,6 +1568,42 @@ mod tests {
         let mut second = first.clone();
         second.entries.reverse();
         assert_eq!(fingerprint(&first).unwrap(), fingerprint(&second).unwrap());
+    }
+
+    #[test]
+    fn valid_source_limits_do_not_reject_duplicated_materialized_output() {
+        let service = PackageService::ephemeral("test").unwrap();
+        let asset = vec![b'x'; 3 * 1024 * 1024 + 1];
+        let result = service
+            .execute(PackageCommand::Install {
+                request_id: "large-materialized-install".to_string(),
+                package_id: "large-materialized".to_string(),
+                snapshot: PackageSnapshot {
+                    source_name: "large-materialized".to_string(),
+                    entries: vec![
+                        PackageSnapshotEntry {
+                            path: "SKILL.md".to_string(),
+                            bytes: b"---\nname: Large Materialized\ndescription: Large valid Skill.\n---\n"
+                                .to_vec(),
+                            executable: false,
+                        },
+                        PackageSnapshotEntry {
+                            path: "assets/first.bin".to_string(),
+                            bytes: asset.clone(),
+                            executable: false,
+                        },
+                        PackageSnapshotEntry {
+                            path: "assets/second.bin".to_string(),
+                            bytes: asset,
+                            executable: false,
+                        },
+                    ],
+                },
+            })
+            .unwrap();
+
+        assert!(result.success, "{}", result.message);
+        assert!(service.acquire("large-materialized").is_ok());
     }
 
     #[test]

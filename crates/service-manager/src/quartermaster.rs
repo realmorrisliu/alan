@@ -6,7 +6,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use alan_ap::{ErrorCode, InProcessTransport};
+use alan_ap::{ErrorCode, FileKind, InProcessTransport};
 use alan_kernel::{MountFs, ProcessInvocation, ProcessOutcome, ProcessRunner};
 use alan_shell::Shell;
 use anyhow::{Context, Result};
@@ -86,6 +86,11 @@ enum QError {
         code: ErrorCode,
     },
     Operation(String),
+}
+
+enum BoundedReadError {
+    Protocol(ErrorCode),
+    LimitExceeded,
 }
 
 impl From<anyhow::Error> for QError {
@@ -220,6 +225,40 @@ fn source_leaf(source: &str) -> Result<String, QError> {
         .ok_or_else(|| QError::Usage("package source has no leaf name".to_string()))
 }
 
+async fn read_bounded_source_file(
+    shell: &Shell,
+    path: &str,
+    max_bytes: u64,
+) -> Result<Vec<u8>, BoundedReadError> {
+    let mut reader = shell.tail(path).await.map_err(BoundedReadError::Protocol)?;
+    let read_result = async {
+        let mut bytes = Vec::new();
+        loop {
+            let remaining = max_bytes.saturating_sub(bytes.len() as u64);
+            let count = remaining.saturating_add(1).min(4_096) as u32;
+            let chunk = reader
+                .read(count)
+                .await
+                .map_err(BoundedReadError::Protocol)?;
+            if chunk.is_empty() {
+                break;
+            }
+            if chunk.len() as u64 > remaining {
+                return Err(BoundedReadError::LimitExceeded);
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        Ok(bytes)
+    }
+    .await;
+    let close_result = reader.close().await;
+    match (read_result, close_result) {
+        (Err(error), _) => Err(error),
+        (Ok(bytes), Ok(())) => Ok(bytes),
+        (Ok(_), Err(code)) => Err(BoundedReadError::Protocol(code)),
+    }
+}
+
 async fn snapshot_namespace_tree(
     shell: &Shell,
     source: &str,
@@ -274,30 +313,45 @@ async fn snapshot_namespace_tree(
                                 action: "inspect source",
                                 code,
                             })?;
+                    if stat.qid.kind != FileKind::File {
+                        return Err(QError::Operation(
+                            "package source contains a non-file leaf".to_string(),
+                        ));
+                    }
                     if stat.length > MAX_SOURCE_FILE_BYTES {
                         return Err(QError::Operation(
                             "package source file is too large".to_string(),
                         ));
                     }
-                    total_bytes = total_bytes.checked_add(stat.length).ok_or_else(|| {
-                        QError::Operation("package source size overflow".to_string())
-                    })?;
-                    if total_bytes > MAX_SOURCE_BYTES {
+                    let remaining_total = MAX_SOURCE_BYTES.saturating_sub(total_bytes);
+                    if stat.length > remaining_total {
                         return Err(QError::Operation("package source is too large".to_string()));
                     }
-                    let bytes =
-                        shell
-                            .cat(&child_absolute)
-                            .await
-                            .map_err(|code| QError::Protocol {
+                    let read_limit = MAX_SOURCE_FILE_BYTES.min(remaining_total);
+                    let bytes = read_bounded_source_file(shell, &child_absolute, read_limit)
+                        .await
+                        .map_err(|error| match error {
+                            BoundedReadError::Protocol(code) => QError::Protocol {
                                 action: "read source",
                                 code,
-                            })?;
+                            },
+                            BoundedReadError::LimitExceeded
+                                if remaining_total < MAX_SOURCE_FILE_BYTES =>
+                            {
+                                QError::Operation("package source is too large".to_string())
+                            }
+                            BoundedReadError::LimitExceeded => {
+                                QError::Operation("package source file is too large".to_string())
+                            }
+                        })?;
                     if bytes.len() as u64 != stat.length {
                         return Err(QError::Operation(
                             "package source changed while it was being imported".to_string(),
                         ));
                     }
+                    total_bytes = total_bytes.checked_add(bytes.len() as u64).ok_or_else(|| {
+                        QError::Operation("package source size overflow".to_string())
+                    })?;
                     entries.push(PackageSnapshotEntry {
                         path: child_relative,
                         bytes,
@@ -426,10 +480,73 @@ fn usage() -> &'static str {
 mod tests {
     use super::*;
     use alan_ap::reference::MemFs;
+    use alan_ap::{Fid, FileKind, FileServer, Offset, OpenMode, Qid, Stat};
     use alan_hostfs::{HostDirAccess, HostDirFs};
     use alan_kernel::{Access, Credentials, ExecSpec, Namespace, Pid};
     use alan_shell::StdioDriver;
+    use async_trait::async_trait;
     use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
+
+    struct UnderreportedInfiniteFile {
+        inner: MemFs,
+    }
+
+    impl UnderreportedInfiniteFile {
+        fn new() -> Self {
+            Self {
+                inner: MemFs::with_read_only_file("SKILL.md", Vec::new()),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl FileServer for UnderreportedInfiniteFile {
+        async fn walk(&self, fid: Fid, newfid: Fid, names: &[String]) -> Result<Qid, ErrorCode> {
+            self.inner.walk(fid, newfid, names).await
+        }
+
+        async fn open(&self, fid: Fid, mode: OpenMode) -> Result<Qid, ErrorCode> {
+            self.inner.open(fid, mode).await
+        }
+
+        async fn read(&self, fid: Fid, offset: Offset, count: u32) -> Result<Vec<u8>, ErrorCode> {
+            if self.inner.stat(fid).await?.qid.kind == FileKind::File {
+                Ok(vec![b'x'; count as usize])
+            } else {
+                self.inner.read(fid, offset, count).await
+            }
+        }
+
+        async fn write(&self, fid: Fid, offset: Offset, data: &[u8]) -> Result<u32, ErrorCode> {
+            self.inner.write(fid, offset, data).await
+        }
+
+        async fn stat(&self, fid: Fid) -> Result<Stat, ErrorCode> {
+            let mut stat = self.inner.stat(fid).await?;
+            if stat.qid.kind == FileKind::File {
+                stat.length = 0;
+            }
+            Ok(stat)
+        }
+
+        async fn create(
+            &self,
+            fid: Fid,
+            newfid: Fid,
+            name: &str,
+            kind: FileKind,
+        ) -> Result<Qid, ErrorCode> {
+            self.inner.create(fid, newfid, name, kind).await
+        }
+
+        async fn remove(&self, fid: Fid) -> Result<(), ErrorCode> {
+            self.inner.remove(fid).await
+        }
+
+        async fn clunk(&self, fid: Fid) -> Result<(), ErrorCode> {
+            self.inner.clunk(fid).await
+        }
+    }
 
     fn invocation(namespace: Namespace, args: &[&str]) -> ProcessInvocation {
         ProcessInvocation {
@@ -541,6 +658,21 @@ mod tests {
                 .unwrap()
                 .contains("--name")
         );
+    }
+
+    #[tokio::test]
+    async fn source_read_budget_rejects_an_infinite_file_that_underreports_stat() {
+        let shell = Shell::new(InProcessTransport::new(Arc::new(
+            UnderreportedInfiniteFile::new(),
+        )));
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            read_bounded_source_file(&shell, "/SKILL.md", 16),
+        )
+        .await
+        .expect("bounded source read must not wait for EOF");
+
+        assert!(matches!(result, Err(BoundedReadError::LimitExceeded)));
     }
 
     #[tokio::test]
