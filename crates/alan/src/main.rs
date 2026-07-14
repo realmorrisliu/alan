@@ -795,12 +795,24 @@ async fn main() -> Result<()> {
                                 legacy_state::AuthoredImportKind::MemoryStore
                             }
                         };
+                        let package_shell = if kind == legacy_state::AuthoredImportKind::Skill {
+                            let attachment =
+                                alan_os_host::LocalAttachment::detect(channel.descriptor().id)?;
+                            attachment
+                                .connect()
+                                .await
+                                .ok()
+                                .map(|attached| alan_shell::Shell::new(attached.root))
+                        } else {
+                            None
+                        };
                         let report = legacy_state::import_authored_content(
                             kind,
                             &source,
                             &name,
                             delete_source,
                             &system,
+                            package_shell.as_ref(),
                         )
                         .await?;
                         println!("imported: {}", report.destination.display());

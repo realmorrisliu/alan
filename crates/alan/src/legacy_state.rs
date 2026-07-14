@@ -234,6 +234,7 @@ pub async fn import_authored_content(
     name: &str,
     delete_source: bool,
     system_store: &SystemStorePaths,
+    package_shell: Option<&Shell>,
 ) -> Result<AuthoredImportReport> {
     validate_import_name(name)?;
     validate_absolute_path("authored import source", source)?;
@@ -272,7 +273,15 @@ pub async fn import_authored_content(
     );
 
     if kind == AuthoredImportKind::Skill {
-        return import_authored_skill(source, name, delete_source, system_store).await;
+        if let Some(package_shell) = package_shell {
+            return import_authored_skill(source, name, delete_source, package_shell).await;
+        }
+        let package_service = alan_service_manager::PackageService::open(
+            &system_store.channel_id,
+            system_store.packages()?,
+        )?;
+        let package_shell = package_service_shell(&package_service);
+        return import_authored_skill(source, name, delete_source, &package_shell).await;
     }
 
     let destination_parent = match kind {
@@ -338,35 +347,42 @@ pub async fn import_authored_content(
     })
 }
 
+fn package_service_shell(service: &std::sync::Arc<alan_service_manager::PackageService>) -> Shell {
+    let mut namespace = alan_kernel::Namespace::new();
+    namespace.mount(
+        "/mnt/package",
+        InProcessTransport::new(service.file_server()),
+        alan_kernel::Access::ReadWrite,
+    );
+    Shell::new(InProcessTransport::new(std::sync::Arc::new(
+        alan_kernel::MountFs::new(namespace),
+    )))
+}
+
 async fn import_authored_skill(
     source: &Path,
     package_id: &str,
     delete_source: bool,
-    system_store: &SystemStorePaths,
+    package_shell: &Shell,
 ) -> Result<AuthoredImportReport> {
     let canonical_source = fs::canonicalize(source)
         .with_context(|| format!("failed to resolve import source {}", source.display()))?;
     let source_fingerprint = tree_fingerprint(&canonical_source)?;
     let snapshot = alan_service_manager::PackageSnapshot::from_directory(&canonical_source)?;
-    let package_service = alan_service_manager::PackageService::open(
-        &system_store.channel_id,
-        system_store.packages()?,
-    )?;
     let request_id = format!("legacy-import-{}", uuid::Uuid::new_v4().simple());
     let command = alan_service_manager::PackageCommand::Install {
         request_id: request_id.clone(),
         package_id: package_id.to_string(),
         snapshot,
     };
-    let shell = Shell::new(InProcessTransport::new(package_service.file_server()));
-    shell
-        .write("/ctl", &serde_json::to_vec(&command)?)
+    package_shell
+        .write("/mnt/package/ctl", &serde_json::to_vec(&command)?)
         .await
         .map_err(|code| anyhow::anyhow!("submit Package Service import: {code:?}"))?;
     let results: BTreeMap<String, alan_service_manager::PackageCommandResult> =
         serde_json::from_slice(
-            &shell
-                .cat("/result")
+            &package_shell
+                .cat("/mnt/package/result")
                 .await
                 .map_err(|code| anyhow::anyhow!("read Package Service import: {code:?}"))?,
         )?;
@@ -1040,6 +1056,12 @@ mod tests {
         )
         .unwrap();
         let (system, _) = stores(temp.path(), InstallChannel::Stable);
+        let service = alan_service_manager::PackageService::open(
+            &system.channel_id,
+            system.packages().unwrap(),
+        )
+        .unwrap();
+        let package_shell = package_service_shell(&service);
 
         let report = import_authored_content(
             AuthoredImportKind::Skill,
@@ -1047,13 +1069,9 @@ mod tests {
             "imported-skill",
             true,
             &system,
+            Some(&package_shell),
         )
         .await
-        .unwrap();
-        let service = alan_service_manager::PackageService::open(
-            &system.channel_id,
-            system.packages().unwrap(),
-        )
         .unwrap();
         let lease = service.acquire("imported-skill").unwrap();
         let export = &lease.record().exports[0];
@@ -1086,6 +1104,7 @@ mod tests {
             "managed-copy",
             true,
             &system,
+            None,
         )
         .await
         .unwrap_err();
@@ -1134,6 +1153,7 @@ mod tests {
             "default",
             false,
             &system,
+            None,
         )
         .await
         .unwrap_err();

@@ -139,10 +139,11 @@ fn host_import_installs_verified_skill_before_deleting_source() {
         InstallChannel::Stable.descriptor().id,
     )
     .unwrap();
-    let packages =
-        alan_service_manager::PackageService::open(&system.channel_id, system.packages().unwrap())
-            .unwrap();
-    assert!(packages.resolve("reviewer").is_ok());
+    let catalog: alan_service_manager::PackageCatalog = serde_json::from_slice(
+        &std::fs::read(system.packages().unwrap().join("catalog.json")).unwrap(),
+    )
+    .unwrap();
+    assert!(catalog.packages.contains_key("reviewer"));
     assert!(!source.exists());
     assert!(String::from_utf8_lossy(&output.stdout).contains("source deleted after verification"));
 }
@@ -190,10 +191,12 @@ fn host_import_never_follows_a_symlinked_source_for_deletion() {
         InstallChannel::Stable.descriptor().id,
     )
     .unwrap();
-    let packages =
-        alan_service_manager::PackageService::open(&system.channel_id, system.packages().unwrap())
-            .unwrap();
-    assert!(!packages.catalog().packages.contains_key("linked-skill"));
+    let catalog_path = system.packages().unwrap().join("catalog.json");
+    if catalog_path.exists() {
+        let catalog: alan_service_manager::PackageCatalog =
+            serde_json::from_slice(&std::fs::read(catalog_path).unwrap()).unwrap();
+        assert!(!catalog.packages.contains_key("linked-skill"));
+    }
 }
 
 #[cfg(unix)]
@@ -240,15 +243,12 @@ fn host_import_never_follows_a_symlinked_source_ancestor_for_deletion() {
         InstallChannel::Stable.descriptor().id,
     )
     .unwrap();
-    let packages =
-        alan_service_manager::PackageService::open(&system.channel_id, system.packages().unwrap())
-            .unwrap();
-    assert!(
-        !packages
-            .catalog()
-            .packages
-            .contains_key("ancestor-linked-skill")
-    );
+    let catalog_path = system.packages().unwrap().join("catalog.json");
+    if catalog_path.exists() {
+        let catalog: alan_service_manager::PackageCatalog =
+            serde_json::from_slice(&std::fs::read(catalog_path).unwrap()).unwrap();
+        assert!(!catalog.packages.contains_key("ancestor-linked-skill"));
+    }
 }
 
 #[test]

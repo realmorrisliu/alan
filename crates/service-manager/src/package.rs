@@ -1,7 +1,7 @@
 //! Package Service (Quartermaster): installed package ownership and lifecycle.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs::{self, File};
+use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex, Weak};
@@ -231,9 +231,60 @@ struct State {
 pub struct PackageService {
     channel_id: String,
     store_root: PathBuf,
+    _store_lock: PackageStoreLock,
     _temporary_store: Option<tempfile::TempDir>,
     state: Mutex<State>,
     operation: Mutex<()>,
+}
+
+struct PackageStoreLock {
+    file: File,
+}
+
+impl PackageStoreLock {
+    fn acquire(root: &Path) -> Result<Self> {
+        let path = root.join("store.lock");
+        let mut options = OpenOptions::new();
+        options.read(true).write(true).create(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
+        }
+        let file = options
+            .open(&path)
+            .with_context(|| format!("open Package Store lock {}", path.display()))?;
+        #[cfg(unix)]
+        {
+            use std::os::fd::AsRawFd;
+            // SAFETY: file owns a valid descriptor for the lifetime of the lock.
+            let result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+            if result != 0 {
+                let error = std::io::Error::last_os_error();
+                if error
+                    .raw_os_error()
+                    .is_some_and(|code| code == libc::EWOULDBLOCK || code == libc::EAGAIN)
+                {
+                    bail!("Package Store is already owned by another Package Service")
+                }
+                return Err(error).context("acquire Package Store lock");
+            }
+        }
+        Ok(Self { file })
+    }
+}
+
+impl Drop for PackageStoreLock {
+    fn drop(&mut self) {
+        #[cfg(unix)]
+        {
+            use std::os::fd::AsRawFd;
+            // SAFETY: file remains valid until this Drop implementation returns.
+            unsafe {
+                libc::flock(self.file.as_raw_fd(), libc::LOCK_UN);
+            }
+        }
+    }
 }
 
 /// An immutable Package Service revision reference retained by a Process context.
@@ -314,6 +365,7 @@ impl PackageService {
         );
         fs::create_dir_all(store_root.join("revisions"))?;
         fs::create_dir_all(store_root.join("staging"))?;
+        let store_lock = PackageStoreLock::acquire(&store_root)?;
         recover_staging(&store_root)?;
         let mut catalog = load_catalog(&store_root)?;
         validate_catalog_structure(&catalog)?;
@@ -344,6 +396,7 @@ impl PackageService {
         Ok(Arc::new(Self {
             channel_id,
             store_root,
+            _store_lock: store_lock,
             _temporary_store: temporary_store,
             state: Mutex::new(State {
                 catalog,
@@ -1959,6 +2012,19 @@ mod tests {
 
         assert!(PackageService::open("dev", root).is_err());
         assert_eq!(fs::read(victim.join("sentinel")).unwrap(), b"keep");
+    }
+
+    #[test]
+    fn package_store_has_only_one_live_service_owner() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("packages");
+        let service = PackageService::open("dev", root.clone()).unwrap();
+
+        let error = PackageService::open("dev", root.clone()).unwrap_err();
+        assert!(error.to_string().contains("already owned"));
+
+        drop(service);
+        assert!(PackageService::open("dev", root).is_ok());
     }
 
     #[test]

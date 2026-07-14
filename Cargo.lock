@@ -320,6 +320,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "hex",
+ "libc",
  "serde",
  "serde_json",
  "serde_yaml",
