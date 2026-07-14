@@ -1645,7 +1645,7 @@ fn set_executable(_path: &Path, _executable: bool) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alan_ap::InProcessTransport;
+    use alan_ap::{Fid, InProcessTransport, OpenMode};
     use alan_shell::Shell;
 
     fn native_snapshot(name: &str, body: &str) -> PackageSnapshot {
@@ -2300,5 +2300,28 @@ mod tests {
             Err(ErrorCode::BadRequest)
         );
         assert_eq!(service.catalog().generation, 0);
+    }
+
+    #[tokio::test]
+    async fn file_surface_discards_buffer_after_oversized_write_fails() {
+        let service = PackageService::ephemeral("test").unwrap();
+        let fs = service.file_server();
+        let fid = Fid(41);
+        fs.walk(Fid::ROOT, fid, &["ctl".to_string()]).await.unwrap();
+        fs.open(fid, OpenMode::Write).await.unwrap();
+        let command = serde_json::to_vec(&PackageCommand::Install {
+            request_id: "rejected-oversized-write".to_string(),
+            package_id: "must-not-install".to_string(),
+            snapshot: native_snapshot("must-not-install", "body"),
+        })
+        .unwrap();
+        fs.write(fid, 0, &command).await.unwrap();
+        assert_eq!(
+            fs.write(fid, MAX_COMMAND_BYTES as u64, b"x").await,
+            Err(ErrorCode::BadRequest)
+        );
+
+        fs.clunk(fid).await.unwrap();
+        assert!(service.resolve("must-not-install").is_err());
     }
 }

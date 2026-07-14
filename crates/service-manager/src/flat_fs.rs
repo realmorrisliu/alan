@@ -29,6 +29,7 @@ struct FidState {
     node: Node,
     mode: Option<OpenMode>,
     write_buf: Vec<u8>,
+    write_failed: bool,
 }
 
 pub(crate) struct FlatServiceFs {
@@ -110,6 +111,7 @@ impl FileServer for FlatServiceFs {
                 node,
                 mode: None,
                 write_buf: Vec::new(),
+                write_failed: false,
             },
         );
         Ok(qid)
@@ -162,9 +164,25 @@ impl FileServer for FlatServiceFs {
         if state.mode != Some(OpenMode::Write) || !self.writable(name) {
             return Err(ErrorCode::NoAccess);
         }
-        let start = usize::try_from(offset).map_err(|_| ErrorCode::BadRequest)?;
-        let end = start.checked_add(data.len()).ok_or(ErrorCode::BadRequest)?;
+        if state.write_failed {
+            return Err(ErrorCode::BadRequest);
+        }
+        let start = match usize::try_from(offset) {
+            Ok(start) => start,
+            Err(_) => {
+                state.write_failed = true;
+                return Err(ErrorCode::BadRequest);
+            }
+        };
+        let end = match start.checked_add(data.len()) {
+            Some(end) => end,
+            None => {
+                state.write_failed = true;
+                return Err(ErrorCode::BadRequest);
+            }
+        };
         if end > self.service.max_write_bytes() {
+            state.write_failed = true;
             return Err(ErrorCode::BadRequest);
         }
         state.write_buf.resize(state.write_buf.len().max(end), 0);
@@ -210,6 +228,7 @@ impl FileServer for FlatServiceFs {
             .ok_or(ErrorCode::NotFound)?;
         if let Node::File(name) = state.node
             && state.mode == Some(OpenMode::Write)
+            && !state.write_failed
         {
             self.service.commit(&name, &state.write_buf).await?;
         }
