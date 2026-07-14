@@ -12,23 +12,42 @@ use crate::{
 #[derive(Debug, Clone)]
 pub struct ResolvedAgentDefinition {
     pub root_dir: Option<PathBuf>,
+    pub namespace_root: Option<PathBuf>,
     pub config_path: Option<PathBuf>,
     pub persona_dirs: Vec<PathBuf>,
     pub capability_view: ResolvedCapabilityView,
     pub skill_overrides: Vec<SkillOverride>,
     pub policy_path: Option<PathBuf>,
+    pub config_content: Option<String>,
+    pub persona_context: Option<String>,
+    pub descriptor_tree: Option<crate::ProcessFileTree>,
 }
 
 impl ResolvedAgentDefinition {
+    pub(crate) fn config_overlay_source(&self) -> Option<PathBuf> {
+        self.namespace_root
+            .as_ref()
+            .map(|root| root.join("agent.toml"))
+    }
+
     pub fn from_launch_context(
         launch_context: &ProcessLaunchContext,
         base_skill_overrides: &[SkillOverride],
         base_source: ConfigSourceKind,
     ) -> Result<Self> {
-        let package_roots = resolve_package_references(launch_context)?;
+        let package_capabilities = resolve_package_references(launch_context)?;
         let Some(descriptor) = launch_context.descriptor(AGENT_DEFINITION_DESCRIPTOR) else {
-            return Self::empty(base_skill_overrides, package_roots);
+            return Self::empty(base_skill_overrides, package_capabilities);
         };
+        if let Some(file_tree) = descriptor.file_tree.as_ref() {
+            return Self::from_file_tree(
+                descriptor,
+                file_tree,
+                base_skill_overrides,
+                base_source,
+                package_capabilities,
+            );
+        }
         let declared_root = launch_context
             .host_path(&descriptor.path)
             .with_context(|| {
@@ -71,21 +90,25 @@ impl ResolvedAgentDefinition {
             merge_skill_override_overlays_from_paths(base_skill_overrides, &config_paths)?;
         let resolved = Self {
             root_dir: Some(root_dir),
+            namespace_root: Some(PathBuf::from(&descriptor.path)),
             config_path: config_path.exists().then_some(config_path),
             persona_dirs: persona_dir
                 .is_dir()
                 .then_some(persona_dir)
                 .into_iter()
                 .collect(),
-            capability_view: ResolvedCapabilityView::from_package_sources(
+            capability_view: capability_view_with_packages(
                 vec![ScopedPackageDir {
                     path: skills_dir,
                     scope: SkillScope::Descriptor,
                 }],
-                package_roots,
+                package_capabilities,
             ),
             skill_overrides,
             policy_path: policy_path.exists().then_some(policy_path),
+            config_content: None,
+            persona_context: None,
+            descriptor_tree: None,
         };
         resolved
             .capability_view
@@ -96,18 +119,80 @@ impl ResolvedAgentDefinition {
 
     fn empty(
         base_skill_overrides: &[SkillOverride],
-        package_roots: Vec<crate::skills::ScopedPackageRoot>,
+        package_capabilities: Vec<crate::skills::CapabilityPackage>,
     ) -> Result<Self> {
         let resolved = Self {
             root_dir: None,
+            namespace_root: None,
             config_path: None,
             persona_dirs: Vec::new(),
-            capability_view: ResolvedCapabilityView::from_package_sources(
-                Vec::new(),
-                package_roots,
-            ),
+            capability_view: capability_view_with_packages(Vec::new(), package_capabilities),
             skill_overrides: base_skill_overrides.to_vec(),
             policy_path: None,
+            config_content: None,
+            persona_context: None,
+            descriptor_tree: None,
+        };
+        resolved
+            .capability_view
+            .validate_unique_runtime_skill_ids()
+            .context("validate Process Skill package references")?;
+        Ok(resolved)
+    }
+
+    fn from_file_tree(
+        descriptor: &crate::ProcessDescriptor,
+        file_tree: &crate::ProcessFileTree,
+        base_skill_overrides: &[SkillOverride],
+        base_source: ConfigSourceKind,
+        mut package_capabilities: Vec<crate::skills::CapabilityPackage>,
+    ) -> Result<Self> {
+        let config_content = (base_source != ConfigSourceKind::EnvOverride)
+            .then(|| file_tree.text("agent.toml"))
+            .transpose()?
+            .flatten()
+            .map(str::to_string);
+        let skill_overrides = match config_content.as_deref() {
+            Some(content) => crate::config::merge_skill_override_overlay_from_content(
+                base_skill_overrides,
+                content,
+                Path::new(&descriptor.path).join("agent.toml").as_path(),
+            )?,
+            None => base_skill_overrides.to_vec(),
+        };
+        for name in file_tree.child_dirs("skills") {
+            let prefix = format!("skills/{name}");
+            let tree = file_tree.subtree(&prefix)?;
+            if !tree.contains_file("SKILL.md") {
+                continue;
+            }
+            let namespace_root = Path::new(&descriptor.path).join(&prefix);
+            package_capabilities.push(capability_package_from_descriptor(
+                format!("skill:{name}"),
+                &name,
+                namespace_root.clone(),
+                SkillScope::Descriptor,
+                Vec::new(),
+                &tree,
+            )?);
+        }
+        let persona_context = crate::prompts::render_definition_persona_context_from_file_tree(
+            file_tree,
+            &descriptor.path,
+        );
+        let resolved = Self {
+            root_dir: None,
+            namespace_root: Some(PathBuf::from(&descriptor.path)),
+            config_path: None,
+            persona_dirs: Vec::new(),
+            capability_view: capability_view_with_packages(Vec::new(), package_capabilities),
+            skill_overrides,
+            policy_path: file_tree
+                .contains_file("policy.yaml")
+                .then(|| Path::new(&descriptor.path).join("policy.yaml")),
+            config_content,
+            persona_context: (!persona_context.is_empty()).then_some(persona_context),
+            descriptor_tree: Some(file_tree.clone()),
         };
         resolved
             .capability_view
@@ -119,8 +204,8 @@ impl ResolvedAgentDefinition {
 
 fn resolve_package_references(
     launch_context: &ProcessLaunchContext,
-) -> Result<Vec<crate::skills::ScopedPackageRoot>> {
-    let mut roots = Vec::new();
+) -> Result<Vec<crate::skills::CapabilityPackage>> {
+    let mut packages = Vec::new();
     let mut selected_packages = std::collections::BTreeSet::new();
     for reference in &launch_context.package_references {
         ensure!(
@@ -128,33 +213,13 @@ fn resolve_package_references(
             "duplicate package reference `{}`",
             reference.package_id
         );
-        let declared_root = launch_context
-            .host_path(&reference.namespace_path)
-            .with_context(|| {
-                format!(
-                    "package reference {} is not backed by an explicit package projection",
-                    reference.namespace_path
-                )
-            })?;
-        let canonical_root = std::fs::canonicalize(&declared_root).with_context(|| {
-            format!(
-                "failed to resolve package reference {}",
-                reference.namespace_path
-            )
-        })?;
-        let resolved_namespace_path = launch_context
-            .namespace_path(&canonical_root)
-            .with_context(|| {
-                format!(
-                    "package reference {} escapes its package projection",
-                    reference.namespace_path
-                )
-            })?;
         ensure!(
-            resolved_namespace_path == reference.namespace_path,
-            "package reference {} resolves to a different Alan OS path: {}",
-            reference.namespace_path,
-            resolved_namespace_path
+            launch_context
+                .namespace
+                .resolve(&reference.namespace_path)
+                .is_ok(),
+            "package reference {} is not mounted in the Process namespace",
+            reference.namespace_path
         );
         let scope = match reference.kind {
             ProcessPackageKind::Preinstalled => SkillScope::Builtin,
@@ -162,49 +227,11 @@ fn resolve_package_references(
         };
         let multiple_exports = reference.skills.len() > 1;
         for skill in &reference.skills {
-            let declared_skill_root = canonical_root.join(&skill.path);
-            let canonical_skill_root =
-                std::fs::canonicalize(&declared_skill_root).with_context(|| {
-                    format!(
-                        "failed to resolve Skill `{}` from package `{}`",
-                        skill.skill_id, reference.package_id
-                    )
-                })?;
-            ensure!(
-                canonical_skill_root.starts_with(&canonical_root),
-                "Skill `{}` escapes package `{}`",
-                skill.skill_id,
-                reference.package_id
-            );
-            let expected_namespace_path = format!(
+            let namespace_root = PathBuf::from(format!(
                 "{}/{}",
                 reference.namespace_path.trim_end_matches('/'),
                 skill.path
-            );
-            ensure!(
-                launch_context
-                    .namespace_path(&canonical_skill_root)
-                    .as_deref()
-                    == Some(expected_namespace_path.as_str()),
-                "Skill `{}` resolves outside package `{}`",
-                skill.skill_id,
-                reference.package_id
-            );
-            let metadata =
-                crate::skills::load_skill_metadata(&canonical_skill_root.join("SKILL.md"), scope)
-                    .with_context(|| {
-                    format!(
-                        "validate Skill `{}` from package `{}`",
-                        skill.skill_id, reference.package_id
-                    )
-                })?;
-            ensure!(
-                metadata.id == skill.skill_id,
-                "package `{}` declares Skill `{}` but its runtime id is `{}`",
-                reference.package_id,
-                skill.skill_id,
-                metadata.id
-            );
+            ));
             let package_id = match (reference.kind, multiple_exports) {
                 (ProcessPackageKind::Preinstalled, false) => {
                     format!("builtin:{}", reference.package_id)
@@ -216,16 +243,122 @@ fn resolve_package_references(
                     format!("installed:{}:{}", reference.package_id, skill.skill_id)
                 }
             };
-            roots.push(crate::skills::ScopedPackageRoot {
+            packages.push(capability_package_from_descriptor(
                 package_id,
-                path: canonical_skill_root,
-                namespace_root: Some(PathBuf::from(expected_namespace_path)),
+                &skill.skill_id,
+                namespace_root.clone(),
                 scope,
-                dependencies: skill.dependencies.clone(),
-            });
+                skill.dependencies.clone(),
+                &skill.descriptor,
+            )?);
+            ensure!(
+                packages
+                    .last()
+                    .map(|package| package.portable_skill.path.parent())
+                    == Some(Some(namespace_root.as_path())),
+                "package Skill descriptor root changed during capability assembly"
+            );
         }
     }
-    Ok(roots)
+    Ok(packages)
+}
+
+fn capability_package_from_descriptor(
+    package_id: String,
+    expected_skill_id: &str,
+    namespace_root: PathBuf,
+    scope: SkillScope,
+    dependencies: Vec<crate::skills::SkillTypedDependency>,
+    descriptor: &crate::ProcessFileTree,
+) -> Result<crate::skills::CapabilityPackage> {
+    let document = descriptor
+        .text("SKILL.md")?
+        .context("Skill descriptor has no SKILL.md")?;
+    let source = crate::skills::SkillContentSource::Embedded(std::sync::Arc::from(document));
+    let metadata = crate::skills::parse_skill_metadata_with_source(
+        document,
+        &namespace_root.join("SKILL.md"),
+        scope,
+        source.clone(),
+        Some(package_id.clone()),
+    )?;
+    ensure!(
+        metadata.id == expected_skill_id,
+        "package `{package_id}` declares Skill `{expected_skill_id}` but its runtime id is `{}`",
+        metadata.id
+    );
+    let package_sidecar = descriptor
+        .text(crate::skills::PACKAGE_SIDECAR_FILE)?
+        .map(crate::skills::parse_package_sidecar)
+        .transpose()?;
+    let skill_sidecar = descriptor
+        .text(crate::skills::SKILL_SIDECAR_FILE)?
+        .map(crate::skills::parse_skill_sidecar)
+        .transpose()?;
+    let compatible_metadata = descriptor
+        .text("agents/openai.yaml")?
+        .map(|content| crate::skills::parse_compatibility_metadata(content, &namespace_root))
+        .transpose()?
+        .flatten();
+    let child_agents = descriptor
+        .child_dirs("agents")
+        .into_iter()
+        .filter_map(|name| {
+            let prefix = format!("agents/{name}");
+            let looks_like_definition = descriptor.contains_file(&format!("{prefix}/agent.toml"))
+                || descriptor.contains_dir(&format!("{prefix}/persona"))
+                || descriptor.contains_dir(&format!("{prefix}/skills"))
+                || descriptor.contains_file(&format!("{prefix}/policy.yaml"));
+            looks_like_definition.then(|| {
+                Ok(crate::skills::CapabilityChildAgentExport {
+                    name: name.clone(),
+                    root_dir: namespace_root.join(&prefix),
+                    handle: crate::skills::CapabilityChildAgentExport::package_handle(
+                        &package_id,
+                        &name,
+                    ),
+                    file_tree: Some(descriptor.subtree(&prefix)?),
+                })
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let resource = |name: &str| {
+        descriptor
+            .contains_dir(name)
+            .then(|| namespace_root.join(name))
+    };
+    Ok(crate::skills::CapabilityPackage {
+        id: package_id,
+        scope,
+        root_dir: None,
+        namespace_root: Some(namespace_root.clone()),
+        exports: crate::skills::CapabilityPackageExports {
+            child_agents,
+            resources: crate::skills::CapabilityPackageResources {
+                bin_dir: resource("bin"),
+                scripts_dir: resource("scripts"),
+                references_dir: resource("references"),
+                assets_dir: resource("assets"),
+            },
+        },
+        portable_skill: crate::skills::PortableSkill {
+            path: namespace_root.join("SKILL.md"),
+            source,
+        },
+        dependencies,
+        package_sidecar,
+        skill_sidecar,
+        compatible_metadata,
+    })
+}
+
+fn capability_view_with_packages(
+    package_dirs: Vec<ScopedPackageDir>,
+    packages: Vec<crate::skills::CapabilityPackage>,
+) -> ResolvedCapabilityView {
+    let mut view = ResolvedCapabilityView::from_package_dirs(package_dirs);
+    view.packages.extend(packages);
+    view
 }
 
 fn validate_definition_tree(root_dir: &Path) -> Result<()> {
@@ -288,6 +421,18 @@ mod tests {
     };
     use alan_kernel::Access;
 
+    fn package_descriptor(id: &str) -> crate::ProcessFileTree {
+        crate::ProcessFileTree::new(std::collections::BTreeMap::from([(
+            "SKILL.md".to_string(),
+            format!("---\nname: {id}\ndescription: Test Skill.\n---\n").into_bytes(),
+        )]))
+        .unwrap()
+    }
+
+    fn package_handle() -> alan_ap::InProcessTransport {
+        alan_ap::InProcessTransport::new(std::sync::Arc::new(alan_ap::reference::MemFs::new()))
+    }
+
     #[test]
     fn definition_resolves_only_inside_its_descriptor_tree() {
         let host = tempfile::tempdir().unwrap();
@@ -325,6 +470,80 @@ mod tests {
     }
 
     #[test]
+    fn file_tree_definition_resolves_without_host_backing() {
+        let tree = crate::ProcessFileTree::new(std::collections::BTreeMap::from([
+            (
+                "agent.toml".to_string(),
+                b"tool_repeat_limit = 7\n".to_vec(),
+            ),
+            ("persona/ROLE.md".to_string(), b"Package reviewer".to_vec()),
+            (
+                "skills/reviewer/SKILL.md".to_string(),
+                b"---\nname: Reviewer\ndescription: Review changes.\n---\n".to_vec(),
+            ),
+            (
+                "skills/reviewer/agents/critic/agent.toml".to_string(),
+                b"tool_repeat_limit = 3\n".to_vec(),
+            ),
+            (
+                "policy.yaml".to_string(),
+                b"default_action: deny\nrules: []\n".to_vec(),
+            ),
+        ]))
+        .unwrap();
+        let context = ProcessLaunchContext::root().with_descriptor(
+            AGENT_DEFINITION_DESCRIPTOR,
+            ProcessDescriptor::with_file_tree("/lib/pkg/review/agents/root", tree).unwrap(),
+        );
+
+        let resolved =
+            ResolvedAgentDefinition::from_launch_context(&context, &[], ConfigSourceKind::Default)
+                .unwrap();
+
+        assert!(resolved.root_dir.is_none());
+        assert_eq!(
+            resolved.namespace_root.as_deref(),
+            Some(Path::new("/lib/pkg/review/agents/root"))
+        );
+        assert!(resolved.config_path.is_none());
+        assert!(resolved.persona_dirs.is_empty());
+        assert_eq!(
+            resolved.config_content.as_deref(),
+            Some("tool_repeat_limit = 7\n")
+        );
+        assert!(
+            resolved
+                .persona_context
+                .as_deref()
+                .is_some_and(|context| context.contains("Package reviewer"))
+        );
+        assert_eq!(
+            resolved.policy_path.as_deref(),
+            Some(Path::new("/lib/pkg/review/agents/root/policy.yaml"))
+        );
+        let registry = crate::skills::SkillsRegistry::load_capability_view(
+            &resolved.capability_view,
+            &resolved.skill_overrides,
+        )
+        .unwrap();
+        assert!(registry.has(&"reviewer".to_string()));
+        let package = resolved
+            .capability_view
+            .packages
+            .iter()
+            .find(|package| package.id == "skill:reviewer")
+            .unwrap();
+        let export = package.exports.child_agent_export("critic").unwrap();
+        assert!(
+            export
+                .file_tree
+                .as_ref()
+                .is_some_and(|tree| tree.contains_file("agent.toml"))
+        );
+        assert!(context.host_mounts.is_empty());
+    }
+
+    #[test]
     fn host_directories_are_not_scanned_without_a_descriptor() {
         let host = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(host.path().join(".alan/agents/default/persona")).unwrap();
@@ -359,6 +578,7 @@ mod tests {
             name: "review-runtime".to_string(),
             description: None,
         };
+        let handle = package_handle();
         let reference = ProcessPackageReference::new(
             "review-pack",
             "a".repeat(64),
@@ -369,16 +589,17 @@ mod tests {
                     "reviewer",
                     "skills/reviewer",
                     vec![dependency.clone()],
+                    package_descriptor("reviewer"),
                 )
                 .unwrap(),
             ],
+            handle.clone(),
         )
         .unwrap();
-        let context = ProcessLaunchContext::root()
-            .with_host_mount(
-                HostMountGrant::new("/lib/pkg/review-pack", &package, Access::ReadOnly).unwrap(),
-            )
-            .with_package_reference(reference);
+        let mut context = ProcessLaunchContext::root().with_package_reference(reference);
+        context
+            .namespace
+            .mount("/lib/pkg/review-pack", handle, Access::ReadOnly);
 
         let resolved =
             ResolvedAgentDefinition::from_launch_context(&context, &[], ConfigSourceKind::Default)
@@ -396,7 +617,9 @@ mod tests {
             &resolved.skill_overrides,
         )
         .unwrap();
-        let metadata = registry.get(&"reviewer".to_string()).unwrap();
+        let metadata = registry
+            .get(&"reviewer".to_string())
+            .unwrap_or_else(|| panic!("registry errors: {:?}", registry.errors()));
         assert_eq!(
             metadata.path,
             PathBuf::from("/lib/pkg/review-pack/skills/reviewer/SKILL.md")
@@ -408,8 +631,7 @@ mod tests {
         assert_eq!(metadata.package_root, metadata.resource_root);
         assert!(matches!(
             &metadata.source,
-            crate::skills::SkillContentSource::File(path)
-                if path == &package.root_dir.as_ref().unwrap().join("SKILL.md")
+            crate::skills::SkillContentSource::Embedded(_)
         ));
         assert!(!resolved.capability_view.packages.iter().any(|package| {
             package
@@ -426,21 +648,25 @@ mod tests {
         let definition = host.path().join("definition");
         write_skill(&package, "reviewer");
         write_skill(&definition, "reviewer");
+        let handle = package_handle();
         let reference = ProcessPackageReference::new(
             "review-pack",
             "b".repeat(64),
             ProcessPackageKind::Installed,
             "/lib/pkg/review-pack",
             vec![
-                ProcessPackageSkillReference::new("reviewer", "skills/reviewer", Vec::new())
-                    .unwrap(),
+                ProcessPackageSkillReference::new(
+                    "reviewer",
+                    "skills/reviewer",
+                    Vec::new(),
+                    package_descriptor("reviewer"),
+                )
+                .unwrap(),
             ],
+            handle.clone(),
         )
         .unwrap();
-        let context = ProcessLaunchContext::root()
-            .with_host_mount(
-                HostMountGrant::new("/lib/pkg/review-pack", &package, Access::ReadOnly).unwrap(),
-            )
+        let mut context = ProcessLaunchContext::root()
             .with_host_mount(
                 HostMountGrant::new("/mnt/definition", &definition, Access::ReadOnly).unwrap(),
             )
@@ -449,6 +675,9 @@ mod tests {
                 AGENT_DEFINITION_DESCRIPTOR,
                 ProcessDescriptor::new("/mnt/definition").unwrap(),
             );
+        context
+            .namespace
+            .mount("/lib/pkg/review-pack", handle, Access::ReadOnly);
 
         let error =
             ResolvedAgentDefinition::from_launch_context(&context, &[], ConfigSourceKind::Default)

@@ -318,8 +318,35 @@ impl PackageReferenceLease {
         )?))
     }
 
+    #[cfg(test)]
     pub(crate) fn content_root(&self) -> &Path {
         &self.content_root
+    }
+
+    pub(crate) fn skill_descriptor(
+        &self,
+        relative_root: &str,
+    ) -> Result<alan_agent_engine::ProcessFileTree> {
+        let root = self.content_root.join(relative_root);
+        let canonical_content = fs::canonicalize(&self.content_root)?;
+        let canonical_root = fs::canonicalize(&root)?;
+        ensure!(
+            canonical_root.starts_with(&canonical_content),
+            "package Skill descriptor escapes its immutable revision"
+        );
+        let source_leaf = canonical_root
+            .file_name()
+            .and_then(|name| name.to_str())
+            .context("package Skill descriptor root has no UTF-8 leaf")?;
+        let snapshot =
+            PackageSnapshot::from_directory_named(&canonical_root, source_leaf.to_string())?;
+        alan_agent_engine::ProcessFileTree::new(
+            snapshot
+                .entries
+                .into_iter()
+                .map(|entry| (entry.path, entry.bytes))
+                .collect(),
+        )
     }
 }
 

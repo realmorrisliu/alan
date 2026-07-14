@@ -255,7 +255,7 @@ async fn spawn_child_runtime_inner(
         &parent_launch_context,
         &spec,
         child_cwd,
-        launch_root_dir.as_deref(),
+        launch_root_dir.as_ref(),
     )?;
 
     let mut child_config = AgentProcessConfig {
@@ -285,7 +285,15 @@ async fn spawn_child_runtime_inner(
     )
     .context("Failed to resolve child-agent definition")?;
     let mut resolved_child_agent_config = child_agent_config.clone();
-    if let Some(config_path) = resolved_child_definition.config_path.as_ref() {
+    if let Some(content) = resolved_child_definition.config_content.as_deref() {
+        let source = launch_root_dir
+            .as_ref()
+            .map(|root| root.root_dir.join("agent.toml"))
+            .unwrap_or_else(|| PathBuf::from("/agent-definition/agent.toml"));
+        resolved_child_agent_config = resolved_child_agent_config
+            .with_definition_overlay_content(content, &source)
+            .context("Failed to resolve effective child-agent config")?;
+    } else if let Some(config_path) = resolved_child_definition.config_path.as_ref() {
         resolved_child_agent_config = resolved_child_agent_config
             .with_definition_overlays(std::slice::from_ref(config_path))
             .context("Failed to resolve effective child-agent config")?;
@@ -495,7 +503,7 @@ fn build_child_launch_context(
     parent: &crate::ProcessLaunchContext,
     spec: &SpawnSpec,
     child_cwd: Option<String>,
-    launch_root_dir: Option<&std::path::Path>,
+    launch_root_dir: Option<&ResolvedLaunchRoot>,
 ) -> Result<crate::ProcessLaunchContext> {
     let memory_descriptor = parent.descriptor(crate::MEMORY_STORE_DESCRIPTOR).cloned();
     let parent_definition_path = parent
@@ -505,16 +513,10 @@ fn build_child_launch_context(
     launch_context.descriptors.clear();
 
     if !spec.has_handle(SpawnHandle::HostMounts) {
-        let package_projection_paths = launch_context
-            .package_references
-            .iter()
-            .map(|reference| reference.namespace_path.clone())
-            .collect::<std::collections::BTreeSet<_>>();
         let inherited_mounts = std::mem::take(&mut launch_context.host_mounts);
         if let Some(cwd) = child_cwd.as_deref()
             && inherited_mounts
                 .iter()
-                .filter(|grant| !package_projection_paths.contains(&grant.namespace_path))
                 .any(|grant| grant.resolve_host_path(cwd).is_some())
         {
             bail!("Child-agent launch cwd '{cwd}' requires the explicit host_mounts handle.");
@@ -522,16 +524,11 @@ fn build_child_launch_context(
         if child_cwd.is_none()
             && inherited_mounts
                 .iter()
-                .filter(|grant| !package_projection_paths.contains(&grant.namespace_path))
                 .any(|grant| grant.resolve_host_path(&launch_context.cwd).is_some())
         {
             launch_context.cwd = "/".to_string();
         }
         for grant in inherited_mounts {
-            if package_projection_paths.contains(&grant.namespace_path) {
-                launch_context.host_mounts.push(grant);
-                continue;
-            }
             if parent_definition_path.as_deref() == Some(&grant.namespace_path) {
                 launch_context.host_mounts.push(grant);
                 continue;
@@ -553,7 +550,19 @@ fn build_child_launch_context(
         launch_context.namespace.unmount("/memory");
     }
 
-    if let Some(root_dir) = launch_root_dir {
+    if let Some(ResolvedLaunchRoot {
+        root_dir,
+        file_tree: Some(file_tree),
+    }) = launch_root_dir
+    {
+        let descriptor_path = root_dir
+            .to_str()
+            .context("package child-agent descriptor path is not UTF-8")?;
+        launch_context.descriptors.insert(
+            crate::AGENT_DEFINITION_DESCRIPTOR.to_string(),
+            crate::ProcessDescriptor::with_file_tree(descriptor_path, file_tree.clone())?,
+        );
+    } else if let Some(ResolvedLaunchRoot { root_dir, .. }) = launch_root_dir {
         let source_path = parent
             .namespace_path(root_dir)
             .filter(|path| !parent.namespace.union_at(path).is_empty());
@@ -781,7 +790,7 @@ fn validate_child_launch_contract(spec: &SpawnSpec) -> Result<Option<String>> {
 fn resolve_launch_root_dir(
     parent: &RuntimeLoopState,
     target: &SpawnTarget,
-) -> Result<Option<PathBuf>> {
+) -> Result<Option<ResolvedLaunchRoot>> {
     match target {
         SpawnTarget::DefinitionDescriptor { descriptor } => {
             let descriptor = parent
@@ -789,26 +798,43 @@ fn resolve_launch_root_dir(
                 .launch_context()
                 .and_then(|context| context.descriptor(descriptor))
                 .with_context(|| format!("parent Process has no `{descriptor}` descriptor"))?;
-            let root = parent
-                .namespace_environment()
-                .launch_context()
-                .and_then(|context| context.host_path(&descriptor.path))
-                .with_context(|| {
-                    format!(
-                        "Agent Definition descriptor {} has no explicit Host Mount backing",
-                        descriptor.path
-                    )
-                })?;
-            Ok(Some(root))
+            let root = if descriptor.file_tree.is_some() {
+                PathBuf::from(&descriptor.path)
+            } else {
+                parent
+                    .namespace_environment()
+                    .launch_context()
+                    .and_then(|context| context.host_path(&descriptor.path))
+                    .with_context(|| {
+                        format!(
+                            "Agent Definition descriptor {} has no explicit Host Mount backing",
+                            descriptor.path
+                        )
+                    })?
+            };
+            Ok(Some(ResolvedLaunchRoot {
+                root_dir: root,
+                file_tree: descriptor.file_tree.clone(),
+            }))
         }
-        SpawnTarget::PackageChildAgent { .. } => parent
-            .prompt_cache
-            .capability_view()
-            .map(crate::skills::ResolvedCapabilityView::refresh)
-            .and_then(|view| view.resolve_child_agent_target(target))
-            .map(Some)
-            .ok_or_else(|| anyhow::anyhow!("Unknown package child-agent target: {target:?}")),
+        SpawnTarget::PackageChildAgent { .. } => {
+            let export = parent
+                .prompt_cache
+                .capability_view()
+                .map(crate::skills::ResolvedCapabilityView::refresh)
+                .and_then(|view| view.resolve_child_agent_export(target).cloned())
+                .ok_or_else(|| anyhow::anyhow!("Unknown package child-agent target: {target:?}"))?;
+            Ok(Some(ResolvedLaunchRoot {
+                root_dir: export.root_dir,
+                file_tree: export.file_tree,
+            }))
+        }
     }
+}
+
+struct ResolvedLaunchRoot {
+    root_dir: PathBuf,
+    file_tree: Option<crate::ProcessFileTree>,
 }
 
 #[allow(dead_code)]
@@ -1537,15 +1563,11 @@ struct ChildNamespaceAssemblyPlan {
 }
 
 impl ChildNamespaceAssemblyPlan {
-    fn tool_host_mounts(&self) -> impl Iterator<Item = &crate::HostMountGrant> {
-        self.launch_context.tool_host_mounts()
-    }
-
     fn runtime_execution_binding(
         &self,
         scratch: Option<PathBuf>,
     ) -> Result<Option<crate::tools::ToolExecutionBinding>> {
-        if self.tool_host_mounts().next().is_none() {
+        if self.launch_context.host_mounts.is_empty() {
             return Ok(None);
         }
         let scratch = scratch.context(
@@ -1558,11 +1580,10 @@ impl ChildNamespaceAssemblyPlan {
         &self,
         scratch: PathBuf,
     ) -> Result<Option<crate::tools::ToolExecutionBinding>> {
-        if self.tool_host_mounts().next().is_none() {
+        if self.launch_context.host_mounts.is_empty() {
             return Ok(None);
         }
-        let mut launch_context = self.launch_context.clone();
-        launch_context.host_mounts = self.tool_host_mounts().cloned().collect();
+        let launch_context = self.launch_context.clone();
         Ok(Some(
             crate::tools::ToolExecutionBinding::from_launch_context(&launch_context, scratch)?,
         ))
@@ -2735,9 +2756,7 @@ mod tests {
 
     #[test]
     fn package_projection_does_not_create_host_tool_authority() {
-        let package = TempDir::new().unwrap();
-        let mut plan = capability_plan(Some(package.path().to_path_buf()), &["read_file"]);
-        plan.launch_context.host_mounts[0].namespace_path = "/lib/pkg/example".to_string();
+        let mut plan = capability_plan(None, &["read_file"]);
         plan.launch_context.package_references.push(
             crate::ProcessPackageReference::new(
                 "example",
@@ -2745,6 +2764,7 @@ mod tests {
                 crate::ProcessPackageKind::Installed,
                 "/lib/pkg/example",
                 Vec::new(),
+                memfs_transport(),
             )
             .unwrap(),
         );
@@ -2911,6 +2931,21 @@ Body
 
     fn memfs_transport() -> InProcessTransport {
         InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::new()))
+    }
+
+    fn host_launch_root(path: impl Into<PathBuf>) -> ResolvedLaunchRoot {
+        ResolvedLaunchRoot {
+            root_dir: path.into(),
+            file_tree: None,
+        }
+    }
+
+    fn package_skill_descriptor(id: &str) -> crate::ProcessFileTree {
+        crate::ProcessFileTree::new(std::collections::BTreeMap::from([(
+            "SKILL.md".to_string(),
+            format!("---\nname: {id}\ndescription: test\n---\n").into_bytes(),
+        )]))
+        .unwrap()
     }
 
     fn namespace_from_child_plan(plan: &ChildNamespaceAssemblyPlan) -> KernelNamespace {
@@ -4189,6 +4224,7 @@ model_reasoning_effort = "high"
         let mut spec = launch_spec(definition.clone());
         spec.handles.clear();
 
+        let definition = host_launch_root(definition);
         let child =
             build_child_launch_context(parent_context, &spec, None, Some(&definition)).unwrap();
 
@@ -4237,9 +4273,11 @@ model_reasoning_effort = "high"
                     "inherited",
                     "skills/inherited",
                     Vec::new(),
+                    package_skill_descriptor("inherited"),
                 )
                 .unwrap(),
             ],
+            memfs_transport(),
         )
         .unwrap();
         let parent = crate::ProcessLaunchContext::new(
@@ -4248,14 +4286,6 @@ model_reasoning_effort = "high"
             "/lib/pkg/parent-pack",
         )
         .unwrap()
-        .with_host_mount(
-            crate::HostMountGrant::new(
-                "/lib/pkg/parent-pack",
-                package.path(),
-                KernelAccess::ReadOnly,
-            )
-            .unwrap(),
-        )
         .with_package_reference(package_reference);
         let mut spec = launch_spec(package.path().join("unused-definition"));
         spec.handles.clear();
@@ -4263,14 +4293,10 @@ model_reasoning_effort = "high"
         let child = build_child_launch_context(&parent, &spec, None, None).unwrap();
 
         assert_eq!(child.cwd, "/lib/pkg/parent-pack");
-        assert_eq!(child.package_references, parent.package_references);
+        assert_eq!(child.package_references.len(), 1);
+        assert_eq!(child.package_references[0].package_id, "parent-pack");
         assert!(child.namespace.resolve("/lib/pkg/parent-pack").is_ok());
-        assert!(
-            child
-                .host_mounts
-                .iter()
-                .any(|grant| grant.namespace_path == "/lib/pkg/parent-pack")
-        );
+        assert!(child.host_mounts.is_empty());
         let resolved = crate::ResolvedAgentDefinition::from_launch_context(
             &child,
             &[],
@@ -4281,6 +4307,37 @@ model_reasoning_effort = "high"
         assert_eq!(
             resolved.capability_view.packages[0].id,
             "installed:parent-pack:inherited"
+        );
+    }
+
+    #[test]
+    fn package_child_definition_is_passed_by_descriptor_without_host_mount() {
+        let parent = crate::ProcessLaunchContext::root();
+        let definition = ResolvedLaunchRoot {
+            root_dir: PathBuf::from("/lib/pkg/review/skills/review/agents/critic"),
+            file_tree: Some(
+                crate::ProcessFileTree::new(std::collections::BTreeMap::from([(
+                    "agent.toml".to_string(),
+                    b"tool_repeat_limit = 3\n".to_vec(),
+                )]))
+                .unwrap(),
+            ),
+        };
+        let mut spec = launch_spec(definition.root_dir.clone());
+        spec.handles.clear();
+
+        let child = build_child_launch_context(&parent, &spec, None, Some(&definition)).unwrap();
+
+        assert!(child.host_mounts.is_empty());
+        let descriptor = child
+            .descriptor(crate::AGENT_DEFINITION_DESCRIPTOR)
+            .unwrap();
+        assert_eq!(descriptor.path, definition.root_dir.to_string_lossy());
+        assert!(
+            descriptor
+                .file_tree
+                .as_ref()
+                .is_some_and(|tree| tree.contains_file("agent.toml"))
         );
     }
 
@@ -4313,8 +4370,9 @@ model_reasoning_effort = "high"
         );
         let spec = launch_spec(definition.path().to_path_buf());
 
+        let definition_root = host_launch_root(definition.path());
         let child =
-            build_child_launch_context(&parent, &spec, None, Some(definition.path())).unwrap();
+            build_child_launch_context(&parent, &spec, None, Some(&definition_root)).unwrap();
 
         assert!(child.namespace.resolve("/agent-definition").is_ok());
         assert_eq!(
@@ -4365,11 +4423,12 @@ model_reasoning_effort = "high"
             crate::ProcessDescriptor::new("/agent-definition").unwrap(),
         );
 
+        let child_definition_root = host_launch_root(&child_definition);
         let child = build_child_launch_context(
             &parent,
             &launch_spec(child_definition.clone()),
             None,
-            Some(&child_definition),
+            Some(&child_definition_root),
         )
         .unwrap();
 
@@ -4397,6 +4456,7 @@ model_reasoning_effort = "high"
         let definition = temp.path().join("child-definition");
         let spec = launch_spec(definition.clone());
 
+        let definition = host_launch_root(definition);
         let child =
             build_child_launch_context(parent_context, &spec, None, Some(&definition)).unwrap();
 
@@ -4423,6 +4483,7 @@ model_reasoning_effort = "high"
         let mut spec = launch_spec(definition.clone());
         spec.handles.clear();
 
+        let definition = host_launch_root(definition);
         let error = build_child_launch_context(
             parent_context,
             &spec,

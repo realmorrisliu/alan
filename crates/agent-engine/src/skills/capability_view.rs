@@ -42,6 +42,9 @@ impl ResolvedCapabilityView {
                         source: SkillContentSource::File(skill.path),
                     },
                     dependencies: Vec::new(),
+                    package_sidecar: None,
+                    skill_sidecar: None,
+                    compatible_metadata: None,
                 });
             }
         }
@@ -63,6 +66,9 @@ impl ResolvedCapabilityView {
                     source: SkillContentSource::File(skill_path),
                 },
                 dependencies: package_root.dependencies,
+                package_sidecar: None,
+                skill_sidecar: None,
+                compatible_metadata: None,
             });
         }
 
@@ -72,7 +78,25 @@ impl ResolvedCapabilityView {
     }
 
     pub fn refresh(&self) -> Self {
-        Self::from_package_sources(self.package_dirs.clone(), self.package_roots.clone())
+        let mut refreshed =
+            Self::from_package_sources(self.package_dirs.clone(), self.package_roots.clone());
+        let discovered_ids = refreshed
+            .packages
+            .iter()
+            .map(|package| package.id.clone())
+            .collect::<BTreeSet<_>>();
+        refreshed.packages.extend(
+            self.packages
+                .iter()
+                .filter(|package| {
+                    matches!(
+                        package.portable_skill.source,
+                        SkillContentSource::Embedded(_)
+                    ) && !discovered_ids.contains(&package.id)
+                })
+                .cloned(),
+        );
+        refreshed
     }
 
     pub fn package(&self, package_id: &str) -> Option<&CapabilityPackage> {
@@ -107,6 +131,14 @@ impl ResolvedCapabilityView {
         &self,
         target: &alan_agent_protocol::SpawnTarget,
     ) -> Option<PathBuf> {
+        self.resolve_child_agent_export(target)
+            .map(|export| export.root_dir.clone())
+    }
+
+    pub fn resolve_child_agent_export(
+        &self,
+        target: &alan_agent_protocol::SpawnTarget,
+    ) -> Option<&CapabilityChildAgentExport> {
         let alan_agent_protocol::SpawnTarget::PackageChildAgent {
             package_id,
             export_name,
@@ -117,7 +149,6 @@ impl ResolvedCapabilityView {
 
         self.package(package_id)
             .and_then(|package| package.exports.child_agent_export(export_name))
-            .map(|export| export.root_dir.clone())
     }
 }
 
@@ -171,6 +202,7 @@ fn child_agent_exports(package_id: &str, root_dir: &Path) -> Vec<CapabilityChild
                 handle: CapabilityChildAgentExport::package_handle(package_id, &name),
                 name,
                 root_dir: canonical_root,
+                file_tree: None,
             })
         })
         .collect();

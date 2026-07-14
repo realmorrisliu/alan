@@ -170,7 +170,7 @@ impl SkillsRegistry {
             if track_package_paths && let Some(path) = compatibility_metadata_path.as_ref() {
                 self.tracked_paths.push(path.clone());
             }
-            let package_sidecar = package_root
+            let package_sidecar = package.package_sidecar.clone().or_else(|| package_root
                 .as_deref()
                 .and_then(|root| match loader::load_package_sidecar(root) {
                     Ok(sidecar) => sidecar,
@@ -188,8 +188,8 @@ impl SkillsRegistry {
                         });
                         None
                     }
-                });
-            let compatibility_metadata =
+                }));
+            let compatibility_metadata = package.compatible_metadata.clone().or_else(||
                 package_root
                     .as_deref()
                     .and_then(|root| match loader::load_compatibility_metadata(root) {
@@ -208,7 +208,7 @@ impl SkillsRegistry {
                             });
                             None
                         }
-                    });
+                    }));
 
             let mut loaded_skills = Vec::new();
             let portable_skill = package.portable_skill;
@@ -227,6 +227,11 @@ impl SkillsRegistry {
                             self.apply_sidecar_metadata(
                                 &mut metadata,
                                 track_package_paths,
+                                package.skill_sidecar.as_ref(),
+                                package
+                                    .package_sidecar
+                                    .as_ref()
+                                    .map(|sidecar| &sidecar.skill_defaults),
                                 package_sidecar
                                     .as_ref()
                                     .zip(package_sidecar_path.as_deref())
@@ -265,6 +270,11 @@ impl SkillsRegistry {
                             self.apply_sidecar_metadata(
                                 &mut metadata,
                                 track_package_paths,
+                                package.skill_sidecar.as_ref(),
+                                package
+                                    .package_sidecar
+                                    .as_ref()
+                                    .map(|sidecar| &sidecar.skill_defaults),
                                 package_sidecar
                                     .as_ref()
                                     .zip(package_sidecar_path.as_deref())
@@ -337,8 +347,21 @@ impl SkillsRegistry {
         &mut self,
         metadata: &mut SkillMetadata,
         track_skill_sidecar_path: bool,
+        supplied_skill_sidecar: Option<&AlanSkillSidecar>,
+        supplied_package_defaults: Option<&AlanSkillSidecar>,
         package_defaults: Option<(&AlanSkillSidecar, &std::path::Path)>,
     ) {
+        if supplied_skill_sidecar.is_some() || supplied_package_defaults.is_some() {
+            let defaults = supplied_package_defaults
+                .or_else(|| package_defaults.map(|(defaults, _)| defaults));
+            if let Err(err) = metadata.apply_sidecar_metadata(defaults, supplied_skill_sidecar) {
+                self.errors.push(SkillError {
+                    path: metadata.path.clone(),
+                    message: err.to_string(),
+                });
+            }
+            return;
+        }
         if let Some((defaults, sidecar_path)) = package_defaults {
             self.apply_sidecar_overlay(metadata, defaults, sidecar_path);
         }
@@ -486,6 +509,7 @@ Body
                     name: (*name).to_string(),
                     handle: CapabilityChildAgentExport::package_handle(package_id, name),
                     root_dir,
+                    file_tree: None,
                 }
             })
             .collect();
@@ -508,6 +532,9 @@ Body
                     source: SkillContentSource::File(canonical_skill),
                 },
                 dependencies: Vec::new(),
+                package_sidecar: None,
+                skill_sidecar: None,
+                compatible_metadata: None,
             }],
             errors: Vec::new(),
             tracked_paths: Vec::new(),

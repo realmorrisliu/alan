@@ -212,6 +212,9 @@ packages SHALL be absent from that Process namespace. Before capability-view
 assembly, Process launch SHALL reject duplicate runtime Skill ids across the
 complete selected installed-package and explicit-descriptor set. Packages with
 colliding Skill ids MAY remain installed when they are not selected together.
+The package reference SHALL retain its File-Server handle for namespace and
+descriptor reads. Package Store backing MUST NOT enter Host Mount grants,
+native Tool authority, Agent metadata, or loader identity.
 
 #### Scenario: Selected packages export the same runtime Skill id
 
@@ -238,6 +241,13 @@ colliding Skill ids MAY remain installed when they are not selected together.
 
 - **WHEN** a Process opens a projected package file for write
 - **THEN** the namespace denies the operation
+
+#### Scenario: Agent Runtime loads a referenced Skill
+
+- **WHEN** Agent Runtime Service resolves a manifest-selected Skill from a
+  package reference
+- **THEN** it reads the Skill and package resources through namespace/aP
+- **AND** no Package Store Host path or Host Mount grant is created
 
 ### Requirement: Package references are immutable Process authority
 

@@ -82,3 +82,19 @@
 - [x] 7.2 Run `just fmt`, `just lint`, `just test`, `just check`, and `just build`.
 - [x] 7.3 Run strict OpenSpec validation for every current capability/change and
   record dogfood evidence in the implementation PR.
+
+## 8. Remove runtime Package Store Host backing
+
+- [x] 8.1 Amend D6 and capability deltas so immutable package File-Server
+  handles/descriptors are the only runtime authority and Host backing grants
+  are forbidden.
+- [x] 8.2 Load package Skill metadata, sidecars, resources, and child-agent
+  exports through the Process namespace/aP path while preserving existing
+  capability semantics.
+- [x] 8.3 Remove package `HostMountGrant` construction, backing-path
+  translation, Tool-authority filtering, and obsolete compatibility tests.
+- [x] 8.4 Prove referenced and inherited packages load without Host grants,
+  remain read-only, expose only `/lib/pkg` paths, and never create native Tool
+  authority.
+- [ ] 8.5 Run focused and full verification, strict OpenSpec validation, push
+  the implementation, and finish the current-HEAD Codex review loop.

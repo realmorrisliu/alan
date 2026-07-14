@@ -6,15 +6,14 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use alan_agent_engine::{
-    AgentProcessConfig, ConnectionsFile, HostMountGrant, LlmClient, ProcessLaunchContext,
-    ProcessPackageKind, ProcessPackageReference, ProcessPackageSkillReference, RuntimeController,
-    ToolRegistry, configure_runtime_tool_execution_binding, provider_capabilities_for_config,
+    AgentProcessConfig, ConnectionsFile, LlmClient, ProcessLaunchContext, ProcessPackageKind,
+    ProcessPackageReference, ProcessPackageSkillReference, RuntimeController, ToolRegistry,
+    configure_runtime_tool_execution_binding, provider_capabilities_for_config,
     spawn_with_namespace_environment,
 };
 use alan_ap::{
     ErrorCode, Fid, FileKind, FileServer, InProcessTransport, Offset, OpenMode, Qid, Stat,
 };
-use alan_hostfs::{HostDirAccess, HostDirFs};
 use alan_kernel::{Access, Credentials, LiveNamespace, Namespace, Pid, Status};
 use alan_llm::ProviderCapabilities;
 use anyhow::{Context, Result, ensure};
@@ -258,8 +257,8 @@ impl ServiceManager {
                 .launch_context
                 .host_mounts
                 .iter()
-                .all(|grant| !is_package_namespace_path(&grant.namespace_path)),
-            "raw /lib/pkg Host Mount grants are not accepted"
+                .all(|grant| !overlaps_package_namespace(&grant.namespace_path)),
+            "Host Mount grants overlapping /lib/pkg are not accepted"
         );
         ensure!(
             config
@@ -268,8 +267,8 @@ impl ServiceManager {
                 .namespace
                 .describe()
                 .iter()
-                .all(|(path, _)| !is_package_namespace_path(path)),
-            "raw /lib/pkg namespace mounts are not accepted"
+                .all(|(path, _)| !overlaps_package_namespace(path)),
+            "namespace mounts overlapping /lib/pkg are not accepted"
         );
         configure_runtime_tool_execution_binding(&config.process, &mut config.tools)?;
 
@@ -811,7 +810,6 @@ impl SupervisorRuntime {
             .launch_context
             .host_mounts
             .iter()
-            .filter(|grant| !is_package_namespace_path(&grant.namespace_path))
             .map(|grant| (grant.namespace_path.clone(), grant.access))
             .collect::<Vec<_>>();
         let (pid, root_namespace) = spawn_unit_process(
@@ -1197,7 +1195,6 @@ async fn assemble_environment(inputs: AssembleInputs<'_>) -> Result<AssembledEnv
     let extra_mounts = root_template_context
         .host_mounts
         .iter()
-        .filter(|grant| !is_package_namespace_path(&grant.namespace_path))
         .map(|grant| (grant.namespace_path.clone(), grant.access))
         .collect::<Vec<_>>();
     let (root_pid, root_namespace) = spawn_unit_process(
@@ -1461,35 +1458,27 @@ fn namespace_with_package_references(
     launch_context: &ProcessLaunchContext,
 ) -> Result<LiveNamespace> {
     for reference in &launch_context.package_references {
-        let grant = launch_context
-            .host_mounts
-            .iter()
-            .find(|grant| grant.namespace_path == reference.namespace_path)
-            .with_context(|| {
-                format!(
-                    "package reference `{}` has no matching immutable projection",
-                    reference.package_id
-                )
-            })?;
-        ensure!(
-            grant.access == Access::ReadOnly,
-            "package projection `{}` is not read-only",
-            reference.package_id
-        );
         base.mount(
             &reference.namespace_path,
-            InProcessTransport::new(Arc::new(HostDirFs::new(
-                &grant.host_path,
-                HostDirAccess::ReadOnly,
-            )?)),
+            reference.handle(),
             Access::ReadOnly,
         );
     }
     Ok(LiveNamespace::new(base))
 }
 
-fn is_package_namespace_path(path: &str) -> bool {
-    path == "/lib/pkg" || path.starts_with("/lib/pkg/")
+fn overlaps_package_namespace(path: &str) -> bool {
+    namespace_paths_overlap(path, "/lib/pkg")
+}
+
+fn namespace_paths_overlap(left: &str, right: &str) -> bool {
+    left == right
+        || left
+            .strip_prefix(right)
+            .is_some_and(|suffix| suffix.starts_with('/'))
+        || right
+            .strip_prefix(left)
+            .is_some_and(|suffix| suffix.starts_with('/'))
 }
 
 fn project_package_reference(
@@ -1500,16 +1489,10 @@ fn project_package_reference(
     let lease = package_service.acquire(package_id)?;
     let record = lease.record().clone();
     let namespace_root = format!("/lib/pkg/{package_id}");
-    launch_context.namespace.mount(
-        &namespace_root,
-        InProcessTransport::new(lease.file_server()?),
-        Access::ReadOnly,
-    );
-    launch_context.host_mounts.push(HostMountGrant::new(
-        &namespace_root,
-        lease.content_root(),
-        Access::ReadOnly,
-    )?);
+    let handle = InProcessTransport::new(lease.file_server()?);
+    launch_context
+        .namespace
+        .mount(&namespace_root, handle.clone(), Access::ReadOnly);
     let kind = match record.kind {
         crate::PackageKind::Preinstalled => ProcessPackageKind::Preinstalled,
         crate::PackageKind::Installed => ProcessPackageKind::Installed,
@@ -1522,6 +1505,7 @@ fn project_package_reference(
                 &export.skill_id,
                 &export.root,
                 export.dependencies.clone(),
+                lease.skill_descriptor(&export.root)?,
             )
         })
         .collect::<Result<Vec<_>>>()?;
@@ -1531,6 +1515,7 @@ fn project_package_reference(
         kind,
         &namespace_root,
         skills,
+        handle,
     )?);
     launch_context.retain_authority(lease);
     Ok(())
@@ -1775,7 +1760,7 @@ mod tests {
         assert!(
             error
                 .to_string()
-                .contains("raw /lib/pkg namespace mounts are not accepted")
+                .contains("namespace mounts overlapping /lib/pkg are not accepted")
         );
     }
 
@@ -1833,6 +1818,7 @@ mod tests {
                 .is_err()
         );
         project_package_reference(&service, &mut launch_context, "dogfood-pack").unwrap();
+        assert!(launch_context.host_mounts.is_empty());
         assert!(
             launch_context
                 .namespace
@@ -1890,7 +1876,8 @@ mod tests {
         assert!(!issues.is_empty());
 
         let child = launch_context.child();
-        assert_eq!(child.package_references, launch_context.package_references);
+        assert_eq!(child.package_references.len(), 1);
+        assert_eq!(child.package_references[0].package_id, "dogfood-pack");
         assert!(
             child
                 .namespace

@@ -17,6 +17,8 @@ Rules:
   `builtin` is a provenance and precedence tier, not a second discovery path.
 - Agent Execution Engine does not append compiled-in packages or scan ambient
   Host directories.
+- Installed package Skills are read through their Process namespace/aP
+  descriptors; Package Store Host paths are not a discovery input.
 
 #### Scenario: First-party package is discovered
 
@@ -87,6 +89,13 @@ a Process that lacks a reference.
 - **WHEN** Package Service has an installed Skill package but an Agent Process
   launch omits its package reference
 - **THEN** the Skill is absent from that Agent's resolved capability view
+
+#### Scenario: Installed package is referenced
+
+- **WHEN** an Agent Process receives an immutable package handle and selected
+  Skill descriptors
+- **THEN** Agent Runtime Service loads them through namespace/aP
+- **AND** capability assembly requires no Package Store Host Mount grant
 
 #### Scenario: Explicit descriptor contains a Skill
 

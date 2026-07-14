@@ -5,6 +5,7 @@ use std::{
     sync::Arc,
 };
 
+use alan_ap::InProcessTransport;
 use alan_kernel::{Access, Credentials, Namespace};
 use anyhow::{Result, ensure};
 
@@ -80,6 +81,7 @@ impl HostMountGrant {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProcessDescriptor {
     pub path: String,
+    pub file_tree: Option<crate::ProcessFileTree>,
 }
 
 /// Provenance tier for an immutable package reference passed to a Process.
@@ -96,6 +98,7 @@ pub struct ProcessPackageSkillReference {
     /// Normalized path relative to the package projection root.
     pub path: String,
     pub dependencies: Vec<SkillTypedDependency>,
+    pub descriptor: crate::ProcessFileTree,
 }
 
 impl ProcessPackageSkillReference {
@@ -103,6 +106,7 @@ impl ProcessPackageSkillReference {
         skill_id: impl Into<String>,
         path: impl Into<String>,
         dependencies: Vec<SkillTypedDependency>,
+        descriptor: crate::ProcessFileTree,
     ) -> Result<Self> {
         let skill_id = skill_id.into();
         validate_canonical_skill_id(&skill_id).map_err(anyhow::Error::msg)?;
@@ -117,18 +121,33 @@ impl ProcessPackageSkillReference {
             skill_id,
             path,
             dependencies,
+            descriptor,
         })
     }
 }
 
 /// Explicit immutable package authority passed at Process creation.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone)]
 pub struct ProcessPackageReference {
     pub package_id: String,
     pub revision: String,
     pub kind: ProcessPackageKind,
     pub namespace_path: String,
     pub skills: Vec<ProcessPackageSkillReference>,
+    handle: InProcessTransport,
+}
+
+impl std::fmt::Debug for ProcessPackageReference {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ProcessPackageReference")
+            .field("package_id", &self.package_id)
+            .field("revision", &self.revision)
+            .field("kind", &self.kind)
+            .field("namespace_path", &self.namespace_path)
+            .field("skills", &self.skills)
+            .finish_non_exhaustive()
+    }
 }
 
 impl ProcessPackageReference {
@@ -138,6 +157,7 @@ impl ProcessPackageReference {
         kind: ProcessPackageKind,
         namespace_path: impl Into<String>,
         skills: Vec<ProcessPackageSkillReference>,
+        handle: InProcessTransport,
     ) -> Result<Self> {
         let package_id = package_id.into();
         validate_package_id(&package_id)?;
@@ -167,7 +187,12 @@ impl ProcessPackageReference {
             kind,
             namespace_path,
             skills,
+            handle,
         })
+    }
+
+    pub fn handle(&self) -> InProcessTransport {
+        self.handle.clone()
     }
 }
 
@@ -175,6 +200,17 @@ impl ProcessDescriptor {
     pub fn new(path: impl Into<String>) -> Result<Self> {
         Ok(Self {
             path: normalize_namespace_path(&path.into())?,
+            file_tree: None,
+        })
+    }
+
+    pub fn with_file_tree(
+        path: impl Into<String>,
+        file_tree: crate::ProcessFileTree,
+    ) -> Result<Self> {
+        Ok(Self {
+            path: normalize_namespace_path(&path.into())?,
+            file_tree: Some(file_tree),
         })
     }
 }
@@ -253,28 +289,6 @@ impl ProcessLaunchContext {
 
     pub fn add_package_reference(&mut self, reference: ProcessPackageReference) {
         self.package_references.push(reference);
-    }
-
-    /// Host Mount grants that authorize native Tool execution.
-    ///
-    /// Package references use Host-backed grants to project immutable content into the
-    /// Process namespace, but that implementation detail must not grant native Tools direct
-    /// access to Package Store paths.
-    pub fn tool_host_mounts(&self) -> impl Iterator<Item = &HostMountGrant> {
-        let package_roots = self
-            .host_mounts
-            .iter()
-            .filter(|grant| {
-                self.package_references
-                    .iter()
-                    .any(|reference| reference.namespace_path == grant.namespace_path)
-            })
-            .map(|grant| normalized_host_path(&grant.host_path))
-            .collect::<Vec<_>>();
-        self.host_mounts.iter().filter(move |grant| {
-            let host_path = normalized_host_path(&grant.host_path);
-            !package_roots.iter().any(|root| host_path.starts_with(root))
-        })
     }
 
     /// Retain an opaque owner-issued authority for the lifetime of this Process context.
@@ -357,27 +371,6 @@ impl ProcessLaunchContext {
             cwd: self.cwd.clone(),
             retained_authorities: self.retained_authorities.clone(),
         }
-    }
-}
-
-fn normalized_host_path(path: &Path) -> PathBuf {
-    let mut ancestor = path;
-    let mut suffix = Vec::new();
-    loop {
-        if let Ok(mut canonical) = dunce::canonicalize(ancestor) {
-            for component in suffix.iter().rev() {
-                canonical.push(component);
-            }
-            return canonical;
-        }
-        let Some(name) = ancestor.file_name() else {
-            return dunce::simplified(path).to_path_buf();
-        };
-        suffix.push(name.to_os_string());
-        let Some(parent) = ancestor.parent() else {
-            return dunce::simplified(path).to_path_buf();
-        };
-        ancestor = parent;
     }
 }
 

@@ -2,8 +2,8 @@
 
 use semver::{BuildMetadata, Version};
 use serde::{Deserialize, Deserializer, Serialize};
-use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
+use std::{collections::BTreeSet, sync::Arc};
 
 /// Skill unique identifier (lowercase, hyphenated).
 pub type SkillId = String;
@@ -66,7 +66,7 @@ pub struct ScopedPackageRoot {
 #[derive(Debug, Clone)]
 pub enum SkillContentSource {
     File(PathBuf),
-    Embedded(&'static str),
+    Embedded(Arc<str>),
 }
 
 impl Default for SkillContentSource {
@@ -110,6 +110,8 @@ pub struct CapabilityChildAgentExport {
     pub name: String,
     pub root_dir: PathBuf,
     pub handle: alan_agent_protocol::SpawnTarget,
+    #[serde(skip, default)]
+    pub file_tree: Option<crate::ProcessFileTree>,
 }
 
 impl CapabilityChildAgentExport {
@@ -161,6 +163,9 @@ pub struct CapabilityPackage {
     pub exports: CapabilityPackageExports,
     pub portable_skill: PortableSkill,
     pub dependencies: Vec<SkillTypedDependency>,
+    pub package_sidecar: Option<AlanPackageSidecar>,
+    pub skill_sidecar: Option<AlanSkillSidecar>,
+    pub compatible_metadata: Option<CompatibleSkillMetadata>,
 }
 
 /// Runtime-facing resolved capability view assembled from package sources.

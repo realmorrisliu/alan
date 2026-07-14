@@ -481,6 +481,31 @@ impl AgentConfig {
         })
     }
 
+    pub fn with_definition_overlay_content(
+        &self,
+        content: &str,
+        source: &std::path::Path,
+    ) -> anyhow::Result<Self> {
+        let mut merge_base_core_config = self.core_config.clone();
+        if self.explicit_runtime_overrides.request_control_intent {
+            merge_base_core_config.model_reasoning_effort = None;
+        }
+        let mut core_config =
+            merge_base_core_config.with_definition_overlay_content(content, source)?;
+        let mut runtime_config = merge_runtime_config_from_core_overlay(
+            &merge_base_core_config,
+            &core_config,
+            &self.runtime_config,
+            self.explicit_runtime_overrides,
+        );
+        self.reapply_explicit_runtime_overrides(&mut core_config, &mut runtime_config);
+        Ok(Self {
+            core_config,
+            runtime_config,
+            explicit_runtime_overrides: self.explicit_runtime_overrides,
+        })
+    }
+
     fn reapply_explicit_runtime_overrides(
         &self,
         core_config: &mut crate::config::Config,
@@ -757,7 +782,7 @@ pub fn configure_runtime_tool_execution_binding(
     config: &AgentProcessConfig,
     tools: &mut crate::tools::ToolRegistry,
 ) -> Result<()> {
-    if config.launch_context.tool_host_mounts().next().is_some() {
+    if !config.launch_context.host_mounts.is_empty() {
         let scratch_dir = config
             .store_bindings
             .as_ref()
@@ -785,7 +810,12 @@ pub fn effective_core_config_for_runtime(
         config.core_config_source,
     )?;
     let mut agent_config = config.agent_config.clone();
-    if let Some(config_path) = resolved_agent_definition.config_path.as_ref() {
+    if let Some(content) = resolved_agent_definition.config_content.as_deref() {
+        let source = resolved_agent_definition
+            .config_overlay_source()
+            .unwrap_or_else(|| std::path::PathBuf::from("/agent-definition/agent.toml"));
+        agent_config = agent_config.with_definition_overlay_content(content, &source)?;
+    } else if let Some(config_path) = resolved_agent_definition.config_path.as_ref() {
         agent_config = agent_config.with_definition_overlays(std::slice::from_ref(config_path))?;
     }
     let mut core_config = agent_config.core_config.clone();
@@ -846,7 +876,12 @@ fn spawn_with_prepared_runtime_environment(
         config.core_config_source,
     )?;
     let mut agent_config = config.agent_config.clone();
-    if let Some(config_path) = resolved_agent_definition.config_path.as_ref() {
+    if let Some(content) = resolved_agent_definition.config_content.as_deref() {
+        let source = resolved_agent_definition
+            .config_overlay_source()
+            .unwrap_or_else(|| std::path::PathBuf::from("/agent-definition/agent.toml"));
+        agent_config = agent_config.with_definition_overlay_content(content, &source)?;
+    } else if let Some(config_path) = resolved_agent_definition.config_path.as_ref() {
         agent_config = agent_config.with_definition_overlays(std::slice::from_ref(config_path))?;
     }
     let mut core_config = agent_config.core_config.clone();
@@ -868,11 +903,18 @@ fn spawn_with_prepared_runtime_environment(
     runtime_config.store_bindings = config.store_bindings.clone();
     runtime_config.memory_store_backing = config.memory_store_backing.clone();
     runtime_config.policy_engine =
-        crate::policy::PolicyEngine::load_for_governance_with_default_policy_path(
-            resolved_agent_definition.root_dir.as_deref(),
-            resolved_agent_definition.policy_path.as_deref(),
-            &runtime_config.governance,
-        );
+        if let Some(tree) = resolved_agent_definition.descriptor_tree.as_ref() {
+            crate::policy::PolicyEngine::load_for_governance_from_file_tree(
+                tree,
+                &runtime_config.governance,
+            )
+        } else {
+            crate::policy::PolicyEngine::load_for_governance_with_default_policy_path(
+                resolved_agent_definition.root_dir.as_deref(),
+                resolved_agent_definition.policy_path.as_deref(),
+                &runtime_config.governance,
+            )
+        };
     let prompt_cache_persona_dirs = resolved_agent_definition.persona_dirs.clone();
     if core_config.memory.enabled
         && let Some(memory_dir) = core_config.memory.store_dir.as_deref()
@@ -898,6 +940,8 @@ fn spawn_with_prepared_runtime_environment(
             prompt_cache_persona_dirs.clone(),
             host_capabilities,
         );
+    prompt_cache
+        .set_fixed_definition_persona_section(resolved_agent_definition.persona_context.clone());
     prompt_cache.set_memory_store_dir(
         core_config
             .memory
@@ -2346,15 +2390,7 @@ mod tests {
 
     #[test]
     fn package_projection_alone_does_not_require_runtime_tool_binding() {
-        let package = TempDir::new().unwrap();
-        let mut launch_context = crate::ProcessLaunchContext::root().with_host_mount(
-            crate::HostMountGrant::new(
-                "/lib/pkg/example",
-                package.path(),
-                alan_kernel::Access::ReadOnly,
-            )
-            .unwrap(),
-        );
+        let mut launch_context = crate::ProcessLaunchContext::root();
         launch_context.add_package_reference(
             crate::ProcessPackageReference::new(
                 "example",
@@ -2362,6 +2398,9 @@ mod tests {
                 crate::ProcessPackageKind::Installed,
                 "/lib/pkg/example",
                 Vec::new(),
+                alan_ap::InProcessTransport::new(std::sync::Arc::new(
+                    alan_ap::reference::MemFs::new(),
+                )),
             )
             .unwrap(),
         );

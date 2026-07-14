@@ -311,6 +311,59 @@ impl PolicyEngine {
         }
     }
 
+    pub fn load_for_governance_from_file_tree(
+        tree: &crate::ProcessFileTree,
+        governance: &alan_agent_protocol::GovernanceConfig,
+    ) -> Self {
+        let (raw_path, explicit) = match governance.policy_path.as_deref() {
+            Some(path) => (path, true),
+            None => ("policy.yaml", false),
+        };
+        let path = Path::new(raw_path);
+        if path.is_absolute()
+            || !path
+                .components()
+                .all(|component| matches!(component, Component::Normal(_) | Component::CurDir))
+        {
+            tracing::error!(
+                raw_path,
+                "Descriptor policy path escapes the Agent Definition"
+            );
+            return Self::fail_closed();
+        }
+        let normalized = path
+            .components()
+            .filter_map(|component| match component {
+                Component::Normal(value) => Some(value.to_string_lossy()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("/");
+        let content = match tree.text(&normalized) {
+            Ok(Some(content)) => content,
+            Ok(None) if !explicit => return Self::autonomous(),
+            Ok(None) => {
+                tracing::error!(raw_path, "Explicit descriptor policy file is missing");
+                return Self::fail_closed();
+            }
+            Err(err) => {
+                tracing::error!(raw_path, error = %err, "Descriptor policy is not UTF-8");
+                return Self::fail_closed();
+            }
+        };
+        match serde_yaml::from_str::<PolicyFile>(content) {
+            Ok(policy_file) => Self {
+                rules: policy_file.rules,
+                default_action: policy_file.default_action,
+                source: "descriptor_policy_file",
+            },
+            Err(err) => {
+                tracing::error!(raw_path, error = %err, "Failed to parse descriptor policy");
+                Self::fail_closed()
+            }
+        }
+    }
+
     pub fn load_or_default(default_policy_path: Option<&Path>) -> Self {
         Self::load_or_default_with_default_policy_path(default_policy_path)
     }
@@ -664,6 +717,27 @@ mod tests {
     use super::*;
     use serde_json::json;
     use tempfile::TempDir;
+
+    #[test]
+    fn descriptor_policy_loads_without_a_host_path() {
+        let tree = crate::ProcessFileTree::new(std::collections::BTreeMap::from([(
+            "policy.yaml".to_string(),
+            b"default_action: deny\nrules: []\n".to_vec(),
+        )]))
+        .unwrap();
+        let engine = PolicyEngine::load_for_governance_from_file_tree(
+            &tree,
+            &alan_agent_protocol::GovernanceConfig::default(),
+        );
+        let decision = engine.evaluate(PolicyContext {
+            tool_name: "read_file",
+            arguments: &json!({"path": "README.md"}),
+            capability: alan_agent_protocol::ToolCapability::Read,
+            cwd: None,
+        });
+        assert_eq!(decision.action, PolicyAction::Deny);
+        assert_eq!(decision.source, "descriptor_policy_file");
+    }
 
     #[test]
     fn auto_approve_boundary_matches_human_in_the_end_posture() {

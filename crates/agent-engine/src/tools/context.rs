@@ -53,7 +53,7 @@ impl ToolExecutionBinding {
         scratch_dir: PathBuf,
     ) -> Result<Self> {
         let mut tool_context = context.clone();
-        tool_context.host_mounts = context.tool_host_mounts().cloned().collect();
+        tool_context.host_mounts = context.host_mounts.clone();
         // A namespace cwd such as `/` may have no Host backing even after the
         // Process receives an explicit mount. Native adapters still need an OS
         // cwd inside their sandbox authority. Prefer the first writable Host
@@ -398,34 +398,16 @@ mod tests {
     }
 
     #[test]
-    fn package_projection_is_excluded_from_native_tool_binding() {
-        let package = tempfile::tempdir().unwrap();
+    fn package_handle_does_not_create_native_tool_authority() {
         let project = tempfile::tempdir().unwrap();
-        let mut launch_context = crate::ProcessLaunchContext::root()
-            .with_host_mount(
-                crate::HostMountGrant::new(
-                    "/lib/pkg/example",
-                    package.path(),
-                    alan_kernel::Access::ReadOnly,
-                )
-                .unwrap(),
+        let mut launch_context = crate::ProcessLaunchContext::root().with_host_mount(
+            crate::HostMountGrant::new(
+                "/mnt/project",
+                project.path(),
+                alan_kernel::Access::ReadWrite,
             )
-            .with_host_mount(
-                crate::HostMountGrant::new(
-                    "/mnt/project",
-                    project.path(),
-                    alan_kernel::Access::ReadWrite,
-                )
-                .unwrap(),
-            )
-            .with_host_mount(
-                crate::HostMountGrant::new(
-                    "/agent-definition",
-                    package.path().join("skills/example"),
-                    alan_kernel::Access::ReadOnly,
-                )
-                .unwrap(),
-            );
+            .unwrap(),
+        );
         launch_context.add_package_reference(
             crate::ProcessPackageReference::new(
                 "example",
@@ -433,6 +415,9 @@ mod tests {
                 crate::ProcessPackageKind::Installed,
                 "/lib/pkg/example",
                 Vec::new(),
+                alan_ap::InProcessTransport::new(std::sync::Arc::new(
+                    alan_ap::reference::MemFs::new(),
+                )),
             )
             .unwrap(),
         );
@@ -446,18 +431,9 @@ mod tests {
         assert_eq!(binding.host_mounts.len(), 1);
         assert_eq!(binding.host_mounts[0].namespace_path, "/mnt/project");
         assert_eq!(binding.cwd, dunce::canonicalize(project.path()).unwrap());
-        let sandbox = binding.sandbox_spec.unwrap();
-        assert!(
-            !sandbox
-                .readable_roots
-                .iter()
-                .any(|root| root.starts_with(package.path()))
-        );
+        assert!(binding.sandbox_spec.is_some());
 
-        launch_context.host_mounts.retain(|grant| {
-            grant.namespace_path == "/lib/pkg/example"
-                || grant.namespace_path == "/agent-definition"
-        });
+        launch_context.host_mounts.clear();
         let error = ToolExecutionBinding::from_launch_context(
             &launch_context,
             PathBuf::from("/tmp/scratch"),

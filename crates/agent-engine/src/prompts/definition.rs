@@ -140,6 +140,50 @@ pub(crate) fn render_definition_persona_context(definition_dir: &Path) -> String
 
 pub(crate) fn render_definition_persona_context_from_dirs(definition_dirs: &[PathBuf]) -> String {
     let files = load_definition_files_from_dirs(definition_dirs);
+    render_definition_persona_files(files, "/agent-definition/persona")
+}
+
+pub(crate) fn render_definition_persona_context_from_file_tree(
+    tree: &crate::ProcessFileTree,
+    descriptor_root: &str,
+) -> String {
+    let mut files = REQUIRED_DEFINITION_TEMPLATES
+        .iter()
+        .map(|template| definition_file_from_tree(tree, template.name))
+        .collect::<Vec<_>>();
+    if tree.contains_file(&format!("persona/{}", OPTIONAL_BOOTSTRAP_TEMPLATE.name)) {
+        files.push(definition_file_from_tree(
+            tree,
+            OPTIONAL_BOOTSTRAP_TEMPLATE.name,
+        ));
+    }
+    render_definition_persona_files(
+        files,
+        &format!("{}/persona", descriptor_root.trim_end_matches('/')),
+    )
+}
+
+fn definition_file_from_tree(tree: &crate::ProcessFileTree, name: &'static str) -> DefinitionFile {
+    match tree.text(&format!("persona/{name}")) {
+        Ok(Some(content)) => DefinitionFile {
+            name,
+            content: Some(content.to_string()),
+            missing: false,
+        },
+        Ok(None) => DefinitionFile {
+            name,
+            content: None,
+            missing: true,
+        },
+        Err(error) => DefinitionFile {
+            name,
+            content: Some(format!("[ERROR] Failed to read file: {error}")),
+            missing: false,
+        },
+    }
+}
+
+fn render_definition_persona_files(files: Vec<DefinitionFile>, descriptor_dir: &str) -> String {
     if files.is_empty() || files.iter().all(|file| file.missing) {
         return String::new();
     }
@@ -162,7 +206,7 @@ pub(crate) fn render_definition_persona_context_from_dirs(definition_dirs: &[Pat
             continue;
         }
         prompt.push_str(&format!(
-            "Descriptor path: /agent-definition/persona/{}\n",
+            "Descriptor path: {descriptor_dir}/{}\n",
             file.name
         ));
         let content = file.content.unwrap_or_default();

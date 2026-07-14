@@ -15,6 +15,7 @@ mod approval;
 mod config;
 mod connections;
 mod evidence;
+mod file_tree;
 mod install_channel;
 mod llm;
 mod models;
@@ -44,6 +45,7 @@ pub use connections::{
     default_credential_backend, normalize_profile_settings, provider_catalog, sanitize_identifier,
     validate_profile_settings,
 };
+pub use file_tree::ProcessFileTree;
 pub use install_channel::{INSTALL_CHANNEL_ENV, InstallChannel, InstallChannelDescriptor};
 pub use llm::{
     CompatibilityTier, GenerationRequest, GenerationResponse, InstructionRole, LlmClient,

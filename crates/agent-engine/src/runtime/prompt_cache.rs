@@ -689,6 +689,7 @@ pub(crate) struct PromptAssemblyCache {
     fixed_capability_view: Option<ResolvedCapabilityView>,
     skill_overrides: Vec<SkillOverride>,
     definition_persona_dirs: Vec<PathBuf>,
+    fixed_definition_persona_section: Option<String>,
     memory_store_dir: Option<PathBuf>,
     host_capabilities: SkillHostCapabilities,
     skills_snapshot: Option<CachedSkillsRegistry>,
@@ -704,6 +705,7 @@ impl PromptAssemblyCache {
             fixed_capability_view: None,
             skill_overrides: Vec::new(),
             definition_persona_dirs,
+            fixed_definition_persona_section: None,
             memory_store_dir: None,
             host_capabilities: SkillHostCapabilities::default(),
             skills_snapshot: None,
@@ -737,6 +739,7 @@ impl PromptAssemblyCache {
             fixed_capability_view: Some(fixed_capability_view),
             skill_overrides,
             definition_persona_dirs,
+            fixed_definition_persona_section: None,
             memory_store_dir: None,
             host_capabilities,
             skills_snapshot: None,
@@ -751,6 +754,10 @@ impl PromptAssemblyCache {
             self.definition_persona_dirs = definition_persona_dirs;
             self.definition_persona_snapshot = None;
         }
+    }
+
+    pub(crate) fn set_fixed_definition_persona_section(&mut self, section: Option<String>) {
+        self.fixed_definition_persona_section = section;
     }
 
     pub(crate) fn set_memory_store_dir(&mut self, memory_store_dir: Option<PathBuf>) {
@@ -978,6 +985,9 @@ impl PromptAssemblyCache {
     }
 
     fn definition_persona_section_with_cache(&mut self) -> (Option<String>, bool) {
+        if let Some(section) = self.fixed_definition_persona_section.as_ref() {
+            return (Some(section.clone()), true);
+        }
         if self.definition_persona_dirs.is_empty() {
             return (None, true);
         }

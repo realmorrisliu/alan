@@ -37,7 +37,9 @@ only through an explicit Alan OS package reference.
   capabilities remain explicit availability failures.
 - Project explicitly referenced installed package revisions read-only beneath
   `/lib/pkg/<package-id>`. The backing System Store path and format are not
-  Agent-visible identity.
+  Process authority or Agent-visible identity. Package references retain an
+  immutable File-Server handle; Agent Runtime Service reads selected Skills
+  through namespace/aP descriptors without a Host-path translation.
 - Resolve Skills from only two authorities: explicit installed package
   references and explicit Skill/Agent Definition descriptors. Remove the
   direct `builtin_capability_packages()` injection. First-party Skills are
@@ -75,8 +77,8 @@ only through an explicit Alan OS package reference.
 
 - `crates/service-manager` and Alan OS boot units: Package Service lifecycle,
   publication, readiness, and package command execution.
-- `crates/os-host`: Package Service System Store binding and native backing
-  adapter only; no package policy or source discovery.
+- `crates/os-host`: Package Service System Store binding only; no runtime
+  package backing grants, package policy, or source discovery.
 - `crates/agent-engine`: explicit installed-package inputs replace built-in
   injection while descriptor-passed Skills remain supported.
 - `crates/shell`: generic command execution is completed so `/bin/q` can run as

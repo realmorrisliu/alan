@@ -684,6 +684,37 @@ impl Config {
         Ok(config)
     }
 
+    pub fn with_definition_overlay_content(
+        &self,
+        content: &str,
+        source: &std::path::Path,
+    ) -> anyhow::Result<Self> {
+        let model_catalog = self.model_catalog.clone();
+        let mut merged = toml::Value::try_from(self.clone())
+            .context("failed to serialize base configuration for overlay merge")?;
+        let mut overlay: toml::Value = toml::from_str(content)
+            .with_context(|| format!("failed to parse configuration file {}", source.display()))?;
+        strip_skill_overrides_from_overlay(&mut overlay);
+        merge_toml_overlay(&mut merged, overlay);
+        let mut config: Self = merged
+            .try_into()
+            .context("failed to deserialize merged agent-root configuration")?;
+        if config.connection_profile == self.connection_profile {
+            config.copy_internal_provider_config_from(self);
+        } else if config.connection_profile.is_none() {
+            config.connection_profile = self.connection_profile.clone();
+            config.copy_internal_provider_config_from(self);
+        }
+        config.skill_overrides = merge_skill_override_overlay_from_content(
+            &self.resolved_skill_overrides(),
+            content,
+            source,
+        )?;
+        config.model_catalog = model_catalog;
+        config.validate_compaction_thresholds("merged agent-root configuration".to_string())?;
+        Ok(config)
+    }
+
     pub fn resolved_skill_overrides(&self) -> Vec<SkillOverride> {
         self.skill_overrides.clone()
     }
@@ -1151,6 +1182,15 @@ pub(crate) fn merge_skill_override_overlays_from_paths(
     Ok(merged_overrides)
 }
 
+pub(crate) fn merge_skill_override_overlay_from_content(
+    base_overrides: &[SkillOverride],
+    content: &str,
+    source: &std::path::Path,
+) -> anyhow::Result<Vec<SkillOverride>> {
+    let overlay_overrides = parse_skill_overrides(content, source)?;
+    Ok(merge_skill_overrides(base_overrides, &overlay_overrides))
+}
+
 pub(crate) fn read_skill_overrides(path: &std::path::Path) -> anyhow::Result<Vec<SkillOverride>> {
     let content = std::fs::read_to_string(path)
         .with_context(|| format!("failed to read configuration file {}", path.display()))?;
@@ -1263,6 +1303,18 @@ mod tests {
         assert!(config.memory.strict_store);
         assert!(config.memory.store_dir.is_none());
         assert!(!config.durability.required);
+    }
+
+    #[test]
+    fn definition_overlay_content_does_not_require_a_host_file() {
+        let config = Config::default()
+            .with_definition_overlay_content(
+                "tool_repeat_limit = 7\n",
+                Path::new("/lib/pkg/example/agents/root/agent.toml"),
+            )
+            .unwrap();
+
+        assert_eq!(config.tool_repeat_limit, 7);
     }
 
     #[test]
