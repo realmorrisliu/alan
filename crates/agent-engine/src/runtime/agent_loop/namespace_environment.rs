@@ -2176,7 +2176,8 @@ impl NamespaceClient {
 
     async fn read_all_opened(&self, fid: Fid) -> Result<Vec<u8>> {
         let stat = self.stat(fid).await?;
-        let bounded_length = (stat.qid.kind == FileKind::Stream).then_some(stat.length);
+        let bounded_length =
+            matches!(stat.qid.kind, FileKind::File | FileKind::Stream).then_some(stat.length);
         let mut offset = 0_u64;
         let mut data = Vec::new();
         loop {
@@ -2831,6 +2832,18 @@ mod tests {
         assert_eq!(
             client.read_file("/proc/10/status").await.unwrap(),
             b"exited\n"
+        );
+        assert_eq!(fs.clunk_count.load(AtomicOrdering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn read_file_stops_at_reported_regular_file_length() {
+        let fs = Arc::new(ScriptedReadFs::shrinking_file(b"ready\nignored", 6));
+        let client = NamespaceClient::new(InProcessTransport::new(fs.clone()));
+
+        assert_eq!(
+            client.read_file("/proc/10/status").await.unwrap(),
+            b"ready\n"
         );
         assert_eq!(fs.clunk_count.load(AtomicOrdering::SeqCst), 1);
     }
