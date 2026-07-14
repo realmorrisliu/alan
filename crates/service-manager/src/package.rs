@@ -364,6 +364,15 @@ impl PackageService {
             matches!(channel_id.as_str(), "stable" | "dev" | "test"),
             "invalid Package Service channel"
         );
+        match fs::symlink_metadata(&store_root) {
+            Ok(_) => {
+                ensure_owned_directory(&store_root, "Package Store root is not an owned directory")?
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                fs::create_dir_all(&store_root)?;
+            }
+            Err(error) => return Err(error).context("inspect Package Store root"),
+        }
         fs::create_dir_all(store_root.join("revisions"))?;
         fs::create_dir_all(store_root.join("staging"))?;
         ensure_owned_directory(
@@ -2420,6 +2429,27 @@ mod tests {
         let catalog = fs::read_to_string(stable_root.join("catalog.json")).unwrap();
         let host_root = directory.path().to_string_lossy();
         assert!(!catalog.contains(host_root.as_ref()));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn channel_rejects_a_symlinked_package_store_root() {
+        use std::os::unix::fs::symlink;
+
+        let directory = tempfile::tempdir().unwrap();
+        let stable_root = directory.path().join("stable/services/packages");
+        let dev_parent = directory.path().join("dev/services");
+        fs::create_dir_all(&stable_root).unwrap();
+        fs::create_dir_all(&dev_parent).unwrap();
+        fs::write(stable_root.join("sentinel"), b"stable").unwrap();
+        symlink(&stable_root, dev_parent.join("packages")).unwrap();
+
+        let error = PackageService::open("dev", dev_parent.join("packages")).unwrap_err();
+
+        assert!(error.to_string().contains("Package Store root"));
+        assert_eq!(fs::read(stable_root.join("sentinel")).unwrap(), b"stable");
+        assert!(!stable_root.join("revisions").exists());
+        assert!(!stable_root.join("staging").exists());
     }
 
     #[test]
