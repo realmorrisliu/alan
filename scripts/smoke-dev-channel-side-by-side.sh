@@ -176,8 +176,10 @@ assert_dev_system_store_isolated() {
     HOME="$fixture_home" ALAN_INSTALL_CHANNEL=dev \
         "$DEV_CLI" host legacy-state import skill "$skill_source" --name side-by-side-smoke
 
-    [[ -f "$dev_store/services/packages/imports/skills/side-by-side-smoke/SKILL.md" ]] ||
-        fail "dev System Store import was not created"
+    [[ -f "$dev_store/services/packages/catalog.json" ]] ||
+        fail "dev Package Service catalog was not created"
+    grep -q '"side-by-side-smoke"' "$dev_store/services/packages/catalog.json" ||
+        fail "dev Package Service catalog does not contain the imported package"
     [[ ! -e "$stable_store" ]] ||
         fail "dev import unexpectedly created stable System Store state"
     [[ ! -e "$fixture_home/.alan" && ! -e "$fixture_home/.alan-dev" ]] ||

@@ -74,8 +74,8 @@ impl SystemStorePaths {
         Ok(self.service("agent-runtime")?.join("definitions"))
     }
 
-    pub fn imported_skills(&self) -> Result<PathBuf> {
-        Ok(self.service("packages")?.join("imports/skills"))
+    pub fn packages(&self) -> Result<PathBuf> {
+        self.service("packages")
     }
 
     pub fn connections_metadata(&self) -> Result<PathBuf> {
@@ -179,6 +179,10 @@ mod tests {
         assert_eq!(
             store.connections_metadata().unwrap(),
             store.root.join("services/connections/connections.toml")
+        );
+        assert_eq!(
+            store.packages().unwrap(),
+            store.root.join("services/packages")
         );
     }
 

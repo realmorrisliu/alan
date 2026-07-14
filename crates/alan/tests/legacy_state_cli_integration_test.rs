@@ -139,13 +139,10 @@ fn host_import_installs_verified_skill_before_deleting_source() {
         InstallChannel::Stable.descriptor().id,
     )
     .unwrap();
-    assert!(
-        system
-            .imported_skills()
-            .unwrap()
-            .join("reviewer/SKILL.md")
-            .is_file()
-    );
+    let packages =
+        alan_service_manager::PackageService::open(&system.channel_id, system.packages().unwrap())
+            .unwrap();
+    assert!(packages.resolve("reviewer").is_ok());
     assert!(!source.exists());
     assert!(String::from_utf8_lossy(&output.stdout).contains("source deleted after verification"));
 }
@@ -193,13 +190,10 @@ fn host_import_never_follows_a_symlinked_source_for_deletion() {
         InstallChannel::Stable.descriptor().id,
     )
     .unwrap();
-    assert!(
-        !system
-            .imported_skills()
-            .unwrap()
-            .join("linked-skill")
-            .exists()
-    );
+    let packages =
+        alan_service_manager::PackageService::open(&system.channel_id, system.packages().unwrap())
+            .unwrap();
+    assert!(!packages.catalog().packages.contains_key("linked-skill"));
 }
 
 #[cfg(unix)]
@@ -246,12 +240,14 @@ fn host_import_never_follows_a_symlinked_source_ancestor_for_deletion() {
         InstallChannel::Stable.descriptor().id,
     )
     .unwrap();
+    let packages =
+        alan_service_manager::PackageService::open(&system.channel_id, system.packages().unwrap())
+            .unwrap();
     assert!(
-        !system
-            .imported_skills()
-            .unwrap()
-            .join("ancestor-linked-skill")
-            .exists()
+        !packages
+            .catalog()
+            .packages
+            .contains_key("ancestor-linked-skill")
     );
 }
 

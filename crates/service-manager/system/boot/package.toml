@@ -1,6 +1,6 @@
-name = "agent-runtime"
-executable = "/bin/agent-runtime-service"
-after = ["connection", "package", "route"]
+name = "package"
+executable = "/bin/package-service"
+after = []
 required = true
 timeout_ms = 10000
 restart = "on-failure"
@@ -8,16 +8,11 @@ restart_limit = 5
 initial_backoff_ms = 100
 max_backoff_ms = 1000
 stable_reset_ms = 30000
-published_handles = ["agent-runtime"]
+published_handles = ["package"]
 
 [[mounts]]
 path = "/proc"
 source = "/proc"
-access = "write"
-
-[[mounts]]
-path = "/agent"
-source = "/agent"
 access = "write"
 
 [[mounts]]
@@ -26,6 +21,6 @@ source = "/srv"
 access = "write"
 
 [[mounts]]
-path = "/bin/agent-runtime-service"
-source = "/bin/agent-runtime-service"
+path = "/bin/package-service"
+source = "/bin/package-service"
 access = "read"

@@ -1,6 +1,6 @@
 name = "local-entry"
 executable = "/bin/local-entry-service"
-after = ["agent-runtime", "connection", "host-mount"]
+after = ["agent-runtime", "connection", "host-mount", "package"]
 required = true
 timeout_ms = 5000
 restart = "on-failure"
@@ -68,4 +68,9 @@ access = "write"
 [[mounts]]
 path = "/mnt/host-mount"
 source = "/mnt/host-mount"
+access = "write"
+
+[[mounts]]
+path = "/mnt/package"
+source = "/mnt/package"
 access = "write"

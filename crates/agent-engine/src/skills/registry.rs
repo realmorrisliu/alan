@@ -23,7 +23,7 @@ impl SkillsRegistry {
         skill_overrides: &[SkillOverride],
     ) -> Result<Self, SkillsError> {
         let mut registry = Self::default();
-        registry.reload_capability_view(capability_view, skill_overrides);
+        registry.reload_capability_view(capability_view, skill_overrides)?;
         Ok(registry)
     }
 
@@ -135,18 +135,18 @@ impl SkillsRegistry {
         &mut self,
         capability_view: &ResolvedCapabilityView,
         skill_overrides: &[SkillOverride],
-    ) {
+    ) -> Result<(), SkillsError> {
         self.skills.clear();
         self.errors.clear();
         self.tracked_paths.clear();
-        self.apply_capability_view(capability_view.refresh(), skill_overrides);
+        self.apply_capability_view(capability_view.refresh(), skill_overrides)
     }
 
     fn apply_capability_view(
         &mut self,
         capability_view: ResolvedCapabilityView,
         skill_overrides: &[SkillOverride],
-    ) {
+    ) -> Result<(), SkillsError> {
         self.errors.extend(capability_view.errors);
         self.tracked_paths.extend(capability_view.tracked_paths);
         let overrides_by_skill: HashMap<String, SkillOverride> = skill_overrides
@@ -290,7 +290,20 @@ impl SkillsRegistry {
             let child_agent_exports = package.exports.child_agent_export_names();
 
             for mut metadata in loaded_skills {
+                for dependency in &package.dependencies {
+                    if !metadata
+                        .compatibility
+                        .dependencies
+                        .iter()
+                        .any(|existing| existing.identity_key() == dependency.identity_key())
+                    {
+                        metadata.compatibility.dependencies.push(dependency.clone());
+                    }
+                }
                 let skill_id = metadata.id.clone();
+                if self.skills.contains_key(&skill_id) {
+                    return Err(SkillsError::DuplicateSkill(skill_id));
+                }
                 self.resolve_runtime_exposure(
                     &mut metadata,
                     overrides_by_skill.get(skill_id.as_str()),
@@ -311,6 +324,7 @@ impl SkillsRegistry {
 
         self.tracked_paths.sort();
         self.tracked_paths.dedup();
+        Ok(())
     }
 
     fn apply_sidecar_metadata(
@@ -473,6 +487,7 @@ Body
 
         ResolvedCapabilityView {
             package_dirs: Vec::new(),
+            package_roots: Vec::new(),
             packages: vec![CapabilityPackage {
                 id: package_id.to_string(),
                 scope: SkillScope::Descriptor,
@@ -485,6 +500,7 @@ Body
                     path: canonical_skill.clone(),
                     source: SkillContentSource::File(canonical_skill),
                 },
+                dependencies: Vec::new(),
             }],
             errors: Vec::new(),
             tracked_paths: Vec::new(),
@@ -511,7 +527,7 @@ Body
     }
 
     #[test]
-    fn load_capability_view_prefers_later_entries_for_same_skill_id() {
+    fn load_capability_view_rejects_duplicate_runtime_skill_ids() {
         let temp = TempDir::new().unwrap();
         let global_dir = temp.path().join("global");
         let package_dir = temp.path().join("packages");
@@ -535,16 +551,15 @@ Body
             },
         ]);
 
-        let registry = SkillsRegistry::load_capability_view(&capability_view, &[]).unwrap();
-        let skill = registry.get(&"shared-skill".to_string()).unwrap();
-
-        assert_eq!(skill.description, "From descriptor");
-        assert_eq!(skill.scope, SkillScope::Descriptor);
+        assert!(matches!(
+            SkillsRegistry::load_capability_view(&capability_view, &[]),
+            Err(SkillsError::DuplicateSkill(id)) if id == "shared-skill"
+        ));
     }
 
     #[test]
     fn load_capability_view_applies_skill_overrides() {
-        let capability_view = ResolvedCapabilityView::from_package_dirs(Vec::new());
+        let capability_view = crate::skills::preinstalled_capability_view_for_tests();
         let registry = SkillsRegistry::load_capability_view(
             &capability_view,
             &[
@@ -963,7 +978,7 @@ interface:
 
     #[test]
     fn load_capability_view_does_not_track_synthetic_builtin_skill_sidecars() {
-        let capability_view = ResolvedCapabilityView::from_package_dirs(Vec::new());
+        let capability_view = crate::skills::preinstalled_capability_view_for_tests();
         let registry = SkillsRegistry::load_capability_view(&capability_view, &[]).unwrap();
 
         assert!(registry.has(&"memory".to_string()));
@@ -977,7 +992,7 @@ interface:
 
     #[test]
     fn load_capability_view_loads_builtin_skill_creator_compatibility_metadata() {
-        let capability_view = ResolvedCapabilityView::from_package_dirs(Vec::new());
+        let capability_view = crate::skills::preinstalled_capability_view_for_tests();
         let registry = SkillsRegistry::load_capability_view(&capability_view, &[]).unwrap();
         let skill = registry.get(&"skill-creator".to_string()).unwrap();
 
@@ -1019,7 +1034,7 @@ interface:
 
     #[test]
     fn load_capability_view_loads_builtin_repo_coding_compatibility_metadata() {
-        let capability_view = ResolvedCapabilityView::from_package_dirs(Vec::new());
+        let capability_view = crate::skills::preinstalled_capability_view_for_tests();
         let registry = SkillsRegistry::load_capability_view(&capability_view, &[]).unwrap();
         let skill = registry.get(&"repo-coding".to_string()).unwrap();
 
@@ -1143,7 +1158,9 @@ interface:
         );
 
         let mut registry = SkillsRegistry::default();
-        registry.apply_capability_view(capability_view, &[]);
+        registry
+            .apply_capability_view(capability_view, &[])
+            .unwrap();
         let skill = registry.get(&"repo-review".to_string()).unwrap();
 
         assert_eq!(
@@ -1172,7 +1189,9 @@ interface:
         );
 
         let mut registry = SkillsRegistry::default();
-        registry.apply_capability_view(capability_view, &[]);
+        registry
+            .apply_capability_view(capability_view, &[])
+            .unwrap();
         let skill = registry.get(&"repo-review".to_string()).unwrap();
 
         assert_eq!(
@@ -1202,7 +1221,9 @@ interface:
         );
 
         let mut registry = SkillsRegistry::default();
-        registry.apply_capability_view(capability_view, &[]);
+        registry
+            .apply_capability_view(capability_view, &[])
+            .unwrap();
         let skill = registry.get(&"repo-review".to_string()).unwrap();
 
         assert_eq!(
@@ -1232,7 +1253,9 @@ interface:
         );
 
         let mut registry = SkillsRegistry::default();
-        registry.apply_capability_view(capability_view, &[]);
+        registry
+            .apply_capability_view(capability_view, &[])
+            .unwrap();
         let skill = registry.get(&"repo-review".to_string()).unwrap();
 
         assert_eq!(
@@ -1264,7 +1287,9 @@ interface:
         );
 
         let mut registry = SkillsRegistry::default();
-        registry.apply_capability_view(capability_view, &[]);
+        registry
+            .apply_capability_view(capability_view, &[])
+            .unwrap();
         let skill = registry.get(&"lint-summary".to_string()).unwrap();
 
         assert_eq!(
@@ -1289,7 +1314,9 @@ interface:
         );
 
         let mut registry = SkillsRegistry::default();
-        registry.apply_capability_view(capability_view, &[]);
+        registry
+            .apply_capability_view(capability_view, &[])
+            .unwrap();
         let foo_skill = registry.get(&"foo".to_string()).unwrap();
 
         assert_eq!(
@@ -1332,7 +1359,9 @@ runtime:
         );
 
         let mut registry = SkillsRegistry::default();
-        registry.apply_capability_view(capability_view, &[]);
+        registry
+            .apply_capability_view(capability_view, &[])
+            .unwrap();
         let skill = registry.get(&"skill-creator".to_string()).unwrap();
 
         assert_eq!(
@@ -1373,7 +1402,9 @@ runtime:
         );
 
         let mut registry = SkillsRegistry::default();
-        registry.apply_capability_view(capability_view, &[]);
+        registry
+            .apply_capability_view(capability_view, &[])
+            .unwrap();
         let skill = registry.get(&"skill-creator".to_string()).unwrap();
 
         assert_eq!(

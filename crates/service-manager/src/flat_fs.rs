@@ -13,6 +13,10 @@ pub(crate) trait FlatFileService: Send + Sync {
     fn files(&self) -> &'static [(&'static str, bool)];
     fn read(&self, name: &str) -> Result<Vec<u8>, ErrorCode>;
     async fn commit(&self, name: &str, bytes: &[u8]) -> Result<(), ErrorCode>;
+
+    fn max_write_bytes(&self) -> usize {
+        MAX_WRITE_BYTES
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -160,7 +164,7 @@ impl FileServer for FlatServiceFs {
         }
         let start = usize::try_from(offset).map_err(|_| ErrorCode::BadRequest)?;
         let end = start.checked_add(data.len()).ok_or(ErrorCode::BadRequest)?;
-        if end > MAX_WRITE_BYTES {
+        if end > self.service.max_write_bytes() {
             return Err(ErrorCode::BadRequest);
         }
         state.write_buf.resize(state.write_buf.len().max(end), 0);

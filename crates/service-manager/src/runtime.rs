@@ -6,11 +6,13 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use alan_agent_engine::{
-    AgentProcessConfig, ConnectionsFile, LlmClient, ProcessLaunchContext, RuntimeController,
+    AgentProcessConfig, ConnectionsFile, HostMountGrant, LlmClient, ProcessLaunchContext,
+    ProcessPackageKind, ProcessPackageReference, ProcessPackageSkillReference, RuntimeController,
     ToolRegistry, configure_runtime_tool_execution_binding, provider_capabilities_for_config,
     spawn_with_namespace_environment,
 };
 use alan_ap::{Fid, FileServer, InProcessTransport, OpenMode};
+use alan_hostfs::{HostDirAccess, HostDirFs};
 use alan_kernel::{Access, Credentials, LiveNamespace, Namespace, Pid, Status};
 use alan_llm::ProviderCapabilities;
 use anyhow::{Context, Result, ensure};
@@ -18,8 +20,9 @@ use uuid::Uuid;
 
 use crate::{
     BootManifest, BootUnit, ConnectionService, HostMountApplicatorFactory, HostMountExportAdapter,
-    HostMountService, LocalEntryService, ManagerState, RestartDecision, ServiceManagerFs,
-    UnavailableHostMountExportAdapter,
+    HostMountService, LocalEntryService, ManagerState, PackageService, RestartDecision,
+    ServiceManagerFs, UnavailableHostMountExportAdapter,
+    quartermaster::{QUARTERMASTER_EXECUTABLE, SystemProcessRunner},
 };
 
 pub const BOOT_ID_PATH: &str = "/proc/host/boot_id";
@@ -34,6 +37,7 @@ pub struct ServiceManagerConfig {
     pub channel_id: String,
     pub process: AgentProcessConfig,
     pub connection_store: Option<alan_agent_engine::ConnectionStoreBindings>,
+    pub package_store: Option<std::path::PathBuf>,
     pub llm_factory: Arc<dyn LlmClientFactory>,
     pub host_mount_adapter: Arc<dyn HostMountExportAdapter>,
     pub tools: ToolRegistry,
@@ -96,6 +100,7 @@ impl ServiceManagerConfig {
         Self {
             channel_id: channel_id.into(),
             connection_store: None,
+            package_store: None,
             process,
             llm_factory: Arc::new(OneShotLlmClientFactory(std::sync::Mutex::new(Some(
                 llm_client,
@@ -109,6 +114,7 @@ impl ServiceManagerConfig {
         channel_id: impl Into<String>,
         process: AgentProcessConfig,
         connection_store: Option<alan_agent_engine::ConnectionStoreBindings>,
+        package_store: Option<std::path::PathBuf>,
         llm_factory: Arc<dyn LlmClientFactory>,
         host_mount_adapter: Arc<dyn HostMountExportAdapter>,
         tools: ToolRegistry,
@@ -117,6 +123,7 @@ impl ServiceManagerConfig {
             channel_id: channel_id.into(),
             process,
             connection_store,
+            package_store,
             llm_factory,
             host_mount_adapter,
             tools,
@@ -134,6 +141,7 @@ pub struct ServiceManager {
     local_entry: Arc<LocalEntryService>,
     host_mount: Arc<HostMountService>,
     connection: Arc<ConnectionService>,
+    package: Arc<PackageService>,
     supervisor_shutdown: tokio::sync::oneshot::Sender<()>,
     supervisor_task: tokio::task::JoinHandle<Result<()>>,
 }
@@ -145,10 +153,28 @@ impl ServiceManager {
             "invalid Alan OS Host channel `{}`",
             config.channel_id
         );
+        ensure!(
+            config.process.launch_context.package_references.is_empty(),
+            "initial package references must be resolved by Package Service"
+        );
+        ensure!(
+            config
+                .process
+                .launch_context
+                .host_mounts
+                .iter()
+                .all(|grant| !is_package_namespace_path(&grant.namespace_path)),
+            "raw /lib/pkg Host Mount grants are not accepted"
+        );
         configure_runtime_tool_execution_binding(&config.process, &mut config.tools)?;
 
         let boot_id = Uuid::new_v4();
         let manifest = BootManifest::system().context("load system /lib/boot units")?;
+        let package_service = match config.package_store.take() {
+            Some(store) => PackageService::open(&config.channel_id, store)?,
+            None => PackageService::ephemeral(&config.channel_id)?,
+        };
+        seed_preinstalled_packages(&package_service)?;
         let resolved_definition = alan_agent_engine::ResolvedAgentDefinition::from_launch_context(
             &config.process.launch_context,
             &config
@@ -219,6 +245,7 @@ impl ServiceManager {
             boot_id,
             manifest,
             connection_service,
+            package_service,
             llm_connection,
             bootstrap,
             llm_factory: config.llm_factory.clone(),
@@ -244,6 +271,7 @@ impl ServiceManager {
         let local_entry = assembled.local_entry.clone();
         let host_mount = assembled.host_mount.clone();
         let connection = assembled.connection.clone();
+        let package = assembled.package.clone();
         let root = assembled.root.clone();
         let mut runtime = SupervisorRuntime {
             manifest: assembled.manifest,
@@ -259,6 +287,7 @@ impl ServiceManager {
             routefs: assembled.routefs,
             host_mount: assembled.host_mount,
             connection: assembled.connection,
+            package: assembled.package,
             local_entry: local_entry.clone(),
             root: Some(RootInstance {
                 pid: assembled.root_pid,
@@ -326,6 +355,7 @@ impl ServiceManager {
             local_entry,
             host_mount,
             connection,
+            package,
             supervisor_shutdown,
             supervisor_task,
         })
@@ -348,6 +378,15 @@ impl ServiceManager {
     /// Native adapter entry to the Connection authority.
     pub fn connection(&self) -> Arc<ConnectionService> {
         self.connection.clone()
+    }
+
+    /// Resolve and retain one installed package revision in a future Process launch context.
+    pub fn reference_package(
+        &self,
+        launch_context: &mut ProcessLaunchContext,
+        package_id: &str,
+    ) -> Result<()> {
+        project_package_reference(&self.package, launch_context, package_id)
     }
 
     pub fn manager_pid(&self) -> Pid {
@@ -400,6 +439,7 @@ struct AssembledEnvironment {
     routefs: Arc<alan_routefs::RouteFs>,
     host_mount: Arc<HostMountService>,
     connection: Arc<ConnectionService>,
+    package: Arc<PackageService>,
     active_units: BTreeMap<String, ActiveUnit>,
     llm_connection: String,
     manager_pid: Pid,
@@ -411,6 +451,7 @@ struct AssembleInputs<'a> {
     boot_id: Uuid,
     manifest: BootManifest,
     connection_service: Arc<ConnectionService>,
+    package_service: Arc<PackageService>,
     llm_connection: String,
     bootstrap: Option<(String, LlmClient)>,
     llm_factory: Arc<dyn LlmClientFactory>,
@@ -453,6 +494,7 @@ struct SupervisorRuntime {
     routefs: Arc<alan_routefs::RouteFs>,
     host_mount: Arc<HostMountService>,
     connection: Arc<ConnectionService>,
+    package: Arc<PackageService>,
     local_entry: Arc<LocalEntryService>,
     root: Option<RootInstance>,
     root_pid: Arc<AtomicU64>,
@@ -628,6 +670,7 @@ impl SupervisorRuntime {
                 routefs: &self.routefs,
                 host_mount: &self.host_mount,
                 connection: &self.connection,
+                package: &self.package,
                 local_entry: Some(&self.local_entry),
             },
         )
@@ -649,24 +692,23 @@ impl SupervisorRuntime {
     }
 
     async fn launch_root(&mut self, unit: &BootUnit) -> Result<()> {
-        let credentials = self
-            .root_template
-            .process
-            .launch_context
-            .credentials
-            .clone();
+        let template = &self.root_template.process.launch_context;
+        let credentials = template.credentials.clone();
+        let root_source_namespace =
+            namespace_with_package_references(self.system_namespace.snapshot(), template)?;
         let extra_mounts = self
             .root_template
             .process
             .launch_context
             .host_mounts
             .iter()
+            .filter(|grant| !is_package_namespace_path(&grant.namespace_path))
             .map(|grant| (grant.namespace_path.clone(), grant.access))
             .collect::<Vec<_>>();
         let (pid, root_namespace) = spawn_unit_process(
             &self.procfs,
             self.manager_pid,
-            &self.system_namespace,
+            &root_source_namespace,
             credentials.clone(),
             unit,
             &extra_mounts,
@@ -702,10 +744,12 @@ impl SupervisorRuntime {
             .await;
         self.agent_root.set_root_process(pid.0.to_string()).await;
         let tool_runner = self.root_template.tools.process_runner();
-        let procfs_with_runner = self
-            .procfs
-            .clone()
-            .with_runner(Arc::new(tool_runner.clone()));
+        let procfs_with_runner =
+            self.procfs
+                .clone()
+                .with_runner(Arc::new(SystemProcessRunner::new(Some(Arc::new(
+                    tool_runner.clone(),
+                )))));
         self.procfs
             .bind_live_namespace(pid, root_namespace.clone())
             .await;
@@ -722,14 +766,7 @@ impl SupervisorRuntime {
         let root = InProcessTransport::new(Arc::new(alan_kernel::MountFs::from_live_namespace(
             root_namespace.clone(),
         )));
-        let template = &self.root_template.process.launch_context;
-        let launch_context = ProcessLaunchContext {
-            namespace: root_namespace.snapshot(),
-            host_mounts: template.host_mounts.clone(),
-            descriptors: template.descriptors.clone(),
-            credentials,
-            cwd: template.cwd.clone(),
-        };
+        let launch_context = template.rebound(root_namespace.snapshot(), credentials);
         let environment = alan_agent_engine::runtime::NamespaceRuntimeEnvironment::new(
             root,
             format!("/agent/{}", pid.0),
@@ -816,6 +853,7 @@ async fn assemble_environment(inputs: AssembleInputs<'_>) -> Result<AssembledEnv
         boot_id,
         manifest,
         connection_service,
+        package_service,
         llm_connection,
         bootstrap,
         llm_factory,
@@ -836,6 +874,13 @@ async fn assemble_environment(inputs: AssembleInputs<'_>) -> Result<AssembledEnv
         .await?;
     let routefs = Arc::new(alan_routefs::RouteFs::new());
     let srvfs = Arc::new(alan_kernel::SrvFs::new());
+    ensure!(
+        !tools.list_tools().contains(&"q"),
+        "Tool name `q` is reserved for Quartermaster"
+    );
+    // System and Shell Processes are lifecycle records supervised by Alan OS;
+    // they must not be fed to an executable runner merely because `/bin/q`
+    // exists. Process-specific `/proc` views add the Quartermaster runner below.
     let procfs = alan_kernel::ProcFs::new();
     let agent_root = Arc::new(alan_agentfs::AgentRootFs::new(Arc::new(procfs.clone())));
     let state = Arc::new(tokio::sync::Mutex::new(ManagerState::new(manifest.clone())));
@@ -948,6 +993,7 @@ async fn assemble_environment(inputs: AssembleInputs<'_>) -> Result<AssembledEnv
                         routefs: &routefs,
                         host_mount: &host_mount_service,
                         connection: &connection_service,
+                        package: &package_service,
                         local_entry: local_entry.as_ref(),
                     },
                 )
@@ -1020,16 +1066,30 @@ async fn assemble_environment(inputs: AssembleInputs<'_>) -> Result<AssembledEnv
     let root_unit = manifest
         .get("root-agent")
         .context("Root Agent Boot Unit is missing")?;
-    let extra_mounts = launch_context
+    let mut root_template_context = launch_context.rebound(
+        system_namespace.snapshot(),
+        launch_context.credentials.clone(),
+    );
+    for source in alan_agent_engine::skills::preinstalled_skill_package_sources() {
+        project_package_reference(
+            &package_service,
+            &mut root_template_context,
+            &source.package_id,
+        )?;
+    }
+    let root_source_namespace =
+        namespace_with_package_references(system_namespace.snapshot(), &root_template_context)?;
+    let extra_mounts = root_template_context
         .host_mounts
         .iter()
+        .filter(|grant| !is_package_namespace_path(&grant.namespace_path))
         .map(|grant| (grant.namespace_path.clone(), grant.access))
         .collect::<Vec<_>>();
     let (root_pid, root_namespace) = spawn_unit_process(
         &procfs,
         manager_pid,
-        &system_namespace,
-        launch_context.credentials.clone(),
+        &root_source_namespace,
+        root_template_context.credentials.clone(),
         root_unit,
         &extra_mounts,
     )
@@ -1062,14 +1122,18 @@ async fn assemble_environment(inputs: AssembleInputs<'_>) -> Result<AssembledEnv
     agent_root.set_root_process(root_pid.0.to_string()).await;
 
     let tool_runner = tools.process_runner();
-    let procfs_with_runner = procfs.clone().with_runner(Arc::new(tool_runner.clone()));
+    let procfs_with_runner = procfs
+        .clone()
+        .with_runner(Arc::new(SystemProcessRunner::new(Some(Arc::new(
+            tool_runner.clone(),
+        )))));
     procfs
         .bind_live_namespace(root_pid, root_namespace.clone())
         .await;
     let process_procfs = procfs_with_runner.for_live_spawner(
         Some(root_pid),
         root_namespace.clone(),
-        launch_context.credentials.clone(),
+        root_template_context.credentials.clone(),
     );
     root_namespace.replace_mount(
         "/proc",
@@ -1082,13 +1146,10 @@ async fn assemble_environment(inputs: AssembleInputs<'_>) -> Result<AssembledEnv
     ));
     let root = InProcessTransport::new(root_mount);
     let route_tree = InProcessTransport::new(routefs.clone());
-    let root_launch_context = ProcessLaunchContext {
-        namespace: root_namespace.snapshot(),
-        host_mounts: launch_context.host_mounts.clone(),
-        descriptors: launch_context.descriptors.clone(),
-        credentials: launch_context.credentials.clone(),
-        cwd: launch_context.cwd.clone(),
-    };
+    let root_launch_context = root_template_context.rebound(
+        root_namespace.snapshot(),
+        root_template_context.credentials.clone(),
+    );
     let environment = alan_agent_engine::runtime::NamespaceRuntimeEnvironment::new(
         root.clone(),
         format!("/agent/{}", root_pid.0),
@@ -1120,6 +1181,7 @@ async fn assemble_environment(inputs: AssembleInputs<'_>) -> Result<AssembledEnv
         routefs,
         host_mount: host_mount_service,
         connection: connection_service,
+        package: package_service,
         active_units,
         llm_connection,
         manager_pid,
@@ -1154,7 +1216,11 @@ fn mount_system_executables(namespace: &mut Namespace, manifest: &BootManifest) 
     for executable in manifest
         .ordered()
         .map(|unit| unit.executable.as_str())
-        .chain([SERVICE_MANAGER_EXECUTABLE, "/bin/alan-shell"])
+        .chain([
+            SERVICE_MANAGER_EXECUTABLE,
+            "/bin/alan-shell",
+            QUARTERMASTER_EXECUTABLE,
+        ])
     {
         namespace.mount(
             executable,
@@ -1171,6 +1237,7 @@ struct SystemServiceHandles<'a> {
     routefs: &'a Arc<alan_routefs::RouteFs>,
     host_mount: &'a Arc<HostMountService>,
     connection: &'a Arc<ConnectionService>,
+    package: &'a Arc<PackageService>,
     local_entry: Option<&'a Arc<LocalEntryService>>,
 }
 
@@ -1181,6 +1248,7 @@ async fn publish_unit_handles(unit: &BootUnit, services: &SystemServiceHandles<'
             "llm" => InProcessTransport::new(services.llmfs.clone()),
             "agent-runtime" => InProcessTransport::new(services.agent_root.clone()),
             "connection" => InProcessTransport::new(services.connection.file_server()),
+            "package" => InProcessTransport::new(services.package.file_server()),
             "host-mount" => InProcessTransport::new(services.host_mount.file_server()),
             "local-entry" => InProcessTransport::new(
                 services
@@ -1224,6 +1292,11 @@ async fn mount_service_handles(
         .await
         .context("lookup /srv/host-mount")?;
     namespace.replace_mount("/mnt/host-mount", host_mount_tree, host_mount_access);
+    let (package_tree, package_access) = srvfs
+        .lookup("package")
+        .await
+        .context("lookup /srv/package")?;
+    namespace.replace_mount("/mnt/package", package_tree, package_access);
     Ok(())
 }
 
@@ -1243,6 +1316,100 @@ fn mount_tool_packages(namespace: &mut Namespace, tools: &ToolRegistry) -> Resul
             Access::ReadOnly,
         );
     }
+    Ok(())
+}
+
+fn seed_preinstalled_packages(package_service: &Arc<PackageService>) -> Result<()> {
+    for source in alan_agent_engine::skills::preinstalled_skill_package_sources() {
+        let snapshot =
+            crate::PackageSnapshot::from_directory(&source.root_dir).with_context(|| {
+                format!(
+                    "snapshot first-party package `{}` for Package Service",
+                    source.package_id
+                )
+            })?;
+        package_service.seed_preinstalled(&source.package_id, snapshot)?;
+    }
+    Ok(())
+}
+
+fn namespace_with_package_references(
+    mut base: Namespace,
+    launch_context: &ProcessLaunchContext,
+) -> Result<LiveNamespace> {
+    for reference in &launch_context.package_references {
+        let grant = launch_context
+            .host_mounts
+            .iter()
+            .find(|grant| grant.namespace_path == reference.namespace_path)
+            .with_context(|| {
+                format!(
+                    "package reference `{}` has no matching immutable projection",
+                    reference.package_id
+                )
+            })?;
+        ensure!(
+            grant.access == Access::ReadOnly,
+            "package projection `{}` is not read-only",
+            reference.package_id
+        );
+        base.mount(
+            &reference.namespace_path,
+            InProcessTransport::new(Arc::new(HostDirFs::new(
+                &grant.host_path,
+                HostDirAccess::ReadOnly,
+            )?)),
+            Access::ReadOnly,
+        );
+    }
+    Ok(LiveNamespace::new(base))
+}
+
+fn is_package_namespace_path(path: &str) -> bool {
+    path == "/lib/pkg" || path.starts_with("/lib/pkg/")
+}
+
+fn project_package_reference(
+    package_service: &Arc<PackageService>,
+    launch_context: &mut ProcessLaunchContext,
+    package_id: &str,
+) -> Result<()> {
+    let lease = package_service.acquire(package_id)?;
+    let record = lease.record().clone();
+    let namespace_root = format!("/lib/pkg/{package_id}");
+    launch_context.namespace.mount(
+        &namespace_root,
+        InProcessTransport::new(lease.file_server()?),
+        Access::ReadOnly,
+    );
+    launch_context.host_mounts.push(HostMountGrant::new(
+        &namespace_root,
+        lease.content_root(),
+        Access::ReadOnly,
+    )?);
+    let kind = match record.kind {
+        crate::PackageKind::Preinstalled => ProcessPackageKind::Preinstalled,
+        crate::PackageKind::Installed => ProcessPackageKind::Installed,
+    };
+    let skills = record
+        .exports
+        .iter()
+        .map(|export| {
+            ProcessPackageSkillReference::new(
+                &export.skill_id,
+                &export.root,
+                export.dependencies.clone(),
+            )
+        })
+        .collect::<Result<Vec<_>>>()?;
+    launch_context.add_package_reference(ProcessPackageReference::new(
+        package_id,
+        &record.revision,
+        kind,
+        &namespace_root,
+        skills,
+    )?);
+    launch_context.retain_authority(lease);
     Ok(())
 }
 
@@ -1425,6 +1592,7 @@ async fn verify_readiness(
         "service-manager",
         "agent-runtime",
         "connection",
+        "package",
         "host-mount",
         "local-entry",
         "llm",
@@ -1463,6 +1631,126 @@ mod tests {
         ) -> Result<LlmClient> {
             anyhow::bail!("selected profile is missing a secret")
         }
+    }
+
+    #[tokio::test]
+    async fn installed_distribution_is_visible_only_after_explicit_process_reference() {
+        let service = PackageService::ephemeral("test").unwrap();
+        let installed = service
+            .execute(crate::PackageCommand::Install {
+                request_id: "dogfood-install".to_string(),
+                package_id: "dogfood-pack".to_string(),
+                snapshot: crate::PackageSnapshot {
+                    source_name: "dogfood-pack".to_string(),
+                    entries: vec![
+                        crate::PackageSnapshotEntry {
+                            path: "research/SKILL.md".to_string(),
+                            bytes: b"---\nname: Research\ndescription: Research Skill.\n---\n"
+                                .to_vec(),
+                            executable: false,
+                        },
+                        crate::PackageSnapshotEntry {
+                            path: "shared/data.txt".to_string(),
+                            bytes: b"shared".to_vec(),
+                            executable: false,
+                        },
+                        crate::PackageSnapshotEntry {
+                            path: "skills/web.md".to_string(),
+                            bytes: b"Use WebSearch for this work.".to_vec(),
+                            executable: false,
+                        },
+                    ],
+                },
+            })
+            .unwrap();
+        assert!(installed.success, "{}", installed.message);
+        service
+            .execute(crate::PackageCommand::Install {
+                request_id: "hidden-install".to_string(),
+                package_id: "hidden-pack".to_string(),
+                snapshot: crate::PackageSnapshot {
+                    source_name: "hidden-pack".to_string(),
+                    entries: vec![crate::PackageSnapshotEntry {
+                        path: "hidden/SKILL.md".to_string(),
+                        bytes: b"---\nname: Hidden\ndescription: Hidden Skill.\n---\n".to_vec(),
+                        executable: false,
+                    }],
+                },
+            })
+            .unwrap();
+
+        let mut launch_context = ProcessLaunchContext::root();
+        assert!(
+            launch_context
+                .namespace
+                .resolve("/lib/pkg/dogfood-pack")
+                .is_err()
+        );
+        project_package_reference(&service, &mut launch_context, "dogfood-pack").unwrap();
+        assert!(
+            launch_context
+                .namespace
+                .resolve("/lib/pkg/dogfood-pack/skills/research/SKILL.md")
+                .is_ok()
+        );
+        assert!(
+            launch_context
+                .namespace
+                .resolve("/lib/pkg/hidden-pack")
+                .is_err()
+        );
+        let package_shell = alan_shell::Shell::new(InProcessTransport::new(Arc::new(
+            alan_kernel::MountFs::new(launch_context.namespace.clone()),
+        )));
+        assert_eq!(
+            package_shell
+                .cat("/lib/pkg/dogfood-pack/source/shared/data.txt")
+                .await
+                .unwrap(),
+            b"shared"
+        );
+        assert_eq!(
+            package_shell
+                .write("/lib/pkg/dogfood-pack/skills/research/SKILL.md", b"mutate",)
+                .await,
+            Err(alan_ap::ErrorCode::NoAccess)
+        );
+
+        let definition = alan_agent_engine::ResolvedAgentDefinition::from_launch_context(
+            &launch_context,
+            &[],
+            alan_agent_engine::ConfigSourceKind::Default,
+        )
+        .unwrap();
+        let registry = alan_agent_engine::skills::SkillsRegistry::load_capability_view(
+            &definition.capability_view,
+            &[],
+        )
+        .unwrap();
+        assert!(registry.has(&"research".to_string()));
+        assert!(registry.has(&"web".to_string()));
+        assert!(!registry.has(&"hidden".to_string()));
+        let web = registry.get(&"web".to_string()).unwrap();
+        assert!(
+            web.compatibility
+                .dependencies
+                .iter()
+                .any(|dependency| { dependency.identity_key() == "runtime_capability:web-search" })
+        );
+        let issues = alan_agent_engine::skills::skill_availability_issues(
+            web,
+            &alan_agent_engine::skills::SkillHostCapabilities::default(),
+        );
+        assert!(!issues.is_empty());
+
+        let child = launch_context.child();
+        assert_eq!(child.package_references, launch_context.package_references);
+        assert!(
+            child
+                .namespace
+                .resolve("/lib/pkg/dogfood-pack/skills/web/SKILL.md")
+                .is_ok()
+        );
     }
 
     #[tokio::test]
@@ -1569,6 +1857,7 @@ mod tests {
         let (_, _, namespace) = manager.local_entry().create_and_handoff().await.unwrap();
         let shell = alan_shell::Shell::new(InProcessTransport::new(namespace));
         shell.ls("/agent/root").await.unwrap();
+        assert!(shell.ls("/lib/pkg/alan-memory").await.is_err());
         assert_eq!(
             String::from_utf8(
                 shell
@@ -1585,6 +1874,7 @@ mod tests {
             "service-manager",
             "agent-runtime",
             "connection",
+            "package",
             "host-mount",
             "local-entry",
             "llm",
@@ -1656,6 +1946,14 @@ mod tests {
                 .iter()
                 .any(|connection| connection == "default")
         );
+        let packages = shell
+            .run(QUARTERMASTER_EXECUTABLE, &["list".to_string()])
+            .await
+            .unwrap();
+        assert_eq!(packages.exit_code, 0);
+        let packages = String::from_utf8(packages.output).unwrap();
+        assert!(packages.contains("alan-memory"), "{packages}");
+        assert!(packages.contains("alan-skill-creator"), "{packages}");
         manager.shutdown().await.unwrap();
     }
 
@@ -1749,6 +2047,61 @@ published_handles = ["test-service"]
             .unwrap();
         assert!(services.iter().any(|service| service == "connection"));
         assert!(services.iter().any(|service| service == "llm"));
+        manager.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn package_service_process_restart_republishes_its_catalog_handle() {
+        let manager = ServiceManager::boot(ServiceManagerConfig::ephemeral(
+            "test",
+            AgentProcessConfig::default(),
+            LlmClient::new(MockLlmProvider::new()),
+            ToolRegistry::new(),
+        ))
+        .await
+        .unwrap();
+        let old_pid = Pid(manager
+            .state()
+            .lock()
+            .await
+            .unit("package")
+            .unwrap()
+            .pid
+            .unwrap());
+        manager.terminate_unit("package", 1).await.unwrap();
+        let new_pid = tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                let unit = manager.state().lock().await.unit("package").unwrap();
+                if unit.status == crate::UnitStatus::Ready && unit.pid != Some(old_pid.0) {
+                    break Pid(unit.pid.unwrap());
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("Package Service was not restarted");
+        assert_ne!(new_pid, old_pid);
+        let (_, _, namespace) = manager.local_entry().create_and_handoff().await.unwrap();
+        let shell = alan_shell::Shell::new(InProcessTransport::new(namespace));
+        assert!(
+            shell
+                .ls("/srv")
+                .await
+                .unwrap()
+                .iter()
+                .any(|handle| handle == "package")
+        );
+        assert!(shell.ls("/mnt/package").await.is_ok());
+        let list = shell
+            .run(QUARTERMASTER_EXECUTABLE, &["list".to_string()])
+            .await
+            .unwrap();
+        assert_eq!(list.exit_code, 0);
+        assert!(
+            String::from_utf8(list.output)
+                .unwrap()
+                .contains("alan-memory")
+        );
         manager.shutdown().await.unwrap();
     }
 }

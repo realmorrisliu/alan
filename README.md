@@ -15,6 +15,12 @@ Alan for macOS attaches to the matching stable/dev Host over its protected aP
 endpoint; it renders Agent Processes by boot ID and PID without owning their
 lifecycle or embedding Alan OS.
 
+Package Service is the system owner for installed Skill distributions. It
+publishes `/srv/package`; Quartermaster runs as the ordinary `/bin/q` Process.
+Installing changes the catalog only. A Process sees immutable package content
+at `/lib/pkg/<package-id>` only when its launch context carries an explicit
+package reference.
+
 ## Execution model
 
 An agent is an ordinary Process whose file layout follows the Agent Process
@@ -124,6 +130,19 @@ Host files do not enter Alan OS because `alan` was launched from their
 directory. Authorize a Host Mount explicitly, then use its Alan OS path from
 Alan Shell. The retired `alan init`, `alan workspace`, and boot-time `--agent`
 surfaces have no compatibility aliases.
+
+Package management is performed inside Alan Shell, over namespace paths:
+
+```text
+q install --name my-skills /mnt/import/my-skills
+q list
+q upgrade my-skills /mnt/import/my-skills
+q uninstall my-skills
+```
+
+`q` never receives a raw Host path or fetches remote URLs. The Host directory
+must already be authorized and mounted beneath an Alan OS namespace path such
+as `/mnt/import`.
 
 ## Configuration and state
 

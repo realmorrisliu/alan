@@ -2,8 +2,8 @@
 //!
 //! Every builtin is generic file IO over aP: `ls` (walk a directory + read its
 //! entries), `cat` (open + read a finite snapshot), `write`/`echo >` (open +
-//! write + clunk), `tail` (a live session of blocking reads), and `spawn`
-//! (clone-via-open on `/proc/clone`). There is **no agent-specific command** and
+//! write + clunk), `tail` (a live session of blocking reads), and generic
+//! executable launch through clone-via-open on `/proc/clone`. There is **no agent-specific command** and
 //! no `attach` sugar — an agent is just files under `/agent/<pid>`, reached with
 //! the same builtins (ADR-0025 D3). The shell depends only on [`alan_ap`]; it
 //! never links a server or backend, and it addresses a whole assembled namespace
@@ -14,7 +14,7 @@ use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use alan_ap::{
-    ErrorCode, Fid, FileKind, InProcessTransport, Offset, OpenMode, Qid, Request, Response,
+    ErrorCode, Fid, FileKind, InProcessTransport, Offset, OpenMode, Qid, Request, Response, Stat,
 };
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::{mpsc, oneshot};
@@ -82,6 +82,18 @@ impl Shell {
             Response::Stat { stat } => Ok(stat.length),
             _ => Err(ErrorCode::Io),
         }
+    }
+
+    /// Inspect one namespace path without exposing a backing-server side channel.
+    pub async fn stat(&self, path: &str) -> Result<Stat, ErrorCode> {
+        let (fid, _) = self.walk_to(path).await?;
+        let result = match self.fs.call(Request::Stat { fid }).await {
+            Ok(Response::Stat { stat }) => Ok(stat),
+            Ok(_) => Err(ErrorCode::Io),
+            Err(error) => Err(error),
+        };
+        self.clunk_quietly(fid).await;
+        result
     }
 
     /// Release a fid, propagating a commit-time error. On a commit-on-clunk
@@ -284,6 +296,50 @@ impl Shell {
         self.write_all(fid, exec_spec.as_bytes()).await?;
         Ok(pid)
     }
+
+    /// Run an executable from the Process namespace and collect its terminal output and exit.
+    pub async fn run(&self, executable: &str, args: &[String]) -> Result<CommandOutput, ErrorCode> {
+        let exec_spec = serde_json::to_string(&serde_json::json!({
+            "executable": executable,
+            "args": args,
+        }))
+        .map_err(|_| ErrorCode::Io)?;
+        let pid = self.spawn(&exec_spec).await?.trim().to_string();
+        if pid.is_empty() || !pid.bytes().all(|byte| byte.is_ascii_digit()) {
+            return Err(ErrorCode::Io);
+        }
+        let status_path = format!("/proc/{pid}/status");
+        loop {
+            let status = self.cat(&status_path).await?;
+            match status.as_slice() {
+                b"running\n" | b"running" => {
+                    tokio::time::sleep(std::time::Duration::from_millis(5)).await
+                }
+                b"exited\n" | b"exited" => break,
+                _ => return Err(ErrorCode::Io),
+            }
+        }
+        let output = self.cat(&format!("/proc/{pid}/io/output")).await?;
+        let exit = self.cat(&format!("/proc/{pid}/exit")).await?;
+        let exit_code = std::str::from_utf8(&exit)
+            .map_err(|_| ErrorCode::Io)?
+            .trim()
+            .parse::<i32>()
+            .map_err(|_| ErrorCode::Io)?;
+        Ok(CommandOutput {
+            pid,
+            output,
+            exit_code,
+        })
+    }
+}
+
+/// Collected result of one ordinary Process command.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CommandOutput {
+    pub pid: String,
+    pub output: Vec<u8>,
+    pub exit_code: i32,
 }
 
 /// Error returned by the line-oriented stdio driver.
@@ -321,10 +377,20 @@ impl From<std::io::Error> for DriverError {
 enum LineCommand {
     Ls(String),
     Cat(String),
-    Echo { path: String, data: Vec<u8> },
-    Write { path: String, data: Vec<u8> },
+    Echo {
+        path: String,
+        data: Vec<u8>,
+    },
+    Write {
+        path: String,
+        data: Vec<u8>,
+    },
     Tail(String),
     Spawn(String),
+    Run {
+        executable: String,
+        args: Vec<String>,
+    },
     Exit,
     Empty,
 }
@@ -480,6 +546,27 @@ impl StdioDriver {
                 }
                 Err(err) => write_protocol_error(output, err).await?,
             },
+            LineCommand::Run { executable, args } => match self.shell.run(&executable, &args).await
+            {
+                Ok(result) => {
+                    output.write_all(&result.output).await?;
+                    if result.exit_code != 0 {
+                        if !result.output.is_empty() && !result.output.ends_with(b"\n") {
+                            output.write_all(b"\n").await?;
+                        }
+                        output
+                            .write_all(
+                                format!(
+                                    "error: process {} exited {}\n",
+                                    result.pid, result.exit_code
+                                )
+                                .as_bytes(),
+                            )
+                            .await?;
+                    }
+                }
+                Err(err) => write_protocol_error(output, err).await?,
+            },
         }
         output.flush().await?;
         Ok(false)
@@ -538,7 +625,72 @@ fn parse_line(line: &str) -> Result<LineCommand, String> {
             data: data.trim_end().as_bytes().to_vec(),
         });
     }
-    Err(format!("unknown command: {trimmed}"))
+    let argv = parse_argv(trimmed)?;
+    let executable = if argv[0].starts_with('/') {
+        argv[0].clone()
+    } else {
+        format!("/bin/{}", argv[0])
+    };
+    Ok(LineCommand::Run {
+        executable,
+        args: argv[1..].to_vec(),
+    })
+}
+
+fn parse_argv(line: &str) -> Result<Vec<String>, String> {
+    let mut argv = Vec::new();
+    let mut current = String::new();
+    let mut quote = None;
+    let mut escaped = false;
+    let mut started = false;
+    for character in line.chars() {
+        if escaped {
+            current.push(character);
+            escaped = false;
+            started = true;
+            continue;
+        }
+        if character == '\\' && quote != Some('\'') {
+            escaped = true;
+            started = true;
+            continue;
+        }
+        if let Some(active_quote) = quote {
+            if character == active_quote {
+                quote = None;
+            } else {
+                current.push(character);
+            }
+            started = true;
+            continue;
+        }
+        if matches!(character, '\'' | '"') {
+            quote = Some(character);
+            started = true;
+        } else if character.is_whitespace() {
+            if started {
+                argv.push(std::mem::take(&mut current));
+                started = false;
+            }
+        } else {
+            current.push(character);
+            started = true;
+        }
+    }
+    if escaped {
+        return Err("command ends with an incomplete escape".to_string());
+    }
+    if quote.is_some() {
+        return Err("command has an unterminated quote".to_string());
+    }
+    if started {
+        argv.push(current);
+    }
+    if argv.is_empty() {
+        Err("command is empty".to_string())
+    } else {
+        Ok(argv)
+    }
 }
 
 fn non_empty_path(path: &str) -> Result<String, String> {

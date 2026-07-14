@@ -801,7 +801,8 @@ async fn main() -> Result<()> {
                             &name,
                             delete_source,
                             &system,
-                        )?;
+                        )
+                        .await?;
                         println!("imported: {}", report.destination.display());
                         if report.source_deleted {
                             println!(

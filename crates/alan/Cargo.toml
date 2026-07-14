@@ -19,6 +19,7 @@ alan-agent-protocol.workspace = true
 alan-agent-engine.workspace = true
 alan-kernel = { path = "../kernel" }
 alan-os-host.workspace = true
+alan-service-manager.workspace = true
 alan-shell = { path = "../shell" }
 alan-swebench-tooling.workspace = true
 alan-tools.workspace = true

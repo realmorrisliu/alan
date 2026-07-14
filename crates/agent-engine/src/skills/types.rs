@@ -52,6 +52,15 @@ pub struct ScopedPackageDir {
     pub scope: SkillScope,
 }
 
+/// One explicitly referenced Skill package root with its owning package id.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScopedPackageRoot {
+    pub package_id: CapabilityPackageId,
+    pub path: PathBuf,
+    pub scope: SkillScope,
+    pub dependencies: Vec<SkillTypedDependency>,
+}
+
 /// Skill content source.
 #[derive(Debug, Clone)]
 pub enum SkillContentSource {
@@ -149,12 +158,14 @@ pub struct CapabilityPackage {
     pub root_dir: Option<PathBuf>,
     pub exports: CapabilityPackageExports,
     pub portable_skill: PortableSkill,
+    pub dependencies: Vec<SkillTypedDependency>,
 }
 
 /// Runtime-facing resolved capability view assembled from package sources.
 #[derive(Debug, Clone, Default)]
 pub struct ResolvedCapabilityView {
     pub package_dirs: Vec<ScopedPackageDir>,
+    pub package_roots: Vec<ScopedPackageRoot>,
     pub packages: Vec<CapabilityPackage>,
     pub errors: Vec<SkillError>,
     pub tracked_paths: Vec<PathBuf>,
@@ -1591,6 +1602,8 @@ pub enum SkillsError {
     NotFound(SkillId),
     #[error("Invalid capabilities declaration: {0}")]
     InvalidCapabilities(String),
+    #[error("Duplicate runtime Skill id: {0}")]
+    DuplicateSkill(SkillId),
 }
 
 impl From<std::io::Error> for SkillsError {

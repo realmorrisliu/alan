@@ -53,7 +53,8 @@ pub use models::{ModelCatalog, ModelInfo};
 pub use policy::{PolicyAction, PolicyDecision, PolicyEngine, PolicyRule};
 pub use process_launch::{
     AGENT_DEFINITION_DESCRIPTOR, AgentRuntimeStoreBindings, HostMountGrant,
-    MEMORY_STORE_DESCRIPTOR, ProcessDescriptor, ProcessLaunchContext,
+    MEMORY_STORE_DESCRIPTOR, ProcessDescriptor, ProcessLaunchContext, ProcessPackageKind,
+    ProcessPackageReference, ProcessPackageSkillReference,
 };
 pub use prompts::PromptLoader;
 pub use request_controls::{

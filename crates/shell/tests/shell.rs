@@ -16,7 +16,10 @@ use alan_ap::{
     ErrorCode, Fid, FileKind, FileServer, InProcessTransport, Offset, OpenMode, Qid, Request,
     Response, Stat, Stream,
 };
-use alan_kernel::{Access, MountFs, Namespace, ProcFs};
+use alan_kernel::{
+    Access, Credentials, MountFs, Namespace, ProcFs, ProcessInvocation, ProcessOutcome,
+    ProcessRunner,
+};
 use alan_llm::{GenerationResponse, MockLlmProvider};
 use alan_shell::{Shell, StdioDriver};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt, BufReader};
@@ -360,6 +363,67 @@ async fn stdio_driver_runs_line_commands() {
     assert!(
         output.contains("hello from stdio"),
         "cat should print data written by echo: {output:?}"
+    );
+}
+
+#[derive(Clone)]
+struct ArgvRunner;
+
+#[async_trait::async_trait]
+impl ProcessRunner for ArgvRunner {
+    async fn run(&self, invocation: ProcessInvocation) -> ProcessOutcome {
+        if invocation.exec.executable != "/bin/argv" {
+            return ProcessOutcome::exited(127, b"wrong executable\n");
+        }
+        ProcessOutcome::exited(0, format!("{}\n", invocation.exec.args.join("|")))
+    }
+}
+
+fn command_shell() -> Shell {
+    let procfs = ProcFs::new().with_runner(Arc::new(ArgvRunner));
+    let mut namespace = Namespace::new();
+    namespace.mount(
+        "/bin/argv",
+        InProcessTransport::new(Arc::new(MemFs::empty())),
+        Access::ReadOnly,
+    );
+    let spawner = procfs.for_spawner(None, namespace.clone(), Credentials::user("shell-test"));
+    namespace.mount(
+        "/proc",
+        InProcessTransport::new(Arc::new(spawner)),
+        Access::ReadWrite,
+    );
+    Shell::new(InProcessTransport::new(Arc::new(MountFs::new(namespace))))
+}
+
+#[tokio::test]
+async fn generic_command_execution_collects_proc_output_and_exit() {
+    let shell = command_shell();
+    let result = shell
+        .run("/bin/argv", &["first".to_string(), "two words".to_string()])
+        .await
+        .unwrap();
+    assert_eq!(result.exit_code, 0);
+    assert_eq!(result.output, b"first|two words\n");
+    assert_eq!(
+        shell
+            .cat(&format!("/proc/{}/status", result.pid))
+            .await
+            .unwrap(),
+        b"exited\n"
+    );
+}
+
+#[tokio::test]
+async fn stdio_driver_parses_quoted_argv_for_generic_bin_commands() {
+    let output = run_stdio_script(
+        command_shell(),
+        b"argv first 'two words' \"three words\"\nexit\n",
+    )
+    .await;
+    assert!(
+        output.contains("first|two words|three words\n"),
+        "{output:?}"
     );
 }
 

@@ -1,10 +1,17 @@
 use std::{
+    any::Any,
     collections::BTreeMap,
     path::{Component, Path, PathBuf},
+    sync::Arc,
 };
 
 use alan_kernel::{Access, Credentials, Namespace};
 use anyhow::{Result, ensure};
+
+use crate::skills::{
+    SkillCompatibility, SkillTypedDependency, validate_canonical_skill_id,
+    validate_skill_compatibility,
+};
 
 pub const AGENT_DEFINITION_DESCRIPTOR: &str = "agent-definition";
 pub const MEMORY_STORE_DESCRIPTOR: &str = "memory-store";
@@ -75,6 +82,95 @@ pub struct ProcessDescriptor {
     pub path: String,
 }
 
+/// Provenance tier for an immutable package reference passed to a Process.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProcessPackageKind {
+    Preinstalled,
+    Installed,
+}
+
+/// One Skill root selected from an immutable distribution package revision.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProcessPackageSkillReference {
+    pub skill_id: String,
+    /// Normalized path relative to the package projection root.
+    pub path: String,
+    pub dependencies: Vec<SkillTypedDependency>,
+}
+
+impl ProcessPackageSkillReference {
+    pub fn new(
+        skill_id: impl Into<String>,
+        path: impl Into<String>,
+        dependencies: Vec<SkillTypedDependency>,
+    ) -> Result<Self> {
+        let skill_id = skill_id.into();
+        validate_canonical_skill_id(&skill_id).map_err(anyhow::Error::msg)?;
+        let path = normalize_relative_path(&path.into())?;
+        ensure!(!path.is_empty(), "package Skill path must not be empty");
+        validate_skill_compatibility(&SkillCompatibility {
+            dependencies: dependencies.clone(),
+            ..SkillCompatibility::default()
+        })
+        .map_err(anyhow::Error::from)?;
+        Ok(Self {
+            skill_id,
+            path,
+            dependencies,
+        })
+    }
+}
+
+/// Explicit immutable package authority passed at Process creation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProcessPackageReference {
+    pub package_id: String,
+    pub revision: String,
+    pub kind: ProcessPackageKind,
+    pub namespace_path: String,
+    pub skills: Vec<ProcessPackageSkillReference>,
+}
+
+impl ProcessPackageReference {
+    pub fn new(
+        package_id: impl Into<String>,
+        revision: impl Into<String>,
+        kind: ProcessPackageKind,
+        namespace_path: impl Into<String>,
+        skills: Vec<ProcessPackageSkillReference>,
+    ) -> Result<Self> {
+        let package_id = package_id.into();
+        validate_package_id(&package_id)?;
+        let revision = revision.into();
+        ensure!(
+            revision.len() == 64
+                && revision
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)),
+            "package revision must be a lowercase SHA-256 fingerprint"
+        );
+        let namespace_path = normalize_namespace_path(&namespace_path.into())?;
+        ensure!(
+            namespace_path == format!("/lib/pkg/{package_id}"),
+            "package reference must be projected at /lib/pkg/<package-id>"
+        );
+        let mut seen = std::collections::BTreeSet::new();
+        ensure!(
+            skills
+                .iter()
+                .all(|skill| seen.insert(skill.skill_id.clone())),
+            "package reference contains duplicate Skill ids"
+        );
+        Ok(Self {
+            package_id,
+            revision,
+            kind,
+            namespace_path,
+            skills,
+        })
+    }
+}
+
 impl ProcessDescriptor {
     pub fn new(path: impl Into<String>) -> Result<Self> {
         Ok(Self {
@@ -89,8 +185,10 @@ pub struct ProcessLaunchContext {
     pub namespace: Namespace,
     pub host_mounts: Vec<HostMountGrant>,
     pub descriptors: BTreeMap<String, ProcessDescriptor>,
+    pub package_references: Vec<ProcessPackageReference>,
     pub credentials: Credentials,
     pub cwd: String,
+    retained_authorities: Vec<Arc<dyn Any + Send + Sync>>,
 }
 
 impl std::fmt::Debug for ProcessLaunchContext {
@@ -100,8 +198,10 @@ impl std::fmt::Debug for ProcessLaunchContext {
             .field("namespace", &self.namespace.describe())
             .field("host_mounts", &self.host_mounts)
             .field("descriptors", &self.descriptors)
+            .field("package_references", &self.package_references)
             .field("credentials", &self.credentials)
             .field("cwd", &self.cwd)
+            .field("retained_authorities", &self.retained_authorities.len())
             .finish()
     }
 }
@@ -116,8 +216,10 @@ impl ProcessLaunchContext {
             namespace,
             host_mounts: Vec::new(),
             descriptors: BTreeMap::new(),
+            package_references: Vec::new(),
             credentials,
             cwd: normalize_namespace_path(&cwd.into())?,
+            retained_authorities: Vec::new(),
         })
     }
 
@@ -142,6 +244,23 @@ impl ProcessLaunchContext {
 
     pub fn descriptor(&self, name: &str) -> Option<&ProcessDescriptor> {
         self.descriptors.get(name)
+    }
+
+    pub fn with_package_reference(mut self, reference: ProcessPackageReference) -> Self {
+        self.package_references.push(reference);
+        self
+    }
+
+    pub fn add_package_reference(&mut self, reference: ProcessPackageReference) {
+        self.package_references.push(reference);
+    }
+
+    /// Retain an opaque owner-issued authority for the lifetime of this Process context.
+    pub fn retain_authority<T>(&mut self, authority: Arc<T>)
+    where
+        T: Any + Send + Sync,
+    {
+        self.retained_authorities.push(authority);
     }
 
     /// Resolve an Alan OS path only through an explicit Host Mount grant.
@@ -198,10 +317,60 @@ impl ProcessLaunchContext {
             namespace: self.namespace.child(),
             host_mounts: self.host_mounts.clone(),
             descriptors: self.descriptors.clone(),
+            package_references: self.package_references.clone(),
             credentials: self.credentials.clone(),
             cwd: self.cwd.clone(),
+            retained_authorities: self.retained_authorities.clone(),
         }
     }
+
+    /// Rebind inherited Process authority to a concrete live namespace and credentials.
+    pub fn rebound(&self, namespace: Namespace, credentials: Credentials) -> Self {
+        Self {
+            namespace,
+            host_mounts: self.host_mounts.clone(),
+            descriptors: self.descriptors.clone(),
+            package_references: self.package_references.clone(),
+            credentials,
+            cwd: self.cwd.clone(),
+            retained_authorities: self.retained_authorities.clone(),
+        }
+    }
+}
+
+fn validate_package_id(value: &str) -> Result<()> {
+    ensure!(!value.is_empty() && value.len() <= 64, "invalid package id");
+    ensure!(
+        value.split('-').all(|part| {
+            !part.is_empty()
+                && part
+                    .bytes()
+                    .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
+        }),
+        "invalid package id `{value}`"
+    );
+    Ok(())
+}
+
+fn normalize_relative_path(path: &str) -> Result<String> {
+    ensure!(
+        !path.starts_with('/'),
+        "package Skill path must be relative"
+    );
+    let components = path
+        .split('/')
+        .filter(|component| !component.is_empty())
+        .map(|component| {
+            ensure!(
+                component != "." && component != "..",
+                "invalid package Skill path: {path}"
+            );
+            Ok(component)
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let normalized = components.join("/");
+    ensure!(normalized == path, "package Skill path must be normalized");
+    Ok(normalized)
 }
 
 pub(crate) fn normalize_namespace_path(path: &str) -> Result<String> {

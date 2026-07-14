@@ -1,6 +1,6 @@
 name = "root-agent"
 executable = "/bin/alan-agent"
-after = ["agent-runtime", "connection", "route"]
+after = ["agent-runtime", "connection", "package", "route"]
 required = true
 timeout_ms = 30000
 restart = "always"
@@ -76,6 +76,11 @@ access = "write"
 [[mounts]]
 path = "/mnt/host-mount"
 source = "/mnt/host-mount"
+access = "write"
+
+[[mounts]]
+path = "/mnt/package"
+source = "/mnt/package"
 access = "write"
 
 [[mounts]]

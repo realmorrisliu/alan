@@ -5,11 +5,14 @@
 //! it never discovers repositories or authored trees recursively.
 
 use std::{
+    collections::BTreeMap,
     fs,
     path::{Component, Path, PathBuf},
 };
 
 use alan_agent_engine::InstallChannel;
+use alan_ap::InProcessTransport;
+use alan_shell::Shell;
 use anyhow::{Context, Result, bail, ensure};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -225,7 +228,7 @@ fn migrate_legacy_connections(
     )
 }
 
-pub fn import_authored_content(
+pub async fn import_authored_content(
     kind: AuthoredImportKind,
     source: &Path,
     name: &str,
@@ -244,9 +247,13 @@ pub fn import_authored_content(
     );
     validate_import_shape(kind, source)?;
 
+    if kind == AuthoredImportKind::Skill {
+        return import_authored_skill(source, name, delete_source, system_store).await;
+    }
+
     let destination_parent = match kind {
         AuthoredImportKind::AgentDefinition => system_store.agent_definitions()?,
-        AuthoredImportKind::Skill => system_store.imported_skills()?,
+        AuthoredImportKind::Skill => unreachable!("Skill imports use Package Service"),
         AuthoredImportKind::MemoryStore => system_store.memory_stores()?,
     };
     fs::create_dir_all(&destination_parent).with_context(|| {
@@ -321,6 +328,56 @@ pub fn import_authored_content(
     Ok(AuthoredImportReport {
         source: canonical_source,
         destination,
+        source_deleted: delete_source,
+    })
+}
+
+async fn import_authored_skill(
+    source: &Path,
+    package_id: &str,
+    delete_source: bool,
+    system_store: &SystemStorePaths,
+) -> Result<AuthoredImportReport> {
+    let canonical_source = fs::canonicalize(source)
+        .with_context(|| format!("failed to resolve import source {}", source.display()))?;
+    let source_fingerprint = tree_fingerprint(&canonical_source)?;
+    let snapshot = alan_service_manager::PackageSnapshot::from_directory(&canonical_source)?;
+    let package_service = alan_service_manager::PackageService::open(
+        &system_store.channel_id,
+        system_store.packages()?,
+    )?;
+    let request_id = format!("legacy-import-{}", uuid::Uuid::new_v4().simple());
+    let command = alan_service_manager::PackageCommand::Install {
+        request_id: request_id.clone(),
+        package_id: package_id.to_string(),
+        snapshot,
+    };
+    let shell = Shell::new(InProcessTransport::new(package_service.file_server()));
+    shell
+        .write("/ctl", &serde_json::to_vec(&command)?)
+        .await
+        .map_err(|code| anyhow::anyhow!("submit Package Service import: {code:?}"))?;
+    let results: BTreeMap<String, alan_service_manager::PackageCommandResult> =
+        serde_json::from_slice(
+            &shell
+                .cat("/result")
+                .await
+                .map_err(|code| anyhow::anyhow!("read Package Service import: {code:?}"))?,
+        )?;
+    let result = results
+        .get(&request_id)
+        .context("Package Service returned no matching import result")?;
+    ensure!(
+        result.success,
+        "Package Service import failed: {}",
+        result.message
+    );
+    if delete_source {
+        remove_import_source_if_unchanged(&canonical_source, &source_fingerprint)?;
+    }
+    Ok(AuthoredImportReport {
+        source: canonical_source,
+        destination: PathBuf::from(format!("/lib/pkg/{package_id}")),
         source_deleted: delete_source,
     })
 }
@@ -711,7 +768,6 @@ mod tests {
     use alan_agent_engine::{
         ConnectionCredential, ConnectionProfile, ConnectionsFile, CredentialKind, LlmProvider,
         default_credential_backend,
-        skills::{ResolvedCapabilityView, ScopedPackageDir, SkillScope, SkillsRegistry},
     };
     use chrono::Utc;
     use tempfile::TempDir;
@@ -967,8 +1023,8 @@ mod tests {
         assert!(outside.join("runtime/stable/rollouts/keep").is_file());
     }
 
-    #[test]
-    fn explicit_skill_import_is_verified_and_loadable_as_installed() {
+    #[tokio::test]
+    async fn explicit_skill_import_is_verified_and_loadable_as_installed() {
         let temp = TempDir::new().unwrap();
         let source = temp.path().join("host-skill");
         fs::create_dir_all(&source).unwrap();
@@ -986,20 +1042,21 @@ mod tests {
             true,
             &system,
         )
+        .await
         .unwrap();
-        let view = ResolvedCapabilityView::from_package_dirs(vec![ScopedPackageDir {
-            path: system.imported_skills().unwrap(),
-            scope: SkillScope::Installed,
-        }]);
-        let registry = SkillsRegistry::load_capability_view(&view, &[]).unwrap();
+        let service = alan_service_manager::PackageService::open(
+            &system.channel_id,
+            system.packages().unwrap(),
+        )
+        .unwrap();
+        let lease = service.acquire("imported-skill").unwrap();
+        let export = &lease.record().exports[0];
 
         assert!(report.source_deleted);
         assert!(!source.exists());
-        assert!(report.destination.join("SKILL.md").is_file());
-        assert_eq!(
-            registry.get(&"imported-skill".to_string()).unwrap().scope,
-            SkillScope::Installed
-        );
+        assert_eq!(report.destination, PathBuf::from("/lib/pkg/imported-skill"));
+        assert_eq!(export.skill_id, "host-skill");
+        assert!(lease.file_server().is_ok());
     }
 
     #[test]
@@ -1025,8 +1082,8 @@ mod tests {
     }
 
     #[cfg(unix)]
-    #[test]
-    fn explicit_import_rejects_symlinks_without_installing() {
+    #[tokio::test]
+    async fn explicit_import_rejects_symlinks_without_installing() {
         use std::os::unix::fs::symlink;
 
         let temp = TempDir::new().unwrap();
@@ -1043,6 +1100,7 @@ mod tests {
             false,
             &system,
         )
+        .await
         .unwrap_err();
 
         assert!(error.to_string().contains("contains a symlink"));
