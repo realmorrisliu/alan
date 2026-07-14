@@ -1208,8 +1208,14 @@ fn command_skill_document(
     body: &str,
     dependencies: &[SkillTypedDependency],
 ) -> String {
-    let mut document =
-        format!("---\nname: {skill_id}\ndescription: Imported command-style Skill `{skill_id}`.\n");
+    let yaml_skill_id = serde_yaml::to_string(skill_id)
+        .expect("validated Skill id serialization must succeed")
+        .trim_start_matches("---\n")
+        .trim_end()
+        .to_string();
+    let mut document = format!(
+        "---\nname: {yaml_skill_id}\ndescription: Imported command-style Skill `{skill_id}`.\n"
+    );
     if !dependencies.is_empty() {
         document.push_str("compatibility:\n  dependencies:\n");
         for dependency in dependencies {
@@ -2635,14 +2641,20 @@ mod tests {
                 package_id: "command-normalization-pack".to_string(),
                 snapshot: PackageSnapshot {
                     source_name: "command-normalization-pack".to_string(),
-                    entries: ["repo.review.md", "release check.md", "foo__bar.md"]
-                        .into_iter()
-                        .map(|name| PackageSnapshotEntry {
-                            path: format!("skills/{name}"),
-                            bytes: b"Command body.".to_vec(),
-                            executable: false,
-                        })
-                        .collect(),
+                    entries: [
+                        "repo.review.md",
+                        "release check.md",
+                        "foo__bar.md",
+                        "123.md",
+                        "true.md",
+                    ]
+                    .into_iter()
+                    .map(|name| PackageSnapshotEntry {
+                        path: format!("skills/{name}"),
+                        bytes: b"Command body.".to_vec(),
+                        executable: false,
+                    })
+                    .collect(),
                 },
             })
             .unwrap()
@@ -2655,8 +2667,25 @@ mod tests {
                 .iter()
                 .map(|export| export.skill_id.as_str())
                 .collect::<Vec<_>>(),
-            vec!["foo-bar", "release-check", "repo-review"]
+            vec!["123", "foo-bar", "release-check", "repo-review", "true"]
         );
+
+        let lease = service.acquire("command-normalization-pack").unwrap();
+        for skill_id in ["123", "true"] {
+            let document = fs::read_to_string(
+                lease
+                    .content_root()
+                    .join(format!("skills/{skill_id}/SKILL.md")),
+            )
+            .unwrap();
+            let metadata = parse_skill_metadata(
+                &document,
+                &Path::new(skill_id).join("SKILL.md"),
+                SkillScope::Installed,
+            )
+            .unwrap();
+            assert_eq!(metadata.id, skill_id);
+        }
     }
 
     #[tokio::test]
