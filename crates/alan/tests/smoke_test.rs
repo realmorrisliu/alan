@@ -137,7 +137,7 @@ async fn submit(shell: &alan_shell::Shell, text: &str) {
 }
 
 async fn wait_for_action(shell: &alan_shell::Shell) -> String {
-    tokio::time::timeout(TEST_TIMEOUT, async {
+    tokio::time::timeout(ACTION_TIMEOUT, async {
         loop {
             if let Some(action) = shell
                 .ls(&format!("{AGENT_PATH}/actions"))
