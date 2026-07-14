@@ -1197,6 +1197,11 @@ fn bounded_error_message(error: &anyhow::Error) -> String {
 
 fn recover_staging(root: &Path) -> Result<()> {
     let staging = root.join("staging");
+    let metadata = fs::symlink_metadata(&staging).context("inspect package staging directory")?;
+    ensure!(
+        metadata.file_type().is_dir() && !metadata.file_type().is_symlink(),
+        "package staging path is not an owned directory"
+    );
     for entry in fs::read_dir(&staging)? {
         remove_path_without_following(&entry?.path())?;
     }
@@ -2024,6 +2029,27 @@ mod tests {
         persist_catalog(&root, &catalog).unwrap();
 
         assert!(PackageService::open("dev", root).is_err());
+        assert_eq!(fs::read(victim.join("sentinel")).unwrap(), b"keep");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn restart_rejects_symlinked_staging_without_deleting_its_target() {
+        use std::os::unix::fs::symlink;
+
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("packages");
+        let service = PackageService::open("dev", root.clone()).unwrap();
+        drop(service);
+
+        fs::remove_dir(root.join("staging")).unwrap();
+        let victim = directory.path().join("victim");
+        fs::create_dir(&victim).unwrap();
+        fs::write(victim.join("sentinel"), b"keep").unwrap();
+        symlink(&victim, root.join("staging")).unwrap();
+
+        let error = PackageService::open("dev", root).unwrap_err();
+        assert!(error.to_string().contains("staging path"));
         assert_eq!(fs::read(victim.join("sentinel")).unwrap(), b"keep");
     }
 
