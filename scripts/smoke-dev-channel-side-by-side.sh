@@ -161,25 +161,19 @@ assert_bundle_metadata() {
 assert_dev_system_store_isolated() {
     local fixture_root="$1"
     local fixture_home="$fixture_root/home"
-    local skill_source="$fixture_root/explicit-skill"
+    local memory_source="$fixture_root/explicit-memory"
     local dev_store="$fixture_home/Library/Application Support/Alan/System Store/dev"
     local stable_store="$fixture_home/Library/Application Support/Alan/System Store/stable"
 
-    mkdir -p "$fixture_home" "$skill_source"
-    printf '%s\n' \
-        '---' \
-        'name: side-by-side-smoke' \
-        'description: Explicit dev-channel import smoke' \
-        '---' \
-        'Use only for channel isolation smoke.' >"$skill_source/SKILL.md"
+    mkdir -p "$fixture_home" "$memory_source"
+    printf '%s\n' 'side-by-side channel isolation smoke' >"$memory_source/MEMORY.md"
 
     HOME="$fixture_home" ALAN_INSTALL_CHANNEL=dev \
-        "$DEV_CLI" host legacy-state import skill "$skill_source" --name side-by-side-smoke
+        "$DEV_CLI" host legacy-state import memory-store "$memory_source" \
+        --name side-by-side-smoke
 
-    [[ -f "$dev_store/services/packages/catalog.json" ]] ||
-        fail "dev Package Service catalog was not created"
-    grep -q '"side-by-side-smoke"' "$dev_store/services/packages/catalog.json" ||
-        fail "dev Package Service catalog does not contain the imported package"
+    [[ -f "$dev_store/services/memory/stores/side-by-side-smoke/MEMORY.md" ]] ||
+        fail "dev Memory Store import was not created"
     [[ ! -e "$stable_store" ]] ||
         fail "dev import unexpectedly created stable System Store state"
     [[ ! -e "$fixture_home/.alan" && ! -e "$fixture_home/.alan-dev" ]] ||

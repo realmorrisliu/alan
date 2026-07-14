@@ -113,7 +113,6 @@ Examples:
 ```bash
 alan host legacy-state inspect
 alan host legacy-state cleanup --source-root /path/to/former/project
-alan host legacy-state import skill /path/to/skill --name my-skill
 
 alan connection list
 alan connection add chatgpt --profile chatgpt-main

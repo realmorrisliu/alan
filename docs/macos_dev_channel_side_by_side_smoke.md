@@ -17,7 +17,7 @@ It covers the OpenSpec side-by-side boundary:
    Alan Dev is running without creating or retaining a second stable process;
 5. dev shell-control state is created for the current run in the
    `alan-dev-shell-control` namespace;
-6. an explicit `alan-dev host legacy-state import skill` writes only to the dev System Store,
+6. an explicit `alan-dev host legacy-state import memory-store` writes only to the dev System Store,
    does not create stable state, and does not recreate `.alan` or `.alan-dev`;
 7. removed `init` and `workspace` commands remain unavailable.
 
