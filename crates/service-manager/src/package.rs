@@ -800,8 +800,16 @@ impl PackageService {
         snapshot: &PackageSnapshot,
     ) -> Result<MaterializationManifest> {
         let final_root = revision_root(&self.store_root, package_id, revision);
-        if final_root.is_dir() {
-            return verify_materialized_revision(&final_root, revision);
+        match fs::symlink_metadata(&final_root) {
+            Ok(metadata) => {
+                ensure!(
+                    metadata.file_type().is_dir(),
+                    "package revision path exists but is not an owned directory"
+                );
+                return verify_materialized_revision(&final_root, revision);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error).context("inspect package revision path"),
         }
 
         let stage = self.store_root.join("staging").join(format!(
@@ -920,12 +928,12 @@ impl PackageService {
             Ok(manifest) => {
                 let parent = final_root.parent().context("revision root has no parent")?;
                 fs::create_dir_all(parent)?;
-                if final_root.exists() {
+                if fs::symlink_metadata(&final_root).is_ok() {
                     fs::remove_dir_all(&stage)?;
-                } else {
-                    fs::rename(&stage, &final_root)?;
-                    File::open(parent)?.sync_all()?;
+                    bail!("package revision path appeared during materialization");
                 }
+                fs::rename(&stage, &final_root)?;
+                File::open(parent)?.sync_all()?;
                 Ok(manifest)
             }
             Err(error) => {
@@ -1775,6 +1783,55 @@ mod tests {
 
         assert!(result.success, "{}", result.message);
         assert!(service.acquire("large-materialized").is_ok());
+    }
+
+    #[test]
+    fn install_rejects_a_stale_file_at_the_revision_path() {
+        let service = PackageService::ephemeral("test").unwrap();
+        let snapshot = native_snapshot("stale-file", "body");
+        let revision = fingerprint(&snapshot).unwrap();
+        let target = revision_root(&service.store_root, "stale-file-pack", &revision);
+        fs::create_dir_all(target.parent().unwrap()).unwrap();
+        fs::write(&target, b"stale").unwrap();
+
+        let result = service.execute(PackageCommand::Install {
+            request_id: "stale-file-install".to_string(),
+            package_id: "stale-file-pack".to_string(),
+            snapshot,
+        });
+
+        assert!(!result.unwrap().success);
+        assert!(target.is_file());
+        assert!(!service.catalog().packages.contains_key("stale-file-pack"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn install_rejects_a_stale_symlink_at_the_revision_path() {
+        use std::os::unix::fs::symlink;
+
+        let service = PackageService::ephemeral("test").unwrap();
+        let snapshot = native_snapshot("stale-link", "body");
+        let revision = fingerprint(&snapshot).unwrap();
+        let target = revision_root(&service.store_root, "stale-link-pack", &revision);
+        fs::create_dir_all(target.parent().unwrap()).unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        symlink(outside.path(), &target).unwrap();
+
+        let result = service.execute(PackageCommand::Install {
+            request_id: "stale-link-install".to_string(),
+            package_id: "stale-link-pack".to_string(),
+            snapshot,
+        });
+
+        assert!(!result.unwrap().success);
+        assert!(
+            fs::symlink_metadata(&target)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert!(!service.catalog().packages.contains_key("stale-link-pack"));
     }
 
     #[test]
