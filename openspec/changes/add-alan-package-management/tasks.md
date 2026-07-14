@@ -80,5 +80,5 @@
 - [x] 7.1 Run focused Package Service, Service Manager, Agent Engine, Shell, OS
   Host, and Alan integration tests.
 - [x] 7.2 Run `just fmt`, `just lint`, `just test`, `just check`, and `just build`.
-- [ ] 7.3 Run strict OpenSpec validation for every current capability/change and
+- [x] 7.3 Run strict OpenSpec validation for every current capability/change and
   record dogfood evidence in the implementation PR.
