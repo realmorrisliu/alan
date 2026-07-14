@@ -11,11 +11,14 @@ use alan_agent_engine::{
     ToolRegistry, configure_runtime_tool_execution_binding, provider_capabilities_for_config,
     spawn_with_namespace_environment,
 };
-use alan_ap::{Fid, FileServer, InProcessTransport, OpenMode};
+use alan_ap::{
+    ErrorCode, Fid, FileKind, FileServer, InProcessTransport, Offset, OpenMode, Qid, Stat,
+};
 use alan_hostfs::{HostDirAccess, HostDirFs};
 use alan_kernel::{Access, Credentials, LiveNamespace, Namespace, Pid, Status};
 use alan_llm::ProviderCapabilities;
 use anyhow::{Context, Result, ensure};
+use async_trait::async_trait;
 use uuid::Uuid;
 
 use crate::{
@@ -31,6 +34,98 @@ pub const BOOT_STATE_PATH: &str = "/proc/host/state";
 const LLM_CONNECTION: &str = "default";
 const SERVICE_MANAGER_EXECUTABLE: &str = "/bin/service-manager";
 static NEXT_BOOT_FID: AtomicU64 = AtomicU64::new(800_000);
+
+/// A stable namespace mount whose backing File-Server exists only while its
+/// owning service Process is running. Rebinding installs a fresh server so
+/// buffered fids from a previous service lifetime cannot commit after restart.
+struct SwitchableFileServer {
+    inner: tokio::sync::RwLock<Option<Arc<dyn FileServer>>>,
+}
+
+impl SwitchableFileServer {
+    fn new() -> Arc<Self> {
+        Arc::new(Self {
+            inner: tokio::sync::RwLock::new(None),
+        })
+    }
+
+    async fn bind(&self, inner: Arc<dyn FileServer>) {
+        *self.inner.write().await = Some(inner);
+    }
+
+    async fn deactivate(&self) {
+        *self.inner.write().await = None;
+    }
+}
+
+#[async_trait]
+impl FileServer for SwitchableFileServer {
+    async fn walk(&self, fid: Fid, newfid: Fid, names: &[String]) -> Result<Qid, ErrorCode> {
+        let inner = self.inner.read().await;
+        inner
+            .as_ref()
+            .ok_or(ErrorCode::NoAccess)?
+            .walk(fid, newfid, names)
+            .await
+    }
+
+    async fn open(&self, fid: Fid, mode: OpenMode) -> Result<Qid, ErrorCode> {
+        let inner = self.inner.read().await;
+        inner
+            .as_ref()
+            .ok_or(ErrorCode::NoAccess)?
+            .open(fid, mode)
+            .await
+    }
+
+    async fn read(&self, fid: Fid, offset: Offset, count: u32) -> Result<Vec<u8>, ErrorCode> {
+        let inner = self.inner.read().await;
+        inner
+            .as_ref()
+            .ok_or(ErrorCode::NoAccess)?
+            .read(fid, offset, count)
+            .await
+    }
+
+    async fn write(&self, fid: Fid, offset: Offset, data: &[u8]) -> Result<u32, ErrorCode> {
+        let inner = self.inner.read().await;
+        inner
+            .as_ref()
+            .ok_or(ErrorCode::NoAccess)?
+            .write(fid, offset, data)
+            .await
+    }
+
+    async fn stat(&self, fid: Fid) -> Result<Stat, ErrorCode> {
+        let inner = self.inner.read().await;
+        inner.as_ref().ok_or(ErrorCode::NoAccess)?.stat(fid).await
+    }
+
+    async fn create(
+        &self,
+        fid: Fid,
+        newfid: Fid,
+        name: &str,
+        kind: FileKind,
+    ) -> Result<Qid, ErrorCode> {
+        let inner = self.inner.read().await;
+        inner
+            .as_ref()
+            .ok_or(ErrorCode::NoAccess)?
+            .create(fid, newfid, name, kind)
+            .await
+    }
+
+    async fn remove(&self, fid: Fid) -> Result<(), ErrorCode> {
+        let inner = self.inner.read().await;
+        inner.as_ref().ok_or(ErrorCode::NoAccess)?.remove(fid).await
+    }
+
+    async fn clunk(&self, fid: Fid) -> Result<(), ErrorCode> {
+        let inner = self.inner.read().await;
+        inner.as_ref().ok_or(ErrorCode::NoAccess)?.clunk(fid).await
+    }
+}
 
 /// Explicit inputs supplied by the platform Host to Service Manager.
 pub struct ServiceManagerConfig {
@@ -298,6 +393,7 @@ impl ServiceManager {
             host_mount: assembled.host_mount,
             connection: assembled.connection,
             package: assembled.package,
+            package_handle: assembled.package_handle,
             local_entry: local_entry.clone(),
             root: Some(RootInstance {
                 pid: assembled.root_pid,
@@ -450,6 +546,7 @@ struct AssembledEnvironment {
     host_mount: Arc<HostMountService>,
     connection: Arc<ConnectionService>,
     package: Arc<PackageService>,
+    package_handle: Arc<SwitchableFileServer>,
     active_units: BTreeMap<String, ActiveUnit>,
     llm_connection: String,
     manager_pid: Pid,
@@ -505,6 +602,7 @@ struct SupervisorRuntime {
     host_mount: Arc<HostMountService>,
     connection: Arc<ConnectionService>,
     package: Arc<PackageService>,
+    package_handle: Arc<SwitchableFileServer>,
     local_entry: Arc<LocalEntryService>,
     root: Option<RootInstance>,
     root_pid: Arc<AtomicU64>,
@@ -681,6 +779,7 @@ impl SupervisorRuntime {
                 host_mount: &self.host_mount,
                 connection: &self.connection,
                 package: &self.package,
+                package_handle: &self.package_handle,
                 local_entry: Some(&self.local_entry),
             },
         )
@@ -830,12 +929,16 @@ impl SupervisorRuntime {
     async fn invalidate_handles(&self, name: &str) {
         if let Some(unit) = self.manifest.get(name) {
             for handle in &unit.published_handles {
+                if handle == "package" {
+                    self.package_handle.deactivate().await;
+                }
                 self.srvfs.unpost(handle).await;
             }
         }
     }
 
     async fn stop(mut self) -> Result<()> {
+        self.package_handle.deactivate().await;
         if let Some(root) = self.root.take() {
             let result = root.controller.shutdown().await;
             self.procfs.record_exit(root.pid, 0).await;
@@ -896,6 +999,7 @@ async fn assemble_environment(inputs: AssembleInputs<'_>) -> Result<AssembledEnv
     let state = Arc::new(tokio::sync::Mutex::new(ManagerState::new(manifest.clone())));
     let manager_fs = Arc::new(ServiceManagerFs::new(state.clone()));
     let host_mount_service = HostMountService::new(host_mount_adapter);
+    let package_handle = SwitchableFileServer::new();
 
     let mut namespace = launch_context.namespace.child();
     mount_standard_namespace_roots(&mut namespace);
@@ -1004,6 +1108,7 @@ async fn assemble_environment(inputs: AssembleInputs<'_>) -> Result<AssembledEnv
                         host_mount: &host_mount_service,
                         connection: &connection_service,
                         package: &package_service,
+                        package_handle: &package_handle,
                         local_entry: local_entry.as_ref(),
                     },
                 )
@@ -1192,6 +1297,7 @@ async fn assemble_environment(inputs: AssembleInputs<'_>) -> Result<AssembledEnv
         host_mount: host_mount_service,
         connection: connection_service,
         package: package_service,
+        package_handle,
         active_units,
         llm_connection,
         manager_pid,
@@ -1248,6 +1354,7 @@ struct SystemServiceHandles<'a> {
     host_mount: &'a Arc<HostMountService>,
     connection: &'a Arc<ConnectionService>,
     package: &'a Arc<PackageService>,
+    package_handle: &'a Arc<SwitchableFileServer>,
     local_entry: Option<&'a Arc<LocalEntryService>>,
 }
 
@@ -1258,7 +1365,13 @@ async fn publish_unit_handles(unit: &BootUnit, services: &SystemServiceHandles<'
             "llm" => InProcessTransport::new(services.llmfs.clone()),
             "agent-runtime" => InProcessTransport::new(services.agent_root.clone()),
             "connection" => InProcessTransport::new(services.connection.file_server()),
-            "package" => InProcessTransport::new(services.package.file_server()),
+            "package" => {
+                services
+                    .package_handle
+                    .bind(services.package.file_server())
+                    .await;
+                InProcessTransport::new(services.package_handle.clone())
+            }
             "host-mount" => InProcessTransport::new(services.host_mount.file_server()),
             "local-entry" => InProcessTransport::new(
                 services
@@ -2093,6 +2206,16 @@ published_handles = ["test-service"]
         ))
         .await
         .unwrap();
+        let (_, _, namespace) = manager.local_entry().create_and_handoff().await.unwrap();
+        let shell = alan_shell::Shell::new(InProcessTransport::new(namespace));
+        assert_eq!(
+            shell
+                .run(QUARTERMASTER_EXECUTABLE, &["list".to_string()])
+                .await
+                .unwrap()
+                .exit_code,
+            0
+        );
         let old_pid = Pid(manager
             .state()
             .lock()
@@ -2102,6 +2225,32 @@ published_handles = ["test-service"]
             .pid
             .unwrap());
         manager.terminate_unit("package", 1).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if !shell
+                    .ls("/srv")
+                    .await
+                    .unwrap()
+                    .iter()
+                    .any(|handle| handle == "package")
+                {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("Package Service handle was not invalidated");
+        let unavailable = shell
+            .run(QUARTERMASTER_EXECUTABLE, &["list".to_string()])
+            .await
+            .unwrap();
+        assert_eq!(unavailable.exit_code, 1);
+        let unavailable_output = String::from_utf8(unavailable.output).unwrap();
+        assert!(
+            unavailable_output.contains("submit command failed"),
+            "unexpected unavailable output: {unavailable_output}"
+        );
         let new_pid = tokio::time::timeout(Duration::from_secs(3), async {
             loop {
                 let unit = manager.state().lock().await.unit("package").unwrap();
@@ -2114,8 +2263,6 @@ published_handles = ["test-service"]
         .await
         .expect("Package Service was not restarted");
         assert_ne!(new_pid, old_pid);
-        let (_, _, namespace) = manager.local_entry().create_and_handoff().await.unwrap();
-        let shell = alan_shell::Shell::new(InProcessTransport::new(namespace));
         assert!(
             shell
                 .ls("/srv")
