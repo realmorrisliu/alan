@@ -247,6 +247,30 @@ pub async fn import_authored_content(
     );
     validate_import_shape(kind, source)?;
 
+    fs::create_dir_all(&system_store.root).with_context(|| {
+        format!(
+            "failed to create System Store {}",
+            system_store.root.display()
+        )
+    })?;
+    let canonical_source = fs::canonicalize(source)
+        .with_context(|| format!("failed to resolve import source {}", source.display()))?;
+    ensure!(
+        canonical_source.parent().is_some(),
+        "authored import source must not be a filesystem root"
+    );
+    let canonical_store = fs::canonicalize(&system_store.root).with_context(|| {
+        format!(
+            "failed to resolve System Store {}",
+            system_store.root.display()
+        )
+    })?;
+    ensure!(
+        !canonical_source.starts_with(&canonical_store)
+            && !canonical_store.starts_with(&canonical_source),
+        "import source and System Store must not overlap"
+    );
+
     if kind == AuthoredImportKind::Skill {
         return import_authored_skill(source, name, delete_source, system_store).await;
     }
@@ -267,24 +291,6 @@ pub async fn import_authored_content(
         !path_exists_without_following(&destination)?,
         "import destination already exists: {}",
         destination.display()
-    );
-
-    let canonical_source = fs::canonicalize(source)
-        .with_context(|| format!("failed to resolve import source {}", source.display()))?;
-    ensure!(
-        canonical_source.parent().is_some(),
-        "authored import source must not be a filesystem root"
-    );
-    let canonical_store = fs::canonicalize(&system_store.root).with_context(|| {
-        format!(
-            "failed to resolve System Store {}",
-            system_store.root.display()
-        )
-    })?;
-    ensure!(
-        !canonical_source.starts_with(&canonical_store)
-            && !canonical_store.starts_with(&canonical_source),
-        "import source and System Store must not overlap"
     );
 
     let staging = destination_parent.join(format!(
@@ -1057,6 +1063,35 @@ mod tests {
         assert_eq!(report.destination, PathBuf::from("/lib/pkg/imported-skill"));
         assert_eq!(export.skill_id, "host-skill");
         assert!(lease.file_server().is_ok());
+    }
+
+    #[tokio::test]
+    async fn skill_import_cannot_delete_managed_package_content() {
+        let temp = TempDir::new().unwrap();
+        let (system, _) = stores(temp.path(), InstallChannel::Stable);
+        let source = system
+            .packages()
+            .unwrap()
+            .join("revisions/existing/content/skills/managed");
+        fs::create_dir_all(&source).unwrap();
+        fs::write(
+            source.join("SKILL.md"),
+            "---\nname: managed\ndescription: Managed package Skill.\n---\n",
+        )
+        .unwrap();
+
+        let error = import_authored_content(
+            AuthoredImportKind::Skill,
+            &source,
+            "managed-copy",
+            true,
+            &system,
+        )
+        .await
+        .unwrap_err();
+
+        assert!(error.to_string().contains("must not overlap"));
+        assert!(source.join("SKILL.md").is_file());
     }
 
     #[test]
