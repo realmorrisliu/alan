@@ -722,11 +722,16 @@ impl PackageService {
             None
         };
         next.generation = next.generation.saturating_add(1);
-        persist_catalog(&self.store_root, &next)?;
-        self.state.lock().expect("package state poisoned").catalog = next;
-        if !retained {
-            remove_package_revisions(&self.store_root, &package_id)?;
+        let staged_revisions = if retained {
+            None
+        } else {
+            stage_package_revisions(&self.store_root, &package_id)?
+        };
+        if let Err(error) = persist_catalog(&self.store_root, &next) {
+            rollback_staged_package_revisions(staged_revisions.as_ref(), error)?;
         }
+        self.state.lock().expect("package state poisoned").catalog = next;
+        discard_staged_package_revisions(staged_revisions);
         Ok(PackageCommandResult {
             request_id,
             success: true,
@@ -759,14 +764,21 @@ impl PackageService {
         } else {
             next.packages.insert(package_id.clone(), record);
         }
-        persist_catalog(&self.store_root, &next)?;
+        let staged_revisions = if remove_package {
+            stage_package_revisions(&self.store_root, &package_id)?
+        } else {
+            None
+        };
+        if let Err(error) = persist_catalog(&self.store_root, &next) {
+            rollback_staged_package_revisions(staged_revisions.as_ref(), error)?;
+        }
         state.catalog = next;
         state.leases.remove(&token);
         let catalog = state.catalog.clone();
         let leases = state.leases.clone();
         drop(state);
         if remove_package {
-            remove_package_revisions(&self.store_root, &package_id)?;
+            discard_staged_package_revisions(staged_revisions);
         } else {
             gc_unreferenced_store_revisions(&self.store_root, &catalog, &leases)?;
         }
@@ -1229,6 +1241,62 @@ fn remove_package_revisions(root: &Path, package_id: &str) -> Result<()> {
         remove_path_without_following(&path)?;
     }
     Ok(())
+}
+
+struct StagedPackageRevisions {
+    active: PathBuf,
+    staged: PathBuf,
+}
+
+fn stage_package_revisions(
+    root: &Path,
+    package_id: &str,
+) -> Result<Option<StagedPackageRevisions>> {
+    let active = root.join("revisions").join(package_id);
+    match fs::symlink_metadata(&active) {
+        Ok(metadata) => ensure!(
+            metadata.file_type().is_dir() && !metadata.file_type().is_symlink(),
+            "package revisions path is not an owned directory"
+        ),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    }
+    ensure_owned_directory(
+        &root.join("staging"),
+        "package staging path is not an owned directory",
+    )?;
+    let staged = root.join("staging").join(format!(
+        "remove-{package_id}-{}",
+        uuid::Uuid::new_v4().simple()
+    ));
+    fs::rename(&active, &staged).context("stage package revisions for removal")?;
+    Ok(Some(StagedPackageRevisions { active, staged }))
+}
+
+fn rollback_staged_package_revisions(
+    staged: Option<&StagedPackageRevisions>,
+    catalog_error: anyhow::Error,
+) -> Result<()> {
+    if let Some(staged) = staged
+        && let Err(rollback_error) = fs::rename(&staged.staged, &staged.active)
+    {
+        return Err(catalog_error.context(format!(
+            "rollback staged package revisions failed: {rollback_error}"
+        )));
+    }
+    Err(catalog_error)
+}
+
+fn discard_staged_package_revisions(staged: Option<StagedPackageRevisions>) {
+    if let Some(staged) = staged
+        && let Err(error) = remove_path_without_following(&staged.staged)
+    {
+        tracing::warn!(
+            path = %staged.staged.display(),
+            %error,
+            "staged package revisions remain for startup recovery"
+        );
+    }
 }
 
 fn gc_unreferenced_store_revisions(
@@ -1908,6 +1976,39 @@ mod tests {
                 .unwrap()
                 .count(),
             1
+        );
+    }
+
+    #[test]
+    fn failed_uninstall_keeps_the_current_catalog_and_revision() {
+        let service = PackageService::ephemeral("test").unwrap();
+        service
+            .execute(PackageCommand::Install {
+                request_id: "atomic-uninstall-install".to_string(),
+                package_id: "atomic-uninstall-pack".to_string(),
+                snapshot: native_snapshot("atomic-uninstall", "current"),
+            })
+            .unwrap();
+        let before = service.catalog();
+        let staging = service.store_root.join("staging");
+        fs::remove_dir(&staging).unwrap();
+        fs::write(&staging, b"block revision staging").unwrap();
+
+        let failed = service
+            .execute(PackageCommand::Uninstall {
+                request_id: "atomic-uninstall".to_string(),
+                package_id: "atomic-uninstall-pack".to_string(),
+            })
+            .unwrap();
+
+        assert!(!failed.success);
+        assert_eq!(service.catalog(), before);
+        assert!(service.resolve("atomic-uninstall-pack").is_ok());
+        assert!(
+            service
+                .store_root
+                .join("revisions/atomic-uninstall-pack")
+                .is_dir()
         );
     }
 
