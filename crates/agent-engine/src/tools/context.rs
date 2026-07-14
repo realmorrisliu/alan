@@ -52,16 +52,18 @@ impl ToolExecutionBinding {
         context: &crate::ProcessLaunchContext,
         scratch_dir: PathBuf,
     ) -> Result<Self> {
+        let mut tool_context = context.clone();
+        tool_context.host_mounts = context.tool_host_mounts().cloned().collect();
         // A namespace cwd such as `/` may have no Host backing even after the
         // Process receives an explicit mount. Native adapters still need an OS
         // cwd inside their sandbox authority. Prefer the first writable Host
         // Mount so Bash can start; a read-only mount remains a valid fallback
         // for read-only Tools. That selected mount is the Tool Process cwd;
         // runtime scratch is storage, not Host authority.
-        let (cwd, namespace_cwd) = if let Some(cwd) = context.host_cwd() {
-            (cwd, PathBuf::from(&context.cwd))
+        let (cwd, namespace_cwd) = if let Some(cwd) = tool_context.host_cwd() {
+            (cwd, PathBuf::from(&tool_context.cwd))
         } else {
-            let grant = context
+            let grant = tool_context
                 .host_mounts
                 .iter()
                 .find(|grant| grant.access == alan_kernel::Access::ReadWrite)
@@ -76,9 +78,9 @@ impl ToolExecutionBinding {
         Ok(Self {
             cwd,
             namespace_cwd,
-            host_mounts: context.host_mounts.clone(),
+            host_mounts: tool_context.host_mounts.clone(),
             scratch_dir,
-            sandbox_spec: Some(SandboxSpec::from_host_mounts(&context.host_mounts)),
+            sandbox_spec: Some(SandboxSpec::from_host_mounts(&tool_context.host_mounts)),
         })
     }
 
@@ -393,6 +395,56 @@ mod tests {
 
         assert_eq!(projected, "failed to read /mnt/source/private.txt");
         assert!(!projected.contains(source.path().to_string_lossy().as_ref()));
+    }
+
+    #[test]
+    fn package_projection_is_excluded_from_native_tool_binding() {
+        let package = tempfile::tempdir().unwrap();
+        let project = tempfile::tempdir().unwrap();
+        let mut launch_context = crate::ProcessLaunchContext::root()
+            .with_host_mount(
+                crate::HostMountGrant::new(
+                    "/lib/pkg/example",
+                    package.path(),
+                    alan_kernel::Access::ReadOnly,
+                )
+                .unwrap(),
+            )
+            .with_host_mount(
+                crate::HostMountGrant::new(
+                    "/mnt/project",
+                    project.path(),
+                    alan_kernel::Access::ReadWrite,
+                )
+                .unwrap(),
+            );
+        launch_context.add_package_reference(
+            crate::ProcessPackageReference::new(
+                "example",
+                "a".repeat(64),
+                crate::ProcessPackageKind::Installed,
+                "/lib/pkg/example",
+                Vec::new(),
+            )
+            .unwrap(),
+        );
+
+        let binding = ToolExecutionBinding::from_launch_context(
+            &launch_context,
+            PathBuf::from("/tmp/scratch"),
+        )
+        .unwrap();
+
+        assert_eq!(binding.host_mounts.len(), 1);
+        assert_eq!(binding.host_mounts[0].namespace_path, "/mnt/project");
+        assert_eq!(binding.cwd, dunce::canonicalize(project.path()).unwrap());
+        let sandbox = binding.sandbox_spec.unwrap();
+        assert!(
+            !sandbox
+                .readable_roots
+                .iter()
+                .any(|root| root.starts_with(package.path()))
+        );
     }
 
     #[tokio::test]

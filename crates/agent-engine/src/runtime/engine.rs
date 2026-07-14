@@ -757,7 +757,7 @@ pub fn configure_runtime_tool_execution_binding(
     config: &AgentProcessConfig,
     tools: &mut crate::tools::ToolRegistry,
 ) -> Result<()> {
-    if !config.launch_context.host_mounts.is_empty() {
+    if config.launch_context.tool_host_mounts().next().is_some() {
         let scratch_dir = config
             .store_bindings
             .as_ref()
@@ -2342,6 +2342,39 @@ mod tests {
         assert_eq!(binding.namespace_cwd, PathBuf::from("/mnt/source"));
         assert_eq!(config.launch_context.cwd, "/");
         assert_eq!(binding.host_mounts, config.launch_context.host_mounts);
+    }
+
+    #[test]
+    fn package_projection_alone_does_not_require_runtime_tool_binding() {
+        let package = TempDir::new().unwrap();
+        let mut launch_context = crate::ProcessLaunchContext::root().with_host_mount(
+            crate::HostMountGrant::new(
+                "/lib/pkg/example",
+                package.path(),
+                alan_kernel::Access::ReadOnly,
+            )
+            .unwrap(),
+        );
+        launch_context.add_package_reference(
+            crate::ProcessPackageReference::new(
+                "example",
+                "a".repeat(64),
+                crate::ProcessPackageKind::Installed,
+                "/lib/pkg/example",
+                Vec::new(),
+            )
+            .unwrap(),
+        );
+        let config = AgentProcessConfig {
+            launch_context,
+            store_bindings: None,
+            ..AgentProcessConfig::default()
+        };
+        let mut tools = crate::tools::ToolRegistry::new();
+
+        configure_runtime_tool_execution_binding(&config, &mut tools).unwrap();
+
+        assert!(tools.default_execution_binding().is_none());
     }
 
     #[test]

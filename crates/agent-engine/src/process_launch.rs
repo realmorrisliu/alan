@@ -255,6 +255,20 @@ impl ProcessLaunchContext {
         self.package_references.push(reference);
     }
 
+    /// Host Mount grants that authorize native Tool execution.
+    ///
+    /// Package references use Host-backed grants to project immutable content into the
+    /// Process namespace, but that implementation detail must not grant native Tools direct
+    /// access to Package Store paths.
+    pub fn tool_host_mounts(&self) -> impl Iterator<Item = &HostMountGrant> {
+        self.host_mounts.iter().filter(|grant| {
+            !self
+                .package_references
+                .iter()
+                .any(|reference| reference.namespace_path == grant.namespace_path)
+        })
+    }
+
     /// Retain an opaque owner-issued authority for the lifetime of this Process context.
     pub fn retain_authority<T>(&mut self, authority: Arc<T>)
     where

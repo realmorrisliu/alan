@@ -1538,13 +1538,7 @@ struct ChildNamespaceAssemblyPlan {
 
 impl ChildNamespaceAssemblyPlan {
     fn tool_host_mounts(&self) -> impl Iterator<Item = &crate::HostMountGrant> {
-        self.launch_context.host_mounts.iter().filter(|grant| {
-            !self
-                .launch_context
-                .package_references
-                .iter()
-                .any(|reference| reference.namespace_path == grant.namespace_path)
-        })
+        self.launch_context.tool_host_mounts()
     }
 
     fn runtime_execution_binding(
