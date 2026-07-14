@@ -547,6 +547,14 @@ fn build_child_launch_context(
         let descriptor_path = root_dir
             .to_str()
             .context("package child-agent descriptor path is not UTF-8")?;
+        if !spec.has_handle(SpawnHandle::HostMounts)
+            && let Some(parent_definition_path) = parent_definition_path.as_deref()
+        {
+            launch_context
+                .host_mounts
+                .retain(|grant| grant.namespace_path != parent_definition_path);
+            launch_context.namespace.unmount(parent_definition_path);
+        }
         launch_context.descriptors.insert(
             crate::AGENT_DEFINITION_DESCRIPTOR.to_string(),
             crate::ProcessDescriptor::with_file_tree(descriptor_path, file_tree.clone())?,
@@ -4328,14 +4336,32 @@ model_reasoning_effort = "high"
 
     #[tokio::test]
     async fn package_child_definition_is_passed_by_descriptor_and_package_mount() {
+        let parent_definition = TempDir::new().unwrap();
         let mut namespace = KernelNamespace::new();
         namespace.mount("/lib/pkg/review", memfs_transport(), KernelAccess::ReadOnly);
+        namespace.mount(
+            "/lib/agents/root",
+            memfs_transport(),
+            KernelAccess::ReadOnly,
+        );
         let parent = crate::ProcessLaunchContext::new(
             namespace,
             KernelCredentials::user("parent-agent"),
             "/",
         )
         .unwrap()
+        .with_host_mount(
+            crate::HostMountGrant::new(
+                "/lib/agents/root",
+                parent_definition.path(),
+                KernelAccess::ReadOnly,
+            )
+            .unwrap(),
+        )
+        .with_descriptor(
+            crate::AGENT_DEFINITION_DESCRIPTOR,
+            crate::ProcessDescriptor::new("/lib/agents/root").unwrap(),
+        )
         .with_package_reference(
             crate::ProcessPackageReference::new(
                 "review",
@@ -4363,6 +4389,7 @@ model_reasoning_effort = "high"
         let child = build_child_launch_context(&parent, &spec, None, Some(&definition)).unwrap();
 
         assert!(child.host_mounts.is_empty());
+        assert!(child.namespace.union_at("/lib/agents/root").is_empty());
         let descriptor = child
             .descriptor(crate::AGENT_DEFINITION_DESCRIPTOR)
             .unwrap();
