@@ -1647,8 +1647,35 @@ impl ChildNamespaceAssemblyPlan {
         }));
         mounts.extend(
             self.launch_context
+                .package_references
+                .iter()
+                .filter_map(|reference| {
+                    self.launch_context
+                        .namespace
+                        .resolve(&reference.namespace_path)
+                        .ok()
+                        .map(|resolved| {
+                            let access = match resolved.access {
+                                alan_kernel::Access::ReadOnly => ExecNamespaceAccess::ReadOnly,
+                                alan_kernel::Access::ReadWrite => ExecNamespaceAccess::ReadWrite,
+                            };
+                            ExecNamespaceMount::new(reference.namespace_path.clone(), access)
+                        })
+                }),
+        );
+        mounts.extend(
+            self.launch_context
                 .descriptors
                 .values()
+                .filter(|descriptor| {
+                    !self
+                        .launch_context
+                        .package_references
+                        .iter()
+                        .any(|reference| {
+                            Path::new(&descriptor.path).starts_with(&reference.namespace_path)
+                        })
+                })
                 .filter_map(|descriptor| {
                     self.launch_context
                         .namespace
@@ -4310,9 +4337,27 @@ model_reasoning_effort = "high"
         );
     }
 
-    #[test]
-    fn package_child_definition_is_passed_by_descriptor_without_host_mount() {
-        let parent = crate::ProcessLaunchContext::root();
+    #[tokio::test]
+    async fn package_child_definition_is_passed_by_descriptor_and_package_mount() {
+        let mut namespace = KernelNamespace::new();
+        namespace.mount("/lib/pkg/review", memfs_transport(), KernelAccess::ReadOnly);
+        let parent = crate::ProcessLaunchContext::new(
+            namespace,
+            KernelCredentials::user("parent-agent"),
+            "/",
+        )
+        .unwrap()
+        .with_package_reference(
+            crate::ProcessPackageReference::new(
+                "review",
+                "a".repeat(64),
+                crate::ProcessPackageKind::Installed,
+                "/lib/pkg/review",
+                Vec::new(),
+                memfs_transport(),
+            )
+            .unwrap(),
+        );
         let definition = ResolvedLaunchRoot {
             root_dir: PathBuf::from("/lib/pkg/review/skills/review/agents/critic"),
             file_tree: Some(
@@ -4339,6 +4384,38 @@ model_reasoning_effort = "high"
                 .as_ref()
                 .is_some_and(|tree| tree.contains_file("agent.toml"))
         );
+
+        let mut plan = capability_plan(None, &[]);
+        plan.launch_context = child;
+        let manifest = plan.namespace_manifest_for_pid("99");
+        assert!(manifest.mounts.iter().any(|mount| {
+            mount.path == "/lib/pkg/review" && mount.access == ExecNamespaceAccess::ReadOnly
+        }));
+        assert!(
+            !manifest
+                .mounts
+                .iter()
+                .any(|mount| { mount.path == "/lib/pkg/review/skills/review/agents/critic" })
+        );
+
+        let procfs = KernelProcFs::new();
+        let spawner = procfs.for_spawner(
+            None,
+            namespace_from_child_plan(&plan),
+            KernelCredentials::user("alan"),
+        );
+        spawner
+            .walk(Fid::ROOT, Fid(90), &["clone".to_string()])
+            .await
+            .unwrap();
+        spawner.open(Fid(90), OpenMode::ReadWrite).await.unwrap();
+        let pid = String::from_utf8(spawner.read(Fid(90), 0, 64).await.unwrap()).unwrap();
+        let exec = plan.clone_exec_spec_for_pid(&pid, "/bin/alan-agent", ["--boot"]);
+        spawner
+            .write(Fid(90), 0, &serde_json::to_vec(&exec).unwrap())
+            .await
+            .unwrap();
+        spawner.clunk(Fid(90)).await.unwrap();
     }
 
     #[test]
