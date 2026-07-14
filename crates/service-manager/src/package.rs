@@ -316,6 +316,7 @@ impl PackageService {
         fs::create_dir_all(store_root.join("staging"))?;
         recover_staging(&store_root)?;
         let mut catalog = load_catalog(&store_root)?;
+        validate_catalog_structure(&catalog)?;
         let mut recovered = false;
         let retiring = catalog
             .packages
@@ -1391,6 +1392,18 @@ fn persist_catalog(root: &Path, catalog: &PackageCatalog) -> Result<()> {
 }
 
 fn verify_catalog(root: &Path, catalog: &PackageCatalog) -> Result<()> {
+    validate_catalog_structure(catalog)?;
+    for record in catalog.packages.values() {
+        ensure!(
+            record.materializer_version == MATERIALIZER_VERSION,
+            "catalog references an unsupported materializer version"
+        );
+        verify_revision(root, record)?;
+    }
+    Ok(())
+}
+
+fn validate_catalog_structure(catalog: &PackageCatalog) -> Result<()> {
     ensure!(
         catalog.packages.len() <= MAX_PACKAGES,
         "package catalog exceeds its supported size"
@@ -1401,11 +1414,6 @@ fn verify_catalog(root: &Path, catalog: &PackageCatalog) -> Result<()> {
             "package catalog key does not match its record id"
         );
         validate_package_id(&record.id)?;
-        ensure!(
-            record.materializer_version == MATERIALIZER_VERSION,
-            "catalog references an unsupported materializer version"
-        );
-        verify_revision(root, record)?;
     }
     Ok(())
 }
@@ -1907,6 +1915,33 @@ mod tests {
         let manifest = revision_root(&root, "tamper-pack", &record.revision).join("manifest.json");
         fs::write(manifest, b"{}").unwrap();
         assert!(PackageService::open("dev", root).is_err());
+    }
+
+    #[test]
+    fn restart_rejects_invalid_retiring_package_id_before_removing_revisions() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("packages");
+        let service = PackageService::open("dev", root.clone()).unwrap();
+        service
+            .execute(PackageCommand::Install {
+                request_id: "unsafe-recovery-install".to_string(),
+                package_id: "unsafe-recovery-pack".to_string(),
+                snapshot: native_snapshot("unsafe-recovery", "body"),
+            })
+            .unwrap();
+        let mut catalog = service.catalog();
+        drop(service);
+
+        let victim = directory.path().join("victim");
+        fs::create_dir(&victim).unwrap();
+        fs::write(victim.join("sentinel"), b"keep").unwrap();
+        let record = catalog.packages.get_mut("unsafe-recovery-pack").unwrap();
+        record.id = victim.to_string_lossy().into_owned();
+        record.state = PackageState::Retiring;
+        persist_catalog(&root, &catalog).unwrap();
+
+        assert!(PackageService::open("dev", root).is_err());
+        assert_eq!(fs::read(victim.join("sentinel")).unwrap(), b"keep");
     }
 
     #[test]
