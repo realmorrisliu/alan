@@ -391,6 +391,7 @@ impl PackageService {
             matches!(channel_id.as_str(), "stable" | "dev" | "test"),
             "invalid Package Service channel"
         );
+        ensure_package_store_channel_chain(&store_root)?;
         match fs::symlink_metadata(&store_root) {
             Ok(_) => {
                 ensure_owned_directory(&store_root, "Package Store root is not an owned directory")?
@@ -400,6 +401,7 @@ impl PackageService {
             }
             Err(error) => return Err(error).context("inspect Package Store root"),
         }
+        ensure_package_store_channel_chain(&store_root)?;
         fs::create_dir_all(store_root.join("revisions"))?;
         fs::create_dir_all(store_root.join("staging"))?;
         ensure_owned_directory(
@@ -1606,6 +1608,36 @@ fn ensure_owned_directory(path: &Path, message: &str) -> Result<()> {
     Ok(())
 }
 
+fn ensure_package_store_channel_chain(store_root: &Path) -> Result<()> {
+    let services_root = store_root
+        .parent()
+        .context("Package Store root has no services parent")?;
+    let channel_root = services_root
+        .parent()
+        .context("Package Store root has no channel parent")?;
+    for (path, message) in [
+        (
+            channel_root,
+            "Package Store channel path contains an unsupported ancestor",
+        ),
+        (
+            services_root,
+            "Package Store channel path contains an unsupported ancestor",
+        ),
+        (store_root, "Package Store root is not an owned directory"),
+    ] {
+        match fs::symlink_metadata(path) {
+            Ok(metadata) => ensure!(
+                metadata.file_type().is_dir() && !metadata.file_type().is_symlink(),
+                "{message}"
+            ),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error).context("inspect Package Store channel path"),
+        }
+    }
+    Ok(())
+}
+
 fn ensure_owned_file(path: &Path, message: &str) -> Result<()> {
     let metadata = fs::symlink_metadata(path).with_context(|| format!("inspect {path:?}"))?;
     ensure!(
@@ -2474,6 +2506,28 @@ mod tests {
         let error = PackageService::open("dev", dev_parent.join("packages")).unwrap_err();
 
         assert!(error.to_string().contains("Package Store root"));
+        assert_eq!(fs::read(stable_root.join("sentinel")).unwrap(), b"stable");
+        assert!(!stable_root.join("revisions").exists());
+        assert!(!stable_root.join("staging").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn channel_rejects_a_symlinked_package_store_ancestor() {
+        use std::os::unix::fs::symlink;
+
+        let directory = tempfile::tempdir().unwrap();
+        let stable_services = directory.path().join("stable/services");
+        let stable_root = stable_services.join("packages");
+        let dev_channel = directory.path().join("dev");
+        fs::create_dir_all(&stable_root).unwrap();
+        fs::create_dir_all(&dev_channel).unwrap();
+        fs::write(stable_root.join("sentinel"), b"stable").unwrap();
+        symlink(&stable_services, dev_channel.join("services")).unwrap();
+
+        let error = PackageService::open("dev", dev_channel.join("services/packages")).unwrap_err();
+
+        assert!(error.to_string().contains("unsupported ancestor"));
         assert_eq!(fs::read(stable_root.join("sentinel")).unwrap(), b"stable");
         assert!(!stable_root.join("revisions").exists());
         assert!(!stable_root.join("staging").exists());
