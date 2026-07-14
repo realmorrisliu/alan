@@ -67,7 +67,7 @@ impl ToolExecutionBinding {
                 .host_mounts
                 .iter()
                 .find(|grant| grant.access == alan_kernel::Access::ReadWrite)
-                .or_else(|| context.host_mounts.first())
+                .or_else(|| tool_context.host_mounts.first())
                 .context("Process has no explicit Host Mount for native Tool execution")?;
             (
                 dunce::canonicalize(&grant.host_path)
@@ -444,6 +444,18 @@ mod tests {
                 .readable_roots
                 .iter()
                 .any(|root| root.starts_with(package.path()))
+        );
+
+        launch_context.host_mounts.truncate(1);
+        let error = ToolExecutionBinding::from_launch_context(
+            &launch_context,
+            PathBuf::from("/tmp/scratch"),
+        )
+        .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("no explicit Host Mount for native Tool execution")
         );
     }
 

@@ -1033,6 +1033,10 @@ fn validate_snapshot(snapshot: &PackageSnapshot) -> Result<()> {
             "VCS control metadata is not package content"
         );
         let normalized = path.components().collect::<PathBuf>();
+        ensure!(
+            normalized.to_str() == Some(entry.path.as_str()),
+            "snapshot path is not canonical"
+        );
         ensure!(paths.insert(normalized), "duplicate snapshot path");
     }
     Ok(())
@@ -1688,6 +1692,15 @@ mod tests {
             }],
         };
         assert!(validate_snapshot(&vcs).is_err());
+        let noncanonical = PackageSnapshot {
+            source_name: "noncanonical".to_string(),
+            entries: vec![PackageSnapshotEntry {
+                path: "dir//file".to_string(),
+                bytes: Vec::new(),
+                executable: false,
+            }],
+        };
+        assert!(validate_snapshot(&noncanonical).is_err());
         let duplicate = PackageSnapshot {
             source_name: "duplicate".to_string(),
             entries: vec![
@@ -1697,7 +1710,7 @@ mod tests {
                     executable: false,
                 },
                 PackageSnapshotEntry {
-                    path: "dir//file".to_string(),
+                    path: "dir/file".to_string(),
                     bytes: b"second".to_vec(),
                     executable: false,
                 },
