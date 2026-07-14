@@ -21,7 +21,7 @@ use alan_kernel::{
     ProcessRunner,
 };
 use alan_llm::{GenerationResponse, MockLlmProvider};
-use alan_shell::{Shell, StdioDriver};
+use alan_shell::{BoundedListError, Shell, StdioDriver};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt, BufReader};
 
 static NEXT_TEST_FID: AtomicU64 = AtomicU64::new(500_000);
@@ -295,6 +295,23 @@ async fn ls_rejects_a_non_directory() {
     // as directory entries.
     let shell = Shell::new(EchoFs::transport());
     assert_eq!(shell.ls("/buf").await, Err(ErrorCode::NotDirectory));
+}
+
+#[tokio::test]
+async fn bounded_ls_limits_entries_and_encoded_bytes() {
+    let shell = Shell::new(EchoFs::transport());
+    assert_eq!(
+        shell.ls_bounded("/", 1, 1024).await,
+        Err(BoundedListError::LimitExceeded)
+    );
+    assert_eq!(
+        shell.ls_bounded("/", 2, 3).await,
+        Err(BoundedListError::LimitExceeded)
+    );
+    assert_eq!(
+        shell.ls_bounded("/", 2, 10).await.unwrap(),
+        vec!["buf".to_string(), "stream".to_string()]
+    );
 }
 
 #[tokio::test]

@@ -207,6 +207,26 @@ impl Shell {
         result
     }
 
+    /// List a directory without allowing a File-Server to make the client collect an
+    /// unbounded response. Both the encoded listing and the decoded entry count are
+    /// limited.
+    pub async fn ls_bounded(
+        &self,
+        path: &str,
+        max_entries: usize,
+        max_bytes: usize,
+    ) -> Result<Vec<String>, BoundedListError> {
+        let (fid, qid) = self
+            .walk_to(path)
+            .await
+            .map_err(BoundedListError::Protocol)?;
+        let result = self
+            .ls_bounded_body(fid, qid.kind, max_entries, max_bytes)
+            .await;
+        self.clunk_quietly(fid).await;
+        result
+    }
+
     async fn ls_body(&self, fid: Fid, kind: FileKind) -> Result<Vec<String>, ErrorCode> {
         if kind != FileKind::Dir {
             return Err(ErrorCode::NotDirectory);
@@ -226,6 +246,54 @@ impl Shell {
             .filter(|l| !l.is_empty())
             .map(str::to_string)
             .collect())
+    }
+
+    async fn ls_bounded_body(
+        &self,
+        fid: Fid,
+        kind: FileKind,
+        max_entries: usize,
+        max_bytes: usize,
+    ) -> Result<Vec<String>, BoundedListError> {
+        if kind != FileKind::Dir {
+            return Err(BoundedListError::Protocol(ErrorCode::NotDirectory));
+        }
+        self.open(fid, OpenMode::Read)
+            .await
+            .map_err(BoundedListError::Protocol)?;
+        let mut bytes = Vec::new();
+        let mut newline_count = 0usize;
+        loop {
+            let remaining = max_bytes.saturating_sub(bytes.len());
+            let count = remaining.saturating_add(1).min(4096) as u32;
+            let chunk = self
+                .read_at(fid, bytes.len() as u64, count)
+                .await
+                .map_err(BoundedListError::Protocol)?;
+            if chunk.is_empty() {
+                break;
+            }
+            if chunk.len() > remaining {
+                return Err(BoundedListError::LimitExceeded);
+            }
+            newline_count =
+                newline_count.saturating_add(chunk.iter().filter(|&&byte| byte == b'\n').count());
+            if newline_count > max_entries {
+                return Err(BoundedListError::LimitExceeded);
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        let text =
+            String::from_utf8(bytes).map_err(|_| BoundedListError::Protocol(ErrorCode::Io))?;
+        let entries = text
+            .lines()
+            .filter(|line| !line.is_empty())
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        if entries.len() > max_entries {
+            return Err(BoundedListError::LimitExceeded);
+        }
+        Ok(entries)
     }
 
     /// `echo data > path` — write a document and commit it on clunk. A commit-time
@@ -340,6 +408,15 @@ pub struct CommandOutput {
     pub pid: String,
     pub output: Vec<u8>,
     pub exit_code: i32,
+}
+
+/// Failure from a bounded directory listing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BoundedListError {
+    /// The namespace operation failed.
+    Protocol(ErrorCode),
+    /// The encoded listing or decoded entry count exceeded the caller's budget.
+    LimitExceeded,
 }
 
 /// Error returned by the line-oriented stdio driver.

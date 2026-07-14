@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use alan_ap::{ErrorCode, FileKind, InProcessTransport};
 use alan_kernel::{MountFs, ProcessInvocation, ProcessOutcome, ProcessRunner};
-use alan_shell::Shell;
+use alan_shell::{BoundedListError, Shell};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 
@@ -23,6 +23,7 @@ const MAX_SOURCE_FILES: usize = 4_096;
 const MAX_SOURCE_FILE_BYTES: u64 = 4 * 1024 * 1024;
 const MAX_SOURCE_BYTES: u64 = 12 * 1024 * 1024;
 const MAX_SOURCE_NODES: usize = 8_192;
+const MAX_SOURCE_DIRECTORY_BYTES: usize = 8 * 1024 * 1024;
 
 #[derive(Clone, Default)]
 pub(crate) struct QuartermasterProcessRunner;
@@ -265,24 +266,15 @@ async fn snapshot_namespace_tree(
     source_name: String,
 ) -> Result<PackageSnapshot, QError> {
     let source = source.trim_end_matches('/');
-    let root_entries = shell.ls(source).await.map_err(|code| QError::Protocol {
-        action: "read source",
-        code,
-    })?;
+    let root_entries = list_source_directory(shell, source, MAX_SOURCE_NODES).await?;
+    let mut discovered_nodes = root_entries.len();
     let mut pending = vec![(source.to_string(), String::new(), root_entries)];
     let mut entries = Vec::new();
     let mut total_bytes = 0u64;
-    let mut visited_nodes = 0usize;
     while let Some((absolute, relative, children)) = pending.pop() {
         let mut children = children;
         children.sort();
         for child in children.into_iter().rev() {
-            visited_nodes += 1;
-            if visited_nodes > MAX_SOURCE_NODES {
-                return Err(QError::Operation(
-                    "package source has too many entries".to_string(),
-                ));
-            }
             if child.is_empty() || child.contains('/') || child == "." || child == ".." {
                 return Err(QError::Operation(
                     "source File-Server returned an invalid directory entry".to_string(),
@@ -297,9 +289,16 @@ async fn snapshot_namespace_tree(
             } else {
                 format!("{relative}/{child}")
             };
-            match shell.ls(&child_absolute).await {
-                Ok(grandchildren) => pending.push((child_absolute, child_relative, grandchildren)),
-                Err(ErrorCode::NotDirectory) => {
+            let remaining_nodes = MAX_SOURCE_NODES - discovered_nodes;
+            match list_source_directory(shell, &child_absolute, remaining_nodes).await {
+                Ok(grandchildren) => {
+                    discovered_nodes += grandchildren.len();
+                    pending.push((child_absolute, child_relative, grandchildren));
+                }
+                Err(QError::Protocol {
+                    code: ErrorCode::NotDirectory,
+                    ..
+                }) => {
                     if entries.len() >= MAX_SOURCE_FILES {
                         return Err(QError::Operation(
                             "package source has too many files".to_string(),
@@ -358,12 +357,7 @@ async fn snapshot_namespace_tree(
                         executable: stat.executable,
                     });
                 }
-                Err(code) => {
-                    return Err(QError::Protocol {
-                        action: "read source",
-                        code,
-                    });
-                }
+                Err(error) => return Err(error),
             }
         }
     }
@@ -372,6 +366,25 @@ async fn snapshot_namespace_tree(
         source_name,
         entries,
     })
+}
+
+async fn list_source_directory(
+    shell: &Shell,
+    path: &str,
+    remaining_nodes: usize,
+) -> Result<Vec<String>, QError> {
+    shell
+        .ls_bounded(path, remaining_nodes, MAX_SOURCE_DIRECTORY_BYTES)
+        .await
+        .map_err(|error| match error {
+            BoundedListError::Protocol(code) => QError::Protocol {
+                action: "read source",
+                code,
+            },
+            BoundedListError::LimitExceeded => {
+                QError::Operation("package source has too many entries".to_string())
+            }
+        })
 }
 
 async fn submit(
