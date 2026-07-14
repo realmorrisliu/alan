@@ -96,5 +96,5 @@
 - [x] 8.4 Prove referenced and inherited packages load without Host grants,
   remain read-only, expose only `/lib/pkg` paths, and never create native Tool
   authority.
-- [ ] 8.5 Run focused and full verification, strict OpenSpec validation, push
+- [x] 8.5 Run focused and full verification, strict OpenSpec validation, push
   the implementation, and finish the current-HEAD Codex review loop.
