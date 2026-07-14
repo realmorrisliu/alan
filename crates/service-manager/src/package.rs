@@ -110,6 +110,7 @@ impl PackageSnapshot {
         ensure_owned_directory(root, "package source is not an owned directory")?;
         let canonical_root = fs::canonicalize(root)?;
         let mut entries = Vec::new();
+        let mut total_bytes = 0usize;
         let mut pending = vec![canonical_root.clone()];
         while let Some(directory) = pending.pop() {
             let mut children = fs::read_dir(&directory)?.collect::<std::io::Result<Vec<_>>>()?;
@@ -132,9 +133,28 @@ impl PackageSnapshot {
                 if has_vcs_component(&relative) {
                     continue;
                 }
+                let file_len = usize::try_from(metadata.len())
+                    .context("package source file size does not fit in memory")?;
+                ensure!(
+                    file_len <= MAX_SOURCE_FILE_BYTES,
+                    "package source file is too large"
+                );
+                ensure!(
+                    file_len <= MAX_SOURCE_BYTES.saturating_sub(total_bytes),
+                    "package source is too large"
+                );
+                let mut bytes = Vec::with_capacity(file_len);
+                File::open(&path)?
+                    .take(file_len as u64 + 1)
+                    .read_to_end(&mut bytes)?;
+                ensure!(
+                    bytes.len() == file_len,
+                    "package source changed while it was being snapshotted"
+                );
+                total_bytes += bytes.len();
                 entries.push(PackageSnapshotEntry {
                     path: slash_path(&relative)?,
-                    bytes: fs::read(&path)?,
+                    bytes,
                     executable: executable_bit(&metadata),
                 });
             }
@@ -2043,6 +2063,23 @@ mod tests {
             ],
         };
         assert!(validate_snapshot(&duplicate).is_err());
+    }
+
+    #[test]
+    fn directory_snapshot_rejects_oversized_file_before_reading_it() {
+        let source = tempfile::tempdir().unwrap();
+        File::create(source.path().join("oversized.bin"))
+            .unwrap()
+            .set_len(MAX_SOURCE_FILE_BYTES as u64 + 1)
+            .unwrap();
+
+        let error = PackageSnapshot::from_directory(source.path()).unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("package source file is too large")
+        );
     }
 
     #[test]

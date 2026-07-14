@@ -273,7 +273,11 @@ async fn snapshot_namespace_tree(
     source_name: String,
 ) -> Result<PackageSnapshot, QError> {
     let source = source.trim_end_matches('/');
-    let root_entries = list_source_directory(shell, source, MAX_SOURCE_NODES).await?;
+    let root_entries = list_source_directory(shell, source, MAX_SOURCE_NODES)
+        .await?
+        .into_iter()
+        .filter(|entry| entry != ".git")
+        .collect::<Vec<_>>();
     let mut discovered_nodes = root_entries.len();
     let mut pending = vec![(source.to_string(), String::new(), root_entries)];
     let mut entries = Vec::new();
@@ -287,6 +291,9 @@ async fn snapshot_namespace_tree(
                     "source File-Server returned an invalid directory entry".to_string(),
                 ));
             }
+            if child == ".git" {
+                continue;
+            }
             let child_absolute = format!("{absolute}/{child}");
             let child_relative = if relative.is_empty() {
                 child.clone()
@@ -296,9 +303,6 @@ async fn snapshot_namespace_tree(
             let remaining_nodes = MAX_SOURCE_NODES - discovered_nodes;
             match list_source_directory(shell, &child_absolute, remaining_nodes).await {
                 Ok(grandchildren) => {
-                    if child == ".git" {
-                        continue;
-                    }
                     discovered_nodes += grandchildren.len();
                     pending.push((child_absolute, child_relative, grandchildren));
                 }
@@ -323,9 +327,6 @@ async fn snapshot_namespace_tree(
                         return Err(QError::Operation(
                             "package source contains a non-file leaf".to_string(),
                         ));
-                    }
-                    if child == ".git" {
-                        continue;
                     }
                     if stat.length > MAX_SOURCE_FILE_BYTES {
                         return Err(QError::Operation(
@@ -931,7 +932,7 @@ mod tests {
 
     #[cfg(unix)]
     #[tokio::test]
-    async fn q_rejects_a_git_symlink_before_excluding_vcs_metadata() {
+    async fn q_excludes_a_git_symlink_without_traversing_it() {
         use std::os::unix::fs::symlink;
 
         let source = tempfile::tempdir().unwrap();
@@ -958,12 +959,12 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(result.exit_code, 1);
-        let output = String::from_utf8(result.output).unwrap();
-        assert!(
-            output.contains("NoAccess") || output.contains("NotFound"),
-            "{output}"
+        assert_eq!(
+            result.exit_code,
+            0,
+            "{}",
+            String::from_utf8_lossy(&result.output)
         );
-        assert!(service.catalog().packages.is_empty());
+        assert!(service.catalog().packages.contains_key("git-symlink-pack"));
     }
 }
