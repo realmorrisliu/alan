@@ -367,9 +367,9 @@ impl PackageService {
         fs::create_dir_all(store_root.join("revisions"))?;
         fs::create_dir_all(store_root.join("staging"))?;
         let store_lock = PackageStoreLock::acquire(&store_root)?;
-        recover_staging(&store_root)?;
         let mut catalog = load_catalog(&store_root)?;
         validate_catalog_structure(&catalog)?;
+        recover_staging(&store_root, &catalog)?;
         let mut recovered = false;
         let retiring = catalog
             .packages
@@ -1231,11 +1231,38 @@ fn bounded_error_message(error: &anyhow::Error) -> String {
     format!("{}…", &message[..end])
 }
 
-fn recover_staging(root: &Path) -> Result<()> {
+fn recover_staging(root: &Path, catalog: &PackageCatalog) -> Result<()> {
     let staging = root.join("staging");
     ensure_owned_directory(&staging, "package staging path is not an owned directory")?;
     for entry in fs::read_dir(&staging)? {
-        remove_path_without_following(&entry?.path())?;
+        let entry = entry?;
+        let name = entry
+            .file_name()
+            .into_string()
+            .map_err(|_| anyhow::anyhow!("package staging entry is not UTF-8"))?;
+        let interrupted_removal = name.strip_prefix("remove-").and_then(|rest| {
+            let (package_id, nonce) = rest.rsplit_once('-')?;
+            uuid::Uuid::parse_str(nonce).ok()?;
+            Some(package_id)
+        });
+        if let Some(package_id) = interrupted_removal
+            && catalog.packages.contains_key(package_id)
+        {
+            validate_package_id(package_id)?;
+            ensure_owned_directory(
+                &entry.path(),
+                "staged package revisions are not an owned directory",
+            )?;
+            let active = root.join("revisions").join(package_id);
+            match fs::symlink_metadata(&active) {
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Ok(_) => bail!("both active and staged package revisions exist"),
+                Err(error) => return Err(error.into()),
+            }
+            fs::rename(entry.path(), active)?;
+        } else {
+            remove_path_without_following(&entry.path())?;
+        }
     }
     for entry in fs::read_dir(root)? {
         let entry = entry?;
@@ -2083,6 +2110,33 @@ mod tests {
                 .join("revisions/atomic-uninstall-pack")
                 .is_dir()
         );
+    }
+
+    #[test]
+    fn restart_rolls_back_revision_removal_when_catalog_is_still_old() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("packages");
+        let service = PackageService::open("dev", root.clone()).unwrap();
+        service
+            .execute(PackageCommand::Install {
+                request_id: "crash-window-install".to_string(),
+                package_id: "crash-window-pack".to_string(),
+                snapshot: native_snapshot("crash-window", "body"),
+            })
+            .unwrap();
+        let record = service.resolve("crash-window-pack").unwrap();
+        let staged = stage_package_revisions(&root, "crash-window-pack")
+            .unwrap()
+            .unwrap();
+        assert!(staged.staged.is_dir());
+        assert!(!staged.active.exists());
+        drop(service);
+
+        let reopened = PackageService::open("dev", root.clone()).unwrap();
+
+        assert_eq!(reopened.resolve("crash-window-pack").unwrap(), record);
+        assert!(revision_root(&root, "crash-window-pack", &record.revision).is_dir());
+        assert_eq!(fs::read_dir(root.join("staging")).unwrap().count(), 0);
     }
 
     #[test]
