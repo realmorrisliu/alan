@@ -107,6 +107,7 @@ impl PackageSnapshot {
     }
 
     fn from_directory_named(root: &Path, source_name: String) -> Result<Self> {
+        ensure_owned_directory(root, "package source is not an owned directory")?;
         let canonical_root = fs::canonicalize(root)?;
         let mut entries = Vec::new();
         let mut pending = vec![canonical_root.clone()];
@@ -1197,11 +1198,7 @@ fn bounded_error_message(error: &anyhow::Error) -> String {
 
 fn recover_staging(root: &Path) -> Result<()> {
     let staging = root.join("staging");
-    let metadata = fs::symlink_metadata(&staging).context("inspect package staging directory")?;
-    ensure!(
-        metadata.file_type().is_dir() && !metadata.file_type().is_symlink(),
-        "package staging path is not an owned directory"
-    );
+    ensure_owned_directory(&staging, "package staging path is not an owned directory")?;
     for entry in fs::read_dir(&staging)? {
         remove_path_without_following(&entry?.path())?;
     }
@@ -1295,18 +1292,35 @@ fn gc_one_package_revisions(
 }
 
 fn verify_materialized_revision(root: &Path, revision: &str) -> Result<MaterializationManifest> {
-    let source_name: String = serde_json::from_slice(&fs::read(root.join("source-name.json"))?)
+    ensure_owned_directory(root, "package revision root is not an owned directory")?;
+    let source_name_path = root.join("source-name.json");
+    ensure_owned_file(
+        &source_name_path,
+        "package source-name record is not an owned file",
+    )?;
+    let source_name: String = serde_json::from_slice(&fs::read(source_name_path)?)
         .context("decode package source leaf")?;
-    let snapshot = PackageSnapshot::from_directory_named(&root.join("source"), source_name)?;
+    let source_root = root.join("source");
+    ensure_owned_directory(
+        &source_root,
+        "package source root is not an owned directory",
+    )?;
+    let snapshot = PackageSnapshot::from_directory_named(&source_root, source_name)?;
     ensure!(
         fingerprint(&snapshot)? == revision,
         "package source fingerprint does not match its immutable revision"
     );
-    let manifest: MaterializationManifest =
-        serde_json::from_slice(&fs::read(root.join("manifest.json"))?)
-            .context("decode materialization manifest")?;
+    let manifest_path = root.join("manifest.json");
+    ensure_owned_file(&manifest_path, "package manifest is not an owned file")?;
+    let manifest: MaterializationManifest = serde_json::from_slice(&fs::read(manifest_path)?)
+        .context("decode materialization manifest")?;
+    let content_root = root.join("content");
+    ensure_owned_directory(
+        &content_root,
+        "materialized package root is not an owned directory",
+    )?;
     ensure!(
-        fingerprint_directory(&root.join("content"))? == manifest.tree_fingerprint,
+        fingerprint_directory(&content_root)? == manifest.tree_fingerprint,
         "materialized package tree failed integrity validation"
     );
     let recorded_paths = manifest
@@ -1314,7 +1328,7 @@ fn verify_materialized_revision(root: &Path, revision: &str) -> Result<Materiali
         .iter()
         .map(|file| file.path.clone())
         .collect::<BTreeSet<_>>();
-    let actual_paths = list_relative_files(&root.join("content"))?
+    let actual_paths = list_relative_files(&content_root)?
         .into_iter()
         .collect::<BTreeSet<_>>();
     ensure!(
@@ -1383,6 +1397,7 @@ fn materialized_file_records(
 }
 
 fn list_relative_files(root: &Path) -> Result<Vec<String>> {
+    ensure_owned_directory(root, "materialized tree root is not an owned directory")?;
     let canonical_root = fs::canonicalize(root)?;
     let mut pending = vec![canonical_root.clone()];
     let mut files = Vec::new();
@@ -1409,6 +1424,24 @@ fn list_relative_files(root: &Path) -> Result<Vec<String>> {
     }
     files.sort();
     Ok(files)
+}
+
+fn ensure_owned_directory(path: &Path, message: &str) -> Result<()> {
+    let metadata = fs::symlink_metadata(path).with_context(|| format!("inspect {path:?}"))?;
+    ensure!(
+        metadata.file_type().is_dir() && !metadata.file_type().is_symlink(),
+        "{message}"
+    );
+    Ok(())
+}
+
+fn ensure_owned_file(path: &Path, message: &str) -> Result<()> {
+    let metadata = fs::symlink_metadata(path).with_context(|| format!("inspect {path:?}"))?;
+    ensure!(
+        metadata.file_type().is_file() && !metadata.file_type().is_symlink(),
+        "{message}"
+    );
+    Ok(())
 }
 
 fn sync_tree(root: &Path) -> Result<()> {
@@ -2003,6 +2036,37 @@ mod tests {
         let manifest = revision_root(&root, "tamper-pack", &record.revision).join("manifest.json");
         fs::write(manifest, b"{}").unwrap();
         assert!(PackageService::open("dev", root).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn restart_rejects_symlinked_materialized_root() {
+        use std::os::unix::fs::symlink;
+
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("packages");
+        let service = PackageService::open("dev", root.clone()).unwrap();
+        let record = service
+            .execute(PackageCommand::Install {
+                request_id: "symlinked-content-install".to_string(),
+                package_id: "symlinked-content-pack".to_string(),
+                snapshot: native_snapshot("symlinked-content", "original"),
+            })
+            .unwrap()
+            .package
+            .unwrap();
+        drop(service);
+
+        let content =
+            revision_root(&root, "symlinked-content-pack", &record.revision).join("content");
+        fs::remove_dir_all(&content).unwrap();
+        let victim = directory.path().join("victim");
+        fs::create_dir(&victim).unwrap();
+        fs::write(victim.join("SKILL.md"), b"mutable external content").unwrap();
+        symlink(&victim, content).unwrap();
+
+        let error = PackageService::open("dev", root).unwrap_err();
+        assert!(error.to_string().contains("materialized package root"));
     }
 
     #[test]
