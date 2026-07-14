@@ -1134,6 +1134,7 @@ fn validate_snapshot(snapshot: &PackageSnapshot) -> Result<()> {
         "package snapshot file count is outside the supported range"
     );
     let mut paths = BTreeSet::new();
+    let mut store_paths = BTreeSet::new();
     let mut total = 0usize;
     for entry in &snapshot.entries {
         ensure!(
@@ -1164,6 +1165,10 @@ fn validate_snapshot(snapshot: &PackageSnapshot) -> Result<()> {
             "snapshot path is not canonical"
         );
         ensure!(paths.insert(normalized), "duplicate snapshot path");
+        ensure!(
+            store_paths.insert(entry.path.to_lowercase()),
+            "snapshot paths collide on a case-insensitive Package Store"
+        );
     }
     Ok(())
 }
@@ -2106,6 +2111,55 @@ mod tests {
             ],
         };
         assert!(validate_snapshot(&duplicate).is_err());
+    }
+
+    #[test]
+    fn install_rejects_case_colliding_snapshot_paths_before_materialization() {
+        let service = PackageService::ephemeral("test").unwrap();
+        let error = service
+            .execute(PackageCommand::Install {
+                request_id: "case-collision-install".to_string(),
+                package_id: "case-collision-pack".to_string(),
+                snapshot: PackageSnapshot {
+                    source_name: "case-collision-source".to_string(),
+                    entries: vec![
+                        PackageSnapshotEntry {
+                            path: "research/SKILL.md".to_string(),
+                            bytes: b"---\nname: research\ndescription: Test Skill.\n---\n".to_vec(),
+                            executable: false,
+                        },
+                        PackageSnapshotEntry {
+                            path: "assets/Icon.png".to_string(),
+                            bytes: b"upper".to_vec(),
+                            executable: false,
+                        },
+                        PackageSnapshotEntry {
+                            path: "assets/icon.png".to_string(),
+                            bytes: b"lower".to_vec(),
+                            executable: false,
+                        },
+                    ],
+                },
+            })
+            .unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("snapshot paths collide on a case-insensitive Package Store")
+        );
+        assert!(
+            !service
+                .catalog()
+                .packages
+                .contains_key("case-collision-pack")
+        );
+        assert!(
+            !service
+                .store_root
+                .join("revisions/case-collision-pack")
+                .exists()
+        );
     }
 
     #[test]
