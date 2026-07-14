@@ -13,6 +13,7 @@ use std::time::Duration;
 
 const AGENT_PATH: &str = "/agent/root";
 const TEST_TIMEOUT: Duration = Duration::from_secs(20);
+const ACTION_TIMEOUT: Duration = Duration::from_secs(60);
 
 struct TestHost {
     root: InProcessTransport,
@@ -100,7 +101,10 @@ async fn read_tail_until(tail: &mut alan_shell::Tail, expected: &str) -> String 
 }
 
 async fn wait_for_idle(events: &mut alan_shell::Tail) {
-    tokio::time::timeout(TEST_TIMEOUT, async {
+    // Coverage instrumentation can make the first full-workspace Agent turn substantially
+    // slower than the ordinary test build. Keep submission and shutdown deadlines tight, but
+    // give this asynchronous end-to-end transition enough time under that gate.
+    tokio::time::timeout(ACTION_TIMEOUT, async {
         let mut pending = String::new();
         let mut saw_running = false;
         loop {
