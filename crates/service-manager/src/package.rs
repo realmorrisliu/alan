@@ -979,7 +979,8 @@ fn validate_snapshot(snapshot: &PackageSnapshot) -> Result<()> {
             !has_vcs_component(path),
             "VCS control metadata is not package content"
         );
-        ensure!(paths.insert(entry.path.clone()), "duplicate snapshot path");
+        let normalized = path.components().collect::<PathBuf>();
+        ensure!(paths.insert(normalized), "duplicate snapshot path");
     }
     Ok(())
 }
@@ -1634,6 +1635,22 @@ mod tests {
             }],
         };
         assert!(validate_snapshot(&vcs).is_err());
+        let duplicate = PackageSnapshot {
+            source_name: "duplicate".to_string(),
+            entries: vec![
+                PackageSnapshotEntry {
+                    path: "dir/file".to_string(),
+                    bytes: b"first".to_vec(),
+                    executable: false,
+                },
+                PackageSnapshotEntry {
+                    path: "dir//file".to_string(),
+                    bytes: b"second".to_vec(),
+                    executable: false,
+                },
+            ],
+        };
+        assert!(validate_snapshot(&duplicate).is_err());
     }
 
     #[test]
