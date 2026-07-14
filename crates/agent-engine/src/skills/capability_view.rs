@@ -89,10 +89,8 @@ impl ResolvedCapabilityView {
             self.packages
                 .iter()
                 .filter(|package| {
-                    matches!(
-                        package.portable_skill.source,
-                        SkillContentSource::Embedded(_)
-                    ) && !discovered_ids.contains(&package.id)
+                    !matches!(package.portable_skill.source, SkillContentSource::File(_))
+                        && !discovered_ids.contains(&package.id)
                 })
                 .cloned(),
         );
@@ -112,13 +110,16 @@ impl ResolvedCapabilityView {
         for package in &self.packages {
             let metadata = match &package.portable_skill.source {
                 SkillContentSource::File(path) => loader::load_skill_metadata(path, package.scope)?,
-                SkillContentSource::Embedded(content) => loader::parse_skill_metadata_with_source(
-                    content,
-                    &package.portable_skill.path,
-                    package.scope,
-                    package.portable_skill.source.clone(),
-                    Some(package.id.clone()),
-                )?,
+                SkillContentSource::Embedded(content)
+                | SkillContentSource::Descriptor { content, .. } => {
+                    loader::parse_skill_metadata_with_source(
+                        content,
+                        &package.portable_skill.path,
+                        package.scope,
+                        package.portable_skill.source.clone(),
+                        Some(package.id.clone()),
+                    )?
+                }
             };
             if !ids.insert(metadata.id.clone()) {
                 return Err(crate::skills::SkillsError::DuplicateSkill(metadata.id));
@@ -257,6 +258,9 @@ mod tests {
             match &package.portable_skill.source {
                 SkillContentSource::File(path) => assert!(path.is_file()),
                 SkillContentSource::Embedded(_) => {
+                    panic!("builtin package {} should be directory-backed", package.id)
+                }
+                SkillContentSource::Descriptor { .. } => {
                     panic!("builtin package {} should be directory-backed", package.id)
                 }
             }

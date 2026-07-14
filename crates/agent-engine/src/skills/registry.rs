@@ -49,7 +49,8 @@ impl SkillsRegistry {
 
         let mut skill = match &metadata.source {
             SkillContentSource::File(path) => loader::load_skill(path, metadata.scope)?,
-            SkillContentSource::Embedded(content) => loader::load_skill_from_content(
+            SkillContentSource::Embedded(content)
+            | SkillContentSource::Descriptor { content, .. } => loader::load_skill_from_content(
                 content,
                 &metadata.path,
                 metadata.scope,
@@ -253,7 +254,8 @@ impl SkillsRegistry {
                         }
                     }
                 }
-                SkillContentSource::Embedded(content) => {
+                SkillContentSource::Embedded(content)
+                | SkillContentSource::Descriptor { content, .. } => {
                     match loader::parse_skill_metadata_with_source(
                         content,
                         &portable_skill.path,

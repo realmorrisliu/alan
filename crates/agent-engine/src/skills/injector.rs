@@ -376,8 +376,13 @@ fn format_active_skill_context(envelope: &ActiveSkillEnvelope) -> String {
 fn disclose_skill_prompt(skill: &Skill, envelope: &ActiveSkillEnvelope) -> DisclosedSkillPrompt {
     let disclosure = skill_disclosure_config(skill);
     let base_dir = disclosure_base_dir(skill, envelope);
-    let level2 = load_level2_content(skill, &disclosure, base_dir.as_deref());
-    let resources = collect_disclosed_resources(&level2.body, &disclosure, base_dir.as_deref());
+    let descriptor = match &skill.metadata.source {
+        SkillContentSource::Descriptor { file_tree, .. } => Some(file_tree),
+        SkillContentSource::File(_) | SkillContentSource::Embedded(_) => None,
+    };
+    let level2 = load_level2_content(skill, &disclosure, base_dir.as_deref(), descriptor);
+    let resources =
+        collect_disclosed_resources(&level2.body, &disclosure, base_dir.as_deref(), descriptor);
 
     DisclosedSkillPrompt { level2, resources }
 }
@@ -394,7 +399,7 @@ fn skill_disclosure_config(skill: &Skill) -> DisclosureConfig {
 fn disclosure_base_dir(skill: &Skill, envelope: &ActiveSkillEnvelope) -> Option<PathBuf> {
     match &skill.metadata.source {
         SkillContentSource::File(path) => path.parent(),
-        SkillContentSource::Embedded(_) => None,
+        SkillContentSource::Embedded(_) | SkillContentSource::Descriptor { .. } => None,
     }
     .or_else(|| envelope.metadata.resource_root())
     .or_else(|| skill.metadata.path.parent())
@@ -405,6 +410,7 @@ fn load_level2_content(
     skill: &Skill,
     disclosure: &DisclosureConfig,
     base_dir: Option<&Path>,
+    descriptor: Option<&crate::ProcessFileTree>,
 ) -> DisclosedLevel2Content {
     let mut tracked_paths = Vec::new();
 
@@ -416,13 +422,17 @@ fn load_level2_content(
     let Some(base_dir) = base_dir else {
         return fallback_level2_content(skill, tracked_paths);
     };
-    let Some((display_path, path)) = resolve_relative_path(base_dir, requested) else {
+    let Some((display_path, path)) =
+        resolve_relative_path(base_dir, requested, descriptor.is_some())
+    else {
         return fallback_level2_content(skill, tracked_paths);
     };
 
     let source_path = match &skill.metadata.source {
         SkillContentSource::File(path) => path.as_path(),
-        SkillContentSource::Embedded(_) => skill.metadata.path.as_path(),
+        SkillContentSource::Embedded(_) | SkillContentSource::Descriptor { .. } => {
+            skill.metadata.path.as_path()
+        }
     };
     if path == source_path {
         return DisclosedLevel2Content {
@@ -437,7 +447,14 @@ fn load_level2_content(
         MAX_DISCLOSED_LEVEL2_BYTES,
     ));
 
-    let Some(content) = load_disclosed_text_content(&path, MAX_DISCLOSED_LEVEL2_BYTES, None) else {
+    let content = load_disclosure_content(
+        descriptor,
+        base_dir,
+        &path,
+        MAX_DISCLOSED_LEVEL2_BYTES,
+        None,
+    );
+    let Some(content) = content else {
         return fallback_level2_content(skill, tracked_paths);
     };
 
@@ -463,6 +480,7 @@ fn collect_disclosed_resources(
     level2_body: &str,
     disclosure: &DisclosureConfig,
     base_dir: Option<&Path>,
+    descriptor: Option<&crate::ProcessFileTree>,
 ) -> Vec<DisclosedSkillResource> {
     let Some(base_dir) = base_dir else {
         return Vec::new();
@@ -475,6 +493,7 @@ fn collect_disclosed_resources(
             &mut resources,
             level2_body,
             base_dir,
+            descriptor.is_some(),
             SkillResourceKind::Reference,
             entry,
         );
@@ -484,6 +503,7 @@ fn collect_disclosed_resources(
             &mut resources,
             level2_body,
             base_dir,
+            descriptor.is_some(),
             SkillResourceKind::Script,
             entry,
         );
@@ -493,26 +513,37 @@ fn collect_disclosed_resources(
             &mut resources,
             level2_body,
             base_dir,
+            descriptor.is_some(),
             SkillResourceKind::Asset,
             entry,
         );
     }
 
     for reference in extract_resource_references(level2_body) {
-        add_prefixed_resource(&mut resources, base_dir, &reference);
+        add_prefixed_resource(&mut resources, base_dir, descriptor.is_some(), &reference);
     }
 
-    materialize_disclosed_resources(resources.into_values(), load_resource_content)
+    materialize_disclosed_resources(resources.into_values(), |path| {
+        load_disclosure_content(
+            descriptor,
+            base_dir,
+            path,
+            MAX_DISCLOSED_RESOURCE_BYTES,
+            Some(MAX_DISCLOSED_RESOURCE_CHARS),
+        )
+    })
 }
 
 fn add_declared_resource_if_referenced(
     resources: &mut BTreeMap<String, PendingDisclosedSkillResource>,
     level2_body: &str,
     base_dir: &Path,
+    descriptor_path: bool,
     kind: SkillResourceKind,
     entry: &str,
 ) {
-    let Some((display_path, path)) = resolve_resource_entry(base_dir, kind, entry) else {
+    let Some((display_path, path)) = resolve_resource_entry(base_dir, descriptor_path, kind, entry)
+    else {
         return;
     };
     if !declared_resource_is_referenced(level2_body, kind, entry, &display_path) {
@@ -530,9 +561,12 @@ fn add_declared_resource_if_referenced(
 fn add_prefixed_resource(
     resources: &mut BTreeMap<String, PendingDisclosedSkillResource>,
     base_dir: &Path,
+    descriptor_path: bool,
     entry: &str,
 ) {
-    let Some((kind, display_path, path)) = resolve_prefixed_resource_entry(base_dir, entry) else {
+    let Some((kind, display_path, path)) =
+        resolve_prefixed_resource_entry(base_dir, descriptor_path, entry)
+    else {
         return;
     };
     resources
@@ -572,6 +606,7 @@ where
 
 fn resolve_resource_entry(
     base_dir: &Path,
+    descriptor_path: bool,
     kind: SkillResourceKind,
     entry: &str,
 ) -> Option<(String, PathBuf)> {
@@ -582,12 +617,13 @@ fn resolve_resource_entry(
         PathBuf::from(kind.default_dir()).join(relative)
     };
     let display_path = relative_display_path(&relative);
-    let path = resolve_relative_under_root(base_dir, &relative)?;
+    let path = resolve_relative_under_root(base_dir, &relative, descriptor_path)?;
     Some((display_path, path))
 }
 
 fn resolve_prefixed_resource_entry(
     base_dir: &Path,
+    descriptor_path: bool,
     entry: &str,
 ) -> Option<(SkillResourceKind, String, PathBuf)> {
     let relative = sanitize_relative_path(entry)?;
@@ -599,19 +635,30 @@ fn resolve_prefixed_resource_entry(
         _ => return None,
     };
     let display_path = relative_display_path(&relative);
-    let path = resolve_relative_under_root(base_dir, &relative)?;
+    let path = resolve_relative_under_root(base_dir, &relative, descriptor_path)?;
     Some((kind, display_path, path))
 }
 
-fn resolve_relative_path(base_dir: &Path, entry: &str) -> Option<(String, PathBuf)> {
+fn resolve_relative_path(
+    base_dir: &Path,
+    entry: &str,
+    descriptor_path: bool,
+) -> Option<(String, PathBuf)> {
     let relative = sanitize_relative_path(entry)?;
     let display_path = relative_display_path(&relative);
-    let path = resolve_relative_under_root(base_dir, &relative)?;
+    let path = resolve_relative_under_root(base_dir, &relative, descriptor_path)?;
     Some((display_path, path))
 }
 
-fn resolve_relative_under_root(root: &Path, relative: &Path) -> Option<PathBuf> {
+fn resolve_relative_under_root(
+    root: &Path,
+    relative: &Path,
+    descriptor_path: bool,
+) -> Option<PathBuf> {
     let candidate = root.join(relative);
+    if descriptor_path {
+        return Some(candidate);
+    }
     let canonical_root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
 
     match std::fs::canonicalize(&candidate) {
@@ -743,12 +790,56 @@ fn relative_display_path(path: &Path) -> String {
         .collect::<Vec<_>>()
         .join("/")
 }
-fn load_resource_content(path: &Path) -> Option<String> {
-    load_disclosed_text_content(
-        path,
-        MAX_DISCLOSED_RESOURCE_BYTES,
-        Some(MAX_DISCLOSED_RESOURCE_CHARS),
-    )
+fn load_disclosure_content(
+    descriptor: Option<&crate::ProcessFileTree>,
+    base_dir: &Path,
+    path: &Path,
+    max_bytes: u64,
+    max_chars: Option<usize>,
+) -> Option<String> {
+    match descriptor {
+        Some(descriptor) => {
+            load_descriptor_content(descriptor, base_dir, path, max_bytes, max_chars)
+        }
+        None => load_disclosed_text_content(path, max_bytes, max_chars),
+    }
+}
+
+fn load_descriptor_content(
+    descriptor: &crate::ProcessFileTree,
+    base_dir: &Path,
+    path: &Path,
+    max_bytes: u64,
+    max_chars: Option<usize>,
+) -> Option<String> {
+    let relative = path.strip_prefix(base_dir).ok()?;
+    let relative = relative
+        .components()
+        .map(|component| match component {
+            Component::Normal(part) => Some(part.to_string_lossy().into_owned()),
+            _ => None,
+        })
+        .collect::<Option<Vec<_>>>()?
+        .join("/");
+    let source = descriptor.bytes(&relative)?;
+    let truncated_by_bytes = source.len() as u64 > max_bytes;
+    let mut bytes = source[..source.len().min(max_bytes as usize)].to_vec();
+    let valid_len = match std::str::from_utf8(&bytes) {
+        Ok(_) => bytes.len(),
+        Err(error)
+            if truncated_by_bytes && error.error_len().is_none() && error.valid_up_to() > 0 =>
+        {
+            error.valid_up_to()
+        }
+        Err(_) => return None,
+    };
+    bytes.truncate(valid_len);
+    Some(truncate_disclosed_text_content(
+        String::from_utf8(bytes).ok()?,
+        truncated_by_bytes,
+        max_bytes,
+        max_chars,
+    ))
 }
 
 fn load_disclosed_text_content(
@@ -2004,7 +2095,71 @@ mod tests {
     }
 
     #[test]
-    fn test_load_resource_content_caps_large_files_by_byte_budget() {
+    fn test_descriptor_skill_disclosure_reads_only_its_file_tree() {
+        let namespace_root = std::path::PathBuf::from("/lib/pkg/example/skills/review");
+        let tree = crate::ProcessFileTree::new(std::collections::BTreeMap::from([
+            ("SKILL.md".to_string(), b"Fallback instructions.".to_vec()),
+            (
+                "details.md".to_string(),
+                b"Read `references/guide.md` before reviewing.".to_vec(),
+            ),
+            (
+                "references/guide.md".to_string(),
+                b"# Descriptor Guide".to_vec(),
+            ),
+        ]))
+        .unwrap();
+        let skill = Skill {
+            metadata: SkillMetadata {
+                id: "review".to_string(),
+                package_id: Some("example".to_string()),
+                name: "Review".to_string(),
+                description: "Review a change".to_string(),
+                short_description: None,
+                path: namespace_root.join("SKILL.md"),
+                package_root: Some(namespace_root.clone()),
+                resource_root: Some(namespace_root),
+                scope: SkillScope::Descriptor,
+                tags: vec![],
+                capabilities: Some(SkillCapabilities {
+                    disclosure: DisclosureConfig {
+                        level2: "details.md".to_string(),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                }),
+                compatibility: Default::default(),
+                source: SkillContentSource::Descriptor {
+                    content: std::sync::Arc::from("Fallback instructions."),
+                    file_tree: tree,
+                },
+                enabled: true,
+                allow_implicit_invocation: true,
+                alan_metadata: Default::default(),
+                compatible_metadata: Default::default(),
+                execution: Default::default(),
+            },
+            content: "Fallback instructions.".to_string(),
+            frontmatter: SkillFrontmatter {
+                name: "Review".to_string(),
+                description: "Review a change".to_string(),
+                metadata: Default::default(),
+                capabilities: Default::default(),
+                compatibility: Default::default(),
+            },
+        };
+
+        let injected = inject_skills(&[skill]);
+
+        assert!(injected.contains("source: details.md"));
+        assert!(injected.contains("Read `references/guide.md` before reviewing."));
+        assert!(injected.contains("#### reference: references/guide.md"));
+        assert!(injected.contains("# Descriptor Guide"));
+        assert!(!injected.contains("Fallback instructions."));
+    }
+
+    #[test]
+    fn test_load_disclosed_text_content_caps_large_files_by_byte_budget() {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("large.txt");
         std::fs::write(
@@ -2013,7 +2168,12 @@ mod tests {
         )
         .unwrap();
 
-        let content = load_resource_content(&path).unwrap();
+        let content = load_disclosed_text_content(
+            &path,
+            MAX_DISCLOSED_RESOURCE_BYTES,
+            Some(MAX_DISCLOSED_RESOURCE_CHARS),
+        )
+        .unwrap();
 
         assert!(content.starts_with('a'));
         assert!(content.contains(&format!("exceeded {MAX_DISCLOSED_RESOURCE_BYTES} bytes")));

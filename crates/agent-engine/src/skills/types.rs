@@ -67,6 +67,10 @@ pub struct ScopedPackageRoot {
 pub enum SkillContentSource {
     File(PathBuf),
     Embedded(Arc<str>),
+    Descriptor {
+        content: Arc<str>,
+        file_tree: crate::ProcessFileTree,
+    },
 }
 
 impl Default for SkillContentSource {

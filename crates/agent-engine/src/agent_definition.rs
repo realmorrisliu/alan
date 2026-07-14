@@ -275,7 +275,10 @@ fn capability_package_from_descriptor(
     let document = descriptor
         .text("SKILL.md")?
         .context("Skill descriptor has no SKILL.md")?;
-    let source = crate::skills::SkillContentSource::Embedded(std::sync::Arc::from(document));
+    let source = crate::skills::SkillContentSource::Descriptor {
+        content: std::sync::Arc::from(document),
+        file_tree: descriptor.clone(),
+    };
     let metadata = crate::skills::parse_skill_metadata_with_source(
         document,
         &namespace_root.join("SKILL.md"),
@@ -695,7 +698,7 @@ mod tests {
         assert_eq!(metadata.package_root, metadata.resource_root);
         assert!(matches!(
             &metadata.source,
-            crate::skills::SkillContentSource::Embedded(_)
+            crate::skills::SkillContentSource::Descriptor { .. }
         ));
         assert!(!resolved.capability_view.packages.iter().any(|package| {
             package
