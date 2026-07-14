@@ -392,11 +392,13 @@ fn skill_disclosure_config(skill: &Skill) -> DisclosureConfig {
 }
 
 fn disclosure_base_dir(skill: &Skill, envelope: &ActiveSkillEnvelope) -> Option<PathBuf> {
-    envelope
-        .metadata
-        .resource_root()
-        .or_else(|| skill.metadata.path.parent())
-        .map(Path::to_path_buf)
+    match &skill.metadata.source {
+        SkillContentSource::File(path) => path.parent(),
+        SkillContentSource::Embedded(_) => None,
+    }
+    .or_else(|| envelope.metadata.resource_root())
+    .or_else(|| skill.metadata.path.parent())
+    .map(Path::to_path_buf)
 }
 
 fn load_level2_content(
@@ -418,7 +420,11 @@ fn load_level2_content(
         return fallback_level2_content(skill, tracked_paths);
     };
 
-    if path == skill.metadata.path {
+    let source_path = match &skill.metadata.source {
+        SkillContentSource::File(path) => path.as_path(),
+        SkillContentSource::Embedded(_) => skill.metadata.path.as_path(),
+    };
+    if path == source_path {
         return DisclosedLevel2Content {
             source_display: display_path,
             body: skill.content.clone(),

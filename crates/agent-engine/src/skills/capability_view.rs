@@ -36,6 +36,7 @@ impl ResolvedCapabilityView {
                     scope: package_dir.scope,
                     exports: package_exports_for_root_dir(&package_id, root_dir.as_deref()),
                     root_dir,
+                    namespace_root: None,
                     portable_skill: PortableSkill {
                         path: skill.path.clone(),
                         source: SkillContentSource::File(skill.path),
@@ -56,6 +57,7 @@ impl ResolvedCapabilityView {
                     Some(&package_root.path),
                 ),
                 root_dir: Some(package_root.path),
+                namespace_root: package_root.namespace_root,
                 portable_skill: PortableSkill {
                     path: skill_path.clone(),
                     source: SkillContentSource::File(skill_path),

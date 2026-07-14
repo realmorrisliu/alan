@@ -159,6 +159,7 @@ impl SkillsRegistry {
             let track_package_paths = package.scope != SkillScope::Builtin;
             let package_root = package.root_dir.clone();
             let resource_root = package.root_dir.clone();
+            let namespace_root = package.namespace_root.clone();
             let package_sidecar_path = package_root.as_deref().map(loader::package_sidecar_path);
             let compatibility_metadata_path = package_root
                 .as_deref()
@@ -309,6 +310,11 @@ impl SkillsRegistry {
                     overrides_by_skill.get(skill_id.as_str()),
                 );
                 metadata.execution = resolve_skill_execution(&metadata, &child_agent_exports);
+                if let Some(namespace_root) = namespace_root.as_ref() {
+                    metadata.path = namespace_root.join("SKILL.md");
+                    metadata.package_root = Some(namespace_root.clone());
+                    metadata.resource_root = Some(namespace_root.clone());
+                }
                 debug!(
                     "Registering skill: {} (package: {}, scope: {:?}, enabled: {}, implicit: {}, path: {})",
                     metadata.id,
@@ -492,6 +498,7 @@ Body
                 id: package_id.to_string(),
                 scope: SkillScope::Descriptor,
                 root_dir: Some(canonical_root),
+                namespace_root: None,
                 exports: CapabilityPackageExports {
                     child_agents,
                     resources: CapabilityPackageResources::default(),

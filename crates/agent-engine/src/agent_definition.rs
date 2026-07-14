@@ -219,6 +219,7 @@ fn resolve_package_references(
             roots.push(crate::skills::ScopedPackageRoot {
                 package_id,
                 path: canonical_skill_root,
+                namespace_root: Some(PathBuf::from(expected_namespace_path)),
                 scope,
                 dependencies: skill.dependencies.clone(),
             });
@@ -386,6 +387,30 @@ mod tests {
         let package = &resolved.capability_view.packages[0];
         assert_eq!(package.id, "installed:review-pack:reviewer");
         assert_eq!(package.dependencies, vec![dependency]);
+        assert_eq!(
+            package.namespace_root.as_deref(),
+            Some(Path::new("/lib/pkg/review-pack/skills/reviewer"))
+        );
+        let registry = crate::skills::SkillsRegistry::load_capability_view(
+            &resolved.capability_view,
+            &resolved.skill_overrides,
+        )
+        .unwrap();
+        let metadata = registry.get(&"reviewer".to_string()).unwrap();
+        assert_eq!(
+            metadata.path,
+            PathBuf::from("/lib/pkg/review-pack/skills/reviewer/SKILL.md")
+        );
+        assert_eq!(
+            metadata.package_root.as_deref(),
+            Some(Path::new("/lib/pkg/review-pack/skills/reviewer"))
+        );
+        assert_eq!(metadata.package_root, metadata.resource_root);
+        assert!(matches!(
+            &metadata.source,
+            crate::skills::SkillContentSource::File(path)
+                if path == &package.root_dir.as_ref().unwrap().join("SKILL.md")
+        ));
         assert!(!resolved.capability_view.packages.iter().any(|package| {
             package
                 .portable_skill

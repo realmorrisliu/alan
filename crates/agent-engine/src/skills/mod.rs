@@ -129,6 +129,7 @@ pub(crate) fn preinstalled_package_roots_for_tests() -> Vec<ScopedPackageRoot> {
         .map(|source| ScopedPackageRoot {
             package_id: format!("builtin:{}", source.package_id),
             path: source.root_dir,
+            namespace_root: None,
             scope: SkillScope::Builtin,
             dependencies: Vec::new(),
         })

@@ -57,6 +57,7 @@ pub struct ScopedPackageDir {
 pub struct ScopedPackageRoot {
     pub package_id: CapabilityPackageId,
     pub path: PathBuf,
+    pub namespace_root: Option<PathBuf>,
     pub scope: SkillScope,
     pub dependencies: Vec<SkillTypedDependency>,
 }
@@ -156,6 +157,7 @@ pub struct CapabilityPackage {
     pub id: CapabilityPackageId,
     pub scope: SkillScope,
     pub root_dir: Option<PathBuf>,
+    pub namespace_root: Option<PathBuf>,
     pub exports: CapabilityPackageExports,
     pub portable_skill: PortableSkill,
     pub dependencies: Vec<SkillTypedDependency>,
