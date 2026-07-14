@@ -284,20 +284,9 @@ async fn spawn_child_runtime_inner(
         child_config.core_config_source,
     )
     .context("Failed to resolve child-agent definition")?;
-    let mut resolved_child_agent_config = child_agent_config.clone();
-    if let Some(content) = resolved_child_definition.config_content.as_deref() {
-        let source = launch_root_dir
-            .as_ref()
-            .map(|root| root.root_dir.join("agent.toml"))
-            .unwrap_or_else(|| PathBuf::from("/agent-definition/agent.toml"));
-        resolved_child_agent_config = resolved_child_agent_config
-            .with_definition_overlay_content(content, &source)
-            .context("Failed to resolve effective child-agent config")?;
-    } else if let Some(config_path) = resolved_child_definition.config_path.as_ref() {
-        resolved_child_agent_config = resolved_child_agent_config
-            .with_definition_overlays(std::slice::from_ref(config_path))
-            .context("Failed to resolve effective child-agent config")?;
-    }
+    let mut resolved_child_agent_config = resolved_child_definition
+        .apply_to_agent_config(&child_agent_config)
+        .context("Failed to resolve effective child-agent config")?;
     if spec.has_handle(SpawnHandle::Memory) {
         resolved_child_agent_config.core_config.memory.store_dir =
             parent.core_config.memory.store_dir.clone();

@@ -295,12 +295,8 @@ impl ServiceManager {
                 .resolved_skill_overrides(),
             config.process.core_config_source,
         )?;
-        if let Some(config_path) = resolved_definition.config_path.as_ref() {
-            config.process.agent_config = config
-                .process
-                .agent_config
-                .with_definition_overlays(std::slice::from_ref(config_path))?;
-        }
+        config.process.agent_config =
+            resolved_definition.apply_to_agent_config(&config.process.agent_config)?;
         let preferred_connection = config
             .process
             .agent_config
@@ -1752,6 +1748,26 @@ mod tests {
         }
     }
 
+    #[derive(Debug, Default)]
+    struct RecordingFactory {
+        selected_profiles: std::sync::Mutex<Vec<Option<String>>>,
+    }
+
+    impl LlmClientFactory for RecordingFactory {
+        fn create(
+            &self,
+            _base_config: &alan_agent_engine::Config,
+            selected_profile: Option<&str>,
+            _connections: &ConnectionsFile,
+        ) -> Result<LlmClient> {
+            self.selected_profiles
+                .lock()
+                .map_err(|_| anyhow::anyhow!("recording factory lock poisoned"))?
+                .push(selected_profile.map(str::to_string));
+            Ok(LlmClient::new(MockLlmProvider::new()))
+        }
+    }
+
     #[tokio::test]
     async fn boot_rejects_ambient_package_namespace_mounts() {
         let mut config = ServiceManagerConfig::ephemeral(
@@ -1956,6 +1972,75 @@ mod tests {
             br#"{"default-profile":"unavailable"}"#
         );
         assert_eq!(shell.cat(BOOT_STATE_PATH).await.unwrap(), b"ready\n");
+        manager.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn file_tree_agent_definition_selects_connection_before_boot() {
+        let temp = tempfile::tempdir().unwrap();
+        let metadata = temp.path().join("connections.toml");
+        let profile_id = "definition-profile".to_string();
+        let credential_id = "definition-secret".to_string();
+        let now = chrono::Utc::now();
+        ConnectionsFile {
+            version: 1,
+            default_profile: None,
+            credentials: [(
+                credential_id.clone(),
+                ConnectionCredential {
+                    kind: CredentialKind::SecretString,
+                    provider_family: ConnectionProvider::OpenAiResponses,
+                    label: "Definition secret".to_string(),
+                    backend: "host_credential_store".to_string(),
+                },
+            )]
+            .into_iter()
+            .collect(),
+            profiles: [(
+                profile_id.clone(),
+                ConnectionProfile {
+                    provider: ConnectionProvider::OpenAiResponses,
+                    label: None,
+                    credential_id: Some(credential_id),
+                    created_at: now,
+                    updated_at: now,
+                    source: "managed".to_string(),
+                    settings: BTreeMap::new(),
+                },
+            )]
+            .into_iter()
+            .collect(),
+        }
+        .save_to_path(&metadata)
+        .unwrap();
+        let definition = alan_agent_engine::ProcessFileTree::new(BTreeMap::from([(
+            "agent.toml".to_string(),
+            format!("connection_profile = \"{profile_id}\"\n").into_bytes(),
+        )]))
+        .unwrap();
+        let mut process = AgentProcessConfig::default();
+        process.launch_context = process.launch_context.with_descriptor(
+            alan_agent_engine::AGENT_DEFINITION_DESCRIPTOR,
+            alan_agent_engine::ProcessDescriptor::with_file_tree("/agent-definition", definition)
+                .unwrap(),
+        );
+        let mut config = ServiceManagerConfig::ephemeral(
+            "test",
+            process,
+            LlmClient::new(MockLlmProvider::new()),
+            ToolRegistry::new(),
+        );
+        config.connection_store =
+            Some(ConnectionStoreBindings::new(metadata, temp.path().join("credentials")).unwrap());
+        let factory = Arc::new(RecordingFactory::default());
+        config.llm_factory = factory.clone();
+
+        let manager = ServiceManager::boot(config).await.unwrap();
+
+        assert_eq!(
+            factory.selected_profiles.lock().unwrap().as_slice(),
+            &[Some(profile_id)]
+        );
         manager.shutdown().await.unwrap();
     }
 

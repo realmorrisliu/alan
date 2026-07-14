@@ -24,10 +24,23 @@ pub struct ResolvedAgentDefinition {
 }
 
 impl ResolvedAgentDefinition {
-    pub(crate) fn config_overlay_source(&self) -> Option<PathBuf> {
+    fn config_overlay_source(&self) -> Option<PathBuf> {
         self.namespace_root
             .as_ref()
             .map(|root| root.join("agent.toml"))
+    }
+
+    pub fn apply_to_agent_config(&self, base: &crate::AgentConfig) -> Result<crate::AgentConfig> {
+        if let Some(content) = self.config_content.as_deref() {
+            let source = self
+                .config_overlay_source()
+                .unwrap_or_else(|| PathBuf::from("/agent-definition/agent.toml"));
+            return base.with_definition_overlay_content(content, &source);
+        }
+        if let Some(config_path) = self.config_path.as_ref() {
+            return base.with_definition_overlays(std::slice::from_ref(config_path));
+        }
+        Ok(base.clone())
     }
 
     pub fn from_launch_context(

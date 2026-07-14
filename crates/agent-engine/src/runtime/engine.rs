@@ -809,15 +809,7 @@ pub fn effective_core_config_for_runtime(
         &config.agent_config.core_config.resolved_skill_overrides(),
         config.core_config_source,
     )?;
-    let mut agent_config = config.agent_config.clone();
-    if let Some(content) = resolved_agent_definition.config_content.as_deref() {
-        let source = resolved_agent_definition
-            .config_overlay_source()
-            .unwrap_or_else(|| std::path::PathBuf::from("/agent-definition/agent.toml"));
-        agent_config = agent_config.with_definition_overlay_content(content, &source)?;
-    } else if let Some(config_path) = resolved_agent_definition.config_path.as_ref() {
-        agent_config = agent_config.with_definition_overlays(std::slice::from_ref(config_path))?;
-    }
+    let agent_config = resolved_agent_definition.apply_to_agent_config(&config.agent_config)?;
     let mut core_config = agent_config.core_config.clone();
     if let Some(memory_store) = config.memory_store_backing.as_ref() {
         let memory_descriptor = config
@@ -875,15 +867,7 @@ fn spawn_with_prepared_runtime_environment(
         &config.agent_config.core_config.resolved_skill_overrides(),
         config.core_config_source,
     )?;
-    let mut agent_config = config.agent_config.clone();
-    if let Some(content) = resolved_agent_definition.config_content.as_deref() {
-        let source = resolved_agent_definition
-            .config_overlay_source()
-            .unwrap_or_else(|| std::path::PathBuf::from("/agent-definition/agent.toml"));
-        agent_config = agent_config.with_definition_overlay_content(content, &source)?;
-    } else if let Some(config_path) = resolved_agent_definition.config_path.as_ref() {
-        agent_config = agent_config.with_definition_overlays(std::slice::from_ref(config_path))?;
-    }
+    let agent_config = resolved_agent_definition.apply_to_agent_config(&config.agent_config)?;
     let mut core_config = agent_config.core_config.clone();
     if let Some(memory_store) = config.memory_store_backing.as_ref() {
         let memory_descriptor = config
