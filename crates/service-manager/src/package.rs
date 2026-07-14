@@ -366,6 +366,14 @@ impl PackageService {
         );
         fs::create_dir_all(store_root.join("revisions"))?;
         fs::create_dir_all(store_root.join("staging"))?;
+        ensure_owned_directory(
+            &store_root.join("revisions"),
+            "package revisions store is not an owned directory",
+        )?;
+        ensure_owned_directory(
+            &store_root.join("staging"),
+            "package staging path is not an owned directory",
+        )?;
         let store_lock = PackageStoreLock::acquire(&store_root)?;
         let mut catalog = load_catalog(&store_root)?;
         validate_catalog_structure(&catalog)?;
@@ -922,7 +930,16 @@ impl PackageService {
         match materialized {
             Ok(manifest) => {
                 let parent = final_root.parent().context("revision root has no parent")?;
-                fs::create_dir_all(parent)?;
+                match fs::symlink_metadata(parent) {
+                    Ok(_) => ensure_owned_directory(
+                        parent,
+                        "package revisions path is not an owned directory",
+                    )?,
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                        fs::create_dir(parent)?;
+                    }
+                    Err(error) => return Err(error).context("inspect package revisions path"),
+                }
                 if fs::symlink_metadata(&final_root).is_ok() {
                     fs::remove_dir_all(&stage)?;
                     bail!("package revision path appeared during materialization");
@@ -1875,6 +1892,32 @@ mod tests {
                 .is_symlink()
         );
         assert!(!service.catalog().packages.contains_key("stale-link-pack"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn install_rejects_a_symlinked_package_revision_parent() {
+        use std::os::unix::fs::symlink;
+
+        let service = PackageService::ephemeral("test").unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let parent = service.store_root.join("revisions/symlinked-parent-pack");
+        symlink(outside.path(), &parent).unwrap();
+
+        let result = service.execute(PackageCommand::Install {
+            request_id: "symlinked-parent-install".to_string(),
+            package_id: "symlinked-parent-pack".to_string(),
+            snapshot: native_snapshot("symlinked-parent", "body"),
+        });
+
+        assert!(!result.unwrap().success);
+        assert!(outside.path().read_dir().unwrap().next().is_none());
+        assert!(
+            !service
+                .catalog()
+                .packages
+                .contains_key("symlinked-parent-pack")
+        );
     }
 
     #[test]
