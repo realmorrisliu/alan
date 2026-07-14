@@ -71,6 +71,13 @@ impl SystemProcessRunner {
 impl ProcessRunner for SystemProcessRunner {
     async fn run(&self, invocation: ProcessInvocation) -> ProcessOutcome {
         if invocation.exec.executable == QUARTERMASTER_EXECUTABLE {
+            if invocation
+                .namespace
+                .resolve(&invocation.exec.executable)
+                .is_err()
+            {
+                return ProcessOutcome::exited(127, b"executable is not mounted\n");
+            }
             return self.quartermaster.run(invocation).await;
         }
         match &self.fallback {
@@ -635,6 +642,16 @@ mod tests {
                 .unwrap()
                 .contains("submit command")
         );
+    }
+
+    #[tokio::test]
+    async fn system_runner_rejects_q_without_an_executable_mount() {
+        let outcome = SystemProcessRunner::new(None)
+            .run(invocation(Namespace::new(), &["list"]))
+            .await;
+
+        assert_eq!(outcome.exit_code, 127);
+        assert_eq!(outcome.output, b"executable is not mounted\n");
     }
 
     #[tokio::test]

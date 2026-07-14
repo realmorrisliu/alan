@@ -935,6 +935,10 @@ impl PackageService {
                         .context("command-style Skill is not UTF-8")?;
                     let dependencies = detect_availability_dependencies(&entry.bytes);
                     let document = command_skill_document(&skill_id, body, &dependencies);
+                    ensure!(
+                        document.len() <= MAX_SOURCE_FILE_BYTES,
+                        "generated command-style Skill exceeds descriptor file size limit"
+                    );
                     let target = skills_root.join(&skill_id);
                     fs::create_dir_all(&target)?;
                     fs::write(target.join("SKILL.md"), document)?;
@@ -2587,6 +2591,38 @@ mod tests {
                 .files
                 .iter()
                 .any(|file| { file.path == "source/skills/research.md" && !file.generated })
+        );
+    }
+
+    #[test]
+    fn command_materialization_rejects_generated_skill_above_descriptor_limit() {
+        let service = PackageService::ephemeral("test").unwrap();
+        let result = service
+            .execute(PackageCommand::Install {
+                request_id: "oversized-command".to_string(),
+                package_id: "oversized-command-pack".to_string(),
+                snapshot: PackageSnapshot {
+                    source_name: "oversized-command-pack".to_string(),
+                    entries: vec![PackageSnapshotEntry {
+                        path: "skills/research.md".to_string(),
+                        bytes: vec![b'a'; MAX_SOURCE_FILE_BYTES],
+                        executable: false,
+                    }],
+                },
+            })
+            .unwrap();
+
+        assert!(!result.success);
+        assert!(
+            result
+                .message
+                .contains("generated command-style Skill exceeds descriptor file size limit")
+        );
+        assert!(
+            !service
+                .catalog()
+                .packages
+                .contains_key("oversized-command-pack")
         );
     }
 
