@@ -1035,6 +1035,8 @@ fn join_finished_child_pipe(handle: Option<JoinHandle<std::io::Result<Vec<u8>>>>
 #[cfg(target_os = "linux")]
 fn kill_child_process_group(child: &mut std::process::Child) -> std::io::Result<()> {
     let pgid = -(child.id() as libc::pid_t);
+    // SAFETY: kill takes no pointers; this child was spawned as the leader of
+    // its own process group, and the negative pid targets that group.
     let result = unsafe { libc::kill(pgid, libc::SIGKILL) };
     if result == 0 { Ok(()) } else { child.kill() }
 }

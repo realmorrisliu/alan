@@ -26,9 +26,9 @@ crates/agent-engine/src/skills/registry.rs 1458
 crates/agent-engine/src/skills/types.rs 3013
 crates/agent-engine/src/tape.rs 1513
 crates/agent-engine/src/tools/registry.rs 1456
-crates/agent-engine/src/tools/reified_namespace.rs 2754
+crates/agent-engine/src/tools/reified_namespace.rs 2756
 crates/agent-engine/src/tools/sandbox.rs 3514
-crates/agent-engine/src/tools/sandbox_backend.rs 1558
+crates/agent-engine/src/tools/sandbox_backend.rs 1562
 crates/agent-engine/src/tools/sandbox_tests.rs 2976
 crates/agentfs/src/lib.rs 1151
 crates/agentfs/src/root.rs 1191

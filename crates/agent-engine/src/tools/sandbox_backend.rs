@@ -1192,6 +1192,8 @@ mod tests {
             let root = host_mount_path.clone();
             let mut cmd = std::process::Command::new("sh");
             cmd.arg("-c").arg(script);
+            // SAFETY: pre_exec runs in the forked child; the closure owns root
+            // and performs only the bounded Landlock setup before exec.
             unsafe {
                 cmd.pre_exec(move || {
                     super::apply_landlock(std::slice::from_ref(&root), &[], false)
@@ -1242,6 +1244,8 @@ mod tests {
         let host_mount_path = host_mount.path().to_path_buf();
         let mut cmd = std::process::Command::new("sh");
         cmd.arg("-c").arg(probe);
+        // SAFETY: pre_exec runs in the forked child; the closure owns the mount
+        // path and performs only the bounded Landlock setup before exec.
         unsafe {
             cmd.pre_exec(move || {
                 super::apply_landlock(std::slice::from_ref(&host_mount_path), &[], false)
