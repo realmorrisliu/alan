@@ -10,6 +10,10 @@ use crate::skills::{
 
 use super::child_runs::ChildRunRecord;
 
+mod supervisor;
+
+pub(crate) use supervisor::{DelegatedChildRunSupervision, DelegatedChildRunSupervisor};
+
 pub(super) const MAX_DELEGATED_RESULT_SUMMARY_CHARS: usize = 320;
 pub(super) const MAX_DELEGATED_RESULT_OUTPUT_INLINE_CHARS: usize = 4_000;
 
@@ -119,7 +123,7 @@ impl ChildRuntimeResult {
             }
             ChildRuntimeStatus::Failed => self.failed_delegated_result(
                 format!(
-                    "Delegated runtime failed: {}",
+                    "Delegated Child Run failed: {}",
                     self.error_message
                         .clone()
                         .or_else(|| non_empty_trimmed(&self.output_text))
@@ -129,19 +133,19 @@ impl ChildRuntimeResult {
                 output_reference.as_ref(),
             ),
             ChildRuntimeStatus::TimedOut => self.failed_delegated_result(
-                "Delegated runtime timed out.".to_string(),
+                "Delegated Child Run timed out.".to_string(),
                 "child_timed_out",
                 output_reference.as_ref(),
             ),
             ChildRuntimeStatus::Cancelled => self.failed_delegated_result(
-                "Delegated runtime was cancelled.".to_string(),
+                "Delegated Child Run was cancelled.".to_string(),
                 "child_cancelled",
                 output_reference.as_ref(),
             ),
             ChildRuntimeStatus::Terminated => self.failed_delegated_result(
                 self.error_message
                     .clone()
-                    .unwrap_or_else(|| "Delegated runtime was terminated.".to_string()),
+                    .unwrap_or_else(|| "Delegated Child Run was terminated.".to_string()),
                 "child_terminated",
                 output_reference.as_ref(),
             ),
@@ -249,7 +253,7 @@ impl ChildRuntimeResult {
             .unwrap_or_else(|| ("unknown".to_string(), None));
         let mut delegated = DelegatedSkillResult::failed(
             format!(
-                "Delegated runtime paused for {pause_kind} and cannot continue in v1 delegated execution."
+                "Delegated Child Run paused for {pause_kind} and cannot continue in v1 delegated execution."
             ),
             Some(serde_json::json!({
                 "error_kind": "child_paused",
@@ -300,7 +304,7 @@ impl ChildRuntimeResult {
                 non_empty_trimmed(self.turn_summary.as_deref().unwrap_or_default())
                     .map(|summary| redact_durable_evidence_text(&summary).text)
             })
-            .unwrap_or_else(|| "Delegated runtime completed without textual output.".to_string())
+            .unwrap_or_else(|| "Delegated Child Run completed without textual output.".to_string())
     }
 }
 
