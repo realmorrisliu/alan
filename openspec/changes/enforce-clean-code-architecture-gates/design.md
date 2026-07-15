@@ -93,7 +93,9 @@ edges with `cargo tree` across all features and target-specific declarations.
 It also compares its recorded package inventory with the complete Cargo
 workspace so a newly added crate cannot bypass ownership review. It replaces
 duplicated manifest parsers and covers Kernel, File-Server Service crates,
-clients, adapters, and current transitional owners. Current transitional edges
+clients, adapters, the root `alan` composition crate, and current transitional
+owners. The root crate is included in actual-edge discovery but forbidden from
+accepted downstream dependency entries. Current transitional edges
 are a structured, pre-change-compared ratcheting ceiling: they may shrink, but
 editing the Cargo graph and its ledger together cannot add an accepted edge.
 An ownership-model expansion therefore requires a dedicated ADR/OpenSpec and

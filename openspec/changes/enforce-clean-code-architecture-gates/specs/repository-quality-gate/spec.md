@@ -115,7 +115,9 @@ proof of module depth or as permission for cosmetic file splitting.
 Alan SHALL enforce accepted normal-dependency laws for Alan crates through one
 repository architecture module over Cargo's graph. The module SHALL cover
 Alan Kernel, File-Server Service crates, clients, adapters, composition owners,
-and explicitly recorded transitional edges.
+the root `alan` composition crate, and explicitly recorded transitional edges.
+The root composition crate MUST be recognized as an Alan dependency and MUST
+NOT be accepted as a downstream crate dependency.
 
 Duplicated per-crate manifest parsers MUST NOT be the durable architecture test
 surface. The exact dependency ledger MUST be compared with the pre-change Git
@@ -159,6 +161,11 @@ change.
   the current dependency ledger
 - **THEN** comparison with the pre-change ledger reports the expanded allowance
 - **AND** the quality gate fails
+
+#### Scenario: Downstream crate depends on the composition root
+- **WHEN** a workspace package adds a normal dependency on the root `alan` crate
+- **THEN** the architecture gate includes `alan` in the package's actual edges
+- **AND** the forbidden inbound composition-root dependency fails the gate
 
 ### Requirement: Git hook and CI enforce the same gate
 Alan SHALL provide a versioned pre-commit hook and an explicit installer for

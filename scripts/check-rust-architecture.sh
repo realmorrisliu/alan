@@ -46,7 +46,10 @@ validate_dependency_baseline() {
                 if (dependency == "") {
                     continue
                 }
-                if (dependency !~ /^alan-[a-z0-9-]+$/) {
+                if (dependency == "alan") {
+                    printf "error: %s cannot accept the root alan composition crate as a dependency\n", $1 > "/dev/stderr"
+                    failed = 1
+                } else if (dependency !~ /^alan-[a-z0-9-]+$/) {
                     printf "error: dependency baseline for %s has invalid dependency %s\n", $1, dependency > "/dev/stderr"
                     failed = 1
                 }
@@ -65,7 +68,7 @@ direct_alan_dependencies() {
     cargo tree -p "$1" --locked --all-features --depth 1 --edges normal --prefix none \
         --no-dedupe \
         --target all \
-        | awk 'NR > 1 && $1 ~ /^alan-/ { print $1 }' \
+        | awk 'NR > 1 && ($1 == "alan" || $1 ~ /^alan-/) { print $1 }' \
         | sort -u \
         | paste -sd ' ' -
 }
