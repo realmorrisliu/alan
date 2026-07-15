@@ -12,7 +12,8 @@
 - [x] 2.1 Record exact maxima for the 64 Rust source files currently over 1,000
   lines and add a guard for new, growing, reduced, and removed files.
 - [x] 2.2 Add one Cargo-graph architecture module covering accepted normal Alan
-  crate dependencies and current ratcheting transitional edges.
+  crate dependencies, complete package inventory, and pre-change-ratcheted
+  transitional edges.
 - [x] 2.3 Remove duplicated per-crate manifest parsers after the graph module
   preserves their accepted ADR-0025 checks.
 - [x] 2.4 Run existing Alan OS retired-host/workspace/legacy absence guards and

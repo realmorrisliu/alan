@@ -91,8 +91,11 @@ It also compares its recorded package inventory with the complete Cargo
 workspace so a newly added crate cannot bypass ownership review. It replaces
 duplicated manifest parsers and covers Kernel, File-Server Service crates,
 clients, adapters, and current transitional owners. Current transitional edges
-are a ratcheting ceiling: they may shrink, and any expansion requires an
-explicit ADR/OpenSpec update.
+are a structured, pre-change-compared ratcheting ceiling: they may shrink, but
+editing the Cargo graph and its ledger together cannot add an accepted edge.
+An ownership-model expansion therefore requires a dedicated ADR/OpenSpec and
+gate-policy change rather than an ordinary implementation PR widening its own
+allowance.
 
 Source-token guards that encode accepted absence rules remain in their owning
 scripts or focused tests; the graph module does not become a source-code parser.
@@ -151,8 +154,8 @@ slices rather than one repository-wide rewrite.
   AI-navigability ceiling; architecture review still uses module depth,
   interface, seam, locality, and leverage.
 - [Baseline files can be edited to hide debt] → Compare current ledgers with the
-  pre-change Git reference so new entries and budget increases fail even when
-  source and ledger change together.
+  pre-change Git reference so dependency edges, source entries, and warning
+  budgets cannot grow even when implementation and ledger change together.
 - [Apple warnings remain non-zero] → The immediate follow-up change owns their
   reduction; this PR forbids silent growth.
 

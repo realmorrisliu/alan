@@ -1,0 +1,24 @@
+# Exact normal Alan-crate dependencies. Keep packages and dependencies sorted.
+alan|alan-agent-engine alan-agent-protocol alan-ap alan-auth alan-kernel alan-os-host alan-service-manager alan-shell alan-swebench-tooling alan-tools
+alan-agent-engine|alan-agent-protocol alan-agentfs alan-ap alan-kernel alan-llm alan-llmfs alan-routefs
+alan-agent-protocol|
+alan-agentfs|alan-ap alan-knowledge
+alan-ap|
+alan-auth|
+alan-branchfs|alan-ap alan-knowledge
+alan-editfs|alan-ap
+alan-hostfs|alan-ap
+alan-kernel|alan-ap
+alan-knowledge|
+alan-llm|alan-agent-protocol alan-auth
+alan-llmfs|alan-ap alan-llm
+alan-memfs|alan-ap alan-knowledge
+alan-os-host|alan-agent-engine alan-agentfs alan-ap alan-hostfs alan-kernel alan-llm alan-llmfs alan-routefs alan-service-manager alan-shell
+alan-routefs|alan-ap
+alan-service-manager|alan-agent-engine alan-agentfs alan-ap alan-hostfs alan-kernel alan-llm alan-llmfs alan-routefs alan-shell
+alan-shell|alan-ap
+alan-shell-core|
+alan-shell-core-ffi|alan-shell-core
+alan-swebench-tooling|
+alan-terminal-ui|alan-agent-protocol alan-ap alan-shell
+alan-tools|alan-agent-engine alan-agent-protocol

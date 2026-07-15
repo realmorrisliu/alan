@@ -112,8 +112,11 @@ Alan Kernel, File-Server Service crates, clients, adapters, composition owners,
 and explicitly recorded transitional edges.
 
 Duplicated per-crate manifest parsers MUST NOT be the durable architecture test
-surface. Recorded transitional edges MAY shrink but MUST NOT expand without an
-OpenSpec or ADR update that changes the accepted ownership model.
+surface. The exact dependency ledger MUST be compared with the pre-change Git
+reference. Recorded transitional edges MAY shrink, but an implementation PR
+MUST NOT expand them by editing its Cargo graph and ledger together. A genuine
+ownership-model expansion requires a dedicated OpenSpec or ADR and gate-policy
+change.
 
 #### Scenario: Forbidden dependency edge is added
 - **WHEN** an Alan crate adds a normal dependency outside its accepted set
@@ -143,6 +146,12 @@ OpenSpec or ADR update that changes the accepted ownership model.
 - **WHEN** a forbidden normal dependency is activated only by a non-default
   feature or target-specific declaration
 - **THEN** the architecture gate includes that edge in its comparison
+- **AND** the quality gate fails
+
+#### Scenario: Dependency graph and ledger expand together
+- **WHEN** a change adds a normal Alan dependency and records the same edge in
+  the current dependency ledger
+- **THEN** comparison with the pre-change ledger reports the expanded allowance
 - **AND** the quality gate fails
 
 ### Requirement: Git hook and CI enforce the same gate

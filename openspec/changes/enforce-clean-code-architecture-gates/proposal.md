@@ -15,7 +15,8 @@ or architecture debt grow without a mechanical no-regression rule.
   reject blanket `pedantic`, `nursery`, `restriction`, and `cargo` groups.
 - Make formatting checks non-mutating and require suppression reasons.
 - Enforce ADR-0025 dependency laws and existing Alan OS absence guards through
-  the same quality gate.
+  the same quality gate, with accepted dependency edges compared against the
+  pre-change ledger so implementation and allowance cannot expand together.
 - Ratchet oversized Rust source files and existing Apple architecture warnings:
   new debt fails, existing debt cannot grow, and every reduction lowers the
   recorded ceiling.
@@ -28,7 +29,7 @@ or architecture debt grow without a mechanical no-regression rule.
 
 - `repository-quality-gate`: Defines the canonical clean-code and
   clean-architecture validation interface, pinned tooling, curated lint policy,
-  source-debt ratchets, Git hook behavior, and CI enforcement.
+  dependency and source-debt ratchets, Git hook behavior, and CI enforcement.
 
 ### Modified Capabilities
 
