@@ -86,21 +86,34 @@ fn runtime_state_and_handles_have_no_parallel_capability_or_event_authority() {
 
 #[test]
 fn namespace_environment_reaches_capabilities_only_through_files() {
-    let source = read_runtime_source("agent_loop/namespace_environment.rs");
-    let production = source.split("\n#[cfg(test)]\nmod tests").next().unwrap();
+    let environment = read_runtime_source("agent_loop/namespace_environment.rs");
+    let production = environment
+        .split("\n#[cfg(test)]\nmod tests")
+        .next()
+        .unwrap();
+    let generation = read_runtime_source("agent_loop/namespace_environment/generation.rs");
 
     for forbidden in ["LlmProvider", "ToolRegistry"] {
         assert!(!production.contains(forbidden));
+        assert!(!generation.contains(forbidden));
     }
     for required in [
+        "mod generation;",
         "root: InProcessTransport",
-        "/mnt/llm/connections/{llm_connection}/clone",
         "write_agent_output",
         "machine/tape",
         "/proc/clone",
     ] {
         assert!(production.contains(required), "missing {required:?}");
     }
+    assert!(
+        generation.contains("/mnt/llm/connections/{llm_connection}/clone"),
+        "llmfs generation owner must clone through its file surface"
+    );
+    assert!(
+        !production.contains("/mnt/llm/connections/{llm_connection}/clone"),
+        "namespace environment coordinator must leave llmfs protocol details to generation owner"
+    );
 }
 
 #[test]
