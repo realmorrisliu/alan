@@ -29,8 +29,11 @@ jobs:
         with:
           components: clippy, rustfmt
 
-      - name: Install pinned OpenSpec CLI
-        run: npm install --global @fission-ai/openspec@1.4.1
+      - name: Install repository quality tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes ripgrep
+          npm install --global @fission-ai/openspec@1.4.1
 
       - name: Cache Cargo dependencies
         uses: Swatinem/rust-cache@v2

@@ -76,6 +76,8 @@ still represented only by contracts or partial file-server crates.
 ## Build and test
 
 Rust 2024 and the repository-pinned Rust 1.97.0 toolchain are required.
+The canonical quality gate also expects `rg` and the pinned OpenSpec CLI on
+`PATH`; CI installs both explicitly.
 
 ```bash
 just build

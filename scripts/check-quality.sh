@@ -4,6 +4,13 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
+for command in cargo rg openspec; do
+    if ! command -v "$command" >/dev/null 2>&1; then
+        printf 'error: repository quality gate requires %s on PATH\n' "$command" >&2
+        exit 1
+    fi
+done
+
 "$ROOT/scripts/check-rust-source-size.sh"
 "$ROOT/scripts/check-rust-architecture.sh"
 "$ROOT/scripts/check-rust-quality.sh"
