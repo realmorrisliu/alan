@@ -6,7 +6,8 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
-use alan_agent_engine::{ConnectionsFile, InstallChannel, default_credential_backend};
+use alan_agent_engine::InstallChannel;
+use alan_service_manager::{ConnectionsFile, default_credential_backend};
 use anyhow::{Context, Result, ensure};
 use serde::Serialize;
 

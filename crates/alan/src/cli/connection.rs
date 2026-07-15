@@ -1,13 +1,15 @@
-use alan_agent_engine::{
-    Config, ConnectionCredential, ConnectionProfile, ConnectionStoreBindings, ConnectionsFile,
-    CredentialKind, InstallChannel, LlmProvider, SecretStore, default_credential_backend,
-    normalize_profile_settings, sanitize_identifier, validate_profile_settings,
-};
+use alan_agent_engine::{Config, InstallChannel, LlmProvider};
 use alan_auth::{
     BrowserLoginOptions, ChatgptAuthConfig, ChatgptAuthManager, DeviceCodeLoginOptions,
 };
 use alan_os_host::{
-    HostStorePaths, LegacyConnectionPaths, SystemStorePaths, migrate_legacy_connections,
+    HostStorePaths, LegacyConnectionPaths, SecretStore, SystemStorePaths, apply_profile_to_config,
+    migrate_legacy_connections,
+};
+use alan_service_manager::{
+    ConnectionCredential, ConnectionProfile, ConnectionsFile, CredentialKind,
+    default_credential_backend, normalize_profile_settings, sanitize_identifier,
+    validate_profile_settings,
 };
 use alan_shell::Shell;
 use anyhow::{Context, Result};
@@ -24,7 +26,7 @@ use std::{
 pub const NATIVE_CONNECTION_REQUEST_ENV: &str = "ALAN_NATIVE_CONNECTION_REQUEST_ID";
 
 struct ConnectionStores {
-    bindings: ConnectionStoreBindings,
+    credentials_dir: PathBuf,
     managed_auth: PathBuf,
     shell: Shell,
 }
@@ -37,7 +39,7 @@ async fn connection_stores() -> Result<ConnectionStores> {
         migrate_legacy_connections(&legacy, &system, &host)?;
     }
     Ok(ConnectionStores {
-        bindings: system.connection_bindings(&host)?,
+        credentials_dir: host.credentials,
         managed_auth: host.managed_auth,
         shell: Shell::new(super::host::attach_or_start_host(channel).await?.root),
     })
@@ -141,7 +143,7 @@ async fn respond_native(
 }
 
 fn secret_store(stores: &ConnectionStores) -> Result<SecretStore> {
-    SecretStore::from_directory(&stores.bindings.credentials_dir)
+    SecretStore::from_directory(&stores.credentials_dir)
 }
 
 fn chatgpt_auth_manager(stores: &ConnectionStores) -> Result<ChatgptAuthManager> {
@@ -598,7 +600,8 @@ pub async fn run_connection_test(profile_id: Option<String>) -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("no profile selected"))?;
     let profile = connection_profile(&connections, &profile_id)?;
     let mut config = Config::default();
-    let resolved = connections.apply_profile_to_config(
+    let resolved = apply_profile_to_config(
+        &connections,
         Some(&profile_id),
         &secret_store(&stores)?,
         &mut config,

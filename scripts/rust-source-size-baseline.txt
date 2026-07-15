@@ -4,7 +4,6 @@ crates/agent-engine/skills/swebench/tooling/src/swebench_lite.rs 1389
 crates/agent-engine/src/agent_definition.rs 1005
 crates/agent-engine/src/agent_machine.rs 3661
 crates/agent-engine/src/config.rs 2556
-crates/agent-engine/src/connections.rs 1061
 crates/agent-engine/src/policy.rs 1177
 crates/agent-engine/src/rollout.rs 2266
 crates/agent-engine/src/runtime/agent_loop.rs 2771
@@ -52,9 +51,9 @@ crates/llm/src/openai_chat_completions.rs 3324
 crates/llm/src/openrouter.rs 1235
 crates/llmfs/src/lib.rs 1937
 crates/llmfs/tests/generation.rs 1627
-crates/service-manager/src/connection.rs 1052
+crates/service-manager/src/connection.rs 1048
 crates/service-manager/src/package.rs 2947
-crates/service-manager/src/runtime.rs 2439
+crates/service-manager/src/runtime.rs 2437
 crates/shell-core/src/actions.rs 1591
 crates/shell-core/src/control.rs 1183
 crates/shell-core/src/model.rs 1320

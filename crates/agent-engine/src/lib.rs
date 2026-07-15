@@ -13,7 +13,6 @@ mod agent_definition;
 mod agent_machine;
 mod approval;
 mod config;
-mod connections;
 mod evidence;
 mod file_tree;
 mod install_channel;
@@ -38,12 +37,6 @@ pub use agent_machine::{
 };
 pub use config::{
     Config, ConfigSourceKind, LlmProvider, LoadedConfig, PartialStreamRecoveryMode, StreamingMode,
-};
-pub use connections::{
-    ConnectionCredential, ConnectionProfile, ConnectionStoreBindings, ConnectionsFile,
-    CredentialKind, ProviderDescriptor, ResolvedConnectionProfile, SecretStore,
-    default_credential_backend, normalize_profile_settings, provider_catalog, sanitize_identifier,
-    validate_profile_settings,
 };
 pub use file_tree::ProcessFileTree;
 pub use install_channel::{INSTALL_CHANNEL_ENV, InstallChannel, InstallChannelDescriptor};
