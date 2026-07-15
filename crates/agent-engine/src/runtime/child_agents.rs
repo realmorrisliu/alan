@@ -1,17 +1,17 @@
 mod delegated_launch;
 mod launch_context;
+mod runtime_startup;
 mod task_context;
 
 use super::agent_loop::RuntimeLoopState;
+use super::child_runs::ChildRunRecord;
 #[cfg(test)]
 use super::child_runs::ChildRunRegistry;
-use super::child_runs::{ChildRunRecord, ChildRunStatus};
 #[cfg(test)]
 use super::delegated_child_run::ChildRuntimeStatus;
 use super::delegated_child_run::{DelegatedChildRunSupervision, DelegatedChildRunSupervisor};
 use super::engine::{
-    AgentProcessConfig, RuntimeController, RuntimeStartupMetadata,
-    effective_core_config_for_runtime, runtime_host_capabilities_for_tools,
+    AgentProcessConfig, effective_core_config_for_runtime, runtime_host_capabilities_for_tools,
     spawn_with_namespace_environment,
 };
 #[cfg(test)]
@@ -32,17 +32,22 @@ use launch_context::{
     build_child_agent_config, build_child_launch_context, ensure_child_connection_is_passed,
     resolve_launch_root_dir, validate_child_launch_contract,
 };
+use runtime_startup::{
+    CHILD_AGENT_LAUNCH_CANCELLED_MESSAGE, child_run_status_for_launch_error,
+    record_child_launch_failure_process, send_initial_child_submission,
+    wait_for_child_runtime_startup,
+};
 use std::collections::BTreeSet;
 #[cfg(test)]
 use std::path::Path;
 use std::path::PathBuf;
+#[cfg(test)]
 use std::sync::Arc;
 #[cfg(test)]
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
-const CHILD_AGENT_LAUNCH_CANCELLED_MESSAGE: &str = "Child Agent Process launch cancelled";
 const ROUTE_MOUNT_PATH: &str = "/mnt/route";
 #[cfg(test)]
 static NEXT_CHILD_NAMESPACE_FID: AtomicU64 = AtomicU64::new(80_000);
@@ -310,88 +315,6 @@ async fn spawn_child_runtime_inner(
             process_pid: child_process_pid,
         },
     ))
-}
-
-async fn wait_for_child_runtime_startup(
-    mut runtime: RuntimeController,
-    cancel: Option<&CancellationToken>,
-) -> Result<(RuntimeController, RuntimeStartupMetadata)> {
-    let startup_metadata = if let Some(cancel) = cancel {
-        if cancel.is_cancelled() {
-            runtime.abort().await;
-            bail!(CHILD_AGENT_LAUNCH_CANCELLED_MESSAGE);
-        }
-        tokio::select! {
-            _ = cancel.cancelled() => {
-                runtime.abort().await;
-                bail!(CHILD_AGENT_LAUNCH_CANCELLED_MESSAGE);
-            }
-            ready = runtime.wait_until_ready() => {
-                ready.context("Child Agent Process runtime failed to start")?
-            }
-        }
-    } else {
-        runtime
-            .wait_until_ready()
-            .await
-            .context("Child Agent Process runtime failed to start")?
-    };
-
-    Ok((runtime, startup_metadata))
-}
-
-async fn send_initial_child_submission(
-    runtime: RuntimeController,
-    submission: Submission,
-    cancel: Option<&CancellationToken>,
-) -> Result<RuntimeController> {
-    if let Some(cancel) = cancel {
-        if cancel.is_cancelled() {
-            runtime.abort().await;
-            bail!(CHILD_AGENT_LAUNCH_CANCELLED_MESSAGE);
-        }
-        tokio::select! {
-            _ = cancel.cancelled() => {
-                runtime.abort().await;
-                bail!(CHILD_AGENT_LAUNCH_CANCELLED_MESSAGE);
-            }
-            result = runtime.handle.submission_tx.send(submission) => {
-                result.context("Failed to submit initial child Agent Process turn")?
-            }
-        }
-    } else {
-        runtime
-            .handle
-            .submission_tx
-            .send(submission)
-            .await
-            .context("Failed to submit initial child Agent Process turn")?;
-    }
-
-    Ok(runtime)
-}
-
-fn child_run_status_for_launch_error(error: &anyhow::Error) -> ChildRunStatus {
-    if error.chain().any(|cause| {
-        cause
-            .to_string()
-            .contains(CHILD_AGENT_LAUNCH_CANCELLED_MESSAGE)
-    }) {
-        ChildRunStatus::Cancelled
-    } else {
-        ChildRunStatus::Failed
-    }
-}
-
-async fn record_child_launch_failure_process(
-    lifecycle: &Arc<dyn super::AgentProcessLifecycle>,
-    error: &anyhow::Error,
-) {
-    let exit_code = match child_run_status_for_launch_error(error) {
-        ChildRunStatus::Cancelled => 130,
-        _ => 1,
-    };
-    lifecycle.finish(exit_code).await;
 }
 
 type ChildNamespaceAssemblyPlan = super::ChildAgentProcessAssemblyPlan;
