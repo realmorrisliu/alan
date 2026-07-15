@@ -653,7 +653,7 @@ impl SupervisorRuntime {
         self.invalidate_handles(name).await;
         if name == "root-agent" {
             if let Some(root) = self.root.take() {
-                self.agent_runtime.detach_root(root).await;
+                self.agent_runtime.detach_root(root, exit_code).await;
             }
             self.root_pid.store(0, Ordering::Release);
         }
@@ -779,11 +779,11 @@ impl SupervisorRuntime {
             .await?;
         let pid = root.pid();
         if let Err(error) = self.state.lock().await.start_attempt("root-agent", pid) {
-            self.agent_runtime.detach_root(root).await;
+            self.agent_runtime.detach_root(root, 1).await;
             return Err(anyhow::anyhow!("track Root Agent restart: {error:?}"));
         }
         if let Err(error) = root.wait_until_ready().await {
-            self.agent_runtime.detach_root(root).await;
+            self.agent_runtime.detach_root(root, 1).await;
             return Err(error).context("replacement Root Agent failed before readiness");
         }
         self.state
@@ -1085,7 +1085,7 @@ async fn assemble_environment(inputs: AssembleInputs) -> Result<AssembledEnviron
         .await?;
     let root_pid = root.pid();
     if let Err(error) = state.lock().await.start_attempt("root-agent", root_pid) {
-        agent_runtime.detach_root(root).await;
+        agent_runtime.detach_root(root, 1).await;
         return Err(anyhow::anyhow!("track Root Agent start: {error:?}"));
     }
     active_units.insert(
@@ -1909,7 +1909,7 @@ mod tests {
         assert_eq!(manager.manager_pid(), Pid(1));
         let old_pid = manager.root_pid();
 
-        manager.terminate_unit("root-agent", 1).await.unwrap();
+        manager.terminate_unit("root-agent", 0).await.unwrap();
         let new_pid = tokio::time::timeout(Duration::from_secs(3), async {
             loop {
                 let pid = manager.root_pid();
@@ -1924,7 +1924,7 @@ mod tests {
 
         assert_eq!(
             manager.procfs.try_observe_process_lifecycle(old_pid),
-            Some((Status::Exited, Some(1)))
+            Some((Status::Exited, Some(0)))
         );
         assert_eq!(
             manager.procfs.try_observe_process_lifecycle(new_pid),

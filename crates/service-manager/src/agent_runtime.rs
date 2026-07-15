@@ -212,14 +212,14 @@ impl AgentRuntimeService {
         })
     }
 
-    pub(crate) async fn detach_root(&self, root: RootAgentProcess) {
+    pub(crate) async fn detach_root(&self, root: RootAgentProcess, exit_code: i32) {
         let RootAgentProcess {
             pid, controller, ..
         } = root;
         if !controller.is_finished() {
             controller.abort().await;
         }
-        self.procfs.record_exit(pid, 1).await;
+        self.procfs.record_exit(pid, exit_code).await;
         self.release_process(pid).await;
     }
 
