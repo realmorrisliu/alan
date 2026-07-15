@@ -1,8 +1,79 @@
 use crate::MessageContentPart;
 
+use super::{
+    LlmMessage, MessageRole, OpenAiChatCompletionsFunctionCall, OpenAiChatCompletionsToolCall,
+    is_non_empty, openai_chat_completions_message_value,
+};
+
+pub(super) fn convert_messages_for_openai_chat_completions_with_instruction_role(
+    messages: Vec<LlmMessage>,
+    instruction_role: &'static str,
+) -> anyhow::Result<Vec<serde_json::Value>> {
+    messages
+        .into_iter()
+        .map(|message| {
+            let LlmMessage {
+                role,
+                content,
+                content_parts,
+                thinking,
+                thinking_signature,
+                redacted_thinking: _,
+                tool_calls,
+                tool_call_id,
+            } = message;
+            let allow_attachments = role == MessageRole::User;
+            let role = match role {
+                MessageRole::System => instruction_role,
+                MessageRole::User => "user",
+                MessageRole::Assistant => "assistant",
+                MessageRole::Tool => "tool",
+                MessageRole::Context => instruction_role,
+            };
+
+            let tool_calls = tool_calls.map(|calls| {
+                calls
+                    .into_iter()
+                    .map(|call| OpenAiChatCompletionsToolCall {
+                        id: call.id.unwrap_or_default(),
+                        r#type: "function".to_string(),
+                        function: OpenAiChatCompletionsFunctionCall {
+                            name: call.name,
+                            arguments: call.arguments.to_string(),
+                        },
+                    })
+                    .collect()
+            });
+
+            let reasoning_content = if role == "assistant" {
+                thinking.filter(|value| is_non_empty(value))
+            } else {
+                None
+            };
+            let reasoning = if role == "assistant" {
+                thinking_signature
+                    .filter(|value| is_non_empty(value))
+                    .map(|signature| serde_json::json!({ "encrypted_content": signature }))
+            } else {
+                None
+            };
+
+            Ok(openai_chat_completions_message_value(
+                role,
+                chat_completions_content(content, content_parts, allow_attachments)?,
+                reasoning_content,
+                reasoning,
+                tool_calls,
+                tool_call_id,
+            ))
+        })
+        .collect()
+}
+
 pub(super) fn chat_completions_content(
     fallback: String,
     parts: Vec<MessageContentPart>,
+    allow_attachments: bool,
 ) -> anyhow::Result<Option<serde_json::Value>> {
     if parts.is_empty() {
         return Ok((!fallback.is_empty()).then_some(serde_json::Value::String(fallback)));
@@ -10,7 +81,7 @@ pub(super) fn chat_completions_content(
 
     let mut projected = Vec::new();
     for part in parts {
-        if let Some(part) = chat_completions_part(part)? {
+        if let Some(part) = chat_completions_part(part, allow_attachments)? {
             projected.push(part);
         }
     }
@@ -42,7 +113,10 @@ pub(super) fn responses_content(
     })
 }
 
-fn chat_completions_part(part: MessageContentPart) -> anyhow::Result<Option<serde_json::Value>> {
+fn chat_completions_part(
+    part: MessageContentPart,
+    allow_attachments: bool,
+) -> anyhow::Result<Option<serde_json::Value>> {
     Ok(match part {
         MessageContentPart::Text { text } => {
             (!text.trim().is_empty()).then(|| serde_json::json!({"type": "text", "text": text}))
@@ -56,6 +130,11 @@ fn chat_completions_part(part: MessageContentPart) -> anyhow::Result<Option<serd
             mime_type,
             metadata,
         } => {
+            if !allow_attachments {
+                anyhow::bail!(
+                    "OpenAI Chat Completions accepts attachments only in user messages; cannot represent attachment `{hash}` ({mime_type}) in this role"
+                );
+            }
             if mime_type.starts_with("image/")
                 && let Some(url) = attachment_url(&metadata)
             {
@@ -84,6 +163,32 @@ fn chat_completions_part(part: MessageContentPart) -> anyhow::Result<Option<serd
                 "OpenAI Chat Completions cannot represent attachment `{hash}` ({mime_type}); use an image URL, uploaded `file_id`, or `file_data` with `filename`"
             );
         }
+    })
+}
+
+pub(super) fn plain_text_content(
+    fallback: String,
+    parts: Vec<MessageContentPart>,
+    context: &str,
+) -> anyhow::Result<String> {
+    if parts.is_empty() {
+        return Ok(fallback);
+    }
+
+    let mut content = String::new();
+    for part in parts {
+        match part {
+            MessageContentPart::Text { text } => content.push_str(&text),
+            MessageContentPart::Structured { data } => content.push_str(&data.to_string()),
+            MessageContentPart::Attachment {
+                hash, mime_type, ..
+            } => anyhow::bail!("{context} cannot represent attachment `{hash}` ({mime_type})"),
+        }
+    }
+    Ok(if !is_non_empty(&content) {
+        fallback
+    } else {
+        content
     })
 }
 
@@ -188,7 +293,7 @@ mod tests {
     #[test]
     fn projects_chat_completions_image_input() {
         assert_eq!(
-            chat_completions_content(String::new(), image_parts()).unwrap(),
+            chat_completions_content(String::new(), image_parts(), true).unwrap(),
             Some(json!([
                 {"type": "text", "text": "Describe this image"},
                 {"type": "image_url", "image_url": {"url": "https://example.com/cat.png"}}
@@ -207,7 +312,7 @@ mod tests {
         };
 
         assert_eq!(
-            chat_completions_content(String::new(), parts()).unwrap(),
+            chat_completions_content(String::new(), parts(), true).unwrap(),
             Some(json!([{
                 "type": "file",
                 "file": {"file_data": "data:application/pdf;base64,AA==", "filename": "spec.pdf"}
@@ -236,7 +341,7 @@ mod tests {
             Some(json!("fallback"))
         );
         assert_eq!(
-            chat_completions_content("fallback".to_string(), parts()).unwrap(),
+            chat_completions_content("fallback".to_string(), parts(), true).unwrap(),
             Some(json!("fallback"))
         );
 
@@ -257,7 +362,7 @@ mod tests {
             metadata: json!({"file_url": "https://example.com/spec.pdf"}),
         }];
 
-        let error = chat_completions_content(String::new(), parts).unwrap_err();
+        let error = chat_completions_content(String::new(), parts, true).unwrap_err();
         assert!(error.to_string().contains("file_id"));
         assert!(error.to_string().contains("file_data"));
     }
@@ -276,5 +381,25 @@ mod tests {
                 .to_string()
                 .contains("cannot represent document attachment")
         );
+    }
+
+    #[test]
+    fn rejects_attachment_outside_chat_user_message() {
+        let error = chat_completions_content(String::new(), image_parts(), false).unwrap_err();
+        assert!(error.to_string().contains("only in user messages"));
+    }
+
+    #[test]
+    fn plain_text_projection_falls_back_for_blank_typed_parts() {
+        let content = plain_text_content(
+            "fallback".to_string(),
+            vec![MessageContentPart::Text {
+                text: "   ".to_string(),
+            }],
+            "test",
+        )
+        .unwrap();
+
+        assert_eq!(content, "fallback");
     }
 }

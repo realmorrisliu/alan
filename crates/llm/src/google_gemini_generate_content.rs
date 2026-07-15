@@ -11,6 +11,10 @@ use tracing::{debug, error, instrument, warn};
 
 use crate::ReasoningEffort;
 
+mod input_projection;
+
+use input_projection::project_request_input;
+
 /// Client for the Google Gemini GenerateContent API.
 pub struct GoogleGeminiGenerateContentClient {
     /// HTTP client
@@ -560,7 +564,7 @@ impl Content {
 // ============================================================================
 
 use crate::{
-    GenerationRequest, GenerationResponse, LlmProvider, MessageRole, SseEventParser,
+    GenerationRequest, GenerationResponse, LlmProvider, SseEventParser,
     StreamChunk as UnifiedStreamChunk, TokenUsage, ToolCall as LlmToolCall,
 };
 
@@ -690,28 +694,7 @@ fn gemini_budget_for_effort(effort: ReasoningEffort) -> i32 {
 impl LlmProvider for GoogleGeminiGenerateContentClient {
     async fn generate(&mut self, request: GenerationRequest) -> anyhow::Result<GenerationResponse> {
         let thinking_config = build_gemini_thinking_config(&self.model, request.reasoning.effort)?;
-        // Convert messages to Gemini format
-        let contents: Vec<Content> = request
-            .messages
-            .iter()
-            .filter_map(|msg| match msg.role {
-                MessageRole::User | MessageRole::Context => {
-                    Some(Content::user(vec![Part::text(msg.content.clone())]))
-                }
-                MessageRole::Assistant => {
-                    Some(Content::model(vec![Part::text(msg.content.clone())]))
-                }
-                MessageRole::Tool => {
-                    let name = msg.tool_call_id.clone()?;
-                    let payload = serde_json::from_str(&msg.content)
-                        .unwrap_or_else(|_| serde_json::json!({"result": msg.content}));
-                    Some(Content::function(vec![Part::function_response(
-                        name, payload,
-                    )]))
-                }
-                MessageRole::System => None, // System prompt handled separately
-            })
-            .collect();
+        let input = project_request_input(request.system_prompt.as_deref(), &request.messages)?;
 
         // Build tools
         let tools_payload = if request.tools.is_empty() {
@@ -731,15 +714,9 @@ impl LlmProvider for GoogleGeminiGenerateContentClient {
             }])
         };
 
-        // Build system instruction
-        let system_instruction = request.system_prompt.map(|sys| Content {
-            role: None,
-            parts: vec![Part::text(sys)],
-        });
-
         let gemini_request = GoogleGeminiGenerateContentRequest {
-            contents,
-            system_instruction,
+            contents: input.contents,
+            system_instruction: input.system_instruction,
             tools: tools_payload,
             generation_config: Some(GenerationConfig {
                 temperature: request.temperature,
@@ -851,28 +828,7 @@ impl LlmProvider for GoogleGeminiGenerateContentClient {
         request: GenerationRequest,
     ) -> anyhow::Result<tokio::sync::mpsc::Receiver<UnifiedStreamChunk>> {
         let thinking_config = build_gemini_thinking_config(&self.model, request.reasoning.effort)?;
-        // Convert messages to Gemini format
-        let contents: Vec<Content> = request
-            .messages
-            .iter()
-            .filter_map(|msg| match msg.role {
-                MessageRole::User | MessageRole::Context => {
-                    Some(Content::user(vec![Part::text(msg.content.clone())]))
-                }
-                MessageRole::Assistant => {
-                    Some(Content::model(vec![Part::text(msg.content.clone())]))
-                }
-                MessageRole::Tool => {
-                    let name = msg.tool_call_id.clone()?;
-                    let payload = serde_json::from_str(&msg.content)
-                        .unwrap_or_else(|_| serde_json::json!({"result": msg.content}));
-                    Some(Content::function(vec![Part::function_response(
-                        name, payload,
-                    )]))
-                }
-                MessageRole::System => None,
-            })
-            .collect();
+        let input = project_request_input(request.system_prompt.as_deref(), &request.messages)?;
 
         // Build tools
         let tools_payload = if request.tools.is_empty() {
@@ -892,14 +848,9 @@ impl LlmProvider for GoogleGeminiGenerateContentClient {
             }])
         };
 
-        let system_instruction = request.system_prompt.map(|sys| Content {
-            role: None,
-            parts: vec![Part::text(sys)],
-        });
-
         let gemini_request = GoogleGeminiGenerateContentRequest {
-            contents,
-            system_instruction,
+            contents: input.contents,
+            system_instruction: input.system_instruction,
             tools: tools_payload,
             generation_config: Some(GenerationConfig {
                 temperature: request.temperature,

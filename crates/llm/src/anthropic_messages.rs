@@ -10,7 +10,7 @@ use crate::message::reject_retired_message_overrides;
 
 mod input_projection;
 
-use input_projection::content_blocks;
+use input_projection::convert_messages_for_anthropic_messages;
 
 const MIN_THINKING_BUDGET_TOKENS: u32 = 1_024;
 const INTERLEAVED_THINKING_BETA: &str = "interleaved-thinking-2025-05-14";
@@ -431,112 +431,13 @@ impl AnthropicMessagesToolDefinition {
 }
 
 use crate::{
-    GenerationRequest, GenerationResponse, LlmProvider, Message as LlmMessage, MessageRole,
-    SseEventParser, StreamChunk, TokenUsage, ToolCall as LlmToolCall, ToolCallDelta,
-    ToolDefinition as LlmToolDefinition,
+    GenerationRequest, GenerationResponse, LlmProvider, SseEventParser, StreamChunk, TokenUsage,
+    ToolCall as LlmToolCall, ToolCallDelta, ToolDefinition as LlmToolDefinition,
 };
 use async_trait::async_trait;
 
 fn is_non_empty(value: &str) -> bool {
     !value.trim().is_empty()
-}
-
-fn convert_messages_for_anthropic_messages(
-    messages: Vec<LlmMessage>,
-) -> Result<Vec<AnthropicMessagesMessage>> {
-    let mut converted = Vec::new();
-    let mut known_tool_use_ids = std::collections::HashSet::new();
-
-    for msg in messages {
-        let LlmMessage {
-            role,
-            content,
-            content_parts,
-            thinking,
-            thinking_signature,
-            redacted_thinking,
-            tool_calls,
-            tool_call_id,
-        } = msg;
-
-        let content_blocks = match role {
-            MessageRole::User => content_blocks(content, content_parts)?,
-            MessageRole::Assistant => {
-                let mut blocks = Vec::new();
-
-                if let Some(thinking) = thinking
-                    && !thinking.is_empty()
-                {
-                    blocks.push(ContentBlockInput::Thinking {
-                        thinking,
-                        signature: thinking_signature.filter(|sig| is_non_empty(sig)),
-                    });
-                }
-
-                if let Some(redacted_blocks) = redacted_thinking {
-                    for data in redacted_blocks {
-                        if is_non_empty(&data) {
-                            blocks.push(ContentBlockInput::RedactedThinking { data });
-                        }
-                    }
-                }
-
-                blocks.extend(content_blocks(content, content_parts)?);
-
-                if let Some(calls) = tool_calls {
-                    for call in calls {
-                        if let Some(id) = call.id.filter(|id| is_non_empty(id)) {
-                            known_tool_use_ids.insert(id.clone());
-                            blocks.push(ContentBlockInput::ToolUse {
-                                id,
-                                name: call.name,
-                                input: call.arguments,
-                            });
-                        }
-                    }
-                }
-
-                blocks
-            }
-            MessageRole::Tool => {
-                if let Some(tool_use_id) = tool_call_id.filter(|id| is_non_empty(id)) {
-                    if known_tool_use_ids.contains(&tool_use_id) {
-                        vec![ContentBlockInput::ToolResult {
-                            tool_use_id,
-                            content,
-                            is_error: None,
-                        }]
-                    } else if !content.is_empty() {
-                        vec![ContentBlockInput::Text { text: content }]
-                    } else {
-                        Vec::new()
-                    }
-                } else if !content.is_empty() {
-                    vec![ContentBlockInput::Text { text: content }]
-                } else {
-                    Vec::new()
-                }
-            }
-            MessageRole::System | MessageRole::Context => Vec::new(),
-        };
-
-        if content_blocks.is_empty() {
-            continue;
-        }
-
-        let role = match role {
-            MessageRole::User | MessageRole::Tool => "user".to_string(),
-            MessageRole::Assistant => "assistant".to_string(),
-            MessageRole::System | MessageRole::Context => continue,
-        };
-
-        converted.push(AnthropicMessagesMessage {
-            role,
-            content: content_blocks,
-        });
-    }
-
-    Ok(converted)
 }
 
 fn convert_tools_for_anthropic_messages(
@@ -906,7 +807,8 @@ impl LlmProvider for AnthropicMessagesClient {
             mut extra_params,
         } = request;
 
-        let messages = convert_messages_for_anthropic_messages(request_messages)?;
+        let (messages, system_prompt) =
+            convert_messages_for_anthropic_messages(request_messages, system_prompt)?;
         let tools = convert_tools_for_anthropic_messages(request_tools);
         let request_headers = build_request_headers(&messages, &mut extra_params)?;
         if !extra_params.is_empty() {
@@ -955,7 +857,8 @@ impl LlmProvider for AnthropicMessagesClient {
             mut extra_params,
         } = request;
 
-        let messages = convert_messages_for_anthropic_messages(request_messages)?;
+        let (messages, system_prompt) =
+            convert_messages_for_anthropic_messages(request_messages, system_prompt)?;
         let tools = convert_tools_for_anthropic_messages(request_tools);
         let request_headers = build_request_headers(&messages, &mut extra_params)?;
         if !extra_params.is_empty() {
@@ -1235,6 +1138,7 @@ impl LlmProvider for AnthropicMessagesClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::MessageRole;
 
     #[test]
     fn anthropic_messages_url_appends_v1_when_missing() {
@@ -1675,7 +1579,8 @@ mod tests {
         );
         let tool = crate::Message::tool("toolu_123", "{\"ok\":true}");
 
-        let converted = convert_messages_for_anthropic_messages(vec![assistant, tool]).unwrap();
+        let (converted, _) =
+            convert_messages_for_anthropic_messages(vec![assistant, tool], None).unwrap();
         assert_eq!(converted.len(), 2);
 
         assert_eq!(converted[0].role, "assistant");
@@ -1712,7 +1617,7 @@ mod tests {
             tool_call_id: Some("   ".to_string()),
         };
 
-        let converted = convert_messages_for_anthropic_messages(vec![tool_msg]).unwrap();
+        let (converted, _) = convert_messages_for_anthropic_messages(vec![tool_msg], None).unwrap();
         assert_eq!(converted.len(), 1);
         assert_eq!(converted[0].role, "user");
         assert_eq!(converted[0].content.len(), 1);
@@ -1733,8 +1638,8 @@ mod tests {
         );
         let unmatched_tool_result = crate::Message::tool("toolu_unknown", "{\"ok\":true}");
 
-        let converted =
-            convert_messages_for_anthropic_messages(vec![assistant, unmatched_tool_result])
+        let (converted, _) =
+            convert_messages_for_anthropic_messages(vec![assistant, unmatched_tool_result], None)
                 .unwrap();
         assert_eq!(converted.len(), 2);
         assert_eq!(converted[1].role, "user");
@@ -1839,7 +1744,7 @@ mod tests {
             tool_call_id: None,
         };
 
-        let converted = convert_messages_for_anthropic_messages(vec![message]).unwrap();
+        let (converted, _) = convert_messages_for_anthropic_messages(vec![message], None).unwrap();
         assert_eq!(converted.len(), 1);
         assert_eq!(converted[0].role, "assistant");
         assert_eq!(converted[0].content.len(), 3);

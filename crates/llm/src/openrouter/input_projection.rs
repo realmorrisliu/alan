@@ -64,7 +64,7 @@ fn project_content(fallback: String, parts: Vec<MessageContentPart>) -> Result<S
         }
     }
 
-    Ok(if content.is_empty() {
+    Ok(if content.trim().is_empty() {
         fallback
     } else {
         content
@@ -106,5 +106,18 @@ mod tests {
         let error = convert_messages_for_openrouter(vec![message]).unwrap_err();
 
         assert!(error.to_string().contains("cannot represent attachment"));
+    }
+
+    #[test]
+    fn falls_back_when_typed_text_projects_to_nothing() {
+        let content = project_content(
+            "fallback".to_string(),
+            vec![MessageContentPart::Text {
+                text: "   ".to_string(),
+            }],
+        )
+        .unwrap();
+
+        assert_eq!(content, "fallback");
     }
 }

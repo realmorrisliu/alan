@@ -1,6 +1,7 @@
 use alan_llm::{
-    AnthropicMessagesClient, GenerationRequest, LlmProvider, Message, MessageContentPart,
-    OpenAiChatCompletionsClient, OpenAiResponsesClient, OpenRouterClient,
+    AnthropicMessagesClient, GenerationRequest, GoogleGeminiGenerateContentClient, LlmProvider,
+    Message, MessageContentPart, OpenAiChatCompletionsClient, OpenAiResponsesClient,
+    OpenRouterClient,
 };
 
 fn request_with_attachment(metadata: serde_json::Value) -> GenerationRequest {
@@ -73,6 +74,21 @@ async fn openrouter_rejects_attachment_before_dispatch() {
     let mut provider =
         OpenRouterClient::with_params("unused", "https://example.invalid/v1", "openai/gpt-5.4")
             .unwrap();
+
+    let error = provider
+        .generate(request_with_attachment(serde_json::json!({
+            "file_id": "file_123"
+        })))
+        .await
+        .unwrap_err();
+
+    assert!(error.to_string().contains("cannot represent attachment"));
+}
+
+#[tokio::test]
+async fn gemini_rejects_attachment_before_dispatch() {
+    let mut provider =
+        GoogleGeminiGenerateContentClient::with_params("unused", "us-central1", "gemini-2.5-pro");
 
     let error = provider
         .generate(request_with_attachment(serde_json::json!({

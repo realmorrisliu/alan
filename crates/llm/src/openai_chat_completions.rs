@@ -19,7 +19,10 @@ use async_trait::async_trait;
 
 mod input_projection;
 
-use input_projection::{chat_completions_content, responses_content};
+use input_projection::{
+    convert_messages_for_openai_chat_completions_with_instruction_role, plain_text_content,
+    responses_content,
+};
 
 /// Client for the OpenAI Chat Completions API and compatible endpoints.
 pub struct OpenAiChatCompletionsClient {
@@ -1328,70 +1331,6 @@ pub(crate) fn convert_messages_for_openai_chat_completions(
         .expect("test messages should have representable Chat Completions content")
 }
 
-fn convert_messages_for_openai_chat_completions_with_instruction_role(
-    messages: Vec<LlmMessage>,
-    instruction_role: &'static str,
-) -> Result<Vec<serde_json::Value>> {
-    messages
-        .into_iter()
-        .map(|msg| {
-            let LlmMessage {
-                role,
-                content,
-                content_parts,
-                thinking,
-                thinking_signature,
-                redacted_thinking: _,
-                tool_calls,
-                tool_call_id,
-            } = msg;
-            let role = match role {
-                MessageRole::System => instruction_role,
-                MessageRole::User => "user",
-                MessageRole::Assistant => "assistant",
-                MessageRole::Tool => "tool",
-                MessageRole::Context => instruction_role,
-            };
-
-            let tool_calls: Option<Vec<OpenAiChatCompletionsToolCall>> = tool_calls.map(|calls| {
-                calls
-                    .into_iter()
-                    .map(|call| OpenAiChatCompletionsToolCall {
-                        id: call.id.unwrap_or_default(),
-                        r#type: "function".to_string(),
-                        function: OpenAiChatCompletionsFunctionCall {
-                            name: call.name,
-                            arguments: call.arguments.to_string(),
-                        },
-                    })
-                    .collect()
-            });
-
-            let reasoning_content = if role == "assistant" {
-                thinking.filter(|value| is_non_empty(value))
-            } else {
-                None
-            };
-            let reasoning = if role == "assistant" {
-                thinking_signature
-                    .filter(|value| is_non_empty(value))
-                    .map(|signature| serde_json::json!({ "encrypted_content": signature }))
-            } else {
-                None
-            };
-
-            Ok(openai_chat_completions_message_value(
-                role,
-                chat_completions_content(content, content_parts)?,
-                reasoning_content,
-                reasoning,
-                tool_calls,
-                tool_call_id,
-            ))
-        })
-        .collect()
-}
-
 pub(crate) fn convert_tools_for_openai_chat_completions(
     tools: Vec<LlmToolDefinition>,
 ) -> (
@@ -1602,6 +1541,11 @@ pub(crate) fn convert_messages_for_openai_responses(
                 }
             }
             MessageRole::Tool => {
+                let output = plain_text_content(
+                    message.content,
+                    message.content_parts,
+                    "OpenAI Responses tool output",
+                )?;
                 let Some(call_id) = message.tool_call_id.filter(|value| is_non_empty(value)) else {
                     warn!("Skipping tool message without tool_call_id in Responses API projection");
                     continue;
@@ -1611,7 +1555,7 @@ pub(crate) fn convert_messages_for_openai_responses(
                     OpenAiResponsesFunctionCallOutputItem {
                         kind: "function_call_output".to_string(),
                         call_id,
-                        output: message.content,
+                        output,
                     },
                 ));
             }
