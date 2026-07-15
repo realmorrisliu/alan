@@ -23,7 +23,6 @@ crates/agentfs/tests/agent_root_overlay.rs 1645
 crates/alan/src/cli/shell.rs 1322
 crates/alan/src/cli/skill_authoring.rs 1187
 crates/alan/src/cli/skill_eval.rs 1167
-crates/alan/src/legacy_state.rs 1117
 crates/alan/src/main.rs 1370
 crates/auth/src/chatgpt.rs 1342
 crates/hostfs/src/lib.rs 1397

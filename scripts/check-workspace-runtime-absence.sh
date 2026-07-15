@@ -46,8 +46,8 @@ if rg -n "$implicit_path_pattern" crates --glob '*.rs' >"$matches_file"; then
     violations=()
     while IFS=: read -r file line text; do
         case "$file" in
-            crates/alan/src/legacy_state.rs)
-                continue # sole bounded migration/cleanup owner
+            crates/alan/src/legacy_state.rs | crates/alan/src/legacy_state/tests.rs)
+                continue # bounded migration/cleanup owner and adjacent white-box suite
                 ;;
             crates/agent-engine/src/agent_definition/tests.rs | crates/alan/tests/agent_definition_descriptor_integration_test.rs)
                 continue # negative regressions proving no implicit definition discovery
