@@ -33,7 +33,13 @@ awk -v max="$MAX_LINES" '
         path = $1
         lines = $2
         seen[path] = 1
-        if (lines > max && !(path in limit)) {
+        if (path in limit && limit[path] <= max) {
+            printf "error: %s has a stale <= %d-line debt limit; remove or correct it\n", path, max > "/dev/stderr"
+            failed = 1
+        } else if (path in limit && lines <= max) {
+            printf "error: %s is %d lines; remove its debt entry now that it is <= %d\n", path, lines, max > "/dev/stderr"
+            failed = 1
+        } else if (lines > max && !(path in limit)) {
             printf "error: %s is %d lines; new Rust files must be <= %d lines\n", path, lines, max > "/dev/stderr"
             failed = 1
         } else if (path in limit && lines != limit[path]) {
