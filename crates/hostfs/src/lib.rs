@@ -515,6 +515,8 @@ fn open_parent_for_entry(
 
 fn mkdir_child(parent_fd: RawFd, name: &str) -> Result<(), ErrorCode> {
     let name = c_name(name)?;
+    // SAFETY: parent_fd is borrowed from an open directory and name is a live
+    // NUL-terminated C string.
     let result = unsafe { libc::mkdirat(parent_fd, name.as_ptr(), 0o777) };
     if result == 0 {
         Ok(())
@@ -535,6 +537,8 @@ fn create_child_file_with_mode(
     mode: libc::mode_t,
 ) -> Result<std::fs::File, ErrorCode> {
     let name = c_name(name)?;
+    // SAFETY: parent_fd is an open directory descriptor, name is a valid C string, and flags/mode
+    // contain only values accepted by openat. The returned descriptor is checked before use.
     let fd = unsafe {
         libc::openat(
             parent_fd,
@@ -546,6 +550,7 @@ fn create_child_file_with_mode(
     if fd < 0 {
         return Err(map_create_error(std::io::Error::last_os_error()));
     }
+    // SAFETY: openat returned a new non-negative descriptor whose ownership transfers to File.
     Ok(unsafe { std::fs::File::from_raw_fd(fd) })
 }
 
@@ -561,6 +566,8 @@ fn remove_entry(root_dir: &std::fs::File, rel: &[String]) -> Result<(), ErrorCod
 
 fn unlink_child(parent_fd: RawFd, name: &str, flags: libc::c_int) -> Result<(), ErrorCode> {
     let name = c_name(name)?;
+    // SAFETY: parent_fd is borrowed from an open directory and name is a live
+    // NUL-terminated C string.
     let result = unsafe { libc::unlinkat(parent_fd, name.as_ptr(), flags) };
     if result == 0 {
         Ok(())
@@ -572,6 +579,7 @@ fn unlink_child(parent_fd: RawFd, name: &str, flags: libc::c_int) -> Result<(), 
 fn rename_child(parent_fd: RawFd, from: &str, to: &str) -> Result<(), ErrorCode> {
     let from = c_name(from)?;
     let to = c_name(to)?;
+    // SAFETY: parent_fd is an open directory and both names are live NUL-terminated C strings.
     let result = unsafe { libc::renameat(parent_fd, from.as_ptr(), parent_fd, to.as_ptr()) };
     if result == 0 {
         Ok(())
@@ -595,6 +603,8 @@ fn entry_kind_at(parent_fd: RawFd, name: &str) -> Result<HostEntryKind, ErrorCod
 fn entry_stat_at(parent_fd: RawFd, name: &str) -> Result<libc::stat, ErrorCode> {
     let name = c_name(name)?;
     let mut stat = std::mem::MaybeUninit::<libc::stat>::uninit();
+    // SAFETY: parent_fd is an open directory, name is a valid C string, and stat points to writable
+    // storage large enough for libc::stat. Success is checked before the storage is read.
     let result = unsafe {
         libc::fstatat(
             parent_fd,
@@ -606,6 +616,7 @@ fn entry_stat_at(parent_fd: RawFd, name: &str) -> Result<libc::stat, ErrorCode> 
     if result != 0 {
         return Err(map_open_error(std::io::Error::last_os_error()));
     }
+    // SAFETY: a successful fstatat initialized every field of stat.
     Ok(unsafe { stat.assume_init() })
 }
 
@@ -647,15 +658,19 @@ fn openat_file(
     mode: libc::mode_t,
 ) -> Result<std::fs::File, ErrorCode> {
     let name = c_name(name)?;
+    // SAFETY: parent_fd is an open directory descriptor, name is a valid C string, and the returned
+    // descriptor is checked before ownership is transferred.
     let fd = unsafe { libc::openat(parent_fd, name.as_ptr(), flags, mode as libc::c_uint) };
     if fd < 0 {
         return Err(map_open_error(std::io::Error::last_os_error()));
     }
+    // SAFETY: openat returned a new non-negative descriptor whose ownership transfers to File.
     Ok(unsafe { std::fs::File::from_raw_fd(fd) })
 }
 
 fn open_root_dir(path: &Path) -> Result<std::fs::File, ErrorCode> {
     let path = CString::new(path.as_os_str().as_bytes()).map_err(|_| ErrorCode::BadRequest)?;
+    // SAFETY: path is a live NUL-terminated C string and the returned descriptor is checked.
     let fd = unsafe {
         libc::open(
             path.as_ptr(),
@@ -665,11 +680,14 @@ fn open_root_dir(path: &Path) -> Result<std::fs::File, ErrorCode> {
     if fd < 0 {
         return Err(map_open_error(std::io::Error::last_os_error()));
     }
+    // SAFETY: open returned a new non-negative descriptor whose ownership transfers to File.
     Ok(unsafe { std::fs::File::from_raw_fd(fd) })
 }
 
 fn reopen_root_dir(root_dir: &std::fs::File) -> Result<std::fs::File, ErrorCode> {
     let dot = CString::new(".").expect("a literal dot has no NUL byte");
+    // SAFETY: root_dir owns an open directory descriptor, dot is a valid C string, and the returned
+    // descriptor is checked before ownership is transferred.
     let fd = unsafe {
         libc::openat(
             root_dir.as_raw_fd(),
@@ -681,6 +699,7 @@ fn reopen_root_dir(root_dir: &std::fs::File) -> Result<std::fs::File, ErrorCode>
     if fd < 0 {
         return Err(map_open_error(std::io::Error::last_os_error()));
     }
+    // SAFETY: openat returned a new non-negative descriptor whose ownership transfers to File.
     Ok(unsafe { std::fs::File::from_raw_fd(fd) })
 }
 
@@ -721,8 +740,11 @@ fn map_remove_error(error: std::io::Error) -> ErrorCode {
 
 fn directory_listing(file: std::fs::File) -> Result<Vec<u8>, ErrorCode> {
     let fd = file.into_raw_fd();
+    // SAFETY: fd is an owned open directory descriptor. On success fdopendir takes ownership.
     let dir = unsafe { libc::fdopendir(fd) };
     if dir.is_null() {
+        // SAFETY: fdopendir failed and therefore did not take ownership of fd;
+        // close it exactly once.
         unsafe {
             libc::close(fd);
         }
@@ -730,16 +752,20 @@ fn directory_listing(file: std::fs::File) -> Result<Vec<u8>, ErrorCode> {
     }
     let mut names = Vec::new();
     loop {
+        // SAFETY: dir is a non-null DIR pointer owned by this function until closedir below.
         let entry = unsafe { libc::readdir(dir) };
         if entry.is_null() {
             break;
         }
+        // SAFETY: readdir returned a live dirent whose d_name field is NUL-terminated and remains
+        // valid until the next readdir call.
         let name = unsafe { CStr::from_ptr((*entry).d_name.as_ptr()) };
         if name.to_bytes() == b"." || name.to_bytes() == b".." {
             continue;
         }
         names.push(String::from_utf8_lossy(name.to_bytes()).to_string());
     }
+    // SAFETY: dir is still owned here and has not previously been passed to closedir.
     let close_result = unsafe { libc::closedir(dir) };
     if close_result != 0 {
         return Err(ErrorCode::Io);
@@ -901,6 +927,7 @@ mod tests {
 
     #[cfg(unix)]
     fn running_as_root() -> bool {
+        // SAFETY: geteuid takes no pointers and has no caller-side preconditions.
         unsafe { libc::geteuid() == 0 }
     }
 
@@ -947,6 +974,7 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let fifo = temp.path().join("pipe");
         let fifo_path = CString::new(fifo.as_os_str().as_bytes()).unwrap();
+        // SAFETY: fifo_path is a live NUL-terminated C string and the mode contains valid bits.
         assert_eq!(unsafe { libc::mkfifo(fifo_path.as_ptr(), 0o600) }, 0);
         let fs = HostDirFs::new(temp.path(), HostDirAccess::ReadOnly).unwrap();
 

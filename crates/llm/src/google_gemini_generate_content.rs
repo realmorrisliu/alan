@@ -914,7 +914,7 @@ impl LlmProvider for GoogleGeminiGenerateContentClient {
         let (tx, rx) = tokio::sync::mpsc::channel(256);
 
         // Convert Gemini chunks to unified chunks
-        let convert_tx = tx.clone();
+        let convert_tx = tx;
         tokio::spawn(async move {
             let mut latest_usage: Option<TokenUsage> = None;
             let mut emitted_final = false;

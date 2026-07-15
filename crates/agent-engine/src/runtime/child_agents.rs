@@ -173,7 +173,13 @@ fn truncate_child_text_with_suffix(text: &str, max_chars: usize, suffix: &str) -
     truncated
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg_attr(
+    not(test),
+    allow(
+        dead_code,
+        reason = "controller is currently constructed only by the focused child-runtime tests"
+    )
+)]
 pub(crate) struct ChildRuntimeController {
     runtime: Option<RuntimeController>,
     startup_metadata: RuntimeStartupMetadata,
@@ -185,7 +191,10 @@ pub(crate) struct ChildRuntimeController {
     process_pid: String,
 }
 
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "non-cancellable adapter remains available to focused child-runtime tests"
+)]
 pub(crate) async fn spawn_child_runtime(
     parent: &RuntimeLoopState,
     spec: SpawnSpec,
@@ -193,7 +202,10 @@ pub(crate) async fn spawn_child_runtime(
     spawn_child_runtime_with_optional_cancel(parent, spec, None).await
 }
 
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "cancellable adapter remains available to focused child-runtime tests"
+)]
 pub(crate) async fn spawn_child_runtime_cancellable(
     parent: &RuntimeLoopState,
     spec: SpawnSpec,
@@ -436,7 +448,7 @@ async fn spawn_child_runtime_inner(
     let child_run_id = uuid::Uuid::new_v4().to_string();
     let mut child_run_record = ChildRunRecord::new(
         child_run_id.clone(),
-        parent.process_path().to_string(),
+        parent.process_path(),
         startup_metadata.process_path.clone(),
         Some(startup_metadata.agent_path.clone()),
         Some(format!("{:?}", spec.target)),
@@ -834,7 +846,10 @@ struct ResolvedLaunchRoot {
     file_tree: Option<crate::ProcessFileTree>,
 }
 
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "file observation helpers are exercised through focused child-runtime tests"
+)]
 impl ChildRuntimeController {
     async fn observe_files(&self) -> Result<Option<ChildFileObservation>> {
         let environment = &self.process_environment;
@@ -1591,7 +1606,13 @@ impl ChildNamespaceAssemblyPlan {
             .filter_map(|mount| mount.strip_prefix("/bin/"))
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg_attr(
+        not(test),
+        allow(
+            dead_code,
+            reason = "PID-specific exec cloning is exercised through the child-runtime test seam"
+        )
+    )]
     fn clone_exec_spec_for_pid<I, S>(
         &self,
         child_pid: &str,
@@ -1616,7 +1637,13 @@ impl ChildNamespaceAssemblyPlan {
         }
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg_attr(
+        not(test),
+        allow(
+            dead_code,
+            reason = "namespace manifests are currently exercised through the child-runtime test seam"
+        )
+    )]
     fn namespace_manifest_for_pid(&self, _child_pid: &str) -> ExecNamespaceManifest {
         let mut mounts = vec![
             ExecNamespaceMount::new(self.agent_mount.clone(), ExecNamespaceAccess::ReadWrite),
@@ -1696,7 +1723,13 @@ impl ChildNamespaceAssemblyPlan {
         ExecNamespaceManifest { mounts }
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg_attr(
+        not(test),
+        allow(
+            dead_code,
+            reason = "connection-name validation is currently exercised through focused tests"
+        )
+    )]
     fn llm_connection_name(&self) -> Result<String> {
         if self.llm_connection_name.is_empty() || self.llm_connection_name.contains('/') {
             bail!(
@@ -1708,7 +1741,13 @@ impl ChildNamespaceAssemblyPlan {
     }
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg_attr(
+    not(test),
+    allow(
+        dead_code,
+        reason = "launch handles currently support the child-runtime namespace test seam"
+    )
+)]
 #[derive(Clone)]
 struct ChildNamespaceLaunchHandles {
     agent_tree: Arc<alan_agentfs::AgentFs>,
@@ -1719,7 +1758,13 @@ struct ChildNamespaceLaunchHandles {
     tool_manifests: Vec<(String, InProcessTransport)>,
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg_attr(
+    not(test),
+    allow(
+        dead_code,
+        reason = "launch-handle construction currently supports the namespace test seam"
+    )
+)]
 impl ChildNamespaceLaunchHandles {
     fn new(
         agent_tree: Arc<alan_agentfs::AgentFs>,
@@ -1768,15 +1813,30 @@ fn child_namespace_launch_handles_from_parent(
     ))
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg_attr(
+    not(test),
+    allow(
+        dead_code,
+        reason = "launch result is currently observed through the child-runtime test seam"
+    )
+)]
 struct ChildNamespaceRuntimeLaunch {
     pid: String,
     exec: ExecSpec,
     environment: super::NamespaceRuntimeEnvironment,
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
-#[allow(clippy::too_many_arguments)]
+#[cfg_attr(
+    not(test),
+    allow(
+        dead_code,
+        reason = "namespace assembly is currently reached only by the child-runtime test seam"
+    )
+)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "arguments expose each namespace resource explicitly at the transitional assembly seam"
+)]
 async fn spawn_child_namespace_runtime_environment(
     launch_procfs: &alan_kernel::ProcFs,
     runtime_procfs: &alan_kernel::ProcFs,
@@ -1913,7 +1973,13 @@ async fn spawn_child_namespace_runtime_environment(
     })
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg_attr(
+    not(test),
+    allow(
+        dead_code,
+        reason = "launch-handle validation currently supports the namespace test seam"
+    )
+)]
 fn validate_child_namespace_launch_handles(
     plan: &ChildNamespaceAssemblyPlan,
     handles: &ChildNamespaceLaunchHandles,
@@ -1954,7 +2020,13 @@ fn validate_child_namespace_launch_handles(
     );
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg_attr(
+    not(test),
+    allow(
+        dead_code,
+        reason = "spawner namespace assembly currently supports the namespace test seam"
+    )
+)]
 fn child_spawner_namespace_from_launch_handles(
     plan: &ChildNamespaceAssemblyPlan,
     agent_root_tree: InProcessTransport,
@@ -1963,7 +2035,13 @@ fn child_spawner_namespace_from_launch_handles(
     child_namespace_from_launch_handles(plan, agent_root_tree, handles)
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg_attr(
+    not(test),
+    allow(
+        dead_code,
+        reason = "runtime namespace assembly currently supports the namespace test seam"
+    )
+)]
 fn child_runtime_namespace_from_launch_handles(
     plan: &ChildNamespaceAssemblyPlan,
     agent_root_tree: InProcessTransport,
@@ -1972,7 +2050,13 @@ fn child_runtime_namespace_from_launch_handles(
     child_namespace_from_launch_handles(plan, agent_root_tree, handles)
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg_attr(
+    not(test),
+    allow(
+        dead_code,
+        reason = "shared namespace assembly currently supports the namespace test seam"
+    )
+)]
 fn child_namespace_from_launch_handles(
     plan: &ChildNamespaceAssemblyPlan,
     agent_root_tree: InProcessTransport,
@@ -2038,7 +2122,13 @@ async fn child_observation_environment(
     .with_launch_context(plan.launch_context.clone()))
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg_attr(
+    not(test),
+    allow(
+        dead_code,
+        reason = "namespace FID allocation currently supports the namespace test seam"
+    )
+)]
 fn next_child_namespace_fid() -> Fid {
     Fid(NEXT_CHILD_NAMESPACE_FID.fetch_add(1, Ordering::Relaxed))
 }

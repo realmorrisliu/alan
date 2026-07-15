@@ -276,7 +276,7 @@ pub(crate) fn build_turn_memory_promotion_job(
 
     Some(TurnMemoryPromotionJob {
         memory_dir,
-        process_path: state.process_path().to_string(),
+        process_path: state.process_path(),
         active_turn_user_messages,
         llm_request_timeout_secs: state.runtime_config.llm_request_timeout_secs,
         warning_context,

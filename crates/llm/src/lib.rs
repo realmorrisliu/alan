@@ -1223,7 +1223,7 @@ pub mod mock {
             let tool_calls = response.tool_calls.clone();
             let usage = response.usage;
             let provider_response_id = response.provider_response_id.clone();
-            let provider_response_status = response.provider_response_status.clone();
+            let provider_response_status = response.provider_response_status;
             tokio::spawn(async move {
                 if !content.is_empty() {
                     let _ = tx

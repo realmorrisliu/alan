@@ -1636,7 +1636,7 @@ fn child_failure_result(
     output_reference: Option<&DelegatedSkillOutputRef>,
 ) -> DelegatedSkillResult {
     let mut delegated = DelegatedSkillResult::failed(
-        summary.clone(),
+        summary,
         Some(json!({
             "error_kind": error_kind
         })),
@@ -1856,9 +1856,9 @@ fn build_bounded_delegated_tape_record(
         result,
     };
     let mut arguments = json!({
-        "skill_id": record.skill_id.clone(),
-        "target": record.target.clone(),
-        "task": record.task.clone(),
+        "skill_id": record.skill_id,
+        "target": record.target,
+        "task": record.task,
     });
     if let Some(cwd) = record.cwd.as_ref() {
         arguments["cwd"] = json!(cwd);

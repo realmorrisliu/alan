@@ -147,7 +147,13 @@ impl TurnState {
     }
 
     /// Number of queued `next_turn` payloads.
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg_attr(
+        not(test),
+        allow(
+            dead_code,
+            reason = "queue count is exposed for the adjacent turn-state tests"
+        )
+    )]
     pub(crate) fn queued_next_turn_input_count(&self) -> usize {
         self.queued_next_turn_inputs.len()
     }
@@ -183,7 +189,13 @@ impl TurnState {
     }
 
     /// Get the latest pending key across all pending types
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg_attr(
+        not(test),
+        allow(
+            dead_code,
+            reason = "pending-key inspection is exposed for the adjacent turn-state tests"
+        )
+    )]
     pub(crate) fn latest_pending_key(&self) -> Option<String> {
         self.pending_order.last().cloned()
     }
@@ -192,7 +204,13 @@ impl TurnState {
         self.turn_activity = activity;
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg_attr(
+        not(test),
+        allow(
+            dead_code,
+            reason = "activity inspection is exposed for the adjacent turn-state tests"
+        )
+    )]
     pub(crate) fn turn_activity(&self) -> TurnActivityState {
         self.turn_activity
     }
@@ -320,12 +338,24 @@ impl TurnState {
         self.last_compaction_prompt_tokens = Some(output_prompt_tokens);
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg_attr(
+        not(test),
+        allow(
+            dead_code,
+            reason = "compaction-count inspection is exposed for the adjacent turn-state tests"
+        )
+    )]
     pub(crate) fn compactions_this_turn(&self) -> u32 {
         self.compactions_this_turn
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg_attr(
+        not(test),
+        allow(
+            dead_code,
+            reason = "confirmation adapter is exposed for the adjacent turn-state tests"
+        )
+    )]
     pub(crate) fn set_confirmation(&mut self, pending: PendingConfirmation) {
         self.set_confirmation_for_request(pending.checkpoint_id.clone(), pending);
     }
@@ -367,7 +397,13 @@ impl TurnState {
         self.pending_tool_replay_batches.remove(checkpoint_id)
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg_attr(
+        not(test),
+        allow(
+            dead_code,
+            reason = "structured-input adapter is exposed for the adjacent turn-state tests"
+        )
+    )]
     pub(crate) fn set_structured_input(&mut self, pending: PendingStructuredInputRequest) {
         self.set_structured_input_for_request(pending.request_id.clone(), pending);
     }
@@ -790,7 +826,7 @@ mod tests {
             },
         ];
 
-        state.set_tool_replay_batch("cp-1", tool_calls.clone());
+        state.set_tool_replay_batch("cp-1", tool_calls);
 
         let retrieved = state.take_tool_replay_batch("cp-1").unwrap();
         assert_eq!(retrieved.len(), 2);

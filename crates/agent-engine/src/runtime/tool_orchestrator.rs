@@ -1947,12 +1947,12 @@ mod tests {
         let mut process_namespace = Namespace::new();
         process_namespace.mount(
             agent_path,
-            InProcessTransport::new(agentfs.clone()),
+            InProcessTransport::new(agentfs),
             Access::ReadWrite,
         );
         process_namespace.mount(
             "/mnt/llm",
-            InProcessTransport::new(llmfs.clone()),
+            InProcessTransport::new(llmfs),
             Access::ReadWrite,
         );
         for tool_name in tools.list_tools() {

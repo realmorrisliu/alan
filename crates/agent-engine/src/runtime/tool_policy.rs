@@ -252,7 +252,7 @@ pub(super) fn evaluate_tool_policy(
                 reason: Some(reason),
                 capability: capability_label(capability).to_string(),
                 sandbox_backend: sandbox_backend.to_string(),
-                path_mode: Some(path_mode.clone()),
+                path_mode: Some(path_mode),
             },
         };
     }
@@ -369,13 +369,13 @@ pub(super) fn evaluate_tool_policy(
     match action {
         crate::policy::PolicyAction::Allow => ToolPolicyDecision::Allow {
             audit: alan_agent_protocol::ToolDecisionAudit {
-                policy_source: policy_source.clone(),
-                rule_id: rule_id.clone(),
+                policy_source,
+                rule_id,
                 action: "allow".to_string(),
-                reason: policy_reason.clone(),
+                reason: policy_reason,
                 capability: capability_kind,
                 sandbox_backend: sandbox_backend.to_string(),
-                path_mode: Some(path_mode.clone()),
+                path_mode: Some(path_mode),
             },
         },
         crate::policy::PolicyAction::Deny => ToolPolicyDecision::Forbidden {
@@ -383,13 +383,13 @@ pub(super) fn evaluate_tool_policy(
                 .clone()
                 .unwrap_or_else(|| format!("Tool '{}' denied by policy", tool_name)),
             audit: alan_agent_protocol::ToolDecisionAudit {
-                policy_source: policy_source.clone(),
-                rule_id: rule_id.clone(),
+                policy_source,
+                rule_id,
                 action: "deny".to_string(),
-                reason: policy_reason.clone(),
+                reason: policy_reason,
                 capability: capability_kind,
                 sandbox_backend: sandbox_backend.to_string(),
-                path_mode: Some(path_mode.clone()),
+                path_mode: Some(path_mode),
             },
         },
         crate::policy::PolicyAction::Escalate => ToolPolicyDecision::Escalate {
@@ -425,7 +425,7 @@ pub(super) fn evaluate_tool_policy(
                     "action": "escalate"
                 },
                 "sandbox_backend": sandbox_backend,
-                "path_mode": path_mode.clone()
+                "path_mode": path_mode
             }),
             audit: alan_agent_protocol::ToolDecisionAudit {
                 policy_source,

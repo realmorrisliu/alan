@@ -18,7 +18,10 @@ pub fn build_agent_system_prompt(config: &Config, domain_prompt: &str) -> String
     build_agent_system_prompt_from_sections(domain_prompt, &[], memory_context.as_deref())
 }
 
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "persona-directory adapter remains available to focused white-box tests during descriptor migration"
+)]
 pub(crate) fn build_agent_system_prompt_from_persona_dirs(
     domain_prompt: &str,
     definition_persona_dirs: &[PathBuf],

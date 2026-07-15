@@ -1809,7 +1809,10 @@ impl FileBackedApp {
 
 #[derive(Deserialize)]
 struct TapeRecordV1 {
-    #[allow(dead_code)]
+    #[allow(
+        dead_code,
+        reason = "version is part of the persisted tape schema even though deserialization validates it elsewhere"
+    )]
     version: u16,
     kind: String,
     role: String,

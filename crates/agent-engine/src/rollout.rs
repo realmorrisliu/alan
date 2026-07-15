@@ -718,7 +718,10 @@ impl RolloutRecorder {
     }
 
     /// Record a turn context snapshot
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "arguments map directly to the durable turn-context record fields"
+    )]
     pub async fn record_turn_context(
         &self,
         model: &str,
@@ -747,7 +750,10 @@ impl RolloutRecorder {
     }
 
     /// Record a turn context snapshot without waiting on IO completion.
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "arguments map directly to the durable turn-context record fields"
+    )]
     pub fn record_turn_context_nowait(
         &self,
         model: &str,
@@ -1895,7 +1901,7 @@ this is not valid json
             timestamp: "2026-01-29T14:31:00Z".to_string(),
         };
 
-        let json = serde_json::to_string(&RolloutItem::CompactionAttempt(attempt.clone())).unwrap();
+        let json = serde_json::to_string(&RolloutItem::CompactionAttempt(attempt)).unwrap();
         assert!(json.contains("\"compaction_attempt\""));
         assert!(json.contains("\"attempt-123\""));
         assert!(json.contains("\"retry\""));

@@ -325,7 +325,7 @@ impl ShellControlReducer {
                     space_id: command.space_id.clone(),
                     title: command.title.clone(),
                     working_directory: command.cwd.clone(),
-                    terminal_profile_id: command.terminal_profile_id.clone(),
+                    terminal_profile_id: command.terminal_profile_id,
                     reserved_pane_slot_ids: Vec::new(),
                 },
                 ResponseProjection::Current,
@@ -393,7 +393,7 @@ impl ShellControlReducer {
                     command.clone(),
                     ReducerOperation::MovePaneToNewTab {
                         pane_slot_id,
-                        title: command.title.clone(),
+                        title: command.title,
                     },
                     ResponseProjection::Current,
                 )
@@ -428,7 +428,7 @@ impl ShellControlReducer {
             ShellControlCommandKind::PaneEqualizeSplits => self.apply_reducer(
                 command.clone(),
                 ReducerOperation::EqualizeSplits {
-                    tab_id: command.tab_id.clone(),
+                    tab_id: command.tab_id,
                 },
                 ResponseProjection::Current,
             ),
@@ -445,7 +445,7 @@ impl ShellControlReducer {
             ShellControlCommandKind::PaneUnzoom => self.apply_reducer(
                 command.clone(),
                 ReducerOperation::UnzoomTab {
-                    tab_id: command.tab_id.clone(),
+                    tab_id: command.tab_id,
                 },
                 ResponseProjection::Zoom,
             ),
@@ -609,7 +609,7 @@ impl ShellControlReducer {
                 placement: placement_for_split_direction(direction),
                 title: command.title.clone(),
                 working_directory: command.cwd.clone(),
-                terminal_profile_id: command.terminal_profile_id.clone(),
+                terminal_profile_id: command.terminal_profile_id,
                 reserved_pane_slot_ids: Vec::new(),
             },
             ResponseProjection::Snapshot,
@@ -791,7 +791,7 @@ impl ShellControlReducer {
             .pane_slot_id
             .clone()
             .or_else(|| command.pane_id.clone());
-        response.content_id = command.content_id.clone();
+        response.content_id = command.content_id;
         fill_content_projection(&mut response, &self.state);
         ShellControlResult {
             response,

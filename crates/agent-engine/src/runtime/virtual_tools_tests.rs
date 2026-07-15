@@ -2906,7 +2906,10 @@ Use this skill when asked.
         &mut emit,
         |_state, _spec, _cancel| {
             panic!("unsupported runtimes must not spawn delegated runtimes");
-            #[allow(unreachable_code)]
+            #[allow(
+                unreachable_code,
+                reason = "the typed future after panic satisfies the injected spawn closure signature"
+            )]
             Box::pin(async move {
                 Ok(ChildRuntimeResult {
                     status: ChildRuntimeStatus::Completed,
@@ -3589,7 +3592,10 @@ async fn test_try_handle_virtual_tool_call_rejects_target_mismatch() {
         &mut emit,
         |_state, _spec, _cancel| {
             panic!("target mismatch should not attempt child launch");
-            #[allow(unreachable_code)]
+            #[allow(
+                unreachable_code,
+                reason = "the typed future after panic satisfies the injected spawn closure signature"
+            )]
             Box::pin(async move {
                 Ok(ChildRuntimeResult {
                     status: ChildRuntimeStatus::Completed,

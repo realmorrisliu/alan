@@ -1323,7 +1323,7 @@ mod tests {
             "alan-missing-config-{}.toml",
             uuid::Uuid::new_v4().simple()
         ));
-        let error = Config::load_from_override(Some(missing.clone())).unwrap_err();
+        let error = Config::load_from_override(Some(missing)).unwrap_err();
         assert!(
             error
                 .to_string()

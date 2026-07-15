@@ -405,7 +405,7 @@ impl ToolRegistry {
                             anyhow::anyhow!("Invalid tool schema for {}: {}", tool.name(), e)
                         })?,
                 );
-                cache.insert(tool_name.clone(), Arc::clone(&compiled));
+                cache.insert(tool_name, Arc::clone(&compiled));
                 compiled
             }
         };

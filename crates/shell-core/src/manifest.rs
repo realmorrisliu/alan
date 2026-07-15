@@ -218,7 +218,7 @@ impl ShellContentWorkspaceManifest {
         let snapshot = ShellContentTabRestoreSnapshot {
             pane_tree: PaneTreeNode::pane("node_pane_1", &pane_slot_id),
             pane_slots: vec![ShellPaneSlotRestoreRecord {
-                pane_slot_id: pane_slot_id.clone(),
+                pane_slot_id,
                 content_id: content_id.clone(),
             }],
             contents: vec![ShellContentRestoreRecord {

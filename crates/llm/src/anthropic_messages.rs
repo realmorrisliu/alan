@@ -1021,7 +1021,7 @@ impl LlmProvider for AnthropicMessagesClient {
         // Spawn streaming task
         let client =
             AnthropicMessagesClient::with_params(&self.api_key, &self.base_url, &self.model);
-        let request_headers_for_task = request_headers.clone();
+        let request_headers_for_task = request_headers;
         tokio::spawn(async move {
             if let Err(e) = client
                 .stream_anthropic_messages_with_headers(

@@ -1236,9 +1236,7 @@ impl WorkspaceReducer {
             terminal_profile_id.as_deref(),
         ));
 
-        self.changed_ids
-            .updated_tab_ids
-            .push(source_slot.tab_id.clone());
+        self.changed_ids.updated_tab_ids.push(source_slot.tab_id);
         self.changed_ids
             .created_pane_slot_ids
             .push(pane_slot_id_new.clone());
@@ -1315,9 +1313,7 @@ impl WorkspaceReducer {
             .contents
             .push(content_instance(&content_id, kind, title, payload));
 
-        self.changed_ids
-            .updated_tab_ids
-            .push(source_slot.tab_id.clone());
+        self.changed_ids.updated_tab_ids.push(source_slot.tab_id);
         self.changed_ids
             .created_pane_slot_ids
             .push(pane_slot_id_new.clone());
@@ -1842,7 +1838,7 @@ impl WorkspaceReducer {
         direction: SplitDirection,
     ) -> Result<(), ReducerError> {
         let pane_slot = self.require_pane_slot(pane_slot_id)?.clone();
-        let source_tab_id = pane_slot.tab_id.clone();
+        let source_tab_id = pane_slot.tab_id;
         if source_tab_id == target_tab_id {
             return Err(ReducerError::new(
                 ReducerErrorCode::InvalidMoveTarget,

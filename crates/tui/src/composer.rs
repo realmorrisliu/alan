@@ -411,7 +411,7 @@ mod tests {
         }
         let loaded = load_history(&path, 100);
         assert_eq!(loaded, vec!["persisted entry".to_string()]);
-        let mut next = Composer::with_history(loaded, Some(path.clone()));
+        let mut next = Composer::with_history(loaded, Some(path));
         next.handle_key(key(KeyCode::Up));
         assert_eq!(next.text(), "persisted entry");
     }

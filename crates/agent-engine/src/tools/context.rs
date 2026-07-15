@@ -361,7 +361,7 @@ mod tests {
             read_denylist: Vec::new(),
             network: crate::tools::NetworkPosture::Deny,
         };
-        let binding = ToolExecutionBinding::new(source.clone(), PathBuf::from("/tmp/scratch"))
+        let binding = ToolExecutionBinding::new(source, PathBuf::from("/tmp/scratch"))
             .with_sandbox_spec(spec.clone());
         let ctx = ToolContext::from_binding(binding, config);
 
