@@ -27,7 +27,8 @@
   in this checkout, and verify staged-whitespace and quality failures block a
   commit.
 - [x] 3.3 Replace duplicated CI fmt/Clippy/doc command lists with one required
-  quality job using the pinned toolchain while preserving behavioral jobs.
+  canonical quality job plus a required macOS lane that invokes the same Rust
+  quality module using the pinned toolchain, while preserving behavioral jobs.
 - [x] 3.4 Update contributor-facing validation text and the pull request
   checklist to name the canonical gate and the CI-versus-hook enforcement model.
 

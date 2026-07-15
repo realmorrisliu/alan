@@ -53,6 +53,13 @@ blanket-deny the full `pedantic`, `nursery`, `restriction`, or `cargo` groups.
   suppression
 - **THEN** the canonical quality gate fails
 
+#### Scenario: Suppression exists only in platform-gated Rust
+- **WHEN** an `allow` or `expect` attribute without a reason is compiled only on
+  a supported macOS target
+- **THEN** a required macOS Rust-quality CI lane runs the same curated lint
+  policy against that target
+- **AND** the pull request cannot merge
+
 #### Scenario: Test double uses an intentionally incomplete operation
 - **WHEN** test-only code requires an explicit incomplete-operation stub
 - **THEN** the production-target restriction does not misclassify it as shipped
@@ -153,6 +160,12 @@ interface as a required CI check.
 - **WHEN** a commit is created with `--no-verify` or without installed hooks
 - **THEN** required CI still runs the canonical quality gate
 - **AND** a failing commit cannot merge through the protected branch gate
+
+#### Scenario: Host platform hides gated source
+- **WHEN** the canonical Linux quality job cannot compile macOS-gated Rust
+  source
+- **THEN** a required macOS Rust-quality job compiles and lints that source
+- **AND** both required quality contexts must pass before merge
 
 #### Scenario: Commit fails quality validation
 - **WHEN** staged code violates a quality rule

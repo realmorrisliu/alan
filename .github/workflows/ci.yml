@@ -47,6 +47,25 @@ jobs:
         env:
           ALAN_QUALITY_BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before }}
 
+  rust-quality-macos:
+    name: Rust Quality (macos-latest)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@1.97.0
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache Cargo dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-bin: false
+
+      - name: Run macOS Rust quality checks
+        run: ./scripts/check-rust-quality.sh
+
   shell-design-tokens:
     name: Shell Design Token Guard
     runs-on: ubuntu-latest

@@ -48,7 +48,10 @@ build-target configuration therefore cannot make a guard inspect a stale file.
 
 `just check` becomes non-mutating and delegates to the quality interface before
 tests. CI keeps behavioral test/build/harness jobs separate but makes the
-quality job required for pull requests and protected branches.
+quality job required for pull requests and protected branches. A second
+required macOS Rust-quality lane invokes the same owning Rust-quality module so
+platform-gated source is compiled with its real target configuration rather
+than inferred by a host-independent text scan.
 
 Alternative considered: keep independent fmt, Clippy, and architecture jobs.
 Rejected because the local hook and CI would continue to have different test
@@ -125,7 +128,8 @@ the canonical quality interface. If the working tree differs from the index,
 the hook materializes an index-only snapshot so unstaged fixes or untracked
 files cannot make invalid staged code pass. It documents that `--no-verify` can
 bypass a local hook; protected-branch required CI is the non-bypassable merge
-condition.
+condition. Required CI also runs the Rust-quality module on macOS so lint policy
+covers supported platform-gated Rust source.
 
 Alternative considered: copy a hook directly into `.git/hooks`. Rejected
 because Git does not version that directory and updates would drift.
