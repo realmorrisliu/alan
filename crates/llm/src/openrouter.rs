@@ -288,11 +288,9 @@ pub(crate) fn convert_messages_for_openrouter(messages: Vec<Message>) -> Result<
             let Message {
                 role,
                 content,
-                thinking: _thinking,
-                thinking_signature: _thinking_signature,
-                redacted_thinking: _,
                 tool_calls,
                 tool_call_id,
+                ..
             } = message;
 
             Ok(match role {
@@ -919,17 +917,10 @@ mod tests {
             .with_assistant_message("thinking done")
             .with_tool(ToolDefinition::new("lookup", "Lookup data"))
             .with_reasoning_effort(ReasoningEffort::Low);
-        request.messages.push(Message {
-            role: MessageRole::Assistant,
-            content: String::new(),
-            thinking: None,
-            thinking_signature: None,
-            redacted_thinking: None,
-            tool_calls: Some(vec![
-                ToolCall::new("lookup", json!({"q":"rust"})).with_id("call-1"),
-            ]),
-            tool_call_id: None,
-        });
+        request.messages.push(Message::assistant_with_tools(
+            "",
+            vec![ToolCall::new("lookup", json!({"q":"rust"})).with_id("call-1")],
+        ));
         request
             .messages
             .push(Message::tool("call-1", "tool result"));
@@ -951,15 +942,10 @@ mod tests {
     #[test]
     fn request_payload_preserves_assistant_reasoning_fields() {
         let mut request = GenerationRequest::new().with_user_message("hello");
-        request.messages.push(Message {
-            role: MessageRole::Assistant,
-            content: "answer".to_string(),
-            thinking: Some("step by step".to_string()),
-            thinking_signature: Some("encrypted_state".to_string()),
-            redacted_thinking: None,
-            tool_calls: None,
-            tool_call_id: None,
-        });
+        let mut assistant = Message::assistant("answer");
+        assistant.thinking = Some("step by step".to_string());
+        assistant.thinking_signature = Some("encrypted_state".to_string());
+        request.messages.push(assistant);
 
         let value = build_openrouter_chat_request_payload("openrouter/model", request).unwrap();
 
@@ -974,15 +960,9 @@ mod tests {
     #[test]
     fn missing_tool_call_id_fails_projection_before_dispatch() {
         let mut request = GenerationRequest::new().with_user_message("hello");
-        request.messages.push(Message {
-            role: MessageRole::Tool,
-            content: "tool result".to_string(),
-            thinking: None,
-            thinking_signature: None,
-            redacted_thinking: None,
-            tool_calls: None,
-            tool_call_id: None,
-        });
+        let mut tool = Message::tool("", "tool result");
+        tool.tool_call_id = None;
+        request.messages.push(tool);
 
         let error = build_openrouter_chat_request("openrouter/model", request).unwrap_err();
 

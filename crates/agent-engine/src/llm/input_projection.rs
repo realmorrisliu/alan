@@ -1,4 +1,4 @@
-use super::{Message, MessageRole, ToolCall};
+use super::{Message, MessageContentPart, MessageRole, ToolCall};
 use crate::agent_machine::{Message as MachineMessage, MessageRole as MachineMessageRole};
 use crate::tape::ContentPart;
 
@@ -17,6 +17,7 @@ pub(crate) fn project_messages(
                 .map(|response| Message {
                     role: MessageRole::Tool,
                     content: project_tool_response(&response.content),
+                    content_parts: Vec::new(),
                     thinking: None,
                     thinking_signature: None,
                     redacted_thinking: None,
@@ -47,6 +48,7 @@ pub(crate) fn project_messages(
                 vec![Message {
                     role,
                     content: message.non_thinking_text_content(),
+                    content_parts: project_rich_content_parts(message.parts()),
                     thinking: preserve_thinking
                         .then(|| message.thinking_content())
                         .flatten(),
@@ -63,6 +65,35 @@ pub(crate) fn project_messages(
                     tool_call_id: None,
                 }]
             }
+        })
+        .collect()
+}
+
+fn project_rich_content_parts(parts: &[ContentPart]) -> Vec<MessageContentPart> {
+    if !parts
+        .iter()
+        .any(|part| matches!(part, ContentPart::Attachment { .. }))
+    {
+        return Vec::new();
+    }
+
+    parts
+        .iter()
+        .filter_map(|part| match part {
+            ContentPart::Text { text } => Some(MessageContentPart::Text { text: text.clone() }),
+            ContentPart::Attachment {
+                hash,
+                mime_type,
+                metadata,
+            } => Some(MessageContentPart::Attachment {
+                hash: hash.clone(),
+                mime_type: mime_type.clone(),
+                metadata: metadata.clone(),
+            }),
+            ContentPart::Structured { data } => {
+                Some(MessageContentPart::Structured { data: data.clone() })
+            }
+            ContentPart::Thinking { .. } | ContentPart::RedactedThinking { .. } => None,
         })
         .collect()
 }

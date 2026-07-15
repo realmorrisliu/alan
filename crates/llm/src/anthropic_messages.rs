@@ -7,6 +7,10 @@ use tracing::debug;
 
 use crate::ReasoningEffort;
 
+mod input_projection;
+
+use input_projection::content_blocks;
+
 const MIN_THINKING_BUDGET_TOKENS: u32 = 1_024;
 const INTERLEAVED_THINKING_BETA: &str = "interleaved-thinking-2025-05-14";
 const FILES_API_BETA: &str = "files-api-2025-04-14";
@@ -450,6 +454,7 @@ fn convert_messages_for_anthropic_messages(
         let LlmMessage {
             role,
             content,
+            content_parts,
             thinking,
             thinking_signature,
             redacted_thinking,
@@ -458,13 +463,7 @@ fn convert_messages_for_anthropic_messages(
         } = msg;
 
         let content_blocks = match role {
-            MessageRole::User => {
-                if content.is_empty() {
-                    Vec::new()
-                } else {
-                    vec![ContentBlockInput::Text { text: content }]
-                }
-            }
+            MessageRole::User => content_blocks(content, content_parts),
             MessageRole::Assistant => {
                 let mut blocks = Vec::new();
 
@@ -485,9 +484,7 @@ fn convert_messages_for_anthropic_messages(
                     }
                 }
 
-                if !content.is_empty() {
-                    blocks.push(ContentBlockInput::Text { text: content });
-                }
+                blocks.extend(content_blocks(content, content_parts));
 
                 if let Some(calls) = tool_calls {
                     for call in calls {
@@ -561,34 +558,6 @@ fn convert_tools_for_anthropic_messages(
                 })
                 .collect(),
         )
-    }
-}
-
-fn take_anthropic_messages_extra_param(
-    key: &str,
-    extra_params: &mut HashMap<String, serde_json::Value>,
-) -> Result<Option<Vec<AnthropicMessagesMessage>>> {
-    let Some(value) = extra_params.remove(key) else {
-        return Ok(None);
-    };
-
-    match value {
-        serde_json::Value::Array(values) if !values.is_empty() => {
-            let parsed = serde_json::from_value::<Vec<AnthropicMessagesMessage>>(
-                serde_json::Value::Array(values),
-            )
-            .context("Failed to parse Anthropic message override payload")?;
-            Ok(Some(parsed))
-        }
-        serde_json::Value::Array(_) => Ok(None),
-        other => {
-            debug!(
-                key,
-                value = %other,
-                "Ignoring non-array Anthropic message override"
-            );
-            Ok(None)
-        }
     }
 }
 
@@ -939,9 +908,7 @@ impl LlmProvider for AnthropicMessagesClient {
             mut extra_params,
         } = request;
 
-        let messages =
-            take_anthropic_messages_extra_param("anthropic_messages", &mut extra_params)?
-                .unwrap_or_else(|| convert_messages_for_anthropic_messages(request_messages));
+        let messages = convert_messages_for_anthropic_messages(request_messages);
         let tools = convert_tools_for_anthropic_messages(request_tools);
         let request_headers = build_request_headers(&messages, &mut extra_params)?;
         if !extra_params.is_empty() {
@@ -989,9 +956,7 @@ impl LlmProvider for AnthropicMessagesClient {
             mut extra_params,
         } = request;
 
-        let messages =
-            take_anthropic_messages_extra_param("anthropic_messages", &mut extra_params)?
-                .unwrap_or_else(|| convert_messages_for_anthropic_messages(request_messages));
+        let messages = convert_messages_for_anthropic_messages(request_messages);
         let tools = convert_tools_for_anthropic_messages(request_tools);
         let request_headers = build_request_headers(&messages, &mut extra_params)?;
         if !extra_params.is_empty() {
@@ -1741,6 +1706,7 @@ mod tests {
         let tool_msg = crate::Message {
             role: MessageRole::Tool,
             content: "tool output".to_string(),
+            content_parts: Vec::new(),
             thinking: None,
             thinking_signature: None,
             redacted_thinking: None,
@@ -1866,6 +1832,7 @@ mod tests {
         let message = crate::Message {
             role: MessageRole::Assistant,
             content: "done".to_string(),
+            content_parts: Vec::new(),
             thinking: Some("step by step".to_string()),
             thinking_signature: Some("sig_123".to_string()),
             redacted_thinking: Some(vec!["ciphertext".to_string()]),

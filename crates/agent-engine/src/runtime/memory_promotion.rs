@@ -14,7 +14,7 @@ use tokio_util::sync::CancellationToken;
 use crate::agent_machine::AgentMachine;
 #[cfg(test)]
 use crate::llm::LlmClient;
-use crate::llm::{GenerationRequest, Message as LlmMessage, MessageRole, build_generation_request};
+use crate::llm::{GenerationRequest, Message as LlmMessage, build_generation_request};
 use crate::prompts::{
     MEMORY_INBOX_DIRNAME, MEMORY_PROMOTION_PROMPT, MEMORY_STORE_FILENAME, MEMORY_TOPICS_DIRNAME,
     MEMORY_USER_FILENAME, ensure_memory_store_layout_at,
@@ -668,15 +668,7 @@ fn active_turn_user_messages(
 fn build_memory_promotion_request(active_turn_user_messages: Vec<String>) -> GenerationRequest {
     let messages = active_turn_user_messages
         .into_iter()
-        .map(|content| LlmMessage {
-            role: MessageRole::User,
-            content,
-            thinking: None,
-            thinking_signature: None,
-            redacted_thinking: None,
-            tool_calls: None,
-            tool_call_id: None,
-        })
+        .map(LlmMessage::user)
         .collect();
 
     build_generation_request(

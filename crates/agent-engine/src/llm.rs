@@ -29,7 +29,8 @@ use std::path::PathBuf;
 
 pub use alan_llm::{
     CompatibilityTier, GenerationRequest, GenerationResponse, InstructionRole, LlmProvider,
-    Message, MessageRole, ProviderCapabilities, StreamChunk, TokenUsage, ToolCall, ToolDefinition,
+    Message, MessageContentPart, MessageRole, ProviderCapabilities, StreamChunk, TokenUsage,
+    ToolCall, ToolDefinition,
 };
 
 pub use alan_llm::factory::{self, ProviderConfig, ProviderType};

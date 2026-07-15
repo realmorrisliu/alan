@@ -19,6 +19,36 @@ fn project_messages_maps_roles_and_content() {
 }
 
 #[test]
+fn project_messages_preserves_rich_attachment_parts() {
+    let messages = vec![MachineMessage::User {
+        parts: vec![
+            ContentPart::text("What is in this image?"),
+            ContentPart::Attachment {
+                hash: "img_hash".to_string(),
+                mime_type: "image/png".to_string(),
+                metadata: json!({"image_url": "https://example.com/cat.png"}),
+            },
+        ],
+    }];
+
+    let projected = project_messages(&messages, true);
+
+    assert_eq!(
+        projected[0].content_parts,
+        vec![
+            MessageContentPart::Text {
+                text: "What is in this image?".to_string(),
+            },
+            MessageContentPart::Attachment {
+                hash: "img_hash".to_string(),
+                mime_type: "image/png".to_string(),
+                metadata: json!({"image_url": "https://example.com/cat.png"}),
+            },
+        ]
+    );
+}
+
+#[test]
 fn project_messages_ignores_blank_tool_ids() {
     let messages = vec![
         MachineMessage::assistant_with_tools(

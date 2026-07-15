@@ -866,7 +866,7 @@ async fn generate_once(root: InProcessTransport, message: &str) -> String {
     let gen_id = open_llm_generation(&root, "/mnt/llm/connections/default/clone").await;
     let data_path = format!("/mnt/llm/connections/default/{gen_id}/data");
     let request = serde_json::json!({
-        "version": 1,
+        "version": 2,
         "messages": [
             {"role": "user", "content": message}
         ],

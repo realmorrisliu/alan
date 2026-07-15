@@ -201,6 +201,7 @@ mod tests {
             crate::Message {
                 role: MessageRole::Assistant,
                 content: "Let me inspect that.".to_string(),
+                content_parts: Vec::new(),
                 thinking: None,
                 thinking_signature: Some("enc_sig".to_string()),
                 redacted_thinking: None,
@@ -214,6 +215,7 @@ mod tests {
             crate::Message {
                 role: MessageRole::Tool,
                 content: "{\"ok\":true}".to_string(),
+                content_parts: Vec::new(),
                 thinking: None,
                 thinking_signature: None,
                 redacted_thinking: None,
