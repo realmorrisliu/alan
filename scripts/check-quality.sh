@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-for command in cargo openspec rg rustc; do
+for command in cargo git openspec rg rustc; do
     if ! command -v "$command" >/dev/null 2>&1; then
         printf 'error: repository quality gate requires %s on PATH\n' "$command" >&2
         exit 1
@@ -16,7 +16,7 @@ if [[ -z "$host_target" ]]; then
     printf 'error: could not resolve the host Rust target\n' >&2
     exit 1
 fi
-quality_target_dir="$ROOT/target/quality-gate"
+quality_target_dir="${ALAN_QUALITY_TARGET_DIR:-$ROOT/target/quality-gate}"
 alan_binary="$quality_target_dir/$host_target/debug/alan"
 export CARGO_BUILD_TARGET="$host_target"
 export CARGO_TARGET_DIR="$quality_target_dir"

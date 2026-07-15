@@ -100,8 +100,11 @@ because Cargo already exposes the direct graph needed by this gate.
 ### Decision: Ratchet debt instead of grandfathering it silently
 
 New Rust source files may not exceed 1,000 lines. Each existing oversized Rust
-file has an exact maximum in a checked-in baseline. Growth fails; reduction also
-requires lowering or removing the baseline entry, preventing later regrowth.
+file has an exact maximum in a checked-in baseline. The current tree must match
+that baseline, and the baseline is compared with the pre-change Git reference:
+new debt entries and increased limits fail even when source and ledger are
+changed together. Reduction also requires lowering or removing the baseline
+entry, preventing later regrowth.
 
 The existing Apple report remains authoritative for its 15 warning classes.
 The quality interface runs it on every commit and in CI; its recorded warning
@@ -115,8 +118,11 @@ refactor with the enforcement change and make review unsafe.
 
 The repository owns `.githooks/pre-commit` and an explicit installer sets
 `core.hooksPath` for the checkout. The hook checks staged whitespace and runs
-the canonical quality interface. It documents that `--no-verify` can bypass a
-local hook; protected-branch required CI is the non-bypassable merge condition.
+the canonical quality interface. If the working tree differs from the index,
+the hook materializes an index-only snapshot so unstaged fixes or untracked
+files cannot make invalid staged code pass. It documents that `--no-verify` can
+bypass a local hook; protected-branch required CI is the non-bypassable merge
+condition.
 
 Alternative considered: copy a hook directly into `.git/hooks`. Rejected
 because Git does not version that directory and updates would drift.

@@ -86,6 +86,18 @@ proof of module depth or as permission for cosmetic file splitting.
   the file reaches 1,000 lines or fewer
 - **AND** later growth back to the old size fails
 
+#### Scenario: Source and debt ledger grow together
+- **WHEN** an existing oversized Rust file and its recorded maximum are both
+  increased in one change
+- **THEN** comparison with the pre-change ledger reports the debt growth
+- **AND** the quality gate fails
+
+#### Scenario: New source-size debt is added
+- **WHEN** a file that was not in the pre-change ledger grows beyond 1,000 lines
+  and is added to the current ledger
+- **THEN** the new debt entry is rejected
+- **AND** the quality gate fails
+
 ### Requirement: Accepted dependency laws have one complete test surface
 Alan SHALL enforce accepted normal-dependency laws for Alan crates through one
 repository architecture module over Cargo's graph. The module SHALL cover
@@ -145,6 +157,11 @@ interface as a required CI check.
 #### Scenario: Commit fails quality validation
 - **WHEN** staged code violates a quality rule
 - **THEN** the pre-commit hook exits non-zero with the owning check's diagnostic
+
+#### Scenario: Unstaged content differs from the commit
+- **WHEN** the working tree contains unstaged changes or untracked files
+- **THEN** the pre-commit hook validates an index-only snapshot
+- **AND** unstaged content cannot make invalid staged code pass
 
 ### Requirement: Quality enforcement precedes debt burn-down
 The enforcement change SHALL create a separate

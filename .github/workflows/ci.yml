@@ -23,6 +23,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@1.97.0
@@ -42,6 +44,8 @@ jobs:
 
       - name: Run canonical quality gate
         run: ./scripts/check-quality.sh
+        env:
+          ALAN_RUST_SOURCE_SIZE_BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before }}
 
   shell-design-tokens:
     name: Shell Design Token Guard
