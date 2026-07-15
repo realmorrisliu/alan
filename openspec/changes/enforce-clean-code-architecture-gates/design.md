@@ -41,6 +41,10 @@ A repository script is the implementation module. `just`, the pre-commit hook,
 and CI call that same interface without copying its command list. The interface
 runs rustfmt in check mode, Rust quality checks, dependency and source-hygiene
 guards, current Alan OS absence guards, and the Apple architecture report.
+It resolves the pinned toolchain's Host target, forces Cargo artifacts into a
+repository-owned quality target directory, and passes that exact freshly built
+`alan` executable to binary-surface guards. Ambient Cargo target-directory or
+build-target configuration therefore cannot make a guard inspect a stale file.
 
 `just check` becomes non-mutating and delegates to the quality interface before
 tests. CI keeps behavioral test/build/harness jobs separate but makes the
@@ -79,10 +83,13 @@ ownership.
 ### Decision: Use built-in Cargo graph output for dependency laws
 
 One repository architecture script checks exact normal Alan-crate dependency
-edges with `cargo tree`. It replaces duplicated manifest parsers and covers
-Kernel, File-Server Service crates, clients, adapters, and current transitional
-owners. Current transitional edges are a ratcheting ceiling: they may shrink,
-and any expansion requires an explicit ADR/OpenSpec update.
+edges with `cargo tree` across all features and target-specific declarations.
+It also compares its recorded package inventory with the complete Cargo
+workspace so a newly added crate cannot bypass ownership review. It replaces
+duplicated manifest parsers and covers Kernel, File-Server Service crates,
+clients, adapters, and current transitional owners. Current transitional edges
+are a ratcheting ceiling: they may shrink, and any expansion requires an
+explicit ADR/OpenSpec update.
 
 Source-token guards that encode accepted absence rules remain in their owning
 scripts or focused tests; the graph module does not become a source-code parser.

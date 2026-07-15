@@ -17,6 +17,12 @@ clean-code or clean-architecture check fails.
 - **AND** local hooks and CI consume the updated interface without duplicating
   its internal command list
 
+#### Scenario: Ambient Cargo output configuration differs
+- **WHEN** a developer or CI environment configures another Cargo target
+  directory or build target
+- **THEN** the quality gate builds into its owned Host-target directory
+- **AND** binary-surface guards inspect the executable produced by that run
+
 ### Requirement: Rust lint semantics are reproducible
 Alan SHALL pin one explicit Rust toolchain including rustfmt and Clippy. Local
 quality checks and CI MUST use that pinned version.
@@ -106,6 +112,19 @@ OpenSpec or ADR update that changes the accepted ownership model.
   contract test
 - **THEN** the normal-dependency law does not misclassify that test adapter as a
   production ownership edge
+
+#### Scenario: Workspace crate is added
+- **WHEN** a package is added to the Cargo workspace without a recorded
+  dependency expectation
+- **THEN** the architecture gate reports that the workspace inventory is not
+  fully covered
+- **AND** the quality gate fails
+
+#### Scenario: Optional production dependency violates ownership
+- **WHEN** a forbidden normal dependency is activated only by a non-default
+  feature or target-specific declaration
+- **THEN** the architecture gate includes that edge in its comparison
+- **AND** the quality gate fails
 
 ### Requirement: Git hook and CI enforce the same gate
 Alan SHALL provide a versioned pre-commit hook and an explicit installer for
