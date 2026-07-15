@@ -36,7 +36,7 @@ pub use alan_llm::factory::{self, ProviderConfig, ProviderType};
 
 mod input_projection;
 
-pub(crate) use input_projection::{project_messages, with_provider_input};
+pub(crate) use input_projection::project_messages;
 
 fn provider_preserves_thinking(provider_type: ProviderType) -> bool {
     matches!(

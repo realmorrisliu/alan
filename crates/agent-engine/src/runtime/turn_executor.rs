@@ -21,6 +21,10 @@ use super::turn_support::{
 };
 use super::virtual_tools::virtual_tool_definitions;
 
+mod namespace_generation;
+
+use namespace_generation::NamespaceTurnGeneration;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum TurnRunKind {
     NewTurn,
@@ -38,12 +42,6 @@ const COMPACTION_TIMEOUT_SECS: u64 = 30;
 struct TimedCompactionResult {
     result: Result<CompactionOutcome>,
     timed_out: bool,
-}
-
-#[derive(Debug, Clone)]
-struct GenerationConnectionContext {
-    provider: String,
-    capabilities: crate::llm::ProviderCapabilities,
 }
 
 fn append_system_instruction(request: &mut crate::llm::GenerationRequest, instruction: &str) {
@@ -123,19 +121,7 @@ async fn turn_tool_definitions(
     Ok((tool_packages, tools))
 }
 
-fn responses_status_supports_continuation(status: Option<&str>) -> bool {
-    matches!(status, Some("completed" | "incomplete") | None)
-}
-
-fn uses_responses_input_projection(capabilities: crate::llm::ProviderCapabilities) -> bool {
-    matches!(
-        capabilities.instruction_role,
-        crate::llm::InstructionRole::ResponsesInstructions
-    )
-}
-
-fn log_generation_failure(state: &RuntimeLoopState, request_start: Instant, error: &anyhow::Error) {
-    let _ = state;
+fn log_generation_failure(request_start: Instant, error: &anyhow::Error) {
     error!(
         elapsed_ms = request_start.elapsed().as_millis(),
         error = %error,
@@ -143,189 +129,8 @@ fn log_generation_failure(state: &RuntimeLoopState, request_start: Instant, erro
     );
 }
 
-fn generation_error_message(state: &RuntimeLoopState, error: &anyhow::Error) -> String {
-    let _ = state;
+fn generation_error_message(error: &anyhow::Error) -> String {
     format!("Namespace LLM request failed: {error}")
-}
-
-async fn generate_turn_response<E, F>(
-    state: &mut RuntimeLoopState,
-    request: crate::llm::GenerationRequest,
-    timeout_secs: u64,
-    cancel: &CancellationToken,
-    _emit: &mut E,
-    live_namespace_text: bool,
-) -> Result<(crate::llm::GenerationResponse, Vec<String>)>
-where
-    E: FnMut(Event) -> F,
-    F: std::future::Future<Output = ()>,
-{
-    if live_namespace_text {
-        return generate_live_namespace_response_with_retry(state, request, timeout_secs, cancel)
-            .await;
-    }
-
-    state
-        .generate_response_with_retry(request, timeout_secs, cancel)
-        .await
-        .map(|response| (response, Vec::new()))
-}
-
-async fn generate_live_namespace_response_with_retry(
-    state: &RuntimeLoopState,
-    request: crate::llm::GenerationRequest,
-    timeout_secs: u64,
-    cancel: &CancellationToken,
-) -> Result<(crate::llm::GenerationResponse, Vec<String>)> {
-    let max_retries = crate::retry::DEFAULT_MAX_RETRIES;
-    let mut last_error = None;
-
-    for attempt in 0..=max_retries {
-        if cancel.is_cancelled() {
-            return Err(anyhow::anyhow!("LLM request cancelled"));
-        }
-
-        let namespace = state.namespace_environment().clone();
-        let attempt_request = request.clone();
-        let mut live_text_chunks = Vec::new();
-        let mut collect_text = |event: Event| {
-            if let Event::TextDelta {
-                chunk,
-                is_final: false,
-            } = event
-                && !chunk.is_empty()
-            {
-                live_text_chunks.push(chunk);
-            }
-            async {}
-        };
-        let result = namespace
-            .generate_with_text_events_controlled(
-                &attempt_request,
-                &mut collect_text,
-                timeout_secs,
-                cancel,
-            )
-            .await;
-
-        match result {
-            Ok((response, _saw_text_events)) => return Ok((response, live_text_chunks)),
-            Err(error) => {
-                if !crate::retry::is_retryable(&error) || attempt >= max_retries {
-                    return Err(error);
-                }
-                last_error = Some(error);
-                let delay = crate::retry::backoff_delay(attempt + 1);
-                tokio::select! {
-                    _ = cancel.cancelled() => return Err(anyhow::anyhow!("LLM request cancelled")),
-                    _ = tokio::time::sleep(delay) => {}
-                }
-            }
-        }
-    }
-
-    Err(last_error.unwrap_or_else(|| anyhow::anyhow!("Max retries exceeded")))
-}
-
-async fn load_generation_connection_context(
-    state: &RuntimeLoopState,
-) -> GenerationConnectionContext {
-    match state
-        .namespace_environment()
-        .read_llm_connection_capabilities()
-        .await
-    {
-        Ok(info) => GenerationConnectionContext {
-            provider: info.provider,
-            capabilities: neutralize_namespace_capabilities(info.capabilities),
-        },
-        Err(err) => {
-            warn!(
-                error = %err,
-                "Failed to read namespace llm connection capabilities; using neutral fallback"
-            );
-            GenerationConnectionContext {
-                provider: "namespace".to_string(),
-                capabilities: neutral_namespace_generation_capabilities(),
-            }
-        }
-    }
-}
-
-fn neutralize_namespace_capabilities(
-    mut capabilities: crate::llm::ProviderCapabilities,
-) -> crate::llm::ProviderCapabilities {
-    capabilities.instruction_role = crate::llm::InstructionRole::System;
-    capabilities.supports_server_managed_continuation = false;
-    capabilities.supports_provider_compaction = false;
-    capabilities
-}
-
-fn neutral_namespace_generation_capabilities() -> crate::llm::ProviderCapabilities {
-    crate::llm::ProviderCapabilities {
-        supports_streaming_text: true,
-        supports_streaming_tool_calls: true,
-        supports_provider_response_id: true,
-        supports_provider_response_status: true,
-        supports_reasoning_text: true,
-        supports_reasoning_signature: true,
-        supports_reasoning_effort_control: true,
-        supports_redacted_thinking: true,
-        supports_multimodal_input: false,
-        supports_document_input: false,
-        supports_cached_token_usage: true,
-        supports_server_managed_continuation: false,
-        supports_background_execution: false,
-        supports_retrieve_cancel: false,
-        supports_provider_compaction: false,
-        instruction_role: crate::llm::InstructionRole::System,
-        compatibility_tier: crate::llm::CompatibilityTier::TierBFullFidelityStateless,
-    }
-}
-
-fn responses_server_managed_compact_threshold(state: &RuntimeLoopState) -> Option<u64> {
-    let context_window_tokens = state.runtime_config.context_window_tokens;
-    let soft_trigger_ratio = state
-        .runtime_config
-        .compaction_soft_trigger_ratio
-        .clamp(0.0, 1.0);
-    if context_window_tokens == 0 || soft_trigger_ratio <= 0.0 {
-        return None;
-    }
-
-    Some(((context_window_tokens as f64) * (soft_trigger_ratio as f64)).ceil() as u64)
-}
-
-fn resolve_responses_continuation(
-    state: &mut RuntimeLoopState,
-    provider: &str,
-    reference_context_revision: u64,
-    raw_message_count: usize,
-) -> Option<crate::agent_machine::ResponsesContinuationState> {
-    match state.machine.responses_continuation().cloned() {
-        Some(continuation) if continuation.provider != provider => {
-            state
-                .machine
-                .clear_responses_continuation("provider_changed");
-            None
-        }
-        Some(continuation) if continuation.boundary_message_count > raw_message_count => {
-            state
-                .machine
-                .clear_responses_continuation("history_changed");
-            None
-        }
-        Some(continuation)
-            if continuation.reference_context_revision != reference_context_revision =>
-        {
-            state
-                .machine
-                .clear_responses_continuation("reference_context_changed");
-            None
-        }
-        Some(continuation) => Some(continuation),
-        None => None,
-    }
 }
 
 fn should_skip_auto_compaction_for_responses_continuation(_state: &mut RuntimeLoopState) -> bool {
@@ -524,8 +329,8 @@ where
         .iter()
         .map(|tool| tool.name.clone())
         .collect::<Vec<_>>();
-    let generation_context = load_generation_connection_context(state).await;
-    let initial_provider_capabilities = generation_context.capabilities;
+    let generation = NamespaceTurnGeneration::load(state).await;
+    let initial_provider_capabilities = generation.capabilities();
     let turn_request_controls = crate::resolve_turn_request_controls(
         &state.core_config,
         initial_provider_capabilities,
@@ -560,17 +365,11 @@ where
         if check_turn_cancelled(state, emit, cancel).await? {
             return Ok(TurnExecutionOutcome::Finished);
         }
-        let provider = generation_context.provider.as_str();
-        let provider_capabilities = generation_context.capabilities;
-        let responses_input_projection = uses_responses_input_projection(provider_capabilities);
-        let supports_server_managed_continuation =
-            provider_capabilities.supports_server_managed_continuation;
-        let supports_provider_compaction = provider_capabilities.supports_provider_compaction;
-        if !supports_server_managed_continuation
-            && state
-                .machine
-                .responses_continuation()
-                .is_some_and(|continuation| continuation.provider == provider)
+        let provider = generation.provider();
+        if state
+            .machine
+            .responses_continuation()
+            .is_some_and(|continuation| continuation.provider == provider)
         {
             state
                 .machine
@@ -587,28 +386,7 @@ where
                 ));
         let context_revision = prompt_view.reference_context.revision;
         let messages = prompt_view.messages;
-        let raw_tape_messages = state.machine.tape.messages().to_vec();
-        let mut previous_response_id: Option<String> = None;
-        let provider_input_messages: &[crate::agent_machine::Message] =
-            if responses_input_projection {
-                match supports_server_managed_continuation.then(|| {
-                    resolve_responses_continuation(
-                        state,
-                        provider,
-                        context_revision,
-                        raw_tape_messages.len(),
-                    )
-                }) {
-                    Some(Some(continuation)) => {
-                        previous_response_id = Some(continuation.last_response_id);
-                        &raw_tape_messages[continuation.boundary_message_count..]
-                    }
-                    None | Some(None) => &messages,
-                }
-            } else {
-                &messages
-            };
-        let llm_messages = crate::llm::project_messages(provider_input_messages, true);
+        let llm_messages = crate::llm::project_messages(&messages, true);
         let llm_tools: Vec<crate::llm::ToolDefinition> = tools
             .iter()
             .map(|t| {
@@ -629,21 +407,6 @@ where
         }
         if let Some(instruction) = pending_guardrail_instruction.as_deref() {
             append_system_instruction(&mut request, instruction);
-        }
-        request = crate::llm::with_provider_input(
-            request,
-            provider_capabilities.instruction_role,
-            provider_input_messages,
-        );
-        if supports_provider_compaction
-            && let Some(compact_threshold) = responses_server_managed_compact_threshold(state)
-        {
-            request = request.with_context_management_compact_threshold(compact_threshold);
-        }
-        if let Some(previous_response_id) = previous_response_id {
-            request = request
-                .with_previous_response_id(previous_response_id)
-                .with_store(true);
         }
         let request_controls = turn_request_controls.clone();
         request = request.with_reasoning_controls(request_controls.reasoning);
@@ -671,25 +434,18 @@ where
             debug!("Streaming mode requested; generation uses request/response file semantics");
         }
         let llm_request_timeout_secs = state.runtime_config.llm_request_timeout_secs;
-        let live_namespace_text = true;
-        let (response, live_text_chunks) = match generate_turn_response(
-            state,
-            request,
-            llm_request_timeout_secs,
-            cancel,
-            emit,
-            live_namespace_text,
-        )
-        .await
+        let (response, live_text_chunks) = match generation
+            .generate(state, request, llm_request_timeout_secs, cancel)
+            .await
         {
             Ok(response) => response,
             Err(error) => {
                 if cancel.is_cancelled() && check_turn_cancelled(state, emit, cancel).await? {
                     return Ok(TurnExecutionOutcome::Finished);
                 }
-                log_generation_failure(state, request_start, &error);
+                log_generation_failure(request_start, &error);
                 emit(Event::Error {
-                    message: generation_error_message(state, &error),
+                    message: generation_error_message(&error),
                     recoverable: true,
                 })
                 .await;
@@ -830,25 +586,6 @@ where
                 .context("write namespace turn tape state")?;
         }
 
-        if supports_server_managed_continuation && assistant_message_persisted {
-            if let Some(response_id) = response.provider_response_id.as_deref()
-                && responses_status_supports_continuation(
-                    response.provider_response_status.as_deref(),
-                )
-            {
-                state.machine.mark_responses_continuation(
-                    provider,
-                    response_id,
-                    state.machine.tape.messages().len(),
-                    context_revision,
-                );
-            } else {
-                state
-                    .machine
-                    .clear_responses_continuation("continuation_unavailable");
-            }
-        }
-
         if !tool_calls.is_empty() {
             match tool_orchestrator
                 .orchestrate_tool_batch(
@@ -913,24 +650,6 @@ where
                 .write_turn_tape_state(namespace_input_text.as_deref(), fallback_text)
                 .await
                 .context("write namespace fallback turn tape state")?;
-            if supports_server_managed_continuation {
-                if let Some(response_id) = response.provider_response_id.as_deref()
-                    && responses_status_supports_continuation(
-                        response.provider_response_status.as_deref(),
-                    )
-                {
-                    state.machine.mark_responses_continuation(
-                        provider,
-                        response_id,
-                        state.machine.tape.messages().len(),
-                        context_revision,
-                    );
-                } else {
-                    state
-                        .machine
-                        .clear_responses_continuation("continuation_unavailable");
-                }
-            }
             finalize_turn_memory_best_effort(
                 state,
                 false,
