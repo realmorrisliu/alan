@@ -4,7 +4,9 @@ use std::sync::{
 };
 
 use alan_agentfs::{AgentConformanceChecker, AgentFs, AgentRootFs};
-use alan_ap::{FileServer, InProcessTransport, Qid, Request};
+use alan_ap::{
+    ErrorCode, Fid, FileKind, FileServer, InProcessTransport, OpenMode, Qid, Request, Stat,
+};
 use alan_kernel::{
     Access, Credentials, MountFs, Namespace, ProcFs, ProcessInvocation, ProcessOutcome,
     ProcessRunner,
