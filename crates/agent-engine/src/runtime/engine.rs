@@ -883,7 +883,7 @@ fn spawn_with_prepared_runtime_environment(
         core_config.memory.store_dir = None;
     }
 
-    let mut runtime_config = agent_config.runtime_config.clone();
+    let mut runtime_config = agent_config.runtime_config;
     runtime_config.store_bindings = config.store_bindings.clone();
     runtime_config.memory_store_backing = config.memory_store_backing.clone();
     runtime_config.policy_engine =
@@ -915,7 +915,7 @@ fn spawn_with_prepared_runtime_environment(
         .as_ref()
         .map(|stores| stores.rollouts.clone());
     let rollout_cwd = std::path::PathBuf::from(&config.launch_context.cwd);
-    let recovery_rollout_path = config.recovery_rollout_path.clone();
+    let recovery_rollout_path = config.recovery_rollout_path;
     let generation_capabilities = crate::provider_capabilities_for_config(&core_config);
     let mut prompt_cache =
         super::prompt_cache::PromptAssemblyCache::with_fixed_capability_view_and_overrides(
@@ -924,8 +924,7 @@ fn spawn_with_prepared_runtime_environment(
             prompt_cache_persona_dirs.clone(),
             host_capabilities,
         );
-    prompt_cache
-        .set_fixed_definition_persona_section(resolved_agent_definition.persona_context.clone());
+    prompt_cache.set_fixed_definition_persona_section(resolved_agent_definition.persona_context);
     prompt_cache.set_memory_store_dir(
         core_config
             .memory
@@ -2448,7 +2447,7 @@ mod tests {
     #[test]
     fn test_agent_runtime_config_from_core_config() {
         let core_config = crate::config::Config::default();
-        let runtime_config = AgentProcessConfig::from(core_config.clone());
+        let runtime_config = AgentProcessConfig::from(core_config);
 
         assert_eq!(runtime_config.launch_context.cwd, "/");
         assert!(runtime_config.launch_context.host_mounts.is_empty());

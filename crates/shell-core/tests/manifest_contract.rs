@@ -492,7 +492,7 @@ fn content_tab(tab_id: &str, title: &str, cwd: &str) -> ShellContentWorkspaceTab
         live_snapshot: Some(ShellContentTabRestoreSnapshot {
             pane_tree: PaneTreeNode::pane(format!("node_{pane_slot_id}"), pane_slot_id.clone()),
             pane_slots: vec![ShellPaneSlotRestoreRecord {
-                pane_slot_id: pane_slot_id.clone(),
+                pane_slot_id,
                 content_id: content_id.clone(),
             }],
             contents: vec![ShellContentRestoreRecord {

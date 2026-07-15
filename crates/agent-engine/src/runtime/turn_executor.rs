@@ -2415,7 +2415,7 @@ mod tests {
         );
         process_namespace.mount(
             "/mnt/llm",
-            alan_ap::InProcessTransport::new(llmfs.clone()),
+            alan_ap::InProcessTransport::new(llmfs),
             alan_kernel::Access::ReadWrite,
         );
         for tool_name in tools.list_tools() {
@@ -4419,7 +4419,10 @@ description: {description}
     }
 
     #[tokio::test]
-    #[allow(clippy::field_reassign_with_default)]
+    #[allow(
+        clippy::field_reassign_with_default,
+        reason = "the test highlights only the compaction fields that define this scenario"
+    )]
     async fn test_run_turn_performs_mid_turn_compaction_before_follow_up_generation() {
         let generate_calls = Arc::new(AtomicUsize::new(0));
         let provider = SequenceMockProvider::new(
@@ -4519,7 +4522,10 @@ description: {description}
     }
 
     #[tokio::test]
-    #[allow(clippy::field_reassign_with_default)]
+    #[allow(
+        clippy::field_reassign_with_default,
+        reason = "the test highlights only the compaction fields that define this scenario"
+    )]
     async fn test_run_turn_resets_mid_turn_compaction_budget_for_new_turns() {
         let generate_calls = Arc::new(AtomicUsize::new(0));
         let provider = SequenceMockProvider::new(
@@ -4986,7 +4992,10 @@ description: {description}
     }
 
     #[tokio::test]
-    #[allow(clippy::field_reassign_with_default)]
+    #[allow(
+        clippy::field_reassign_with_default,
+        reason = "the test highlights only the memory-refresh fields that define this scenario"
+    )]
     async fn test_run_turn_tool_loop_guard_refreshes_memory_surfaces_before_completion_event() {
         let temp = TempDir::new().unwrap();
         let memory_dir = temp.path().join("memory-store");

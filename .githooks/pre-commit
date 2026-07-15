@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT"
+
+git diff --cached --check
+
+quality_root="$ROOT"
+snapshot=""
+untracked="$(git ls-files --others --exclude-standard)"
+if ! git diff --quiet || [[ -n "$untracked" ]]; then
+    snapshot="$(mktemp -d "${TMPDIR:-/tmp}/alan-pre-commit.XXXXXX")"
+    trap 'rm -rf "$snapshot"' EXIT
+    git checkout-index --all --prefix="$snapshot/"
+    quality_root="$snapshot"
+    export ALAN_QUALITY_GIT_DIR
+    ALAN_QUALITY_GIT_DIR="$(git rev-parse --absolute-git-dir)"
+    export ALAN_QUALITY_TARGET_DIR="$ROOT/target/quality-gate"
+fi
+
+"$quality_root/scripts/check-quality.sh"

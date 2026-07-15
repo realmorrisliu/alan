@@ -84,7 +84,10 @@ pub fn ensure_definition_bootstrap_files_at(definition_dir: &Path) -> io::Result
     Ok(())
 }
 
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "single-root adapter remains available to focused white-box tests during descriptor migration"
+)]
 pub fn load_definition_files(definition_dir: &Path) -> Vec<DefinitionFile> {
     load_definition_files_from_dirs(&[definition_dir.to_path_buf()])
 }
@@ -110,7 +113,10 @@ pub fn load_definition_files_from_dirs(definition_dirs: &[PathBuf]) -> Vec<Defin
     files
 }
 
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "single-root adapter remains available to focused white-box tests during descriptor migration"
+)]
 pub(crate) fn definition_persona_tracked_paths(definition_dir: &Path) -> Vec<PathBuf> {
     definition_persona_tracked_paths_from_dirs(&[definition_dir.to_path_buf()])
 }
@@ -133,7 +139,10 @@ pub(crate) fn definition_persona_tracked_paths_from_dirs(
     tracked
 }
 
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "single-root adapter remains available to focused white-box tests during descriptor migration"
+)]
 pub(crate) fn render_definition_persona_context(definition_dir: &Path) -> String {
     render_definition_persona_context_from_dirs(&[definition_dir.to_path_buf()])
 }
@@ -384,7 +393,7 @@ mod tests {
         fs::create_dir_all(&definition_dir).unwrap();
         fs::write(global_dir.join(DEFAULT_USER_FILENAME), "global user").unwrap();
 
-        let files = load_definition_files_from_dirs(&[global_dir.clone(), definition_dir.clone()]);
+        let files = load_definition_files_from_dirs(&[global_dir, definition_dir]);
         let user_file = files
             .iter()
             .find(|file| file.name == DEFAULT_USER_FILENAME)

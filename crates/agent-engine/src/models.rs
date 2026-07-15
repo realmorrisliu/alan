@@ -5,7 +5,10 @@ use std::sync::LazyLock;
 
 // The shared OpenAi prefix is intentional here: this enum distinguishes
 // OpenAI API families, not unrelated providers.
-#[allow(clippy::enum_variant_names)]
+#[allow(
+    clippy::enum_variant_names,
+    reason = "the shared OpenAi prefix distinguishes API families within the OpenAI provider"
+)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ModelCatalogProvider {
     OpenAiResponses,

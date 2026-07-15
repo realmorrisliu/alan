@@ -378,7 +378,10 @@ fn explicit_activation_reason(
         })
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the command-case runner mirrors the skill-eval manifest fields at this CLI boundary"
+)]
 fn run_command_case(
     id: &str,
     prompt: Option<&str>,
@@ -508,7 +511,10 @@ fn run_command_case(
     Ok(summary)
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the stage runner keeps process inputs explicit at the CLI execution boundary"
+)]
 fn run_stage_command(
     label: &str,
     command: &[String],

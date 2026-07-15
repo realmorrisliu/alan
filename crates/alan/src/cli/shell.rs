@@ -1023,8 +1023,6 @@ mod tests {
 
         let request_id = "req-fallback".to_string();
         let handle = std::thread::spawn({
-            let commands_dir = commands_dir.clone();
-            let results_dir = results_dir.clone();
             let request_id = request_id.clone();
             move || {
                 let command_path = commands_dir.join(format!("{request_id}.json"));
@@ -1088,8 +1086,6 @@ mod tests {
 
         let request_id = "req-files".to_string();
         let handle = std::thread::spawn({
-            let commands_dir = commands_dir.clone();
-            let results_dir = results_dir.clone();
             let request_id = request_id.clone();
             move || {
                 let command_path = commands_dir.join(format!("{request_id}.json"));
@@ -1156,8 +1152,6 @@ mod tests {
 
         let request_id = "req-retry".to_string();
         let handle = std::thread::spawn({
-            let commands_dir = commands_dir.clone();
-            let results_dir = results_dir.clone();
             let request_id = request_id.clone();
             move || {
                 let command_path = commands_dir.join(format!("{request_id}.json"));

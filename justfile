@@ -17,8 +17,8 @@ shell-core-ffi-test:
     cargo test -p alan-shell-core-ffi
     bash clients/apple/scripts/test-shell-core-ffi-adapter.sh
 
-# Check code and reject reintroduction of the retired workspace runtime model
-check: fmt lint test guard-workspace-runtime-absence
+# Run the canonical non-mutating quality gate and workspace tests
+check: quality test
     @echo "✅ All checks passed"
 
 # Format code
@@ -68,9 +68,17 @@ apple-auto-update-tests:
     ./scripts/test-appcast-tools.sh
     ./scripts/check-macos-auto-update-config.sh
 
-# Run clippy
-lint:
-    cargo clippy --workspace --all-targets --all-features -- -D warnings
+# Run the canonical non-mutating repository quality gate
+quality:
+    ./scripts/check-quality.sh
+
+# Keep the familiar lint entry point aligned with the canonical quality gate
+lint: quality
+
+# Install the versioned pre-commit hook for this checkout
+install-hooks:
+    git config core.hooksPath .githooks
+    @echo "Installed repository hooks from .githooks"
 
 # Show coverage summary in terminal
 coverage:
@@ -208,7 +216,7 @@ harness-compaction-ci:
     bash scripts/harness/run_compaction_suite.sh --ci-blocking
 
 # Coding agent verification loop (run after code changes)
-verify: fmt lint test smoke
+verify: quality test smoke
     @echo "✅ Core flows verified"
 
 # Full local verification

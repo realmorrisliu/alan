@@ -639,7 +639,7 @@ impl PackageService {
         let mut state = self.state.lock().expect("package state poisoned");
         state.status = format!("{}:{}", result.action, result.message);
         state.result_order.push(request_id.clone());
-        state.results.insert(request_id, result.clone());
+        state.results.insert(request_id, result);
         while state.result_order.len() > MAX_RESULTS {
             let oldest = state.result_order.remove(0);
             state.results.remove(&oldest);

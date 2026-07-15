@@ -30,7 +30,10 @@ use super::turn_driver::TurnInputBroker;
 pub(super) use super::turn_executor::run_turn_with_cancel;
 use super::turn_executor::{TurnExecutionOutcome, TurnRunKind};
 use super::turn_state::{TurnActivityState, TurnState};
-#[allow(unused_imports)]
+#[allow(
+    unused_imports,
+    reason = "these helpers are imported here for the adjacent white-box test module"
+)]
 use super::turn_support::{
     cancel_current_task, emit_streaming_chunks, normalize_tool_calls, split_text_for_typing,
 };
@@ -207,7 +210,13 @@ impl RuntimeLoopState {
 }
 
 /// Handle a single submission
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg_attr(
+    not(test),
+    allow(
+        dead_code,
+        reason = "submission entrypoint remains available to the adjacent white-box test seam"
+    )
+)]
 pub async fn handle_submission<E, F>(
     state: &mut RuntimeLoopState,
     submission: Submission,
@@ -1501,7 +1510,10 @@ mod tests {
     }
 
     #[tokio::test]
-    #[allow(clippy::field_reassign_with_default)]
+    #[allow(
+        clippy::field_reassign_with_default,
+        reason = "the test highlights only the compaction fields that define this scenario"
+    )]
     async fn test_maybe_compact_context_triggers_on_estimated_token_budget() {
         let config = Config::default();
         let mut machine = AgentMachine::new();
@@ -1551,7 +1563,10 @@ mod tests {
     }
 
     #[tokio::test]
-    #[allow(clippy::field_reassign_with_default)]
+    #[allow(
+        clippy::field_reassign_with_default,
+        reason = "the test highlights only the compaction fields that define this scenario"
+    )]
     async fn test_maybe_compact_context_triggers_immediately_when_ratio_is_zero() {
         let config = Config::default();
         let mut machine = AgentMachine::new();
@@ -1601,7 +1616,10 @@ mod tests {
     }
 
     #[tokio::test]
-    #[allow(clippy::field_reassign_with_default)]
+    #[allow(
+        clippy::field_reassign_with_default,
+        reason = "the test highlights only the compaction fields that define this scenario"
+    )]
     async fn test_maybe_compact_context_skips_when_context_window_budget_has_room() {
         let config = Config::default();
         let mut machine = AgentMachine::new();
@@ -2157,7 +2175,10 @@ mod tests {
     }
 
     #[tokio::test]
-    #[allow(clippy::field_reassign_with_default)]
+    #[allow(
+        clippy::field_reassign_with_default,
+        reason = "the test highlights only the compaction fields that define this scenario"
+    )]
     async fn test_maybe_compact_context_allows_mid_turn_emergency_near_hard_limit() {
         let config = Config::default();
         let mut machine = AgentMachine::new();
@@ -2635,7 +2656,10 @@ mod tests {
 
     // Tests for handle_submission
     #[tokio::test]
-    #[allow(clippy::field_reassign_with_default)]
+    #[allow(
+        clippy::field_reassign_with_default,
+        reason = "the test highlights only the submission fields that define this scenario"
+    )]
     async fn test_handle_submission_cancel() {
         let config = Config::default();
         let mut machine = AgentMachine::new();
@@ -2685,7 +2709,10 @@ mod tests {
     }
 
     #[tokio::test]
-    #[allow(clippy::field_reassign_with_default)]
+    #[allow(
+        clippy::field_reassign_with_default,
+        reason = "the test highlights only the submission fields that define this scenario"
+    )]
     async fn test_handle_submission_rollback() {
         let config = Config::default();
         let mut machine = AgentMachine::new();

@@ -1243,7 +1243,7 @@ mod tests {
             dataset_files: vec![dataset_file],
             dataset_name: None,
             split: "test".to_string(),
-            workspace_root: Some(workspace_root.clone()),
+            workspace_root: Some(workspace_root),
             workspace_map_file: None,
             output_dir: output_dir.clone(),
             suite_name: "pilot".to_string(),

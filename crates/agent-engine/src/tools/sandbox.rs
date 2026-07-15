@@ -1453,7 +1453,7 @@ fn push_absolute_path_literal_candidates(
     range: Range<usize>,
     literals: &mut Vec<Vec<String>>,
 ) {
-    let literal = &token[range.clone()];
+    let literal = &token[range];
     if !Path::new(literal).is_absolute() {
         return;
     }

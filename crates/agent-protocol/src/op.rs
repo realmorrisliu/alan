@@ -288,7 +288,7 @@ mod tests {
     #[test]
     fn test_submission_new() {
         let op = Op::Interrupt;
-        let submission = Submission::new(op.clone());
+        let submission = Submission::new(op);
 
         assert!(!submission.id.is_empty());
         assert!(matches!(submission.op, Op::Interrupt));

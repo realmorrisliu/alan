@@ -75,18 +75,26 @@ still represented only by contracts or partial file-server crates.
 
 ## Build and test
 
-Rust 2024 and a current stable toolchain are required.
+Rust 2024 and the repository-pinned Rust 1.97.0 toolchain are required.
+The canonical quality gate also expects `rg` and the pinned OpenSpec CLI on
+`PATH`; CI installs both explicitly.
 
 ```bash
 just build
 just test
+just quality
 just check
+just install-hooks
 
 cargo test --workspace
 cargo test -p alan-agent-engine
 cargo test -p alan-agent-protocol
 cargo test -p alan-terminal-ui
 ```
+
+`just quality` is the canonical non-mutating clean-code and architecture gate
+used by the versioned pre-commit hook and required CI. CI remains authoritative
+because local hooks can be bypassed with `--no-verify`.
 
 Local macOS development:
 

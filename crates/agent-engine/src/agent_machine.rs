@@ -725,7 +725,7 @@ impl AgentMachine {
             id: tool_call_id.to_string(),
             content: Self::tool_payload_to_content_parts(payload.clone()),
         }]);
-        self.tape.push(message.clone());
+        self.tape.push(message);
 
         let durable_message = {
             let durable_payload = build_durable_tool_payload(&payload);
@@ -1149,7 +1149,10 @@ impl AgentMachine {
     }
 
     /// Record turn context snapshot to persistence (enqueue only; background writer performs IO)
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "arguments map directly to the durable turn-context record fields"
+    )]
     pub fn record_turn_context(
         &self,
         model: &str,
@@ -1192,7 +1195,10 @@ impl AgentMachine {
 
     /// Record turn context snapshot only when the observed prompt context changed.
     /// Returns `true` if a snapshot was recorded, `false` if it was skipped.
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "arguments map directly to the durable turn-context record fields"
+    )]
     pub fn record_turn_context_if_changed(
         &mut self,
         model: &str,
@@ -1524,7 +1530,7 @@ mod tests {
     fn test_add_tool_message() {
         let mut machine = AgentMachine::new();
         let payload = serde_json::json!({"result": "success"});
-        machine.add_tool_message("call_123", "search_tool", payload.clone());
+        machine.add_tool_message("call_123", "search_tool", payload);
 
         let messages = machine.tape.messages();
         assert_eq!(messages.len(), 1);
@@ -2817,7 +2823,7 @@ mod tests {
         let result = serde_json::json!({"status": "ok"});
 
         // Should not panic without recorder
-        machine.record_tool_call("search_tool", args.clone(), result.clone(), true);
+        machine.record_tool_call("search_tool", args, result, true);
     }
 
     #[test]
@@ -3460,7 +3466,7 @@ mod tests {
             {"id": 3, "content": "Third item"}
         ]);
         // Small max_size to trigger truncation
-        let result = truncate_payload(payload.clone(), 100);
+        let result = truncate_payload(payload, 100);
         // Result should be an array
         assert!(result.is_array());
         let arr = result.as_array().unwrap();
@@ -3554,7 +3560,7 @@ mod tests {
             "array": [1, 2, 3],
             "nested": {"key": "value"}
         });
-        let result = truncate_payload(payload.clone(), 1000);
+        let result = truncate_payload(payload, 1000);
         // All types should be preserved
         assert_eq!(result["string"], "test");
         assert_eq!(result["number"], 42);

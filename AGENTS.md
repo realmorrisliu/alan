@@ -101,13 +101,20 @@ Prefer Just for complete workflows:
 ```bash
 just test
 just check
+just quality
 just fmt
 just lint
 just build
+just install-hooks
 just install-dev
 just apple-shell-focused-tests
 just apple-shell-ui-smoke
 ```
+
+`just quality` is the canonical non-mutating clean-code and architecture gate.
+CI is the merge-blocking authority; `just install-hooks` enables the same gate
+as local pre-commit feedback. The hook can be bypassed locally with
+`--no-verify`, but required CI cannot.
 
 Focused Rust commands:
 

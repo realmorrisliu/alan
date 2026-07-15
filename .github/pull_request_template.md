@@ -10,8 +10,7 @@
 
 ## Validation
 
-- [ ] `cargo fmt --all`
-- [ ] `cargo clippy --workspace --all-targets --all-features -- -D warnings`
+- [ ] `just quality` (canonical non-mutating clean-code and architecture gate)
 - [ ] `cargo test --workspace`
 - [ ] Additional checks (if applicable):
 
@@ -23,6 +22,7 @@
 ## Checklist
 
 - [ ] Scope is focused and reviewable
+- [ ] Any architecture-debt budget change is explained and ratcheted downward where possible
 - [ ] Tests cover changed behavior and regressions
 - [ ] Docs updated if behavior/config changed
 - [ ] No secrets or sensitive data added

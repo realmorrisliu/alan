@@ -1164,8 +1164,7 @@ description: {description}
             "# Instructions\nUse this skill when asked.",
         );
 
-        let mut cache =
-            prompt_cache_for_definition_root(&definition_root, vec![persona_dir.clone()]);
+        let mut cache = prompt_cache_for_definition_root(&definition_root, vec![persona_dir]);
         let user_input = vec![ContentPart::text("please use $my-skill for this task")];
 
         let first = cache.build(Some(&user_input));

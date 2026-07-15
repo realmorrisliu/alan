@@ -904,7 +904,7 @@ impl TerminalLaunchIntent {
                     executable_path: None,
                     launch_path: String::new(),
                     arguments: Vec::new(),
-                    boot_command: boot_command.clone(),
+                    boot_command,
                     surface_command: None,
                     summary: format!("Launching pane with Managed User {}", profile.title),
                     detail: Some(profile.redacted_display_detail()),
