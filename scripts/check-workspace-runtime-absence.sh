@@ -49,7 +49,7 @@ if rg -n "$implicit_path_pattern" crates --glob '*.rs' >"$matches_file"; then
             crates/alan/src/legacy_state.rs)
                 continue # sole bounded migration/cleanup owner
                 ;;
-            crates/agent-engine/src/agent_definition.rs | crates/alan/tests/agent_definition_descriptor_integration_test.rs)
+            crates/agent-engine/src/agent_definition/tests.rs | crates/alan/tests/agent_definition_descriptor_integration_test.rs)
                 continue # negative regressions proving no implicit definition discovery
                 ;;
             crates/agent-engine/src/tools/sandbox_tests.rs)
