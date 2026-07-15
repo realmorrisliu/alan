@@ -6,7 +6,6 @@ crates/agent-engine/src/agent_machine.rs 3661
 crates/agent-engine/src/config.rs 2556
 crates/agent-engine/src/policy.rs 1177
 crates/agent-engine/src/rollout.rs 2266
-crates/agent-engine/src/runtime/agent_loop.rs 2763
 crates/agent-engine/src/runtime/compaction.rs 1373
 crates/agent-engine/src/runtime/engine.rs 2816
 crates/agent-engine/src/runtime/memory_promotion.rs 1770
