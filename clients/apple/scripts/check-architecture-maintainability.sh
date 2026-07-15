@@ -9,6 +9,8 @@ HELPER_SOURCE_ROOT="$APPLE_ROOT/alan-macos-privileged-helper"
 PROJECT_FILE="$APPLE_ROOT/alan-macos.xcodeproj/project.pbxproj"
 README_FILE="$APPLE_ROOT/README.md"
 ARCH_DOC="$APPLE_ROOT/ARCHITECTURE.md"
+WARNING_BASELINE="$SCRIPT_DIR/architecture-warning-baseline.txt"
+WARNING_BASELINE_REL="clients/apple/scripts/architecture-warning-baseline.txt"
 STRICT=0
 
 if [[ "${1:-}" == "--strict" ]]; then
@@ -17,17 +19,150 @@ fi
 
 warnings=0
 failures=0
+warning_inventory="$(mktemp)"
+warning_inventory_sorted="$(mktemp)"
+warning_baseline_body="$(mktemp)"
+warning_baseline_sorted="$(mktemp)"
+base_warning_baseline="$(mktemp)"
+trap 'rm -f "$warning_inventory" "$warning_inventory_sorted" "$warning_baseline_body" "$warning_baseline_sorted" "$base_warning_baseline"' EXIT
+
+git_command=(git)
+if [[ -n "${ALAN_QUALITY_GIT_DIR:-}" ]]; then
+    git_command+=(--git-dir="$ALAN_QUALITY_GIT_DIR")
+fi
+base_ref="${ALAN_QUALITY_BASE_REF:-HEAD}"
 
 "$SCRIPT_DIR/check-brand-identity.sh"
 
 warn() {
+    local key="$1"
+    shift
     printf 'warning: %s\n' "$1"
+    printf '%s\n' "$key" >>"$warning_inventory"
     warnings=$((warnings + 1))
 }
 
 fail() {
     printf 'error: %s\n' "$1" >&2
     failures=$((failures + 1))
+}
+
+validate_warning_baseline() {
+    local duplicate
+
+    if [[ ! -f "$WARNING_BASELINE" ]]; then
+        fail "clients/apple/scripts/architecture-warning-baseline.txt must record accepted warnings"
+        return
+    fi
+
+    if ! awk -F '|' '
+        /^[[:space:]]*#/ || NF == 0 { next }
+        $1 == "large" {
+            if (NF != 3 || $2 == "" || $3 !~ /^[0-9]+$/) {
+                printf "invalid Apple warning baseline entry: %s\n", $0 > "/dev/stderr"
+                invalid = 1
+                next
+            }
+            print
+            next
+        }
+        $1 == "bridge" {
+            if (NF != 3 || $2 == "" || $3 == "") {
+                printf "invalid Apple warning baseline entry: %s\n", $0 > "/dev/stderr"
+                invalid = 1
+                next
+            }
+            print
+            next
+        }
+        $1 == "missing-target-folder" ||
+        $1 == "readme-missing-file" ||
+        $1 == "readme-missing-folder" ||
+        $1 == "readme-missing-command" {
+            if (NF != 2 || $2 == "") {
+                printf "invalid Apple warning baseline entry: %s\n", $0 > "/dev/stderr"
+                invalid = 1
+                next
+            }
+            print
+            next
+        }
+        {
+            printf "unknown Apple warning baseline entry: %s\n", $0 > "/dev/stderr"
+            invalid = 1
+        }
+        END { exit invalid }
+    ' "$WARNING_BASELINE" >"$warning_baseline_body"; then
+        fail "Apple architecture warning baseline is malformed"
+        return
+    fi
+
+    LC_ALL=C sort "$warning_inventory" >"$warning_inventory_sorted"
+    LC_ALL=C sort "$warning_baseline_body" >"$warning_baseline_sorted"
+
+    duplicate="$(uniq -d "$warning_baseline_sorted" | head -n 1)"
+    if [[ -n "$duplicate" ]]; then
+        fail "Apple architecture warning baseline contains duplicate entry: $duplicate"
+    fi
+
+    duplicate="$(uniq -d "$warning_inventory_sorted" | head -n 1)"
+    if [[ -n "$duplicate" ]]; then
+        fail "Apple architecture report emitted duplicate warning key: $duplicate"
+    fi
+
+    if ! cmp -s "$warning_baseline_body" "$warning_baseline_sorted"; then
+        fail "Apple architecture warning baseline entries must stay sorted"
+    fi
+
+    if ! cmp -s "$warning_inventory_sorted" "$warning_baseline_sorted"; then
+        printf 'Apple architecture warning ledger drift:\n' >&2
+        diff -u "$warning_baseline_sorted" "$warning_inventory_sorted" >&2 || true
+        fail "update the Apple warning baseline in the same reduction change"
+    fi
+}
+
+compare_warning_baseline_with_base() {
+    if ! "${git_command[@]}" cat-file -e "$base_ref^{commit}" 2>/dev/null; then
+        fail "Apple architecture warning ratchet base is not a commit: $base_ref"
+        return
+    fi
+
+    if ! "${git_command[@]}" cat-file -e "$base_ref:$WARNING_BASELINE_REL" 2>/dev/null; then
+        printf 'Apple architecture warning baseline established relative to %s.\n' "$base_ref"
+        return
+    fi
+
+    "${git_command[@]}" show "$base_ref:$WARNING_BASELINE_REL" >"$base_warning_baseline"
+    if ! awk -F '|' '
+        NR == FNR {
+            if ($0 ~ /^[[:space:]]*#/ || NF == 0) {
+                next
+            }
+            if ($1 == "large") {
+                previous_large[$2] = $3
+            } else {
+                previous[$0] = 1
+            }
+            next
+        }
+        $1 == "large" {
+            if (!($2 in previous_large)) {
+                printf "error: new Apple large-file warning: %s\n", $2 > "/dev/stderr"
+                failed = 1
+            } else if ($3 > previous_large[$2]) {
+                printf "error: Apple large-file debt grew for %s from %d to %d lines\n", $2, previous_large[$2], $3 > "/dev/stderr"
+                failed = 1
+            }
+            next
+        }
+        !($0 in previous) {
+            printf "error: new or broadened Apple architecture warning: %s\n", $0 > "/dev/stderr"
+            failed = 1
+        }
+        END { exit failed }
+    ' "$base_warning_baseline" "$warning_baseline_body"; then
+        fail "Apple architecture warning debt may shrink but must not grow"
+    fi
 }
 
 contains_line() {
@@ -466,7 +601,8 @@ while IFS= read -r file; do
     fi
 
     if (( lines > large_file_threshold )); then
-        warn "$rel is $lines lines; keep new behavior in the target owner or document the temporary boundary"
+        warn "large|$rel|$lines" \
+            "$rel is $lines lines; keep new behavior in the target owner or document the temporary boundary"
     fi
 
     if grep -Eq '^import (AppKit|Darwin)$' "$file"; then
@@ -474,7 +610,8 @@ while IFS= read -r file; do
             App/*|Services/*|Support/*|Views/Shell/Terminal/*|AlanApp.swift|AlanAppSingletonGuard.swift|GhosttyLiveHost.swift|ShellControlPlane.swift|TerminalHostView.swift|TerminalRuntimeService.swift|TerminalSurfaceController.swift)
                 ;;
             MacShellRootView.swift|ShellHostController.swift|TerminalRuntimeRegistry.swift)
-                warn "$rel imports AppKit or Darwin while it remains outside a narrow bridge owner"
+                warn "bridge|$rel|appkit-or-darwin-outside-bridge" \
+                    "$rel imports AppKit or Darwin while it remains outside a narrow bridge owner"
                 ;;
             *)
                 fail "$rel imports AppKit or Darwin outside an accepted app, service, support, or terminal bridge boundary"
@@ -492,7 +629,8 @@ for dir in "${target_dirs[@]}"; do
     if [[ -d "$SOURCE_ROOT/$dir" ]]; then
         printf '  present: clients/apple/alan-macos/%s\n' "$dir"
     else
-        warn "target folder clients/apple/alan-macos/$dir is not present yet"
+        warn "missing-target-folder|$dir" \
+            "target folder clients/apple/alan-macos/$dir is not present yet"
     fi
     if [[ -f "$ARCH_DOC" ]] && ! grep -q "\`$dir/\`" "$ARCH_DOC"; then
         fail "clients/apple/ARCHITECTURE.md must document target folder $dir/"
@@ -505,16 +643,19 @@ while IFS= read -r entry; do
     [[ "$path" == "$entry" ]] && continue
     case "$path" in
         *.swift)
-            [[ -f "$SOURCE_ROOT/$path" ]] || warn "README lists $path but the file is not at clients/apple/alan-macos/$path"
+            [[ -f "$SOURCE_ROOT/$path" ]] || warn "readme-missing-file|$path" \
+                "README lists $path but the file is not at clients/apple/alan-macos/$path"
             ;;
         */)
-            [[ -d "$SOURCE_ROOT/${path%/}" ]] || warn "README lists $path but the folder is not present yet"
+            [[ -d "$SOURCE_ROOT/${path%/}" ]] || warn "readme-missing-folder|$path" \
+                "README lists $path but the folder is not present yet"
             ;;
     esac
 done < <(grep -E '^- `[^`]+`' "$README_FILE" || true)
 
 if ! grep -q "check-architecture-maintainability.sh" "$README_FILE"; then
-    warn "README does not mention the architecture maintainability report command"
+    warn "readme-missing-command|check-architecture-maintainability.sh" \
+        "README does not mention the architecture maintainability report command"
 fi
 
 printf '\nXcode project membership drift:\n'
@@ -526,6 +667,9 @@ while IFS= read -r ref; do
         fail "Xcode project references missing Swift file $name"
     fi
 done < <(grep -E 'path = .*\.swift;' "$PROJECT_FILE" || true)
+
+validate_warning_baseline
+compare_warning_baseline_with_base
 
 if [[ -f "$ARCH_DOC" ]] && ! grep -Eq "^${warnings} known large-file / bridge-boundary warning" "$ARCH_DOC"; then
     fail "clients/apple/ARCHITECTURE.md must record the current report-mode warning count ($warnings)"

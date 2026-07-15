@@ -106,9 +106,12 @@ new debt entries and increased limits fail even when source and ledger are
 changed together. Reduction also requires lowering or removing the baseline
 entry, preventing later regrowth.
 
-The existing Apple report remains authoritative for its 15 warning classes.
-The quality interface runs it on every commit and in CI; its recorded warning
-count must stay synchronized, and the follow-up burn-down tightens the count.
+The existing Apple report remains authoritative for its 15 warning instances.
+A structured ledger records each stable warning key and the exact line ceiling
+for every large file. The report must exactly match that ledger, and the ledger
+is compared with the pre-change Git reference. A new warning or larger line
+ceiling therefore fails even when code and ledger are raised together; every
+reduction tightens the ledger and documented count in the same change.
 
 Alternative considered: immediately require zero oversized files and strict
 Apple mode. Rejected because it would combine a large behavior-preserving
@@ -143,8 +146,9 @@ slices rather than one repository-wide rewrite.
 - [Line count can incentivize cosmetic splits] → Treat it only as an
   AI-navigability ceiling; architecture review still uses module depth,
   interface, seam, locality, and leverage.
-- [Baseline files can be edited to hide debt] → Require review of every budget
-  increase; the gate accepts only current inventory and CI shows the diff.
+- [Baseline files can be edited to hide debt] → Compare current ledgers with the
+  pre-change Git reference so new entries and budget increases fail even when
+  source and ledger change together.
 - [Apple warnings remain non-zero] → The immediate follow-up change owns their
   reduction; this PR forbids silent growth.
 

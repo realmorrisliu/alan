@@ -334,13 +334,18 @@ reduced architecture warning count is a byproduct; success is defined by the
 absence of production-compiled Rust-owned Swift implementations and by
 `check-shell-contracts.sh` continuing to reject fallback paths.
 
-The current architecture gate remains non-blocking for future documented
-warnings while failing narrower regressions such as new root-level Swift files,
+The current architecture gate treats
+`clients/apple/scripts/architecture-warning-baseline.txt` as a hard downward
+ratchet. The report must exactly match its structured warning inventory, and
+the quality gate compares that inventory with the pre-change commit. New or
+broadened warnings and increases to an existing large-file ceiling fail even
+when code and ledger are updated together. A reduction must tighten the ledger
+and this count in the same change.
+
+The gate also fails narrower regressions such as new root-level Swift files,
 project membership drift, reintroduced control-plane ownership in the wrong
 file, direct reducer FFI calls outside `ShellReducerCommandCoordinator`, or
 direct shell-core FFI calls outside the documented operation owner allowlist.
 Direct `ShellCoreFFIAdapter` construction is likewise restricted to the loader
 owner, and raw `alan_shell_core_ffi_*` symbol access must stay in that same
 loader owner, so production code cannot bypass the shared adapter boundary.
-The `macos-app-architecture-maintainability` spec requires this debt record to
-stay current whenever warnings are introduced, broadened, or resolved.

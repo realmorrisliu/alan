@@ -15,18 +15,18 @@ while IFS= read -r file; do
             collecting = 0
             attribute = ""
         }
-        /^[[:space:]]*#!?\[/ {
+        /^[[:space:]]*#[[:space:]]*!?[[:space:]]*\[/ {
             collecting = 1
             start = NR
             attribute = $0
-            if ($0 ~ /\][[:space:]]*$/) {
+            if ($0 ~ /\]/) {
                 finish_attribute()
             }
             next
         }
         collecting {
             attribute = attribute " " $0
-            if ($0 ~ /\][[:space:]]*$/) {
+            if ($0 ~ /\]/) {
                 finish_attribute()
             }
         }

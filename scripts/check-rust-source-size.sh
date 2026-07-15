@@ -13,7 +13,7 @@ git_command=(git)
 if [[ -n "${ALAN_QUALITY_GIT_DIR:-}" ]]; then
     git_command+=(--git-dir="$ALAN_QUALITY_GIT_DIR")
 fi
-base_ref="${ALAN_RUST_SOURCE_SIZE_BASE_REF:-HEAD}"
+base_ref="${ALAN_QUALITY_BASE_REF:-HEAD}"
 
 cd "$ROOT"
 while IFS= read -r file; do

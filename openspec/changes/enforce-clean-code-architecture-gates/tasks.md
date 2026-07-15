@@ -15,8 +15,9 @@
   crate dependencies and current ratcheting transitional edges.
 - [x] 2.3 Remove duplicated per-crate manifest parsers after the graph module
   preserves their accepted ADR-0025 checks.
-- [x] 2.4 Run existing Alan OS retired-host/workspace/legacy absence guards and the
-  Apple architecture warning ledger through the repository gate.
+- [x] 2.4 Run existing Alan OS retired-host/workspace/legacy absence guards and
+  the exact, pre-change-ratcheted Apple architecture warning ledger through the
+  repository gate.
 
 ## 3. Canonical Gate, Git Hook, And CI
 
