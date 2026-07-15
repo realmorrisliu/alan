@@ -3,6 +3,7 @@ use super::child_runs::{
     ChildRunRecord, ChildRunRegistry, ChildRunStatus, ChildRunTerminationMode,
     ChildRunTerminationRequest,
 };
+use super::delegated_child_run::{ChildRuntimePause, ChildRuntimeResult, ChildRuntimeStatus};
 use super::delegation_capabilities::{
     DelegatedSpawnRejected, evaluate_delegated_namespace, namespace_summary_from_bindings,
 };
@@ -80,37 +81,6 @@ impl LlmProvider for ChildLlmProvider {
     fn provider_name(&self) -> &'static str {
         self.client.provider_name()
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum ChildRuntimeStatus {
-    Completed,
-    Paused,
-    Cancelled,
-    TimedOut,
-    Terminated,
-    Failed,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct ChildRuntimePause {
-    pub request_id: String,
-    pub kind: YieldKind,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct ChildRuntimeResult {
-    pub status: ChildRuntimeStatus,
-    pub process_path: String,
-    pub child_run_id: Option<String>,
-    pub rollout_path: Option<PathBuf>,
-    pub output_text: String,
-    pub turn_summary: Option<String>,
-    pub structured_output: Option<serde_json::Value>,
-    pub warnings: Vec<String>,
-    pub error_message: Option<String>,
-    pub pause: Option<ChildRuntimePause>,
-    pub child_run: Option<ChildRunRecord>,
 }
 
 #[derive(Debug)]

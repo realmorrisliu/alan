@@ -7,6 +7,7 @@ mod agent_process;
 mod child_agents;
 mod child_runs;
 mod compaction;
+mod delegated_child_run;
 mod delegation_capabilities;
 mod engine;
 mod guardian;
