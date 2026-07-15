@@ -7,10 +7,11 @@ use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
 
+use super::agent_files::{write_agent_output, write_tape_records};
 use super::client::NamespaceClient;
 use super::{
     NamespaceLlmCapabilities, NamespaceRuntimeEnvironment, NamespaceTurnOutput,
-    NamespaceTurnRuntime, write_agent_output, write_tape_records,
+    NamespaceTurnRuntime,
 };
 
 #[derive(Deserialize)]

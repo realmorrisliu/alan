@@ -1,3 +1,4 @@
+use super::super::agent_files::tape_record_bytes;
 use super::*;
 
 #[tokio::test]
