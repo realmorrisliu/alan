@@ -713,13 +713,13 @@ fn path_exists_without_following(path: &Path) -> Result<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alan_agent_engine::{
-        ConnectionCredential, ConnectionProfile, ConnectionsFile, CredentialKind, LlmProvider,
+    use alan_agent_engine::LlmProvider;
+    use alan_service_manager::{
+        ConnectionCredential, ConnectionProfile, ConnectionsFile, CredentialKind,
         default_credential_backend,
     };
     use chrono::Utc;
     use tempfile::TempDir;
-
     fn stores(root: &Path, channel: InstallChannel) -> (SystemStorePaths, HostStorePaths) {
         let data = root.join("data");
         fs::create_dir_all(&data).unwrap();

@@ -7,6 +7,7 @@
 
 mod boot_unit;
 mod connection;
+mod connection_profile;
 mod control_fs;
 mod flat_fs;
 mod host_mount;
@@ -20,6 +21,11 @@ pub use boot_unit::{
 };
 pub use connection::{
     ConnectionService, NativeConnectionAction, NativeConnectionRequest, NativeConnectionResponse,
+};
+pub use connection_profile::{
+    ConnectionCredential, ConnectionProfile, ConnectionStoreBindings, ConnectionsFile,
+    CredentialKind, ProviderDescriptor, ResolvedConnectionProfile, default_credential_backend,
+    normalize_profile_settings, provider_catalog, sanitize_identifier, validate_profile_settings,
 };
 pub use control_fs::{
     ManagerState, RestartDecision, ServiceManagerFs, SystemStatus, UnitSnapshot, UnitStatus,

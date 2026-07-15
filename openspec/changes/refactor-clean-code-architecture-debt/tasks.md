@@ -1,13 +1,13 @@
 ## 1. Immediate Connection Service PR
 
-- [ ] 1.1 Confirm `enforce-clean-code-architecture-gates` is merged and branch
+- [x] 1.1 Confirm `enforce-clean-code-architecture-gates` is merged and branch
   the next PR from that exact `main` before unrelated feature work.
-- [ ] 1.2 Characterize current profile metadata, default selection, mounted
+- [x] 1.2 Characterize current profile metadata, default selection, mounted
   connection publication, and engine consumption with focused contract tests.
-- [ ] 1.3 Move one complete profile metadata/selection responsibility from
+- [x] 1.3 Move one complete profile metadata/selection responsibility from
   Agent Execution Engine into Connection Service without adding a bridge or
   dual writer.
-- [ ] 1.4 Delete the displaced engine path, remove any dependency it made
+- [x] 1.4 Delete the displaced engine path, remove any dependency it made
   unnecessary, and tighten the source-size and dependency baselines.
 - [ ] 1.5 Run the canonical gate and focused tests, open the behavior-preserving
   PR, and resolve Codex review until no new issue remains.

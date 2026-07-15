@@ -3,7 +3,8 @@ use std::{
     process::Command,
 };
 
-use alan_agent_engine::{ConnectionsFile, InstallChannel};
+use alan_agent_engine::InstallChannel;
+use alan_service_manager::ConnectionsFile;
 use tempfile::TempDir;
 
 fn detected_data_dir(home: &Path, xdg_data: &Path) -> PathBuf {

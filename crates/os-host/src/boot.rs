@@ -3,17 +3,19 @@
 use std::sync::Arc;
 
 use alan_agent_engine::{
-    AgentProcessConfig, Config, ConnectionsFile, HostMountGrant, InstallChannel, LlmClient,
-    ProcessDescriptor, ProcessLaunchContext, SecretStore, ToolRegistry,
+    AgentProcessConfig, Config, HostMountGrant, InstallChannel, LlmClient, ProcessDescriptor,
+    ProcessLaunchContext, ToolRegistry,
 };
 use alan_ap::InProcessTransport;
 use alan_kernel::{Access, Credentials, Namespace};
 use alan_llm::{GenerationRequest, GenerationResponse, LlmProvider, StreamChunk};
-use alan_service_manager::{LlmClientFactory, ServiceManagerConfig};
+use alan_service_manager::{ConnectionsFile, LlmClientFactory, ServiceManagerConfig};
 use anyhow::{Context, Result, bail};
 
 use crate::paths::{HostStorePaths, SystemStorePaths};
-use crate::{LegacyConnectionPaths, migrate_legacy_connections};
+use crate::{
+    LegacyConnectionPaths, SecretStore, apply_profile_to_config, migrate_legacy_connections,
+};
 
 /// Host-supplied adapters and durable bindings needed by Service Manager.
 pub struct HostBootConfig(ServiceManagerConfig);
@@ -117,7 +119,8 @@ impl LlmClientFactory for ProductLlmClientFactory {
             }
             _ => SecretStore::from_directory(&self.credentials_dir)?,
         };
-        connections.apply_profile_to_config(
+        apply_profile_to_config(
+            connections,
             Some(selected_profile),
             &secret_store,
             &mut core_config,
@@ -184,10 +187,10 @@ impl HostBootConfig {
             );
         process.store_bindings = Some(system_store.agent_runtime_bindings()?);
         process.memory_store_backing = Some(memory_store_backing);
-        let connection_store = system_store.connection_bindings(&host_store)?;
+        let connection_store = system_store.connection_bindings()?;
         let tools = ToolRegistry::with_config(Arc::new(process.agent_config.core_config.clone()));
         let llm_factory = Arc::new(ProductLlmClientFactory {
-            credentials_dir: connection_store.credentials_dir.clone(),
+            credentials_dir: host_store.credentials.clone(),
             keychain_service: {
                 #[cfg(target_os = "macos")]
                 {

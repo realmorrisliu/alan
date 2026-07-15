@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use alan_agent_engine::{
-    AgentProcessConfig, ConnectionsFile, LlmClient, ProcessLaunchContext, ProcessPackageKind,
+    AgentProcessConfig, LlmClient, ProcessLaunchContext, ProcessPackageKind,
     ProcessPackageReference, ProcessPackageSkillReference, RuntimeController, ToolRegistry,
     configure_runtime_tool_execution_binding, provider_capabilities_for_config,
     spawn_with_namespace_environment,
@@ -21,9 +21,10 @@ use async_trait::async_trait;
 use uuid::Uuid;
 
 use crate::{
-    BootManifest, BootUnit, ConnectionService, HostMountApplicatorFactory, HostMountExportAdapter,
-    HostMountService, LocalEntryService, ManagerState, PackageService, RestartDecision,
-    ServiceManagerFs, UnavailableHostMountExportAdapter,
+    BootManifest, BootUnit, ConnectionService, ConnectionStoreBindings, ConnectionsFile,
+    HostMountApplicatorFactory, HostMountExportAdapter, HostMountService, LocalEntryService,
+    ManagerState, PackageService, RestartDecision, ServiceManagerFs,
+    UnavailableHostMountExportAdapter,
     quartermaster::{QUARTERMASTER_EXECUTABLE, SystemProcessRunner},
 };
 
@@ -136,7 +137,7 @@ impl FileServer for SwitchableFileServer {
 pub struct ServiceManagerConfig {
     pub channel_id: String,
     pub process: AgentProcessConfig,
-    pub connection_store: Option<alan_agent_engine::ConnectionStoreBindings>,
+    pub connection_store: Option<ConnectionStoreBindings>,
     pub package_store: Option<std::path::PathBuf>,
     pub llm_factory: Arc<dyn LlmClientFactory>,
     pub host_mount_adapter: Arc<dyn HostMountExportAdapter>,
@@ -213,7 +214,7 @@ impl ServiceManagerConfig {
     pub fn with_factory(
         channel_id: impl Into<String>,
         process: AgentProcessConfig,
-        connection_store: Option<alan_agent_engine::ConnectionStoreBindings>,
+        connection_store: Option<ConnectionStoreBindings>,
         package_store: Option<std::path::PathBuf>,
         llm_factory: Arc<dyn LlmClientFactory>,
         host_mount_adapter: Arc<dyn HostMountExportAdapter>,
@@ -1730,11 +1731,10 @@ async fn verify_readiness(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alan_agent_engine::{
-        ConnectionCredential, ConnectionProfile, ConnectionStoreBindings, CredentialKind,
-        LlmProvider as ConnectionProvider,
-    };
+    use alan_agent_engine::LlmProvider as ConnectionProvider;
     use alan_llm::MockLlmProvider;
+
+    use crate::{ConnectionCredential, ConnectionProfile, CredentialKind};
 
     #[derive(Debug)]
     struct MissingSecretFactory;
@@ -2004,8 +2004,7 @@ mod tests {
             LlmClient::new(MockLlmProvider::new()),
             ToolRegistry::new(),
         );
-        config.connection_store =
-            Some(ConnectionStoreBindings::new(metadata, temp.path().join("credentials")).unwrap());
+        config.connection_store = Some(ConnectionStoreBindings::new(metadata).unwrap());
         config.llm_factory = Arc::new(MissingSecretFactory);
 
         let manager = ServiceManager::boot(config).await.unwrap();
@@ -2077,8 +2076,7 @@ mod tests {
             LlmClient::new(MockLlmProvider::new()),
             ToolRegistry::new(),
         );
-        config.connection_store =
-            Some(ConnectionStoreBindings::new(metadata, temp.path().join("credentials")).unwrap());
+        config.connection_store = Some(ConnectionStoreBindings::new(metadata).unwrap());
         let factory = Arc::new(RecordingFactory::default());
         config.llm_factory = factory.clone();
 

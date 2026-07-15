@@ -2,17 +2,17 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use alan_agent_engine::{
-    Config, ConnectionProfile, ConnectionStoreBindings, ConnectionsFile, LlmClient,
-    sanitize_identifier, validate_profile_settings,
+use crate::connection_profile::{
+    ConnectionProfile, ConnectionStoreBindings, ConnectionsFile, sanitize_identifier,
+    validate_profile_settings,
 };
+use crate::flat_fs::{FlatFileService, FlatServiceFs};
+use crate::runtime::LlmClientFactory;
+use alan_agent_engine::{Config, LlmClient};
 use alan_ap::{ErrorCode, FileServer};
 use alan_llm::{GenerationRequest, GenerationResponse, LlmProvider, StreamChunk};
 use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
-
-use crate::flat_fs::{FlatFileService, FlatServiceFs};
-use crate::runtime::LlmClientFactory;
 
 const FILES: &[(&str, bool)] = &[
     ("metadata", false),
@@ -718,11 +718,7 @@ mod tests {
     #[tokio::test]
     async fn metadata_is_persistent_and_secret_bytes_never_enter_files() {
         let temp = tempfile::tempdir().unwrap();
-        let bindings = ConnectionStoreBindings::new(
-            temp.path().join("connections.toml"),
-            temp.path().join("credentials"),
-        )
-        .unwrap();
+        let bindings = ConnectionStoreBindings::new(temp.path().join("connections.toml")).unwrap();
         let service = ConnectionService::open("test", &bindings).unwrap();
         let shell = Shell::new(InProcessTransport::new(service.file_server()));
         let command = serde_json::json!({

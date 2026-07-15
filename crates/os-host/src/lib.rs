@@ -9,6 +9,7 @@ pub mod host_mounts;
 mod legacy_connections;
 mod local;
 pub mod paths;
+mod secret_store;
 
 pub use boot::HostBootConfig;
 pub use legacy_connections::{
@@ -19,3 +20,4 @@ pub use local::{
     HostReadiness, HostStatus, LocalAttachment, request_host_stop, run_host_process,
 };
 pub use paths::{AgentRuntimeStorePaths, HostStorePaths, SystemStorePaths};
+pub use secret_store::{SecretStore, apply_profile_to_config};

@@ -1,6 +1,7 @@
 use std::path::{Component, Path, PathBuf};
 
-use alan_agent_engine::{AgentRuntimeStoreBindings, ConnectionStoreBindings};
+use alan_agent_engine::AgentRuntimeStoreBindings;
+use alan_service_manager::ConnectionStoreBindings;
 use anyhow::{Context, Result, ensure};
 
 const PRODUCT_DIR: &str = "Alan";
@@ -82,8 +83,8 @@ impl SystemStorePaths {
         Ok(self.service("connections")?.join("connections.toml"))
     }
 
-    pub fn connection_bindings(&self, host: &HostStorePaths) -> Result<ConnectionStoreBindings> {
-        ConnectionStoreBindings::new(self.connections_metadata()?, host.credentials.clone())
+    pub fn connection_bindings(&self) -> Result<ConnectionStoreBindings> {
+        ConnectionStoreBindings::new(self.connections_metadata()?)
     }
 }
 

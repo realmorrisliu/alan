@@ -5,6 +5,11 @@ fn read_runtime_source(path: &str) -> String {
         .unwrap_or_else(|error| panic!("read src/runtime/{path}: {error}"))
 }
 
+fn read_crate_source(path: &str) -> String {
+    std::fs::read_to_string(format!("{}/src/{path}", env!("CARGO_MANIFEST_DIR")))
+        .unwrap_or_else(|error| panic!("read src/{path}: {error}"))
+}
+
 fn rust_item_body<'a>(source: &'a str, marker: &str) -> &'a str {
     let item = &source[source
         .find(marker)
@@ -165,4 +170,29 @@ fn engine_has_no_host_connection_store_or_provider_factory_authority() {
     }
     assert!(child.contains("ensure_child_connection_is_passed"));
     assert!(child.contains("parent namespace missing callable Connection service"));
+}
+
+#[test]
+fn engine_does_not_own_connection_profile_metadata_or_selection() {
+    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    assert!(
+        !manifest_dir.join("src/connections.rs").exists(),
+        "Connection profile metadata must be owned by Connection Service"
+    );
+
+    let public_api = read_crate_source("lib.rs");
+    for forbidden in [
+        "mod connections",
+        "ConnectionCredential",
+        "ConnectionProfile",
+        "ConnectionStoreBindings",
+        "ConnectionsFile",
+        "ResolvedConnectionProfile",
+        "SecretStore",
+    ] {
+        assert!(
+            !public_api.contains(forbidden),
+            "Agent Execution Engine still exports Connection authority through {forbidden}"
+        );
+    }
 }
