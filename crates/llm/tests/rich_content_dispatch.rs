@@ -1,27 +1,69 @@
 use alan_llm::{
-    GenerationRequest, LlmProvider, Message, MessageContentPart, OpenAiChatCompletionsClient,
+    AnthropicMessagesClient, GenerationRequest, LlmProvider, Message, MessageContentPart,
+    OpenAiChatCompletionsClient, OpenAiResponsesClient,
 };
 
-#[tokio::test]
-async fn openai_chat_rejects_url_backed_document_before_dispatch() {
+fn request_with_attachment(metadata: serde_json::Value) -> GenerationRequest {
     let mut message = Message::user("");
     message.content_parts = vec![MessageContentPart::Attachment {
         hash: "doc_hash".to_string(),
         mime_type: "application/pdf".to_string(),
-        metadata: serde_json::json!({"file_url": "https://example.com/spec.pdf"}),
+        metadata,
     }];
-    let request = GenerationRequest {
+    GenerationRequest {
         messages: vec![message],
         ..GenerationRequest::new()
-    };
+    }
+}
+
+#[tokio::test]
+async fn openai_chat_rejects_url_backed_document_before_dispatch() {
     let mut provider = OpenAiChatCompletionsClient::official_with_params(
         "unused",
         "https://example.invalid/v1",
         "gpt-5.4",
     );
 
-    let error = provider.generate(request).await.unwrap_err();
+    let error = provider
+        .generate(request_with_attachment(serde_json::json!({
+            "file_url": "https://example.com/spec.pdf"
+        })))
+        .await
+        .unwrap_err();
 
     assert!(error.to_string().contains("file_id"));
     assert!(error.to_string().contains("file_data"));
+}
+
+#[tokio::test]
+async fn openai_responses_rejects_unreferenced_document_before_dispatch() {
+    let mut provider =
+        OpenAiResponsesClient::with_params("unused", "https://example.invalid/v1", "gpt-5.4");
+
+    let error = provider
+        .generate(request_with_attachment(serde_json::json!({})))
+        .await
+        .unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("cannot represent document attachment")
+    );
+}
+
+#[tokio::test]
+async fn anthropic_rejects_unreferenced_document_before_dispatch() {
+    let mut provider = AnthropicMessagesClient::with_params(
+        "unused",
+        "https://example.invalid/v1",
+        "claude-sonnet-4-5",
+    );
+
+    let error = provider
+        .generate(request_with_attachment(serde_json::json!({})))
+        .await
+        .unwrap_err();
+
+    assert!(error.to_string().contains("cannot represent attachment"));
 }

@@ -1,71 +1,49 @@
 use crate::MessageContentPart;
 
-pub(super) fn validate_chat_completions_parts(parts: &[MessageContentPart]) -> anyhow::Result<()> {
-    for part in parts {
-        let MessageContentPart::Attachment {
-            hash,
-            mime_type,
-            metadata,
-        } = part
-        else {
-            continue;
-        };
-        let image_url = mime_type.starts_with("image/") && attachment_url(metadata).is_some();
-        let file_id = metadata.get("file_id").and_then(serde_json::Value::as_str);
-        let inline_file = metadata
-            .get("file_data")
-            .and_then(serde_json::Value::as_str)
-            .zip(metadata.get("filename").and_then(serde_json::Value::as_str));
-        if image_url || file_id.is_some() || inline_file.is_some() {
-            continue;
-        }
-        anyhow::bail!(
-            "OpenAI Chat Completions cannot represent attachment `{hash}` ({mime_type}); use an image URL, uploaded `file_id`, or `file_data` with `filename`"
-        );
-    }
-    Ok(())
-}
-
 pub(super) fn chat_completions_content(
     fallback: String,
     parts: Vec<MessageContentPart>,
-) -> Option<serde_json::Value> {
+) -> anyhow::Result<Option<serde_json::Value>> {
     if parts.is_empty() {
-        return (!fallback.is_empty()).then_some(serde_json::Value::String(fallback));
+        return Ok((!fallback.is_empty()).then_some(serde_json::Value::String(fallback)));
     }
 
-    let parts = parts
-        .into_iter()
-        .filter_map(chat_completions_part)
-        .collect::<Vec<_>>();
-    if parts.is_empty() {
+    let mut projected = Vec::new();
+    for part in parts {
+        if let Some(part) = chat_completions_part(part)? {
+            projected.push(part);
+        }
+    }
+    Ok(if projected.is_empty() {
         (!fallback.is_empty()).then_some(serde_json::Value::String(fallback))
     } else {
-        Some(serde_json::Value::Array(parts))
-    }
+        Some(serde_json::Value::Array(projected))
+    })
 }
 
 pub(super) fn responses_content(
     fallback: String,
     parts: Vec<MessageContentPart>,
-) -> Option<serde_json::Value> {
+) -> anyhow::Result<Option<serde_json::Value>> {
     if parts.is_empty() {
-        return (!fallback.is_empty()).then_some(serde_json::Value::String(fallback));
+        return Ok((!fallback.is_empty()).then_some(serde_json::Value::String(fallback)));
     }
 
-    let parts = parts
-        .into_iter()
-        .filter_map(responses_part)
-        .collect::<Vec<_>>();
-    if parts.is_empty() {
+    let mut projected = Vec::new();
+    for part in parts {
+        if let Some(part) = responses_part(part)? {
+            projected.push(part);
+        }
+    }
+    Ok(if projected.is_empty() {
         (!fallback.is_empty()).then_some(serde_json::Value::String(fallback))
     } else {
-        Some(serde_json::Value::Array(parts))
-    }
+        Some(serde_json::Value::Array(projected))
+    })
 }
 
-fn chat_completions_part(part: MessageContentPart) -> Option<serde_json::Value> {
-    match part {
+fn chat_completions_part(part: MessageContentPart) -> anyhow::Result<Option<serde_json::Value>> {
+    Ok(match part {
         MessageContentPart::Text { text } => {
             (!text.trim().is_empty()).then(|| serde_json::json!({"type": "text", "text": text}))
         }
@@ -81,34 +59,36 @@ fn chat_completions_part(part: MessageContentPart) -> Option<serde_json::Value> 
             if mime_type.starts_with("image/")
                 && let Some(url) = attachment_url(&metadata)
             {
-                return Some(serde_json::json!({
+                return Ok(Some(serde_json::json!({
                     "type": "image_url",
                     "image_url": {"url": url}
-                }));
+                })));
             }
             if let Some(file_id) = metadata.get("file_id").and_then(serde_json::Value::as_str) {
-                return Some(serde_json::json!({
+                return Ok(Some(serde_json::json!({
                     "type": "file",
                     "file": {"file_id": file_id}
-                }));
+                })));
             }
             if let Some((file_data, filename)) = metadata
                 .get("file_data")
                 .and_then(serde_json::Value::as_str)
                 .zip(metadata.get("filename").and_then(serde_json::Value::as_str))
             {
-                return Some(serde_json::json!({
+                return Ok(Some(serde_json::json!({
                     "type": "file",
                     "file": {"file_data": file_data, "filename": filename}
-                }));
+                })));
             }
-            Some(fallback_text("text", hash, mime_type))
+            anyhow::bail!(
+                "OpenAI Chat Completions cannot represent attachment `{hash}` ({mime_type}); use an image URL, uploaded `file_id`, or `file_data` with `filename`"
+            );
         }
-    }
+    })
 }
 
-fn responses_part(part: MessageContentPart) -> Option<serde_json::Value> {
-    match part {
+fn responses_part(part: MessageContentPart) -> anyhow::Result<Option<serde_json::Value>> {
+    Ok(match part {
         MessageContentPart::Text { text } => (!text.trim().is_empty())
             .then(|| serde_json::json!({"type": "input_text", "text": text})),
         MessageContentPart::Structured { data } => Some(serde_json::json!({
@@ -122,27 +102,47 @@ fn responses_part(part: MessageContentPart) -> Option<serde_json::Value> {
         } => {
             if mime_type.starts_with("image/") {
                 if let Some(url) = attachment_url(&metadata) {
-                    return Some(serde_json::json!({"type": "input_image", "image_url": url}));
+                    return Ok(Some(
+                        serde_json::json!({"type": "input_image", "image_url": url}),
+                    ));
                 }
                 if let Some(file_id) = metadata.get("file_id").and_then(serde_json::Value::as_str) {
-                    return Some(serde_json::json!({"type": "input_image", "file_id": file_id}));
+                    return Ok(Some(
+                        serde_json::json!({"type": "input_image", "file_id": file_id}),
+                    ));
                 }
+                anyhow::bail!(
+                    "OpenAI Responses cannot represent image attachment `{hash}` ({mime_type}); use an image URL or uploaded `file_id`"
+                );
             }
             if let Some(file_id) = metadata.get("file_id").and_then(serde_json::Value::as_str) {
-                return Some(serde_json::json!({
+                return Ok(Some(serde_json::json!({
                     "type": "input_file",
                     "file_id": file_id
-                }));
+                })));
             }
             if let Some(url) = attachment_url(&metadata) {
-                return Some(serde_json::json!({
+                return Ok(Some(serde_json::json!({
                     "type": "input_file",
                     "file_url": url
-                }));
+                })));
             }
-            Some(fallback_text("input_text", hash, mime_type))
+            if let Some((file_data, filename)) = metadata
+                .get("file_data")
+                .and_then(serde_json::Value::as_str)
+                .zip(metadata.get("filename").and_then(serde_json::Value::as_str))
+            {
+                return Ok(Some(serde_json::json!({
+                    "type": "input_file",
+                    "file_data": file_data,
+                    "filename": filename
+                })));
+            }
+            anyhow::bail!(
+                "OpenAI Responses cannot represent document attachment `{hash}` ({mime_type}); use a URL, uploaded `file_id`, or `file_data` with `filename`"
+            );
         }
-    }
+    })
 }
 
 fn attachment_url(metadata: &serde_json::Value) -> Option<&str> {
@@ -151,13 +151,6 @@ fn attachment_url(metadata: &serde_json::Value) -> Option<&str> {
         .or_else(|| metadata.get("file_url"))
         .or_else(|| metadata.get("url"))
         .and_then(serde_json::Value::as_str)
-}
-
-fn fallback_text(kind: &str, hash: String, mime_type: String) -> serde_json::Value {
-    serde_json::json!({
-        "type": kind,
-        "text": format!("[attachment: {hash} ({mime_type})]"),
-    })
 }
 
 #[cfg(test)]
@@ -184,7 +177,7 @@ mod tests {
     #[test]
     fn projects_responses_image_input() {
         assert_eq!(
-            responses_content(String::new(), image_parts()),
+            responses_content(String::new(), image_parts()).unwrap(),
             Some(json!([
                 {"type": "input_text", "text": "Describe this image"},
                 {"type": "input_image", "image_url": "https://example.com/cat.png"}
@@ -195,11 +188,38 @@ mod tests {
     #[test]
     fn projects_chat_completions_image_input() {
         assert_eq!(
-            chat_completions_content(String::new(), image_parts()),
+            chat_completions_content(String::new(), image_parts()).unwrap(),
             Some(json!([
                 {"type": "text", "text": "Describe this image"},
                 {"type": "image_url", "image_url": {"url": "https://example.com/cat.png"}}
             ]))
+        );
+    }
+
+    #[test]
+    fn projects_inline_document_input() {
+        let parts = || {
+            vec![MessageContentPart::Attachment {
+                hash: "doc_hash".to_string(),
+                mime_type: "application/pdf".to_string(),
+                metadata: json!({"file_data": "data:application/pdf;base64,AA==", "filename": "spec.pdf"}),
+            }]
+        };
+
+        assert_eq!(
+            chat_completions_content(String::new(), parts()).unwrap(),
+            Some(json!([{
+                "type": "file",
+                "file": {"file_data": "data:application/pdf;base64,AA==", "filename": "spec.pdf"}
+            }]))
+        );
+        assert_eq!(
+            responses_content(String::new(), parts()).unwrap(),
+            Some(json!([{
+                "type": "input_file",
+                "file_data": "data:application/pdf;base64,AA==",
+                "filename": "spec.pdf"
+            }]))
         );
     }
 
@@ -212,17 +232,21 @@ mod tests {
         };
 
         assert_eq!(
-            responses_content("fallback".to_string(), parts()),
+            responses_content("fallback".to_string(), parts()).unwrap(),
             Some(json!("fallback"))
         );
         assert_eq!(
-            chat_completions_content("fallback".to_string(), parts()),
+            chat_completions_content("fallback".to_string(), parts()).unwrap(),
             Some(json!("fallback"))
         );
 
         let mut message = crate::Message::user("");
         message.content_parts = parts();
-        assert!(super::super::convert_messages_for_openai_responses(vec![message]).is_empty());
+        assert!(
+            super::super::convert_messages_for_openai_responses(vec![message])
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]
@@ -233,8 +257,24 @@ mod tests {
             metadata: json!({"file_url": "https://example.com/spec.pdf"}),
         }];
 
-        let error = validate_chat_completions_parts(&parts).unwrap_err();
+        let error = chat_completions_content(String::new(), parts).unwrap_err();
         assert!(error.to_string().contains("file_id"));
         assert!(error.to_string().contains("file_data"));
+    }
+
+    #[test]
+    fn rejects_unreferenced_responses_document() {
+        let parts = vec![MessageContentPart::Attachment {
+            hash: "doc_hash".to_string(),
+            mime_type: "application/pdf".to_string(),
+            metadata: json!({}),
+        }];
+
+        let error = responses_content(String::new(), parts).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("cannot represent document attachment")
+        );
     }
 }

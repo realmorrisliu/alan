@@ -443,7 +443,7 @@ fn is_non_empty(value: &str) -> bool {
 
 fn convert_messages_for_anthropic_messages(
     messages: Vec<LlmMessage>,
-) -> Vec<AnthropicMessagesMessage> {
+) -> Result<Vec<AnthropicMessagesMessage>> {
     let mut converted = Vec::new();
     let mut known_tool_use_ids = std::collections::HashSet::new();
 
@@ -460,7 +460,7 @@ fn convert_messages_for_anthropic_messages(
         } = msg;
 
         let content_blocks = match role {
-            MessageRole::User => content_blocks(content, content_parts),
+            MessageRole::User => content_blocks(content, content_parts)?,
             MessageRole::Assistant => {
                 let mut blocks = Vec::new();
 
@@ -481,7 +481,7 @@ fn convert_messages_for_anthropic_messages(
                     }
                 }
 
-                blocks.extend(content_blocks(content, content_parts));
+                blocks.extend(content_blocks(content, content_parts)?);
 
                 if let Some(calls) = tool_calls {
                     for call in calls {
@@ -536,7 +536,7 @@ fn convert_messages_for_anthropic_messages(
         });
     }
 
-    converted
+    Ok(converted)
 }
 
 fn convert_tools_for_anthropic_messages(
@@ -906,7 +906,7 @@ impl LlmProvider for AnthropicMessagesClient {
             mut extra_params,
         } = request;
 
-        let messages = convert_messages_for_anthropic_messages(request_messages);
+        let messages = convert_messages_for_anthropic_messages(request_messages)?;
         let tools = convert_tools_for_anthropic_messages(request_tools);
         let request_headers = build_request_headers(&messages, &mut extra_params)?;
         if !extra_params.is_empty() {
@@ -955,7 +955,7 @@ impl LlmProvider for AnthropicMessagesClient {
             mut extra_params,
         } = request;
 
-        let messages = convert_messages_for_anthropic_messages(request_messages);
+        let messages = convert_messages_for_anthropic_messages(request_messages)?;
         let tools = convert_tools_for_anthropic_messages(request_tools);
         let request_headers = build_request_headers(&messages, &mut extra_params)?;
         if !extra_params.is_empty() {
@@ -982,7 +982,6 @@ impl LlmProvider for AnthropicMessagesClient {
         let (tx, rx) = tokio::sync::mpsc::channel(100);
         let (event_tx, mut event_rx) = tokio::sync::mpsc::channel(100);
 
-        // Spawn streaming task
         let client =
             AnthropicMessagesClient::with_params(&self.api_key, &self.base_url, &self.model);
         let request_headers_for_task = request_headers;
@@ -1676,7 +1675,7 @@ mod tests {
         );
         let tool = crate::Message::tool("toolu_123", "{\"ok\":true}");
 
-        let converted = convert_messages_for_anthropic_messages(vec![assistant, tool]);
+        let converted = convert_messages_for_anthropic_messages(vec![assistant, tool]).unwrap();
         assert_eq!(converted.len(), 2);
 
         assert_eq!(converted[0].role, "assistant");
@@ -1713,7 +1712,7 @@ mod tests {
             tool_call_id: Some("   ".to_string()),
         };
 
-        let converted = convert_messages_for_anthropic_messages(vec![tool_msg]);
+        let converted = convert_messages_for_anthropic_messages(vec![tool_msg]).unwrap();
         assert_eq!(converted.len(), 1);
         assert_eq!(converted[0].role, "user");
         assert_eq!(converted[0].content.len(), 1);
@@ -1735,7 +1734,8 @@ mod tests {
         let unmatched_tool_result = crate::Message::tool("toolu_unknown", "{\"ok\":true}");
 
         let converted =
-            convert_messages_for_anthropic_messages(vec![assistant, unmatched_tool_result]);
+            convert_messages_for_anthropic_messages(vec![assistant, unmatched_tool_result])
+                .unwrap();
         assert_eq!(converted.len(), 2);
         assert_eq!(converted[1].role, "user");
         assert_eq!(converted[1].content.len(), 1);
@@ -1839,7 +1839,7 @@ mod tests {
             tool_call_id: None,
         };
 
-        let converted = convert_messages_for_anthropic_messages(vec![message]);
+        let converted = convert_messages_for_anthropic_messages(vec![message]).unwrap();
         assert_eq!(converted.len(), 1);
         assert_eq!(converted[0].role, "assistant");
         assert_eq!(converted[0].content.len(), 3);

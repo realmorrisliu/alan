@@ -5,19 +5,25 @@ use super::ContentBlockInput;
 pub(super) fn content_blocks(
     fallback: String,
     parts: Vec<MessageContentPart>,
-) -> Vec<ContentBlockInput> {
+) -> anyhow::Result<Vec<ContentBlockInput>> {
     if parts.is_empty() {
-        return (!fallback.is_empty())
+        return Ok((!fallback.is_empty())
             .then_some(ContentBlockInput::Text { text: fallback })
             .into_iter()
-            .collect();
+            .collect());
     }
 
-    parts.into_iter().filter_map(content_block).collect()
+    let mut blocks = Vec::new();
+    for part in parts {
+        if let Some(block) = content_block(part)? {
+            blocks.push(block);
+        }
+    }
+    Ok(blocks)
 }
 
-fn content_block(part: MessageContentPart) -> Option<ContentBlockInput> {
-    match part {
+fn content_block(part: MessageContentPart) -> anyhow::Result<Option<ContentBlockInput>> {
+    Ok(match part {
         MessageContentPart::Text { text } => {
             (!text.trim().is_empty()).then_some(ContentBlockInput::Text { text })
         }
@@ -28,15 +34,15 @@ fn content_block(part: MessageContentPart) -> Option<ContentBlockInput> {
             hash,
             mime_type,
             metadata,
-        } => Some(attachment_block(hash, mime_type, metadata)),
-    }
+        } => Some(attachment_block(hash, mime_type, metadata)?),
+    })
 }
 
 fn attachment_block(
     hash: String,
     mime_type: String,
     metadata: serde_json::Value,
-) -> ContentBlockInput {
+) -> anyhow::Result<ContentBlockInput> {
     let source = metadata
         .get("file_id")
         .and_then(serde_json::Value::as_str)
@@ -46,12 +52,12 @@ fn attachment_block(
         });
 
     let Some(source) = source else {
-        return ContentBlockInput::Text {
-            text: format!("[attachment: {hash} ({mime_type})]"),
-        };
+        anyhow::bail!(
+            "Anthropic Messages cannot represent attachment `{hash}` ({mime_type}); use an uploaded `file_id` or URL"
+        );
     };
 
-    if mime_type.starts_with("image/") {
+    Ok(if mime_type.starts_with("image/") {
         ContentBlockInput::Image { source }
     } else {
         ContentBlockInput::Document {
@@ -62,7 +68,7 @@ fn attachment_block(
                 .map(ToString::to_string),
             citations: None,
         }
-    }
+    })
 }
 
 fn attachment_url(metadata: &serde_json::Value) -> Option<&str> {
@@ -92,7 +98,8 @@ mod tests {
                     metadata: json!({"file_id": "file_123", "title": "Spec"}),
                 },
             ],
-        );
+        )
+        .unwrap();
 
         assert_eq!(
             serde_json::to_value(blocks).unwrap(),
@@ -102,5 +109,17 @@ mod tests {
                 "title": "Spec"
             }])
         );
+    }
+
+    #[test]
+    fn rejects_unreferenced_attachment() {
+        let parts = vec![MessageContentPart::Attachment {
+            hash: "doc_hash".to_string(),
+            mime_type: "application/pdf".to_string(),
+            metadata: json!({}),
+        }];
+
+        let error = content_blocks(String::new(), parts).unwrap_err();
+        assert!(error.to_string().contains("cannot represent attachment"));
     }
 }

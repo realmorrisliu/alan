@@ -19,9 +19,7 @@ use async_trait::async_trait;
 
 mod input_projection;
 
-use input_projection::{
-    chat_completions_content, responses_content, validate_chat_completions_parts,
-};
+use input_projection::{chat_completions_content, responses_content};
 
 /// Client for the OpenAI Chat Completions API and compatible endpoints.
 pub struct OpenAiChatCompletionsClient {
@@ -1347,8 +1345,6 @@ fn convert_messages_for_openai_chat_completions_with_instruction_role(
                 tool_calls,
                 tool_call_id,
             } = msg;
-            validate_chat_completions_parts(&content_parts)?;
-
             let role = match role {
                 MessageRole::System => instruction_role,
                 MessageRole::User => "user",
@@ -1386,7 +1382,7 @@ fn convert_messages_for_openai_chat_completions_with_instruction_role(
 
             Ok(openai_chat_completions_message_value(
                 role,
-                chat_completions_content(content, content_parts),
+                chat_completions_content(content, content_parts)?,
                 reasoning_content,
                 reasoning,
                 tool_calls,
@@ -1481,7 +1477,7 @@ pub(crate) fn build_responses_request_for_model(
         should_include_reasoning_encrypted_content(&messages, &tools, reasoning.is_some()),
     );
     let (response_tools, tool_choice) = convert_tools_for_openai_responses(tools);
-    let input = convert_messages_for_openai_responses(messages);
+    let input = convert_messages_for_openai_responses(messages)?;
 
     Ok(OpenAiResponsesRequest {
         model,
@@ -1519,7 +1515,7 @@ pub(crate) fn build_responses_input_tokens_request_for_model(
 
     let reasoning = build_openai_responses_reasoning(reasoning.effort, &mut extra_params);
     let (response_tools, tool_choice) = convert_tools_for_openai_responses(tools);
-    let input = convert_messages_for_openai_responses(messages);
+    let input = convert_messages_for_openai_responses(messages)?;
 
     extra_params.remove("previous_response_id");
     extra_params.remove("background");
@@ -1542,13 +1538,13 @@ pub(crate) fn build_responses_input_tokens_request_for_model(
 
 pub(crate) fn convert_messages_for_openai_responses(
     messages: Vec<LlmMessage>,
-) -> Vec<OpenAiResponsesInputItem> {
+) -> Result<Vec<OpenAiResponsesInputItem>> {
     let mut input = Vec::new();
 
     for message in messages {
         match message.role {
             MessageRole::System | MessageRole::Context | MessageRole::User => {
-                if let Some(content) = responses_content(message.content, message.content_parts) {
+                if let Some(content) = responses_content(message.content, message.content_parts)? {
                     let role = match message.role {
                         MessageRole::User => "user",
                         _ => "developer",
@@ -1574,7 +1570,7 @@ pub(crate) fn convert_messages_for_openai_responses(
                     ));
                 }
 
-                if let Some(content) = responses_content(message.content, message.content_parts) {
+                if let Some(content) = responses_content(message.content, message.content_parts)? {
                     input.push(OpenAiResponsesInputItem::Message(
                         OpenAiResponsesInputMessage {
                             role: "assistant".to_string(),
@@ -1622,7 +1618,7 @@ pub(crate) fn convert_messages_for_openai_responses(
         }
     }
 
-    input
+    Ok(input)
 }
 
 #[cfg(test)]

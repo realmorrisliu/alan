@@ -225,7 +225,8 @@ mod tests {
         ];
 
         let converted =
-            crate::openai_chat_completions::convert_messages_for_openai_responses(messages);
+            crate::openai_chat_completions::convert_messages_for_openai_responses(messages)
+                .unwrap();
         assert_eq!(converted.len(), 4);
 
         match &converted[0] {
