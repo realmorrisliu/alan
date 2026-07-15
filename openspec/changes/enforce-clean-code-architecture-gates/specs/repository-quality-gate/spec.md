@@ -23,6 +23,12 @@ clean-code or clean-architecture check fails.
 - **THEN** the quality gate builds into its owned Host-target directory
 - **AND** binary-surface guards inspect the executable produced by that run
 
+#### Scenario: Dependency manifest and lockfile diverge
+- **WHEN** a dependency manifest requires a Cargo.lock update that is not part
+  of the change
+- **THEN** dependency-resolving quality commands run in locked mode and fail
+- **AND** the quality gate leaves Cargo.lock byte-for-byte unchanged
+
 ### Requirement: Rust lint semantics are reproducible
 Alan SHALL pin one explicit Rust toolchain including rustfmt and Clippy. Local
 quality checks and CI MUST use that pinned version.

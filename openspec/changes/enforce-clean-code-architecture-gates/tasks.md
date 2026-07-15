@@ -5,7 +5,8 @@
   warnings denied, without enabling broad optional lint groups.
 - [x] 1.3 Resolve current redundant-clone findings, document unsafe blocks, and
   give every explicit source lint suppression a reason.
-- [x] 1.4 Keep rustfmt and rustdoc validation non-mutating and fatal on warnings.
+- [x] 1.4 Keep rustfmt and rustdoc validation non-mutating, make dependency-
+  resolving Cargo checks use the committed lockfile, and keep warnings fatal.
 
 ## 2. Source And Architecture Ratchets
 

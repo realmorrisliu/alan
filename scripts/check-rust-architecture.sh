@@ -62,7 +62,8 @@ validate_dependency_baseline() {
 }
 
 direct_alan_dependencies() {
-    cargo tree -p "$1" --all-features --depth 1 --edges normal --prefix none --no-dedupe \
+    cargo tree -p "$1" --locked --all-features --depth 1 --edges normal --prefix none \
+        --no-dedupe \
         --target all \
         | awk 'NR > 1 && $1 ~ /^alan-/ { print $1 }' \
         | sort -u \
@@ -70,7 +71,8 @@ direct_alan_dependencies() {
 }
 
 direct_dependencies() {
-    cargo tree -p "$1" --all-features --depth 1 --edges normal --prefix none --no-dedupe \
+    cargo tree -p "$1" --locked --all-features --depth 1 --edges normal --prefix none \
+        --no-dedupe \
         --target all \
         | awk 'NR > 1 { print $1 }' \
         | sort -u
@@ -141,7 +143,7 @@ expected_packages="$({
     done
 } | sort -u)"
 workspace_packages="$(
-    cargo tree --workspace --all-features --depth 0 --prefix none \
+    cargo tree --workspace --locked --all-features --depth 0 --prefix none \
         | awk 'NF { print $1 }' \
         | sort -u
 )"

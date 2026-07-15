@@ -45,6 +45,9 @@ It resolves the pinned toolchain's Host target, forces Cargo artifacts into a
 repository-owned quality target directory, and passes that exact freshly built
 `alan` executable to binary-surface guards. Ambient Cargo target-directory or
 build-target configuration therefore cannot make a guard inspect a stale file.
+Every dependency-resolving Cargo validation uses the checked-in lockfile in
+locked mode, so a stale manifest/lock pair fails without rewriting repository
+state.
 
 `just check` becomes non-mutating and delegates to the quality interface before
 tests. CI keeps behavioral test/build/harness jobs separate but makes the

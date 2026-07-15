@@ -25,7 +25,7 @@ export CARGO_TARGET_DIR="$quality_target_dir"
 "$ROOT/scripts/check-rust-architecture.sh"
 "$ROOT/scripts/check-rust-quality.sh"
 
-cargo build -p alan --bin alan
+cargo build --locked -p alan --bin alan
 "$ROOT/scripts/check-daemon-era-absence.sh" "$alan_binary"
 "$ROOT/scripts/check-workspace-runtime-absence.sh" "$ROOT" "$alan_binary"
 "$ROOT/scripts/check-legacy-macos-absence.sh"
