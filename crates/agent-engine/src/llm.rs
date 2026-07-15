@@ -34,48 +34,20 @@ pub use alan_llm::{
 
 pub use alan_llm::factory::{self, ProviderConfig, ProviderType};
 
-// ============================================================================
-// LlmProjection — provider-aware tape → LLM message projection
-// ============================================================================
+mod input_projection;
 
-/// Provider-aware message projection from rich tape format to LLM wire format.
-///
-/// Different providers handle thinking/reasoning content differently:
-/// - Anthropic Messages / OpenAI Responses / OpenAI Chat Completions: preserves thinking blocks
-/// - Google Gemini GenerateContent: drops thinking (not supported in wire format)
-pub trait LlmProjection: Send + Sync {
-    fn project(&self, messages: &[crate::agent_machine::Message]) -> Vec<Message>;
-}
+pub(crate) use input_projection::{project_messages, with_provider_input};
 
-/// Projection for providers that preserve thinking content.
-struct PreserveThinkingProjection;
-
-/// Projection for providers that drop thinking content.
-struct DropThinkingProjection;
-
-impl LlmProjection for PreserveThinkingProjection {
-    fn project(&self, messages: &[crate::agent_machine::Message]) -> Vec<Message> {
-        project_messages_impl(messages, true)
-    }
-}
-
-impl LlmProjection for DropThinkingProjection {
-    fn project(&self, messages: &[crate::agent_machine::Message]) -> Vec<Message> {
-        project_messages_impl(messages, false)
-    }
-}
-
-/// Select the appropriate projection for a provider type.
-fn projection_for(provider_type: ProviderType) -> Box<dyn LlmProjection> {
-    match provider_type {
+fn provider_preserves_thinking(provider_type: ProviderType) -> bool {
+    matches!(
+        provider_type,
         ProviderType::AnthropicMessages
-        | ProviderType::ChatgptResponses
-        | ProviderType::OpenAiResponses
-        | ProviderType::OpenAiChatCompletions
-        | ProviderType::OpenAiChatCompletionsCompatible
-        | ProviderType::OpenRouter => Box::new(PreserveThinkingProjection),
-        _ => Box::new(DropThinkingProjection),
-    }
+            | ProviderType::ChatgptResponses
+            | ProviderType::OpenAiResponses
+            | ProviderType::OpenAiChatCompletions
+            | ProviderType::OpenAiChatCompletionsCompatible
+            | ProviderType::OpenRouter
+    )
 }
 
 // ============================================================================
@@ -86,7 +58,7 @@ fn projection_for(provider_type: ProviderType) -> Box<dyn LlmProjection> {
 pub struct LlmClient {
     provider: Box<dyn LlmProvider>,
     provider_type: ProviderType,
-    projection: Box<dyn LlmProjection>,
+    preserve_thinking: bool,
 }
 
 impl LlmClient {
@@ -107,11 +79,10 @@ impl LlmClient {
             _ => ProviderType::OpenAiChatCompletionsCompatible, // Default fallback
         };
 
-        let projection = projection_for(provider_type);
         Self {
             provider: Box::new(provider),
             provider_type,
-            projection,
+            preserve_thinking: provider_preserves_thinking(provider_type),
         }
     }
 
@@ -119,11 +90,10 @@ impl LlmClient {
     pub fn from_config(config: ProviderConfig) -> Result<Self> {
         let provider_type = config.provider_type;
         let provider = factory::create_provider(config)?;
-        let projection = projection_for(provider_type);
         Ok(Self {
             provider,
             provider_type,
-            projection,
+            preserve_thinking: provider_preserves_thinking(provider_type),
         })
     }
 
@@ -221,7 +191,7 @@ impl LlmClient {
 
     /// Project tape messages to LLM wire format using the provider-specific projection.
     pub fn project_messages(&self, messages: &[crate::agent_machine::Message]) -> Vec<Message> {
-        self.projection.project(messages)
+        project_messages(messages, self.preserve_thinking)
     }
 }
 
@@ -232,275 +202,6 @@ impl std::fmt::Debug for LlmClient {
             .field("provider_type", &self.provider_type)
             .finish()
     }
-}
-
-// ============================================================================
-// Conversion Helpers
-// ============================================================================
-
-/// Convert machine messages to LLM messages (preserves thinking).
-///
-/// This is the legacy free-function entry point. Prefer `LlmClient::project_messages()`
-/// which automatically selects the right projection for the provider.
-#[cfg(test)]
-pub fn convert_agent_machine_messages(messages: &[crate::agent_machine::Message]) -> Vec<Message> {
-    project_messages_impl(messages, true)
-}
-
-/// Core projection implementation.
-///
-/// `preserve_thinking`: if true, thinking content is forwarded to the LLM message;
-/// if false, thinking is stripped (for providers that don't support it).
-fn project_messages_impl(
-    messages: &[crate::agent_machine::Message],
-    preserve_thinking: bool,
-) -> Vec<Message> {
-    use crate::tape;
-
-    messages
-        .iter()
-        .flat_map(|m| match m {
-            tape::Message::Tool { responses } => responses
-                .iter()
-                .map(|r| {
-                    let content = project_tool_response_for_prompt(&r.content);
-
-                    let tool_call_id = {
-                        let trimmed = r.id.trim();
-                        if trimmed.is_empty() {
-                            None
-                        } else {
-                            Some(trimmed.to_string())
-                        }
-                    };
-
-                    Message {
-                        role: MessageRole::Tool,
-                        content,
-                        thinking: None,
-                        thinking_signature: None,
-                        redacted_thinking: None,
-                        tool_calls: None,
-                        tool_call_id,
-                    }
-                })
-                .collect::<Vec<_>>(),
-            _ => {
-                let role = match m.role() {
-                    tape::MessageRole::System => MessageRole::System,
-                    tape::MessageRole::Context => MessageRole::Context,
-                    tape::MessageRole::User => MessageRole::User,
-                    tape::MessageRole::Assistant => MessageRole::Assistant,
-                    tape::MessageRole::Tool => MessageRole::Tool,
-                };
-
-                let content = m.non_thinking_text_content();
-                let thinking = if preserve_thinking {
-                    m.thinking_content()
-                } else {
-                    None
-                };
-                let thinking_signature = if preserve_thinking {
-                    m.thinking_signature()
-                } else {
-                    None
-                };
-                let redacted_thinking = if preserve_thinking {
-                    let blocks = m.redacted_thinking_blocks();
-                    if blocks.is_empty() {
-                        None
-                    } else {
-                        Some(blocks)
-                    }
-                } else {
-                    None
-                };
-
-                let tool_calls = if !m.tool_requests().is_empty() {
-                    Some(
-                        m.tool_requests()
-                            .iter()
-                            .map(|tc| ToolCall {
-                                id: {
-                                    let trimmed = tc.id.trim();
-                                    if trimmed.is_empty() {
-                                        None
-                                    } else {
-                                        Some(trimmed.to_string())
-                                    }
-                                },
-                                name: tc.name.clone(),
-                                arguments: tc.arguments.clone(),
-                            })
-                            .collect(),
-                    )
-                } else {
-                    None
-                };
-
-                vec![Message {
-                    role,
-                    content,
-                    thinking,
-                    thinking_signature,
-                    redacted_thinking,
-                    tool_calls,
-                    tool_call_id: None,
-                }]
-            }
-        })
-        .collect()
-}
-
-const MAX_PROJECTED_TOOL_PAYLOAD_SIZE: usize = 30_000;
-
-pub(crate) fn project_tool_response_for_prompt(parts: &[crate::tape::ContentPart]) -> String {
-    project_tool_response_content(parts, MAX_PROJECTED_TOOL_PAYLOAD_SIZE)
-}
-
-fn project_tool_response_content(parts: &[crate::tape::ContentPart], max_size: usize) -> String {
-    let mut content = String::new();
-
-    for (idx, part) in parts.iter().enumerate() {
-        let remaining = max_size.saturating_sub(content.len());
-        if remaining == 0 {
-            break;
-        }
-
-        let remaining_parts = parts.len() - idx;
-        let part_budget = remaining.div_ceil(remaining_parts);
-        content.push_str(&project_tool_content_part(part, part_budget));
-    }
-
-    truncate_text_for_projection(&content, max_size)
-}
-
-fn project_tool_content_part(part: &crate::tape::ContentPart, max_size: usize) -> String {
-    let raw = match part {
-        crate::tape::ContentPart::Structured { data } => {
-            let truncated = truncate_payload_for_projection(data.clone(), max_size);
-            serde_json::to_string(&truncated).unwrap_or_else(|_| "{}".to_string())
-        }
-        _ => part.to_text_lossy(),
-    };
-
-    truncate_text_for_projection(&raw, max_size)
-}
-
-fn truncate_payload_for_projection(
-    payload: serde_json::Value,
-    max_size: usize,
-) -> serde_json::Value {
-    let payload_str = payload.to_string();
-    if payload_str.len() <= max_size {
-        return payload;
-    }
-
-    match payload {
-        serde_json::Value::Object(map) => {
-            let mut truncated = serde_json::Map::new();
-            let mut current_size = 0;
-
-            for (key, value) in map {
-                let is_critical = matches!(key.as_str(), "success" | "error" | "url" | "title");
-                if is_critical {
-                    truncated.insert(key, value);
-                    continue;
-                }
-
-                let processed_value = if key == "content" || key == "aggregated_content" {
-                    if let serde_json::Value::String(s) = &value {
-                        serde_json::Value::String(truncate_text_for_projection(s, max_size / 4))
-                    } else {
-                        value
-                    }
-                } else {
-                    truncate_payload_for_projection(value, max_size / 2)
-                };
-
-                let value_str = processed_value.to_string();
-                if current_size + value_str.len() < max_size * 3 / 4 {
-                    truncated.insert(key, processed_value);
-                    current_size += value_str.len();
-                } else {
-                    truncated.insert(
-                        "_truncated".to_string(),
-                        serde_json::Value::String("Additional fields omitted".to_string()),
-                    );
-                    break;
-                }
-            }
-
-            serde_json::Value::Object(truncated)
-        }
-        serde_json::Value::Array(arr) => {
-            let arr_len = arr.len();
-            let mut truncated = Vec::new();
-            let mut current_size = 0;
-
-            for item in arr {
-                let processed = truncate_payload_for_projection(item, max_size / arr_len.max(1));
-                let item_str = processed.to_string();
-
-                if current_size + item_str.len() < max_size * 3 / 4 {
-                    truncated.push(processed);
-                    current_size += item_str.len();
-                } else {
-                    truncated.push(serde_json::json!({
-                        "_note": "Additional array items omitted"
-                    }));
-                    break;
-                }
-            }
-
-            serde_json::Value::Array(truncated)
-        }
-        serde_json::Value::String(s) => {
-            if s.len() > max_size / 10 {
-                serde_json::Value::String(truncate_text_for_projection(&s, max_size / 10))
-            } else {
-                serde_json::Value::String(s)
-            }
-        }
-        other => other,
-    }
-}
-
-const PROJECTION_TRUNCATION_MARKER: &str = "...[truncated]";
-
-fn truncate_text_for_projection(text: &str, max_len: usize) -> String {
-    if text.len() <= max_len {
-        return text.to_string();
-    }
-
-    if max_len == 0 {
-        return String::new();
-    }
-
-    if max_len <= PROJECTION_TRUNCATION_MARKER.len() {
-        return utf8_prefix(PROJECTION_TRUNCATION_MARKER, max_len);
-    }
-
-    let prefix_len = max_len - PROJECTION_TRUNCATION_MARKER.len();
-    let truncated = utf8_prefix(text, prefix_len);
-    format!("{truncated}{PROJECTION_TRUNCATION_MARKER}")
-}
-
-fn utf8_prefix(text: &str, max_len: usize) -> String {
-    if text.len() <= max_len {
-        return text.to_string();
-    }
-
-    let mut end = 0;
-    for (idx, ch) in text.char_indices() {
-        let next = idx + ch.len_utf8();
-        if next > max_len {
-            break;
-        }
-        end = next;
-    }
-
-    text[..end].to_string()
 }
 
 /// Build a generation request from machine context.
@@ -693,172 +394,6 @@ mod tests {
     }
 
     #[test]
-    fn test_convert_agent_machine_messages() {
-        use crate::agent_machine::Message as AgentMachineMessage;
-
-        let machine_messages = vec![
-            AgentMachineMessage::user("Hello"),
-            AgentMachineMessage::assistant("Hi there"),
-        ];
-
-        let llm_messages = convert_agent_machine_messages(&machine_messages);
-
-        assert_eq!(llm_messages.len(), 2);
-        assert_eq!(llm_messages[0].role, MessageRole::User);
-        assert_eq!(llm_messages[1].role, MessageRole::Assistant);
-        assert_eq!(llm_messages[0].content, "Hello");
-    }
-
-    #[test]
-    fn test_convert_agent_machine_messages_ignores_blank_tool_ids() {
-        use crate::agent_machine::Message as AgentMachineMessage;
-        use crate::tape::ToolRequest;
-
-        let machine_messages = vec![
-            AgentMachineMessage::assistant_with_tools(
-                "",
-                vec![ToolRequest {
-                    id: "   ".to_string(),
-                    name: "web_search".to_string(),
-                    arguments: serde_json::json!({"query": "test"}),
-                }],
-            ),
-            AgentMachineMessage::tool_text("   ", "{}"),
-        ];
-
-        let llm_messages = convert_agent_machine_messages(&machine_messages);
-        assert_eq!(llm_messages.len(), 2);
-        assert_eq!(llm_messages[0].tool_calls.as_ref().unwrap()[0].id, None);
-        assert_eq!(llm_messages[1].tool_call_id, None);
-    }
-
-    #[test]
-    fn test_convert_agent_machine_messages_uses_tool_payload_for_tool_content() {
-        use crate::agent_machine::Message as AgentMachineMessage;
-
-        let payload = serde_json::json!({
-            "success": true,
-            "company": "y-warm.com"
-        });
-        let machine_messages = vec![AgentMachineMessage::tool_structured(
-            "tool_call_123",
-            payload.clone(),
-        )];
-
-        let llm_messages = convert_agent_machine_messages(&machine_messages);
-        assert_eq!(llm_messages.len(), 1);
-        assert_eq!(llm_messages[0].role, MessageRole::Tool);
-        assert_eq!(
-            llm_messages[0].tool_call_id.as_deref(),
-            Some("tool_call_123")
-        );
-        assert_eq!(llm_messages[0].content, payload.to_string());
-    }
-
-    #[test]
-    fn test_convert_agent_machine_messages_tool_without_payload_uses_content() {
-        use crate::agent_machine::Message as AgentMachineMessage;
-
-        let machine_messages = vec![AgentMachineMessage::tool_text(
-            "tool_call_123",
-            "{\"ok\":true}",
-        )];
-
-        let llm_messages = convert_agent_machine_messages(&machine_messages);
-        assert_eq!(llm_messages.len(), 1);
-        assert_eq!(llm_messages[0].content, "{\"ok\":true}");
-    }
-
-    #[test]
-    fn test_convert_agent_machine_messages_truncates_large_tool_payload_for_projection() {
-        use crate::agent_machine::Message as AgentMachineMessage;
-
-        let large_content = "x".repeat(50_000);
-        let payload = serde_json::json!({
-            "success": true,
-            "content": large_content
-        });
-        let machine_messages = vec![AgentMachineMessage::tool_structured(
-            "tool_call_123",
-            payload,
-        )];
-
-        let llm_messages = convert_agent_machine_messages(&machine_messages);
-        assert_eq!(llm_messages.len(), 1);
-        assert!(llm_messages[0].content.len() <= 30_000);
-        assert!(
-            llm_messages[0]
-                .content
-                .contains(PROJECTION_TRUNCATION_MARKER)
-        );
-    }
-
-    #[test]
-    fn test_convert_agent_machine_messages_truncates_large_tool_text_for_projection() {
-        use crate::agent_machine::Message as AgentMachineMessage;
-
-        let large_content = "x".repeat(50_000);
-        let machine_messages = vec![AgentMachineMessage::tool_text(
-            "tool_call_123",
-            large_content,
-        )];
-
-        let llm_messages = convert_agent_machine_messages(&machine_messages);
-        assert_eq!(llm_messages.len(), 1);
-        assert!(llm_messages[0].content.len() <= 30_000);
-        assert!(
-            llm_messages[0]
-                .content
-                .contains(PROJECTION_TRUNCATION_MARKER)
-        );
-    }
-
-    #[test]
-    fn test_convert_agent_machine_messages_preserves_single_part_tool_text_within_projection_budget()
-     {
-        use crate::agent_machine::Message as AgentMachineMessage;
-
-        let content = "x".repeat(20_000);
-        let machine_messages = vec![AgentMachineMessage::tool_text(
-            "tool_call_123",
-            content.clone(),
-        )];
-
-        let llm_messages = convert_agent_machine_messages(&machine_messages);
-        assert_eq!(llm_messages.len(), 1);
-        assert_eq!(llm_messages[0].content, content);
-    }
-
-    #[test]
-    fn test_convert_agent_machine_messages_caps_tool_text_projection_by_bytes() {
-        use crate::agent_machine::Message as AgentMachineMessage;
-
-        let large_content = "你".repeat(20_000);
-        let machine_messages = vec![AgentMachineMessage::tool_text(
-            "tool_call_123",
-            large_content,
-        )];
-
-        let llm_messages = convert_agent_machine_messages(&machine_messages);
-        assert_eq!(llm_messages.len(), 1);
-        assert!(llm_messages[0].content.len() <= 30_000);
-        assert!(
-            llm_messages[0]
-                .content
-                .contains(PROJECTION_TRUNCATION_MARKER)
-        );
-    }
-
-    #[test]
-    fn test_truncate_text_for_projection_uses_byte_limit_and_preserves_utf8() {
-        let text = "你好世界好";
-        assert_eq!(truncate_text_for_projection(text, text.len()), text);
-        let truncated = truncate_text_for_projection(text, 14);
-        assert!(truncated.len() <= 14);
-        assert_eq!(truncated, PROJECTION_TRUNCATION_MARKER);
-    }
-
-    #[test]
     fn test_build_generation_request() {
         let messages = vec![Message::user("Hello"), Message::assistant("Hi")];
 
@@ -874,67 +409,6 @@ mod tests {
         assert_eq!(request.messages.len(), 2);
         assert_eq!(request.temperature, Some(0.7));
         assert_eq!(request.max_tokens, Some(1000));
-    }
-
-    #[test]
-    fn test_anthropic_projection_preserves_thinking() {
-        use crate::agent_machine::AgentMachine;
-
-        let mut machine = AgentMachine::new();
-        machine.add_assistant_message("hello", Some("my reasoning"));
-
-        let messages = machine.tape.messages();
-        let projection = PreserveThinkingProjection;
-        let llm_messages = projection.project(messages);
-
-        assert_eq!(llm_messages.len(), 1);
-        assert_eq!(llm_messages[0].content, "hello");
-        assert_eq!(llm_messages[0].thinking, Some("my reasoning".to_string()));
-    }
-
-    #[test]
-    fn test_anthropic_projection_preserves_thinking_metadata() {
-        use crate::agent_machine::AgentMachine;
-
-        let mut machine = AgentMachine::new();
-        let redacted = vec!["ciphertext".to_string()];
-        machine.add_assistant_message_with_reasoning(
-            "hello",
-            Some("my reasoning"),
-            Some("sig_123"),
-            &redacted,
-        );
-
-        let messages = machine.tape.messages();
-        let projection = PreserveThinkingProjection;
-        let llm_messages = projection.project(messages);
-
-        assert_eq!(llm_messages.len(), 1);
-        assert_eq!(llm_messages[0].thinking, Some("my reasoning".to_string()));
-        assert_eq!(
-            llm_messages[0].thinking_signature.as_deref(),
-            Some("sig_123")
-        );
-        assert_eq!(
-            llm_messages[0].redacted_thinking,
-            Some(vec!["ciphertext".to_string()])
-        );
-    }
-
-    #[test]
-    fn test_drop_thinking_projection_strips_thinking() {
-        use crate::agent_machine::AgentMachine;
-
-        let mut machine = AgentMachine::new();
-        machine.add_assistant_message("hello", Some("my reasoning"));
-
-        let messages = machine.tape.messages();
-        let projection = DropThinkingProjection;
-        let llm_messages = projection.project(messages);
-
-        assert_eq!(llm_messages.len(), 1);
-        assert_eq!(llm_messages[0].content, "hello");
-        assert_eq!(llm_messages[0].thinking, None);
     }
 
     #[test]

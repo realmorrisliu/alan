@@ -42,7 +42,7 @@ pub use file_tree::ProcessFileTree;
 pub use install_channel::{INSTALL_CHANNEL_ENV, InstallChannel, InstallChannelDescriptor};
 pub use llm::{
     CompatibilityTier, GenerationRequest, GenerationResponse, InstructionRole, LlmClient,
-    LlmProjection, ProviderCapabilities, TokenUsage, ToolCall, ToolDefinition,
+    ProviderCapabilities, TokenUsage, ToolCall, ToolDefinition,
 };
 pub use models::{ModelCatalog, ModelInfo};
 pub use policy::{PolicyAction, PolicyDecision, PolicyEngine, PolicyRule};
