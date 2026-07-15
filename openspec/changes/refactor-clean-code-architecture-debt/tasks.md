@@ -14,10 +14,11 @@
 
 ## 2. Agent Runtime Service Ownership
 
-- [ ] 2.1 Record the live Process clone, mount, AgentFS lifecycle, and child
+- [x] 2.1 Record the live Process clone, mount, AgentFS lifecycle, and child
   namespace assembly call paths with focused characterization tests.
-- [ ] 2.2 Move root Agent Process namespace and AgentFS lifecycle assembly into
-  Agent Runtime Service and delete the old engine composition path.
+- [x] 2.2 Consolidate root Agent Process namespace and AgentFS lifecycle
+  assembly behind Agent Runtime Service and delete the duplicated Service
+  Manager supervisor composition path.
 - [ ] 2.3 Move child Agent Process clone and namespace assembly into Agent
   Runtime Service while preserving narrower mount behavior.
 - [ ] 2.4 Narrow Agent Execution Engine inputs to the assembled namespace and

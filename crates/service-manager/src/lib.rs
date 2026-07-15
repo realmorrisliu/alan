@@ -5,6 +5,7 @@
 //! supervision, local entry, Host Mount grants, Connection metadata, and
 //! Package Service lifecycle.
 
+mod agent_runtime;
 mod boot_unit;
 mod connection;
 mod connection_profile;

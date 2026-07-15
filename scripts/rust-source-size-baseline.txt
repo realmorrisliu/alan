@@ -53,7 +53,7 @@ crates/llmfs/src/lib.rs 1937
 crates/llmfs/tests/generation.rs 1627
 crates/service-manager/src/connection.rs 1048
 crates/service-manager/src/package.rs 2947
-crates/service-manager/src/runtime.rs 2437
+crates/service-manager/src/runtime.rs 2244
 crates/shell-core/src/actions.rs 1591
 crates/shell-core/src/control.rs 1183
 crates/shell-core/src/model.rs 1320
