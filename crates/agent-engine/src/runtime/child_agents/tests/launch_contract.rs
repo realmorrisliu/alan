@@ -1,4 +1,5 @@
 use super::*;
+use alan_kernel::ExecNamespaceAccess;
 
 #[tokio::test]
 async fn spawn_child_runtime_conversation_snapshot_excludes_tool_outputs_without_handle() {
