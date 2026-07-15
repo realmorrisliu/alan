@@ -49,5 +49,5 @@
 - [x] 5.2 Run workspace tests, current focused architecture tests, and the full
   OpenSpec strict validation set.
 - [x] 5.3 Verify CI workflow syntax, `git diff --check`, and a clean scoped diff.
-- [ ] 5.4 Open the focused gate PR, keep Codex review and required checks clean,
+- [x] 5.4 Open the focused gate PR, keep Codex review and required checks clean,
   and sync delta specs into canonical specs after merge before archive.
