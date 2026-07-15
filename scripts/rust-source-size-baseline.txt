@@ -15,7 +15,7 @@ crates/agent-engine/src/runtime/memory_promotion.rs 1778
 crates/agent-engine/src/runtime/memory_surfaces.rs 1061
 crates/agent-engine/src/runtime/prompt_cache.rs 2233
 crates/agent-engine/src/runtime/submission_handlers.rs 2981
-crates/agent-engine/src/runtime/tool_orchestrator.rs 3599
+crates/agent-engine/src/runtime/tool_orchestrator.rs 3291
 crates/agent-engine/src/runtime/tool_policy.rs 1107
 crates/agent-engine/src/runtime/turn_executor.rs 5401
 crates/agent-engine/src/runtime/virtual_tools.rs 2755
