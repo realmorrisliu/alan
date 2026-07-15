@@ -43,11 +43,11 @@ crates/hostfs/src/lib.rs 1397
 crates/kernel/src/procfs.rs 1323
 crates/kernel/tests/mountfs.rs 1112
 crates/kernel/tests/procfs.rs 1847
-crates/llm/src/anthropic_messages.rs 1871
+crates/llm/src/anthropic_messages.rs 1870
 crates/llm/src/chatgpt_responses.rs 1712
 crates/llm/src/google_gemini_generate_content.rs 1422
 crates/llm/src/lib.rs 1579
-crates/llm/src/openai_chat_completions.rs 3254
+crates/llm/src/openai_chat_completions.rs 3252
 crates/llm/src/openrouter.rs 1215
 crates/llmfs/src/lib.rs 1797
 crates/llmfs/tests/generation.rs 1627

@@ -99,12 +99,10 @@ impl ChatgptResponsesClient {
         &self,
         request: GenerationRequest,
         stream: bool,
-    ) -> OpenAiResponsesRequest {
-        let mut request = build_responses_request_for_model(self.model.clone(), request, stream);
+    ) -> Result<OpenAiResponsesRequest> {
+        let mut request = build_responses_request_for_model(self.model.clone(), request, stream)?;
         request.instructions = Some(request.instructions.unwrap_or_default());
-        // The ChatGPT managed Responses surface rejects `store=true` even when
-        // a previous response id is supplied, so force the provider-specific
-        // invariant here instead of reusing the official OpenAI default.
+        // Managed ChatGPT rejects `store=true`, so keep that provider invariant here.
         request.store = Some(false);
         // Managed ChatGPT also rejects the generic Responses `temperature`
         // field; runtime may still set one globally, so strip it here.
@@ -113,7 +111,7 @@ impl ChatgptResponsesClient {
         // `max_output_tokens` field, so keep the request surface to the
         // subset accepted by the managed endpoint.
         request.max_output_tokens = None;
-        request
+        Ok(request)
     }
 
     #[instrument(skip(self, request))]
@@ -824,7 +822,7 @@ impl ChatgptResponsesClient {
     }
 
     async fn generate_via_stream(&self, request: GenerationRequest) -> Result<GenerationResponse> {
-        let response_request = self.build_openai_responses_request(request, true);
+        let response_request = self.build_openai_responses_request(request, true)?;
         let background_requested = response_request.background == Some(true);
         let response = self.execute_with_auth_retry(response_request, true).await?;
         let (tx, rx) = tokio::sync::mpsc::channel(100);
@@ -886,7 +884,7 @@ impl LlmProvider for ChatgptResponsesClient {
         &mut self,
         request: GenerationRequest,
     ) -> Result<tokio::sync::mpsc::Receiver<StreamChunk>> {
-        let response_request = self.build_openai_responses_request(request, true);
+        let response_request = self.build_openai_responses_request(request, true)?;
         let response = self.execute_with_auth_retry(response_request, true).await?;
         let (tx, rx) = tokio::sync::mpsc::channel(100);
         let client = self.clone_with_same_config();
@@ -1565,15 +1563,17 @@ mod tests {
         )
         .expect("client");
 
-        let request = client.build_openai_responses_request(
-            crate::GenerationRequest::new()
-                .with_system_prompt("system")
-                .with_user_message("hello")
-                .with_previous_response_id("resp_prev")
-                .with_temperature(0.7)
-                .with_store(true),
-            false,
-        );
+        let request = client
+            .build_openai_responses_request(
+                crate::GenerationRequest::new()
+                    .with_system_prompt("system")
+                    .with_user_message("hello")
+                    .with_previous_response_id("resp_prev")
+                    .with_temperature(0.7)
+                    .with_store(true),
+                false,
+            )
+            .unwrap();
 
         assert_eq!(request.previous_response_id.as_deref(), Some("resp_prev"));
         assert_eq!(request.store, Some(false));

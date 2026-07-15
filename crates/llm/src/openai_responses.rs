@@ -107,7 +107,7 @@ impl OpenAiResponsesClient {
         &self,
         request: GenerationRequest,
         stream: bool,
-    ) -> OpenAiResponsesRequest {
+    ) -> Result<OpenAiResponsesRequest> {
         self.inner.build_openai_responses_request(request, stream)
     }
 
@@ -115,7 +115,7 @@ impl OpenAiResponsesClient {
     fn build_openai_responses_input_tokens_request(
         &self,
         request: GenerationRequest,
-    ) -> OpenAiResponsesInputTokensRequest {
+    ) -> Result<OpenAiResponsesInputTokensRequest> {
         self.inner
             .build_openai_responses_input_tokens_request(request)
     }
@@ -141,7 +141,7 @@ impl OpenAiResponsesClient {
 #[async_trait]
 impl LlmProvider for OpenAiResponsesClient {
     async fn generate(&mut self, request: GenerationRequest) -> anyhow::Result<GenerationResponse> {
-        let response_request = self.build_openai_responses_request(request, false);
+        let response_request = self.build_openai_responses_request(request, false)?;
         let background_requested = response_request.background == Some(true);
         let mut response = self.openai_responses(response_request).await?;
         if background_requested {
@@ -165,7 +165,7 @@ impl LlmProvider for OpenAiResponsesClient {
         &mut self,
         request: GenerationRequest,
     ) -> anyhow::Result<tokio::sync::mpsc::Receiver<StreamChunk>> {
-        let response_request = self.build_openai_responses_request(request, true);
+        let response_request = self.build_openai_responses_request(request, true)?;
         let (tx, rx) = tokio::sync::mpsc::channel(100);
         let client = Self {
             inner: self.inner.clone_with_same_config(),
@@ -266,15 +266,17 @@ mod tests {
     fn test_build_openai_responses_request_moves_system_prompt_to_instructions() {
         let client =
             OpenAiResponsesClient::with_params("test-key", "https://api.openai.com/v1", "gpt-5.4");
-        let request = client.build_openai_responses_request(
-            GenerationRequest::new()
-                .with_system_prompt("System prompt")
-                .with_user_message("hello")
-                .with_extra_param("previous_response_id", json!("resp_prev"))
-                .with_extra_param("store", json!(false))
-                .with_extra_param("include", json!(["metadata.foo"])),
-            false,
-        );
+        let request = client
+            .build_openai_responses_request(
+                GenerationRequest::new()
+                    .with_system_prompt("System prompt")
+                    .with_user_message("hello")
+                    .with_extra_param("previous_response_id", json!("resp_prev"))
+                    .with_extra_param("store", json!(false))
+                    .with_extra_param("include", json!(["metadata.foo"])),
+                false,
+            )
+            .unwrap();
 
         assert_eq!(request.instructions.as_deref(), Some("System prompt"));
         assert_eq!(request.previous_response_id.as_deref(), Some("resp_prev"));
@@ -294,15 +296,34 @@ mod tests {
     }
 
     #[test]
+    fn test_build_openai_responses_request_rejects_retired_input_override() {
+        let client =
+            OpenAiResponsesClient::with_params("test-key", "https://api.openai.com/v1", "gpt-5.4");
+        let error = client
+            .build_openai_responses_request(
+                GenerationRequest::new()
+                    .with_user_message("hello")
+                    .with_extra_param("responses_input_items", json!([])),
+                false,
+            )
+            .expect_err("retired override should fail before dispatch");
+
+        assert!(error.to_string().contains("responses_input_items"));
+        assert!(error.to_string().contains("Message::content_parts"));
+    }
+
+    #[test]
     fn test_build_openai_responses_request_background_defaults_store_true() {
         let client =
             OpenAiResponsesClient::with_params("test-key", "https://api.openai.com/v1", "gpt-5.4");
-        let request = client.build_openai_responses_request(
-            GenerationRequest::new()
-                .with_user_message("hello")
-                .with_extra_param("background", json!(true)),
-            false,
-        );
+        let request = client
+            .build_openai_responses_request(
+                GenerationRequest::new()
+                    .with_user_message("hello")
+                    .with_extra_param("background", json!(true)),
+                false,
+            )
+            .unwrap();
 
         assert_eq!(request.background, Some(true));
         assert_eq!(request.store, Some(true));
@@ -312,20 +333,22 @@ mod tests {
     fn test_build_openai_responses_request_adds_reasoning_include_for_tool_loops() {
         let client =
             OpenAiResponsesClient::with_params("test-key", "https://api.openai.com/v1", "gpt-5.4");
-        let request = client.build_openai_responses_request(
-            GenerationRequest::new()
-                .with_user_message("hello")
-                .with_tool(crate::ToolDefinition {
-                    name: "lookup".to_string(),
-                    description: "Lookup a record".to_string(),
-                    parameters: json!({
-                        "type": "object",
-                        "properties": { "query": { "type": "string" } },
-                        "required": ["query"]
+        let request = client
+            .build_openai_responses_request(
+                GenerationRequest::new()
+                    .with_user_message("hello")
+                    .with_tool(crate::ToolDefinition {
+                        name: "lookup".to_string(),
+                        description: "Lookup a record".to_string(),
+                        parameters: json!({
+                            "type": "object",
+                            "properties": { "query": { "type": "string" } },
+                            "required": ["query"]
+                        }),
                     }),
-                }),
-            false,
-        );
+                false,
+            )
+            .unwrap();
 
         assert_eq!(
             request.include.as_deref(),
@@ -337,12 +360,14 @@ mod tests {
     fn test_build_openai_responses_request_preserves_context_management() {
         let client =
             OpenAiResponsesClient::with_params("test-key", "https://api.openai.com/v1", "gpt-5.4");
-        let request = client.build_openai_responses_request(
-            GenerationRequest::new()
-                .with_user_message("hello")
-                .with_context_management_compact_threshold(8192),
-            false,
-        );
+        let request = client
+            .build_openai_responses_request(
+                GenerationRequest::new()
+                    .with_user_message("hello")
+                    .with_context_management_compact_threshold(8192),
+                false,
+            )
+            .unwrap();
 
         assert_eq!(
             request.extra_params.get("context_management"),
@@ -354,22 +379,24 @@ mod tests {
     fn test_build_openai_responses_input_tokens_request_uses_responses_shape() {
         let client =
             OpenAiResponsesClient::with_params("test-key", "https://api.openai.com/v1", "gpt-5.4");
-        let request = client.build_openai_responses_input_tokens_request(
-            GenerationRequest::new()
-                .with_system_prompt("System prompt")
-                .with_user_message("hello")
-                .with_tool(crate::ToolDefinition {
-                    name: "lookup".to_string(),
-                    description: "Lookup a record".to_string(),
-                    parameters: json!({
-                        "type": "object",
-                        "properties": { "query": { "type": "string" } },
-                        "required": ["query"]
-                    }),
-                })
-                .with_context_management_compact_threshold(8192)
-                .with_extra_param("store", json!(true)),
-        );
+        let request = client
+            .build_openai_responses_input_tokens_request(
+                GenerationRequest::new()
+                    .with_system_prompt("System prompt")
+                    .with_user_message("hello")
+                    .with_tool(crate::ToolDefinition {
+                        name: "lookup".to_string(),
+                        description: "Lookup a record".to_string(),
+                        parameters: json!({
+                            "type": "object",
+                            "properties": { "query": { "type": "string" } },
+                            "required": ["query"]
+                        }),
+                    })
+                    .with_context_management_compact_threshold(8192)
+                    .with_extra_param("store", json!(true)),
+            )
+            .unwrap();
 
         assert_eq!(request.instructions.as_deref(), Some("System prompt"));
         assert_eq!(request.input.len(), 1);
@@ -395,20 +422,22 @@ mod tests {
     fn test_build_openai_responses_request_uses_responses_native_tool_shape() {
         let client =
             OpenAiResponsesClient::with_params("test-key", "https://api.openai.com/v1", "gpt-5.4");
-        let request = client.build_openai_responses_request(
-            GenerationRequest::new()
-                .with_user_message("hello")
-                .with_tool(crate::ToolDefinition {
-                    name: "lookup".to_string(),
-                    description: "Lookup a record".to_string(),
-                    parameters: json!({
-                        "type": "object",
-                        "properties": { "query": { "type": "string" } },
-                        "required": ["query"]
+        let request = client
+            .build_openai_responses_request(
+                GenerationRequest::new()
+                    .with_user_message("hello")
+                    .with_tool(crate::ToolDefinition {
+                        name: "lookup".to_string(),
+                        description: "Lookup a record".to_string(),
+                        parameters: json!({
+                            "type": "object",
+                            "properties": { "query": { "type": "string" } },
+                            "required": ["query"]
+                        }),
                     }),
-                }),
-            false,
-        );
+                false,
+            )
+            .unwrap();
 
         let tool = &request.tools.as_ref().expect("tools")[0];
         assert_eq!(tool.kind, "function");

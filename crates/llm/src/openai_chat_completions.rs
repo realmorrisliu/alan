@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tracing::{debug, instrument, warn};
 
+use crate::message::reject_retired_message_overrides;
 use crate::{
     GenerationRequest, GenerationResponse, LlmProvider, Message as LlmMessage, MessageRole,
     ReasoningEffort, SseEventParser, StreamChunk, TokenUsage, ToolCall as LlmToolCall,
@@ -34,10 +35,6 @@ enum OpenAiChatCompletionsApiFlavor {
     Official,
     Compatible,
 }
-
-// ============================================================================
-// Request Types (OpenAI Chat Completions API)
-// ============================================================================
 
 #[derive(Debug, Serialize)]
 pub struct OpenAiChatCompletionsRequest {
@@ -1148,7 +1145,7 @@ impl OpenAiChatCompletionsClient {
         &self,
         request: GenerationRequest,
         stream: bool,
-    ) -> OpenAiResponsesRequest {
+    ) -> Result<OpenAiResponsesRequest> {
         build_responses_request_for_model(self.model.clone(), request, stream)
     }
 
@@ -1156,7 +1153,7 @@ impl OpenAiChatCompletionsClient {
     pub(crate) fn build_openai_responses_input_tokens_request(
         &self,
         request: GenerationRequest,
-    ) -> OpenAiResponsesInputTokensRequest {
+    ) -> Result<OpenAiResponsesInputTokensRequest> {
         build_responses_input_tokens_request_for_model(self.model.clone(), request)
     }
 
@@ -1461,7 +1458,8 @@ pub(crate) fn build_responses_request_for_model(
     model: String,
     request: GenerationRequest,
     stream: bool,
-) -> OpenAiResponsesRequest {
+) -> Result<OpenAiResponsesRequest> {
+    reject_retired_message_overrides(&request)?;
     let GenerationRequest {
         system_prompt,
         messages,
@@ -1487,7 +1485,7 @@ pub(crate) fn build_responses_request_for_model(
     let (response_tools, tool_choice) = convert_tools_for_openai_responses(tools);
     let input = convert_messages_for_openai_responses(messages);
 
-    OpenAiResponsesRequest {
+    Ok(OpenAiResponsesRequest {
         model,
         instructions: normalize_responses_instructions(system_prompt),
         previous_response_id,
@@ -1502,14 +1500,15 @@ pub(crate) fn build_responses_request_for_model(
         reasoning,
         stream: Some(stream),
         extra_params,
-    }
+    })
 }
 
 #[cfg(test)]
 pub(crate) fn build_responses_input_tokens_request_for_model(
     model: String,
     request: GenerationRequest,
-) -> OpenAiResponsesInputTokensRequest {
+) -> Result<OpenAiResponsesInputTokensRequest> {
+    reject_retired_message_overrides(&request)?;
     let GenerationRequest {
         system_prompt,
         messages,
@@ -1532,7 +1531,7 @@ pub(crate) fn build_responses_input_tokens_request_for_model(
     extra_params.remove("stream");
     extra_params.remove("max_completion_tokens");
 
-    OpenAiResponsesInputTokensRequest {
+    Ok(OpenAiResponsesInputTokensRequest {
         model,
         instructions: normalize_responses_instructions(system_prompt),
         input,
@@ -1540,7 +1539,7 @@ pub(crate) fn build_responses_input_tokens_request_for_model(
         tool_choice,
         reasoning,
         extra_params,
-    }
+    })
 }
 
 pub(crate) fn convert_messages_for_openai_responses(
@@ -2223,10 +2222,6 @@ fn select_primary_choice(
         .or_else(|| choices.first())
 }
 
-// ============================================================================
-// LlmProvider Implementation
-// ============================================================================
-
 #[async_trait]
 impl LlmProvider for OpenAiChatCompletionsClient {
     async fn generate(&mut self, request: GenerationRequest) -> anyhow::Result<GenerationResponse> {
@@ -2259,6 +2254,7 @@ impl OpenAiChatCompletionsClient {
         &mut self,
         request: GenerationRequest,
     ) -> anyhow::Result<GenerationResponse> {
+        reject_retired_message_overrides(&request)?;
         let GenerationRequest {
             system_prompt,
             messages: request_messages,
@@ -2312,6 +2308,7 @@ impl OpenAiChatCompletionsClient {
         &mut self,
         request: GenerationRequest,
     ) -> anyhow::Result<tokio::sync::mpsc::Receiver<StreamChunk>> {
+        reject_retired_message_overrides(&request)?;
         let GenerationRequest {
             system_prompt,
             messages: request_messages,
@@ -3017,7 +3014,8 @@ mod tests {
             .with_extra_param("reasoning_effort", serde_json::json!("high"))
             .with_reasoning_effort(ReasoningEffort::Low);
 
-        let built = build_responses_request_for_model("gpt-5.4".to_string(), request, false);
+        let built =
+            build_responses_request_for_model("gpt-5.4".to_string(), request, false).unwrap();
 
         assert_eq!(
             built.reasoning.map(|reasoning| reasoning.effort),

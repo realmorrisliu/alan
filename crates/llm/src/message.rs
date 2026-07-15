@@ -2,6 +2,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::ToolCall;
 
+const RETIRED_MESSAGE_OVERRIDE_KEYS: [&str; 3] = [
+    "responses_input_items",
+    "chat_completions_messages",
+    "anthropic_messages",
+];
+
 /// A provider-neutral message in a generation request.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {
@@ -99,6 +105,36 @@ impl Message {
             redacted_thinking: None,
             tool_calls: None,
             tool_call_id: None,
+        }
+    }
+}
+
+pub(crate) fn reject_retired_message_overrides(
+    request: &crate::GenerationRequest,
+) -> anyhow::Result<()> {
+    if let Some(key) = RETIRED_MESSAGE_OVERRIDE_KEYS
+        .iter()
+        .find(|key| request.extra_params.contains_key(**key))
+    {
+        anyhow::bail!(
+            "`{key}` extra_param is retired; use provider-neutral `Message::content_parts`"
+        );
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn retired_provider_message_overrides_are_rejected() {
+        for key in RETIRED_MESSAGE_OVERRIDE_KEYS {
+            let request = crate::GenerationRequest::new()
+                .with_user_message("hello")
+                .with_extra_param(key, serde_json::json!([]));
+            let error = reject_retired_message_overrides(&request).unwrap_err();
+            assert!(error.to_string().contains(key));
         }
     }
 }

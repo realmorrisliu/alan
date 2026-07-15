@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use tracing::debug;
 
 use crate::ReasoningEffort;
+use crate::message::reject_retired_message_overrides;
 
 mod input_projection;
 
@@ -428,10 +429,6 @@ impl AnthropicMessagesToolDefinition {
         }
     }
 }
-
-// ============================================================================
-// LlmProvider Trait Implementation
-// ============================================================================
 
 use crate::{
     GenerationRequest, GenerationResponse, LlmProvider, Message as LlmMessage, MessageRole,
@@ -898,6 +895,7 @@ async fn send_stream_chunk(
 #[async_trait]
 impl LlmProvider for AnthropicMessagesClient {
     async fn generate(&mut self, request: GenerationRequest) -> anyhow::Result<GenerationResponse> {
+        reject_retired_message_overrides(&request)?;
         let GenerationRequest {
             system_prompt,
             messages: request_messages,
@@ -946,6 +944,7 @@ impl LlmProvider for AnthropicMessagesClient {
         &mut self,
         request: GenerationRequest,
     ) -> anyhow::Result<tokio::sync::mpsc::Receiver<StreamChunk>> {
+        reject_retired_message_overrides(&request)?;
         let GenerationRequest {
             system_prompt,
             messages: request_messages,

@@ -22,3 +22,10 @@ formats.
   mounted Connection does not declare the corresponding capability
 - **THEN** llmfs rejects the request before provider dispatch
 - **AND** it does not silently send only an attachment placeholder to the model
+
+#### Scenario: A caller submits a retired provider input override
+- **WHEN** a Generation request contains `responses_input_items`,
+  `chat_completions_messages`, or `anthropic_messages` in `extra_params`
+- **THEN** the owning provider adapter rejects the request before dispatch
+- **AND** the error directs the caller to provider-neutral typed message parts
+- **AND** no retired override is forwarded or restored as a parallel input path
