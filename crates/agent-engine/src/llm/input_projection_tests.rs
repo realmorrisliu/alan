@@ -49,6 +49,21 @@ fn project_messages_preserves_rich_attachment_parts() {
 }
 
 #[test]
+fn project_messages_preserves_structured_input_without_attachment() {
+    let data = json!({"resume_id": "resume-123", "section": "experience"});
+    let messages = vec![MachineMessage::User {
+        parts: vec![ContentPart::Structured { data: data.clone() }],
+    }];
+
+    let projected = project_messages(&messages, true);
+
+    assert_eq!(
+        projected[0].content_parts,
+        vec![MessageContentPart::Structured { data }]
+    );
+}
+
+#[test]
 fn project_messages_ignores_blank_tool_ids() {
     let messages = vec![
         MachineMessage::assistant_with_tools(

@@ -70,10 +70,12 @@ pub(crate) fn project_messages(
 }
 
 fn project_rich_content_parts(parts: &[ContentPart]) -> Vec<MessageContentPart> {
-    if !parts
-        .iter()
-        .any(|part| matches!(part, ContentPart::Attachment { .. }))
-    {
+    if !parts.iter().any(|part| {
+        matches!(
+            part,
+            ContentPart::Attachment { .. } | ContentPart::Structured { .. }
+        )
+    }) {
         return Vec::new();
     }
 
