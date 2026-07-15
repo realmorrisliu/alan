@@ -9,7 +9,7 @@
   dual writer.
 - [x] 1.4 Delete the displaced engine path, remove any dependency it made
   unnecessary, and tighten the source-size and dependency baselines.
-- [ ] 1.5 Run the canonical gate and focused tests, open the behavior-preserving
+- [x] 1.5 Run the canonical gate and focused tests, open the behavior-preserving
   PR, and resolve Codex review until no new issue remains.
 
 ## 2. Agent Runtime Service Ownership
