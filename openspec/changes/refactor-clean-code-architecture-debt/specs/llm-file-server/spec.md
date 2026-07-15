@@ -12,8 +12,8 @@ formats.
 - **WHEN** a Generation request contains an image or document attachment and the
   mounted Connection declares the corresponding capability
 - **THEN** the typed attachment crosses the llmfs request document intact
-- **AND** the owning provider adapter projects its URL or file identifier into
-  the provider-native request shape
+- **AND** the owning provider adapter projects a provider-supported URL or file
+  representation into the provider-native request shape
 - **AND** Agent Execution Engine does not construct provider-specific input
   fields
 
@@ -22,6 +22,12 @@ formats.
   mounted Connection does not declare the corresponding capability
 - **THEN** llmfs rejects the request before provider dispatch
 - **AND** it does not silently send only an attachment placeholder to the model
+
+#### Scenario: An adapter cannot represent the attachment reference
+- **WHEN** an attachment passes the Connection capability check but its reference
+  cannot be encoded by the selected provider adapter
+- **THEN** the provider adapter rejects the request before dispatch
+- **AND** it does not substitute an attachment placeholder for the typed input
 
 #### Scenario: A caller submits a retired provider input override
 - **WHEN** a Generation request contains `responses_input_items`,

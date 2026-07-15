@@ -1,5 +1,31 @@
 use crate::MessageContentPart;
 
+pub(super) fn validate_chat_completions_parts(parts: &[MessageContentPart]) -> anyhow::Result<()> {
+    for part in parts {
+        let MessageContentPart::Attachment {
+            hash,
+            mime_type,
+            metadata,
+        } = part
+        else {
+            continue;
+        };
+        let image_url = mime_type.starts_with("image/") && attachment_url(metadata).is_some();
+        let file_id = metadata.get("file_id").and_then(serde_json::Value::as_str);
+        let inline_file = metadata
+            .get("file_data")
+            .and_then(serde_json::Value::as_str)
+            .zip(metadata.get("filename").and_then(serde_json::Value::as_str));
+        if image_url || file_id.is_some() || inline_file.is_some() {
+            continue;
+        }
+        anyhow::bail!(
+            "OpenAI Chat Completions cannot represent attachment `{hash}` ({mime_type}); use an image URL, uploaded `file_id`, or `file_data` with `filename`"
+        );
+    }
+    Ok(())
+}
+
 pub(super) fn chat_completions_content(
     fallback: String,
     parts: Vec<MessageContentPart>,
@@ -64,6 +90,16 @@ fn chat_completions_part(part: MessageContentPart) -> Option<serde_json::Value> 
                 return Some(serde_json::json!({
                     "type": "file",
                     "file": {"file_id": file_id}
+                }));
+            }
+            if let Some((file_data, filename)) = metadata
+                .get("file_data")
+                .and_then(serde_json::Value::as_str)
+                .zip(metadata.get("filename").and_then(serde_json::Value::as_str))
+            {
+                return Some(serde_json::json!({
+                    "type": "file",
+                    "file": {"file_data": file_data, "filename": filename}
                 }));
             }
             Some(fallback_text("text", hash, mime_type))
@@ -187,5 +223,18 @@ mod tests {
         let mut message = crate::Message::user("");
         message.content_parts = parts();
         assert!(super::super::convert_messages_for_openai_responses(vec![message]).is_empty());
+    }
+
+    #[test]
+    fn rejects_url_backed_chat_completions_document() {
+        let parts = vec![MessageContentPart::Attachment {
+            hash: "doc_hash".to_string(),
+            mime_type: "application/pdf".to_string(),
+            metadata: json!({"file_url": "https://example.com/spec.pdf"}),
+        }];
+
+        let error = validate_chat_completions_parts(&parts).unwrap_err();
+        assert!(error.to_string().contains("file_id"));
+        assert!(error.to_string().contains("file_data"));
     }
 }

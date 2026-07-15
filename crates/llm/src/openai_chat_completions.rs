@@ -19,7 +19,9 @@ use async_trait::async_trait;
 
 mod input_projection;
 
-use input_projection::{chat_completions_content, responses_content};
+use input_projection::{
+    chat_completions_content, responses_content, validate_chat_completions_parts,
+};
 
 /// Client for the OpenAI Chat Completions API and compatible endpoints.
 pub struct OpenAiChatCompletionsClient {
@@ -114,9 +116,7 @@ pub struct OpenAiChatCompletionsFunctionCall {
     pub arguments: String, // JSON string, needs parsing
 }
 
-// ============================================================================
-// Responses API Types
-// ============================================================================
+// Responses API types
 
 #[derive(Debug, Serialize)]
 pub struct OpenAiResponsesRequest {
@@ -263,9 +263,7 @@ pub struct OpenAiResponsesOutputTokensDetails {
     pub reasoning_tokens: Option<i32>,
 }
 
-// ============================================================================
-// Response Types
-// ============================================================================
+// Response types
 
 #[derive(Debug, Deserialize)]
 pub struct OpenAiChatCompletionsResponse {
@@ -307,9 +305,7 @@ pub struct OpenAiChatCompletionsCompletionTokensDetails {
     pub rejected_prediction_tokens: Option<i32>,
 }
 
-// ============================================================================
-// Streaming Response Types
-// ============================================================================
+// Streaming response types
 
 /// Stream chunk from OpenAI streaming API
 #[derive(Debug, Deserialize)]
@@ -1331,12 +1327,13 @@ pub(crate) fn convert_messages_for_openai_chat_completions(
     messages: Vec<LlmMessage>,
 ) -> Vec<serde_json::Value> {
     convert_messages_for_openai_chat_completions_with_instruction_role(messages, "system")
+        .expect("test messages should have representable Chat Completions content")
 }
 
 fn convert_messages_for_openai_chat_completions_with_instruction_role(
     messages: Vec<LlmMessage>,
     instruction_role: &'static str,
-) -> Vec<serde_json::Value> {
+) -> Result<Vec<serde_json::Value>> {
     messages
         .into_iter()
         .map(|msg| {
@@ -1350,6 +1347,7 @@ fn convert_messages_for_openai_chat_completions_with_instruction_role(
                 tool_calls,
                 tool_call_id,
             } = msg;
+            validate_chat_completions_parts(&content_parts)?;
 
             let role = match role {
                 MessageRole::System => instruction_role,
@@ -1386,14 +1384,14 @@ fn convert_messages_for_openai_chat_completions_with_instruction_role(
                 None
             };
 
-            openai_chat_completions_message_value(
+            Ok(openai_chat_completions_message_value(
                 role,
                 chat_completions_content(content, content_parts),
                 reasoning_content,
                 reasoning,
                 tool_calls,
                 tool_call_id,
-            )
+            ))
         })
         .collect()
 }
@@ -1657,7 +1655,8 @@ fn build_chat_completions_request_for_model(
         convert_messages_for_openai_chat_completions_with_instruction_role(
             request_messages,
             "developer",
-        ),
+        )
+        .expect("test request should have representable Chat Completions content"),
     );
 
     let (tools, tool_choice) = convert_tools_for_openai_chat_completions(request_tools);
@@ -2280,7 +2279,7 @@ impl OpenAiChatCompletionsClient {
             convert_messages_for_openai_chat_completions_with_instruction_role(
                 request_messages,
                 self.instruction_role_name(),
-            ),
+            )?,
         );
 
         let (tools, tool_choice) = convert_tools_for_openai_chat_completions(request_tools);
@@ -2334,7 +2333,7 @@ impl OpenAiChatCompletionsClient {
             convert_messages_for_openai_chat_completions_with_instruction_role(
                 request_messages,
                 self.instruction_role_name(),
-            ),
+            )?,
         );
 
         let (tools, tool_choice) = convert_tools_for_openai_chat_completions(request_tools);
