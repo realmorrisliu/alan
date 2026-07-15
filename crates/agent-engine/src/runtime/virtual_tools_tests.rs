@@ -34,15 +34,9 @@ fn namespace_environment_for_virtual_tool_test(
         Access::ReadWrite,
     );
     let root = InProcessTransport::new(Arc::new(MountFs::new(namespace)));
-    let procfs = alan_kernel::ProcFs::new();
-    let agent_root = Arc::new(alan_agentfs::AgentRootFs::new(Arc::new(procfs.clone())));
     let runner = crate::tools::ToolProcessRunner::from_registry(tools);
-    NamespaceRuntimeEnvironment::new(root, "/agent/1", "default").with_process_context(
-        procfs,
-        agent_root,
-        alan_kernel::Pid(1),
-        runner,
-    )
+    NamespaceRuntimeEnvironment::new(root, "/agent/1", "default")
+        .with_tool_process_context(alan_kernel::Pid(1), runner)
 }
 
 fn create_test_agent_loop_state() -> super::super::agent_loop::RuntimeLoopState {

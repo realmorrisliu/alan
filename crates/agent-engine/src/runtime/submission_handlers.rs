@@ -786,10 +786,8 @@ mod tests {
     fn attach_test_process_context(
         environment: NamespaceRuntimeEnvironment,
     ) -> NamespaceRuntimeEnvironment {
-        let procfs = ProcFs::new();
-        let agent_root = Arc::new(alan_agentfs::AgentRootFs::new(Arc::new(procfs.clone())));
         let runner = crate::tools::ToolProcessRunner::from_registry(&ToolRegistry::new());
-        environment.with_process_context(procfs, agent_root, alan_kernel::Pid(1), runner)
+        environment.with_tool_process_context(alan_kernel::Pid(1), runner)
     }
 
     async fn namespace_environment_with_live_process_for_test()

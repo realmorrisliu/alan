@@ -6,12 +6,9 @@ edition.workspace = true
 
 [dependencies]
 alan-ap = { path = "../ap" }
-alan-agentfs = { path = "../agentfs" }
 alan-agent-protocol.workspace = true
 alan-kernel = { path = "../kernel" }
 alan-llm.workspace = true
-alan-llmfs = { path = "../llmfs" }
-alan-routefs.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 serde.workspace = true
@@ -51,6 +48,9 @@ libc.workspace = true
 tracing-subscriber.workspace = true
 tempfile.workspace = true
 alan-llm = { workspace = true, features = ["mock"] }
+alan-agentfs = { path = "../agentfs" }
+alan-llmfs = { path = "../llmfs" }
+alan-routefs.workspace = true
 alan-shell = { path = "../shell" }
 # test-util (paused clock) is not part of tokio's "full" feature set.
 tokio = { workspace = true, features = ["test-util"] }

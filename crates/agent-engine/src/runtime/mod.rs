@@ -3,6 +3,7 @@
 //! Drives the agent loop: receive input → LLM generation → tool execution → state transition.
 
 mod agent_loop;
+mod agent_process;
 mod child_agents;
 mod child_runs;
 mod compaction;
@@ -34,6 +35,10 @@ pub use agent_loop::{
     NamespaceToolActionOutput, NamespaceTurnOutput, NamespaceTurnRuntime,
     NamespaceTurnRuntimeConfig,
 };
+pub use agent_process::{
+    AgentProcessLifecycle, AssembledChildAgentProcess, ChildAgentProcessAssembler,
+    ChildAgentProcessAssemblyPlan, ChildAgentProcessAssemblyRequest,
+};
 pub use child_runs::{
     ChildRunRecord, ChildRunRegistryError, ChildRunStatus, ChildRunTerminationMode,
     ChildRunTerminationRequest,
@@ -46,7 +51,7 @@ pub use engine::{
 
 // Re-export agent loop types for internal use
 pub(crate) use agent_loop::RuntimeLoopState;
-pub(crate) use tool_packages::ToolPackageManifest;
+pub use tool_packages::ToolPackageManifest;
 pub(crate) use turn_state::TurnState;
 
 /// Configuration for the agent runtime

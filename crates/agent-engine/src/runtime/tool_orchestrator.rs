@@ -1994,7 +1994,6 @@ mod tests {
         tools.set_default_execution_binding(binding.clone());
 
         let procfs = ProcFs::new().with_runner(Arc::new(RegistryToolRunner::new(tools.clone())));
-        let agent_root = Arc::new(alan_agentfs::AgentRootFs::new(Arc::new(procfs.clone())));
         let tool_runner = crate::tools::ToolProcessRunner::from_registry(&tools);
         tool_runner.register_process_binding(alan_kernel::Pid(1), binding);
         let spawner_procfs = Arc::new(procfs.for_spawner(
@@ -2017,7 +2016,7 @@ mod tests {
             current_submission_id: None,
             environment: NamespaceRuntimeEnvironment::new(root, agent_path, "default")
                 .with_launch_context(launch_context)
-                .with_process_context(procfs, agent_root, alan_kernel::Pid(1), tool_runner),
+                .with_tool_process_context(alan_kernel::Pid(1), tool_runner),
             core_config: config,
             runtime_config: super::super::RuntimeConfig::default(),
             definition_persona_dirs: Vec::new(),

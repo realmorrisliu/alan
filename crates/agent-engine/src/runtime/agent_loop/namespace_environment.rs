@@ -246,29 +246,19 @@ pub struct NamespaceRuntimeEnvironment {
     root: InProcessTransport,
     agent_path: String,
     llm_connection: String,
-    process_context: Option<NamespaceProcessContext>,
-    shared_services: Option<NamespaceSharedServices>,
+    tool_process_context: Option<NamespaceToolProcessContext>,
     input_offset: Arc<AtomicU64>,
     control_offset: Arc<AtomicU64>,
     mount_grant_applicator: Option<Arc<dyn MountGrantApplicator>>,
-    mount_grant_applicator_factory: Option<Arc<dyn MountGrantApplicatorFactory>>,
     child_run_registry: super::super::child_runs::ChildRunRegistry,
+    child_process_assembler: Option<Arc<dyn super::super::ChildAgentProcessAssembler>>,
     launch_context: Option<crate::ProcessLaunchContext>,
 }
 
 #[derive(Clone)]
-pub(crate) struct NamespaceProcessContext {
-    pub(crate) launch_procfs: alan_kernel::ProcFs,
-    pub(crate) agent_root: Arc<alan_agentfs::AgentRootFs>,
+struct NamespaceToolProcessContext {
     pub(crate) pid: alan_kernel::Pid,
     pub(crate) tool_runner: crate::tools::ToolProcessRunner,
-}
-
-#[derive(Clone)]
-pub(crate) struct NamespaceSharedServices {
-    pub(crate) srv: InProcessTransport,
-    pub(crate) route: InProcessTransport,
-    pub(crate) llm: InProcessTransport,
 }
 
 impl std::fmt::Debug for NamespaceRuntimeEnvironment {
@@ -276,14 +266,9 @@ impl std::fmt::Debug for NamespaceRuntimeEnvironment {
         f.debug_struct("NamespaceRuntimeEnvironment")
             .field("agent_path", &self.agent_path)
             .field("llm_connection", &self.llm_connection)
-            .field("has_shared_services", &self.shared_services.is_some())
             .field(
                 "mount_grant_applicator",
                 &self.mount_grant_applicator.is_some(),
-            )
-            .field(
-                "mount_grant_applicator_factory",
-                &self.mount_grant_applicator_factory.is_some(),
             )
             .finish_non_exhaustive()
     }
@@ -299,13 +284,12 @@ impl NamespaceRuntimeEnvironment {
             root,
             agent_path: agent_path.into(),
             llm_connection: llm_connection.into(),
-            process_context: None,
-            shared_services: None,
+            tool_process_context: None,
             input_offset: Arc::new(AtomicU64::new(0)),
             control_offset: Arc::new(AtomicU64::new(0)),
             mount_grant_applicator: None,
-            mount_grant_applicator_factory: None,
             child_run_registry: super::super::child_runs::ChildRunRegistry::default(),
+            child_process_assembler: None,
             launch_context: None,
         }
     }
@@ -320,29 +304,18 @@ impl NamespaceRuntimeEnvironment {
         self.launch_context.as_ref()
     }
 
-    /// Bind the already-created Process and AgentFS owners for this Agent Process.
-    pub fn with_process_context(
+    /// Bind transition-local Tool execution to its already-created Process.
+    pub fn with_tool_process_context(
         mut self,
-        launch_procfs: alan_kernel::ProcFs,
-        agent_root: Arc<alan_agentfs::AgentRootFs>,
         pid: alan_kernel::Pid,
         tool_runner: crate::tools::ToolProcessRunner,
     ) -> Self {
-        self.process_context = Some(NamespaceProcessContext {
-            launch_procfs,
-            agent_root,
-            pid,
-            tool_runner,
-        });
+        self.tool_process_context = Some(NamespaceToolProcessContext { pid, tool_runner });
         self
     }
 
-    pub(crate) fn process_context(&self) -> Option<NamespaceProcessContext> {
-        self.process_context.clone()
-    }
-
     pub(crate) fn tool_execution_binding(&self) -> Option<crate::tools::ToolExecutionBinding> {
-        let context = self.process_context.as_ref()?;
+        let context = self.tool_process_context.as_ref()?;
         context.tool_runner.process_binding(context.pid)
     }
 
@@ -354,7 +327,7 @@ impl NamespaceRuntimeEnvironment {
         if !package.capability_is_argument_dependent {
             return package.capability;
         }
-        self.process_context
+        self.tool_process_context
             .as_ref()
             .and_then(|context| {
                 context
@@ -369,7 +342,7 @@ impl NamespaceRuntimeEnvironment {
         &self,
         binding: crate::tools::ToolExecutionBinding,
     ) -> bool {
-        self.process_context.as_ref().is_some_and(|context| {
+        self.tool_process_context.as_ref().is_some_and(|context| {
             context
                 .tool_runner
                 .register_process_binding(context.pid, binding);
@@ -403,7 +376,7 @@ impl NamespaceRuntimeEnvironment {
         else {
             return false;
         };
-        let Some(process_context) = self.process_context.as_ref() else {
+        let Some(process_context) = self.tool_process_context.as_ref() else {
             return false;
         };
         let changed = process_context
@@ -424,57 +397,11 @@ impl NamespaceRuntimeEnvironment {
             .unwrap_or_default()
     }
 
-    /// Bind already-mounted shared service trees used by Agent transitions.
-    pub fn with_shared_services(
-        mut self,
-        srv: InProcessTransport,
-        route: InProcessTransport,
-        llm: InProcessTransport,
-    ) -> Self {
-        self.shared_services = Some(NamespaceSharedServices { srv, route, llm });
-        self
-    }
-
-    pub(crate) fn shared_services(&self) -> Option<NamespaceSharedServices> {
-        self.shared_services.clone()
-    }
-
     pub fn with_mount_grant_applicator(
         mut self,
         applicator: Arc<dyn MountGrantApplicator>,
     ) -> Self {
         self.mount_grant_applicator = Some(applicator);
-        self
-    }
-
-    pub fn with_mount_grant_applicator_factory(
-        mut self,
-        factory: Arc<dyn MountGrantApplicatorFactory>,
-        live_namespace: alan_kernel::LiveNamespace,
-    ) -> Self {
-        let process = self
-            .process_context
-            .as_ref()
-            .expect("mount grant applicator factory requires a Process context");
-        let inherited_mount_paths = self
-            .launch_context
-            .as_ref()
-            .map(|context| {
-                context
-                    .host_mounts
-                    .iter()
-                    .map(|grant| grant.namespace_path.clone())
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
-        self.mount_grant_applicator =
-            Some(factory.create(process.pid, live_namespace, &inherited_mount_paths));
-        if let Some(authority) = factory.tool_execution_authority() {
-            process
-                .tool_runner
-                .register_process_authority(process.pid, authority);
-        }
-        self.mount_grant_applicator_factory = Some(factory);
         self
     }
 
@@ -490,6 +417,21 @@ impl NamespaceRuntimeEnvironment {
     /// Process-local projection registry for delegated child Agent Processes.
     pub(crate) fn child_run_registry(&self) -> &super::super::child_runs::ChildRunRegistry {
         &self.child_run_registry
+    }
+
+    /// Bind the Process-scoped Agent Runtime Service capability used for child assembly.
+    pub fn with_child_process_assembler(
+        mut self,
+        assembler: Arc<dyn super::super::ChildAgentProcessAssembler>,
+    ) -> Self {
+        self.child_process_assembler = Some(assembler);
+        self
+    }
+
+    pub(crate) fn child_process_assembler(
+        &self,
+    ) -> Option<Arc<dyn super::super::ChildAgentProcessAssembler>> {
+        self.child_process_assembler.clone()
     }
 
     pub fn llm_connection(&self) -> &str {
@@ -525,10 +467,6 @@ impl NamespaceRuntimeEnvironment {
 
     pub fn root_transport(&self) -> InProcessTransport {
         self.root.clone()
-    }
-
-    pub fn mount_grant_applicator_factory(&self) -> Option<Arc<dyn MountGrantApplicatorFactory>> {
-        self.mount_grant_applicator_factory.clone()
     }
 
     pub fn apply_approved_mount_grant(
@@ -861,6 +799,23 @@ impl NamespaceRuntimeEnvironment {
             .parse::<i32>()
             .with_context(|| format!("parse process exit code from {exit_path}"))?;
         Ok(Some(code))
+    }
+
+    pub(crate) async fn read_process_io_offsets(&self, pid: &str) -> Result<(u64, u64)> {
+        let client = NamespaceClient::new(self.root.clone());
+        let output_path = format!("/proc/{pid}/io/output");
+        let events_path = format!("/proc/{pid}/io/events");
+        let output = client
+            .stat_path(&output_path)
+            .await
+            .with_context(|| format!("stat process output at {output_path}"))?
+            .length;
+        let events = client
+            .stat_path(&events_path)
+            .await
+            .with_context(|| format!("stat process IO events at {events_path}"))?
+            .length;
+        Ok((output, events))
     }
 
     pub async fn write_request(&self, record: NamespaceRequestRecord) -> Result<String> {

@@ -479,18 +479,6 @@ struct ToolProcessRunnerInner {
 }
 
 impl ToolProcessRunner {
-    pub(crate) fn empty(config: Arc<Config>) -> Self {
-        Self {
-            inner: Arc::new(ToolProcessRunnerInner {
-                tools: HashMap::new(),
-                config,
-                default_binding: Arc::new(Mutex::new(None)),
-                process_bindings: Mutex::new(HashMap::new()),
-                process_authorities: Mutex::new(HashMap::new()),
-            }),
-        }
-    }
-
     pub(crate) fn from_registry(registry: &ToolRegistry) -> Self {
         Self {
             inner: Arc::new(ToolProcessRunnerInner {
@@ -503,11 +491,8 @@ impl ToolProcessRunner {
         }
     }
 
-    pub(crate) fn register_process_binding(
-        &self,
-        pid: alan_kernel::Pid,
-        binding: ToolExecutionBinding,
-    ) {
+    /// Bind host-resolved Tool execution authority to one assembled Process.
+    pub fn register_process_binding(&self, pid: alan_kernel::Pid, binding: ToolExecutionBinding) {
         self.inner
             .process_bindings
             .lock()
@@ -544,12 +529,18 @@ impl ToolProcessRunner {
             .insert(pid, authority);
     }
 
-    /// Drop the resolver when its owning Process exits.
-    pub fn unregister_process_authority(&self, pid: alan_kernel::Pid) {
-        self.inner
+    /// Remove all Tool execution state when its owning Process exits.
+    pub fn unregister_process(&self, pid: alan_kernel::Pid) {
+        let inner = &self.inner;
+        inner
+            .process_bindings
+            .lock()
+            .expect("binding mutex poisoned")
+            .remove(&pid);
+        inner
             .process_authorities
             .lock()
-            .expect("process authority mutex poisoned")
+            .expect("authority mutex poisoned")
             .remove(&pid);
     }
 

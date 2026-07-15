@@ -4,7 +4,6 @@
 
 mod namespace_environment;
 
-pub(crate) use namespace_environment::NamespaceProcessContext;
 #[cfg(test)]
 pub(super) use namespace_environment::NamespaceRequestRecord;
 pub use namespace_environment::{

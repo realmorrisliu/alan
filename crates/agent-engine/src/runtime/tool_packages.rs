@@ -9,7 +9,7 @@ const TOOL_MANIFEST_VERSION: u16 = 1;
 /// Namespace-owned model and execution metadata for one Tool package.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct ToolPackageManifest {
+pub struct ToolPackageManifest {
     pub version: u16,
     pub name: String,
     pub description: String,
@@ -24,7 +24,7 @@ pub(crate) struct ToolPackageManifest {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct ToolExecutionHints {
+pub struct ToolExecutionHints {
     pub arguments: String,
     pub result: String,
 }
@@ -56,7 +56,7 @@ impl ToolPackageManifest {
         Ok(manifest)
     }
 
-    pub(crate) fn validate_for_name(&self, mounted_name: &str) -> Result<()> {
+    pub fn validate_for_name(&self, mounted_name: &str) -> Result<()> {
         if self.version != TOOL_MANIFEST_VERSION {
             bail!("unsupported Tool manifest version {}", self.version);
         }
