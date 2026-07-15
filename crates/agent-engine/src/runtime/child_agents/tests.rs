@@ -7,6 +7,7 @@ use crate::runtime::{
 use crate::skills::SkillHostCapabilities;
 use crate::tools::Tool;
 use crate::tools::ToolRegistry;
+use alan_agent_protocol::SpawnTarget;
 use alan_ap::{Fid, FileServer, InProcessTransport, OpenMode};
 use alan_kernel::{
     Access as KernelAccess, Credentials as KernelCredentials, Namespace as KernelNamespace,
