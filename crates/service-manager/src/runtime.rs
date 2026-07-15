@@ -7,25 +7,23 @@ use std::time::{Duration, Instant};
 
 use alan_agent_engine::{
     AgentProcessConfig, LlmClient, ProcessLaunchContext, ProcessPackageKind,
-    ProcessPackageReference, ProcessPackageSkillReference, RuntimeController, ToolRegistry,
+    ProcessPackageReference, ProcessPackageSkillReference, ToolRegistry,
     configure_runtime_tool_execution_binding, provider_capabilities_for_config,
-    spawn_with_namespace_environment,
 };
 use alan_ap::{
     ErrorCode, Fid, FileKind, FileServer, InProcessTransport, Offset, OpenMode, Qid, Stat,
 };
 use alan_kernel::{Access, Credentials, LiveNamespace, Namespace, Pid, Status};
-use alan_llm::ProviderCapabilities;
 use anyhow::{Context, Result, ensure};
 use async_trait::async_trait;
 use uuid::Uuid;
 
 use crate::{
     BootManifest, BootUnit, ConnectionService, ConnectionStoreBindings, ConnectionsFile,
-    HostMountApplicatorFactory, HostMountExportAdapter, HostMountService, LocalEntryService,
-    ManagerState, PackageService, RestartDecision, ServiceManagerFs,
-    UnavailableHostMountExportAdapter,
-    quartermaster::{QUARTERMASTER_EXECUTABLE, SystemProcessRunner},
+    HostMountExportAdapter, HostMountService, LocalEntryService, ManagerState, PackageService,
+    RestartDecision, ServiceManagerFs, UnavailableHostMountExportAdapter,
+    agent_runtime::{AgentRuntimeService, RootAgentProcess, RootAgentTemplate},
+    quartermaster::QUARTERMASTER_EXECUTABLE,
 };
 
 pub const BOOT_ID_PATH: &str = "/proc/host/boot_id";
@@ -349,7 +347,7 @@ impl ServiceManager {
             config.tools.list_tools().into_iter().map(str::to_string),
             true,
         );
-        let assembled = assemble_environment(AssembleInputs {
+        let mut assembled = assemble_environment(AssembleInputs {
             boot_id,
             manifest,
             connection_service,
@@ -359,20 +357,14 @@ impl ServiceManager {
             llm_factory: config.llm_factory.clone(),
             connection_base_config,
             host_mount_adapter: config.host_mount_adapter.clone(),
-            tools: &config.tools,
-            launch_context: &config.process.launch_context,
+            process: config.process,
+            tools: config.tools,
+            host_capabilities,
+            generation_capabilities,
         })
         .await?;
-        config.process.launch_context = assembled.root_launch_context.clone();
-        let process_config = config.process.clone();
-        let mut controller = spawn_with_namespace_environment(
-            config.process,
-            assembled.environment,
-            host_capabilities.clone(),
-            generation_capabilities,
-        )?;
-        let initial_ready = controller.wait_until_ready().await;
-        let root_pid = Arc::new(AtomicU64::new(assembled.root_pid.0));
+        let initial_ready = assembled.root.wait_until_ready().await;
+        let root_pid = Arc::new(AtomicU64::new(assembled.root.pid().0));
         let state = assembled.state.clone();
         let procfs = assembled.procfs.clone();
         let manager_pid = assembled.manager_pid;
@@ -381,7 +373,7 @@ impl ServiceManager {
         let connection = assembled.connection.clone();
         let package = assembled.package.clone();
         let package_handle = assembled.package_handle.clone();
-        let root = assembled.root.clone();
+        let root = assembled.root.namespace();
         let mut runtime = SupervisorRuntime {
             manifest: assembled.manifest,
             state: state.clone(),
@@ -391,6 +383,7 @@ impl ServiceManager {
             manager_pid,
             active: assembled.active_units,
             pending: BTreeMap::new(),
+            agent_runtime: assembled.agent_runtime,
             agent_root: assembled.agent_root,
             llmfs: assembled.llmfs,
             routefs: assembled.routefs,
@@ -399,18 +392,9 @@ impl ServiceManager {
             package: assembled.package,
             package_handle: assembled.package_handle,
             local_entry: local_entry.clone(),
-            root: Some(RootInstance {
-                pid: assembled.root_pid,
-                controller,
-            }),
+            root: Some(assembled.root),
             root_pid: root_pid.clone(),
-            root_template: RootLaunchTemplate {
-                process: process_config,
-                tools: config.tools,
-                host_capabilities,
-                generation_capabilities,
-                llm_connection: assembled.llm_connection,
-            },
+            root_template: assembled.root_template,
         };
         match initial_ready {
             Ok(_) => state
@@ -539,14 +523,14 @@ impl ServiceManager {
 }
 
 struct AssembledEnvironment {
-    environment: alan_agent_engine::runtime::NamespaceRuntimeEnvironment,
-    root: InProcessTransport,
-    root_launch_context: ProcessLaunchContext,
+    root: RootAgentProcess,
+    root_template: RootAgentTemplate,
     manifest: BootManifest,
     state: Arc<tokio::sync::Mutex<ManagerState>>,
     procfs: alan_kernel::ProcFs,
     srvfs: Arc<alan_kernel::SrvFs>,
     system_namespace: LiveNamespace,
+    agent_runtime: Arc<AgentRuntimeService>,
     agent_root: Arc<alan_agentfs::AgentRootFs>,
     llmfs: Arc<alan_llmfs::LlmFs>,
     routefs: Arc<alan_routefs::RouteFs>,
@@ -555,13 +539,11 @@ struct AssembledEnvironment {
     package: Arc<PackageService>,
     package_handle: Arc<SwitchableFileServer>,
     active_units: BTreeMap<String, ActiveUnit>,
-    llm_connection: String,
     manager_pid: Pid,
-    root_pid: Pid,
     local_entry: Arc<LocalEntryService>,
 }
 
-struct AssembleInputs<'a> {
+struct AssembleInputs {
     boot_id: Uuid,
     manifest: BootManifest,
     connection_service: Arc<ConnectionService>,
@@ -571,27 +553,16 @@ struct AssembleInputs<'a> {
     llm_factory: Arc<dyn LlmClientFactory>,
     connection_base_config: alan_agent_engine::Config,
     host_mount_adapter: Arc<dyn HostMountExportAdapter>,
-    tools: &'a ToolRegistry,
-    launch_context: &'a ProcessLaunchContext,
+    process: AgentProcessConfig,
+    tools: ToolRegistry,
+    host_capabilities: alan_agent_engine::skills::SkillHostCapabilities,
+    generation_capabilities: alan_llm::ProviderCapabilities,
 }
 
 #[derive(Clone, Copy)]
 struct ActiveUnit {
     pid: Pid,
     started_at: Instant,
-}
-
-struct RootInstance {
-    pid: Pid,
-    controller: RuntimeController,
-}
-
-struct RootLaunchTemplate {
-    process: AgentProcessConfig,
-    tools: ToolRegistry,
-    host_capabilities: alan_agent_engine::skills::SkillHostCapabilities,
-    generation_capabilities: ProviderCapabilities,
-    llm_connection: String,
 }
 
 struct SupervisorRuntime {
@@ -603,6 +574,7 @@ struct SupervisorRuntime {
     manager_pid: Pid,
     active: BTreeMap<String, ActiveUnit>,
     pending: BTreeMap<String, Instant>,
+    agent_runtime: Arc<AgentRuntimeService>,
     agent_root: Arc<alan_agentfs::AgentRootFs>,
     llmfs: Arc<alan_llmfs::LlmFs>,
     routefs: Arc<alan_routefs::RouteFs>,
@@ -611,9 +583,9 @@ struct SupervisorRuntime {
     package: Arc<PackageService>,
     package_handle: Arc<SwitchableFileServer>,
     local_entry: Arc<LocalEntryService>,
-    root: Option<RootInstance>,
+    root: Option<RootAgentProcess>,
     root_pid: Arc<AtomicU64>,
-    root_template: RootLaunchTemplate,
+    root_template: RootAgentTemplate,
 }
 
 async fn run_supervisor(
@@ -646,10 +618,7 @@ impl SupervisorRuntime {
             .collect::<Vec<_>>();
         for (name, active) in active {
             if name == "root-agent"
-                && self
-                    .root
-                    .as_ref()
-                    .is_none_or(|root| root.controller.is_finished())
+                && self.root.as_ref().is_none_or(RootAgentProcess::is_finished)
                 && self.procfs.try_observe_process_lifecycle(active.pid)
                     == Some((Status::Running, None))
             {
@@ -684,14 +653,7 @@ impl SupervisorRuntime {
         self.invalidate_handles(name).await;
         if name == "root-agent" {
             if let Some(root) = self.root.take() {
-                if !root.controller.is_finished() {
-                    root.controller.abort().await;
-                }
-                self.agent_root
-                    .unbind_process(&root.pid.0.to_string())
-                    .await;
-                self.host_mount.unregister_process(root.pid);
-                self.connection.release_process(root.pid.0);
+                self.agent_runtime.detach_root(root).await;
             }
             self.root_pid.store(0, Ordering::Release);
         }
@@ -713,9 +675,7 @@ impl SupervisorRuntime {
             self.procfs.record_exit(Pid(pid), 1).await;
             self.active.remove(name);
             if name == "root-agent" {
-                self.agent_root.unbind_process(&pid.to_string()).await;
-                self.host_mount.unregister_process(Pid(pid));
-                self.connection.release_process(pid);
+                self.agent_runtime.release_process(Pid(pid)).await;
                 self.root_pid.store(0, Ordering::Release);
             }
         }
@@ -808,111 +768,22 @@ impl SupervisorRuntime {
     }
 
     async fn launch_root(&mut self, unit: &BootUnit) -> Result<()> {
-        let template = &self.root_template.process.launch_context;
-        let credentials = template.credentials.clone();
-        let root_source_namespace =
-            namespace_with_package_references(self.system_namespace.snapshot(), template)?;
-        let extra_mounts = self
-            .root_template
-            .process
-            .launch_context
-            .host_mounts
-            .iter()
-            .map(|grant| (grant.namespace_path.clone(), grant.access))
-            .collect::<Vec<_>>();
-        let (pid, root_namespace) = spawn_unit_process(
-            &self.procfs,
-            self.manager_pid,
-            &root_source_namespace,
-            credentials.clone(),
-            unit,
-            &extra_mounts,
-        )
-        .await?;
-        let root_llm = Arc::new(
-            self.llmfs
-                .connection_view(&self.root_template.llm_connection),
-        );
-        root_namespace.replace_mount(
-            "/mnt/llm",
-            InProcessTransport::new(root_llm.clone()),
-            Access::ReadWrite,
-        );
-        self.state
-            .lock()
-            .await
-            .start_attempt("root-agent", pid)
-            .map_err(|error| anyhow::anyhow!("track Root Agent restart: {error:?}"))?;
-        self.host_mount
-            .register_process(pid, root_namespace.clone());
-        if self
-            .connection
-            .has_profile(&self.root_template.llm_connection)
-        {
-            self.connection
-                .select(pid.0, &self.root_template.llm_connection)?;
+        let mut root = self
+            .agent_runtime
+            .launch_root(
+                self.manager_pid,
+                &self.system_namespace,
+                unit,
+                &self.root_template,
+            )
+            .await?;
+        let pid = root.pid();
+        if let Err(error) = self.state.lock().await.start_attempt("root-agent", pid) {
+            self.agent_runtime.detach_root(root).await;
+            return Err(anyhow::anyhow!("track Root Agent restart: {error:?}"));
         }
-
-        let agentfs = Arc::new(alan_agentfs::AgentFs::new());
-        self.agent_root
-            .bind_process(pid.0.to_string(), agentfs)
-            .await;
-        self.agent_root.set_root_process(pid.0.to_string()).await;
-        let tool_runner = self.root_template.tools.process_runner();
-        let procfs_with_runner =
-            self.procfs
-                .clone()
-                .with_runner(Arc::new(SystemProcessRunner::new(Some(Arc::new(
-                    tool_runner.clone(),
-                )))));
-        self.procfs
-            .bind_live_namespace(pid, root_namespace.clone())
-            .await;
-        root_namespace.replace_mount(
-            "/proc",
-            InProcessTransport::new(Arc::new(procfs_with_runner.for_live_spawner(
-                Some(pid),
-                root_namespace.clone(),
-                credentials.clone(),
-            ))),
-            Access::ReadWrite,
-        );
-
-        let root = InProcessTransport::new(Arc::new(alan_kernel::MountFs::from_live_namespace(
-            root_namespace.clone(),
-        )));
-        let launch_context = template.rebound(root_namespace.snapshot(), credentials);
-        let environment = alan_agent_engine::runtime::NamespaceRuntimeEnvironment::new(
-            root,
-            format!("/agent/{}", pid.0),
-            self.root_template.llm_connection.clone(),
-        )
-        .with_launch_context(launch_context.clone())
-        .with_process_context(
-            self.procfs.clone(),
-            self.agent_root.clone(),
-            pid,
-            tool_runner,
-        )
-        .with_shared_services(
-            InProcessTransport::new(self.srvfs.clone()),
-            InProcessTransport::new(self.routefs.clone()),
-            InProcessTransport::new(root_llm),
-        )
-        .with_mount_grant_applicator_factory(
-            Arc::new(HostMountApplicatorFactory::new(self.host_mount.clone())),
-            root_namespace,
-        );
-        let mut process = self.root_template.process.clone();
-        process.launch_context = launch_context;
-        let mut controller = spawn_with_namespace_environment(
-            process,
-            environment,
-            self.root_template.host_capabilities.clone(),
-            self.root_template.generation_capabilities,
-        )?;
-        if let Err(error) = controller.wait_until_ready().await {
-            controller.abort().await;
+        if let Err(error) = root.wait_until_ready().await {
+            self.agent_runtime.detach_root(root).await;
             return Err(error).context("replacement Root Agent failed before readiness");
         }
         self.state
@@ -928,7 +799,7 @@ impl SupervisorRuntime {
             },
         );
         self.root_pid.store(pid.0, Ordering::Release);
-        self.root = Some(RootInstance { pid, controller });
+        self.root = Some(root);
         Ok(())
     }
 
@@ -946,14 +817,7 @@ impl SupervisorRuntime {
     async fn stop(mut self) -> Result<()> {
         self.package_handle.deactivate().await;
         if let Some(root) = self.root.take() {
-            let result = root.controller.shutdown().await;
-            self.procfs.record_exit(root.pid, 0).await;
-            self.agent_root
-                .unbind_process(&root.pid.0.to_string())
-                .await;
-            self.host_mount.unregister_process(root.pid);
-            self.connection.release_process(root.pid.0);
-            result?;
+            self.agent_runtime.shutdown_root(root).await?;
         }
         for (name, active) in self.active {
             self.procfs.record_exit(active.pid, 0).await;
@@ -967,7 +831,7 @@ impl SupervisorRuntime {
     }
 }
 
-async fn assemble_environment(inputs: AssembleInputs<'_>) -> Result<AssembledEnvironment> {
+async fn assemble_environment(inputs: AssembleInputs) -> Result<AssembledEnvironment> {
     let AssembleInputs {
         boot_id,
         manifest,
@@ -978,10 +842,11 @@ async fn assemble_environment(inputs: AssembleInputs<'_>) -> Result<AssembledEnv
         llm_factory,
         connection_base_config,
         host_mount_adapter,
+        mut process,
         tools,
-        launch_context,
+        host_capabilities,
+        generation_capabilities,
     } = inputs;
-    let agentfs = Arc::new(alan_agentfs::AgentFs::new());
     let llmfs = Arc::new(alan_llmfs::LlmFs::new());
     connection_service
         .attach_callable_registry(
@@ -1006,8 +871,17 @@ async fn assemble_environment(inputs: AssembleInputs<'_>) -> Result<AssembledEnv
     let manager_fs = Arc::new(ServiceManagerFs::new(state.clone()));
     let host_mount_service = HostMountService::new(host_mount_adapter);
     let package_handle = SwitchableFileServer::new();
+    let agent_runtime = AgentRuntimeService::new(
+        procfs.clone(),
+        agent_root.clone(),
+        llmfs.clone(),
+        srvfs.clone(),
+        routefs.clone(),
+        host_mount_service.clone(),
+        connection_service.clone(),
+    );
 
-    let mut namespace = launch_context.namespace.child();
+    let mut namespace = process.launch_context.namespace.child();
     mount_standard_namespace_roots(&mut namespace);
     mount_boot_units(&mut namespace);
     mount_system_executables(&mut namespace, &manifest);
@@ -1030,7 +904,7 @@ async fn assemble_environment(inputs: AssembleInputs<'_>) -> Result<AssembledEnv
         ))),
         Access::ReadWrite,
     );
-    mount_tool_packages(&mut namespace, tools)?;
+    mount_tool_packages(&mut namespace, &tools)?;
     namespace.mount(
         "/proc/host",
         InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::with_read_only_files([
@@ -1187,9 +1061,9 @@ async fn assemble_environment(inputs: AssembleInputs<'_>) -> Result<AssembledEnv
     let root_unit = manifest
         .get("root-agent")
         .context("Root Agent Boot Unit is missing")?;
-    let mut root_template_context = launch_context.rebound(
+    let mut root_template_context = process.launch_context.rebound(
         system_namespace.snapshot(),
-        launch_context.credentials.clone(),
+        process.launch_context.credentials.clone(),
     );
     for source in alan_agent_engine::skills::preinstalled_skill_package_sources() {
         project_package_reference(
@@ -1198,37 +1072,22 @@ async fn assemble_environment(inputs: AssembleInputs<'_>) -> Result<AssembledEnv
             &source.package_id,
         )?;
     }
-    let root_source_namespace =
-        namespace_with_package_references(system_namespace.snapshot(), &root_template_context)?;
-    let extra_mounts = root_template_context
-        .host_mounts
-        .iter()
-        .map(|grant| (grant.namespace_path.clone(), grant.access))
-        .collect::<Vec<_>>();
-    let (root_pid, root_namespace) = spawn_unit_process(
-        &procfs,
-        manager_pid,
-        &root_source_namespace,
-        root_template_context.credentials.clone(),
-        root_unit,
-        &extra_mounts,
-    )
-    .await?;
-    let root_llm = Arc::new(llmfs.connection_view(&llm_connection));
-    root_namespace.replace_mount(
-        "/mnt/llm",
-        InProcessTransport::new(root_llm.clone()),
-        Access::ReadWrite,
+    process.launch_context = root_template_context;
+    let root_template = RootAgentTemplate::new(
+        process,
+        tools,
+        host_capabilities,
+        generation_capabilities,
+        llm_connection,
     );
-    host_mount_service.register_process(root_pid, root_namespace.clone());
-    if connection_service.has_profile(&llm_connection) {
-        connection_service.select(root_pid.0, &llm_connection)?;
+    let root = agent_runtime
+        .launch_root(manager_pid, &system_namespace, root_unit, &root_template)
+        .await?;
+    let root_pid = root.pid();
+    if let Err(error) = state.lock().await.start_attempt("root-agent", root_pid) {
+        agent_runtime.detach_root(root).await;
+        return Err(anyhow::anyhow!("track Root Agent start: {error:?}"));
     }
-    state
-        .lock()
-        .await
-        .start_attempt("root-agent", root_pid)
-        .map_err(|error| anyhow::anyhow!("track Root Agent start: {error:?}"))?;
     active_units.insert(
         "root-agent".to_string(),
         ActiveUnit {
@@ -1236,66 +1095,16 @@ async fn assemble_environment(inputs: AssembleInputs<'_>) -> Result<AssembledEnv
             started_at: Instant::now(),
         },
     );
-    agent_root
-        .bind_process(root_pid.0.to_string(), agentfs)
-        .await;
-    agent_root.set_root_process(root_pid.0.to_string()).await;
-
-    let tool_runner = tools.process_runner();
-    let procfs_with_runner = procfs
-        .clone()
-        .with_runner(Arc::new(SystemProcessRunner::new(Some(Arc::new(
-            tool_runner.clone(),
-        )))));
-    procfs
-        .bind_live_namespace(root_pid, root_namespace.clone())
-        .await;
-    let process_procfs = procfs_with_runner.for_live_spawner(
-        Some(root_pid),
-        root_namespace.clone(),
-        root_template_context.credentials.clone(),
-    );
-    root_namespace.replace_mount(
-        "/proc",
-        InProcessTransport::new(Arc::new(process_procfs)),
-        Access::ReadWrite,
-    );
-
-    let root_mount = Arc::new(alan_kernel::MountFs::from_live_namespace(
-        root_namespace.clone(),
-    ));
-    let root = InProcessTransport::new(root_mount);
-    let route_tree = InProcessTransport::new(routefs.clone());
-    let root_launch_context = root_template_context.rebound(
-        root_namespace.snapshot(),
-        root_template_context.credentials.clone(),
-    );
-    let environment = alan_agent_engine::runtime::NamespaceRuntimeEnvironment::new(
-        root.clone(),
-        format!("/agent/{}", root_pid.0),
-        llm_connection.clone(),
-    )
-    .with_launch_context(root_launch_context.clone())
-    .with_process_context(procfs.clone(), agent_root.clone(), root_pid, tool_runner)
-    .with_shared_services(
-        InProcessTransport::new(srvfs.clone()),
-        route_tree,
-        InProcessTransport::new(root_llm),
-    );
-    let environment = environment.with_mount_grant_applicator_factory(
-        Arc::new(HostMountApplicatorFactory::new(host_mount_service.clone())),
-        root_namespace,
-    );
 
     Ok(AssembledEnvironment {
-        environment,
         root,
+        root_template,
         manifest,
-        root_launch_context,
         state,
         procfs,
         srvfs,
         system_namespace,
+        agent_runtime,
         agent_root,
         llmfs,
         routefs,
@@ -1304,9 +1113,7 @@ async fn assemble_environment(inputs: AssembleInputs<'_>) -> Result<AssembledEnv
         package: package_service,
         package_handle,
         active_units,
-        llm_connection,
         manager_pid,
-        root_pid,
         local_entry,
     })
 }
@@ -1461,7 +1268,7 @@ fn seed_preinstalled_packages(package_service: &Arc<PackageService>) -> Result<(
     Ok(())
 }
 
-fn namespace_with_package_references(
+pub(crate) fn namespace_with_package_references(
     mut base: Namespace,
     launch_context: &ProcessLaunchContext,
 ) -> Result<LiveNamespace> {
@@ -1549,7 +1356,7 @@ pub(crate) async fn spawn_process(
     .await
 }
 
-async fn spawn_unit_process(
+pub(crate) async fn spawn_unit_process(
     procfs: &alan_kernel::ProcFs,
     parent: Pid,
     system_namespace: &LiveNamespace,
