@@ -12,7 +12,11 @@ pub(super) fn chat_completions_content(
         .into_iter()
         .filter_map(chat_completions_part)
         .collect::<Vec<_>>();
-    (!parts.is_empty()).then_some(serde_json::Value::Array(parts))
+    if parts.is_empty() {
+        (!fallback.is_empty()).then_some(serde_json::Value::String(fallback))
+    } else {
+        Some(serde_json::Value::Array(parts))
+    }
 }
 
 pub(super) fn responses_content(
@@ -27,7 +31,11 @@ pub(super) fn responses_content(
         .into_iter()
         .filter_map(responses_part)
         .collect::<Vec<_>>();
-    (!parts.is_empty()).then_some(serde_json::Value::Array(parts))
+    if parts.is_empty() {
+        (!fallback.is_empty()).then_some(serde_json::Value::String(fallback))
+    } else {
+        Some(serde_json::Value::Array(parts))
+    }
 }
 
 fn chat_completions_part(part: MessageContentPart) -> Option<serde_json::Value> {
@@ -157,5 +165,27 @@ mod tests {
                 {"type": "image_url", "image_url": {"url": "https://example.com/cat.png"}}
             ]))
         );
+    }
+
+    #[test]
+    fn falls_back_when_typed_parts_project_to_nothing() {
+        let parts = || {
+            vec![MessageContentPart::Text {
+                text: "   ".to_string(),
+            }]
+        };
+
+        assert_eq!(
+            responses_content("fallback".to_string(), parts()),
+            Some(json!("fallback"))
+        );
+        assert_eq!(
+            chat_completions_content("fallback".to_string(), parts()),
+            Some(json!("fallback"))
+        );
+
+        let mut message = crate::Message::user("");
+        message.content_parts = parts();
+        assert!(super::super::convert_messages_for_openai_responses(vec![message]).is_empty());
     }
 }

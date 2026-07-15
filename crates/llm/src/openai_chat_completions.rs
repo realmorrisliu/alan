@@ -1551,7 +1551,7 @@ pub(crate) fn convert_messages_for_openai_responses(
     for message in messages {
         match message.role {
             MessageRole::System | MessageRole::Context | MessageRole::User => {
-                if !message.content.is_empty() || !message.content_parts.is_empty() {
+                if let Some(content) = responses_content(message.content, message.content_parts) {
                     let role = match message.role {
                         MessageRole::User => "user",
                         _ => "developer",
@@ -1559,8 +1559,7 @@ pub(crate) fn convert_messages_for_openai_responses(
                     input.push(OpenAiResponsesInputItem::Message(
                         OpenAiResponsesInputMessage {
                             role: role.to_string(),
-                            content: responses_content(message.content, message.content_parts)
-                                .expect("non-empty message content"),
+                            content,
                         },
                     ));
                 }
@@ -1578,12 +1577,11 @@ pub(crate) fn convert_messages_for_openai_responses(
                     ));
                 }
 
-                if !message.content.is_empty() || !message.content_parts.is_empty() {
+                if let Some(content) = responses_content(message.content, message.content_parts) {
                     input.push(OpenAiResponsesInputItem::Message(
                         OpenAiResponsesInputMessage {
                             role: "assistant".to_string(),
-                            content: responses_content(message.content, message.content_parts)
-                                .expect("non-empty message content"),
+                            content,
                         },
                     ));
                 }
