@@ -26,6 +26,10 @@ use crate::{
     StreamChunk, TokenUsage, ToolCall, ToolCallDelta, ToolDefinition,
 };
 
+mod input_projection;
+
+use input_projection::convert_messages_for_openrouter;
+
 pub const OPENROUTER_BASE_URL: &str = "https://openrouter.ai/api/v1";
 
 /// alan LLM provider backed by the `openrouter-rs` SDK.
@@ -279,47 +283,6 @@ fn preserve_openrouter_reasoning_fields(payload: &mut Value, messages: &[Message
     }
 
     Ok(())
-}
-
-pub(crate) fn convert_messages_for_openrouter(messages: Vec<Message>) -> Result<Vec<OrMessage>> {
-    messages
-        .into_iter()
-        .map(|message| {
-            let Message {
-                role,
-                content,
-                tool_calls,
-                tool_call_id,
-                ..
-            } = message;
-
-            Ok(match role {
-                MessageRole::System => OrMessage::new(Role::System, content),
-                MessageRole::User => OrMessage::new(Role::User, content),
-                MessageRole::Assistant => {
-                    let tool_calls = tool_calls.map(convert_tool_calls_for_openrouter);
-                    match tool_calls {
-                        Some(tool_calls) if !tool_calls.is_empty() => {
-                            OrMessage::assistant_with_tool_calls(content, tool_calls)
-                        }
-                        _ => OrMessage::new(Role::Assistant, content),
-                    }
-                }
-                MessageRole::Tool => {
-                    let tool_call_id = tool_call_id
-                        .map(|value| value.trim().to_string())
-                        .filter(|value| !value.is_empty())
-                        .ok_or_else(|| {
-                            anyhow::anyhow!(
-                                "OpenRouter tool response messages require a non-empty tool_call_id"
-                            )
-                        })?;
-                    OrMessage::tool_response(&tool_call_id, content)
-                }
-                MessageRole::Context => OrMessage::new(Role::System, content),
-            })
-        })
-        .collect()
 }
 
 pub(crate) fn convert_tools_for_openrouter(tools: Vec<ToolDefinition>) -> Vec<OrTool> {
