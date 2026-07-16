@@ -76,20 +76,21 @@ pub(super) fn convert_messages_for_openai_chat_completions_with_instruction_role
 pub(super) fn chat_completions_content(
     fallback: String,
     parts: Vec<MessageContentPart>,
-    allow_attachments: bool,
+    is_user_message: bool,
 ) -> anyhow::Result<Option<serde_json::Value>> {
     if parts.is_empty() {
-        return Ok((!fallback.is_empty()).then_some(serde_json::Value::String(fallback)));
+        return Ok((is_user_message || !fallback.is_empty())
+            .then_some(serde_json::Value::String(fallback)));
     }
 
     let mut projected = Vec::new();
     for part in parts {
-        if let Some(part) = chat_completions_part(part, allow_attachments)? {
+        if let Some(part) = chat_completions_part(part, is_user_message)? {
             projected.push(part);
         }
     }
     Ok(if projected.is_empty() {
-        (!fallback.is_empty()).then_some(serde_json::Value::String(fallback))
+        (is_user_message || !fallback.is_empty()).then_some(serde_json::Value::String(fallback))
     } else {
         Some(serde_json::Value::Array(projected))
     })
@@ -441,6 +442,17 @@ mod tests {
                 {"type": "image_url", "image_url": {"url": "https://example.com/cat.png"}}
             ]))
         );
+    }
+
+    #[test]
+    fn empty_chat_user_message_preserves_required_content_field() {
+        let projected = convert_messages_for_openai_chat_completions_with_instruction_role(
+            vec![crate::Message::user("")],
+            "developer",
+        )
+        .unwrap();
+
+        assert_eq!(projected, vec![json!({"role": "user", "content": ""})]);
     }
 
     #[test]
