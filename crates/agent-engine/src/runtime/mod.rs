@@ -5,6 +5,7 @@
 mod agent_loop;
 mod agent_process;
 mod child_agents;
+mod child_run_termination_tool;
 mod child_runs;
 mod compaction;
 mod delegated_child_run;
