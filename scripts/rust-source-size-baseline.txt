@@ -1,6 +1,5 @@
 # Rust source files above the 1,000-line target. Keep sorted by path.
 # A file may only stay equal to this maximum or shrink with this entry tightened.
-crates/llmfs/src/lib.rs 1196
 crates/service-manager/src/package.rs 2947
 crates/service-manager/src/runtime.rs 2243
 crates/shell-core/src/actions.rs 1591
