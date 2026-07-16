@@ -1,6 +1,5 @@
 # Rust source files above the 1,000-line target. Keep sorted by path.
 # A file may only stay equal to this maximum or shrink with this entry tightened.
-crates/agent-engine/src/tools/sandbox.rs 1038
 crates/agentfs/src/lib.rs 1151
 crates/agentfs/src/root.rs 1191
 crates/alan/src/cli/skill_authoring.rs 1187

@@ -1,6 +1,6 @@
 use super::super::reified_namespace::ReifiedNamespacePlan;
-use super::PROTECTED_SUBPATHS;
 use super::command_wrappers::is_env_assignment;
+use super::path_safety::PROTECTED_SUBPATHS;
 use super::shell_syntax::{ShellWordToken, shell_word_tokens_with_spans};
 use std::ops::Range;
 use std::path::{Component, Path, PathBuf};
