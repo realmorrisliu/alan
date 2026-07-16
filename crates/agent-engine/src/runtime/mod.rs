@@ -18,6 +18,7 @@ mod memory_recall;
 mod memory_surfaces;
 mod prompt_cache;
 mod response_guardrails;
+mod steering_queue;
 mod submission_handlers;
 mod tool_effect_lifecycle;
 mod tool_orchestrator;
