@@ -28,7 +28,6 @@ crates/llm/src/google_gemini_generate_content.rs 1373
 crates/llm/src/lib.rs 1579
 crates/llm/src/openai_chat_completions.rs 3191
 crates/llmfs/src/lib.rs 1797
-crates/llmfs/tests/generation.rs 1627
 crates/service-manager/src/package.rs 2947
 crates/service-manager/src/runtime.rs 2243
 crates/shell-core/src/actions.rs 1591
