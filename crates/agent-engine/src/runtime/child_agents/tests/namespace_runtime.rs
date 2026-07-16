@@ -1,4 +1,5 @@
 use super::*;
+use alan_kernel::ExecSpec;
 
 #[tokio::test]
 async fn spawn_child_runtime_inherits_namespace_tools_but_not_optional_handles() {
