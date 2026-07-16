@@ -23,7 +23,6 @@ crates/alan/src/cli/skill_eval.rs 1167
 crates/alan/src/main.rs 1370
 crates/auth/src/chatgpt.rs 1342
 crates/kernel/src/procfs.rs 1323
-crates/kernel/tests/mountfs.rs 1112
 crates/kernel/tests/procfs.rs 1847
 crates/llm/src/anthropic_messages.rs 1775
 crates/llm/src/chatgpt_responses.rs 1712
