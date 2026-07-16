@@ -35,6 +35,5 @@ crates/shell-core/src/control.rs 1183
 crates/shell-core/src/model.rs 1320
 crates/shell-core/src/reducer.rs 2723
 crates/shell-core/src/terminal_profile.rs 1852
-crates/shell-core/tests/reducer_contract.rs 1309
 crates/tools/src/lib.rs 4301
 crates/tui/src/file_backed.rs 2753
