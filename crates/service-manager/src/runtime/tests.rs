@@ -1,5 +1,6 @@
 use super::*;
 use alan_agent_engine::LlmProvider as ConnectionProvider;
+use alan_kernel::Status;
 use alan_llm::MockLlmProvider;
 
 use crate::{ConnectionCredential, ConnectionProfile, CredentialKind};

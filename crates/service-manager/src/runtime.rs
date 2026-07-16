@@ -10,21 +10,23 @@ use alan_agent_engine::{
     ProcessPackageReference, ProcessPackageSkillReference, ToolRegistry,
     configure_runtime_tool_execution_binding, provider_capabilities_for_config,
 };
-use alan_ap::{
-    ErrorCode, Fid, FileKind, FileServer, InProcessTransport, Offset, OpenMode, Qid, Stat,
-};
-use alan_kernel::{Access, Credentials, LiveNamespace, Namespace, Pid, Status};
+use alan_ap::{Fid, FileServer, InProcessTransport, OpenMode};
+use alan_kernel::{Access, Credentials, LiveNamespace, Namespace, Pid};
 use anyhow::{Context, Result, ensure};
-use async_trait::async_trait;
 use uuid::Uuid;
+
+mod supervisor;
+
+use supervisor::{
+    ActiveUnit, SupervisorEnvironment, SupervisorRuntime, SwitchableFileServer,
+    SystemServiceHandles, mount_service_handles, publish_unit_handles, wait_unit_ready,
+};
 
 use crate::{
     BootManifest, BootUnit, ConnectionService, ConnectionStoreBindings, ConnectionsFile,
     HostMountExportAdapter, HostMountService, LocalEntryService, ManagerState, PackageService,
     RestartDecision, ServiceManagerFs, UnavailableHostMountExportAdapter,
-    agent_runtime::{
-        AgentRuntimeFileServers, AgentRuntimeService, RootAgentProcess, RootAgentTemplate,
-    },
+    agent_runtime::{AgentRuntimeFileServers, AgentRuntimeService, RootAgentTemplate},
     quartermaster::QUARTERMASTER_EXECUTABLE,
 };
 
@@ -34,104 +36,6 @@ pub const BOOT_STATE_PATH: &str = "/proc/host/state";
 const LLM_CONNECTION: &str = "default";
 const SERVICE_MANAGER_EXECUTABLE: &str = "/bin/service-manager";
 static NEXT_BOOT_FID: AtomicU64 = AtomicU64::new(800_000);
-
-/// A stable namespace mount whose backing File-Server exists only while its
-/// owning service Process is running. Rebinding installs a fresh server so
-/// buffered fids from a previous service lifetime cannot commit after restart.
-struct SwitchableFileServer {
-    inner: tokio::sync::RwLock<Option<Arc<dyn FileServer>>>,
-}
-
-impl SwitchableFileServer {
-    fn new() -> Arc<Self> {
-        Arc::new(Self {
-            inner: tokio::sync::RwLock::new(None),
-        })
-    }
-
-    async fn bind(&self, inner: Arc<dyn FileServer>) {
-        *self.inner.write().await = Some(inner);
-    }
-
-    async fn deactivate(&self) {
-        *self.inner.write().await = None;
-    }
-
-    async fn while_bound<T>(&self, action: impl FnOnce() -> Result<T>) -> Result<T> {
-        let inner = self.inner.read().await;
-        ensure!(inner.is_some(), "Package Service is unavailable");
-        action()
-    }
-}
-
-#[async_trait]
-impl FileServer for SwitchableFileServer {
-    async fn walk(&self, fid: Fid, newfid: Fid, names: &[String]) -> Result<Qid, ErrorCode> {
-        let inner = self.inner.read().await;
-        inner
-            .as_ref()
-            .ok_or(ErrorCode::NoAccess)?
-            .walk(fid, newfid, names)
-            .await
-    }
-
-    async fn open(&self, fid: Fid, mode: OpenMode) -> Result<Qid, ErrorCode> {
-        let inner = self.inner.read().await;
-        inner
-            .as_ref()
-            .ok_or(ErrorCode::NoAccess)?
-            .open(fid, mode)
-            .await
-    }
-
-    async fn read(&self, fid: Fid, offset: Offset, count: u32) -> Result<Vec<u8>, ErrorCode> {
-        let inner = self.inner.read().await;
-        inner
-            .as_ref()
-            .ok_or(ErrorCode::NoAccess)?
-            .read(fid, offset, count)
-            .await
-    }
-
-    async fn write(&self, fid: Fid, offset: Offset, data: &[u8]) -> Result<u32, ErrorCode> {
-        let inner = self.inner.read().await;
-        inner
-            .as_ref()
-            .ok_or(ErrorCode::NoAccess)?
-            .write(fid, offset, data)
-            .await
-    }
-
-    async fn stat(&self, fid: Fid) -> Result<Stat, ErrorCode> {
-        let inner = self.inner.read().await;
-        inner.as_ref().ok_or(ErrorCode::NoAccess)?.stat(fid).await
-    }
-
-    async fn create(
-        &self,
-        fid: Fid,
-        newfid: Fid,
-        name: &str,
-        kind: FileKind,
-    ) -> Result<Qid, ErrorCode> {
-        let inner = self.inner.read().await;
-        inner
-            .as_ref()
-            .ok_or(ErrorCode::NoAccess)?
-            .create(fid, newfid, name, kind)
-            .await
-    }
-
-    async fn remove(&self, fid: Fid) -> Result<(), ErrorCode> {
-        let inner = self.inner.read().await;
-        inner.as_ref().ok_or(ErrorCode::NoAccess)?.remove(fid).await
-    }
-
-    async fn clunk(&self, fid: Fid) -> Result<(), ErrorCode> {
-        let inner = self.inner.read().await;
-        inner.as_ref().ok_or(ErrorCode::NoAccess)?.clunk(fid).await
-    }
-}
 
 /// Explicit inputs supplied by the platform Host to Service Manager.
 pub struct ServiceManagerConfig {
@@ -349,7 +253,7 @@ impl ServiceManager {
             config.tools.list_tools().into_iter().map(str::to_string),
             true,
         );
-        let mut assembled = assemble_environment(AssembleInputs {
+        let assembled = assemble_environment(AssembleInputs {
             boot_id,
             manifest,
             connection_service,
@@ -365,7 +269,6 @@ impl ServiceManager {
             generation_capabilities,
         })
         .await?;
-        let initial_ready = assembled.root.wait_until_ready().await;
         let root_pid = Arc::new(AtomicU64::new(assembled.root.pid().0));
         let state = assembled.state.clone();
         let procfs = assembled.procfs.clone();
@@ -376,71 +279,11 @@ impl ServiceManager {
         let package = assembled.package.clone();
         let package_handle = assembled.package_handle.clone();
         let root = assembled.root.namespace();
-        let mut runtime = SupervisorRuntime {
-            manifest: assembled.manifest,
-            state: state.clone(),
-            procfs: procfs.clone(),
-            srvfs: assembled.srvfs,
-            system_namespace: assembled.system_namespace,
-            manager_pid,
-            active: assembled.active_units,
-            pending: BTreeMap::new(),
-            agent_runtime: assembled.agent_runtime,
-            agent_root: assembled.agent_root,
-            llmfs: assembled.llmfs,
-            routefs: assembled.routefs,
-            host_mount: assembled.host_mount,
-            connection: assembled.connection,
-            package: assembled.package,
-            package_handle: assembled.package_handle,
-            local_entry: local_entry.clone(),
-            root: Some(assembled.root),
-            root_pid: root_pid.clone(),
-            root_template: assembled.root_template,
-        };
-        match initial_ready {
-            Ok(_) => state
-                .lock()
-                .await
-                .mark_ready("root-agent")
-                .map_err(|error| anyhow::anyhow!("mark Root Agent ready: {error:?}"))?,
-            Err(error) => {
-                let active = runtime
-                    .active
-                    .get("root-agent")
-                    .copied()
-                    .context("Root Agent launch was not tracked")?;
-                runtime.procfs.record_exit(active.pid, 1).await;
-                runtime.handle_exit("root-agent", active, 1).await?;
-                state
-                    .lock()
-                    .await
-                    .note_error("root-agent", error.to_string())
-                    .map_err(|code| anyhow::anyhow!("record Root Agent boot error: {code:?}"))?;
-                loop {
-                    let Some(deadline) = runtime.pending.remove("root-agent") else {
-                        anyhow::bail!(
-                            "Root Agent exhausted boot restart budget: {}",
-                            state
-                                .lock()
-                                .await
-                                .unit("root-agent")
-                                .and_then(|unit| unit.error)
-                                .unwrap_or_else(|| error.to_string())
-                        );
-                    };
-                    tokio::time::sleep(deadline.saturating_duration_since(Instant::now())).await;
-                    match runtime.launch("root-agent").await {
-                        Ok(()) => break,
-                        Err(error) => runtime.handle_launch_failure("root-agent", error).await?,
-                    }
-                }
-            }
-        }
+        let mut runtime = SupervisorRuntime::from_assembled(assembled, root_pid.clone());
+        runtime.settle_initial_root().await?;
         verify_readiness(&root, boot_id, &state).await?;
 
-        let (supervisor_shutdown, shutdown_rx) = tokio::sync::oneshot::channel();
-        let supervisor_task = tokio::spawn(run_supervisor(runtime, shutdown_rx));
+        let (supervisor_shutdown, supervisor_task) = runtime.start();
 
         Ok(Self {
             boot_id,
@@ -524,27 +367,6 @@ impl ServiceManager {
     }
 }
 
-struct AssembledEnvironment {
-    root: RootAgentProcess,
-    root_template: RootAgentTemplate,
-    manifest: BootManifest,
-    state: Arc<tokio::sync::Mutex<ManagerState>>,
-    procfs: alan_kernel::ProcFs,
-    srvfs: Arc<alan_kernel::SrvFs>,
-    system_namespace: LiveNamespace,
-    agent_runtime: Arc<AgentRuntimeService>,
-    agent_root: Arc<alan_agentfs::AgentRootFs>,
-    llmfs: Arc<alan_llmfs::LlmFs>,
-    routefs: Arc<alan_routefs::RouteFs>,
-    host_mount: Arc<HostMountService>,
-    connection: Arc<ConnectionService>,
-    package: Arc<PackageService>,
-    package_handle: Arc<SwitchableFileServer>,
-    active_units: BTreeMap<String, ActiveUnit>,
-    manager_pid: Pid,
-    local_entry: Arc<LocalEntryService>,
-}
-
 struct AssembleInputs {
     boot_id: Uuid,
     manifest: BootManifest,
@@ -561,279 +383,7 @@ struct AssembleInputs {
     generation_capabilities: alan_llm::ProviderCapabilities,
 }
 
-#[derive(Clone, Copy)]
-struct ActiveUnit {
-    pid: Pid,
-    started_at: Instant,
-}
-
-struct SupervisorRuntime {
-    manifest: BootManifest,
-    state: Arc<tokio::sync::Mutex<ManagerState>>,
-    procfs: alan_kernel::ProcFs,
-    srvfs: Arc<alan_kernel::SrvFs>,
-    system_namespace: LiveNamespace,
-    manager_pid: Pid,
-    active: BTreeMap<String, ActiveUnit>,
-    pending: BTreeMap<String, Instant>,
-    agent_runtime: Arc<AgentRuntimeService>,
-    agent_root: Arc<alan_agentfs::AgentRootFs>,
-    llmfs: Arc<alan_llmfs::LlmFs>,
-    routefs: Arc<alan_routefs::RouteFs>,
-    host_mount: Arc<HostMountService>,
-    connection: Arc<ConnectionService>,
-    package: Arc<PackageService>,
-    package_handle: Arc<SwitchableFileServer>,
-    local_entry: Arc<LocalEntryService>,
-    root: Option<RootAgentProcess>,
-    root_pid: Arc<AtomicU64>,
-    root_template: RootAgentTemplate,
-}
-
-async fn run_supervisor(
-    mut runtime: SupervisorRuntime,
-    mut shutdown: tokio::sync::oneshot::Receiver<()>,
-) -> Result<()> {
-    let mut interval = tokio::time::interval(Duration::from_millis(25));
-    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    loop {
-        tokio::select! {
-            _ = &mut shutdown => break,
-            _ = interval.tick() => runtime.tick().await?,
-        }
-    }
-    runtime.stop().await
-}
-
-impl SupervisorRuntime {
-    async fn tick(&mut self) -> Result<()> {
-        for name in self.state.lock().await.take_retry_requests() {
-            if !self.active.contains_key(&name) {
-                self.pending.insert(name, Instant::now());
-            }
-        }
-
-        let active = self
-            .active
-            .iter()
-            .map(|(name, active)| (name.clone(), *active))
-            .collect::<Vec<_>>();
-        for (name, active) in active {
-            if name == "root-agent"
-                && self.root.as_ref().is_none_or(RootAgentProcess::is_finished)
-                && self.procfs.try_observe_process_lifecycle(active.pid)
-                    == Some((Status::Running, None))
-            {
-                self.procfs.record_exit(active.pid, 0).await;
-            }
-            if let Some((Status::Exited, exit_code)) =
-                self.procfs.try_observe_process_lifecycle(active.pid)
-            {
-                self.handle_exit(&name, active, exit_code.unwrap_or(1))
-                    .await?;
-            }
-        }
-
-        let now = Instant::now();
-        let due = self
-            .pending
-            .iter()
-            .filter(|(_, deadline)| **deadline <= now)
-            .map(|(name, _)| name.clone())
-            .collect::<Vec<_>>();
-        for name in due {
-            self.pending.remove(&name);
-            if let Err(error) = self.launch(&name).await {
-                self.handle_launch_failure(&name, error).await?;
-            }
-        }
-        Ok(())
-    }
-
-    async fn handle_exit(&mut self, name: &str, active: ActiveUnit, exit_code: i32) -> Result<()> {
-        self.active.remove(name);
-        self.invalidate_handles(name).await;
-        if name == "root-agent" {
-            if let Some(root) = self.root.take() {
-                self.agent_runtime.detach_root(root, exit_code).await;
-            }
-            self.root_pid.store(0, Ordering::Release);
-        }
-        let stable_for_ms =
-            u64::try_from(active.started_at.elapsed().as_millis()).unwrap_or(u64::MAX);
-        let decision = self
-            .state
-            .lock()
-            .await
-            .record_exit(name, exit_code, stable_for_ms)
-            .map_err(|error| anyhow::anyhow!("record `{name}` exit: {error:?}"))?;
-        self.apply_restart_decision(name, decision);
-        Ok(())
-    }
-
-    async fn handle_launch_failure(&mut self, name: &str, error: anyhow::Error) -> Result<()> {
-        let pid = self.state.lock().await.unit(name).and_then(|unit| unit.pid);
-        if let Some(pid) = pid {
-            self.procfs.record_exit(Pid(pid), 1).await;
-            self.active.remove(name);
-            if name == "root-agent" {
-                self.agent_runtime.release_process(Pid(pid)).await;
-                self.root_pid.store(0, Ordering::Release);
-            }
-        }
-        self.invalidate_handles(name).await;
-        let mut state = self.state.lock().await;
-        if pid.is_none() {
-            state
-                .start_failure(name, error.to_string())
-                .map_err(|code| anyhow::anyhow!("track `{name}` launch failure: {code:?}"))?;
-        }
-        let decision = state
-            .record_exit(name, 1, 0)
-            .map_err(|code| anyhow::anyhow!("record `{name}` launch failure: {code:?}"))?;
-        state
-            .note_error(name, error.to_string())
-            .map_err(|code| anyhow::anyhow!("record `{name}` launch error: {code:?}"))?;
-        drop(state);
-        self.apply_restart_decision(name, decision);
-        Ok(())
-    }
-
-    fn apply_restart_decision(&mut self, name: &str, decision: RestartDecision) {
-        if let RestartDecision::RestartAfterMs(delay) = decision {
-            self.pending.insert(
-                name.to_string(),
-                Instant::now() + Duration::from_millis(delay),
-            );
-        }
-    }
-
-    async fn launch(&mut self, name: &str) -> Result<()> {
-        let unit = self
-            .manifest
-            .get(name)
-            .cloned()
-            .with_context(|| format!("unknown Boot Unit `{name}`"))?;
-        if name == "root-agent" {
-            return self.launch_root(&unit).await;
-        }
-
-        let (pid, _) = spawn_unit_process(
-            &self.procfs,
-            self.manager_pid,
-            &self.system_namespace,
-            Credentials::system(),
-            &unit,
-            &[],
-        )
-        .await?;
-        self.state
-            .lock()
-            .await
-            .start_attempt(name, pid)
-            .map_err(|error| anyhow::anyhow!("track `{name}` restart: {error:?}"))?;
-        if name == "local-entry" {
-            self.local_entry
-                .set_service_pid(pid)
-                .await
-                .map_err(|error| anyhow::anyhow!("replace Local Entry Process: {error:?}"))?;
-        }
-        publish_unit_handles(
-            &unit,
-            &SystemServiceHandles {
-                srvfs: &self.srvfs,
-                agent_root: &self.agent_root,
-                llmfs: &self.llmfs,
-                routefs: &self.routefs,
-                host_mount: &self.host_mount,
-                connection: &self.connection,
-                package: &self.package,
-                package_handle: &self.package_handle,
-                local_entry: Some(&self.local_entry),
-            },
-        )
-        .await?;
-        wait_unit_ready(&unit, pid, &self.procfs, &self.srvfs).await?;
-        self.state
-            .lock()
-            .await
-            .mark_ready(name)
-            .map_err(|error| anyhow::anyhow!("mark `{name}` ready: {error:?}"))?;
-        self.active.insert(
-            name.to_string(),
-            ActiveUnit {
-                pid,
-                started_at: Instant::now(),
-            },
-        );
-        Ok(())
-    }
-
-    async fn launch_root(&mut self, unit: &BootUnit) -> Result<()> {
-        let mut root = self
-            .agent_runtime
-            .launch_root(
-                self.manager_pid,
-                &self.system_namespace,
-                unit,
-                &self.root_template,
-            )
-            .await?;
-        let pid = root.pid();
-        if let Err(error) = self.state.lock().await.start_attempt("root-agent", pid) {
-            self.agent_runtime.detach_root(root, 1).await;
-            return Err(anyhow::anyhow!("track Root Agent restart: {error:?}"));
-        }
-        if let Err(error) = root.wait_until_ready().await {
-            self.agent_runtime.detach_root(root, 1).await;
-            return Err(error).context("replacement Root Agent failed before readiness");
-        }
-        self.state
-            .lock()
-            .await
-            .mark_ready("root-agent")
-            .map_err(|error| anyhow::anyhow!("mark Root Agent ready: {error:?}"))?;
-        self.active.insert(
-            unit.name.clone(),
-            ActiveUnit {
-                pid,
-                started_at: Instant::now(),
-            },
-        );
-        self.root_pid.store(pid.0, Ordering::Release);
-        self.root = Some(root);
-        Ok(())
-    }
-
-    async fn invalidate_handles(&self, name: &str) {
-        if let Some(unit) = self.manifest.get(name) {
-            for handle in &unit.published_handles {
-                if handle == "package" {
-                    self.package_handle.deactivate().await;
-                }
-                self.srvfs.unpost(handle).await;
-            }
-        }
-    }
-
-    async fn stop(mut self) -> Result<()> {
-        self.package_handle.deactivate().await;
-        if let Some(root) = self.root.take() {
-            self.agent_runtime.shutdown_root(root).await?;
-        }
-        for (name, active) in self.active {
-            self.procfs.record_exit(active.pid, 0).await;
-            if let Some(unit) = self.manifest.get(&name) {
-                for handle in &unit.published_handles {
-                    self.srvfs.unpost(handle).await;
-                }
-            }
-        }
-        Ok(())
-    }
-}
-
-async fn assemble_environment(inputs: AssembleInputs) -> Result<AssembledEnvironment> {
+async fn assemble_environment(inputs: AssembleInputs) -> Result<SupervisorEnvironment> {
     let AssembleInputs {
         boot_id,
         manifest,
@@ -1095,7 +645,7 @@ async fn assemble_environment(inputs: AssembleInputs) -> Result<AssembledEnviron
         },
     );
 
-    Ok(AssembledEnvironment {
+    Ok(SupervisorEnvironment {
         root,
         root_template,
         manifest,
@@ -1155,83 +705,6 @@ fn mount_system_executables(namespace: &mut Namespace, manifest: &BootManifest) 
             Access::ReadOnly,
         );
     }
-}
-
-struct SystemServiceHandles<'a> {
-    srvfs: &'a Arc<alan_kernel::SrvFs>,
-    agent_root: &'a Arc<alan_agentfs::AgentRootFs>,
-    llmfs: &'a Arc<alan_llmfs::LlmFs>,
-    routefs: &'a Arc<alan_routefs::RouteFs>,
-    host_mount: &'a Arc<HostMountService>,
-    connection: &'a Arc<ConnectionService>,
-    package: &'a Arc<PackageService>,
-    package_handle: &'a Arc<SwitchableFileServer>,
-    local_entry: Option<&'a Arc<LocalEntryService>>,
-}
-
-async fn publish_unit_handles(unit: &BootUnit, services: &SystemServiceHandles<'_>) -> Result<()> {
-    for handle in &unit.published_handles {
-        let tree = match handle.as_str() {
-            "route" => InProcessTransport::new(services.routefs.clone()),
-            "llm" => InProcessTransport::new(services.llmfs.clone()),
-            "agent-runtime" => InProcessTransport::new(services.agent_root.clone()),
-            "connection" => InProcessTransport::new(services.connection.file_server()),
-            "package" => {
-                services
-                    .package_handle
-                    .bind(services.package.file_server())
-                    .await;
-                InProcessTransport::new(services.package_handle.clone())
-            }
-            "host-mount" => InProcessTransport::new(services.host_mount.file_server()),
-            "local-entry" => InProcessTransport::new(
-                services
-                    .local_entry
-                    .context("Local Entry Service has no Process")?
-                    .clone(),
-            ),
-            other => anyhow::bail!(
-                "Boot Unit `{}` publishes unknown handle `{other}`",
-                unit.name
-            ),
-        };
-        services.srvfs.post(handle, tree, Access::ReadWrite).await;
-    }
-    Ok(())
-}
-
-async fn mount_service_handles(
-    namespace: &LiveNamespace,
-    srvfs: &Arc<alan_kernel::SrvFs>,
-) -> Result<()> {
-    let (llm_tree, llm_access) = srvfs.lookup("llm").await.context("lookup /srv/llm")?;
-    namespace.replace_mount("/mnt/llm", llm_tree, llm_access);
-    let (route_tree, route_access) = srvfs
-        .lookup(alan_routefs::SRV_HANDLE)
-        .await
-        .context("lookup /srv/route")?;
-    namespace.replace_mount(alan_routefs::MOUNT_PATH, route_tree, route_access);
-    let (connection_tree, connection_access) = srvfs
-        .lookup("connection")
-        .await
-        .context("lookup /srv/connection")?;
-    namespace.replace_mount("/mnt/connections", connection_tree, connection_access);
-    let (manager_tree, manager_access) = srvfs
-        .lookup("service-manager")
-        .await
-        .context("lookup /srv/service-manager")?;
-    namespace.replace_mount("/mnt/service-manager", manager_tree, manager_access);
-    let (host_mount_tree, host_mount_access) = srvfs
-        .lookup("host-mount")
-        .await
-        .context("lookup /srv/host-mount")?;
-    namespace.replace_mount("/mnt/host-mount", host_mount_tree, host_mount_access);
-    let (package_tree, package_access) = srvfs
-        .lookup("package")
-        .await
-        .context("lookup /srv/package")?;
-    namespace.replace_mount("/mnt/package", package_tree, package_access);
-    Ok(())
 }
 
 fn mount_tool_packages(namespace: &mut Namespace, tools: &ToolRegistry) -> Result<()> {
@@ -1453,39 +926,6 @@ async fn spawn_process_with_descriptors(
         .await
         .with_context(|| format!("commit {executable} Process"))?;
     Ok(Pid(pid))
-}
-
-async fn wait_unit_ready(
-    unit: &BootUnit,
-    pid: Pid,
-    procfs: &alan_kernel::ProcFs,
-    srvfs: &Arc<alan_kernel::SrvFs>,
-) -> Result<()> {
-    tokio::time::timeout(std::time::Duration::from_millis(unit.timeout_ms), async {
-        loop {
-            match procfs.try_observe_process_lifecycle(pid) {
-                Some((Status::Exited, exit_code)) => anyhow::bail!(
-                    "unit `{}` exited before readiness with {:?}",
-                    unit.name,
-                    exit_code
-                ),
-                Some((Status::Running, _)) => {
-                    let mut ready = true;
-                    for handle in &unit.published_handles {
-                        ready &= srvfs.lookup(handle).await.is_some();
-                    }
-                    if ready {
-                        return Ok::<_, anyhow::Error>(());
-                    }
-                    tokio::time::sleep(Duration::from_millis(10)).await;
-                }
-                _ => tokio::time::sleep(Duration::from_millis(10)).await,
-            }
-        }
-    })
-    .await
-    .with_context(|| format!("unit `{}` publication timed out", unit.name))??;
-    Ok(())
 }
 
 async fn verify_readiness(
