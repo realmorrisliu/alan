@@ -1,4 +1,5 @@
 use super::*;
+use crate::runtime::delegation_capabilities::DelegatedSpawnRejected;
 
 #[test]
 fn inherited_mount_without_host_backed_cwd_uses_authorized_native_cwd() {

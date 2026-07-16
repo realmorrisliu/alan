@@ -1,3 +1,4 @@
+mod delegated_launch;
 mod launch_context;
 mod task_context;
 
@@ -8,9 +9,6 @@ use super::child_runs::{ChildRunRecord, ChildRunStatus};
 #[cfg(test)]
 use super::delegated_child_run::ChildRuntimeStatus;
 use super::delegated_child_run::{DelegatedChildRunSupervision, DelegatedChildRunSupervisor};
-use super::delegation_capabilities::{
-    DelegatedSpawnRejected, evaluate_delegated_namespace, namespace_summary_from_bindings,
-};
 use super::engine::{
     AgentProcessConfig, RuntimeController, RuntimeStartupMetadata,
     effective_core_config_for_runtime, runtime_host_capabilities_for_tools,
@@ -19,10 +17,7 @@ use super::engine::{
 #[cfg(test)]
 use crate::llm::LlmClient;
 use crate::tape::ContentPart;
-use alan_agent_protocol::{
-    DelegatedCapabilityDecision, DelegatedCapabilityRecovery, Op, SpawnHandle, SpawnSpec,
-    Submission,
-};
+use alan_agent_protocol::{Op, SpawnHandle, SpawnSpec, Submission};
 #[cfg(test)]
 use alan_ap::{Fid, FileServer, InProcessTransport, OpenMode};
 #[cfg(test)]
@@ -30,6 +25,7 @@ use alan_kernel::{ExecNamespaceAccess, ExecNamespaceManifest, ExecNamespaceMount
 #[cfg(test)]
 use alan_llm::{GenerationRequest, GenerationResponse, LlmProvider, StreamChunk};
 use anyhow::{Context, Result, bail};
+use delegated_launch::evaluate_delegated_launch_capabilities;
 #[cfg(test)]
 use launch_context::ResolvedLaunchRoot;
 use launch_context::{
@@ -313,104 +309,6 @@ async fn spawn_child_runtime_inner(
             process_environment: child_process_environment,
             process_pid: child_process_pid,
         },
-    ))
-}
-
-async fn evaluate_delegated_launch_capabilities(
-    parent: &RuntimeLoopState,
-    spec: &mut SpawnSpec,
-    plan: &ChildNamespaceAssemblyPlan,
-) -> Result<Option<DelegatedCapabilityDecision>> {
-    let Some(context) = spec.delegated.as_ref() else {
-        return Ok(None);
-    };
-    let requirements = context.requirements.clone();
-    let child_namespace = namespace_summary_from_child_plan(plan);
-    let parent_namespace = namespace_summary_from_parent(parent).await?;
-    let decision = evaluate_delegated_namespace(
-        &spec.launch.task,
-        &requirements,
-        child_namespace,
-        &parent_namespace,
-    );
-
-    match decision.recovery {
-        DelegatedCapabilityRecovery::Satisfied => Ok(Some(decision)),
-        DelegatedCapabilityRecovery::Narrowed => {
-            if let Some(narrowed_task) = decision.narrowed_task.clone() {
-                spec.launch.task = narrowed_task;
-            }
-            Ok(Some(decision))
-        }
-        DelegatedCapabilityRecovery::ParentPath
-        | DelegatedCapabilityRecovery::AskUser
-        | DelegatedCapabilityRecovery::Limitation => {
-            Err(DelegatedSpawnRejected { decision }.into())
-        }
-    }
-}
-
-fn namespace_summary_from_child_plan(
-    plan: &ChildNamespaceAssemblyPlan,
-) -> alan_agent_protocol::DelegatedNamespaceSummary {
-    let mut described = plan.launch_context.namespace.describe();
-    described.extend([
-        (plan.agent_mount.clone(), alan_kernel::Access::ReadWrite),
-        (plan.llm_mount.clone(), alan_kernel::Access::ReadWrite),
-        (plan.srv_mount.clone(), alan_kernel::Access::ReadOnly),
-        (plan.route_mount.clone(), alan_kernel::Access::ReadWrite),
-    ]);
-    namespace_summary_from_bindings(
-        described.iter().map(|(path, _)| path.clone()).collect(),
-        described
-            .iter()
-            .filter(|(_, access)| *access == alan_kernel::Access::ReadWrite)
-            .map(|(path, _)| path.clone())
-            .collect(),
-        plan.bin_tool_mounts.clone(),
-        plan.cwd.clone(),
-        Some(plan.llm_connection_name.clone()),
-    )
-}
-
-async fn namespace_summary_from_parent(
-    parent: &RuntimeLoopState,
-) -> Result<alan_agent_protocol::DelegatedNamespaceSummary> {
-    let mut described = parent
-        .namespace_environment()
-        .launch_context()
-        .map(|context| context.namespace.describe())
-        .unwrap_or_default();
-    described.extend([
-        ("/agent".to_string(), alan_kernel::Access::ReadWrite),
-        ("/mnt/llm".to_string(), alan_kernel::Access::ReadWrite),
-        ("/srv".to_string(), alan_kernel::Access::ReadOnly),
-        (ROUTE_MOUNT_PATH.to_string(), alan_kernel::Access::ReadWrite),
-    ]);
-    Ok(namespace_summary_from_bindings(
-        described.iter().map(|(path, _)| path.clone()).collect(),
-        described
-            .iter()
-            .filter(|(_, access)| *access == alan_kernel::Access::ReadWrite)
-            .map(|(path, _)| path.clone())
-            .collect(),
-        parent
-            .static_tool_names()
-            .await?
-            .into_iter()
-            .map(|tool| format!("/bin/{tool}"))
-            .collect(),
-        parent
-            .namespace_environment()
-            .launch_context()
-            .map(|context| PathBuf::from(&context.cwd)),
-        Some(
-            parent
-                .core_config
-                .connection_profile
-                .clone()
-                .unwrap_or_else(|| "default".to_string()),
-        ),
     ))
 }
 
