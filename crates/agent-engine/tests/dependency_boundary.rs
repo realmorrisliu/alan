@@ -105,7 +105,12 @@ fn namespace_environment_reaches_capabilities_only_through_files() {
 
 #[test]
 fn child_supervision_has_no_runtime_receiver_fallback() {
-    let source = read_runtime_source("child_agents.rs");
+    let assembly_source = read_runtime_source("child_agents.rs");
+    let assembly_production = assembly_source
+        .split("\n#[cfg(test)]\nmod tests")
+        .next()
+        .unwrap();
+    let supervisor = read_runtime_source("delegated_child_run/supervisor.rs");
     for forbidden in [
         "RuntimeEventEnvelope",
         "RuntimeLivenessEnvelope",
@@ -114,8 +119,8 @@ fn child_supervision_has_no_runtime_receiver_fallback() {
         "broadcast::",
     ] {
         assert!(
-            !source.contains(forbidden),
-            "child path contains {forbidden}"
+            !assembly_production.contains(forbidden) && !supervisor.contains(forbidden),
+            "delegated Child Run path contains {forbidden}"
         );
     }
     for required in [
@@ -126,7 +131,10 @@ fn child_supervision_has_no_runtime_receiver_fallback() {
         "request_events_offset",
         "action_events_offset",
     ] {
-        assert!(source.contains(required), "child path missing {required}");
+        assert!(
+            supervisor.contains(required),
+            "delegated Child Run supervisor missing {required}"
+        );
     }
 }
 
