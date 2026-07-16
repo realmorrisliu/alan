@@ -1,6 +1,5 @@
 # Rust source files above the 1,000-line target. Keep sorted by path.
 # A file may only stay equal to this maximum or shrink with this entry tightened.
-crates/auth/src/chatgpt.rs 1342
 crates/kernel/src/procfs.rs 1323
 crates/llm/src/anthropic_messages.rs 1775
 crates/llm/src/chatgpt_responses.rs 1712
