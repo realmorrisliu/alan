@@ -4,4 +4,3 @@ crates/shell-core/src/actions.rs 1591
 crates/shell-core/src/control.rs 1183
 crates/shell-core/src/model.rs 1320
 crates/shell-core/src/reducer.rs 2723
-crates/shell-core/src/terminal_profile.rs 1201
