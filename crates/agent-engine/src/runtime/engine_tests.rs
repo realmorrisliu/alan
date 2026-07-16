@@ -395,6 +395,46 @@ impl LlmProvider for ShutdownDrainMemoryPromotionProvider {
     }
 }
 
+#[test]
+fn test_should_drive_turn_submission() {
+    // steer/follow_up should be driven as turn
+    assert!(should_drive_turn_submission(&Op::Input {
+        parts: vec![alan_agent_protocol::ContentPart::text("test")],
+        mode: alan_agent_protocol::InputMode::Steer,
+    }));
+    assert!(should_drive_turn_submission(&Op::Input {
+        parts: vec![alan_agent_protocol::ContentPart::text("test")],
+        mode: alan_agent_protocol::InputMode::FollowUp,
+    }));
+    // next_turn should be queue-only, not immediate execution.
+    assert!(!should_drive_turn_submission(&Op::Input {
+        parts: vec![alan_agent_protocol::ContentPart::text("test")],
+        mode: alan_agent_protocol::InputMode::NextTurn,
+    }));
+
+    // Turn should be driven as turn
+    assert!(should_drive_turn_submission(&Op::Turn {
+        parts: vec![alan_agent_protocol::ContentPart::text("test")],
+        context: None,
+    }));
+
+    // Other ops should not be driven as turn
+    assert!(!should_drive_turn_submission(&Op::CompactWithOptions {
+        focus: None,
+    }));
+    assert!(!should_drive_turn_submission(&Op::CompactWithOptions {
+        focus: Some("preserve todos".to_string()),
+    }));
+    assert!(!should_drive_turn_submission(&Op::Rollback { turns: 1 }));
+    assert!(!should_drive_turn_submission(&Op::Interrupt));
+    assert!(!should_drive_turn_submission(&Op::Resume {
+        request_id: "req-123".to_string(),
+        content: vec![alan_agent_protocol::ContentPart::structured(
+            serde_json::json!({})
+        )],
+    }));
+}
+
 #[path = "engine_config_tests.rs"]
 mod config;
 #[path = "engine_runtime_tests.rs"]
