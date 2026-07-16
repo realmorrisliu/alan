@@ -45,65 +45,6 @@ fn test_runtime_host_capabilities_include_host_path_executables() {
     assert!(capabilities.supports_required_tool("demo"));
 }
 
-#[test]
-fn test_agent_runtime_handle_clone() {
-    let (sub_tx, _sub_rx) = mpsc::channel(10);
-
-    let handle = RuntimeHandle {
-        submission_tx: sub_tx,
-        shutdown_tx: None,
-    };
-
-    let cloned = handle.clone();
-    // Both handles should share the same channels
-    drop(cloned);
-    drop(handle);
-}
-
-#[test]
-fn test_agent_runtime_handle_fields() {
-    let (sub_tx, _sub_rx) = mpsc::channel::<Submission>(10);
-
-    let handle = RuntimeHandle {
-        submission_tx: sub_tx,
-        shutdown_tx: None,
-    };
-
-    // Verify handle can be created
-    assert!(!handle.submission_tx.is_closed());
-}
-
-#[tokio::test]
-async fn test_agent_runtime_handle_shutdown_without_channel() {
-    let (sub_tx, _sub_rx) = mpsc::channel::<Submission>(10);
-    let handle = RuntimeHandle {
-        submission_tx: sub_tx,
-        shutdown_tx: None,
-    };
-
-    let result = handle.shutdown().await;
-    assert!(result.is_err());
-}
-
-#[tokio::test]
-async fn test_agent_runtime_handle_shutdown_with_channel() {
-    let (sub_tx, _sub_rx) = mpsc::channel::<Submission>(10);
-    let (shutdown_tx, mut shutdown_rx) = mpsc::channel::<()>(1);
-
-    let handle = RuntimeHandle {
-        submission_tx: sub_tx,
-        shutdown_tx: Some(shutdown_tx),
-    };
-
-    // Shutdown should send signal
-    let result = handle.shutdown().await;
-    assert!(result.is_ok());
-
-    // Verify shutdown signal was sent
-    let signal = shutdown_rx.recv().await;
-    assert!(signal.is_some());
-}
-
 #[tokio::test]
 async fn test_initialize_agent_machine_from_rollout_preserves_current_process_cwd() {
     let temp = TempDir::new().unwrap();

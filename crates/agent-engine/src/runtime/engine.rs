@@ -4,6 +4,7 @@ use super::agent_loop::{
     DeferredRuntimeActionExit, handle_submission_with_cancel,
     run_deferred_runtime_action_with_cancel,
 };
+use super::controller::{AgentMachineDurabilityState, RuntimeController, RuntimeStartupMetadata};
 use super::launch_config::AgentProcessConfig;
 use super::turn_driver::{
     NAMESPACE_PENDING_RESPONSE_POLL_INTERVAL, TurnInputBroker, drive_turn_submission_with_cancel,
@@ -15,10 +16,8 @@ use crate::agent_machine::AgentMachine;
 use alan_agent_protocol::{Event, InputMode, Submission};
 use anyhow::Result;
 use std::collections::VecDeque;
-use std::path::PathBuf;
 use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
-use tokio::task::JoinHandle;
 use tokio::time::MissedTickBehavior;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
@@ -137,31 +136,6 @@ impl RuntimeSubmissionQueues {
     }
 }
 
-/// Effective durability state for a runtime machine.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct AgentMachineDurabilityState {
-    /// Whether the active machine has a persistent recorder attached.
-    pub durable: bool,
-    /// Whether startup required durability instead of allowing in-memory fallback.
-    pub required: bool,
-}
-
-/// Metadata produced once runtime startup completes.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RuntimeStartupMetadata {
-    /// Authoritative lifecycle path of the launched Agent Process.
-    pub process_path: String,
-    /// AgentFS projection path of the launched Agent Process.
-    pub agent_path: String,
-    /// Identity of the fresh rollout produced by this process, when durable.
-    pub rollout_id: Option<String>,
-    pub rollout_path: Option<PathBuf>,
-    pub durability: AgentMachineDurabilityState,
-    pub execution_backend: String,
-    pub request_controls: crate::ResolvedRequestControls,
-    pub warnings: Vec<String>,
-}
-
 struct AgentMachineStartupOutcome {
     machine: AgentMachine,
     metadata: RuntimeStartupMetadata,
@@ -169,10 +143,6 @@ struct AgentMachineStartupOutcome {
 
 fn best_effort_durability_warning(err: &anyhow::Error) -> String {
     format!("AgentMachine is running without persistent recorder; using in-memory mode: {err}")
-}
-
-fn current_execution_backend() -> String {
-    crate::tools::active_backend_name().to_string()
 }
 
 #[cfg(test)]
@@ -318,176 +288,23 @@ async fn initialize_agent_machine(
     };
 
     Ok(AgentMachineStartupOutcome {
-        metadata: RuntimeStartupMetadata {
-            process_path: launch.process_path.to_string(),
-            agent_path: launch.agent_path.to_string(),
-            rollout_id: machine
+        metadata: RuntimeStartupMetadata::ready(
+            launch.process_path.to_string(),
+            launch.agent_path.to_string(),
+            machine
                 .recorder
                 .as_ref()
                 .map(|recorder| recorder.rollout_id().to_string()),
-            rollout_path: machine.rollout_path().cloned(),
-            durability: AgentMachineDurabilityState {
+            machine.rollout_path().cloned(),
+            AgentMachineDurabilityState {
                 durable: machine.recorder.is_some(),
                 required: durability_required,
             },
-            execution_backend: current_execution_backend(),
             request_controls,
             warnings,
-        },
+        ),
         machine,
     })
-}
-
-/// Handle for communicating with an agent runtime
-#[derive(Clone)]
-pub struct RuntimeHandle {
-    pub submission_tx: mpsc::Sender<Submission>,
-    /// Shutdown signal sender for graceful shutdown
-    shutdown_tx: Option<mpsc::Sender<()>>,
-}
-
-impl RuntimeHandle {
-    /// Request graceful shutdown of the runtime
-    pub async fn shutdown(&self) -> Result<()> {
-        if let Some(ref tx) = self.shutdown_tx {
-            tx.send(()).await.map_err(|_| {
-                anyhow::anyhow!("Failed to send shutdown signal - runtime may already be stopped")
-            })?;
-            info!("Shutdown signal sent to runtime");
-            Ok(())
-        } else {
-            Err(anyhow::anyhow!("Shutdown channel not available"))
-        }
-    }
-}
-
-/// Runtime controller for managing a spawned agent runtime
-pub struct RuntimeController {
-    /// Handle for communicating with the runtime
-    pub handle: RuntimeHandle,
-    /// Join handle for the main runtime task (Option to allow take on abort)
-    task_handle: Option<JoinHandle<()>>,
-    /// Runtime readiness channel
-    ready_rx: Option<oneshot::Receiver<std::result::Result<RuntimeStartupMetadata, String>>>,
-    /// Cached startup metadata for repeated readiness checks and child-launch introspection.
-    startup_metadata: Option<RuntimeStartupMetadata>,
-}
-
-impl RuntimeController {
-    /// Returns true if the runtime task has already exited.
-    pub fn is_finished(&self) -> bool {
-        self.task_handle
-            .as_ref()
-            .map(tokio::task::JoinHandle::is_finished)
-            .unwrap_or(true)
-    }
-
-    /// Wait until the runtime has completed startup.
-    pub async fn wait_until_ready(&mut self) -> Result<RuntimeStartupMetadata> {
-        if let Some(metadata) = self.startup_metadata.clone() {
-            return Ok(metadata);
-        }
-
-        let Some(ready_rx) = self.ready_rx.take() else {
-            return Ok(RuntimeStartupMetadata {
-                process_path: String::new(),
-                agent_path: String::new(),
-                rollout_id: None,
-                rollout_path: None,
-                durability: AgentMachineDurabilityState {
-                    durable: true,
-                    required: false,
-                },
-                execution_backend: current_execution_backend(),
-                request_controls: crate::ResolvedRequestControls::default(),
-                warnings: Vec::new(),
-            });
-        };
-
-        match ready_rx.await {
-            Ok(Ok(metadata)) => {
-                self.startup_metadata = Some(metadata.clone());
-                Ok(metadata)
-            }
-            Ok(Err(message)) => Err(anyhow::anyhow!(message)),
-            Err(_) => Err(anyhow::anyhow!(
-                "Runtime stopped before signaling startup readiness"
-            )),
-        }
-    }
-
-    /// Shutdown the runtime gracefully and wait for it to complete
-    ///
-    /// First sends shutdown signal, then waits up to 10s for graceful shutdown.
-    /// If timeout occurs, the task is explicitly aborted and awaited to ensure
-    /// the runtime is truly stopped.
-    pub async fn shutdown(mut self) -> Result<()> {
-        // No longer need readiness signal once shutdown starts.
-        self.ready_rx.take();
-
-        // Send shutdown signal
-        if let Some(ref tx) = self.handle.shutdown_tx
-            && tx.send(()).await.is_err()
-        {
-            warn!("Shutdown channel closed - runtime may already be stopped");
-        }
-
-        // Close submission channel to stop accepting new work
-        drop(self.handle.submission_tx);
-
-        // Wait for the main task to complete with timeout
-        let timeout = tokio::time::Duration::from_secs(10);
-
-        // Use &mut handle so we don't consume it on timeout
-        if let Some(ref mut handle) = self.task_handle {
-            match tokio::time::timeout(timeout, &mut *handle).await {
-                Ok(Ok(())) => {
-                    info!("Runtime task completed gracefully");
-                    Ok(())
-                }
-                Ok(Err(e)) => {
-                    // Task panicked
-                    Err(anyhow::anyhow!("Runtime task panicked: {}", e))
-                }
-                Err(_) => {
-                    // Timeout - explicitly abort the task
-                    warn!("Runtime shutdown timeout, aborting task");
-                    handle.abort();
-                    // Wait for the aborted task to complete
-                    match tokio::time::timeout(Duration::from_secs(5), handle).await {
-                        Ok(_) => {
-                            info!("Runtime task aborted successfully");
-                            Ok(())
-                        }
-                        Err(_) => Err(anyhow::anyhow!("Runtime shutdown timeout and abort failed")),
-                    }
-                }
-            }
-        } else {
-            Err(anyhow::anyhow!("Task handle not available"))
-        }
-    }
-
-    /// Abort the runtime immediately without waiting for graceful shutdown
-    ///
-    /// This takes ownership of the task handles and aborts them immediately.
-    /// Use this when you need to guarantee the runtime stops.
-    pub async fn abort(mut self) {
-        // No longer need readiness signal once abort starts.
-        self.ready_rx.take();
-
-        // Send shutdown signal first (best effort)
-        if let Some(ref tx) = self.handle.shutdown_tx {
-            let _ = tx.try_send(());
-        }
-
-        // Take and abort the runtime task.
-        if let Some(handle) = self.task_handle.take() {
-            handle.abort();
-            // Wait for the task to actually stop
-            let _ = tokio::time::timeout(Duration::from_secs(5), handle).await;
-        }
-    }
 }
 
 /// Start Agent Execution Engine over an already-assembled Process namespace.
@@ -1005,15 +822,12 @@ fn spawn_with_prepared_runtime_environment(
         state.machine.flush().await;
     });
 
-    Ok(RuntimeController {
-        handle: RuntimeHandle {
-            submission_tx: sub_tx,
-            shutdown_tx: Some(shutdown_tx),
-        },
-        task_handle: Some(task_handle),
-        ready_rx: Some(ready_rx),
-        startup_metadata: None,
-    })
+    Ok(RuntimeController::spawned(
+        sub_tx,
+        shutdown_tx,
+        task_handle,
+        ready_rx,
+    ))
 }
 
 #[cfg(test)]

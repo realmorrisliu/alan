@@ -1,6 +1,6 @@
 use crate::runtime::AgentProcessLifecycle;
 use crate::runtime::child_runs::ChildRunStatus;
-use crate::runtime::engine::{RuntimeController, RuntimeStartupMetadata};
+use crate::runtime::controller::{RuntimeController, RuntimeStartupMetadata};
 use alan_agent_protocol::Submission;
 use anyhow::{Context, Result, bail};
 use std::sync::Arc;
