@@ -113,6 +113,14 @@ pub(super) fn responses_content(
     })
 }
 
+pub(super) fn responses_output(
+    fallback: String,
+    parts: Vec<MessageContentPart>,
+) -> anyhow::Result<Option<serde_json::Value>> {
+    let content = plain_text_content(fallback, parts, "OpenAI Responses assistant messages")?;
+    Ok(is_non_empty(&content).then_some(serde_json::Value::String(content)))
+}
+
 fn chat_completions_part(
     part: MessageContentPart,
     allow_attachments: bool,
@@ -352,6 +360,29 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn projects_typed_assistant_parts_as_plain_output_content() {
+        let mut message = crate::Message::assistant("");
+        message.content_parts = vec![
+            MessageContentPart::Text {
+                text: "answer: ".to_string(),
+            },
+            MessageContentPart::Structured {
+                data: json!({"ok": true}),
+            },
+        ];
+
+        let projected = super::super::convert_messages_for_openai_responses(vec![message]).unwrap();
+
+        match &projected[0] {
+            super::super::OpenAiResponsesInputItem::Message(message) => {
+                assert_eq!(message.role, "assistant");
+                assert_eq!(message.content, json!("answer: {\"ok\":true}"));
+            }
+            _ => panic!("expected assistant message"),
+        }
     }
 
     #[test]
