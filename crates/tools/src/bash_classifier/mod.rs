@@ -101,3 +101,6 @@ fn is_network_command(fragment: &str, tokens: &[&str]) -> bool {
     // Catch explicit http(s) fetch commands wrapped in generic shells.
     fragment.contains("http://") || fragment.contains("https://")
 }
+
+#[cfg(test)]
+mod tests;
