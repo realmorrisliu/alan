@@ -29,17 +29,17 @@
 
 ## 3. Rust Source Debt Burn-down
 
-- [ ] 3.1 Split remaining oversized Agent Execution Engine runtime owners along
+- [x] 3.1 Split remaining oversized Agent Execution Engine runtime owners along
   transition, Tool, policy, memory, rollout, and prompt-cache responsibilities.
-- [ ] 3.2 Split oversized Agent Definition, Skill, Tool adapter, and sandbox
+- [x] 3.2 Split oversized Agent Definition, Skill, Tool adapter, and sandbox
   owners into cohesive modules with focused tests.
-- [ ] 3.3 Split oversized provider, file-server, Service Manager, CLI, and TUI
+- [x] 3.3 Split oversized provider, file-server, Service Manager, CLI, and TUI
   owners at their adapter/domain boundaries.
-- [ ] 3.4 Split oversized shell-core production owners without moving reusable
+- [x] 3.4 Split oversized shell-core production owners without moving reusable
   domain behavior back into Swift.
-- [ ] 3.5 Extract oversized Rust test sources into adjacent white-box or public
+- [x] 3.5 Extract oversized Rust test sources into adjacent white-box or public
   contract suites according to `rust-test-placement-contract`.
-- [ ] 3.6 Tighten the baseline after every slice and finish with no Rust source
+- [x] 3.6 Tighten the baseline after every slice and finish with no Rust source
   over 1,000 lines and an empty oversized-source inventory.
 
 ## 4. Apple Architecture Debt Burn-down
