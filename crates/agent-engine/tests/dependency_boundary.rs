@@ -91,20 +91,31 @@ fn namespace_environment_reaches_capabilities_only_through_files() {
         .split("\n#[cfg(test)]\nmod tests")
         .next()
         .unwrap();
+    let agent_files = read_runtime_source("agent_loop/namespace_environment/agent_files.rs");
     let generation = read_runtime_source("agent_loop/namespace_environment/generation.rs");
 
     for forbidden in ["LlmProvider", "ToolRegistry"] {
         assert!(!production.contains(forbidden));
+        assert!(!agent_files.contains(forbidden));
         assert!(!generation.contains(forbidden));
     }
     for required in [
+        "mod agent_files;",
         "mod generation;",
         "root: InProcessTransport",
-        "write_agent_output",
-        "machine/tape",
         "/proc/clone",
     ] {
         assert!(production.contains(required), "missing {required:?}");
+    }
+    for required in ["write_agent_output", "{agent_path}/machine/tape"] {
+        assert!(
+            agent_files.contains(required),
+            "AgentFS file owner missing {required:?}"
+        );
+        assert!(
+            !production.contains(required),
+            "namespace environment coordinator still contains AgentFS detail {required:?}"
+        );
     }
     assert!(
         generation.contains("/mnt/llm/connections/{llm_connection}/clone"),
