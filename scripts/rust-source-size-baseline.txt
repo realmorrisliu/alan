@@ -1,6 +1,5 @@
 # Rust source files above the 1,000-line target. Keep sorted by path.
 # A file may only stay equal to this maximum or shrink with this entry tightened.
-crates/llm/src/google_gemini_generate_content.rs 1373
 crates/llm/src/lib.rs 1579
 crates/llm/src/openai_chat_completions.rs 3191
 crates/llmfs/src/lib.rs 1797
