@@ -38,8 +38,9 @@ fn runtime_state_and_handles_have_no_parallel_capability_or_event_authority() {
     assert!(state.contains("pub environment: NamespaceRuntimeEnvironment"));
 
     let engine_source = read_runtime_source("engine.rs");
-    let handle = rust_item_body(&engine_source, "pub struct RuntimeHandle");
-    let controller = rust_item_body(&engine_source, "pub struct RuntimeController");
+    let controller_source = read_runtime_source("controller.rs");
+    let handle = rust_item_body(&controller_source, "pub struct RuntimeHandle");
+    let controller = rust_item_body(&controller_source, "pub struct RuntimeController");
     let spawn = rust_item_body(&engine_source, "fn spawn_with_prepared_runtime_environment");
 
     for (owner, source) in [

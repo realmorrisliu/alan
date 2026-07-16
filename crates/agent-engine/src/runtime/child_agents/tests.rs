@@ -1,6 +1,6 @@
 use super::*;
 use crate::llm::{GenerationRequest, GenerationResponse, StreamChunk, TokenUsage};
-use crate::runtime::engine::RuntimeStartupMetadata;
+use crate::runtime::controller::RuntimeStartupMetadata;
 use crate::runtime::{
     ApprovedMountGrant, ApprovedMountGrantAccess, MountGrantApplicator,
     MountGrantApplicatorFactory, NamespaceRuntimeEnvironment, RuntimeConfig,
@@ -29,7 +29,7 @@ fn test_startup_metadata(
         agent_path: "/agent/test".to_string(),
         rollout_id: None,
         rollout_path,
-        durability: super::super::engine::AgentMachineDurabilityState {
+        durability: super::super::controller::AgentMachineDurabilityState {
             durable,
             required: false,
         },

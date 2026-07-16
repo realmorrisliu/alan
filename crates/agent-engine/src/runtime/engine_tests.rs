@@ -430,7 +430,7 @@ fn test_should_drive_turn_submission() {
     }));
 }
 
-#[path = "engine_config_tests.rs"]
-mod config;
 #[path = "engine_runtime_tests.rs"]
 mod runtime;
+#[path = "engine_startup_tests.rs"]
+mod startup;

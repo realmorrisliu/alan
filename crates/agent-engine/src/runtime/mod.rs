@@ -8,6 +8,7 @@ mod child_agents;
 mod child_run_termination_tool;
 mod child_runs;
 mod compaction;
+mod controller;
 mod delegated_child_run;
 mod delegated_skill_evidence;
 mod delegated_skill_tool;
@@ -52,10 +53,10 @@ pub use child_runs::{
     ChildRunRecord, ChildRunRegistryError, ChildRunStatus, ChildRunTerminationMode,
     ChildRunTerminationRequest,
 };
-pub use engine::{
+pub use controller::{
     AgentMachineDurabilityState, RuntimeController, RuntimeHandle, RuntimeStartupMetadata,
-    spawn_with_namespace_environment,
 };
+pub use engine::spawn_with_namespace_environment;
 pub use launch_config::{
     AgentConfig, AgentProcessConfig, configure_runtime_tool_execution_binding,
     effective_core_config_for_runtime,
