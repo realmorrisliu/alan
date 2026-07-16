@@ -10,7 +10,7 @@ use serde_json::Value;
 
 use crate::history::{HistoryCell, PendingYieldCell, RunningTool, ToolStatus};
 
-use super::{FileBackedApp, FileBackedEvent};
+use super::app::{FileBackedApp, FileBackedEvent};
 
 /// Hydrate startup state and open the live watch tails so that attach time
 /// neither loses nor replays records, per channel:
