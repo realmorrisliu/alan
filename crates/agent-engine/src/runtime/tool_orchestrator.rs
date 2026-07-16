@@ -1,9 +1,8 @@
 use alan_agent_protocol::{
-    AdaptivePresentationHint, ConfirmationYieldPayload, Event, InputMode, Op, ToolCapability,
+    AdaptivePresentationHint, ConfirmationYieldPayload, Event, InputMode, Op,
 };
 use anyhow::{Context, Result};
-use serde_json::{Map, Value, json};
-use sha2::{Digest, Sha256};
+use serde_json::{Value, json};
 use std::time::Instant;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
@@ -20,34 +19,13 @@ use crate::evidence::{
 
 use super::agent_loop::{NormalizedToolCall, RuntimeLoopState};
 use super::loop_guard::ToolLoopGuard;
+#[cfg(test)]
+use super::tool_effect_lifecycle::{EffectCategory, build_effect_identity};
+use super::tool_effect_lifecycle::{ToolEffectLifecycle, ToolEffectPlan};
 use super::tool_policy::{ToolPolicyDecision, evaluate_tool_policy};
 use super::turn_driver::{MAX_BUFFERED_INBAND_USER_INPUTS, TurnInputBroker};
 use super::turn_support::{check_turn_cancelled, tool_result_preview};
 use super::virtual_tools::{VirtualToolOutcome, try_handle_virtual_tool_call};
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum EffectCategory {
-    File,
-    Network,
-    Process,
-}
-
-impl EffectCategory {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::File => "file",
-            Self::Network => "network",
-            Self::Process => "process",
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-struct EffectIdentity {
-    category: EffectCategory,
-    idempotency_key: String,
-    request_fingerprint: String,
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ToolOrchestratorOutcome {
@@ -214,100 +192,6 @@ where
 pub(super) struct ToolOrchestratorInputs<'a> {
     pub cancel: &'a CancellationToken,
     pub steering_broker: Option<&'a TurnInputBroker>,
-}
-
-fn classify_effect_category(
-    tool_name: &str,
-    tool_capability: ToolCapability,
-) -> Option<EffectCategory> {
-    match tool_capability {
-        ToolCapability::Read => None,
-        ToolCapability::Network => Some(EffectCategory::Network),
-        ToolCapability::Write => {
-            if matches!(tool_name, "write_file" | "edit_file") {
-                Some(EffectCategory::File)
-            } else {
-                Some(EffectCategory::Process)
-            }
-        }
-        ToolCapability::Unknown => {
-            if tool_name == "bash" {
-                Some(EffectCategory::Process)
-            } else {
-                None
-            }
-        }
-    }
-}
-
-fn canonicalize_json(value: &Value) -> Value {
-    match value {
-        Value::Object(map) => {
-            let mut keys: Vec<&String> = map.keys().collect();
-            keys.sort();
-            let mut sorted = Map::new();
-            for key in keys {
-                if let Some(entry) = map.get(key) {
-                    sorted.insert(key.clone(), canonicalize_json(entry));
-                }
-            }
-            Value::Object(sorted)
-        }
-        Value::Array(items) => Value::Array(items.iter().map(canonicalize_json).collect()),
-        _ => value.clone(),
-    }
-}
-
-fn sha256_hex(input: &str) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(input.as_bytes());
-    hex::encode(hasher.finalize())
-}
-
-fn build_effect_identity(
-    machine: &crate::agent_machine::AgentMachine,
-    tool_name: &str,
-    tool_arguments: &Value,
-    category: EffectCategory,
-) -> EffectIdentity {
-    let normalized_arguments = canonicalize_json(tool_arguments);
-    let request_payload = json!({
-        "tool_name": tool_name,
-        "effect_type": category.as_str(),
-        "arguments": normalized_arguments,
-    });
-    let request_fingerprint = sha256_hex(&request_payload.to_string());
-    // The effect index is owned by the Agent Machine and is carried into a
-    // recovered machine. Process paths remain provenance on EffectRecord, but
-    // cannot be part of the key: recovery intentionally launches a fresh PID.
-    let idempotency_key = format!(
-        "machine:turn:{}:{}",
-        machine.user_turn_ordinal(),
-        request_fingerprint
-    );
-    EffectIdentity {
-        category,
-        idempotency_key,
-        request_fingerprint,
-    }
-}
-
-fn effect_decision_reason(
-    decision: &str,
-    reason: Option<&str>,
-    existing_status: Option<crate::rollout::EffectStatus>,
-    dedupe_hit: bool,
-) -> Value {
-    json!({
-        "decision": decision,
-        "reason": reason,
-        "existing_status": existing_status.map(|status| match status {
-            crate::rollout::EffectStatus::Applied => "applied",
-            crate::rollout::EffectStatus::Failed => "failed",
-            crate::rollout::EffectStatus::Unknown => "unknown",
-        }),
-        "dedupe_hit": dedupe_hit,
-    })
 }
 
 fn maybe_allow_approved_tool_escalation_replay(
@@ -739,41 +623,25 @@ where
         }
     };
 
-    let process_path = state.process_path().to_string();
-    let effect_identity =
-        classify_effect_category(&tool_call.name, tool_capability).map(|category| {
-            build_effect_identity(&state.machine, &tool_call.name, &tool_arguments, category)
-        });
-    let existing_effect = effect_identity.as_ref().and_then(|identity| {
-        state
-            .machine
-            .effect_by_idempotency_key(&identity.idempotency_key)
-    });
+    let effect_lifecycle = ToolEffectLifecycle::for_call(
+        &state.machine,
+        state.process_path(),
+        tool_call.id.clone(),
+        tool_call.name.clone(),
+        &tool_arguments,
+        tool_capability,
+    );
+    let effect_plan = effect_lifecycle
+        .as_ref()
+        .map(|effect| effect.plan(&state.machine, allow_approved_unknown_effect_execution));
 
-    if let (Some(identity), Some(existing)) = (&effect_identity, &existing_effect)
-        && matches!(existing.status, crate::rollout::EffectStatus::Unknown)
-        && !allow_approved_unknown_effect_execution
-    {
+    if matches!(effect_plan.as_ref(), Some(ToolEffectPlan::ConfirmUnknown)) {
+        let effect = effect_lifecycle
+            .as_ref()
+            .expect("effect plan requires a lifecycle");
         let escalation_reason =
             "Previous side effect attempt has unknown status; explicit confirmation required";
-        state.machine.record_event(
-            "effect_dedupe_decision",
-            json!({
-                "process_path": process_path,
-                "tool_call_id": tool_call.id,
-                "tool_name": tool_call.name,
-                "effect_type": identity.category.as_str(),
-                "idempotency_key": identity.idempotency_key,
-                "request_fingerprint": identity.request_fingerprint,
-                "existing_effect_id": existing.effect_id,
-                "decision": effect_decision_reason(
-                    "escalate",
-                    Some(escalation_reason),
-                    Some(existing.status.clone()),
-                    false
-                )
-            }),
-        );
+        effect.record_unknown_confirmation(&mut state.machine, escalation_reason);
 
         let pending = PendingConfirmation {
             checkpoint_id: format!("{EFFECT_REPLAY_CHECKPOINT_PREFIX}{}", tool_call.id),
@@ -783,9 +651,9 @@ where
                 json!({
                     "reason": escalation_reason,
                     "effect_status": "unknown",
-                    "effect_type": identity.category.as_str(),
-                    "idempotency_key": identity.idempotency_key,
-                    "request_fingerprint": identity.request_fingerprint,
+                    "effect_type": effect.effect_type(),
+                    "idempotency_key": effect.idempotency_key(),
+                    "request_fingerprint": effect.request_fingerprint(),
                     "replay_tool_call": {
                         "call_id": tool_call.id,
                         "tool_name": tool_call.name,
@@ -806,7 +674,7 @@ where
             json!({
                 "status": "escalation_required",
                 "reason": escalation_reason,
-                "idempotency_key": identity.idempotency_key,
+                "idempotency_key": effect.idempotency_key(),
                 "effect_status": "unknown",
                 "request_id": request_id.clone()
             }),
@@ -840,24 +708,11 @@ where
     })
     .await;
 
-    if let (Some(identity), Some(existing)) = (&effect_identity, &existing_effect)
-        && matches!(existing.status, crate::rollout::EffectStatus::Applied)
+    if let Some(ToolEffectPlan::ReplayApplied {
+        payload: replay_payload,
+    }) = effect_plan
     {
         let dedupe_reason = "Matching applied side effect found; skipped physical execution";
-        let replay_payload = state
-            .machine
-            .tool_payload_by_call_id(&existing.tool_call_id)
-            .or_else(|| existing.result_payload.clone())
-            .unwrap_or_else(|| {
-                json!({
-                    "status": "dedupe_hit",
-                    "dedupe_hit": true,
-                    "reason": dedupe_reason,
-                    "idempotency_key": identity.idempotency_key,
-                    "effect_type": identity.category.as_str(),
-                    "effect_status": "applied"
-                })
-            });
         emit(Event::ToolCallCompleted {
             presentation: None,
             id: tool_call.id.clone(),
@@ -877,147 +732,52 @@ where
         state
             .machine
             .add_tool_message(&tool_call.id, &tool_call.name, replay_payload.clone());
-        state.machine.record_event(
-            "effect_dedupe_decision",
-            json!({
-                "process_path": process_path,
-                "tool_call_id": tool_call.id,
-                "tool_name": tool_call.name,
-                "effect_type": identity.category.as_str(),
-                "idempotency_key": identity.idempotency_key,
-                "request_fingerprint": identity.request_fingerprint,
-                "existing_effect_id": existing.effect_id,
-                "decision": effect_decision_reason(
-                    "skip",
-                    Some(dedupe_reason),
-                    Some(existing.status.clone()),
-                    true
-                )
-            }),
-        );
-        let now = chrono::Utc::now().to_rfc3339();
-        let durable_replay_payload = crate::rollout::build_durable_tool_payload(&replay_payload);
-        let replay_digest = existing
-            .result_digest
-            .clone()
-            .unwrap_or_else(|| durable_replay_payload.digest.clone());
-        state.machine.record_effect(crate::rollout::EffectRecord {
-            effect_id: format!("ef-{}", uuid::Uuid::new_v4()),
-            process_path: process_path.clone(),
-            tool_call_id: tool_call.id.clone(),
-            idempotency_key: identity.idempotency_key.clone(),
-            effect_type: identity.category.as_str().to_string(),
-            request_fingerprint: identity.request_fingerprint.clone(),
-            result_digest: Some(replay_digest),
-            result_payload: Some(durable_replay_payload.payload),
-            status: crate::rollout::EffectStatus::Applied,
-            applied_at: existing.applied_at.clone().or(Some(now.clone())),
-            reason: Some(dedupe_reason.to_string()),
-            dedupe_hit: true,
-            timestamp: now,
-        });
+        effect_lifecycle
+            .as_ref()
+            .expect("replay plan requires a lifecycle")
+            .commit_replay(&mut state.machine, &replay_payload, dedupe_reason);
         return Ok(ToolOrchestratorOutcome::ContinueToolBatch {
             refresh_context: false,
         });
     }
 
-    if let Some(identity) = &effect_identity {
-        let existing_status = existing_effect.as_ref().map(|effect| effect.status.clone());
-        state.machine.record_event(
-            "effect_dedupe_decision",
-            json!({
-                "process_path": process_path,
-                "tool_call_id": tool_call.id,
-                "tool_name": tool_call.name,
-                "effect_type": identity.category.as_str(),
-                "idempotency_key": identity.idempotency_key,
-                "request_fingerprint": identity.request_fingerprint,
-                "decision": effect_decision_reason(
-                    "execute",
-                    Some("No applied effect record found"),
-                    existing_status,
-                    false
-                )
-            }),
-        );
-    }
-
-    let effect_start = effect_identity.as_ref().map(|identity| {
-        let record = crate::rollout::EffectRecord {
-            effect_id: format!("ef-{}", uuid::Uuid::new_v4()),
-            process_path: process_path.clone(),
-            tool_call_id: tool_call.id.clone(),
-            idempotency_key: identity.idempotency_key.clone(),
-            effect_type: identity.category.as_str().to_string(),
-            request_fingerprint: identity.request_fingerprint.clone(),
-            result_digest: None,
-            result_payload: None,
-            status: crate::rollout::EffectStatus::Unknown,
-            applied_at: None,
-            reason: Some("execution started before terminal status commit".to_string()),
-            dedupe_hit: false,
-            timestamp: chrono::Utc::now().to_rfc3339(),
-        };
-        state.machine.record_effect(record.clone());
-        record
-    });
-
-    if effect_start.is_some()
-        && let Some(recorder) = state.machine.recorder.as_ref()
-        && let Err(err) = recorder.flush().await
-    {
-        let flush_error = format!("Failed to persist side-effect checkpoint: {err}");
-        let flush_error_payload = json!({
-            "error": flush_error,
-            "status": "effect_checkpoint_persist_failed"
-        });
-        if let (Some(identity), Some(effect_start)) = (&effect_identity, &effect_start) {
-            let durable_flush_error_payload =
-                crate::rollout::build_durable_tool_payload(&flush_error_payload);
-            state.machine.record_effect(crate::rollout::EffectRecord {
-                effect_id: effect_start.effect_id.clone(),
-                process_path: effect_start.process_path.clone(),
-                tool_call_id: effect_start.tool_call_id.clone(),
-                idempotency_key: identity.idempotency_key.clone(),
-                effect_type: identity.category.as_str().to_string(),
-                request_fingerprint: identity.request_fingerprint.clone(),
-                result_digest: Some(durable_flush_error_payload.digest),
-                result_payload: Some(durable_flush_error_payload.payload),
-                status: crate::rollout::EffectStatus::Failed,
-                applied_at: None,
-                reason: Some(flush_error.clone()),
-                dedupe_hit: false,
-                timestamp: chrono::Utc::now().to_rfc3339(),
-            });
+    let effect_start = if let Some(effect) = effect_lifecycle.as_ref() {
+        effect.record_execute_decision(&mut state.machine, "No applied effect record found");
+        match effect.begin(&mut state.machine).await {
+            Ok(record) => Some(record),
+            Err(failure) => {
+                emit(Event::Error {
+                    message: failure.message.clone(),
+                    recoverable: true,
+                })
+                .await;
+                emit(Event::ToolCallCompleted {
+                    presentation: None,
+                    id: tool_call.id.clone(),
+                    name: Some(tool_call.name.clone()),
+                    success: Some(false),
+                    result_preview: tool_result_preview(&failure.payload),
+                    audit: tool_audit.clone(),
+                })
+                .await;
+                state.machine.record_tool_call_with_audit(
+                    &tool_call.name,
+                    tool_arguments.clone(),
+                    failure.payload.clone(),
+                    false,
+                    tool_audit,
+                );
+                state
+                    .machine
+                    .add_tool_message(&tool_call.id, &tool_call.name, failure.payload);
+                return Ok(ToolOrchestratorOutcome::ContinueToolBatch {
+                    refresh_context: false,
+                });
+            }
         }
-        emit(Event::Error {
-            message: flush_error.clone(),
-            recoverable: true,
-        })
-        .await;
-        emit(Event::ToolCallCompleted {
-            presentation: None,
-            id: tool_call.id.clone(),
-            name: Some(tool_call.name.clone()),
-            success: Some(false),
-            result_preview: tool_result_preview(&flush_error_payload),
-            audit: tool_audit.clone(),
-        })
-        .await;
-        state.machine.record_tool_call_with_audit(
-            &tool_call.name,
-            tool_arguments.clone(),
-            flush_error_payload.clone(),
-            false,
-            tool_audit,
-        );
-        state
-            .machine
-            .add_tool_message(&tool_call.id, &tool_call.name, flush_error_payload);
-        return Ok(ToolOrchestratorOutcome::ContinueToolBatch {
-            refresh_context: false,
-        });
-    }
+    } else {
+        None
+    };
 
     let execution_target = state.namespace_environment().clone();
     let tool_start = Instant::now();
@@ -1043,36 +803,18 @@ where
             // retry skip physical execution) and is not rendered as a success.
             let payload_success =
                 value.get("success").and_then(serde_json::Value::as_bool) != Some(false);
-            if let (Some(identity), Some(effect_start)) = (&effect_identity, &effect_start) {
-                let durable_value = crate::rollout::build_durable_tool_payload(&value);
-                let (status, applied_at, reason) = if payload_success {
-                    (
-                        crate::rollout::EffectStatus::Applied,
-                        Some(chrono::Utc::now().to_rfc3339()),
-                        None,
-                    )
-                } else {
-                    (
-                        crate::rollout::EffectStatus::Failed,
-                        None,
-                        Some("tool reported failure in payload".to_string()),
-                    )
-                };
-                state.machine.record_effect(crate::rollout::EffectRecord {
-                    effect_id: effect_start.effect_id.clone(),
-                    process_path: effect_start.process_path.clone(),
-                    tool_call_id: effect_start.tool_call_id.clone(),
-                    idempotency_key: identity.idempotency_key.clone(),
-                    effect_type: identity.category.as_str().to_string(),
-                    request_fingerprint: identity.request_fingerprint.clone(),
-                    result_digest: Some(durable_value.digest),
-                    result_payload: Some(durable_value.payload),
-                    status,
-                    applied_at,
+            if let (Some(effect), Some(effect_start)) =
+                (effect_lifecycle.as_ref(), effect_start.as_ref())
+            {
+                let reason =
+                    (!payload_success).then(|| "tool reported failure in payload".to_string());
+                effect.complete(
+                    &mut state.machine,
+                    effect_start,
+                    &value,
+                    payload_success,
                     reason,
-                    dedupe_hit: false,
-                    timestamp: chrono::Utc::now().to_rfc3339(),
-                });
+                );
             }
             let tape_value = tool_payload_for_tape(state, &value).await;
             emit(Event::ToolCallCompleted {
@@ -1110,24 +852,16 @@ where
         }
         Err(err) => {
             let error_payload = json!({"error": err.to_string()});
-            if let (Some(identity), Some(effect_start)) = (&effect_identity, &effect_start) {
-                let durable_error_payload =
-                    crate::rollout::build_durable_tool_payload(&error_payload);
-                state.machine.record_effect(crate::rollout::EffectRecord {
-                    effect_id: effect_start.effect_id.clone(),
-                    process_path: effect_start.process_path.clone(),
-                    tool_call_id: effect_start.tool_call_id.clone(),
-                    idempotency_key: identity.idempotency_key.clone(),
-                    effect_type: identity.category.as_str().to_string(),
-                    request_fingerprint: identity.request_fingerprint.clone(),
-                    result_digest: Some(durable_error_payload.digest),
-                    result_payload: Some(durable_error_payload.payload),
-                    status: crate::rollout::EffectStatus::Failed,
-                    applied_at: None,
-                    reason: Some(err.to_string()),
-                    dedupe_hit: false,
-                    timestamp: chrono::Utc::now().to_rfc3339(),
-                });
+            if let (Some(effect), Some(effect_start)) =
+                (effect_lifecycle.as_ref(), effect_start.as_ref())
+            {
+                effect.complete(
+                    &mut state.machine,
+                    effect_start,
+                    &error_payload,
+                    false,
+                    Some(err.to_string()),
+                );
             }
             emit(Event::ToolCallCompleted {
                 presentation: None,
@@ -3198,48 +2932,6 @@ mod tests {
                 .tool_payload_by_call_id("call-proc-1")
                 .expect("original tool payload should exist"),
             "dedupe replay should preserve original process-tool payload"
-        );
-    }
-
-    #[test]
-    fn test_effect_identity_turn_component_remains_monotonic_across_rollback() {
-        let mut machine = AgentMachine::new();
-        let arguments = json!({"path":"notes.txt","payload":"hello"});
-
-        machine.add_user_message("turn-1");
-        let first = build_effect_identity(&machine, "write_file", &arguments, EffectCategory::File);
-        machine.add_user_message("turn-2");
-        let second =
-            build_effect_identity(&machine, "write_file", &arguments, EffectCategory::File);
-
-        let removed = machine.rollback_last_turns(1);
-        assert!(removed.removed_messages > 0);
-        machine.add_user_message("turn-3");
-        let third = build_effect_identity(&machine, "write_file", &arguments, EffectCategory::File);
-
-        assert_ne!(
-            second.idempotency_key, third.idempotency_key,
-            "new turn after rollback must not reuse prior turn idempotency key"
-        );
-        assert_ne!(first.idempotency_key, second.idempotency_key);
-    }
-
-    #[test]
-    fn test_effect_identity_is_stable_when_confirmation_adds_control_message() {
-        let mut machine = AgentMachine::new();
-        let arguments = json!({"path":"notes.txt","payload":"hello"});
-        machine.add_user_message("write once");
-        let first = build_effect_identity(&machine, "write_file", &arguments, EffectCategory::File);
-
-        machine.add_user_control_message_parts(vec![crate::tape::ContentPart::structured(
-            json!({"checkpoint_type":"effect_replay_confirmation","choice":"approve"}),
-        )]);
-        let replayed =
-            build_effect_identity(&machine, "write_file", &arguments, EffectCategory::File);
-
-        assert_eq!(
-            first.idempotency_key, replayed.idempotency_key,
-            "control messages should not perturb idempotency key turn component"
         );
     }
 
