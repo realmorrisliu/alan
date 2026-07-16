@@ -119,7 +119,8 @@ fn child_supervision_has_no_runtime_receiver_fallback() {
         );
     }
     for required in [
-        "observe_process_files",
+        "read_process_exit_code",
+        "read_process_io_offsets",
         "read_ui_activity_snapshot",
         "ui_events_offset",
         "request_events_offset",
@@ -147,6 +148,16 @@ fn engine_does_not_assemble_alan_os() {
         );
     }
     assert!(production.contains("spawn_with_namespace_environment"));
+
+    let manifest =
+        std::fs::read_to_string(format!("{}/Cargo.toml", env!("CARGO_MANIFEST_DIR"))).unwrap();
+    let normal_dependencies = manifest.split("[dev-dependencies]").next().unwrap();
+    for displaced in ["alan-agentfs", "alan-llmfs", "alan-routefs"] {
+        assert!(
+            !normal_dependencies.contains(displaced),
+            "Agent Execution Engine retained assembly dependency {displaced}"
+        );
+    }
 }
 
 #[test]
@@ -169,7 +180,8 @@ fn engine_has_no_host_connection_store_or_provider_factory_authority() {
         );
     }
     assert!(child.contains("ensure_child_connection_is_passed"));
-    assert!(child.contains("parent namespace missing callable Connection service"));
+    assert!(child.contains("child_process_assembler()"));
+    assert!(child.contains("Agent Runtime Service child assembly capability"));
 }
 
 #[test]

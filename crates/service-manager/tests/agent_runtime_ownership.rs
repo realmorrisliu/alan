@@ -1,3 +1,24 @@
+fn rust_item_body<'a>(source: &'a str, marker: &str) -> &'a str {
+    let item = &source[source
+        .find(marker)
+        .unwrap_or_else(|| panic!("find {marker}"))..];
+    let open = item.find('{').unwrap_or_else(|| panic!("open {marker}"));
+    let mut depth = 0_i32;
+    for (index, character) in item[open..].char_indices() {
+        match character {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return &item[open..open + index + 1];
+                }
+            }
+            _ => {}
+        }
+    }
+    panic!("close {marker}")
+}
+
 #[test]
 fn runtime_assembly_call_paths_have_explicit_owners() {
     let service = include_str!("../src/agent_runtime.rs");
@@ -5,8 +26,11 @@ fn runtime_assembly_call_paths_have_explicit_owners() {
         "spawn_unit_process(",
         "AgentFs::new()",
         "set_root_process(",
-        "with_process_context(",
-        "with_mount_grant_applicator_factory(",
+        "with_tool_process_context(",
+        "with_mount_grant_applicator(",
+        "impl ChildAgentProcessAssembler",
+        "walk child /proc/clone",
+        "LiveNamespace::new(child_namespace(",
         "self.procfs.record_exit(pid, 1).await;",
         "shutdown_root",
     ] {
@@ -24,7 +48,7 @@ fn runtime_assembly_call_paths_have_explicit_owners() {
     for displaced in [
         "AgentFs::new()",
         "set_root_process(",
-        "with_process_context(",
+        "with_tool_process_context(",
     ] {
         assert!(
             !production.contains(displaced),
@@ -33,15 +57,18 @@ fn runtime_assembly_call_paths_have_explicit_owners() {
     }
 
     let child_runtime = include_str!("../../agent-engine/src/runtime/child_agents.rs");
-    for transitional in [
-        "spawn_child_namespace_runtime_environment",
-        "child_namespace_from_launch_handles",
-        "bind_process(pid.clone()",
-        "LiveNamespace::new(child_namespace)",
+    let live_child_launch = rust_item_body(child_runtime, "async fn spawn_child_runtime_inner");
+    assert!(live_child_launch.contains("child_process_assembler()"));
+    for displaced in [
+        "AgentFs::new()",
+        "bind_process(",
+        "LiveNamespace::new(",
+        "for_spawner(",
+        "with_tool_process_context(",
     ] {
         assert!(
-            child_runtime.contains(transitional),
-            "child assembly call path changed without updating its ownership slice: `{transitional}`"
+            !live_child_launch.contains(displaced),
+            "Agent Execution Engine still owns child assembly marker `{displaced}`"
         );
     }
 }

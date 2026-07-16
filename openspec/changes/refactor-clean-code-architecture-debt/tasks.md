@@ -19,11 +19,11 @@
 - [x] 2.2 Consolidate root Agent Process namespace and AgentFS lifecycle
   assembly behind Agent Runtime Service and delete the duplicated Service
   Manager supervisor composition path.
-- [ ] 2.3 Move child Agent Process clone and namespace assembly into Agent
+- [x] 2.3 Move child Agent Process clone and namespace assembly into Agent
   Runtime Service while preserving narrower mount behavior.
-- [ ] 2.4 Narrow Agent Execution Engine inputs to the assembled namespace and
+- [x] 2.4 Narrow Agent Execution Engine inputs to the assembled namespace and
   transition-owned files.
-- [ ] 2.5 Remove obsolete `alan-agent-engine` normal dependencies on Kernel and
+- [x] 2.5 Remove obsolete `alan-agent-engine` normal dependencies on Kernel and
   file-server implementation crates as each responsibility moves, tightening
   the graph gate in the same PR.
 

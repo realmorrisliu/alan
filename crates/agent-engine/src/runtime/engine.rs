@@ -15,7 +15,6 @@ use alan_agent_protocol::{Event, InputMode, Submission};
 use anyhow::{Context, Result};
 use std::collections::VecDeque;
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
@@ -602,8 +601,6 @@ pub struct AgentProcessConfig {
     pub memory_store_backing: Option<std::path::PathBuf>,
     /// Optional execution record used to recover Agent Machine state for a new Process.
     pub recovery_rollout_path: Option<std::path::PathBuf>,
-    /// Optional host factory for applying approved mount grants to the live namespace.
-    pub mount_grant_applicator_factory: Option<Arc<dyn super::MountGrantApplicatorFactory>>,
 }
 
 impl Default for AgentProcessConfig {
@@ -615,7 +612,6 @@ impl Default for AgentProcessConfig {
             store_bindings: None,
             memory_store_backing: None,
             recovery_rollout_path: None,
-            mount_grant_applicator_factory: None,
         }
     }
 }
@@ -629,7 +625,6 @@ impl From<crate::config::Config> for AgentProcessConfig {
             store_bindings: None,
             memory_store_backing: None,
             recovery_rollout_path: None,
-            mount_grant_applicator_factory: None,
         }
     }
 }
@@ -643,7 +638,6 @@ impl From<crate::LoadedConfig> for AgentProcessConfig {
             store_bindings: None,
             memory_store_backing: None,
             recovery_rollout_path: None,
-            mount_grant_applicator_factory: None,
         }
     }
 }

@@ -18,17 +18,18 @@ use alan_agent_protocol::{
     DelegatedCapabilityDecision, DelegatedCapabilityRecovery, GovernanceConfig, Op, SpawnHandle,
     SpawnSpec, SpawnTarget, Submission, YieldKind,
 };
+#[cfg(test)]
 use alan_ap::{Fid, FileServer, InProcessTransport, OpenMode};
+#[cfg(test)]
 use alan_kernel::{ExecNamespaceAccess, ExecNamespaceManifest, ExecNamespaceMount, ExecSpec};
 #[cfg(test)]
 use alan_llm::{GenerationRequest, GenerationResponse, LlmProvider, StreamChunk};
 use anyhow::{Context, Result, bail};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
-use std::sync::{
-    Arc,
-    atomic::{AtomicU64, Ordering},
-};
+use std::sync::Arc;
+#[cfg(test)]
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
 
@@ -42,6 +43,8 @@ const MAX_CHILD_TOOL_RESULT_CHARS: usize = 1_200;
 const MAX_OBSERVED_CHILD_WARNINGS: usize = 32;
 const MAX_OBSERVED_CHILD_WARNING_CHARS: usize = 512;
 const MAX_CHILD_FILE_OBSERVATION_POLL_INTERVAL: Duration = Duration::from_millis(250);
+const ROUTE_MOUNT_PATH: &str = "/mnt/route";
+#[cfg(test)]
 static NEXT_CHILD_NAMESPACE_FID: AtomicU64 = AtomicU64::new(80_000);
 
 #[cfg(test)]
@@ -128,7 +131,7 @@ enum ChildRuntimeWaitOutcome {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ChildFileObservation {
-    process_status: Option<alan_kernel::Status>,
+    process_exited: bool,
     process_exit_code: Option<i32>,
     output_text: String,
     process_output_offset: u64,
@@ -186,7 +189,7 @@ pub(crate) struct ChildRuntimeController {
     child_run_id: String,
     child_run_registry: ChildRunRegistry,
     timeout: Option<Duration>,
-    process_registry: alan_kernel::ProcFs,
+    process_lifecycle: Arc<dyn super::AgentProcessLifecycle>,
     process_environment: super::NamespaceRuntimeEnvironment,
     process_pid: String,
 }
@@ -283,9 +286,6 @@ async fn spawn_child_runtime_inner(
             .then(|| parent.runtime_config.memory_store_backing.clone())
             .flatten(),
         recovery_rollout_path: None,
-        mount_grant_applicator_factory: parent
-            .namespace_environment()
-            .mount_grant_applicator_factory(),
     };
     let resolved_child_definition = crate::ResolvedAgentDefinition::from_launch_context(
         &child_config.launch_context,
@@ -334,75 +334,26 @@ async fn spawn_child_runtime_inner(
     } else {
         None
     };
-    let parent_process_context = parent.namespace_environment().process_context();
-    let launch_procfs = parent_process_context
-        .as_ref()
-        .map(|context| context.launch_procfs.clone())
-        .unwrap_or_default();
-    let tool_runner = parent_process_context
-        .as_ref()
-        .map(|context| context.tool_runner.clone())
-        .unwrap_or_else(|| {
-            crate::tools::ToolProcessRunner::empty(Arc::new(effective_child_core_config.clone()))
-        });
-    let runtime_procfs = launch_procfs
-        .clone()
-        .with_runner(Arc::new(tool_runner.clone()));
-    let child_tool_binding = child_namespace_plan.runtime_execution_binding(
-        child_config
-            .store_bindings
-            .as_ref()
-            .map(|stores| stores.tmp.clone()),
-    )?;
-    let agentfs = Arc::new(alan_agentfs::AgentFs::new());
-    let shared_llm = parent
+    let assembler = parent
         .namespace_environment()
-        .shared_services()
-        .context("parent namespace missing callable Connection service for child-agent launch")?
-        .llm;
-    #[cfg(test)]
-    let shared_llm = test_llm.unwrap_or(shared_llm);
-    let mut handles = child_namespace_launch_handles_from_parent(parent, agentfs, shared_llm)
-        .context("Failed to assemble child-agent shared namespace handles")?;
-    for manifest in &child_namespace_plan.tool_packages {
-        let name = &manifest.name;
-        let manifest_fs = Arc::new(alan_ap::reference::MemFs::with_read_only_file(
-            "manifest",
-            serde_json::to_vec(&manifest)?,
-        ));
-        handles = handles.with_tool_package(
-            format!("/bin/{name}"),
-            InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::new())),
-            format!("/lib/exec/{name}"),
-            InProcessTransport::new(manifest_fs),
-        );
-    }
-    let namespace_launch = spawn_child_namespace_runtime_environment(
-        &launch_procfs,
-        &runtime_procfs,
-        &child_namespace_plan,
-        handles,
-        parent_process_context,
-        tool_runner,
-        child_tool_binding,
-        child_config.mount_grant_applicator_factory.clone(),
-        "/bin/alan-agent",
-    )
-    .await
-    .context("Failed to spawn child-agent process namespace")?;
-    let child_process_pid = namespace_launch.pid.clone();
-    let process_context = namespace_launch
-        .environment
-        .process_context()
-        .expect("child namespace launch installs process context");
-    let child_agent_root = process_context.agent_root.clone();
-    let child_process_environment = child_observation_environment(
-        &runtime_procfs,
-        child_agent_root.clone(),
-        &child_process_pid,
-        &child_namespace_plan,
-    )
-    .await?;
+        .child_process_assembler()
+        .context("parent Agent Process has no Agent Runtime Service child assembly capability")?;
+    let assembly = assembler
+        .assemble(super::ChildAgentProcessAssemblyRequest {
+            plan: child_namespace_plan.clone(),
+            scratch_dir: child_config
+                .store_bindings
+                .as_ref()
+                .map(|stores| stores.tmp.clone()),
+            executable: "/bin/alan-agent".to_string(),
+            #[cfg(test)]
+            llm_override: test_llm,
+        })
+        .await
+        .context("Failed to spawn child-agent process namespace")?;
+    let child_process_pid = assembly.pid.clone();
+    let child_process_environment = assembly.observation_environment;
+    let process_lifecycle = assembly.lifecycle;
     let generation_capabilities =
         crate::provider_capabilities_for_config(&effective_child_core_config);
     let host_capabilities = runtime_host_capabilities_for_tools(
@@ -413,7 +364,7 @@ async fn spawn_child_runtime_inner(
     );
     let runtime = match spawn_with_namespace_environment(
         child_config,
-        namespace_launch.environment,
+        assembly.environment,
         host_capabilities,
         generation_capabilities,
     )
@@ -421,26 +372,14 @@ async fn spawn_child_runtime_inner(
     {
         Ok(runtime) => runtime,
         Err(err) => {
-            record_child_launch_failure_process(
-                &launch_procfs,
-                &child_agent_root,
-                &child_process_pid,
-                &err,
-            )
-            .await;
+            record_child_launch_failure_process(&process_lifecycle, &err).await;
             return Err(err);
         }
     };
     let (runtime, startup_metadata) = match wait_for_child_runtime_startup(runtime, cancel).await {
         Ok(ready) => ready,
         Err(err) => {
-            record_child_launch_failure_process(
-                &launch_procfs,
-                &child_agent_root,
-                &child_process_pid,
-                &err,
-            )
-            .await;
+            record_child_launch_failure_process(&process_lifecycle, &err).await;
             return Err(err);
         }
     };
@@ -465,13 +404,7 @@ async fn spawn_child_runtime_inner(
         Ok(runtime) => runtime,
         Err(err) => {
             let status = child_run_status_for_launch_error(&err);
-            record_child_launch_failure_process(
-                &launch_procfs,
-                &child_agent_root,
-                &child_process_pid,
-                &err,
-            )
-            .await;
+            record_child_launch_failure_process(&process_lifecycle, &err).await;
             child_run_registry.mark_terminal(&child_run_id, status, Some(format!("{err:#}")));
             return Err(err);
         }
@@ -484,7 +417,7 @@ async fn spawn_child_runtime_inner(
         child_run_id,
         child_run_registry,
         timeout: spec.launch.timeout_secs.map(Duration::from_secs),
-        process_registry: launch_procfs,
+        process_lifecycle,
         process_environment: child_process_environment,
         process_pid: child_process_pid,
     })
@@ -670,10 +603,7 @@ async fn namespace_summary_from_parent(
         ("/agent".to_string(), alan_kernel::Access::ReadWrite),
         ("/mnt/llm".to_string(), alan_kernel::Access::ReadWrite),
         ("/srv".to_string(), alan_kernel::Access::ReadOnly),
-        (
-            alan_routefs::MOUNT_PATH.to_string(),
-            alan_kernel::Access::ReadWrite,
-        ),
+        (ROUTE_MOUNT_PATH.to_string(), alan_kernel::Access::ReadWrite),
     ]);
     Ok(namespace_summary_from_bindings(
         described.iter().map(|(path, _)| path.clone()).collect(),
@@ -853,18 +783,11 @@ struct ResolvedLaunchRoot {
 impl ChildRuntimeController {
     async fn observe_files(&self) -> Result<Option<ChildFileObservation>> {
         let environment = &self.process_environment;
-        let process_registry = &self.process_registry;
         let pid = self.process_pid.as_str();
         let timeout = Duration::from_secs(1);
-        let pid = alan_kernel::Pid(pid.parse().context("parse observed child pid")?);
-        let (process_status, process_exit_code) = process_registry
-            .try_observe_process_lifecycle(pid)
-            .unwrap_or((alan_kernel::Status::Running, None));
-        let process = if process_status == alan_kernel::Status::Exited {
-            process_registry.observe_process_files(pid).await
-        } else {
-            None
-        };
+        let process_exit_code = environment.read_process_exit_code(pid).await?;
+        let (process_output_offset, process_io_events_offset) =
+            environment.read_process_io_offsets(pid).await?;
         let activity = tokio::time::timeout(timeout, environment.read_ui_activity_snapshot())
             .await
             .context("observe child activity timed out")??;
@@ -896,17 +819,11 @@ impl ChildRuntimeController {
                 .await
                 .context("observe child action stream offset timed out")??;
         Ok(Some(ChildFileObservation {
-            process_status: Some(process_status),
+            process_exited: process_exit_code.is_some(),
             process_exit_code,
             output_text,
-            process_output_offset: process
-                .as_ref()
-                .map(|snapshot| snapshot.output_offset)
-                .unwrap_or(0),
-            process_io_events_offset: process
-                .as_ref()
-                .map(|snapshot| snapshot.io_events_offset)
-                .unwrap_or(0),
+            process_output_offset,
+            process_io_events_offset,
             request_ids,
             pending_request_id,
             request_events_offset,
@@ -1066,7 +983,7 @@ impl ChildRuntimeController {
                         "agentfs",
                         Some(format!(
                             "process={:?} exit={:?} activity={:?} output={} output_offset={} io_offset={} requests={} request_offset={} actions={} action_offset={} ui_offset={}",
-                            observation.process_status,
+                            if observation.process_exited { "exited" } else { "running" },
                             observation.process_exit_code,
                             observation.activity.state,
                             observation.output_text.len(),
@@ -1091,7 +1008,7 @@ impl ChildRuntimeController {
                     }
                 }
                 output_text.clone_from(&observation.output_text);
-                if observation.process_status == Some(alan_kernel::Status::Exited) {
+                if observation.process_exited {
                     let exit_code = observation.process_exit_code.unwrap_or(1);
                     if exit_code == 130 {
                         return Ok(ChildRuntimeWaitOutcome::Observed(
@@ -1244,14 +1161,8 @@ impl ChildRuntimeController {
         if let Some(runtime) = self.runtime.take() {
             let _ = runtime.shutdown().await;
         }
-        let Ok(pid) = self.process_pid.parse::<u64>() else {
-            return;
-        };
-        self.process_registry
-            .record_exit(
-                alan_kernel::Pid(pid),
-                child_runtime_process_exit_code(status),
-            )
+        self.process_lifecycle
+            .finish(child_runtime_process_exit_code(status))
             .await;
         self.reconcile_exited_process().await;
     }
@@ -1267,14 +1178,8 @@ impl ChildRuntimeController {
         if let Some(runtime) = self.runtime.take() {
             runtime.abort().await;
         }
-        let Ok(pid) = self.process_pid.parse::<u64>() else {
-            return;
-        };
-        self.process_registry
-            .record_exit(
-                alan_kernel::Pid(pid),
-                child_runtime_process_exit_code(status),
-            )
+        self.process_lifecycle
+            .finish(child_runtime_process_exit_code(status))
             .await;
         self.reconcile_exited_process().await;
     }
@@ -1283,6 +1188,7 @@ impl ChildRuntimeController {
         let environment = &self.process_environment;
         let pid = self.process_pid.as_str();
         if let Ok(Some(exit_code)) = environment.read_process_exit_code(pid).await {
+            self.process_lifecycle.finish(exit_code).await;
             self.child_run_registry
                 .reconcile_process_exit(&self.child_run_id, exit_code);
             return;
@@ -1290,6 +1196,13 @@ impl ChildRuntimeController {
         let _ = environment
             .write_process_control_for_pid(pid, "cancel")
             .await;
+        let exit_code = environment
+            .read_process_exit_code(pid)
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or(130);
+        self.process_lifecycle.finish(exit_code).await;
         if let Ok(Some(exit_code)) = environment.read_process_exit_code(pid).await {
             self.child_run_registry
                 .reconcile_process_exit(&self.child_run_id, exit_code);
@@ -1423,20 +1336,14 @@ fn child_run_status_for_launch_error(error: &anyhow::Error) -> ChildRunStatus {
 }
 
 async fn record_child_launch_failure_process(
-    procfs: &alan_kernel::ProcFs,
-    agent_root: &alan_agentfs::AgentRootFs,
-    pid: &str,
+    lifecycle: &Arc<dyn super::AgentProcessLifecycle>,
     error: &anyhow::Error,
 ) {
-    let Ok(pid) = pid.parse::<u64>() else {
-        return;
-    };
     let exit_code = match child_run_status_for_launch_error(error) {
         ChildRunStatus::Cancelled => 130,
         _ => 1,
     };
-    procfs.record_exit(alan_kernel::Pid(pid), exit_code).await;
-    agent_root.unbind_process(&pid.to_string()).await;
+    lifecycle.finish(exit_code).await;
 }
 
 async fn read_latest_assistant_text_from_rollout(rollout_path: Option<&Path>) -> Option<String> {
@@ -1561,19 +1468,9 @@ fn build_child_agent_config(parent: &RuntimeLoopState, spec: &SpawnSpec) -> Agen
     child_agent_config
 }
 
-#[derive(Debug, Clone)]
-struct ChildNamespaceAssemblyPlan {
-    agent_mount: String,
-    llm_mount: String,
-    llm_connection_name: String,
-    srv_mount: String,
-    route_mount: String,
-    bin_tool_mounts: Vec<String>,
-    tool_packages: Vec<super::ToolPackageManifest>,
-    cwd: Option<PathBuf>,
-    launch_context: crate::ProcessLaunchContext,
-}
+type ChildNamespaceAssemblyPlan = super::ChildAgentProcessAssemblyPlan;
 
+#[cfg(test)]
 impl ChildNamespaceAssemblyPlan {
     fn runtime_execution_binding(
         &self,
@@ -1600,19 +1497,6 @@ impl ChildNamespaceAssemblyPlan {
             crate::tools::ToolExecutionBinding::from_launch_context(&launch_context, scratch)?,
         ))
     }
-    fn bin_tool_names(&self) -> impl Iterator<Item = &str> {
-        self.bin_tool_mounts
-            .iter()
-            .filter_map(|mount| mount.strip_prefix("/bin/"))
-    }
-
-    #[cfg_attr(
-        not(test),
-        allow(
-            dead_code,
-            reason = "PID-specific exec cloning is exercised through the child-runtime test seam"
-        )
-    )]
     fn clone_exec_spec_for_pid<I, S>(
         &self,
         child_pid: &str,
@@ -1637,13 +1521,6 @@ impl ChildNamespaceAssemblyPlan {
         }
     }
 
-    #[cfg_attr(
-        not(test),
-        allow(
-            dead_code,
-            reason = "namespace manifests are currently exercised through the child-runtime test seam"
-        )
-    )]
     fn namespace_manifest_for_pid(&self, _child_pid: &str) -> ExecNamespaceManifest {
         let mut mounts = vec![
             ExecNamespaceMount::new(self.agent_mount.clone(), ExecNamespaceAccess::ReadWrite),
@@ -1722,33 +1599,10 @@ impl ChildNamespaceAssemblyPlan {
         mounts.dedup();
         ExecNamespaceManifest { mounts }
     }
-
-    #[cfg_attr(
-        not(test),
-        allow(
-            dead_code,
-            reason = "connection-name validation is currently exercised through focused tests"
-        )
-    )]
-    fn llm_connection_name(&self) -> Result<String> {
-        if self.llm_connection_name.is_empty() || self.llm_connection_name.contains('/') {
-            bail!(
-                "child namespace plan has invalid llm connection name '{}'",
-                self.llm_connection_name
-            );
-        }
-        Ok(self.llm_connection_name.clone())
-    }
 }
 
-#[cfg_attr(
-    not(test),
-    allow(
-        dead_code,
-        reason = "launch handles currently support the child-runtime namespace test seam"
-    )
-)]
 #[derive(Clone)]
+#[cfg(test)]
 struct ChildNamespaceLaunchHandles {
     agent_tree: Arc<alan_agentfs::AgentFs>,
     llm_connection: InProcessTransport,
@@ -1758,13 +1612,7 @@ struct ChildNamespaceLaunchHandles {
     tool_manifests: Vec<(String, InProcessTransport)>,
 }
 
-#[cfg_attr(
-    not(test),
-    allow(
-        dead_code,
-        reason = "launch-handle construction currently supports the namespace test seam"
-    )
-)]
+#[cfg(test)]
 impl ChildNamespaceLaunchHandles {
     fn new(
         agent_tree: Arc<alan_agentfs::AgentFs>,
@@ -1796,53 +1644,33 @@ impl ChildNamespaceLaunchHandles {
     }
 }
 
-fn child_namespace_launch_handles_from_parent(
-    parent: &RuntimeLoopState,
-    agent_tree: Arc<alan_agentfs::AgentFs>,
-    llm_connection: InProcessTransport,
-) -> Result<ChildNamespaceLaunchHandles> {
-    let shared_services = parent
-        .namespace_environment()
-        .shared_services()
-        .context("parent namespace missing shared service handles for child-agent launch")?;
-    Ok(ChildNamespaceLaunchHandles::new(
-        agent_tree,
-        llm_connection,
-        shared_services.srv,
-        shared_services.route,
-    ))
-}
-
-#[cfg_attr(
-    not(test),
-    allow(
-        dead_code,
-        reason = "launch result is currently observed through the child-runtime test seam"
-    )
-)]
+#[cfg(test)]
 struct ChildNamespaceRuntimeLaunch {
     pid: String,
     exec: ExecSpec,
     environment: super::NamespaceRuntimeEnvironment,
+    agent_root: Arc<alan_agentfs::AgentRootFs>,
+    lifecycle: Arc<dyn super::AgentProcessLifecycle>,
 }
 
-#[cfg_attr(
-    not(test),
-    allow(
-        dead_code,
-        reason = "namespace assembly is currently reached only by the child-runtime test seam"
-    )
-)]
+#[cfg(test)]
+#[derive(Clone)]
+struct TestParentProcessContext {
+    agent_root: Arc<alan_agentfs::AgentRootFs>,
+    pid: alan_kernel::Pid,
+}
+
 #[allow(
     clippy::too_many_arguments,
     reason = "arguments expose each namespace resource explicitly at the transitional assembly seam"
 )]
+#[cfg(test)]
 async fn spawn_child_namespace_runtime_environment(
     launch_procfs: &alan_kernel::ProcFs,
     runtime_procfs: &alan_kernel::ProcFs,
     plan: &ChildNamespaceAssemblyPlan,
     handles: ChildNamespaceLaunchHandles,
-    parent_process_context: Option<super::agent_loop::NamespaceProcessContext>,
+    parent_process_context: Option<TestParentProcessContext>,
     tool_runner: crate::tools::ToolProcessRunner,
     tool_binding: Option<crate::tools::ToolExecutionBinding>,
     mount_grant_applicator_factory: Option<Arc<dyn super::MountGrantApplicatorFactory>>,
@@ -1923,23 +1751,21 @@ async fn spawn_child_namespace_runtime_environment(
     let root = InProcessTransport::new(Arc::new(alan_kernel::MountFs::from_live_namespace(
         live_namespace.clone(),
     )));
-    let environment = super::NamespaceRuntimeEnvironment::new(
+    let mut environment = super::NamespaceRuntimeEnvironment::new(
         root,
         format!("/agent/{pid}"),
         plan.llm_connection_name()?,
     )
     .with_launch_context(plan.launch_context.clone())
-    .with_process_context(launch_procfs.clone(), agent_root, child_pid, tool_runner)
-    .with_shared_services(
-        handles.srv.clone(),
-        handles.route.clone(),
-        handles.llm_connection.clone(),
-    );
-    let mut environment = if let Some(factory) = mount_grant_applicator_factory {
-        environment.with_mount_grant_applicator_factory(factory, live_namespace)
-    } else {
-        environment
-    };
+    .with_tool_process_context(child_pid, tool_runner.clone());
+    let has_mount_grant_applicator = mount_grant_applicator_factory.is_some();
+    if let Some(factory) = mount_grant_applicator_factory {
+        let applicator = factory.create(child_pid, live_namespace, &[]);
+        if let Some(authority) = factory.tool_execution_authority() {
+            tool_runner.register_process_authority(child_pid, authority);
+        }
+        environment = environment.with_mount_grant_applicator(applicator);
+    }
     if let Some(grant) = plan
         .launch_context
         .host_mounts
@@ -1955,7 +1781,7 @@ async fn spawn_child_namespace_runtime_environment(
             },
             "Agent Definition launch reference",
         ));
-        if environment.mount_grant_applicator_factory().is_some() {
+        if has_mount_grant_applicator {
             anyhow::ensure!(
                 applied.namespace_applied,
                 "failed to project child Agent Definition: {}",
@@ -1966,20 +1792,49 @@ async fn spawn_child_namespace_runtime_environment(
         }
     }
 
+    let lifecycle: Arc<dyn super::AgentProcessLifecycle> = Arc::new(TestAgentProcessLifecycle {
+        procfs: launch_procfs.clone(),
+        agent_root: agent_root.clone(),
+        pid: child_pid,
+    });
     Ok(ChildNamespaceRuntimeLaunch {
         pid,
         exec,
         environment,
+        agent_root,
+        lifecycle,
     })
 }
 
-#[cfg_attr(
-    not(test),
-    allow(
-        dead_code,
-        reason = "launch-handle validation currently supports the namespace test seam"
-    )
-)]
+#[cfg(test)]
+struct TestAgentProcessLifecycle {
+    procfs: alan_kernel::ProcFs,
+    agent_root: Arc<alan_agentfs::AgentRootFs>,
+    pid: alan_kernel::Pid,
+}
+
+#[cfg(test)]
+impl std::fmt::Debug for TestAgentProcessLifecycle {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("TestAgentProcessLifecycle")
+            .field("pid", &self.pid)
+            .finish_non_exhaustive()
+    }
+}
+
+#[cfg(test)]
+#[async_trait::async_trait]
+impl super::AgentProcessLifecycle for TestAgentProcessLifecycle {
+    async fn finish(&self, exit_code: i32) {
+        self.procfs.record_exit(self.pid, exit_code).await;
+        self.agent_root
+            .unbind_process(&self.pid.0.to_string())
+            .await;
+    }
+}
+
+#[cfg(test)]
 fn validate_child_namespace_launch_handles(
     plan: &ChildNamespaceAssemblyPlan,
     handles: &ChildNamespaceLaunchHandles,
@@ -2020,13 +1875,7 @@ fn validate_child_namespace_launch_handles(
     );
 }
 
-#[cfg_attr(
-    not(test),
-    allow(
-        dead_code,
-        reason = "spawner namespace assembly currently supports the namespace test seam"
-    )
-)]
+#[cfg(test)]
 fn child_spawner_namespace_from_launch_handles(
     plan: &ChildNamespaceAssemblyPlan,
     agent_root_tree: InProcessTransport,
@@ -2035,13 +1884,7 @@ fn child_spawner_namespace_from_launch_handles(
     child_namespace_from_launch_handles(plan, agent_root_tree, handles)
 }
 
-#[cfg_attr(
-    not(test),
-    allow(
-        dead_code,
-        reason = "runtime namespace assembly currently supports the namespace test seam"
-    )
-)]
+#[cfg(test)]
 fn child_runtime_namespace_from_launch_handles(
     plan: &ChildNamespaceAssemblyPlan,
     agent_root_tree: InProcessTransport,
@@ -2050,13 +1893,7 @@ fn child_runtime_namespace_from_launch_handles(
     child_namespace_from_launch_handles(plan, agent_root_tree, handles)
 }
 
-#[cfg_attr(
-    not(test),
-    allow(
-        dead_code,
-        reason = "shared namespace assembly currently supports the namespace test seam"
-    )
-)]
+#[cfg(test)]
 fn child_namespace_from_launch_handles(
     plan: &ChildNamespaceAssemblyPlan,
     agent_root_tree: InProcessTransport,
@@ -2092,6 +1929,7 @@ fn child_namespace_from_launch_handles(
     namespace
 }
 
+#[cfg(test)]
 async fn child_observation_environment(
     procfs: &alan_kernel::ProcFs,
     agent_root: Arc<alan_agentfs::AgentRootFs>,
@@ -2122,13 +1960,7 @@ async fn child_observation_environment(
     .with_launch_context(plan.launch_context.clone()))
 }
 
-#[cfg_attr(
-    not(test),
-    allow(
-        dead_code,
-        reason = "namespace FID allocation currently supports the namespace test seam"
-    )
-)]
+#[cfg(test)]
 fn next_child_namespace_fid() -> Fid {
     Fid(NEXT_CHILD_NAMESPACE_FID.fetch_add(1, Ordering::Relaxed))
 }
@@ -2153,7 +1985,7 @@ async fn build_child_namespace_assembly_plan(
         llm_mount: "/mnt/llm".to_string(),
         llm_connection_name: llm_connection.to_string(),
         srv_mount: "/srv".to_string(),
-        route_mount: alan_routefs::MOUNT_PATH.to_string(),
+        route_mount: ROUTE_MOUNT_PATH.to_string(),
         bin_tool_mounts: Vec::new(),
         tool_packages: Vec::new(),
         cwd,
@@ -2421,12 +2253,115 @@ mod tests {
             );
         }
         let root = InProcessTransport::new(Arc::new(alan_kernel::MountFs::new(mounts)));
+        let procfs = KernelProcFs::new();
+        let tool_runner = crate::tools::ToolRegistry::new().process_runner();
+        let assembler = TestChildProcessAssembler {
+            procfs,
+            tool_runner,
+            srv: memfs_transport(),
+            route: InProcessTransport::new(routefs),
+            llm: InProcessTransport::new(llmfs),
+            parent: None,
+        };
         crate::runtime::NamespaceRuntimeEnvironment::new(root, "/agent/1", connection)
-            .with_shared_services(
-                memfs_transport(),
-                InProcessTransport::new(routefs),
-                InProcessTransport::new(llmfs),
+            .with_child_process_assembler(Arc::new(assembler))
+    }
+
+    #[derive(Clone)]
+    struct TestChildProcessAssembler {
+        procfs: KernelProcFs,
+        tool_runner: crate::tools::ToolProcessRunner,
+        srv: InProcessTransport,
+        route: InProcessTransport,
+        llm: InProcessTransport,
+        parent: Option<TestParentProcessContext>,
+    }
+
+    impl std::fmt::Debug for TestChildProcessAssembler {
+        fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter
+                .debug_struct("TestChildProcessAssembler")
+                .finish_non_exhaustive()
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl super::super::ChildAgentProcessAssembler for TestChildProcessAssembler {
+        async fn assemble(
+            &self,
+            request: super::super::ChildAgentProcessAssemblyRequest,
+        ) -> Result<super::super::AssembledChildAgentProcess> {
+            let super::super::ChildAgentProcessAssemblyRequest {
+                plan,
+                scratch_dir,
+                executable,
+                llm_override,
+            } = request;
+            let mut handles = ChildNamespaceLaunchHandles::new(
+                Arc::new(alan_agentfs::AgentFs::new()),
+                llm_override.unwrap_or_else(|| self.llm.clone()),
+                self.srv.clone(),
+                self.route.clone(),
+            );
+            for manifest in &plan.tool_packages {
+                let name = &manifest.name;
+                handles = handles.with_tool_package(
+                    format!("/bin/{name}"),
+                    memfs_transport(),
+                    format!("/lib/exec/{name}"),
+                    InProcessTransport::new(Arc::new(
+                        alan_ap::reference::MemFs::with_read_only_file(
+                            "manifest",
+                            serde_json::to_vec(manifest)?,
+                        ),
+                    )),
+                );
+            }
+            let runtime_procfs = self
+                .procfs
+                .clone()
+                .with_runner(Arc::new(self.tool_runner.clone()));
+            let binding = plan.runtime_execution_binding(scratch_dir)?;
+            let mut launch = spawn_child_namespace_runtime_environment(
+                &self.procfs,
+                &runtime_procfs,
+                &plan,
+                handles,
+                self.parent.clone(),
+                self.tool_runner.clone(),
+                binding,
+                None,
+                &executable,
             )
+            .await?;
+            let observation_environment = child_observation_environment(
+                &runtime_procfs,
+                launch.agent_root.clone(),
+                &launch.pid,
+                &plan,
+            )
+            .await?;
+            let child_assembler = Self {
+                procfs: self.procfs.clone(),
+                tool_runner: self.tool_runner.clone(),
+                srv: self.srv.clone(),
+                route: self.route.clone(),
+                llm: self.llm.clone(),
+                parent: Some(TestParentProcessContext {
+                    agent_root: launch.agent_root.clone(),
+                    pid: alan_kernel::Pid(launch.pid.parse()?),
+                }),
+            };
+            launch.environment = launch
+                .environment
+                .with_child_process_assembler(Arc::new(child_assembler));
+            Ok(super::super::AssembledChildAgentProcess {
+                pid: launch.pid,
+                environment: launch.environment,
+                observation_environment,
+                lifecycle: launch.lifecycle,
+            })
+        }
     }
 
     #[derive(Clone, Default)]
@@ -3618,7 +3553,10 @@ Body
             &runtime_procfs,
             &plan,
             child_handles,
-            launch.environment.process_context(),
+            Some(TestParentProcessContext {
+                agent_root: launch.agent_root.clone(),
+                pid: alan_kernel::Pid(launch.pid.parse().unwrap()),
+            }),
             tool_runner.clone(),
             plan.execution_binding(temp.path().join("scratch")).unwrap(),
             None,
@@ -3643,9 +3581,7 @@ Body
             "delegated Agent Process must be inspectable from the parent AgentFS view"
         );
         record_child_launch_failure_process(
-            &launch_procfs,
-            &nested.environment.process_context().unwrap().agent_root,
-            &nested.pid,
+            &nested.lifecycle,
             &anyhow::anyhow!("simulated child runtime startup failure"),
         )
         .await;
@@ -3717,7 +3653,7 @@ Body
             child_run_id: format!("test-child-run-{}", uuid::Uuid::new_v4()),
             child_run_registry: ChildRunRegistry::default(),
             timeout: None,
-            process_registry: launch_procfs,
+            process_lifecycle: launch.lifecycle,
             process_environment: launch.environment,
             process_pid: process_pid.clone(),
         };
@@ -3793,7 +3729,7 @@ Body
             child_run_id: format!("test-child-run-{}", uuid::Uuid::new_v4()),
             child_run_registry: ChildRunRegistry::default(),
             timeout: None,
-            process_registry: launch_procfs,
+            process_lifecycle: launch.lifecycle,
             process_environment: launch.environment,
             process_pid: process_pid.clone(),
         };
@@ -3902,12 +3838,6 @@ Body
                 "Agent Definition launch reference",
             )]
         );
-        assert!(
-            launch
-                .environment
-                .mount_grant_applicator_factory()
-                .is_some()
-        );
         let definition_namespace = read_proc_path(
             &launch_procfs,
             vec![launch.pid.clone(), "namespace".to_string()],
@@ -3982,12 +3912,12 @@ Body
                 RecordingProvider::new(RecordedRequests::default(), completed_response("unused")),
             ))),
         );
-        let handles = child_namespace_launch_handles_from_parent(
-            &parent,
+        let handles = ChildNamespaceLaunchHandles::new(
             Arc::new(alan_agentfs::AgentFs::new()),
             InProcessTransport::new(llmfs),
+            memfs_transport(),
+            InProcessTransport::new(routefs.clone()),
         )
-        .unwrap()
         .with_tool_package(
             "/bin/alpha",
             memfs_transport(),

@@ -22,7 +22,9 @@ use crate::{
     BootManifest, BootUnit, ConnectionService, ConnectionStoreBindings, ConnectionsFile,
     HostMountExportAdapter, HostMountService, LocalEntryService, ManagerState, PackageService,
     RestartDecision, ServiceManagerFs, UnavailableHostMountExportAdapter,
-    agent_runtime::{AgentRuntimeService, RootAgentProcess, RootAgentTemplate},
+    agent_runtime::{
+        AgentRuntimeFileServers, AgentRuntimeService, RootAgentProcess, RootAgentTemplate,
+    },
     quartermaster::QUARTERMASTER_EXECUTABLE,
 };
 
@@ -873,12 +875,10 @@ async fn assemble_environment(inputs: AssembleInputs) -> Result<AssembledEnviron
     let package_handle = SwitchableFileServer::new();
     let agent_runtime = AgentRuntimeService::new(
         procfs.clone(),
-        agent_root.clone(),
-        llmfs.clone(),
-        srvfs.clone(),
-        routefs.clone(),
+        AgentRuntimeFileServers::from_refs(&agent_root, &llmfs, &srvfs, &routefs),
         host_mount_service.clone(),
         connection_service.clone(),
+        tools.process_runner(),
     );
 
     let mut namespace = process.launch_context.namespace.child();
@@ -1075,7 +1075,6 @@ async fn assemble_environment(inputs: AssembleInputs) -> Result<AssembledEnviron
     process.launch_context = root_template_context;
     let root_template = RootAgentTemplate::new(
         process,
-        tools,
         host_capabilities,
         generation_capabilities,
         llm_connection,
