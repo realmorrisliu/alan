@@ -1,8 +1,11 @@
-use crate::MessageContentPart;
+use tracing::warn;
+
+use crate::{Message as LlmMessage, MessageContentPart, MessageRole};
 
 use super::{
-    LlmMessage, MessageRole, OpenAiChatCompletionsFunctionCall, OpenAiChatCompletionsToolCall,
-    is_non_empty, openai_chat_completions_message_value,
+    OpenAiChatCompletionsFunctionCall, OpenAiChatCompletionsToolCall,
+    OpenAiResponsesFunctionCallItem, OpenAiResponsesFunctionCallOutputItem,
+    OpenAiResponsesInputItem, OpenAiResponsesInputMessage, OpenAiResponsesReasoningInputItem,
 };
 
 pub(super) fn convert_messages_for_openai_chat_completions_with_instruction_role(
@@ -264,6 +267,137 @@ fn attachment_url(metadata: &serde_json::Value) -> Option<&str> {
         .or_else(|| metadata.get("file_url"))
         .or_else(|| metadata.get("url"))
         .and_then(serde_json::Value::as_str)
+}
+
+pub(super) fn openai_chat_completions_message_value(
+    role: impl Into<String>,
+    content: Option<serde_json::Value>,
+    reasoning_content: Option<String>,
+    reasoning: Option<serde_json::Value>,
+    tool_calls: Option<Vec<OpenAiChatCompletionsToolCall>>,
+    tool_call_id: Option<String>,
+) -> serde_json::Value {
+    let mut message = serde_json::Map::new();
+    message.insert("role".to_string(), serde_json::Value::String(role.into()));
+    if let Some(content) = content {
+        message.insert("content".to_string(), content);
+    }
+    if let Some(reasoning_content) = reasoning_content {
+        message.insert(
+            "reasoning_content".to_string(),
+            serde_json::Value::String(reasoning_content),
+        );
+    }
+    if let Some(reasoning) = reasoning {
+        message.insert("reasoning".to_string(), reasoning);
+    }
+    if let Some(tool_calls) = tool_calls {
+        message.insert(
+            "tool_calls".to_string(),
+            serde_json::to_value(tool_calls).unwrap_or_else(|_| serde_json::Value::Array(vec![])),
+        );
+    }
+    if let Some(tool_call_id) = tool_call_id {
+        message.insert(
+            "tool_call_id".to_string(),
+            serde_json::Value::String(tool_call_id),
+        );
+    }
+    serde_json::Value::Object(message)
+}
+
+pub(crate) fn convert_messages_for_openai_responses(
+    messages: Vec<LlmMessage>,
+) -> anyhow::Result<Vec<OpenAiResponsesInputItem>> {
+    let mut input = Vec::new();
+
+    for message in messages {
+        match message.role {
+            MessageRole::System | MessageRole::Context | MessageRole::User => {
+                if let Some(content) = responses_content(message.content, message.content_parts)? {
+                    let role = match message.role {
+                        MessageRole::User => "user",
+                        _ => "developer",
+                    };
+                    input.push(OpenAiResponsesInputItem::Message(
+                        OpenAiResponsesInputMessage {
+                            role: role.to_string(),
+                            content,
+                        },
+                    ));
+                }
+            }
+            MessageRole::Assistant => {
+                if let Some(signature) = message
+                    .thinking_signature
+                    .filter(|value| is_non_empty(value))
+                {
+                    input.push(OpenAiResponsesInputItem::Reasoning(
+                        OpenAiResponsesReasoningInputItem {
+                            kind: "reasoning".to_string(),
+                            encrypted_content: signature,
+                        },
+                    ));
+                }
+
+                if let Some(content) = responses_output(message.content, message.content_parts)? {
+                    input.push(OpenAiResponsesInputItem::Message(
+                        OpenAiResponsesInputMessage {
+                            role: "assistant".to_string(),
+                            content,
+                        },
+                    ));
+                }
+
+                if let Some(tool_calls) = message.tool_calls {
+                    for tool_call in tool_calls {
+                        let call_id = tool_call.id.unwrap_or_default();
+                        if call_id.is_empty() {
+                            warn!(
+                                tool_name = %tool_call.name,
+                                "Skipping assistant tool call without id in Responses API projection"
+                            );
+                            continue;
+                        }
+
+                        input.push(OpenAiResponsesInputItem::FunctionCall(
+                            OpenAiResponsesFunctionCallItem {
+                                kind: "function_call".to_string(),
+                                call_id,
+                                name: tool_call.name,
+                                arguments: tool_call.arguments.to_string(),
+                            },
+                        ));
+                    }
+                }
+            }
+            MessageRole::Tool => {
+                let output = plain_text_content(
+                    message.content,
+                    message.content_parts,
+                    "OpenAI Responses tool output",
+                )?;
+                let Some(call_id) = message.tool_call_id.filter(|value| is_non_empty(value)) else {
+                    warn!("Skipping tool message without tool_call_id in Responses API projection");
+                    continue;
+                };
+
+                input.push(OpenAiResponsesInputItem::FunctionCallOutput(
+                    OpenAiResponsesFunctionCallOutputItem {
+                        kind: "function_call_output".to_string(),
+                        call_id,
+                        output,
+                    },
+                ));
+            }
+        }
+    }
+
+    Ok(input)
+}
+
+pub(super) fn is_non_empty(value: &str) -> bool {
+    !value.trim().is_empty()
 }
 
 #[cfg(test)]
