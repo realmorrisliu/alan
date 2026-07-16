@@ -16,6 +16,7 @@ mod memory_flush;
 mod memory_promotion;
 mod memory_recall;
 mod memory_surfaces;
+mod mount_request_tool;
 mod prompt_cache;
 mod response_guardrails;
 mod steering_queue;
@@ -30,6 +31,7 @@ mod turn_executor;
 mod turn_state;
 mod turn_support;
 mod ui_surfaces;
+mod virtual_tool;
 mod virtual_tools;
 
 pub use agent_loop::{
