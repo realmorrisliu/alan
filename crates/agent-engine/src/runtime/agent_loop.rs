@@ -132,13 +132,6 @@ impl RuntimeLoopState {
         Ok(Some(request_id))
     }
 
-    pub(crate) fn project_generation_messages(
-        &self,
-        messages: &[crate::agent_machine::Message],
-    ) -> Vec<crate::llm::Message> {
-        super::turn_support::project_messages_for_namespace(messages)
-    }
-
     pub(crate) async fn generate_once_with_cancel(
         &mut self,
         request: crate::llm::GenerationRequest,

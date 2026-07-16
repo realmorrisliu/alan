@@ -308,7 +308,7 @@ async fn generate_flush_content(
             tool_call_id: None,
         });
     }
-    llm_messages.extend(state.project_generation_messages(sanitized_messages));
+    llm_messages.extend(crate::llm::project_messages(sanitized_messages, true));
 
     let request = build_generation_request(
         Some(prompts::MEMORY_FLUSH_PROMPT.to_string()),

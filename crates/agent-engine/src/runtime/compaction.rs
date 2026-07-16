@@ -1080,7 +1080,7 @@ where
         });
     }
 
-    llm_messages.extend(state.project_generation_messages(&sanitized_to_summarize));
+    llm_messages.extend(crate::llm::project_messages(&sanitized_to_summarize, true));
 
     let max_trim_retries = 5;
     let mut trimmed_count = 0usize;
