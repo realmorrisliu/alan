@@ -24,7 +24,6 @@ crates/alan/src/cli/skill_authoring.rs 1187
 crates/alan/src/cli/skill_eval.rs 1167
 crates/alan/src/main.rs 1370
 crates/auth/src/chatgpt.rs 1342
-crates/hostfs/src/lib.rs 1397
 crates/kernel/src/procfs.rs 1323
 crates/kernel/tests/mountfs.rs 1112
 crates/kernel/tests/procfs.rs 1847
