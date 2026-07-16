@@ -17,7 +17,6 @@ crates/agent-engine/src/tools/sandbox_backend.rs 1562
 crates/agent-engine/src/tools/sandbox_tests.rs 2976
 crates/agentfs/src/lib.rs 1151
 crates/agentfs/src/root.rs 1191
-crates/agentfs/tests/agent_root_overlay.rs 1645
 crates/alan/src/cli/skill_authoring.rs 1187
 crates/alan/src/cli/skill_eval.rs 1167
 crates/alan/src/main.rs 1370
