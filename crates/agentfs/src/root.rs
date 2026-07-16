@@ -7,6 +7,8 @@
 //! It observes `/proc` through aP, keeping kernel internals and agent files
 //! separate.
 
+mod process_event_bridge;
+
 use std::{
     any::Any,
     collections::HashMap,
@@ -20,15 +22,16 @@ use std::{
 };
 
 use alan_ap::{
-    ErrorCode, Fid, FileKind, FileServer, Offset, OpenMode, ProcessEvent, ProcessEventSink,
-    ProcessEventSource, ProcessInputEventSink, ProcessInputEventSource, ProcessIoEventKind,
-    ProcessIoEventSink, ProcessIoEventSource, ProcessOutputEventSink, ProcessOutputEventSource,
-    Qid, Stat,
+    ErrorCode, Fid, FileKind, FileServer, Offset, OpenMode, ProcessEventSource,
+    ProcessInputEventSource, ProcessIoEventSource, ProcessOutputEventSource, Qid, Stat,
 };
 use async_trait::async_trait;
 use tokio::sync::Mutex;
 
 use crate::AgentFs;
+use process_event_bridge::{
+    agent_event_sink, input_event_sink, io_event_sink, output_event_sink, process_event_sink,
+};
 
 static NEXT_BACKING_FID: AtomicU64 = AtomicU64::new(1_000_000);
 static NEXT_PROC_FID: AtomicU64 = AtomicU64::new(2_000_000);
@@ -266,9 +269,7 @@ impl AgentRootFs {
             parent.append_child_event(&pid).await;
         }
         if subscribe_process_events && let Some(process_events) = self.process_events.clone() {
-            let sink = Arc::new(AgentProcessEventSink {
-                state: self.state.clone(),
-            });
+            let sink = process_event_sink(self.state.clone());
             if process_events
                 .subscribe_process_events(&pid, sink)
                 .await
@@ -278,17 +279,13 @@ impl AgentRootFs {
             }
         }
         if subscribe_io_events && let Some(io_events) = self.io_events.clone() {
-            let sink = Arc::new(AgentIoEventSink {
-                state: self.state.clone(),
-            });
+            let sink = io_event_sink(self.state.clone());
             if io_events.subscribe_process_io(&pid, sink).await.is_err() {
                 self.state.lock().await.io_event_pids.remove(&pid);
             }
         }
         if subscribe_input_events && let Some(input_events) = self.input_events.clone() {
-            let sink = Arc::new(AgentInputEventSink {
-                state: self.state.clone(),
-            });
+            let sink = input_event_sink(self.state.clone());
             if input_events
                 .subscribe_process_input(&pid, sink)
                 .await
@@ -298,9 +295,7 @@ impl AgentRootFs {
             }
         }
         if subscribe_output_events && let Some(output_events) = self.output_events.clone() {
-            let sink = Arc::new(AgentOutputEventSink {
-                state: self.state.clone(),
-            });
+            let sink = output_event_sink(self.state.clone());
             if output_events
                 .subscribe_process_output(&pid, sink)
                 .await
@@ -646,101 +641,6 @@ impl AgentRootFs {
         }
         state.fids.insert(fid, Entry { node });
         Ok(())
-    }
-}
-
-fn agent_event_sink<T>(agent: &Arc<T>) -> Option<Arc<AgentFs>>
-where
-    T: FileServer + Any + 'static,
-{
-    let erased: Arc<dyn Any + Send + Sync> = agent.clone();
-    Arc::downcast::<AgentFs>(erased).ok()
-}
-
-struct AgentOutputEventSink {
-    state: Arc<Mutex<State>>,
-}
-
-struct AgentInputEventSink {
-    state: Arc<Mutex<State>>,
-}
-
-struct AgentIoEventSink {
-    state: Arc<Mutex<State>>,
-}
-
-struct AgentProcessEventSink {
-    state: Arc<Mutex<State>>,
-}
-
-#[async_trait]
-impl ProcessEventSink for AgentProcessEventSink {
-    async fn process_event(&self, pid: &str, event: ProcessEvent) {
-        let event_sink = {
-            let state = self.state.lock().await;
-            state
-                .agents
-                .get(pid)
-                .and_then(|agent| agent.event_sink.clone())
-        };
-        if let Some(agent) = event_sink {
-            match event {
-                ProcessEvent::Input { count } => agent.append_input_event(count).await,
-                ProcessEvent::Output { count } => agent.append_output_event(count).await,
-                ProcessEvent::Status { status } => agent.append_status_event(&status).await,
-            }
-        }
-    }
-}
-
-#[async_trait]
-impl ProcessIoEventSink for AgentIoEventSink {
-    async fn io_appended(&self, pid: &str, kind: ProcessIoEventKind, count: u32) {
-        let event_sink = {
-            let state = self.state.lock().await;
-            state
-                .agents
-                .get(pid)
-                .and_then(|agent| agent.event_sink.clone())
-        };
-        if let Some(agent) = event_sink {
-            match kind {
-                ProcessIoEventKind::Input => agent.append_input_event(count).await,
-                ProcessIoEventKind::Output => agent.append_output_event(count).await,
-            }
-        }
-    }
-}
-
-#[async_trait]
-impl ProcessInputEventSink for AgentInputEventSink {
-    async fn input_appended(&self, pid: &str, count: u32) {
-        let event_sink = {
-            let state = self.state.lock().await;
-            state
-                .agents
-                .get(pid)
-                .and_then(|agent| agent.event_sink.clone())
-        };
-        if let Some(agent) = event_sink {
-            agent.append_input_event(count).await;
-        }
-    }
-}
-
-#[async_trait]
-impl ProcessOutputEventSink for AgentOutputEventSink {
-    async fn output_appended(&self, pid: &str, count: u32) {
-        let event_sink = {
-            let state = self.state.lock().await;
-            state
-                .agents
-                .get(pid)
-                .and_then(|agent| agent.event_sink.clone())
-        };
-        if let Some(agent) = event_sink {
-            agent.append_output_event(count).await;
-        }
     }
 }
 
