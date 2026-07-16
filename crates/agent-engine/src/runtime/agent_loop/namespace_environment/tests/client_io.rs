@@ -1,3 +1,6 @@
+use alan_agent_protocol::Event;
+
+use super::super::generation::read_generation_response_with_text_events;
 use super::*;
 
 #[tokio::test]
