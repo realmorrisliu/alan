@@ -367,3 +367,7 @@ pub(super) fn is_binary_file(path: &Path) -> bool {
         false
     }
 }
+
+#[cfg(test)]
+#[path = "exploration_tools_tests.rs"]
+mod tests;
