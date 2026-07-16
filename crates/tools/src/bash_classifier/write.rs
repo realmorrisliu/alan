@@ -1,6 +1,6 @@
-use super::super::command_basename;
 use super::git::{is_git_network_command, is_git_read_command};
 use super::read::is_tool_query_command;
+use super::wrappers::command_basename;
 use std::path::Path;
 
 pub(super) fn is_write_command(fragment: &str, tokens: &[&str]) -> bool {

@@ -1,11 +1,16 @@
 mod git;
 mod read;
 mod shell_syntax;
+mod wrappers;
 mod write;
 
 use git::is_git_network_command;
 use read::is_safe_read_command;
 use shell_syntax::{normalize_shell_line_continuations, split_shell_fragments};
+use wrappers::{
+    contains_nested_eval_wrapper, contains_unsupported_shell_form, effective_command_tokens,
+    is_wrapper_query_command,
+};
 use write::is_write_command;
 
 pub(super) fn classify_bash_command(command: &str) -> alan_agent_protocol::ToolCapability {
@@ -45,22 +50,22 @@ fn classify_bash_fragment(fragment: &str) -> alan_agent_protocol::ToolCapability
     if tokens.is_empty() {
         return alan_agent_protocol::ToolCapability::Read;
     }
-    let effective_tokens = super::effective_command_tokens(&tokens);
+    let effective_tokens = effective_command_tokens(&tokens);
     let effective_tokens = effective_tokens.as_slice();
 
-    if super::contains_unsupported_shell_form(&tokens) {
+    if contains_unsupported_shell_form(&tokens) {
         return alan_agent_protocol::ToolCapability::Unknown;
     }
     if is_network_command(fragment, effective_tokens) {
         return alan_agent_protocol::ToolCapability::Network;
     }
-    if super::contains_nested_eval_wrapper(&tokens) {
+    if contains_nested_eval_wrapper(&tokens) {
         return alan_agent_protocol::ToolCapability::Unknown;
     }
     if is_write_command(fragment, effective_tokens) {
         return alan_agent_protocol::ToolCapability::Write;
     }
-    if is_safe_read_command(effective_tokens) || super::is_wrapper_query_command(&tokens) {
+    if is_safe_read_command(effective_tokens) || is_wrapper_query_command(&tokens) {
         return alan_agent_protocol::ToolCapability::Read;
     }
     alan_agent_protocol::ToolCapability::Unknown
@@ -70,7 +75,7 @@ fn is_network_command(fragment: &str, tokens: &[&str]) -> bool {
     // Match on the basename so path-qualified forms (`/usr/bin/curl`) classify
     // like the bare head; otherwise an approved network call would run with the
     // sandbox network deny still in force and fail.
-    let head = super::command_basename(tokens[0]);
+    let head = wrappers::command_basename(tokens[0]);
     if matches!(
         head,
         "curl" | "wget" | "ssh" | "scp" | "sftp" | "nc" | "netcat" | "socat" | "telnet" | "ftp"

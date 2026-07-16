@@ -1,4 +1,4 @@
-use super::super::command_basename;
+use super::wrappers::command_basename;
 
 fn git_subcommand<'a>(tokens: &'a [&'a str]) -> Option<(usize, &'a str)> {
     // Match on the basename so path-qualified git (`/usr/bin/git -C repo push`)
