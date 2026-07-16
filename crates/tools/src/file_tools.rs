@@ -264,3 +264,7 @@ pub(super) fn detect_mime(path: &Path) -> &'static str {
         _ => "application/octet-stream",
     }
 }
+
+#[cfg(test)]
+#[path = "file_tools_tests.rs"]
+mod tests;
