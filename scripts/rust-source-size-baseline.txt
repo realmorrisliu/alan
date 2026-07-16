@@ -2,7 +2,7 @@
 # A file may only stay equal to this maximum or shrink with this entry tightened.
 crates/agent-engine/skills/swebench/tooling/src/swebench_lite.rs 1389
 crates/agent-engine/src/skills/injector.rs 2490
-crates/agent-engine/src/skills/types.rs 2036
+crates/agent-engine/src/skills/types.rs 1366
 crates/agent-engine/src/tools/reified_namespace.rs 2756
 crates/agent-engine/src/tools/sandbox.rs 3514
 crates/agent-engine/src/tools/sandbox_backend.rs 1562
