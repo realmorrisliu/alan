@@ -12,7 +12,6 @@ crates/agent-engine/src/runtime/virtual_tools_tests.rs 3331
 crates/agent-engine/src/skills/injector.rs 2490
 crates/agent-engine/src/skills/registry.rs 1458
 crates/agent-engine/src/skills/types.rs 3013
-crates/agent-engine/src/tape.rs 1513
 crates/agent-engine/src/tools/registry.rs 1447
 crates/agent-engine/src/tools/reified_namespace.rs 2756
 crates/agent-engine/src/tools/sandbox.rs 3514
