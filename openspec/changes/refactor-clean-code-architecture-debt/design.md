@@ -86,6 +86,33 @@ updates `clients/apple/ARCHITECTURE.md`, and lowers the executable warning
 ceiling. When the count reaches zero, report mode and strict mode converge and
 the non-zero ledger is removed.
 
+The live report was reconfirmed before Apple source changes began. Its exact
+15-warning ledger is classified by durable owner below; the target is the
+responsibility boundary, not merely a smaller file with the same coupling.
+
+| Warning | Durable owner and removal boundary | Wave |
+| --- | --- | --- |
+| `bridge: ShellHostController.swift` | Narrow AppKit services own close confirmation, app activity, and pasteboard access; the controller remains Foundation/Combine orchestration. | 4.2 first slice |
+| `large: Controllers/Shell/ShellHostControlCommandHandling.swift` | Control request routing, response projection, terminal delivery, diagnostics, and list projection become named controller/service collaborators. | 4.2 |
+| `large: ShellHostController.swift` | The root keeps observable shell orchestration; selection, action, close, runtime projection, and persistence flows move to their existing or named collaborators. | 4.2 |
+| `large: ShellModel.swift` | Sidebar tab projection, drag/drop, pane topology, and activity-notification presentation become separate presentation-model owners. | 4.2 |
+| `large: Models/Shell/ShellSettingsSurfaceModel.swift` | Settings navigation DTOs, managed-user summary/creation flow, catalog storage, and diagnostics summaries split by settings domain owner. | 4.2 |
+| `large: Models/Shell/ShellSnapshots.swift` | Terminal transcript, content, pane-tree, tab/space, and workspace snapshot DTO families become adjacent model modules without duplicating Rust-owned mutation behavior. | 4.2 |
+| `large: Models/Shell/ShellValueTypes.swift` | Terminal Profile, privileged-helper, managed-account, and platform-effect value families move beside their owning adapters/services. | 4.2, then 4.4 adapter audit |
+| `large: Views/Shell/ShellSidebarView.swift` | Space slider, tab list/drop handling, row chrome, activity rail, and topology indicator become focused SwiftUI presentation owners. | 4.2 |
+| `large: TerminalPaneView.swift` | Pane-tree layout, bounded content renderers, settings surface, title bar, find bar, and terminal leaf presentation become focused SwiftUI owners. | 4.2 |
+| `large: GhosttyLiveHost.swift` | Ghostty host lifecycle, renderer coordination, canvas view, and platform display lookup stay behind narrow terminal-host adapters. | 4.3 |
+| `large: TerminalHostRuntime.swift` | Boot resolution, render coordination, publication policy, and runtime snapshot models split along terminal runtime responsibilities. | 4.3 |
+| `large: TerminalHostView.swift` | AppKit terminal view lifecycle, text input, keyboard translation, and input tracing split into host-view adapters. | 4.3 |
+| `large: TerminalRuntimeService.swift` | Native/helper PTY runtimes, surface lifecycle, process bootstrap, and test doubles become separate runtime and test-support owners. | 4.3 |
+| `large: TerminalSurfaceController.swift` | Scrollback, keyboard/pointer routing, search, selection, metadata, and surface readiness become focused terminal-surface collaborators. | 4.3 |
+| `large: Services/Shell/AlanPrivilegedHelperXPC.swift` | Wire DTO/codec, listener/client, managed-user account operations, and managed-user PTY session ownership split at the XPC adapter boundary. | 4.3, then 4.4 adapter audit |
+
+After these warning-bearing owners are split, 4.4 audits the shell-core FFI and
+platform adapters for shallow pass-throughs. It may delete debt without a
+warning of its own, but it must not reintroduce Apple domain fallbacks or widen
+the operation-owner allowlist.
+
 Alternative considered: keep a permanent warning allowlist. Rejected because
 the 15 warnings describe known migration state, not supported architecture.
 
