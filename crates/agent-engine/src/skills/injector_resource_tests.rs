@@ -1,4 +1,12 @@
+use super::disclosure::{
+    DisclosedSkillResource, MAX_DISCLOSED_LEVEL2_BYTES, MAX_DISCLOSED_RESOURCE_BYTES,
+    MAX_DISCLOSED_RESOURCE_CHARS, MAX_DISCLOSED_RESOURCE_COUNT, PendingDisclosedSkillResource,
+    SkillResourceKind, content_contains_resource_reference, declared_resource_reference_candidates,
+    extract_resource_references, format_disclosed_resources, load_disclosed_text_content,
+    materialize_disclosed_resources,
+};
 use super::*;
+use std::path::PathBuf;
 
 #[test]
 fn test_inject_skills_with_resources() {
