@@ -4,7 +4,6 @@ use alan_agent_protocol::{
     StructuredInputOption, StructuredInputQuestion, StructuredInputYieldPayload,
 };
 use anyhow::Result;
-use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::path::{Component, Path, PathBuf};
 use std::pin::Pin;
@@ -12,23 +11,28 @@ use tokio_util::sync::CancellationToken;
 
 use crate::approval::MOUNT_ESCALATION_CHECKPOINT_TYPE;
 use crate::approval::{PendingConfirmation, append_skill_permission_hints};
-use crate::evidence::redact_durable_evidence_text;
 use crate::llm::ToolDefinition;
-use crate::skills::{
-    DelegatedSkillInvocationRecord, DelegatedSkillOutputDebugMetadata, DelegatedSkillOutputRef,
-    DelegatedSkillResult, DelegatedSkillResultStatus, DelegatedSkillResultTruncation,
-};
+use crate::skills::{DelegatedSkillResult, DelegatedSkillResultStatus};
 
-use super::agent_loop::{NamespaceActionRecord, NormalizedToolCall, RuntimeLoopState};
+use super::agent_loop::{NormalizedToolCall, RuntimeLoopState};
 use super::child_agents::spawn_child_runtime_cancellable;
 use super::child_run_termination_tool::{
     handle_terminate_child_run, terminate_child_run_tool_definition,
 };
-use super::delegated_child_run::{
-    ChildRuntimeResult, DelegatedChildRunReference, MAX_DELEGATED_RESULT_SUMMARY_CHARS,
-};
+use super::delegated_child_run::ChildRuntimeResult;
 #[cfg(test)]
 use super::delegated_child_run::{ChildRuntimeStatus, MAX_DELEGATED_RESULT_OUTPUT_INLINE_CHARS};
+use super::delegated_skill_evidence::{
+    build_bounded_delegated_invocation_persistence, persist_delegated_child_evidence,
+};
+use super::delegated_skill_tool::{
+    DEFAULT_DELEGATED_TIMEOUT_SECS, DelegatedSkillInvocationRequest,
+    invoke_delegated_skill_tool_definition, parse_delegated_skill_invocation_request,
+};
+#[cfg(test)]
+use super::delegated_skill_tool::{
+    MAX_DELEGATED_SKILL_ID_CHARS, MAX_DELEGATED_TARGET_CHARS, MAX_DELEGATED_TASK_CHARS,
+};
 use super::delegation_capabilities::{
     DelegatedSpawnRejected, classify_delegated_task_requirements,
 };
@@ -39,16 +43,6 @@ use super::mount_request_tool::{handle_request_mount, request_mount_tool_definit
 use super::turn_support::{check_turn_cancelled, tool_result_preview};
 pub(super) use super::virtual_tool::VirtualToolOutcome;
 
-const MAX_DELEGATED_SKILL_ID_CHARS: usize = 120;
-const MAX_DELEGATED_TARGET_CHARS: usize = 120;
-const MAX_DELEGATED_TASK_CHARS: usize = 1_000;
-const MAX_DELEGATED_PATH_CHARS: usize = 1_000;
-const DEFAULT_DELEGATED_TIMEOUT_SECS: u64 = 900;
-const MAX_DELEGATED_TIMEOUT_SECS: u64 = 86_400;
-const MAX_DELEGATED_STRUCTURED_OUTPUT_CHARS: usize = 4_000;
-const MAX_DELEGATED_CHILD_RUN_METADATA_CHARS: usize = 2_000;
-const MAX_DELEGATED_RESULT_WARNINGS: usize = 16;
-const MAX_DELEGATED_RESULT_WARNING_CHARS: usize = 512;
 type DelegatedSkillSpawnResult<T> = std::result::Result<T, Box<DelegatedSkillResult>>;
 
 pub(super) fn virtual_tool_definitions(include_delegated_skill: bool) -> Vec<ToolDefinition> {
@@ -754,296 +748,6 @@ fn lexically_normalize_path(path: &Path) -> PathBuf {
     normalized
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-struct DelegatedSkillRolloutRecord {
-    #[serde(flatten)]
-    invocation: DelegatedSkillInvocationRecord,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    child_run: Option<DelegatedChildRunReference>,
-}
-
-async fn persist_delegated_child_evidence(
-    state: &RuntimeLoopState,
-    request: &DelegatedSkillInvocationRequest,
-    result: &ChildRuntimeResult,
-) -> Option<DelegatedSkillOutputRef> {
-    if result.output_text.trim().is_empty() {
-        return None;
-    }
-
-    let redacted = redact_durable_evidence_text(&result.output_text);
-    if !result.requires_output_reference(redacted.text.chars().count()) {
-        return None;
-    }
-    let mut result_doc = json!({
-        "child_process_path": result.process_path,
-        "child_run_id": result.child_run_id,
-        "terminal_status": result.terminal_status_label(),
-        "redactions": redacted.markers,
-    });
-    if let Some(agent_path) = result
-        .child_run
-        .as_ref()
-        .and_then(|record| record.agent_path.as_deref())
-    {
-        result_doc["child_agent_path"] = json!(agent_path);
-    }
-    let action_id = state
-        .namespace_environment()
-        .write_action(
-            NamespaceActionRecord::new(
-                format!("delegate:{}", request.skill_id),
-                result.terminal_status_label(),
-            )
-            .with_output(redacted.text)
-            .with_result(result_doc.to_string())
-            .with_approval("not_required"),
-        )
-        .await
-        .ok()?;
-    let path = format!(
-        "{}/actions/{action_id}/output",
-        state.namespace_environment().agent_path()
-    );
-    let reference = state
-        .namespace_environment()
-        .evidence_reference(path)
-        .await?;
-    state
-        .namespace_environment()
-        .resolve_evidence_reference(&reference, None, result.child_run_value())
-        .await
-        .ok()?;
-
-    Some(DelegatedSkillOutputRef {
-        path: reference.path,
-        offset: reference.offset,
-        length: reference.length,
-        debug: Some(DelegatedSkillOutputDebugMetadata {
-            process_path: result.process_path.clone(),
-            rollout_path: result
-                .rollout_path
-                .as_ref()
-                .map(|path| path.display().to_string()),
-            field: "output_text".to_string(),
-        }),
-    })
-}
-
-fn build_bounded_delegated_invocation_persistence(
-    request: &DelegatedSkillInvocationRequest,
-    result: DelegatedSkillResult,
-    child_run: Option<DelegatedChildRunReference>,
-) -> (
-    serde_json::Value,
-    DelegatedSkillInvocationRecord,
-    DelegatedSkillRolloutRecord,
-) {
-    let (arguments, record) = build_bounded_delegated_tape_record(request, result);
-    let rollout_record = DelegatedSkillRolloutRecord {
-        invocation: record.clone(),
-        child_run,
-    };
-    (arguments, record, rollout_record)
-}
-
-fn build_bounded_delegated_tape_record(
-    request: &DelegatedSkillInvocationRequest,
-    result: DelegatedSkillResult,
-) -> (serde_json::Value, DelegatedSkillInvocationRecord) {
-    let skill_id =
-        truncate_text_with_suffix(&request.skill_id, MAX_DELEGATED_SKILL_ID_CHARS, "...");
-    let target = truncate_text_with_suffix(&request.target, MAX_DELEGATED_TARGET_CHARS, "...");
-    let task = truncate_text_with_suffix(&request.task, MAX_DELEGATED_TASK_CHARS, "...");
-    let mut result = result;
-    let summary_chars = result.summary.chars().count();
-    if summary_chars > MAX_DELEGATED_RESULT_SUMMARY_CHARS {
-        let preview =
-            truncate_text_with_suffix(&result.summary, MAX_DELEGATED_RESULT_SUMMARY_CHARS, "...");
-        result.summary = preview.clone();
-        result.summary_preview = Some(preview);
-        let mut truncation = result.truncation.take().unwrap_or_default();
-        truncation.summary = true;
-        truncation.original_summary_chars = Some(summary_chars);
-        result.truncation = Some(truncation);
-    }
-    if let Some(value) = result.structured_output.take() {
-        let serialized_size = serde_json::to_string(&value)
-            .map(|text| text.chars().count())
-            .unwrap_or(MAX_DELEGATED_STRUCTURED_OUTPUT_CHARS + 1);
-        result.structured_output = Some(truncate_structured_output(
-            value,
-            MAX_DELEGATED_STRUCTURED_OUTPUT_CHARS,
-        ));
-        if serialized_size > MAX_DELEGATED_STRUCTURED_OUTPUT_CHARS {
-            let mut truncation = result.truncation.take().unwrap_or_default();
-            truncation.structured_output = true;
-            result.truncation = Some(truncation);
-        }
-    }
-    bound_delegated_result_sidecars(&mut result);
-
-    let record = DelegatedSkillInvocationRecord {
-        skill_id,
-        target,
-        task,
-        cwd: request.cwd.as_ref().map(|path| {
-            truncate_text_with_suffix(&path.to_string_lossy(), MAX_DELEGATED_PATH_CHARS, "...")
-        }),
-        timeout_secs: request.timeout_secs,
-        result,
-    };
-    let mut arguments = json!({
-        "skill_id": record.skill_id,
-        "target": record.target,
-        "task": record.task,
-    });
-    if let Some(cwd) = record.cwd.as_ref() {
-        arguments["cwd"] = json!(cwd);
-    }
-    if let Some(timeout_secs) = record.timeout_secs {
-        arguments["timeout_secs"] = json!(timeout_secs);
-    }
-
-    (arguments, record)
-}
-
-fn bound_delegated_result_sidecars(result: &mut DelegatedSkillResult) {
-    if let Some(value) = result.child_run.take() {
-        let serialized_size = serde_json::to_string(&value)
-            .map(|text| text.chars().count())
-            .unwrap_or(MAX_DELEGATED_CHILD_RUN_METADATA_CHARS + 1);
-        result.child_run = Some(truncate_structured_output(
-            value,
-            MAX_DELEGATED_CHILD_RUN_METADATA_CHARS,
-        ));
-        if serialized_size > MAX_DELEGATED_CHILD_RUN_METADATA_CHARS {
-            let truncation = result.truncation.get_or_insert_with(Default::default);
-            truncation.child_run = true;
-            truncation.original_child_run_chars = Some(serialized_size);
-            append_truncation_note(truncation, "Child-run metadata was truncated.");
-        }
-    }
-
-    let original_warning_count = result.warnings.len();
-    let (warnings, truncated) = bounded_delegated_warnings(std::mem::take(&mut result.warnings));
-    result.warnings = warnings;
-    if truncated {
-        let truncation = result.truncation.get_or_insert_with(Default::default);
-        truncation.warnings = true;
-        truncation.original_warning_count = Some(original_warning_count);
-        append_truncation_note(truncation, "Warnings were truncated to recent entries.");
-    }
-}
-
-fn bounded_delegated_warnings(warnings: Vec<String>) -> (Vec<String>, bool) {
-    let original_count = warnings.len();
-    let skip_count = original_count.saturating_sub(MAX_DELEGATED_RESULT_WARNINGS);
-    let mut truncated = skip_count > 0;
-    let warnings = warnings
-        .into_iter()
-        .skip(skip_count)
-        .map(|warning| {
-            let bounded =
-                truncate_text_with_suffix(&warning, MAX_DELEGATED_RESULT_WARNING_CHARS, "...");
-            if bounded != warning {
-                truncated = true;
-            }
-            bounded
-        })
-        .collect();
-    (warnings, truncated)
-}
-
-fn append_truncation_note(truncation: &mut DelegatedSkillResultTruncation, note: &str) {
-    match truncation.note.as_mut() {
-        Some(existing) if !existing.contains(note) => {
-            existing.push(' ');
-            existing.push_str(note);
-        }
-        Some(_) => {}
-        None => truncation.note = Some(note.to_string()),
-    }
-}
-
-fn is_critical_structured_output_key(key: &str) -> bool {
-    matches!(
-        key,
-        "status"
-            | "summary"
-            | "overall_status"
-            | "verification_attempted"
-            | "attempted_count"
-            | "passed_count"
-            | "failed_count"
-            | "environment_blocked_count"
-            | "blocked_count"
-            | "not_run_count"
-            | "all_passed"
-    )
-}
-
-fn truncate_structured_output(value: serde_json::Value, max_size: usize) -> serde_json::Value {
-    let rendered = value.to_string();
-    if rendered.len() <= max_size {
-        return value;
-    }
-
-    match value {
-        serde_json::Value::Object(map) => {
-            let mut truncated = serde_json::Map::new();
-            let mut current_size = 0usize;
-
-            for (key, value) in map {
-                let is_critical = is_critical_structured_output_key(key.as_str());
-                let processed_value = if is_critical {
-                    truncate_structured_output(value, (max_size / 4).max(64))
-                } else {
-                    truncate_structured_output(value, (max_size / 2).max(64))
-                };
-                let value_size = key.len() + processed_value.to_string().len();
-                if current_size + value_size < max_size * 3 / 4 || is_critical {
-                    truncated.insert(key, processed_value);
-                    current_size += value_size;
-                } else {
-                    truncated.insert(
-                        "_truncated".to_string(),
-                        serde_json::Value::String("Additional fields omitted".to_string()),
-                    );
-                    break;
-                }
-            }
-
-            serde_json::Value::Object(truncated)
-        }
-        serde_json::Value::Array(items) => {
-            let item_budget = (max_size / items.len().max(1)).max(32);
-            let mut truncated = Vec::new();
-            let mut current_size = 0usize;
-
-            for item in items {
-                let processed = truncate_structured_output(item, item_budget);
-                let item_size = processed.to_string().len();
-                if current_size + item_size < max_size * 3 / 4 {
-                    truncated.push(processed);
-                    current_size += item_size;
-                } else {
-                    truncated.push(json!({
-                        "_note": "Additional array items omitted"
-                    }));
-                    break;
-                }
-            }
-
-            serde_json::Value::Array(truncated)
-        }
-        serde_json::Value::String(text) => {
-            serde_json::Value::String(truncate_text_with_suffix(&text, max_size, "..."))
-        }
-        other => other,
-    }
-}
-
 pub(super) fn parse_confirmation_request(
     tool_call_id: &str,
     args: &serde_json::Value,
@@ -1409,101 +1113,6 @@ fn parse_plan_update(
     Some((explanation, items))
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct DelegatedSkillInvocationRequest {
-    skill_id: String,
-    target: String,
-    task: String,
-    cwd: Option<PathBuf>,
-    timeout_secs: Option<u64>,
-}
-
-impl DelegatedSkillInvocationRequest {
-    fn with_effective_launch_inputs(
-        &self,
-        cwd: Option<PathBuf>,
-        timeout_secs: Option<u64>,
-    ) -> Self {
-        Self {
-            skill_id: self.skill_id.clone(),
-            target: self.target.clone(),
-            task: self.task.clone(),
-            cwd,
-            timeout_secs,
-        }
-    }
-}
-
-fn parse_delegated_skill_invocation_request(
-    arguments: &serde_json::Value,
-) -> Option<DelegatedSkillInvocationRequest> {
-    let skill_id = arguments.get("skill_id")?.as_str()?.trim().to_string();
-    let target = arguments.get("target")?.as_str()?.trim().to_string();
-    let task = arguments.get("task")?.as_str()?.trim().to_string();
-    let cwd = parse_optional_path_argument(arguments, "cwd")?;
-    let timeout_secs = parse_optional_timeout_secs_argument(arguments, "timeout_secs")?;
-    if skill_id.is_empty() || target.is_empty() || task.is_empty() {
-        return None;
-    }
-    Some(DelegatedSkillInvocationRequest {
-        skill_id,
-        target,
-        task,
-        cwd,
-        timeout_secs,
-    })
-}
-
-fn parse_optional_path_argument(
-    arguments: &serde_json::Value,
-    key: &str,
-) -> Option<Option<PathBuf>> {
-    match arguments.get(key) {
-        None => Some(None),
-        Some(value) => {
-            let path = value.as_str()?.trim();
-            if path.is_empty() {
-                return Some(None);
-            }
-            Some(Some(PathBuf::from(path)))
-        }
-    }
-}
-
-fn parse_optional_timeout_secs_argument(
-    arguments: &serde_json::Value,
-    key: &str,
-) -> Option<Option<u64>> {
-    match arguments.get(key) {
-        None => Some(None),
-        Some(value) => {
-            let timeout_secs = value.as_u64()?;
-            if timeout_secs == 0 || timeout_secs > MAX_DELEGATED_TIMEOUT_SECS {
-                return None;
-            }
-            Some(Some(timeout_secs))
-        }
-    }
-}
-
-fn truncate_text_with_suffix(text: &str, max_chars: usize, suffix: &str) -> String {
-    if text.chars().count() <= max_chars {
-        return text.to_string();
-    }
-
-    let suffix_len = suffix.chars().count();
-    if max_chars <= suffix_len {
-        return suffix.chars().take(max_chars).collect();
-    }
-
-    let mut truncated = text
-        .chars()
-        .take(max_chars.saturating_sub(suffix_len))
-        .collect::<String>();
-    truncated.push_str(suffix);
-    truncated
-}
-
 fn request_confirmation_tool_definition() -> ToolDefinition {
     ToolDefinition {
         name: "request_confirmation".to_string(),
@@ -1619,45 +1228,6 @@ fn update_plan_tool_definition() -> ToolDefinition {
                 }
             },
             "required": ["items"]
-        }),
-    }
-}
-
-fn invoke_delegated_skill_tool_definition() -> ToolDefinition {
-    ToolDefinition {
-        name: "invoke_delegated_skill".to_string(),
-        description: "Invoke a delegated skill through alan's runtime-owned delegated launch path. Use this for delegated skills listed in the skills catalog or in active-skill runtime context.".to_string(),
-        parameters: serde_json::json!({
-            "type": "object",
-            "properties": {
-                "skill_id": {
-                    "type": "string",
-                    "description": "Resolved delegated skill id exposed in the skills catalog or active-skill runtime context.",
-                    "maxLength": MAX_DELEGATED_SKILL_ID_CHARS
-                },
-                "target": {
-                    "type": "string",
-                    "description": "Resolved package-local launch target for this delegated skill.",
-                    "maxLength": MAX_DELEGATED_TARGET_CHARS
-                },
-                "task": {
-                    "type": "string",
-                    "description": "A concise bounded task for the delegated runtime.",
-                    "maxLength": MAX_DELEGATED_TASK_CHARS
-                },
-                "cwd": {
-                    "type": "string",
-                    "description": "Optional Alan OS namespace cwd for the delegated Process. When omitted, the child inherits the parent Process cwd.",
-                    "maxLength": MAX_DELEGATED_PATH_CHARS
-                },
-                "timeout_secs": {
-                    "type": "integer",
-                    "description": "Optional bounded runtime timeout for the delegated child. When omitted, alan applies a default bounded child timeout.",
-                    "minimum": 1,
-                    "maximum": MAX_DELEGATED_TIMEOUT_SECS
-                }
-            },
-            "required": ["skill_id", "target", "task"]
         }),
     }
 }
