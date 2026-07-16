@@ -9,6 +9,8 @@ mod child_run_termination_tool;
 mod child_runs;
 mod compaction;
 mod delegated_child_run;
+mod delegated_skill_evidence;
+mod delegated_skill_tool;
 mod delegation_capabilities;
 mod engine;
 mod guardian;
