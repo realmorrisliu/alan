@@ -139,6 +139,39 @@ fn child_supervision_has_no_runtime_receiver_fallback() {
 }
 
 #[test]
+fn turn_generation_uses_only_the_file_native_namespace_boundary() {
+    let executor = read_runtime_source("turn_executor.rs");
+    let production = executor.split("\n#[cfg(test)]\nmod tests").next().unwrap();
+    for forbidden in [
+        "generate_response_with_retry",
+        "with_provider_input",
+        "with_previous_response_id",
+        "with_context_management_compact_threshold",
+    ] {
+        assert!(
+            !production.contains(forbidden),
+            "turn transition loop retained provider-local generation path {forbidden}"
+        );
+    }
+
+    let generation = read_runtime_source("turn_executor/namespace_generation.rs");
+    assert!(generation.contains("generate_with_text_events_controlled"));
+    assert!(generation.contains("neutralize_namespace_capabilities"));
+
+    let projection = read_crate_source("llm/input_projection.rs");
+    for forbidden in [
+        "responses_input_items",
+        "chat_completions_messages",
+        "anthropic_messages",
+    ] {
+        assert!(
+            !projection.contains(forbidden),
+            "Agent Execution Engine retained provider-specific projection {forbidden}"
+        );
+    }
+}
+
+#[test]
 fn engine_does_not_assemble_alan_os() {
     let source = read_runtime_source("engine.rs");
     let production = source.split("\n#[cfg(test)]\nmod tests").next().unwrap();

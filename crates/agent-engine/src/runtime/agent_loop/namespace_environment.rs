@@ -1398,7 +1398,7 @@ impl<'a> LlmRequestDoc<'a> {
             bail!("namespace llmfs generation requires at least one message");
         }
         Ok(Self {
-            version: 1,
+            version: 2,
             system: request.system_prompt.as_deref(),
             messages: &request.messages,
             tools: &request.tools,

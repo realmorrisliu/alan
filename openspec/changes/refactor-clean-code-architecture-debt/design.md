@@ -100,6 +100,19 @@ behavior changes require a separate OpenSpec change.
 Alternative considered: complete one repository-wide rewrite and validate at
 the end. Rejected because failures would be difficult to localize and review.
 
+### Decision: File-native generation carries typed content, not private overrides
+
+The llmfs request DTO carries provider-neutral typed message parts through the
+Generation `data` file. The llmfs boundary validates attachment capabilities,
+and official provider adapters project those parts into their native image and
+document representations. Agent Execution Engine does not rebuild the removed
+`responses_input_items`, `chat_completions_messages`, or `anthropic_messages`
+override paths.
+
+Alternative considered: restore the old provider-specific `extra_params` from
+the engine. Rejected because that would preserve behavior by reversing the
+namespace ownership correction and would keep provider details above llmfs.
+
 ## Risks / Trade-offs
 
 - [Behavior changes during moves] → Characterize the seam first, keep each PR

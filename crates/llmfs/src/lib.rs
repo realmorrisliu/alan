@@ -27,94 +27,21 @@ use std::sync::{Arc, Mutex as StdMutex};
 
 use alan_ap::{ErrorCode, Fid, FileKind, FileServer, Offset, OpenMode, Qid, Stat, Stream};
 use alan_llm::{
-    CompatibilityTier, GenerationRequest, LlmProvider, Message, MessageRole, ProviderCapabilities,
-    ReasoningControls, ReasoningEffort, StreamChunk, TokenUsage, ToolCall, ToolCallDelta,
-    ToolDefinition, factory::ProviderType,
+    CompatibilityTier, LlmProvider, ProviderCapabilities, StreamChunk, TokenUsage, ToolCallDelta,
+    factory::ProviderType,
 };
 use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use tokio::sync::{Mutex as AsyncMutex, Notify};
+
+mod request_wire;
+
+use request_wire::WireRequestDocV2;
 
 /// Cap on a buffered request document, so a hostile writer cannot exhaust the
 /// server before the commit-time validation runs.
 const MAX_DOC_BYTES: usize = 1 << 20; // 1 MiB
 const RETAIN_TERMINAL_GENERATIONS_PER_CONNECTION: usize = 16;
-
-/// The neutral request document written to a Generation's `data` file.
-///
-/// The versioned DTO is owned by llmfs and mapped into `alan-llm` at the file
-/// server boundary. The version discriminator is required and only version 1
-/// is currently supported.
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct WireRequestDocV1 {
-    version: u16,
-    #[serde(default)]
-    system: Option<String>,
-    #[serde(default)]
-    messages: Vec<WireMessage>,
-    #[serde(default)]
-    tools: Vec<WireToolDefinition>,
-    #[serde(default)]
-    temperature: Option<f32>,
-    #[serde(default)]
-    max_tokens: Option<i32>,
-    #[serde(default)]
-    reasoning: WireReasoningControls,
-    #[serde(default)]
-    extra_params: serde_json::Map<String, serde_json::Value>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct WireMessage {
-    role: WireMessageRole,
-    content: String,
-    #[serde(default)]
-    thinking: Option<String>,
-    #[serde(default)]
-    thinking_signature: Option<String>,
-    #[serde(default)]
-    redacted_thinking: Option<Vec<String>>,
-    #[serde(default)]
-    tool_calls: Option<Vec<WireToolCall>>,
-    #[serde(default)]
-    tool_call_id: Option<String>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "lowercase")]
-enum WireMessageRole {
-    System,
-    User,
-    Assistant,
-    Tool,
-    Context,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct WireToolDefinition {
-    name: String,
-    description: String,
-    parameters: serde_json::Value,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct WireToolCall {
-    #[serde(default)]
-    id: Option<String>,
-    name: String,
-    arguments: serde_json::Value,
-}
-
-#[derive(Default, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct WireReasoningControls {
-    #[serde(default)]
-    effort: Option<ReasoningEffort>,
-}
 
 #[derive(Serialize)]
 struct WireStreamEventV1 {
@@ -171,73 +98,6 @@ struct WireToolCallDelta {
     arguments_delta: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     arguments: Option<String>,
-}
-
-impl WireRequestDocV1 {
-    fn into_generation_request(self) -> Result<GenerationRequest, ()> {
-        if self.version != 1 || self.messages.is_empty() {
-            return Err(());
-        }
-        Ok(GenerationRequest {
-            system_prompt: self.system,
-            messages: self.messages.into_iter().map(Into::into).collect(),
-            tools: self.tools.into_iter().map(Into::into).collect(),
-            temperature: self.temperature,
-            max_tokens: self.max_tokens,
-            reasoning: ReasoningControls {
-                effort: self.reasoning.effort,
-            },
-            extra_params: self.extra_params.into_iter().collect(),
-        })
-    }
-}
-
-impl From<WireMessage> for Message {
-    fn from(value: WireMessage) -> Self {
-        Self {
-            role: value.role.into(),
-            content: value.content,
-            thinking: value.thinking,
-            thinking_signature: value.thinking_signature,
-            redacted_thinking: value.redacted_thinking,
-            tool_calls: value
-                .tool_calls
-                .map(|tool_calls| tool_calls.into_iter().map(Into::into).collect()),
-            tool_call_id: value.tool_call_id,
-        }
-    }
-}
-
-impl From<WireMessageRole> for MessageRole {
-    fn from(value: WireMessageRole) -> Self {
-        match value {
-            WireMessageRole::System => MessageRole::System,
-            WireMessageRole::User => MessageRole::User,
-            WireMessageRole::Assistant => MessageRole::Assistant,
-            WireMessageRole::Tool => MessageRole::Tool,
-            WireMessageRole::Context => MessageRole::Context,
-        }
-    }
-}
-
-impl From<WireToolDefinition> for ToolDefinition {
-    fn from(value: WireToolDefinition) -> Self {
-        Self {
-            name: value.name,
-            description: value.description,
-            parameters: value.parameters,
-        }
-    }
-}
-
-impl From<WireToolCall> for ToolCall {
-    fn from(value: WireToolCall) -> Self {
-        Self {
-            id: value.id,
-            name: value.name,
-            arguments: value.arguments,
-        }
-    }
 }
 
 impl From<TokenUsage> for WireTokenUsage {
@@ -1200,7 +1060,7 @@ impl FileServer for LlmFs {
         };
 
         // Parse the request first (pure): an empty or invalid document is malformed.
-        let doc: Result<WireRequestDocV1, ()> = if buf.is_empty() {
+        let doc: Result<WireRequestDocV2, ()> = if buf.is_empty() {
             Err(())
         } else {
             serde_json::from_slice(&buf).map_err(|_| ())
@@ -1223,7 +1083,7 @@ impl FileServer for LlmFs {
             }
         };
 
-        let request = match doc.into_generation_request() {
+        let request = match doc.into_generation_request(generation.connection.capabilities) {
             Ok(request) => request,
             Err(()) => {
                 let _guard = generation.finalize.lock().await;

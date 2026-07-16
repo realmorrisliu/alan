@@ -6,6 +6,11 @@ use std::collections::HashMap;
 use tracing::debug;
 
 use crate::ReasoningEffort;
+use crate::message::reject_retired_message_overrides;
+
+mod input_projection;
+
+use input_projection::convert_messages_for_anthropic_messages;
 
 const MIN_THINKING_BUDGET_TOKENS: u32 = 1_024;
 const INTERLEAVED_THINKING_BETA: &str = "interleaved-thinking-2025-05-14";
@@ -425,124 +430,14 @@ impl AnthropicMessagesToolDefinition {
     }
 }
 
-// ============================================================================
-// LlmProvider Trait Implementation
-// ============================================================================
-
 use crate::{
-    GenerationRequest, GenerationResponse, LlmProvider, Message as LlmMessage, MessageRole,
-    SseEventParser, StreamChunk, TokenUsage, ToolCall as LlmToolCall, ToolCallDelta,
-    ToolDefinition as LlmToolDefinition,
+    GenerationRequest, GenerationResponse, LlmProvider, SseEventParser, StreamChunk, TokenUsage,
+    ToolCall as LlmToolCall, ToolCallDelta, ToolDefinition as LlmToolDefinition,
 };
 use async_trait::async_trait;
 
 fn is_non_empty(value: &str) -> bool {
     !value.trim().is_empty()
-}
-
-fn convert_messages_for_anthropic_messages(
-    messages: Vec<LlmMessage>,
-) -> Vec<AnthropicMessagesMessage> {
-    let mut converted = Vec::new();
-    let mut known_tool_use_ids = std::collections::HashSet::new();
-
-    for msg in messages {
-        let LlmMessage {
-            role,
-            content,
-            thinking,
-            thinking_signature,
-            redacted_thinking,
-            tool_calls,
-            tool_call_id,
-        } = msg;
-
-        let content_blocks = match role {
-            MessageRole::User => {
-                if content.is_empty() {
-                    Vec::new()
-                } else {
-                    vec![ContentBlockInput::Text { text: content }]
-                }
-            }
-            MessageRole::Assistant => {
-                let mut blocks = Vec::new();
-
-                if let Some(thinking) = thinking
-                    && !thinking.is_empty()
-                {
-                    blocks.push(ContentBlockInput::Thinking {
-                        thinking,
-                        signature: thinking_signature.filter(|sig| is_non_empty(sig)),
-                    });
-                }
-
-                if let Some(redacted_blocks) = redacted_thinking {
-                    for data in redacted_blocks {
-                        if is_non_empty(&data) {
-                            blocks.push(ContentBlockInput::RedactedThinking { data });
-                        }
-                    }
-                }
-
-                if !content.is_empty() {
-                    blocks.push(ContentBlockInput::Text { text: content });
-                }
-
-                if let Some(calls) = tool_calls {
-                    for call in calls {
-                        if let Some(id) = call.id.filter(|id| is_non_empty(id)) {
-                            known_tool_use_ids.insert(id.clone());
-                            blocks.push(ContentBlockInput::ToolUse {
-                                id,
-                                name: call.name,
-                                input: call.arguments,
-                            });
-                        }
-                    }
-                }
-
-                blocks
-            }
-            MessageRole::Tool => {
-                if let Some(tool_use_id) = tool_call_id.filter(|id| is_non_empty(id)) {
-                    if known_tool_use_ids.contains(&tool_use_id) {
-                        vec![ContentBlockInput::ToolResult {
-                            tool_use_id,
-                            content,
-                            is_error: None,
-                        }]
-                    } else if !content.is_empty() {
-                        vec![ContentBlockInput::Text { text: content }]
-                    } else {
-                        Vec::new()
-                    }
-                } else if !content.is_empty() {
-                    vec![ContentBlockInput::Text { text: content }]
-                } else {
-                    Vec::new()
-                }
-            }
-            MessageRole::System | MessageRole::Context => Vec::new(),
-        };
-
-        if content_blocks.is_empty() {
-            continue;
-        }
-
-        let role = match role {
-            MessageRole::User | MessageRole::Tool => "user".to_string(),
-            MessageRole::Assistant => "assistant".to_string(),
-            MessageRole::System | MessageRole::Context => continue,
-        };
-
-        converted.push(AnthropicMessagesMessage {
-            role,
-            content: content_blocks,
-        });
-    }
-
-    converted
 }
 
 fn convert_tools_for_anthropic_messages(
@@ -561,34 +456,6 @@ fn convert_tools_for_anthropic_messages(
                 })
                 .collect(),
         )
-    }
-}
-
-fn take_anthropic_messages_extra_param(
-    key: &str,
-    extra_params: &mut HashMap<String, serde_json::Value>,
-) -> Result<Option<Vec<AnthropicMessagesMessage>>> {
-    let Some(value) = extra_params.remove(key) else {
-        return Ok(None);
-    };
-
-    match value {
-        serde_json::Value::Array(values) if !values.is_empty() => {
-            let parsed = serde_json::from_value::<Vec<AnthropicMessagesMessage>>(
-                serde_json::Value::Array(values),
-            )
-            .context("Failed to parse Anthropic message override payload")?;
-            Ok(Some(parsed))
-        }
-        serde_json::Value::Array(_) => Ok(None),
-        other => {
-            debug!(
-                key,
-                value = %other,
-                "Ignoring non-array Anthropic message override"
-            );
-            Ok(None)
-        }
     }
 }
 
@@ -929,6 +796,7 @@ async fn send_stream_chunk(
 #[async_trait]
 impl LlmProvider for AnthropicMessagesClient {
     async fn generate(&mut self, request: GenerationRequest) -> anyhow::Result<GenerationResponse> {
+        reject_retired_message_overrides(&request)?;
         let GenerationRequest {
             system_prompt,
             messages: request_messages,
@@ -939,9 +807,8 @@ impl LlmProvider for AnthropicMessagesClient {
             mut extra_params,
         } = request;
 
-        let messages =
-            take_anthropic_messages_extra_param("anthropic_messages", &mut extra_params)?
-                .unwrap_or_else(|| convert_messages_for_anthropic_messages(request_messages));
+        let (messages, system_prompt) =
+            convert_messages_for_anthropic_messages(request_messages, system_prompt)?;
         let tools = convert_tools_for_anthropic_messages(request_tools);
         let request_headers = build_request_headers(&messages, &mut extra_params)?;
         if !extra_params.is_empty() {
@@ -979,6 +846,7 @@ impl LlmProvider for AnthropicMessagesClient {
         &mut self,
         request: GenerationRequest,
     ) -> anyhow::Result<tokio::sync::mpsc::Receiver<StreamChunk>> {
+        reject_retired_message_overrides(&request)?;
         let GenerationRequest {
             system_prompt,
             messages: request_messages,
@@ -989,9 +857,8 @@ impl LlmProvider for AnthropicMessagesClient {
             mut extra_params,
         } = request;
 
-        let messages =
-            take_anthropic_messages_extra_param("anthropic_messages", &mut extra_params)?
-                .unwrap_or_else(|| convert_messages_for_anthropic_messages(request_messages));
+        let (messages, system_prompt) =
+            convert_messages_for_anthropic_messages(request_messages, system_prompt)?;
         let tools = convert_tools_for_anthropic_messages(request_tools);
         let request_headers = build_request_headers(&messages, &mut extra_params)?;
         if !extra_params.is_empty() {
@@ -1018,7 +885,6 @@ impl LlmProvider for AnthropicMessagesClient {
         let (tx, rx) = tokio::sync::mpsc::channel(100);
         let (event_tx, mut event_rx) = tokio::sync::mpsc::channel(100);
 
-        // Spawn streaming task
         let client =
             AnthropicMessagesClient::with_params(&self.api_key, &self.base_url, &self.model);
         let request_headers_for_task = request_headers;
@@ -1272,6 +1138,7 @@ impl LlmProvider for AnthropicMessagesClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::MessageRole;
 
     #[test]
     fn anthropic_messages_url_appends_v1_when_missing() {
@@ -1712,7 +1579,8 @@ mod tests {
         );
         let tool = crate::Message::tool("toolu_123", "{\"ok\":true}");
 
-        let converted = convert_messages_for_anthropic_messages(vec![assistant, tool]);
+        let (converted, _) =
+            convert_messages_for_anthropic_messages(vec![assistant, tool], None).unwrap();
         assert_eq!(converted.len(), 2);
 
         assert_eq!(converted[0].role, "assistant");
@@ -1741,6 +1609,7 @@ mod tests {
         let tool_msg = crate::Message {
             role: MessageRole::Tool,
             content: "tool output".to_string(),
+            content_parts: Vec::new(),
             thinking: None,
             thinking_signature: None,
             redacted_thinking: None,
@@ -1748,7 +1617,7 @@ mod tests {
             tool_call_id: Some("   ".to_string()),
         };
 
-        let converted = convert_messages_for_anthropic_messages(vec![tool_msg]);
+        let (converted, _) = convert_messages_for_anthropic_messages(vec![tool_msg], None).unwrap();
         assert_eq!(converted.len(), 1);
         assert_eq!(converted[0].role, "user");
         assert_eq!(converted[0].content.len(), 1);
@@ -1769,8 +1638,9 @@ mod tests {
         );
         let unmatched_tool_result = crate::Message::tool("toolu_unknown", "{\"ok\":true}");
 
-        let converted =
-            convert_messages_for_anthropic_messages(vec![assistant, unmatched_tool_result]);
+        let (converted, _) =
+            convert_messages_for_anthropic_messages(vec![assistant, unmatched_tool_result], None)
+                .unwrap();
         assert_eq!(converted.len(), 2);
         assert_eq!(converted[1].role, "user");
         assert_eq!(converted[1].content.len(), 1);
@@ -1866,6 +1736,7 @@ mod tests {
         let message = crate::Message {
             role: MessageRole::Assistant,
             content: "done".to_string(),
+            content_parts: Vec::new(),
             thinking: Some("step by step".to_string()),
             thinking_signature: Some("sig_123".to_string()),
             redacted_thinking: Some(vec!["ciphertext".to_string()]),
@@ -1873,7 +1744,7 @@ mod tests {
             tool_call_id: None,
         };
 
-        let converted = convert_messages_for_anthropic_messages(vec![message]);
+        let (converted, _) = convert_messages_for_anthropic_messages(vec![message], None).unwrap();
         assert_eq!(converted.len(), 1);
         assert_eq!(converted[0].role, "assistant");
         assert_eq!(converted[0].content.len(), 3);

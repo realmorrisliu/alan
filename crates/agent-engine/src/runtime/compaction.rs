@@ -1054,30 +1054,16 @@ where
     let mut llm_messages = Vec::new();
 
     if let Some(existing_summary) = state.machine.tape.summary() {
-        llm_messages.push(crate::llm::Message {
-            role: crate::llm::MessageRole::Context,
-            content: format!(
-                "[Previous compaction summary (compaction #{})]\n{}",
-                compaction_count, existing_summary
-            ),
-            thinking: None,
-            thinking_signature: None,
-            redacted_thinking: None,
-            tool_calls: None,
-            tool_call_id: None,
-        });
+        llm_messages.push(crate::llm::Message::context(format!(
+            "[Previous compaction summary (compaction #{})]\n{}",
+            compaction_count, existing_summary
+        )));
     }
 
     if let Some(focus) = request.focus() {
-        llm_messages.push(crate::llm::Message {
-            role: crate::llm::MessageRole::Context,
-            content: format!("[Compaction focus]\nPreserve and emphasize: {focus}"),
-            thinking: None,
-            thinking_signature: None,
-            redacted_thinking: None,
-            tool_calls: None,
-            tool_call_id: None,
-        });
+        llm_messages.push(crate::llm::Message::context(format!(
+            "[Compaction focus]\nPreserve and emphasize: {focus}"
+        )));
     }
 
     llm_messages.extend(crate::llm::project_messages(&sanitized_to_summarize, true));

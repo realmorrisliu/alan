@@ -47,6 +47,7 @@ use tokio::sync::mpsc;
 pub mod anthropic_messages;
 pub mod chatgpt_responses;
 pub mod google_gemini_generate_content;
+mod message;
 pub mod openai_chat_completions;
 pub mod openai_responses;
 pub mod openrouter;
@@ -57,6 +58,7 @@ pub(crate) use sse::SseEventParser;
 pub use anthropic_messages::AnthropicMessagesClient;
 pub use chatgpt_responses::ChatgptResponsesClient;
 pub use google_gemini_generate_content::GoogleGeminiGenerateContentClient;
+pub use message::{Message, MessageContentPart, MessageRole};
 pub use openai_chat_completions::OpenAiChatCompletionsClient;
 pub use openai_responses::OpenAiResponsesClient;
 pub use openrouter::OpenRouterClient;
@@ -64,34 +66,6 @@ pub use openrouter::OpenRouterClient;
 // ============================================================================
 // Core Types
 // ============================================================================
-
-/// A message in the conversation
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Message {
-    pub role: MessageRole,
-    pub content: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub thinking: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub thinking_signature: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub redacted_thinking: Option<Vec<String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tool_calls: Option<Vec<ToolCall>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tool_call_id: Option<String>,
-}
-
-/// Role of the message sender
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum MessageRole {
-    System,
-    User,
-    Assistant,
-    Tool,
-    Context,
-}
 
 /// Compatibility/support tier for a provider family.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -257,6 +231,7 @@ impl GenerationRequest {
         self.messages.push(Message {
             role: MessageRole::User,
             content: content.into(),
+            content_parts: Vec::new(),
             thinking: None,
             thinking_signature: None,
             redacted_thinking: None,
@@ -271,6 +246,7 @@ impl GenerationRequest {
         self.messages.push(Message {
             role: MessageRole::Assistant,
             content: content.into(),
+            content_parts: Vec::new(),
             thinking: None,
             thinking_signature: None,
             redacted_thinking: None,
@@ -285,6 +261,7 @@ impl GenerationRequest {
         self.messages.push(Message {
             role,
             content: content.into(),
+            content_parts: Vec::new(),
             thinking: None,
             thinking_signature: None,
             redacted_thinking: None,
@@ -393,73 +370,6 @@ impl GenerationRequest {
 impl Default for GenerationRequest {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-impl Message {
-    /// Create a system message
-    pub fn system(content: impl Into<String>) -> Self {
-        Self {
-            role: MessageRole::System,
-            content: content.into(),
-            thinking: None,
-            thinking_signature: None,
-            redacted_thinking: None,
-            tool_calls: None,
-            tool_call_id: None,
-        }
-    }
-
-    /// Create a user message
-    pub fn user(content: impl Into<String>) -> Self {
-        Self {
-            role: MessageRole::User,
-            content: content.into(),
-            thinking: None,
-            thinking_signature: None,
-            redacted_thinking: None,
-            tool_calls: None,
-            tool_call_id: None,
-        }
-    }
-
-    /// Create an assistant message
-    pub fn assistant(content: impl Into<String>) -> Self {
-        Self {
-            role: MessageRole::Assistant,
-            content: content.into(),
-            thinking: None,
-            thinking_signature: None,
-            redacted_thinking: None,
-            tool_calls: None,
-            tool_call_id: None,
-        }
-    }
-
-    /// Create an assistant message with tool calls
-    pub fn assistant_with_tools(content: impl Into<String>, tool_calls: Vec<ToolCall>) -> Self {
-        Self {
-            role: MessageRole::Assistant,
-            content: content.into(),
-            thinking: None,
-            thinking_signature: None,
-            redacted_thinking: None,
-            tool_calls: Some(tool_calls),
-            tool_call_id: None,
-        }
-    }
-
-    /// Create a tool response message
-    pub fn tool(tool_call_id: impl Into<String>, content: impl Into<String>) -> Self {
-        Self {
-            role: MessageRole::Tool,
-            content: content.into(),
-            thinking: None,
-            thinking_signature: None,
-            redacted_thinking: None,
-            tool_calls: None,
-            tool_call_id: Some(tool_call_id.into()),
-        }
     }
 }
 

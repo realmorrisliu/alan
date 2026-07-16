@@ -26,6 +26,10 @@ use crate::{
     StreamChunk, TokenUsage, ToolCall, ToolCallDelta, ToolDefinition,
 };
 
+mod input_projection;
+
+use input_projection::convert_messages_for_openrouter;
+
 pub const OPENROUTER_BASE_URL: &str = "https://openrouter.ai/api/v1";
 
 /// alan LLM provider backed by the `openrouter-rs` SDK.
@@ -279,49 +283,6 @@ fn preserve_openrouter_reasoning_fields(payload: &mut Value, messages: &[Message
     }
 
     Ok(())
-}
-
-pub(crate) fn convert_messages_for_openrouter(messages: Vec<Message>) -> Result<Vec<OrMessage>> {
-    messages
-        .into_iter()
-        .map(|message| {
-            let Message {
-                role,
-                content,
-                thinking: _thinking,
-                thinking_signature: _thinking_signature,
-                redacted_thinking: _,
-                tool_calls,
-                tool_call_id,
-            } = message;
-
-            Ok(match role {
-                MessageRole::System => OrMessage::new(Role::System, content),
-                MessageRole::User => OrMessage::new(Role::User, content),
-                MessageRole::Assistant => {
-                    let tool_calls = tool_calls.map(convert_tool_calls_for_openrouter);
-                    match tool_calls {
-                        Some(tool_calls) if !tool_calls.is_empty() => {
-                            OrMessage::assistant_with_tool_calls(content, tool_calls)
-                        }
-                        _ => OrMessage::new(Role::Assistant, content),
-                    }
-                }
-                MessageRole::Tool => {
-                    let tool_call_id = tool_call_id
-                        .map(|value| value.trim().to_string())
-                        .filter(|value| !value.is_empty())
-                        .ok_or_else(|| {
-                            anyhow::anyhow!(
-                                "OpenRouter tool response messages require a non-empty tool_call_id"
-                            )
-                        })?;
-                    OrMessage::tool_response(&tool_call_id, content)
-                }
-                MessageRole::Context => OrMessage::new(Role::System, content),
-            })
-        })
-        .collect()
 }
 
 pub(crate) fn convert_tools_for_openrouter(tools: Vec<ToolDefinition>) -> Vec<OrTool> {
@@ -919,17 +880,10 @@ mod tests {
             .with_assistant_message("thinking done")
             .with_tool(ToolDefinition::new("lookup", "Lookup data"))
             .with_reasoning_effort(ReasoningEffort::Low);
-        request.messages.push(Message {
-            role: MessageRole::Assistant,
-            content: String::new(),
-            thinking: None,
-            thinking_signature: None,
-            redacted_thinking: None,
-            tool_calls: Some(vec![
-                ToolCall::new("lookup", json!({"q":"rust"})).with_id("call-1"),
-            ]),
-            tool_call_id: None,
-        });
+        request.messages.push(Message::assistant_with_tools(
+            "",
+            vec![ToolCall::new("lookup", json!({"q":"rust"})).with_id("call-1")],
+        ));
         request
             .messages
             .push(Message::tool("call-1", "tool result"));
@@ -951,15 +905,10 @@ mod tests {
     #[test]
     fn request_payload_preserves_assistant_reasoning_fields() {
         let mut request = GenerationRequest::new().with_user_message("hello");
-        request.messages.push(Message {
-            role: MessageRole::Assistant,
-            content: "answer".to_string(),
-            thinking: Some("step by step".to_string()),
-            thinking_signature: Some("encrypted_state".to_string()),
-            redacted_thinking: None,
-            tool_calls: None,
-            tool_call_id: None,
-        });
+        let mut assistant = Message::assistant("answer");
+        assistant.thinking = Some("step by step".to_string());
+        assistant.thinking_signature = Some("encrypted_state".to_string());
+        request.messages.push(assistant);
 
         let value = build_openrouter_chat_request_payload("openrouter/model", request).unwrap();
 
@@ -974,15 +923,9 @@ mod tests {
     #[test]
     fn missing_tool_call_id_fails_projection_before_dispatch() {
         let mut request = GenerationRequest::new().with_user_message("hello");
-        request.messages.push(Message {
-            role: MessageRole::Tool,
-            content: "tool result".to_string(),
-            thinking: None,
-            thinking_signature: None,
-            redacted_thinking: None,
-            tool_calls: None,
-            tool_call_id: None,
-        });
+        let mut tool = Message::tool("", "tool result");
+        tool.tool_call_id = None;
+        request.messages.push(tool);
 
         let error = build_openrouter_chat_request("openrouter/model", request).unwrap_err();
 

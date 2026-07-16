@@ -10,7 +10,7 @@ use tokio::io::AsyncWriteExt;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    llm::{Message, MessageRole, build_generation_request},
+    llm::{Message, build_generation_request},
     prompts::{self, MEMORY_STORE_FILENAME},
 };
 
@@ -298,15 +298,9 @@ async fn generate_flush_content(
 ) -> Result<Option<MemoryFlushContent>> {
     let mut llm_messages = Vec::new();
     if let Some(existing_summary) = state.machine.tape.summary() {
-        llm_messages.push(Message {
-            role: MessageRole::Context,
-            content: format!("[Current compaction summary]\n{existing_summary}"),
-            thinking: None,
-            thinking_signature: None,
-            redacted_thinking: None,
-            tool_calls: None,
-            tool_call_id: None,
-        });
+        llm_messages.push(Message::context(format!(
+            "[Current compaction summary]\n{existing_summary}"
+        )));
     }
     llm_messages.extend(crate::llm::project_messages(sanitized_messages, true));
 
