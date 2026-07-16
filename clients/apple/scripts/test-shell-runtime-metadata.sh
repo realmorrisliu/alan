@@ -28,7 +28,9 @@ CLANG_MODULE_CACHE_PATH="$MODULE_CACHE_DIR" swiftc \
     "$REPO_ROOT/clients/apple/alan-macos/ShellModel.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/ShellControlFilePoller.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/ShellActionCoordinator.swift" \
-    "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/ShellClipboardWriter.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/ShellAppActivityProvider.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/ShellCloseConfirmationPresenter.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/ShellPasteboard.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/ShellContentRenderingRegistry.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/ShellCoreFFIAdapter.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/ShellCoreFFIActionAdapter.swift" \

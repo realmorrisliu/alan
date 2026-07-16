@@ -2513,7 +2513,8 @@ private enum ShellRuntimeMetadataTests {
     }
 
     private static func verifiesCopyPasteRouteToFocusedTerminalRuntime() {
-        let controller = makeController()
+        let systemPasteboard = FakeShellPasteboard(string: "system paste payload")
+        let controller = makeController(pasteboard: systemPasteboard)
         let handle = fakeSurfaceHandle(for: "pane_1", controller: controller)
         handle.selectedText = "focused terminal selection"
         let pasteboard = RecordingTerminalPasteboardWriter()
@@ -2534,6 +2535,15 @@ private enum ShellRuntimeMetadataTests {
         expect(
             handle.deliveredText.last == "pasted payload",
             "menu paste must deliver text through the terminal runtime owner"
+        )
+
+        expect(
+            controller.pasteIntoTerminalFromPasteboard(source: .menuBar),
+            "menu paste must read text through the injected system pasteboard boundary"
+        )
+        expect(
+            handle.deliveredText.last == "system paste payload",
+            "system pasteboard text must reach the focused terminal runtime"
         )
     }
 
@@ -9173,6 +9183,7 @@ private enum ShellRuntimeMetadataTests {
         bootProfileCache: AlanShellBootProfileCache? = nil,
         persistenceWriter: ShellPersistenceWriting? = nil,
         manifestFlushScheduler: ManifestFlushScheduling? = nil,
+        pasteboard: ShellPasteboardAccessing? = nil,
         appIsActive: Bool = true
     ) -> ShellHostController {
         let registry =
@@ -9196,6 +9207,7 @@ private enum ShellRuntimeMetadataTests {
             workspaceManifest: workspaceManifest,
             persistenceWriter: resolvedWriter,
             manifestFlushScheduler: resolvedScheduler,
+            pasteboard: pasteboard,
             closeConfirmationPresenter: closeConfirmationPresenter,
             gracefulShutdownTimeout: gracefulShutdownTimeout,
             performanceDiagnosticsRecorder: performanceDiagnosticsRecorder,
@@ -9328,6 +9340,22 @@ private enum ShellRuntimeMetadataTests {
         func writeString(_ text: String) -> Bool {
             string = text
             return true
+        }
+    }
+
+    private final class FakeShellPasteboard: ShellPasteboardAccessing {
+        private(set) var string: String?
+
+        init(string: String? = nil) {
+            self.string = string
+        }
+
+        func readString() -> String? {
+            string
+        }
+
+        func writeString(_ value: String) {
+            string = value
         }
     }
 

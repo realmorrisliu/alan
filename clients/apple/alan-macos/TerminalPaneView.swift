@@ -2966,7 +2966,7 @@ private func shellSettingsCopyToPasteboard(_ value: String?) {
     else {
         return
     }
-    ShellClipboardWriter().writeString(value)
+    ShellSystemPasteboard().writeString(value)
 }
 
 @MainActor
