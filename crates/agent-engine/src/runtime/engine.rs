@@ -4,15 +4,16 @@ use super::agent_loop::{
     DeferredRuntimeActionExit, handle_submission_with_cancel,
     run_deferred_runtime_action_with_cancel,
 };
+use super::launch_config::AgentProcessConfig;
 use super::turn_driver::{
     NAMESPACE_PENDING_RESPONSE_POLL_INTERVAL, TurnInputBroker, drive_turn_submission_with_cancel,
     is_turn_inband_submission, namespace_pending_resume_submission, should_drive_turn_submission,
 };
 use super::turn_state::TurnState;
-use super::{NamespaceRuntimeEnvironment, RuntimeConfig, RuntimeLoopState};
+use super::{NamespaceRuntimeEnvironment, RuntimeLoopState};
 use crate::agent_machine::AgentMachine;
 use alan_agent_protocol::{Event, InputMode, Submission};
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -360,288 +361,6 @@ impl RuntimeHandle {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct AgentConfig {
-    pub core_config: crate::config::Config,
-    pub runtime_config: RuntimeConfig,
-    explicit_runtime_overrides: ExplicitRuntimeOverrides,
-}
-
-#[derive(Debug, Clone, Copy, Default)]
-struct ExplicitRuntimeOverrides {
-    model: bool,
-    max_tool_loops: bool,
-    tool_repeat_limit: bool,
-    llm_request_timeout_secs: bool,
-    prompt_snapshot_enabled: bool,
-    prompt_snapshot_max_chars: bool,
-    context_window_tokens: bool,
-    compaction_soft_trigger_ratio: bool,
-    compaction_hard_trigger_ratio: bool,
-    request_control_intent: bool,
-    streaming_mode: bool,
-    partial_stream_recovery_mode: bool,
-    durability_required: bool,
-}
-
-impl Default for AgentConfig {
-    fn default() -> Self {
-        let runtime_config = RuntimeConfig::default();
-        Self {
-            core_config: crate::config::Config::default(),
-            runtime_config,
-            explicit_runtime_overrides: ExplicitRuntimeOverrides::default(),
-        }
-    }
-}
-
-impl From<crate::config::Config> for AgentConfig {
-    fn from(config: crate::config::Config) -> Self {
-        let runtime_config = RuntimeConfig::from(&config);
-        Self {
-            core_config: config,
-            runtime_config,
-            explicit_runtime_overrides: ExplicitRuntimeOverrides::default(),
-        }
-    }
-}
-
-impl AgentConfig {
-    /// Override the effective model for this launch across agent-root overlays.
-    pub fn set_model_override(&mut self, model: impl Into<String>) {
-        self.core_config.set_effective_model(model);
-        sync_runtime_context_window_budget(&self.core_config, &mut self.runtime_config);
-        sync_runtime_request_control_intent(&self.core_config, &mut self.runtime_config);
-        self.explicit_runtime_overrides.model = true;
-    }
-
-    /// Override named model reasoning effort for this launch across overlays.
-    pub fn set_model_reasoning_effort_override(
-        &mut self,
-        model_reasoning_effort: Option<alan_agent_protocol::ReasoningEffort>,
-    ) {
-        self.core_config.model_reasoning_effort = model_reasoning_effort;
-        self.runtime_config.request_control_intent =
-            crate::RequestControlIntent::reasoning_effort(model_reasoning_effort);
-        self.explicit_runtime_overrides.request_control_intent = true;
-    }
-
-    /// Override streaming mode for this runtime launch, preserving it across agent-root overlays.
-    pub fn set_streaming_mode_override(&mut self, streaming_mode: crate::config::StreamingMode) {
-        self.core_config.streaming_mode = streaming_mode;
-        self.runtime_config.streaming_mode = streaming_mode;
-        self.explicit_runtime_overrides.streaming_mode = true;
-    }
-
-    /// Override partial stream recovery mode for this launch across agent-root overlays.
-    pub fn set_partial_stream_recovery_mode_override(
-        &mut self,
-        partial_stream_recovery_mode: crate::config::PartialStreamRecoveryMode,
-    ) {
-        self.core_config.partial_stream_recovery_mode = partial_stream_recovery_mode;
-        self.runtime_config.partial_stream_recovery_mode = partial_stream_recovery_mode;
-        self.explicit_runtime_overrides.partial_stream_recovery_mode = true;
-    }
-
-    /// Override machine durability requirement for this launch across agent-root overlays.
-    pub fn set_durability_required_override(&mut self, durability_required: bool) {
-        self.core_config.durability.required = durability_required;
-        self.runtime_config.durability_required = durability_required;
-        self.explicit_runtime_overrides.durability_required = true;
-    }
-
-    pub fn refresh_runtime_derived_fields(&mut self) {
-        sync_runtime_context_window_budget(&self.core_config, &mut self.runtime_config);
-        sync_runtime_request_control_intent(&self.core_config, &mut self.runtime_config);
-    }
-
-    pub fn with_definition_overlays(
-        &self,
-        overlay_paths: &[std::path::PathBuf],
-    ) -> anyhow::Result<Self> {
-        let mut merge_base_core_config = self.core_config.clone();
-        if self.explicit_runtime_overrides.request_control_intent {
-            merge_base_core_config.model_reasoning_effort = None;
-        }
-
-        let mut core_config = merge_base_core_config.with_definition_overlays(overlay_paths)?;
-        let mut runtime_config = merge_runtime_config_from_core_overlay(
-            &merge_base_core_config,
-            &core_config,
-            &self.runtime_config,
-            self.explicit_runtime_overrides,
-        );
-        self.reapply_explicit_runtime_overrides(&mut core_config, &mut runtime_config);
-
-        Ok(Self {
-            core_config,
-            runtime_config,
-            explicit_runtime_overrides: self.explicit_runtime_overrides,
-        })
-    }
-
-    pub fn with_definition_overlay_content(
-        &self,
-        content: &str,
-        source: &std::path::Path,
-    ) -> anyhow::Result<Self> {
-        let mut merge_base_core_config = self.core_config.clone();
-        if self.explicit_runtime_overrides.request_control_intent {
-            merge_base_core_config.model_reasoning_effort = None;
-        }
-        let mut core_config =
-            merge_base_core_config.with_definition_overlay_content(content, source)?;
-        let mut runtime_config = merge_runtime_config_from_core_overlay(
-            &merge_base_core_config,
-            &core_config,
-            &self.runtime_config,
-            self.explicit_runtime_overrides,
-        );
-        self.reapply_explicit_runtime_overrides(&mut core_config, &mut runtime_config);
-        Ok(Self {
-            core_config,
-            runtime_config,
-            explicit_runtime_overrides: self.explicit_runtime_overrides,
-        })
-    }
-
-    fn reapply_explicit_runtime_overrides(
-        &self,
-        core_config: &mut crate::config::Config,
-        runtime_config: &mut RuntimeConfig,
-    ) {
-        if self.explicit_runtime_overrides.model {
-            core_config.set_effective_model(self.core_config.effective_model().to_string());
-            sync_runtime_context_window_budget(core_config, runtime_config);
-            sync_runtime_request_control_intent(core_config, runtime_config);
-        }
-        if self.explicit_runtime_overrides.request_control_intent {
-            self.runtime_config
-                .request_control_intent
-                .apply_to_config(core_config);
-            runtime_config.request_control_intent = self.runtime_config.request_control_intent;
-        }
-        if self.explicit_runtime_overrides.streaming_mode {
-            core_config.streaming_mode = self.runtime_config.streaming_mode;
-            runtime_config.streaming_mode = self.runtime_config.streaming_mode;
-        }
-        if self.explicit_runtime_overrides.partial_stream_recovery_mode {
-            core_config.partial_stream_recovery_mode =
-                self.runtime_config.partial_stream_recovery_mode;
-            runtime_config.partial_stream_recovery_mode =
-                self.runtime_config.partial_stream_recovery_mode;
-        }
-        if self.explicit_runtime_overrides.durability_required {
-            core_config.durability.required = self.runtime_config.durability_required;
-            runtime_config.durability_required = self.runtime_config.durability_required;
-        }
-    }
-}
-
-fn sync_runtime_context_window_budget(
-    core_config: &crate::config::Config,
-    runtime_config: &mut RuntimeConfig,
-) {
-    runtime_config.context_window_tokens = core_config.effective_context_window_tokens();
-}
-
-fn sync_runtime_request_control_intent(
-    core_config: &crate::config::Config,
-    runtime_config: &mut RuntimeConfig,
-) {
-    runtime_config.request_control_intent = crate::RequestControlIntent::from_config(core_config);
-}
-
-fn merge_runtime_config_from_core_overlay(
-    base_core_config: &crate::config::Config,
-    overlaid_core_config: &crate::config::Config,
-    current_runtime_config: &RuntimeConfig,
-    explicit_runtime_overrides: ExplicitRuntimeOverrides,
-) -> RuntimeConfig {
-    let base_runtime = RuntimeConfig::from(base_core_config);
-    let overlaid_runtime = RuntimeConfig::from(overlaid_core_config);
-    let mut merged_runtime = current_runtime_config.clone();
-
-    macro_rules! sync_if_unmodified {
-        ($field:ident) => {
-            if !explicit_runtime_overrides.$field && merged_runtime.$field == base_runtime.$field {
-                merged_runtime.$field = overlaid_runtime.$field;
-            }
-        };
-    }
-
-    sync_if_unmodified!(max_tool_loops);
-    sync_if_unmodified!(tool_repeat_limit);
-    sync_if_unmodified!(llm_request_timeout_secs);
-    sync_if_unmodified!(prompt_snapshot_enabled);
-    sync_if_unmodified!(prompt_snapshot_max_chars);
-    sync_if_unmodified!(context_window_tokens);
-    sync_if_unmodified!(compaction_soft_trigger_ratio);
-    sync_if_unmodified!(compaction_hard_trigger_ratio);
-    sync_if_unmodified!(request_control_intent);
-    sync_if_unmodified!(streaming_mode);
-    sync_if_unmodified!(partial_stream_recovery_mode);
-    sync_if_unmodified!(durability_required);
-
-    merged_runtime
-}
-
-/// Host inputs for starting one Agent Process runtime.
-#[derive(Debug, Clone)]
-pub struct AgentProcessConfig {
-    /// Agent execution configuration.
-    pub agent_config: AgentConfig,
-    /// Source used before applying the explicit Agent Definition descriptor.
-    pub core_config_source: crate::ConfigSourceKind,
-    /// Process namespace, descriptors, credentials, Host Mounts, and Alan OS cwd.
-    pub launch_context: crate::ProcessLaunchContext,
-    /// Durable service backing selected by the Host; never exposed as Process identity.
-    pub store_bindings: Option<crate::AgentRuntimeStoreBindings>,
-    /// Memory Service backing paired with the explicit Memory Store descriptor.
-    pub memory_store_backing: Option<std::path::PathBuf>,
-    /// Optional execution record used to recover Agent Machine state for a new Process.
-    pub recovery_rollout_path: Option<std::path::PathBuf>,
-}
-
-impl Default for AgentProcessConfig {
-    fn default() -> Self {
-        Self {
-            agent_config: AgentConfig::default(),
-            core_config_source: crate::ConfigSourceKind::Default,
-            launch_context: crate::ProcessLaunchContext::root(),
-            store_bindings: None,
-            memory_store_backing: None,
-            recovery_rollout_path: None,
-        }
-    }
-}
-
-impl From<crate::config::Config> for AgentProcessConfig {
-    fn from(config: crate::config::Config) -> Self {
-        Self {
-            agent_config: AgentConfig::from(config),
-            core_config_source: crate::ConfigSourceKind::Default,
-            launch_context: crate::ProcessLaunchContext::root(),
-            store_bindings: None,
-            memory_store_backing: None,
-            recovery_rollout_path: None,
-        }
-    }
-}
-
-impl From<crate::LoadedConfig> for AgentProcessConfig {
-    fn from(loaded: crate::LoadedConfig) -> Self {
-        Self {
-            agent_config: AgentConfig::from(loaded.config),
-            core_config_source: loaded.source,
-            launch_context: crate::ProcessLaunchContext::root(),
-            store_bindings: None,
-            memory_store_backing: None,
-            recovery_rollout_path: None,
-        }
-    }
-}
-
 /// Runtime controller for managing a spawned agent runtime
 pub struct RuntimeController {
     /// Handle for communicating with the runtime
@@ -771,62 +490,6 @@ impl RuntimeController {
     }
 }
 
-/// Apply the Process Launch Context's explicit Host Mount authority to Tool execution.
-pub fn configure_runtime_tool_execution_binding(
-    config: &AgentProcessConfig,
-    tools: &mut crate::tools::ToolRegistry,
-) -> Result<()> {
-    if !config.launch_context.host_mounts.is_empty() {
-        let scratch_dir = config
-            .store_bindings
-            .as_ref()
-            .map(|stores| stores.tmp.clone())
-            .context(
-                "Agent Process with Host Mounts requires Agent Runtime Service store bindings",
-            )?;
-        tools.set_default_execution_binding(
-            crate::tools::ToolExecutionBinding::from_launch_context(
-                &config.launch_context,
-                scratch_dir,
-            )?,
-        );
-    }
-
-    Ok(())
-}
-
-pub fn effective_core_config_for_runtime(
-    config: &AgentProcessConfig,
-) -> Result<crate::config::Config> {
-    let resolved_agent_definition = crate::ResolvedAgentDefinition::from_launch_context(
-        &config.launch_context,
-        &config.agent_config.core_config.resolved_skill_overrides(),
-        config.core_config_source,
-    )?;
-    let agent_config = resolved_agent_definition.apply_to_agent_config(&config.agent_config)?;
-    let mut core_config = agent_config.core_config.clone();
-    if let Some(memory_store) = config.memory_store_backing.as_ref() {
-        let memory_descriptor = config
-            .launch_context
-            .descriptor(crate::MEMORY_STORE_DESCRIPTOR)
-            .context("Agent Runtime Service memory backing requires a Memory Store descriptor")?;
-        anyhow::ensure!(
-            memory_descriptor.path == "/memory",
-            "Memory Store descriptor must reference /memory"
-        );
-        core_config.memory.store_dir = Some(memory_store.clone());
-    } else {
-        core_config.memory.store_dir = None;
-    }
-    crate::resolve_runtime_request_controls(
-        &core_config,
-        crate::provider_capabilities_for_config(&core_config),
-        agent_config.runtime_config.request_control_intent,
-    )?;
-
-    Ok(core_config)
-}
-
 /// Start Agent Execution Engine over an already-assembled Process namespace.
 ///
 /// This entry point does not create Kernel, `/proc`, `/srv`, AgentFS, or system
@@ -856,30 +519,10 @@ fn spawn_with_prepared_runtime_environment(
     let (ready_tx, ready_rx) =
         oneshot::channel::<std::result::Result<RuntimeStartupMetadata, String>>();
 
-    let resolved_agent_definition = crate::ResolvedAgentDefinition::from_launch_context(
-        &config.launch_context,
-        &config.agent_config.core_config.resolved_skill_overrides(),
-        config.core_config_source,
-    )?;
-    let agent_config = resolved_agent_definition.apply_to_agent_config(&config.agent_config)?;
-    let mut core_config = agent_config.core_config.clone();
-    if let Some(memory_store) = config.memory_store_backing.as_ref() {
-        let memory_descriptor = config
-            .launch_context
-            .descriptor(crate::MEMORY_STORE_DESCRIPTOR)
-            .context("Agent Runtime Service memory backing requires a Memory Store descriptor")?;
-        anyhow::ensure!(
-            memory_descriptor.path == "/memory",
-            "Memory Store descriptor must reference /memory"
-        );
-        core_config.memory.store_dir = Some(memory_store.clone());
-    } else {
-        core_config.memory.store_dir = None;
-    }
-
-    let mut runtime_config = agent_config.runtime_config;
-    runtime_config.store_bindings = config.store_bindings.clone();
-    runtime_config.memory_store_backing = config.memory_store_backing.clone();
+    let resolved_launch = config.resolve_runtime_launch()?;
+    let resolved_agent_definition = resolved_launch.agent_definition;
+    let core_config = resolved_launch.core_config;
+    let mut runtime_config = resolved_launch.runtime_config;
     runtime_config.policy_engine =
         if let Some(tree) = resolved_agent_definition.descriptor_tree.as_ref() {
             crate::policy::PolicyEngine::load_for_governance_from_file_tree(

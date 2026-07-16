@@ -12,10 +12,8 @@ use super::child_runs::ChildRunRegistry;
 #[cfg(test)]
 use super::delegated_child_run::ChildRuntimeStatus;
 use super::delegated_child_run::{DelegatedChildRunSupervision, DelegatedChildRunSupervisor};
-use super::engine::{
-    AgentProcessConfig, effective_core_config_for_runtime, runtime_host_capabilities_for_tools,
-    spawn_with_namespace_environment,
-};
+use super::engine::{runtime_host_capabilities_for_tools, spawn_with_namespace_environment};
+use super::launch_config::{AgentProcessConfig, effective_core_config_for_runtime};
 #[cfg(test)]
 use crate::llm::LlmClient;
 use crate::tape::ContentPart;

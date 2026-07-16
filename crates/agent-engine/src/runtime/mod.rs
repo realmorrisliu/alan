@@ -14,6 +14,7 @@ mod delegated_skill_tool;
 mod delegation_capabilities;
 mod engine;
 mod guardian;
+mod launch_config;
 mod loop_guard;
 mod memory_flush;
 mod memory_promotion;
@@ -52,9 +53,12 @@ pub use child_runs::{
     ChildRunTerminationRequest,
 };
 pub use engine::{
-    AgentConfig, AgentMachineDurabilityState, AgentProcessConfig, RuntimeController, RuntimeHandle,
-    RuntimeStartupMetadata, configure_runtime_tool_execution_binding,
-    effective_core_config_for_runtime, spawn_with_namespace_environment,
+    AgentMachineDurabilityState, RuntimeController, RuntimeHandle, RuntimeStartupMetadata,
+    spawn_with_namespace_environment,
+};
+pub use launch_config::{
+    AgentConfig, AgentProcessConfig, configure_runtime_tool_execution_binding,
+    effective_core_config_for_runtime,
 };
 
 // Re-export agent loop types for internal use

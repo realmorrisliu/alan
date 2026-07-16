@@ -1,5 +1,5 @@
 use super::*;
-use crate::runtime::{agent_loop::DeferredRuntimeAction, memory_promotion};
+use crate::runtime::{RuntimeConfig, agent_loop::DeferredRuntimeAction, memory_promotion};
 use alan_agent_protocol::{ContentPart, Op};
 use alan_ap::InProcessTransport;
 use alan_llm::{
@@ -8,7 +8,6 @@ use alan_llm::{
 };
 use anyhow::anyhow;
 use async_trait::async_trait;
-use std::path::Path;
 use std::sync::{Arc, Mutex};
 use tempfile::TempDir;
 
@@ -48,10 +47,6 @@ fn namespace_environment_for_test() -> NamespaceRuntimeEnvironment {
         alan_kernel::Namespace::new(),
     )));
     crate::runtime::NamespaceRuntimeEnvironment::new(root, "/agent/1", "default")
-}
-
-fn write_agent_overlay(path: &Path, body: &str) {
-    std::fs::write(path, body).unwrap();
 }
 
 fn make_deferred_action_for_test() -> DeferredRuntimeAction {
