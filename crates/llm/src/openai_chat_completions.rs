@@ -21,7 +21,7 @@ mod input_projection;
 
 use input_projection::{
     convert_messages_for_openai_chat_completions_with_instruction_role, plain_text_content,
-    responses_content,
+    responses_content, responses_output,
 };
 
 /// Client for the OpenAI Chat Completions API and compatible endpoints.
@@ -1509,7 +1509,7 @@ pub(crate) fn convert_messages_for_openai_responses(
                     ));
                 }
 
-                if let Some(content) = responses_content(message.content, message.content_parts)? {
+                if let Some(content) = responses_output(message.content, message.content_parts)? {
                     input.push(OpenAiResponsesInputItem::Message(
                         OpenAiResponsesInputMessage {
                             role: "assistant".to_string(),
