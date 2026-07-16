@@ -15,9 +15,11 @@ mod command_interpreters;
 mod command_options;
 mod command_wrappers;
 mod path_literals;
+mod path_safety;
 mod sandbox_spec;
 mod shell_syntax;
 
+pub(crate) use path_safety::protected_path_component;
 pub use sandbox_spec::{NetworkPosture, SandboxSpec};
 
 use command_wrappers::{
@@ -29,6 +31,7 @@ use path_literals::{
     looks_like_bare_protected_subpath_token, looks_like_path_token, path_like_subtokens,
     translate_reified_shell_token,
 };
+use path_safety::{existing_regular_file_has_multiple_links, is_path_guard_reason};
 use shell_syntax::{
     ShellWordToken, normalize_shell_line_continuations, shell_commands, shell_word_tokens,
     shell_word_tokens_with_spans, validate_shell_features,
@@ -36,26 +39,10 @@ use shell_syntax::{
 
 use anyhow::{Result, anyhow};
 use std::ffi::OsString;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 const SANDBOX_BACKEND_PATH_GUARD: &str = "host_mount_path_guard";
-pub(crate) const PROTECTED_SUBPATHS: [&str; 3] = [".git", ".alan", ".agents"];
-
-pub(crate) fn protected_path_component(path: &Path) -> Option<&'static str> {
-    path.components().find_map(protected_component)
-}
-
-fn protected_component(component: Component<'_>) -> Option<&'static str> {
-    let Component::Normal(name) = component else {
-        return None;
-    };
-    let candidate = name.to_str()?;
-    PROTECTED_SUBPATHS
-        .iter()
-        .copied()
-        .find(|protected| *protected == candidate)
-}
 
 /// How thoroughly to validate command paths. Under an OS sandbox the kernel
 /// enforces host_mount containment, so only protected-subpath writes need the
@@ -722,7 +709,7 @@ impl Sandbox {
             if let Some(component) = root_protected {
                 return Some(component);
             }
-            if let Some(component) = relative.components().find_map(protected_component) {
+            if let Some(component) = protected_path_component(relative) {
                 return Some(component);
             }
         }
@@ -1002,35 +989,6 @@ fn validate_bash_command_shape(cmd: &str) -> Result<()> {
     validate_shell_features(trimmed, Sandbox::backend_name_static())?;
 
     Ok(())
-}
-
-fn is_path_guard_reason(reason: &str) -> bool {
-    reason.contains("outside host_mount")
-}
-
-#[cfg(unix)]
-fn existing_regular_file_has_multiple_links(path: &Path) -> Result<bool> {
-    use std::io::ErrorKind;
-    use std::os::unix::fs::MetadataExt;
-
-    let metadata = match std::fs::metadata(path) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(false),
-        Err(error) => {
-            return Err(anyhow!(
-                "Failed to inspect path link count for {}: {}",
-                path.display(),
-                error
-            ));
-        }
-    };
-
-    Ok(metadata.is_file() && metadata.nlink() > 1)
-}
-
-#[cfg(not(unix))]
-fn existing_regular_file_has_multiple_links(_path: &Path) -> Result<bool> {
-    Ok(false)
 }
 
 #[cfg(test)]
