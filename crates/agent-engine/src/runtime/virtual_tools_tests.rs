@@ -5,7 +5,19 @@ use crate::{
     rollout::{RolloutItem, RolloutRecorder},
     runtime::{
         ChildRunRecord, ChildRunStatus, NamespaceRuntimeEnvironment, RuntimeConfig, TurnState,
-        agent_loop::NamespaceActionRecord, delegated_child_run::MAX_DELEGATED_RESULT_SUMMARY_CHARS,
+        agent_loop::NamespaceActionRecord,
+        delegated_child_run::{
+            ChildRuntimeResult, ChildRuntimeStatus, MAX_DELEGATED_RESULT_OUTPUT_INLINE_CHARS,
+            MAX_DELEGATED_RESULT_SUMMARY_CHARS,
+        },
+        delegated_skill_evidence::persist_delegated_child_evidence,
+        delegated_skill_tool::{
+            DEFAULT_DELEGATED_TIMEOUT_SECS, DelegatedSkillInvocationRequest,
+            MAX_DELEGATED_SKILL_ID_CHARS, MAX_DELEGATED_TARGET_CHARS, MAX_DELEGATED_TASK_CHARS,
+            handle_invoke_delegated_skill_with_spawn,
+        },
+        delegation_capabilities::DelegatedSpawnRejected,
+        mount_request_tool::MountRequestAccess,
         turn_state::TurnActivityState,
     },
     skills::{
@@ -15,6 +27,7 @@ use crate::{
     },
     tools::ToolRegistry,
 };
+use alan_agent_protocol::SpawnHandle;
 use alan_agentfs::AgentFs;
 use alan_ap::InProcessTransport;
 use alan_kernel::{Access, MountFs, Namespace};
@@ -197,24 +210,6 @@ where
 {
     let cancel = CancellationToken::new();
     try_handle_virtual_tool_call(state, tool_call, &tool_call.arguments, &cancel, false, emit).await
-}
-
-#[test]
-fn test_virtual_tool_definitions_include_all_runtime_virtual_tools() {
-    let defs = virtual_tool_definitions(false);
-    assert_eq!(defs.len(), 4);
-    assert!(defs.iter().any(|d| d.name == "request_confirmation"));
-    assert!(defs.iter().any(|d| d.name == "request_mount"));
-    assert!(defs.iter().any(|d| d.name == "request_user_input"));
-    assert!(defs.iter().any(|d| d.name == "update_plan"));
-    assert!(!defs.iter().any(|d| d.name == "invoke_delegated_skill"));
-}
-
-#[test]
-fn test_virtual_tool_definitions_can_include_delegated_skill() {
-    let defs = virtual_tool_definitions(true);
-    assert!(defs.iter().any(|d| d.name == "invoke_delegated_skill"));
-    assert!(defs.iter().any(|d| d.name == "terminate_child_run"));
 }
 
 #[test]
@@ -1920,7 +1915,7 @@ async fn test_try_handle_virtual_tool_call_invoke_delegated_skill() {
     let captured_spec = Arc::new(Mutex::new(None));
     let captured_spec_for_spawn = Arc::clone(&captured_spec);
     let cancel = CancellationToken::new();
-    let result = handle_invoke_delegated_skill(
+    let result = handle_invoke_delegated_skill_with_spawn(
         &mut state,
         &tool_call,
         &tool_call.arguments,
@@ -2032,7 +2027,7 @@ async fn test_delegated_capability_rejection_is_recorded_on_parent_tape() {
     let cancel = CancellationToken::new();
     let mut emit = |_event: Event| async {};
 
-    handle_invoke_delegated_skill(
+    handle_invoke_delegated_skill_with_spawn(
         &mut state,
         &tool_call,
         &tool_call.arguments,
@@ -2103,7 +2098,7 @@ Use this skill when asked.
     let captured_spec_for_spawn = Arc::clone(&captured_spec);
     let cancel = CancellationToken::new();
     let mut emit = |_event: Event| async {};
-    let result = handle_invoke_delegated_skill(
+    let result = handle_invoke_delegated_skill_with_spawn(
         &mut state,
         &tool_call,
         &tool_call.arguments,
@@ -2191,7 +2186,7 @@ Use this skill when asked.
 
     let mut emit = |_event: Event| async {};
     let cancel = CancellationToken::new();
-    let result = handle_invoke_delegated_skill(
+    let result = handle_invoke_delegated_skill_with_spawn(
         &mut state,
         &tool_call,
         &tool_call.arguments,
@@ -2266,7 +2261,7 @@ async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_records_succes
 
     let mut emit = |_event: Event| async {};
     let cancel = CancellationToken::new();
-    let result = handle_invoke_delegated_skill(
+    let result = handle_invoke_delegated_skill_with_spawn(
         &mut state,
         &tool_call,
         &tool_call.arguments,
@@ -2334,7 +2329,7 @@ async fn test_try_handle_virtual_tool_call_records_normalized_namespace_cwd() {
 
     let mut emit = |_event: Event| async {};
     let cancel = CancellationToken::new();
-    let result = handle_invoke_delegated_skill(
+    let result = handle_invoke_delegated_skill_with_spawn(
         &mut state,
         &tool_call,
         &tool_call.arguments,
@@ -2408,7 +2403,7 @@ async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_bounds_preview
     };
 
     let cancel = CancellationToken::new();
-    let result = handle_invoke_delegated_skill(
+    let result = handle_invoke_delegated_skill_with_spawn(
         &mut state,
         &tool_call,
         &tool_call.arguments,
@@ -2498,7 +2493,7 @@ async fn long_delegated_output_uses_parent_resolvable_namespace_reference() {
     let mut emit = |_event: Event| async {};
 
     let output_len = (1 << 20) + 1_024;
-    handle_invoke_delegated_skill(
+    handle_invoke_delegated_skill_with_spawn(
         &mut state,
         &tool_call,
         &tool_call.arguments,
@@ -2712,7 +2707,7 @@ async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_honors_interru
 
     let cancel = CancellationToken::new();
     let cancel_for_task = cancel.clone();
-    let result = handle_invoke_delegated_skill(
+    let result = handle_invoke_delegated_skill_with_spawn(
         &mut state,
         &tool_call,
         &tool_call.arguments,
@@ -2784,7 +2779,7 @@ async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_honors_interru
 
     let cancel = CancellationToken::new();
     let cancel_for_task = cancel.clone();
-    let result = handle_invoke_delegated_skill(
+    let result = handle_invoke_delegated_skill_with_spawn(
         &mut state,
         &tool_call,
         &tool_call.arguments,
@@ -2877,7 +2872,7 @@ async fn test_try_handle_virtual_tool_call_rejects_target_mismatch() {
     };
 
     let cancel = CancellationToken::new();
-    let result = handle_invoke_delegated_skill(
+    let result = handle_invoke_delegated_skill_with_spawn(
         &mut state,
         &tool_call,
         &tool_call.arguments,
