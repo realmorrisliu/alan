@@ -1,4 +1,5 @@
 use super::*;
+use crate::runtime::child_runs::ChildRunStatus;
 
 #[tokio::test]
 async fn child_runtime_join_keeps_running_while_activity_file_is_fresh() {

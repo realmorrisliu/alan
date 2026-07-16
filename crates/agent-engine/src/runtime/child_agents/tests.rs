@@ -1,5 +1,6 @@
 use super::*;
 use crate::llm::{GenerationRequest, GenerationResponse, StreamChunk, TokenUsage};
+use crate::runtime::engine::RuntimeStartupMetadata;
 use crate::runtime::{
     ApprovedMountGrant, ApprovedMountGrantAccess, MountGrantApplicator,
     MountGrantApplicatorFactory, NamespaceRuntimeEnvironment, RuntimeConfig,
