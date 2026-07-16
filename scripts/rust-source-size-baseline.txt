@@ -1,7 +1,7 @@
 # Rust source files above the 1,000-line target. Keep sorted by path.
 # A file may only stay equal to this maximum or shrink with this entry tightened.
 crates/agent-engine/skills/swebench/tooling/src/swebench_lite.rs 1389
-crates/agent-engine/src/skills/injector.rs 2490
+crates/agent-engine/src/skills/injector.rs 1217
 crates/agent-engine/src/tools/reified_namespace.rs 2756
 crates/agent-engine/src/tools/sandbox.rs 3514
 crates/agent-engine/src/tools/sandbox_backend.rs 1562
