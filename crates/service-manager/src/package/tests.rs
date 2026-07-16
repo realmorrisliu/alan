@@ -1,6 +1,8 @@
 use super::materializer::{MAX_SOURCE_FILE_BYTES, MaterializationManifest};
+use super::store;
 use super::*;
 use alan_agent_engine::skills::{SkillScope, parse_skill_metadata};
+use std::fs::File;
 
 mod file_surface;
 
@@ -101,7 +103,7 @@ fn install_rejects_a_stale_file_at_the_revision_path() {
     let service = PackageService::ephemeral("test").unwrap();
     let snapshot = native_snapshot("stale-file", "body");
     let revision = fingerprint(&snapshot).unwrap();
-    let target = revision_root(&service.store_root, "stale-file-pack", &revision);
+    let target = service.store.revision_root("stale-file-pack", &revision);
     fs::create_dir_all(target.parent().unwrap()).unwrap();
     fs::write(&target, b"stale").unwrap();
 
@@ -124,7 +126,7 @@ fn install_rejects_a_stale_symlink_at_the_revision_path() {
     let service = PackageService::ephemeral("test").unwrap();
     let snapshot = native_snapshot("stale-link", "body");
     let revision = fingerprint(&snapshot).unwrap();
-    let target = revision_root(&service.store_root, "stale-link-pack", &revision);
+    let target = service.store.revision_root("stale-link-pack", &revision);
     fs::create_dir_all(target.parent().unwrap()).unwrap();
     let outside = tempfile::tempdir().unwrap();
     symlink(outside.path(), &target).unwrap();
@@ -152,7 +154,7 @@ fn install_rejects_a_symlinked_package_revision_parent() {
 
     let service = PackageService::ephemeral("test").unwrap();
     let outside = tempfile::tempdir().unwrap();
-    let parent = service.store_root.join("revisions/symlinked-parent-pack");
+    let parent = service.store.root().join("revisions/symlinked-parent-pack");
     symlink(outside.path(), &parent).unwrap();
 
     let result = service.execute(PackageCommand::Install {
@@ -261,7 +263,8 @@ fn install_rejects_case_colliding_snapshot_paths_before_materialization() {
     );
     assert!(
         !service
-            .store_root
+            .store
+            .root()
             .join("revisions/case-collision-pack")
             .exists()
     );
@@ -432,7 +435,7 @@ fn failed_upgrade_keeps_the_current_catalog_and_revision() {
     assert!(!failed.success);
     assert_eq!(service.catalog(), before);
     assert_eq!(
-        fs::read_dir(service.store_root.join("revisions/atomic-pack"))
+        fs::read_dir(service.store.root().join("revisions/atomic-pack"))
             .unwrap()
             .count(),
         1
@@ -454,7 +457,8 @@ fn upgrade_reports_success_when_post_commit_revision_cleanup_fails() {
         .unwrap();
     assert!(installed.success);
     let locked_revision = service
-        .store_root
+        .store
+        .root()
         .join("revisions/cleanup-pack")
         .join("stale-locked-revision");
     fs::create_dir(&locked_revision).unwrap();
@@ -490,7 +494,7 @@ fn failed_uninstall_keeps_the_current_catalog_and_revision() {
         })
         .unwrap();
     let before = service.catalog();
-    let staging = service.store_root.join("staging");
+    let staging = service.store.root().join("staging");
     fs::remove_dir(&staging).unwrap();
     fs::write(&staging, b"block revision staging").unwrap();
 
@@ -506,7 +510,8 @@ fn failed_uninstall_keeps_the_current_catalog_and_revision() {
     assert!(service.resolve("atomic-uninstall-pack").is_ok());
     assert!(
         service
-            .store_root
+            .store
+            .root()
             .join("revisions/atomic-uninstall-pack")
             .is_dir()
     );
@@ -525,7 +530,9 @@ fn restart_rolls_back_revision_removal_when_catalog_is_still_old() {
         })
         .unwrap();
     let record = service.resolve("crash-window-pack").unwrap();
-    let staged = stage_package_revisions(&root, "crash-window-pack")
+    let staged = service
+        .store
+        .stage_package_revisions("crash-window-pack")
         .unwrap()
         .unwrap();
     assert!(staged.staged.is_dir());
@@ -535,7 +542,7 @@ fn restart_rolls_back_revision_removal_when_catalog_is_still_old() {
     let reopened = PackageService::open("dev", root.clone()).unwrap();
 
     assert_eq!(reopened.resolve("crash-window-pack").unwrap(), record);
-    assert!(revision_root(&root, "crash-window-pack", &record.revision).is_dir());
+    assert!(store::revision_root_at(&root, "crash-window-pack", &record.revision).is_dir());
     assert_eq!(fs::read_dir(root.join("staging")).unwrap().count(), 0);
 }
 
@@ -580,7 +587,7 @@ fn live_reference_retains_old_revision_until_retiring_package_is_released() {
     assert!(lease.content_root().is_dir());
     drop(lease);
     assert!(!service.catalog().packages.contains_key("leased-pack"));
-    assert!(!service.store_root.join("revisions/leased-pack").exists());
+    assert!(!service.store.root().join("revisions/leased-pack").exists());
 }
 
 #[test]
@@ -660,7 +667,8 @@ fn restart_fails_closed_when_revision_content_is_tampered() {
         .package
         .unwrap();
     drop(service);
-    let manifest = revision_root(&root, "tamper-pack", &record.revision).join("manifest.json");
+    let manifest =
+        store::revision_root_at(&root, "tamper-pack", &record.revision).join("manifest.json");
     fs::write(manifest, b"{}").unwrap();
     assert!(PackageService::open("dev", root).is_err());
 }
@@ -684,7 +692,8 @@ fn restart_rejects_symlinked_materialized_root() {
         .unwrap();
     drop(service);
 
-    let content = revision_root(&root, "symlinked-content-pack", &record.revision).join("content");
+    let content =
+        store::revision_root_at(&root, "symlinked-content-pack", &record.revision).join("content");
     fs::remove_dir_all(&content).unwrap();
     let victim = directory.path().join("victim");
     fs::create_dir(&victim).unwrap();
@@ -716,7 +725,7 @@ fn restart_rejects_invalid_retiring_package_id_before_removing_revisions() {
     let record = catalog.packages.get_mut("unsafe-recovery-pack").unwrap();
     record.id = victim.to_string_lossy().into_owned();
     record.state = PackageState::Retiring;
-    persist_catalog(&root, &catalog).unwrap();
+    store::persist_catalog_at(&root, &catalog).unwrap();
 
     assert!(PackageService::open("dev", root).is_err());
     assert_eq!(fs::read(victim.join("sentinel")).unwrap(), b"keep");
@@ -858,7 +867,9 @@ fn command_materialization_keeps_unsupported_capability_visible() {
     assert!(content.ends_with("Use WebSearch and TeamCreate for this work."));
     let manifest: MaterializationManifest = serde_json::from_slice(
         &fs::read(
-            revision_root(&service.store_root, "foreign-pack", &record.revision)
+            service
+                .store
+                .revision_root("foreign-pack", &record.revision)
                 .join("manifest.json"),
         )
         .unwrap(),
