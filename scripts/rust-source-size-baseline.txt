@@ -1,3 +1,3 @@
 # Rust source files above the 1,000-line target. Keep sorted by path.
 # A file may only stay equal to this maximum or shrink with this entry tightened.
-crates/shell-core/src/reducer.rs 1545
+crates/shell-core/src/reducer.rs 1223
