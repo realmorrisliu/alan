@@ -5,7 +5,6 @@ crates/agent-engine/src/agent_machine.rs 3661
 crates/agent-engine/src/config.rs 2556
 crates/agent-engine/src/rollout.rs 2266
 crates/agent-engine/src/runtime/engine.rs 2816
-crates/agent-engine/src/runtime/tool_orchestrator.rs 1099
 crates/agent-engine/src/runtime/virtual_tools.rs 2476
 crates/agent-engine/src/runtime/virtual_tools_tests.rs 3331
 crates/agent-engine/src/skills/injector.rs 2490
