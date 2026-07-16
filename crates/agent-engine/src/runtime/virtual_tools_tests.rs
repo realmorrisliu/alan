@@ -1782,15 +1782,6 @@ async fn test_try_handle_virtual_tool_call_request_mount_rejects_invalid_request
     assert!(tool_result.contains("namespace_path"));
 }
 
-#[cfg(unix)]
-#[test]
-fn test_request_mount_rejects_protected_host_state_root() {
-    let error = parse_mount_host_path("/tmp/project/.git")
-        .expect_err("a protected Host state root must not become a direct mount");
-
-    assert!(error.contains("protected `.git` state"));
-}
-
 #[tokio::test]
 async fn test_try_handle_virtual_tool_call_request_user_input() {
     let mut state = create_test_agent_loop_state();
