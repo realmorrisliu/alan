@@ -265,6 +265,9 @@ pub struct ManagedTerminalAccountDiagnosis {
     pub is_admin: bool,
     /// Whether the requested home directory exists.
     pub home_directory_exists: bool,
+    /// Whether the account's configured home directory matches the request, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub home_directory_matches: Option<bool>,
     /// Whether the account shell matches the request.
     pub shell_matches: bool,
     /// Whether the account is hidden from login-window lists.
@@ -713,22 +716,46 @@ fn diagnosis_from_state(
             ManagedTerminalAccountOwnershipKind::NotAlanManaged
         }
     };
-    let (account_exists, is_admin, shell_matches, hidden_from_login_window) = match &state.account {
-        ManagedTerminalAccountRecord::Missing => (false, false, false, false),
-        ManagedTerminalAccountRecord::Standard { shell, hidden, .. } => {
-            (true, false, shell == &request.shell, *hidden)
-        }
-        ManagedTerminalAccountRecord::Admin { shell, hidden, .. } => {
-            (true, true, shell == &request.shell, *hidden)
-        }
-        ManagedTerminalAccountRecord::Invalid { reason } => (
-            !reason.to_ascii_lowercase().contains("incomplete"),
-            false,
-            false,
-            false,
-        ),
-    };
+    let (account_exists, is_admin, home_directory_matches, shell_matches, hidden_from_login_window) =
+        match &state.account {
+            ManagedTerminalAccountRecord::Missing => (false, false, true, false, false),
+            ManagedTerminalAccountRecord::Standard {
+                home_directory,
+                shell,
+                hidden,
+            } => (
+                true,
+                false,
+                home_directory == &request.home_directory,
+                shell == &request.shell,
+                *hidden,
+            ),
+            ManagedTerminalAccountRecord::Admin {
+                home_directory,
+                shell,
+                hidden,
+            } => (
+                true,
+                true,
+                home_directory == &request.home_directory,
+                shell == &request.shell,
+                *hidden,
+            ),
+            ManagedTerminalAccountRecord::Invalid { reason } => (
+                !reason.to_ascii_lowercase().contains("incomplete"),
+                false,
+                true,
+                false,
+                false,
+            ),
+        };
     let pty_smoke_verified = state.verification == ManagedTerminalAccountVerificationStatus::Passed;
+    let account_needs_repair = account_exists
+        && (is_admin
+            || !home_directory_matches
+            || !state.home_directory_exists
+            || !shell_matches
+            || (request.hide_from_login_window && !hidden_from_login_window));
     let readiness_state =
         if account_exists && ownership_state != ManagedTerminalAccountOwnershipKind::AlanManaged {
             ManagedTerminalAccountReadinessState::AccountNotAlanManaged
@@ -742,7 +769,7 @@ fn diagnosis_from_state(
             }
         ) {
             ManagedTerminalAccountReadinessState::PtySpawnFailed
-        } else if pty_smoke_verified {
+        } else if pty_smoke_verified && !account_needs_repair {
             ManagedTerminalAccountReadinessState::Ready
         } else {
             ManagedTerminalAccountReadinessState::Repairable
@@ -762,6 +789,7 @@ fn diagnosis_from_state(
         account_exists,
         is_admin,
         home_directory_exists: state.home_directory_exists,
+        home_directory_matches: Some(home_directory_matches),
         shell_matches,
         hidden_from_login_window,
         terminal_profile_id,
@@ -826,7 +854,7 @@ fn helper_backed_steps(
                 true,
             ));
         }
-        if !diagnosis.home_directory_exists {
+        if !diagnosis.home_directory_exists || diagnosis.home_directory_matches == Some(false) {
             steps.push(managed_account_step(
                 ManagedTerminalAccountPlanStepKind::RepairHomeDirectory,
                 "Repair terminal account home directory",

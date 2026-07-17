@@ -452,6 +452,32 @@ fn managed_terminal_account_dry_run_uses_helper_owned_steps() {
             .any(|step| step.kind == ManagedTerminalAccountPlanStepKind::RepairHomeDirectory)
     );
 
+    let mismatched_home_state = ManagedTerminalAccountState {
+        account: ManagedTerminalAccountRecord::Standard {
+            home_directory: "/Users/other".to_string(),
+            shell: "/bin/zsh".to_string(),
+            hidden: true,
+        },
+        ownership: ManagedTerminalAccountOwnershipState::AlanManaged {
+            evidence: ManagedTerminalAccountOwnershipEvidence::HelperMarker {
+                path: "/Library/Application Support/alan-macos-dev/managed-users/alan_smoke/ownership.json".to_string(),
+            },
+        },
+        terminal_profile: ManagedTerminalAccountProfileState::ExistingManaged {
+            profile_id: "alan_smoke".to_string(),
+        },
+        verification: ManagedTerminalAccountVerificationStatus::Passed,
+        home_directory_exists: true,
+    };
+    let mismatched_home_plan =
+        ManagedTerminalAccountPlanner::plan(request.clone(), &mismatched_home_state);
+    assert!(
+        mismatched_home_plan
+            .steps
+            .iter()
+            .any(|step| { step.kind == ManagedTerminalAccountPlanStepKind::RepairHomeDirectory })
+    );
+
     let cancelled = ManagedTerminalAccountFakeExecutor::apply(&plan, true, None);
     assert!(cancelled.cancelled);
     assert!(cancelled.completed_steps.is_empty());
@@ -728,6 +754,7 @@ fn managed_account_diagnosis(
         account_exists: ready,
         is_admin: false,
         home_directory_exists: ready,
+        home_directory_matches: Some(true),
         shell_matches: ready,
         hidden_from_login_window: ready,
         terminal_profile_id: ready.then(|| "alan_smoke".to_string()),
