@@ -37,7 +37,11 @@ Xcode target.
 | `TerminalRuntimeService.swift` | 1815 | Foundation, AppKit, GhosttyKit; macOS/Ghostty gates | Window-scoped terminal runtime service, lifecycle ownership, and Ghostty bootstrap | `Services/Terminal/` |
 | `TerminalSurfaceController.swift` | 1735 | Foundation, AppKit, GhosttyKit; macOS/Ghostty gates | Terminal input, pointer, scrollback, search, semantic commands, and surface adapters | `Services/Terminal/` |
 | `Models/Shell/ShellValueTypes.swift` | 2178 | Foundation | Shell command enums, launch targets, process bindings, Terminal Profile DTOs, and managed-account platform/effect shapes | `Models/Shell/` plus future shell service collaborators |
-| `Models/Shell/ShellSnapshots.swift` | 2093 | CoreGraphics, Foundation | Shell panes, tabs, spaces, split tree, state snapshots, snapshot query helpers, and portable projection DTOs | `Models/Shell/` |
+| `Models/Shell/ShellPaneSnapshots.swift` | 127 | Foundation | Pane identity, viewport, Alan binding, and pane-local runtime metadata DTOs | `Models/Shell/` |
+| `Models/Shell/ShellContentSnapshots.swift` | 555 | CoreGraphics, Foundation | Terminal transcript, renderer state, content payload, and content-instance DTOs | `Models/Shell/` |
+| `Models/Shell/ShellPaneTreeSnapshots.swift` | 492 | Foundation | Pane-slot split-tree and portable slot-tree query models | `Models/Shell/` |
+| `Models/Shell/ShellTabSpaceSnapshots.swift` | 310 | Foundation | Tab, content-tab, Space identity, icon, and default-name DTOs | `Models/Shell/` |
+| `Models/Shell/ShellWorkspaceSnapshots.swift` | 662 | Foundation | Workspace state snapshots and cross-family snapshot query helpers | `Models/Shell/` |
 | `Models/Shell/ShellStateRuntimeSupport.swift` | 348 | Foundation | Narrow app-target shell bootstrap defaults, mutation result/error types, Terminal Profile inheritance queries, platform activity acknowledgement/projection, and inactive temporary-tab query support | `Models/Shell/` |
 | `Models/Shell/ShellTitlePresentation.swift` | 371 | Foundation | Shell titles, visible labels, terminal status, and pane title-bar detail projection | `Models/Shell/` |
 | `Models/Shell/ShellSidebarTabPresentation.swift` | 342 | Foundation | Sidebar tab projection, temporary-tab controls, and context-menu presentation | `Models/Shell/` |
@@ -293,11 +297,11 @@ device support was not required for this validation.
 ## Remaining Architecture Debt
 
 `check-architecture-maintainability.sh` currently completes in report mode.
-10 known large-file / bridge-boundary warnings remain after the first five Apple
+9 known large-file / bridge-boundary warnings remain after the first six Apple
 ownership slices removed the `ShellHostController.swift` bridge warning and
 split control projection, observation commands, root-controller
-responsibilities, and shell presentation models into focused owners; all 11 are
-now large-file warnings. These warnings
+responsibilities, shell presentation models, settings models, and snapshot DTO
+families into focused owners. These warnings
 are telemetry for the cleanup, not the cleanup
 definition. The real debt is any Swift production source that still carries a
 Rust-owned shell-domain implementation, fixture, or fallback after shell-core
@@ -357,6 +361,11 @@ navigation and snapshot composition. Terminal/helper summaries, managed-account
 discovery, catalog storage, managed-user creation/provisioning, and local/diagnostics
 summaries now have separate domain owners under `Models/Shell/`; the current
 inventory is 10 large-file warnings.
+
+The sixth ownership slice removed the generalized `ShellSnapshots.swift` bucket.
+Pane primitives, content and transcript payloads, pane trees, tab/Space models,
+and workspace snapshots now have separate DTO-family owners under `Models/Shell/`;
+the current inventory is 9 large-file warnings.
 
 Rust-owned Swift legacy cleanup targets at this baseline:
 
