@@ -562,7 +562,7 @@ require_semantic_terminal_actions_contract() {
         "copy-last-output must read from a pane-owned command buffer range"
 
     require_pattern \
-        "clients/apple/alan-macos/TerminalRuntimeService.swift" \
+        "clients/apple/alan-macos/Services/Terminal/TerminalSurfaceContracts.swift" \
         "AlanTerminalCommandBufferEngine" \
         "live terminal surface handles must provide command-buffer range reads when reliable ranges exist"
 
@@ -673,28 +673,28 @@ require_pattern \
     "terminal runtimes must expose a handle protocol"
 
 require_pattern \
-    "clients/apple/alan-macos/TerminalRuntimeService.swift" \
+    "clients/apple/alan-macos/Services/Terminal/GhosttyProcessBootstrap.swift" \
     "protocol AlanGhosttyProcessBootstrap: AnyObject" \
     "Ghostty initialization must have an injectable process bootstrap boundary"
 
 require_pattern \
-    "clients/apple/alan-macos/TerminalRuntimeService.swift" \
+    "clients/apple/alan-macos/Services/Terminal/WindowTerminalRuntimeService.swift" \
     "final class AlanWindowTerminalRuntimeService" \
     "terminal runtime services must be window-scoped production owners"
 
 require_pattern \
-    "clients/apple/alan-macos/TerminalRuntimeService.swift" \
+    "clients/apple/alan-macos/Services/Terminal/TerminalSurfaceContracts.swift" \
     "protocol AlanTerminalSurfaceHandle: AnyObject" \
     "terminal panes must be represented by stable service-owned surface handles"
 
 require_pattern \
-    "clients/apple/alan-macos/TerminalRuntimeService.swift" \
+    "clients/apple/scripts/support/TerminalRuntimeTestDoubles.swift" \
     "final class FakeAlanTerminalSurfaceHandle" \
     "runtime service tests must have fake pane surface handles"
 
 require_pattern \
     "clients/apple/scripts/test-terminal-runtime-service.sh" \
-    "TerminalRuntimeService.swift" \
+    "WindowTerminalRuntimeService.swift" \
     "runtime service behavior tests must compile the service boundary"
 
 require_pattern \
@@ -708,57 +708,57 @@ require_pattern \
     "terminal runtime registry must resolve service-owned handles by content ID"
 
 require_pattern \
-    "clients/apple/alan-macos/TerminalRuntimeService.swift" \
+    "clients/apple/alan-macos/Services/Terminal/WindowTerminalRuntimeService.swift" \
     "private var handlesByContentID: \\[String: AlanTerminalSurfaceHandle\\]" \
     "terminal runtime service must keep runtime identity content-keyed"
 
 require_pattern \
-    "clients/apple/alan-macos/TerminalRuntimeService.swift" \
+    "clients/apple/alan-macos/Services/Terminal/WindowTerminalRuntimeService.swift" \
     "var registeredContentIDs: Set<String>" \
     "terminal runtime service must expose content-keyed registration state"
 
 require_pattern \
-    "clients/apple/alan-macos/TerminalRuntimeService.swift" \
+    "clients/apple/alan-macos/Services/Terminal/DarwinTerminalPtyRuntime.swift" \
     "setNoSigpipeSocketOption\\(descriptors\\[0\\]\\)" \
     "local renderer socketpairs must disable SIGPIPE before Ghostty attachment"
 
 require_pattern \
-    "clients/apple/alan-macos/TerminalRuntimeService.swift" \
+    "clients/apple/alan-macos/Services/Terminal/DarwinTerminalPtyRuntime.swift" \
     "private var pendingPtyInputChunks" \
     "local renderer PTY input must buffer nonblocking short writes"
 
 require_pattern \
-    "clients/apple/alan-macos/TerminalRuntimeService.swift" \
+    "clients/apple/alan-macos/Services/Terminal/DarwinTerminalPtyRuntime.swift" \
     "DispatchSource\\.makeWriteSource" \
     "local renderer PTY input must retry buffered input when the PTY becomes writable"
 
 require_pattern \
-    "clients/apple/alan-macos/TerminalRuntimeService.swift" \
+    "clients/apple/alan-macos/Services/Terminal/DarwinTerminalPtyRuntime.swift" \
     "fileDescriptor: ptyFileDescriptor" \
     "local renderer PTY input retry source must watch the PTY file descriptor"
 
 require_pattern \
-    "clients/apple/alan-macos/TerminalRuntimeService.swift" \
+    "clients/apple/alan-macos/Services/Terminal/DarwinTerminalPtyRuntime.swift" \
     "private var pendingDirectPtyInputChunks" \
     "local PTY control-plane input must buffer nonblocking short writes"
 
 require_pattern \
-    "clients/apple/alan-macos/TerminalRuntimeService.swift" \
+    "clients/apple/alan-macos/Services/Terminal/DarwinTerminalPtyRuntime.swift" \
     "fileDescriptor: masterFileDescriptor" \
     "local PTY control-plane input retry source must watch the master PTY file descriptor"
 
 require_pattern \
-    "clients/apple/alan-macos/TerminalRuntimeService.swift" \
+    "clients/apple/alan-macos/Services/Terminal/TerminalPtyRuntime.swift" \
     "func unregisterHandle\\(forTerminalContentID contentID: String\\)" \
     "PTY runtime must expose explicit unregister so finalized panes release PTY handles"
 
 require_pattern \
-    "clients/apple/alan-macos/TerminalRuntimeService.swift" \
+    "clients/apple/alan-macos/Services/Terminal/WindowTerminalRuntimeService.swift" \
     "ptyRuntime\\.unregisterHandle\\(forTerminalContentID: contentID\\)" \
     "terminal content finalization must release the backing PTY runtime handle"
 
 require_pattern \
-    "clients/apple/alan-macos/TerminalRuntimeService.swift" \
+    "clients/apple/alan-macos/Services/Terminal/DarwinTerminalPtyRuntime.swift" \
     "private var pendingRendererOutput" \
     "renderer PTY output must buffer nonblocking socket short writes"
 
@@ -783,7 +783,7 @@ require_pattern \
     "managed_user helper PTY tests must cover full final-output draining before exit projection"
 
 require_pattern \
-    "clients/apple/alan-macos/TerminalRuntimeService.swift" \
+    "clients/apple/alan-macos/Services/Terminal/ManagedUserTerminalPtyRuntime.swift" \
     "AlanManagedUserPTYInputRequest\\(sessionID: sessionID, data: data\\)" \
     "managed_user renderer helper input must preserve raw bytes instead of re-encoding String"
 
@@ -2858,7 +2858,7 @@ require_pattern \
     "helper-backed Managed User PTY sessions must expose a typed output-read operation for renderer attachment"
 
 require_pattern \
-    "clients/apple/alan-macos/TerminalRuntimeService.swift" \
+    "clients/apple/alan-macos/Services/Terminal/ManagedUserTerminalPtyRuntime.swift" \
     "AlanHelperManagedUserPtyRendererProxy" \
     "managed_user terminal runtime must bridge helper PTY sessions into the Ghostty external-PTY attachment seam"
 

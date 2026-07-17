@@ -204,7 +204,6 @@ current_root_swift_allowlist=(
     "ShellHostController.swift"
     "TerminalPaneView.swift"
     "TerminalRuntimeRegistry.swift"
-    "TerminalRuntimeService.swift"
     "TerminalSurfaceController.swift"
 )
 
@@ -609,7 +608,7 @@ while IFS= read -r file; do
 
     if grep -Eq '^import (AppKit|Darwin)$' "$file"; then
         case "$rel" in
-            App/*|Services/*|Support/*|Views/Shell/Terminal/*|AlanApp.swift|AlanAppSingletonGuard.swift|GhosttyLiveHost.swift|ShellControlPlane.swift|TerminalRuntimeService.swift|TerminalSurfaceController.swift)
+            App/*|Services/*|Support/*|Views/Shell/Terminal/*|AlanApp.swift|AlanAppSingletonGuard.swift|GhosttyLiveHost.swift|ShellControlPlane.swift|TerminalSurfaceController.swift)
                 ;;
             MacShellRootView.swift|ShellHostController.swift|TerminalRuntimeRegistry.swift)
                 warn "bridge|$rel|appkit-or-darwin-outside-bridge" \

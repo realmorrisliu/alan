@@ -1,5 +1,4 @@
 # Exact Apple architecture-warning debt. Keep entries sorted.
 # large entries include their current line ceiling; every reduction tightens it.
 large|Services/Shell/AlanPrivilegedHelperXPC.swift|2117
-large|TerminalRuntimeService.swift|3995
 large|TerminalSurfaceController.swift|1837

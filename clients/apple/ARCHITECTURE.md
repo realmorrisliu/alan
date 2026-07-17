@@ -56,7 +56,17 @@ Xcode target.
 | `Services/Terminal/TerminalHostRuntimeReporter.swift` | 48 | Foundation; macOS gates | Runtime snapshot deduplication and main-queue publication for terminal host updates | `Services/Terminal/` |
 | `Services/Terminal/TerminalHostWindowObserver.swift` | 55 | AppKit; macOS gates | Terminal host window key, screen, and occlusion notification ownership | `Services/Terminal/` |
 | `TerminalRuntimeRegistry.swift` | 598 | SwiftUI; macOS gates | Pane/content-keyed terminal host/runtime registry | `Services/Terminal/` |
-| `TerminalRuntimeService.swift` | 3995 | Foundation, AppKit, GhosttyKit; macOS/Ghostty gates | Window-scoped terminal runtime service, lifecycle ownership, and Ghostty bootstrap | `Services/Terminal/` |
+| `Services/Terminal/DarwinTerminalPtyRuntime.swift` | 820 | Darwin, Foundation; macOS gates | Local Darwin PTY handle, renderer proxy, nonblocking IO, process launch, and exit observation | `Services/Terminal/` |
+| `Services/Terminal/GhosttyProcessBootstrap.swift` | 143 | Darwin, Foundation, GhosttyKit; macOS/Ghostty gates | Process-wide Ghostty initialization and inherited terminal-environment scrubbing | `Services/Terminal/` |
+| `Services/Terminal/GhosttyTerminalSurfaceHandle.swift` | 541 | AppKit, Foundation, GhosttyKit; macOS/Ghostty gates | Ghostty surface lifecycle, PTY attachment, delivery, renderer updates, and event-engine adaptation | `Services/Terminal/` |
+| `Services/Terminal/ManagedUserTerminalPtyRuntime.swift` | 764 | Darwin, Foundation; macOS gates | Privileged-helper Managed User PTY provider, handle, renderer proxy, and raw-byte bridge | `Services/Terminal/` |
+| `Services/Terminal/TerminalPtyContracts.swift` | 125 | Foundation; macOS gates | PTY lifecycle, dimensions, exit, attachment, handle, runtime, and provider contracts | `Services/Terminal/` |
+| `Services/Terminal/TerminalPtyControlSequenceResponder.swift` | 223 | Foundation; macOS gates | Bounded PTY control-sequence parser and terminal query responses | `Services/Terminal/` |
+| `Services/Terminal/TerminalPtyRuntime.swift` | 67 | Darwin, Foundation; macOS gates | Content-keyed PTY handle registry, local/Managed User dispatch, and shared socket setup | `Services/Terminal/` |
+| `Services/Terminal/TerminalRuntimeDelivery.swift` | 104 | Foundation; macOS gates | Stable terminal delivery codes and result construction | `Services/Terminal/` |
+| `Services/Terminal/TerminalSurfaceContracts.swift` | 263 | AppKit, Foundation, GhosttyKit; macOS/Ghostty gates | Surface lifecycle, teardown, transcript, event-surface, and runtime-service contracts | `Services/Terminal/` |
+| `Services/Terminal/TerminalTranscriptCapture.swift` | 84 | Foundation; macOS gates | Bounded live/fallback terminal transcript capture and dimension projection | `Services/Terminal/` |
+| `Services/Terminal/WindowTerminalRuntimeService.swift` | 198 | Foundation; macOS gates | Window-scoped content-keyed surface ownership, restored transcripts, delivery, and teardown | `Services/Terminal/` |
 | `TerminalSurfaceController.swift` | 1837 | Foundation, AppKit, GhosttyKit; macOS/Ghostty gates | Terminal input, pointer, scrollback, search, semantic commands, and surface adapters | `Services/Terminal/` |
 | `Models/Shell/ShellWorkspaceValueTypes.swift` | 159 | Foundation | Shared shell commands, split/focus directions, attention, tab organization, and launch-target values | `Models/Shell/` |
 | `Models/Shell/TerminalProfileModels.swift` | 337 | Foundation | Terminal Profile launch, definition, document, validation, editor, store, and resolution result DTOs | `Models/Shell/` |
@@ -331,15 +341,16 @@ device support was not required for this validation.
 ## Remaining Architecture Debt
 
 `check-architecture-maintainability.sh` currently completes in report mode.
-3 known large-file / bridge-boundary warnings remain after the first fourteen Apple
+2 known large-file / bridge-boundary warnings remain after the first fifteen Apple
 ownership slices removed the `ShellHostController.swift` bridge warning and
 split control projection, observation commands, root-controller
 responsibilities, shell presentation models, settings models, snapshot DTO
 families, shell/platform value families, sidebar and settings presentation,
 pane-tree/content rendering, and pane title/overlay presentation into focused
 owners, then isolated Ghostty's macOS platform adapters and terminal runtime
-responsibilities into focused owners and split terminal host lifecycle, pointer,
-keyboard, text-input, and tracing responsibilities. These warnings
+responsibilities into focused owners, split terminal host lifecycle, pointer,
+keyboard, text-input, and tracing responsibilities, and separated the window
+runtime service from PTY, bootstrap, surface, transcript, and test-double owners. These warnings
 are telemetry for the cleanup, not the cleanup
 definition. The real debt is any Swift production source that still carries a
 Rust-owned shell-domain implementation, fixture, or fallback after shell-core
@@ -455,6 +466,14 @@ terminal-view folder and split first-responder/pointer routing, physical keyboar
 translation, `NSTextInputClient`, keyboard-layout lookup, and input tracing into
 focused `Services/Terminal/` adapters. The lifecycle owner is 574 lines, no
 replacement file exceeds 637 lines, and the warning count falls from 4 to 3.
+
+The fifteenth ownership slice removed the generalized
+`TerminalRuntimeService.swift` root. Delivery and PTY contracts, control-sequence
+responses, local and Managed User PTY implementations, Ghostty bootstrap and
+surface adaptation, transcript capture, and window-scoped runtime ownership now
+live in focused `Services/Terminal/` files. Runtime fakes moved out of the app
+target into `scripts/support/TerminalRuntimeTestDoubles.swift`; no production
+replacement exceeds 820 lines, and the warning count falls from 3 to 2.
 
 Rust-owned Swift legacy cleanup targets at this baseline:
 

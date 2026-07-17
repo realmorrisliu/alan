@@ -39,7 +39,9 @@ recorded in [`ARCHITECTURE.md`](./ARCHITECTURE.md).
 - `Services/Terminal/`: terminal host runtime reporting, window observation,
   Ghostty platform adapters, host focus/pointer/keyboard/text-input adapters,
   input tracing, keyboard-layout lookup, boot resolution, render coordination,
-  publication policy, agent-activity projection, and terminal runtime service collaborators
+  publication policy, agent-activity projection, PTY contracts and implementations,
+  Ghostty bootstrap/surface adaptation, transcript capture, and the window-scoped
+  terminal runtime service
 - `TerminalPaneView.swift` / `Views/Shell/Terminal/TerminalHostView.swift`: current
   terminal pane and AppKit host surfaces;
   settings, bounded content, pane-tree, terminal-leaf, title-bar, and overlay
