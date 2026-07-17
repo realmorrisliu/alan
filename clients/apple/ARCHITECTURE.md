@@ -40,10 +40,17 @@ Xcode target.
 | `Models/Shell/ShellSnapshots.swift` | 2093 | CoreGraphics, Foundation | Shell panes, tabs, spaces, split tree, state snapshots, snapshot query helpers, and portable projection DTOs | `Models/Shell/` |
 | `Models/Shell/ShellStateRuntimeSupport.swift` | 348 | Foundation | Narrow app-target shell bootstrap defaults, mutation result/error types, Terminal Profile inheritance queries, platform activity acknowledgement/projection, and inactive temporary-tab query support | `Models/Shell/` |
 | `ShellModel.swift` | 1227 | Foundation | Shell title, label, sidebar, and status presentation helpers | `Models/Shell/` or `Support/ShellPresentation/` |
-| `ShellHostController.swift` | 3885 | Foundation, Combine; macOS gates | Observable shell controller, runtime update intake, command routing, and shell state mutation coordination delegated to services | `Controllers/Shell/` plus service collaborators |
+| `ShellHostController.swift` | 383 | Foundation, Combine; macOS gates | Observable shell state, dependency assembly, startup, shutdown, and root lifecycle | Root controller with focused `Controllers/Shell/` responsibility extensions |
 | `Controllers/Shell/ShellHostControlCommandHandling.swift` | 1199 | Foundation; macOS gates | Shell control-plane command dispatch and pane mutation routing | `Controllers/Shell/` |
 | `Controllers/Shell/ShellHostControlProjection.swift` | 268 | Foundation; macOS gates | Control response, list, routing-candidate, and terminal-delivery projection | `Controllers/Shell/` |
 | `Controllers/Shell/ShellHostObservationControlCommandHandling.swift` | 257 | Foundation; macOS gates | Agent activity, attention, event, render-metric, and performance-diagnostic commands | `Controllers/Shell/` |
+| `Controllers/Shell/ShellHostProjectionAndSelection.swift` | 491 | Foundation; macOS gates | Derived shell projection, focus, selection, zoom, and shell-surface close requests | `Controllers/Shell/` |
+| `Controllers/Shell/ShellHostSpaceAndTabLifecycle.swift` | 727 | Foundation; macOS gates | Space, tab, content, and split creation plus tab ordering and movement | `Controllers/Shell/` |
+| `Controllers/Shell/ShellHostActionAndTerminalCommandHandling.swift` | 494 | Foundation; macOS gates | Shell action execution, spatial focus, and terminal semantic-command routing | `Controllers/Shell/` |
+| `Controllers/Shell/ShellHostRuntimeProjection.swift` | 641 | Foundation; macOS gates | Terminal runtime and metadata projection, activity routing, state adoption, and selection synchronization | `Controllers/Shell/` |
+| `Controllers/Shell/ShellHostWorkspacePersistence.swift` | 328 | Foundation; macOS gates | Workspace-manifest projection, transcript capture, pinned snapshots, and active-task persistence | `Controllers/Shell/` |
+| `Controllers/Shell/ShellHostCloseAndPaneLifecycle.swift` | 550 | Foundation; macOS gates | Close guards, graceful shutdown, pane lifecycle/movement, and control-plane state publication | `Controllers/Shell/` |
+| `Controllers/Shell/ShellHostAutomationCommandHandling.swift` | 309 | Foundation; macOS gates | External shell automation command adaptation and response projection | `Controllers/Shell/` |
 | `Services/Shell/ShellControlFilePoller.swift` | 182 | Foundation; macOS gates | File-backed command/result polling and alan binding-file projection | `Services/Shell/` |
 | `Services/Shell/ShellDiagnostics.swift` | 16 | Foundation; macOS gates | Shell service diagnostic routing | `Services/Shell/` |
 | `Services/Shell/ShellEventStore.swift` | 677 | Foundation; macOS gates | Shell event buffering, diffing, `events.read`, and jsonl persistence | `Services/Shell/` |
@@ -276,10 +283,10 @@ device support was not required for this validation.
 ## Remaining Architecture Debt
 
 `check-architecture-maintainability.sh` currently completes in report mode.
-13 known large-file / bridge-boundary warnings remain after the first two Apple
+12 known large-file / bridge-boundary warnings remain after the first three Apple
 ownership slices removed the `ShellHostController.swift` bridge warning and
-split control projection and observation commands from the dispatch owner; all
-13 are now large-file warnings. These warnings
+split control projection, observation commands, and root-controller
+responsibilities into focused owners; all 12 are now large-file warnings. These warnings
 are telemetry for the cleanup, not the cleanup
 definition. The real debt is any Swift production source that still carries a
 Rust-owned shell-domain implementation, fixture, or fallback after shell-core
@@ -323,6 +330,12 @@ The second ownership slice moved response/list projection and observation/
 diagnostic command handling out of the dispatch file. The command owner is now
 1,199 lines and the current inventory is 13 large-file warnings.
 
+The third ownership slice left `ShellHostController.swift` with observable
+state, dependency assembly, startup, shutdown, and root lifecycle. Selection,
+space/tab lifecycle, actions, runtime projection, persistence, close/pane
+lifecycle, and automation adaptation now live in focused controller extensions;
+the root is 383 lines and the current inventory is 12 large-file warnings.
+
 Rust-owned Swift legacy cleanup targets at this baseline:
 
 | File | Lines | Cleanup target |
@@ -333,7 +346,7 @@ Rust-owned Swift legacy cleanup targets at this baseline:
 | `Models/Shell/ShellValueTypes.swift` | 2,178 | Partially cleaned: Terminal Profile validator/editor/store behavior moved to `Services/Shell/TerminalProfileStore.swift`, where validation, editor definition construction, document upsert, and global default capture policy call shell-core FFI and fail closed on core errors. Fixture-only managed-account fake execution/profile handoff support now lives in `clients/apple/scripts/support/ManagedTerminalAccountTestSupport.swift`. Managed-account request validation and provisioning planning now call shell-core FFI and fail closed on core errors. Production value types still keep Terminal Profile DTOs, error/result shapes, managed-account platform models, local discovery/readiness, sudoers file validation/projection, rollback planning, and authorized executor helpers until later platform-effect or FFI adapter slices. |
 | `Models/Shell/ShellSettingsSurfaceModel.swift` | 1,195 | Cleaned below the current report threshold: managed terminal account settings row icon/status/detail projection now calls `settings.managed_terminal_account_rows` through `Services/Shell/ShellCoreFFISettingsAdapter.swift`; production keeps settings navigation/grouping DTOs, remote/local host summary collection, workspace context discovery, and fail-closed unavailable rows. |
 | `Services/Shell/ShellCoreFFIAdapter.swift` | 12 | Cleaned as adapter facade: loader, envelope, materialization, manifest, reducer, control, action, settings, Terminal Profile, and managed terminal account operation owners now live in sibling `ShellCoreFFI*` files; no Swift domain fallback was added. |
-| `ShellHostController.swift` | 3,885 | Partially cleaned: workspace-manifest startup, Rust-core pruning/materialization, manifest writer construction, debounce scheduling, shell-state persistence, control-plane flush cadence, action dispatch/effect routing, platform metadata preservation, and AppKit/SwiftUI bridges now live in named collaborators. Remaining cleanup target: observable UI/runtime orchestration and any control response adoption still better owned outside the host controller. |
+| `ShellHostController.swift` | 383 | Cleaned below the report threshold: the root keeps observable state, dependency assembly, startup, shutdown, and root lifecycle. Selection, space/tab lifecycle, actions, runtime projection, persistence, close/pane lifecycle, and automation adaptation live in focused `Controllers/Shell/ShellHost*` extensions while Rust shell-core and existing service coordinators retain domain authority. |
 | `Controllers/Shell/ShellHostControlCommandHandling.swift` | 1,199 | Cleaned below the report threshold: reusable reducer invocations route through `ShellReducerCommandCoordinator`, while response/list projection and observation/diagnostic commands live in adjacent controller modules. The dispatch owner retains control-command routing and pane mutation coordination without a second Rust-owned mutation implementation. |
 
 The first implementation batch targeted the production Swift legacy surface, not

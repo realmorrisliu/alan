@@ -100,6 +100,13 @@
 		000000000000000000000037 /* Controllers/Shell/ShellHostControlCommandHandling.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000137 /* Controllers/Shell/ShellHostControlCommandHandling.swift */; };
 		A11C00000000000000000003 /* Controllers/Shell/ShellHostControlProjection.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11C00000000000000000103 /* Controllers/Shell/ShellHostControlProjection.swift */; };
 		A11C00000000000000000004 /* Controllers/Shell/ShellHostObservationControlCommandHandling.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11C00000000000000000104 /* Controllers/Shell/ShellHostObservationControlCommandHandling.swift */; };
+		A11C00000000000000000005 /* Controllers/Shell/ShellHostProjectionAndSelection.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11C00000000000000000105 /* Controllers/Shell/ShellHostProjectionAndSelection.swift */; };
+		A11C00000000000000000006 /* Controllers/Shell/ShellHostSpaceAndTabLifecycle.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11C00000000000000000106 /* Controllers/Shell/ShellHostSpaceAndTabLifecycle.swift */; };
+		A11C00000000000000000007 /* Controllers/Shell/ShellHostActionAndTerminalCommandHandling.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11C00000000000000000107 /* Controllers/Shell/ShellHostActionAndTerminalCommandHandling.swift */; };
+		A11C00000000000000000008 /* Controllers/Shell/ShellHostRuntimeProjection.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11C00000000000000000108 /* Controllers/Shell/ShellHostRuntimeProjection.swift */; };
+		A11C00000000000000000009 /* Controllers/Shell/ShellHostWorkspacePersistence.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11C00000000000000000109 /* Controllers/Shell/ShellHostWorkspacePersistence.swift */; };
+		A11C0000000000000000000A /* Controllers/Shell/ShellHostCloseAndPaneLifecycle.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11C0000000000000000010A /* Controllers/Shell/ShellHostCloseAndPaneLifecycle.swift */; };
+		A11C0000000000000000000B /* Controllers/Shell/ShellHostAutomationCommandHandling.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11C0000000000000000010B /* Controllers/Shell/ShellHostAutomationCommandHandling.swift */; };
 		000000000000000000000038 /* Support/ShellSidebarSwipeMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000138 /* Support/ShellSidebarSwipeMonitor.swift */; };
 		000000000000000000000039 /* Models/Shell/ShellWorkspaceManifest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000139 /* Models/Shell/ShellWorkspaceManifest.swift */; };
 		00000000000000000000003A /* Services/Shell/ShellWorkspaceManifestStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000013A /* Services/Shell/ShellWorkspaceManifestStore.swift */; };
@@ -195,6 +202,13 @@
 		000000000000000000000137 /* Controllers/Shell/ShellHostControlCommandHandling.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Controllers/Shell/ShellHostControlCommandHandling.swift; sourceTree = "<group>"; };
 		A11C00000000000000000103 /* Controllers/Shell/ShellHostControlProjection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Controllers/Shell/ShellHostControlProjection.swift; sourceTree = "<group>"; };
 		A11C00000000000000000104 /* Controllers/Shell/ShellHostObservationControlCommandHandling.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Controllers/Shell/ShellHostObservationControlCommandHandling.swift; sourceTree = "<group>"; };
+		A11C00000000000000000105 /* Controllers/Shell/ShellHostProjectionAndSelection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Controllers/Shell/ShellHostProjectionAndSelection.swift; sourceTree = "<group>"; };
+		A11C00000000000000000106 /* Controllers/Shell/ShellHostSpaceAndTabLifecycle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Controllers/Shell/ShellHostSpaceAndTabLifecycle.swift; sourceTree = "<group>"; };
+		A11C00000000000000000107 /* Controllers/Shell/ShellHostActionAndTerminalCommandHandling.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Controllers/Shell/ShellHostActionAndTerminalCommandHandling.swift; sourceTree = "<group>"; };
+		A11C00000000000000000108 /* Controllers/Shell/ShellHostRuntimeProjection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Controllers/Shell/ShellHostRuntimeProjection.swift; sourceTree = "<group>"; };
+		A11C00000000000000000109 /* Controllers/Shell/ShellHostWorkspacePersistence.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Controllers/Shell/ShellHostWorkspacePersistence.swift; sourceTree = "<group>"; };
+		A11C0000000000000000010A /* Controllers/Shell/ShellHostCloseAndPaneLifecycle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Controllers/Shell/ShellHostCloseAndPaneLifecycle.swift; sourceTree = "<group>"; };
+		A11C0000000000000000010B /* Controllers/Shell/ShellHostAutomationCommandHandling.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Controllers/Shell/ShellHostAutomationCommandHandling.swift; sourceTree = "<group>"; };
 		000000000000000000000138 /* Support/ShellSidebarSwipeMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Support/ShellSidebarSwipeMonitor.swift; sourceTree = "<group>"; };
 		000000000000000000000139 /* Models/Shell/ShellWorkspaceManifest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/Shell/ShellWorkspaceManifest.swift; sourceTree = "<group>"; };
 		00000000000000000000013A /* Services/Shell/ShellWorkspaceManifestStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Shell/ShellWorkspaceManifestStore.swift; sourceTree = "<group>"; };
@@ -449,6 +463,13 @@
 				000000000000000000000137 /* Controllers/Shell/ShellHostControlCommandHandling.swift */,
 				A11C00000000000000000103 /* Controllers/Shell/ShellHostControlProjection.swift */,
 				A11C00000000000000000104 /* Controllers/Shell/ShellHostObservationControlCommandHandling.swift */,
+				A11C00000000000000000105 /* Controllers/Shell/ShellHostProjectionAndSelection.swift */,
+				A11C00000000000000000106 /* Controllers/Shell/ShellHostSpaceAndTabLifecycle.swift */,
+				A11C00000000000000000107 /* Controllers/Shell/ShellHostActionAndTerminalCommandHandling.swift */,
+				A11C00000000000000000108 /* Controllers/Shell/ShellHostRuntimeProjection.swift */,
+				A11C00000000000000000109 /* Controllers/Shell/ShellHostWorkspacePersistence.swift */,
+				A11C0000000000000000010A /* Controllers/Shell/ShellHostCloseAndPaneLifecycle.swift */,
+				A11C0000000000000000010B /* Controllers/Shell/ShellHostAutomationCommandHandling.swift */,
 			);
 			name = Controllers/Shell;
 			sourceTree = "<group>";
@@ -697,6 +718,13 @@
 				000000000000000000000037 /* Controllers/Shell/ShellHostControlCommandHandling.swift in Sources */,
 				A11C00000000000000000003 /* Controllers/Shell/ShellHostControlProjection.swift in Sources */,
 				A11C00000000000000000004 /* Controllers/Shell/ShellHostObservationControlCommandHandling.swift in Sources */,
+				A11C00000000000000000005 /* Controllers/Shell/ShellHostProjectionAndSelection.swift in Sources */,
+				A11C00000000000000000006 /* Controllers/Shell/ShellHostSpaceAndTabLifecycle.swift in Sources */,
+				A11C00000000000000000007 /* Controllers/Shell/ShellHostActionAndTerminalCommandHandling.swift in Sources */,
+				A11C00000000000000000008 /* Controllers/Shell/ShellHostRuntimeProjection.swift in Sources */,
+				A11C00000000000000000009 /* Controllers/Shell/ShellHostWorkspacePersistence.swift in Sources */,
+				A11C0000000000000000000A /* Controllers/Shell/ShellHostCloseAndPaneLifecycle.swift in Sources */,
+				A11C0000000000000000000B /* Controllers/Shell/ShellHostAutomationCommandHandling.swift in Sources */,
 				000000000000000000000038 /* Support/ShellSidebarSwipeMonitor.swift in Sources */,
 				00000000000000000000003D /* Support/ShellSidebarPresentation.swift in Sources */,
 				00000000000000000000003B /* Support/ShellSidebarSpaceContentPager.swift in Sources */,

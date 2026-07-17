@@ -74,6 +74,13 @@ CLANG_MODULE_CACHE_PATH="$MODULE_CACHE_DIR" swiftc \
     "$REPO_ROOT/clients/apple/scripts/test-shell-runtime-metadata-host-stubs.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/TerminalRuntimeRegistry.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/ShellHostController.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Controllers/Shell/ShellHostProjectionAndSelection.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Controllers/Shell/ShellHostSpaceAndTabLifecycle.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Controllers/Shell/ShellHostActionAndTerminalCommandHandling.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Controllers/Shell/ShellHostRuntimeProjection.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Controllers/Shell/ShellHostWorkspacePersistence.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Controllers/Shell/ShellHostCloseAndPaneLifecycle.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Controllers/Shell/ShellHostAutomationCommandHandling.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Controllers/Shell/ShellHostControlProjection.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Controllers/Shell/ShellHostObservationControlCommandHandling.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Controllers/Shell/ShellHostControlCommandHandling.swift" \

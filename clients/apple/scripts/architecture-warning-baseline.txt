@@ -5,7 +5,6 @@ large|Models/Shell/ShellSettingsSurfaceModel.swift|1209
 large|Models/Shell/ShellSnapshots.swift|2142
 large|Models/Shell/ShellValueTypes.swift|2653
 large|Services/Shell/AlanPrivilegedHelperXPC.swift|2117
-large|ShellHostController.swift|3885
 large|ShellModel.swift|1229
 large|TerminalHostRuntime.swift|1552
 large|TerminalHostView.swift|2010

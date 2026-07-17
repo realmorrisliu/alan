@@ -275,10 +275,10 @@ require_split_terminal_full_pane_layout() {
 require_workspace_color_ownership_contract() {
     local pane_file="$REPO_ROOT/clients/apple/alan-macos/TerminalPaneView.swift"
 
-    require_pattern \
+    reject_pattern \
         "clients/apple/alan-macos/Support/ShellDesignTokens.swift" \
-        "static let rootBacking = ShellPaper\\.root" \
-        "shell root backing must alias the paper-domain root token"
+        "static let rootBacking" \
+        "removed shell root-backing compatibility aliases must not return"
 
     require_pattern \
         "clients/apple/alan-macos/Support/ShellDesignTokens.swift" \
@@ -1054,7 +1054,7 @@ require_pattern \
     "workspace manifest restore must prefer content-container manifests"
 
 require_pattern \
-    "clients/apple/alan-macos/ShellHostController.swift" \
+    "clients/apple/alan-macos/Controllers/Shell/ShellHostWorkspacePersistence.swift" \
     "makeWorkspaceManifestFromShellState\\(now: Date\\) -> ShellContentWorkspaceManifest" \
     "workspace manifest writes must produce content-container manifests"
 
@@ -1194,7 +1194,7 @@ require_pattern \
     "terminal.send_text must preserve the resolved terminal content target"
 
 require_pattern \
-    "clients/apple/alan-macos/ShellHostController.swift" \
+    "clients/apple/alan-macos/Controllers/Shell/ShellHostAutomationCommandHandling.swift" \
     "toTerminalContentID: terminalContentID" \
     "shared terminal.send_text commands must use explicit content targets when present"
 
@@ -1289,12 +1289,12 @@ require_pattern \
     "split divider drag end must persist the final ratio"
 
 require_pattern \
-    "clients/apple/alan-macos/ShellHostController.swift" \
+    "clients/apple/alan-macos/Controllers/Shell/ShellHostActionAndTerminalCommandHandling.swift" \
     "func resizeSplit\\(splitNodeID: String, ratio: Double, persist: Bool = true\\)" \
     "shell split resize must expose a non-persisting preview path"
 
 require_pattern \
-    "clients/apple/alan-macos/ShellHostController.swift" \
+    "clients/apple/alan-macos/Controllers/Shell/ShellHostActionAndTerminalCommandHandling.swift" \
     "applyMutationResult\\(result, publish: persist\\)" \
     "split resize preview persistence must be controlled at mutation application"
 
@@ -1314,17 +1314,17 @@ require_pattern \
     "shell workspace commands must remain a centralized shared vocabulary"
 
 require_pattern \
-    "clients/apple/alan-macos/ShellHostController.swift" \
+    "clients/apple/alan-macos/Controllers/Shell/ShellHostActionAndTerminalCommandHandling.swift" \
     "func performShellWorkspaceCommand\\(_ command: ShellWorkspaceCommand\\)" \
     "command UI and terminal-local workspace actions must keep the shared shell command entry point"
 
 require_pattern \
-    "clients/apple/alan-macos/ShellHostController.swift" \
+    "clients/apple/alan-macos/Controllers/Shell/ShellHostActionAndTerminalCommandHandling.swift" \
     "func performShellAction\\(" \
     "native menu, context menu, and shell keyboard actions must enter the shell action registry"
 
 require_pattern \
-    "clients/apple/alan-macos/ShellHostController.swift" \
+    "clients/apple/alan-macos/Controllers/Shell/ShellHostActionAndTerminalCommandHandling.swift" \
     "case \\.splitRight:" \
     "shared shell workspace command routing must be exhaustively owned by ShellHostController"
 
@@ -1374,7 +1374,7 @@ reject_pattern \
     "root shell view must not retain floating Ask alan command input plumbing"
 
 reject_pattern \
-    "clients/apple/alan-macos/ShellHostController.swift" \
+    "clients/apple/alan-macos" \
     "openAlanTab|requestCommandInput|setCommandInputActive|commandInputActive|newAlanTab" \
     "shell controller must not retain Ask alan or first-party alan tab command paths"
 
@@ -1754,7 +1754,7 @@ require_pattern \
     "pane title bars must use a dedicated title helper with terminal-title-first priority"
 
 require_pattern \
-    "clients/apple/alan-macos/ShellHostController.swift" \
+    "clients/apple/alan-macos/Controllers/Shell/ShellHostActionAndTerminalCommandHandling.swift" \
     "func closePaneByID\\(_ paneID: String\\) -> Bool" \
     "pane title-bar close must route through a controller-owned targeted pane close path"
 
@@ -1844,17 +1844,17 @@ require_pattern \
     "registry-owned terminal host views must not strongly retain activation owners"
 
 require_pattern \
-    "clients/apple/alan-macos/ShellHostController.swift" \
+    "clients/apple/alan-macos/Controllers/Shell/ShellHostProjectionAndSelection.swift" \
     "targetPaneID\\(forSpaceID: spaceID\\)" \
     "sidebar space selection must resolve a target pane before committing selection"
 
 require_pattern \
-    "clients/apple/alan-macos/ShellHostController.swift" \
+    "clients/apple/alan-macos/Controllers/Shell/ShellHostProjectionAndSelection.swift" \
     "targetPaneID\\(forTabID: tabID, in: selectedSpace\\)" \
     "sidebar tab selection must resolve a target pane before committing selection"
 
 require_pattern \
-    "clients/apple/alan-macos/ShellHostController.swift" \
+    "clients/apple/alan-macos/Controllers/Shell/ShellHostProjectionAndSelection.swift" \
     "terminalRuntimeRegistry\\.requestFocus\\(for: paneID\\)" \
     "committed sidebar selection must request terminal focus through the runtime registry"
 
@@ -1974,12 +1974,12 @@ reject_pattern \
     "complex split indicators must not render icon and count side by side"
 
 reject_pattern \
-    "clients/apple/alan-macos/ShellHostController.swift" \
+    "clients/apple/alan-macos/Controllers/Shell/ShellHostProjectionAndSelection.swift" \
     "selectedSpaceID = spaceID" \
     "sidebar space selection must not be view-local-only"
 
 reject_pattern \
-    "clients/apple/alan-macos/ShellHostController.swift" \
+    "clients/apple/alan-macos/Controllers/Shell/ShellHostProjectionAndSelection.swift" \
     "selectedTabID = tabID" \
     "sidebar tab selection must not be view-local-only"
 
@@ -2299,7 +2299,7 @@ require_pattern \
     "GhosttyKit bridge must pass the observed visible state used by this linked Ghostty build"
 
 require_pattern \
-    "clients/apple/alan-macos/ShellHostController.swift" \
+    "clients/apple/alan-macos/Controllers/Shell/ShellHostProjectionAndSelection.swift" \
     "windowIsVisible: shellWindowIsVisibleForRendering" \
     "terminal render priorities must use observed shell window visibility instead of a hardcoded visible window"
 
