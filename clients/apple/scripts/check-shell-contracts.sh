@@ -904,7 +904,7 @@ reject_pattern \
     "continuous Space slider track must not use the old too-light sidebar control fill"
 
 require_pattern \
-    "clients/apple/alan-macos/Models/Shell/ShellSnapshots.swift" \
+    "clients/apple/alan-macos/Models/Shell/ShellTabSpaceSnapshots.swift" \
     "resolvedPresentationIconSystemName|presentation_icon" \
     "ShellSpace projection must expose optional Space presentation icon metadata"
 

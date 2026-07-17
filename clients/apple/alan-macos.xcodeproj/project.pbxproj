@@ -40,7 +40,11 @@
 		00000000000000000000001B /* Views/Shell/ShellWorkspaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000011B /* Views/Shell/ShellWorkspaceView.swift */; };
 		00000000000000000000001D /* Support/ShellVoiceCommandController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000011D /* Support/ShellVoiceCommandController.swift */; };
 		000000000000000000000021 /* Models/Shell/ShellValueTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000121 /* Models/Shell/ShellValueTypes.swift */; };
-		000000000000000000000022 /* Models/Shell/ShellSnapshots.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000122 /* Models/Shell/ShellSnapshots.swift */; };
+		000000000000000000000022 /* Models/Shell/ShellPaneSnapshots.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000122 /* Models/Shell/ShellPaneSnapshots.swift */; };
+		A11F00000000000000000001 /* Models/Shell/ShellContentSnapshots.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11F00000000000000000101 /* Models/Shell/ShellContentSnapshots.swift */; };
+		A11F00000000000000000002 /* Models/Shell/ShellPaneTreeSnapshots.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11F00000000000000000102 /* Models/Shell/ShellPaneTreeSnapshots.swift */; };
+		A11F00000000000000000003 /* Models/Shell/ShellTabSpaceSnapshots.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11F00000000000000000103 /* Models/Shell/ShellTabSpaceSnapshots.swift */; };
+		A11F00000000000000000004 /* Models/Shell/ShellWorkspaceSnapshots.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11F00000000000000000104 /* Models/Shell/ShellWorkspaceSnapshots.swift */; };
 		00000000000000000000006B /* Models/Shell/ShellStateRuntimeSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000016B /* Models/Shell/ShellStateRuntimeSupport.swift */; };
 		00000000000000000000006C /* Models/Shell/ShellSpaceCreationProfileOptions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000016C /* Models/Shell/ShellSpaceCreationProfileOptions.swift */; };
 		000000000000000000000025 /* Services/Shell/ShellPaneProjectionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000125 /* Services/Shell/ShellPaneProjectionService.swift */; };
@@ -186,7 +190,11 @@
 		00000000000000000000011B /* Views/Shell/ShellWorkspaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Shell/ShellWorkspaceView.swift; sourceTree = "<group>"; };
 		00000000000000000000011D /* Support/ShellVoiceCommandController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Support/ShellVoiceCommandController.swift; sourceTree = "<group>"; };
 		000000000000000000000121 /* Models/Shell/ShellValueTypes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/Shell/ShellValueTypes.swift; sourceTree = "<group>"; };
-		000000000000000000000122 /* Models/Shell/ShellSnapshots.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/Shell/ShellSnapshots.swift; sourceTree = "<group>"; };
+		000000000000000000000122 /* Models/Shell/ShellPaneSnapshots.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/Shell/ShellPaneSnapshots.swift; sourceTree = "<group>"; };
+		A11F00000000000000000101 /* Models/Shell/ShellContentSnapshots.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/Shell/ShellContentSnapshots.swift; sourceTree = "<group>"; };
+		A11F00000000000000000102 /* Models/Shell/ShellPaneTreeSnapshots.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/Shell/ShellPaneTreeSnapshots.swift; sourceTree = "<group>"; };
+		A11F00000000000000000103 /* Models/Shell/ShellTabSpaceSnapshots.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/Shell/ShellTabSpaceSnapshots.swift; sourceTree = "<group>"; };
+		A11F00000000000000000104 /* Models/Shell/ShellWorkspaceSnapshots.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/Shell/ShellWorkspaceSnapshots.swift; sourceTree = "<group>"; };
 		00000000000000000000016B /* Models/Shell/ShellStateRuntimeSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/Shell/ShellStateRuntimeSupport.swift; sourceTree = "<group>"; };
 		00000000000000000000016C /* Models/Shell/ShellSpaceCreationProfileOptions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/Shell/ShellSpaceCreationProfileOptions.swift; sourceTree = "<group>"; };
 		000000000000000000000125 /* Services/Shell/ShellPaneProjectionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Shell/ShellPaneProjectionService.swift; sourceTree = "<group>"; };
@@ -400,7 +408,11 @@
 				A11D00000000000000000103 /* Models/Shell/ShellSidebarPaneTopology.swift */,
 				A11D00000000000000000104 /* Models/Shell/ShellActivityNotificationPresentation.swift */,
 				000000000000000000000121 /* Models/Shell/ShellValueTypes.swift */,
-				000000000000000000000122 /* Models/Shell/ShellSnapshots.swift */,
+				000000000000000000000122 /* Models/Shell/ShellPaneSnapshots.swift */,
+				A11F00000000000000000101 /* Models/Shell/ShellContentSnapshots.swift */,
+				A11F00000000000000000102 /* Models/Shell/ShellPaneTreeSnapshots.swift */,
+				A11F00000000000000000103 /* Models/Shell/ShellTabSpaceSnapshots.swift */,
+				A11F00000000000000000104 /* Models/Shell/ShellWorkspaceSnapshots.swift */,
 				000000000000000000000129 /* Models/Shell/ShellControlPlaneDTOs.swift */,
 				000000000000000000000139 /* Models/Shell/ShellWorkspaceManifest.swift */,
 				00000000000000000000016B /* Models/Shell/ShellStateRuntimeSupport.swift */,
@@ -719,7 +731,11 @@
 				00000000000000000000001B /* Views/Shell/ShellWorkspaceView.swift in Sources */,
 				00000000000000000000001D /* Support/ShellVoiceCommandController.swift in Sources */,
 				000000000000000000000021 /* Models/Shell/ShellValueTypes.swift in Sources */,
-				000000000000000000000022 /* Models/Shell/ShellSnapshots.swift in Sources */,
+				000000000000000000000022 /* Models/Shell/ShellPaneSnapshots.swift in Sources */,
+				A11F00000000000000000001 /* Models/Shell/ShellContentSnapshots.swift in Sources */,
+				A11F00000000000000000002 /* Models/Shell/ShellPaneTreeSnapshots.swift in Sources */,
+				A11F00000000000000000003 /* Models/Shell/ShellTabSpaceSnapshots.swift in Sources */,
+				A11F00000000000000000004 /* Models/Shell/ShellWorkspaceSnapshots.swift in Sources */,
 				00000000000000000000006B /* Models/Shell/ShellStateRuntimeSupport.swift in Sources */,
 				00000000000000000000006C /* Models/Shell/ShellSpaceCreationProfileOptions.swift in Sources */,
 				00000000000000000000003E /* Models/Shell/ShellActionRegistry.swift in Sources */,
