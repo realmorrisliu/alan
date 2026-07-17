@@ -40,8 +40,10 @@ Xcode target.
 | `Models/Shell/ShellSnapshots.swift` | 2093 | CoreGraphics, Foundation | Shell panes, tabs, spaces, split tree, state snapshots, snapshot query helpers, and portable projection DTOs | `Models/Shell/` |
 | `Models/Shell/ShellStateRuntimeSupport.swift` | 348 | Foundation | Narrow app-target shell bootstrap defaults, mutation result/error types, Terminal Profile inheritance queries, platform activity acknowledgement/projection, and inactive temporary-tab query support | `Models/Shell/` |
 | `ShellModel.swift` | 1227 | Foundation | Shell title, label, sidebar, and status presentation helpers | `Models/Shell/` or `Support/ShellPresentation/` |
-| `ShellHostController.swift` | 4424 | Foundation, AppKit, SwiftUI; macOS gates | Observable shell controller, runtime update intake, command routing, and shell state mutation coordination delegated to services | `Controllers/Shell/` plus service collaborators |
-| `Controllers/Shell/ShellHostControlCommandHandling.swift` | 1805 | Foundation; macOS gates | Shell control-plane command response handling, host routing, terminal delivery, and list helpers | `Controllers/Shell/` plus future control response collaborators |
+| `ShellHostController.swift` | 3885 | Foundation, Combine; macOS gates | Observable shell controller, runtime update intake, command routing, and shell state mutation coordination delegated to services | `Controllers/Shell/` plus service collaborators |
+| `Controllers/Shell/ShellHostControlCommandHandling.swift` | 1199 | Foundation; macOS gates | Shell control-plane command dispatch and pane mutation routing | `Controllers/Shell/` |
+| `Controllers/Shell/ShellHostControlProjection.swift` | 268 | Foundation; macOS gates | Control response, list, routing-candidate, and terminal-delivery projection | `Controllers/Shell/` |
+| `Controllers/Shell/ShellHostObservationControlCommandHandling.swift` | 257 | Foundation; macOS gates | Agent activity, attention, event, render-metric, and performance-diagnostic commands | `Controllers/Shell/` |
 | `Services/Shell/ShellControlFilePoller.swift` | 182 | Foundation; macOS gates | File-backed command/result polling and alan binding-file projection | `Services/Shell/` |
 | `Services/Shell/ShellDiagnostics.swift` | 16 | Foundation; macOS gates | Shell service diagnostic routing | `Services/Shell/` |
 | `Services/Shell/ShellEventStore.swift` | 677 | Foundation; macOS gates | Shell event buffering, diffing, `events.read`, and jsonl persistence | `Services/Shell/` |
@@ -274,9 +276,10 @@ device support was not required for this validation.
 ## Remaining Architecture Debt
 
 `check-architecture-maintainability.sh` currently completes in report mode.
-14 known large-file / bridge-boundary warnings remain after the first Apple
-ownership slice moved AppKit access out of `ShellHostController.swift`; all 14
-are now large-file warnings. These warnings
+13 known large-file / bridge-boundary warnings remain after the first two Apple
+ownership slices removed the `ShellHostController.swift` bridge warning and
+split control projection and observation commands from the dispatch owner; all
+13 are now large-file warnings. These warnings
 are telemetry for the cleanup, not the cleanup
 definition. The real debt is any Swift production source that still carries a
 Rust-owned shell-domain implementation, fixture, or fallback after shell-core
@@ -313,8 +316,12 @@ coordinators from `ShellHostController.swift`, the warning classes are:
 
 The first Apple ownership slice moved close confirmation, app activity, and
 pasteboard access behind narrow `Services/Shell` adapters. The controller now
-imports only Foundation and Combine, so the current warning inventory is the 14
-large Swift files above with no bridge-boundary warning.
+imports only Foundation and Combine, reducing the inventory to 14 large-file
+warnings with no bridge-boundary warning.
+
+The second ownership slice moved response/list projection and observation/
+diagnostic command handling out of the dispatch file. The command owner is now
+1,199 lines and the current inventory is 13 large-file warnings.
 
 Rust-owned Swift legacy cleanup targets at this baseline:
 
@@ -326,16 +333,17 @@ Rust-owned Swift legacy cleanup targets at this baseline:
 | `Models/Shell/ShellValueTypes.swift` | 2,178 | Partially cleaned: Terminal Profile validator/editor/store behavior moved to `Services/Shell/TerminalProfileStore.swift`, where validation, editor definition construction, document upsert, and global default capture policy call shell-core FFI and fail closed on core errors. Fixture-only managed-account fake execution/profile handoff support now lives in `clients/apple/scripts/support/ManagedTerminalAccountTestSupport.swift`. Managed-account request validation and provisioning planning now call shell-core FFI and fail closed on core errors. Production value types still keep Terminal Profile DTOs, error/result shapes, managed-account platform models, local discovery/readiness, sudoers file validation/projection, rollback planning, and authorized executor helpers until later platform-effect or FFI adapter slices. |
 | `Models/Shell/ShellSettingsSurfaceModel.swift` | 1,195 | Cleaned below the current report threshold: managed terminal account settings row icon/status/detail projection now calls `settings.managed_terminal_account_rows` through `Services/Shell/ShellCoreFFISettingsAdapter.swift`; production keeps settings navigation/grouping DTOs, remote/local host summary collection, workspace context discovery, and fail-closed unavailable rows. |
 | `Services/Shell/ShellCoreFFIAdapter.swift` | 12 | Cleaned as adapter facade: loader, envelope, materialization, manifest, reducer, control, action, settings, Terminal Profile, and managed terminal account operation owners now live in sibling `ShellCoreFFI*` files; no Swift domain fallback was added. |
-| `ShellHostController.swift` | 4,424 | Partially cleaned: workspace-manifest startup, Rust-core pruning/materialization, manifest writer construction, debounce scheduling, shell-state persistence, control-plane flush cadence, action dispatch/effect routing, and platform metadata preservation now live in named `Services/Shell/*Coordinator` or `*Preserver` owners. Remaining cleanup target: observable UI/runtime orchestration and any control response adoption still better owned outside the host controller. |
-| `Controllers/Shell/ShellHostControlCommandHandling.swift` | 1,805 | Partially cleaned: reusable reducer invocations now route through `ShellReducerCommandCoordinator`. The remaining bulk is platform-side control-plane request/response projection, terminal delivery, diagnostics, and list helpers rather than a second Rust-owned mutation implementation. Remaining cleanup target: split control response projection and host routing into narrower collaborators after the controller split. |
+| `ShellHostController.swift` | 3,885 | Partially cleaned: workspace-manifest startup, Rust-core pruning/materialization, manifest writer construction, debounce scheduling, shell-state persistence, control-plane flush cadence, action dispatch/effect routing, platform metadata preservation, and AppKit/SwiftUI bridges now live in named collaborators. Remaining cleanup target: observable UI/runtime orchestration and any control response adoption still better owned outside the host controller. |
+| `Controllers/Shell/ShellHostControlCommandHandling.swift` | 1,199 | Cleaned below the report threshold: reusable reducer invocations route through `ShellReducerCommandCoordinator`, while response/list projection and observation/diagnostic commands live in adjacent controller modules. The dispatch owner retains control-command routing and pane mutation coordination without a second Rust-owned mutation implementation. |
 
 The first implementation batch targeted the production Swift legacy surface, not
 a line-count threshold. Manifest parity helpers and the Swift standard action
 registry plus reducer/tree mutation parity support moved out of normal
 app-target sources into script support. Direct inspection of
 `ShellHostControlCommandHandling.swift` shows no direct shell-core FFI owner or
-Swift reducer fallback remains there; its unresolved size is platform glue that
-should be split separately from Rust-domain authority cleanup. The
+Swift reducer fallback remains there. Its response projection and observation
+commands now have adjacent owners, while the remaining dispatch and pane
+mutation routing stays on the platform side of the Rust-domain boundary. The
 reduced architecture warning count is a byproduct; success is defined by the
 absence of production-compiled Rust-owned Swift implementations and by
 `check-shell-contracts.sh` continuing to reject fallback paths.
