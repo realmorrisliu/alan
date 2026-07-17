@@ -37,7 +37,8 @@ recorded in [`ARCHITECTURE.md`](./ARCHITECTURE.md).
   file polling, event store, diagnostics, and command-execution services that
   keep runtime metadata and IO out of the observable host
 - `Services/Terminal/`: terminal host runtime reporting, window observation,
-  agent-activity projection, and terminal runtime service collaborators
+  Ghostty platform adapters, agent-activity projection, and terminal runtime
+  service collaborators
 - `TerminalPaneView.swift` / `TerminalHostView.swift`: current terminal pane and host surfaces;
   settings, bounded content, pane-tree, terminal-leaf, title-bar, and overlay
   presentation live under `Views/Shell/`

@@ -42,7 +42,8 @@ Xcode target.
 | `Views/Shell/Terminal/ShellTerminalOverlayViews.swift` | 128 | SwiftUI; macOS gates | Pane-scoped Find interaction and passive inactive-pane dimming | `Views/Shell/Terminal/` |
 | `Views/Shell/Content/ShellBoundedContentViews.swift` | 647 | Foundation, SwiftUI; macOS gates | Bounded Agent and Markdown content renderers plus unavailable-content presentation | `Views/Shell/Content/` |
 | `TerminalHostView.swift` | 1911 | AppKit, Carbon, QuartzCore, GhosttyKit; macOS gates | AppKit terminal host bridge, focus, overlay composition, runtime attachment, and collaborator wiring | `Views/Shell/Terminal/` plus terminal collaborators |
-| `GhosttyLiveHost.swift` | 1227 | Foundation, AppKit, GhosttyKit, OSLog, QuartzCore; macOS/Ghostty gates | Ghostty canvas bridge and wakeup/occlusion integration | `Services/Terminal/` or `Support/TerminalBridge/` |
+| `GhosttyLiveHost.swift` | 1179 | Foundation, AppKit, GhosttyKit, OSLog, QuartzCore; macOS/Ghostty gates | Ghostty app/surface lifecycle, callbacks, and renderer coordination | `Services/Terminal/` |
+| `Services/Terminal/GhosttyPlatformAdapters.swift` | 104 | Foundation, AppKit, GhosttyKit; macOS/Ghostty gates | Ghostty key-code, clipboard, app-focus, canvas, and display adapters | `Services/Terminal/` |
 | `TerminalHostRuntime.swift` | 1406 | CoreGraphics, Foundation; macOS gates | Terminal launch resolution, boot profiles, runtime protocols, and fallback runtime state | `Services/Terminal/` |
 | `Services/Terminal/TerminalHostRuntimeReporter.swift` | 47 | Foundation; macOS gates | Runtime snapshot deduplication and main-queue publication for terminal host updates | `Services/Terminal/` |
 | `Services/Terminal/TerminalHostWindowObserver.swift` | 55 | AppKit; macOS gates | Terminal host window key, screen, and occlusion notification ownership | `Services/Terminal/` |
@@ -321,13 +322,13 @@ device support was not required for this validation.
 ## Remaining Architecture Debt
 
 `check-architecture-maintainability.sh` currently completes in report mode.
-6 known large-file / bridge-boundary warnings remain after the first eleven Apple
+5 known large-file / bridge-boundary warnings remain after the first twelve Apple
 ownership slices removed the `ShellHostController.swift` bridge warning and
 split control projection, observation commands, root-controller
 responsibilities, shell presentation models, settings models, snapshot DTO
 families, shell/platform value families, sidebar and settings presentation,
 pane-tree/content rendering, and pane title/overlay presentation into focused
-owners. These warnings
+owners, then isolated Ghostty's macOS platform adapters from its live host. These warnings
 are telemetry for the cleanup, not the cleanup
 definition. The real debt is any Swift production source that still carries a
 Rust-owned shell-domain implementation, fixture, or fallback after shell-core
@@ -424,6 +425,13 @@ overlay presentation into focused owners under `Views/Shell/Terminal/`, and
 deleted the unreferenced runtime, boot, Ghostty, binding, action, chip, and info
 card presentation chain. `TerminalPaneView.swift` falls from 1,337 to 229 lines
 and exits the large-file ledger, lowering the warning count from 7 to 6.
+
+The twelfth ownership slice moved Ghostty physical key codes, clipboard access,
+application-focus observation, the transparent canvas view, and display lookup
+behind `Services/Terminal/GhosttyPlatformAdapters.swift`. `GhosttyLiveHost.swift`
+retains app/surface lifecycle, callback assembly, and renderer coordination,
+falls from 1,258 to 1,179 lines, and exits the large-file ledger, lowering the
+warning count from 6 to 5.
 
 Rust-owned Swift legacy cleanup targets at this baseline:
 
