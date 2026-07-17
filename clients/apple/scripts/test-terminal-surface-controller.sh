@@ -92,7 +92,16 @@ CLANG_MODULE_CACHE_PATH="$MODULE_CACHE_DIR" swiftc \
     "$REPO_ROOT/clients/apple/alan-macos/Services/Terminal/TerminalTranscriptCapture.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Services/Terminal/WindowTerminalRuntimeService.swift" \
     "$REPO_ROOT/clients/apple/scripts/support/TerminalRuntimeTestDoubles.swift" \
-    "$REPO_ROOT/clients/apple/alan-macos/TerminalSurfaceController.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Services/Terminal/TerminalSemanticCommands.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Services/Terminal/TerminalKeyboardRouting.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Services/Terminal/TerminalPointerRouting.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Services/Terminal/TerminalInputRouter.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Services/Terminal/TerminalScrollbackAdapter.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Services/Terminal/TerminalSearchAdapter.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Services/Terminal/TerminalSelectionClipboardAdapter.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Services/Terminal/TerminalSurfaceState.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Services/Terminal/TerminalMetadataAdapter.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Services/Terminal/TerminalSurfaceController.swift" \
     "$REPO_ROOT/clients/apple/scripts/test-terminal-surface-controller.swift" \
     "$BUILD_DIR/AlanDarwinPtySpawn.o" \
     -o "$TEST_BINARY"

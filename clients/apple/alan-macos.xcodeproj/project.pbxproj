@@ -25,7 +25,7 @@
 		00000000000000000000000E /* ShellControlPlane.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000010E /* ShellControlPlane.swift */; };
 		00000000000000000000000F /* TerminalRuntimeRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000010F /* TerminalRuntimeRegistry.swift */; };
 		000000000000000000000010 /* Services/Terminal/WindowTerminalRuntimeService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000110 /* Services/Terminal/WindowTerminalRuntimeService.swift */; };
-		000000000000000000000011 /* TerminalSurfaceController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000111 /* TerminalSurfaceController.swift */; };
+		000000000000000000000011 /* Services/Terminal/TerminalSurfaceController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000111 /* Services/Terminal/TerminalSurfaceController.swift */; };
 		000000000000000000000012 /* AlanAppSingletonGuard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000112 /* AlanAppSingletonGuard.swift */; };
 		000000000000000000000013 /* App/AlanMacPrimaryShellOwner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000113 /* App/AlanMacPrimaryShellOwner.swift */; };
 		000000000000000000000014 /* App/AlanMacAppStartup.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000114 /* App/AlanMacAppStartup.swift */; };
@@ -68,6 +68,15 @@
 		A12800000000000000000008 /* Services/Terminal/TerminalRuntimeDelivery.swift in Sources */ = {isa = PBXBuildFile; fileRef = A12800000000000000000108 /* Services/Terminal/TerminalRuntimeDelivery.swift */; };
 		A12800000000000000000009 /* Services/Terminal/TerminalSurfaceContracts.swift in Sources */ = {isa = PBXBuildFile; fileRef = A12800000000000000000109 /* Services/Terminal/TerminalSurfaceContracts.swift */; };
 		A1280000000000000000000A /* Services/Terminal/TerminalTranscriptCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1280000000000000000010A /* Services/Terminal/TerminalTranscriptCapture.swift */; };
+		A12900000000000000000001 /* Services/Terminal/TerminalInputRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A12900000000000000000101 /* Services/Terminal/TerminalInputRouter.swift */; };
+		A12900000000000000000002 /* Services/Terminal/TerminalKeyboardRouting.swift in Sources */ = {isa = PBXBuildFile; fileRef = A12900000000000000000102 /* Services/Terminal/TerminalKeyboardRouting.swift */; };
+		A12900000000000000000003 /* Services/Terminal/TerminalMetadataAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A12900000000000000000103 /* Services/Terminal/TerminalMetadataAdapter.swift */; };
+		A12900000000000000000004 /* Services/Terminal/TerminalPointerRouting.swift in Sources */ = {isa = PBXBuildFile; fileRef = A12900000000000000000104 /* Services/Terminal/TerminalPointerRouting.swift */; };
+		A12900000000000000000005 /* Services/Terminal/TerminalScrollbackAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A12900000000000000000105 /* Services/Terminal/TerminalScrollbackAdapter.swift */; };
+		A12900000000000000000006 /* Services/Terminal/TerminalSearchAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A12900000000000000000106 /* Services/Terminal/TerminalSearchAdapter.swift */; };
+		A12900000000000000000007 /* Services/Terminal/TerminalSelectionClipboardAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A12900000000000000000107 /* Services/Terminal/TerminalSelectionClipboardAdapter.swift */; };
+		A12900000000000000000008 /* Services/Terminal/TerminalSemanticCommands.swift in Sources */ = {isa = PBXBuildFile; fileRef = A12900000000000000000108 /* Services/Terminal/TerminalSemanticCommands.swift */; };
+		A12900000000000000000009 /* Services/Terminal/TerminalSurfaceState.swift in Sources */ = {isa = PBXBuildFile; fileRef = A12900000000000000000109 /* Services/Terminal/TerminalSurfaceState.swift */; };
 		AA1B2C3D4E5F6A7B8C9D0E1F /* Views/Shell/Controls/ShellFormControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB2C3D4E5F6A7B8C9D0E1F2A /* Views/Shell/Controls/ShellFormControls.swift */; };
 		0000000000000000000000F0 /* Views/Shell/ShellSpaceCreationForm.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0000000000000000000001F0 /* Views/Shell/ShellSpaceCreationForm.swift */; };
 		00000000000000000000001B /* Views/Shell/ShellWorkspaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000011B /* Views/Shell/ShellWorkspaceView.swift */; };
@@ -217,7 +226,7 @@
 		00000000000000000000010E /* ShellControlPlane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShellControlPlane.swift; sourceTree = "<group>"; };
 		00000000000000000000010F /* TerminalRuntimeRegistry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalRuntimeRegistry.swift; sourceTree = "<group>"; };
 		000000000000000000000110 /* Services/Terminal/WindowTerminalRuntimeService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Terminal/WindowTerminalRuntimeService.swift; sourceTree = "<group>"; };
-		000000000000000000000111 /* TerminalSurfaceController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalSurfaceController.swift; sourceTree = "<group>"; };
+		000000000000000000000111 /* Services/Terminal/TerminalSurfaceController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Terminal/TerminalSurfaceController.swift; sourceTree = "<group>"; };
 		000000000000000000000112 /* AlanAppSingletonGuard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlanAppSingletonGuard.swift; sourceTree = "<group>"; };
 		000000000000000000000113 /* App/AlanMacPrimaryShellOwner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App/AlanMacPrimaryShellOwner.swift; sourceTree = "<group>"; };
 		000000000000000000000114 /* App/AlanMacAppStartup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App/AlanMacAppStartup.swift; sourceTree = "<group>"; };
@@ -260,6 +269,15 @@
 		A12800000000000000000108 /* Services/Terminal/TerminalRuntimeDelivery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Terminal/TerminalRuntimeDelivery.swift; sourceTree = "<group>"; };
 		A12800000000000000000109 /* Services/Terminal/TerminalSurfaceContracts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Terminal/TerminalSurfaceContracts.swift; sourceTree = "<group>"; };
 		A1280000000000000000010A /* Services/Terminal/TerminalTranscriptCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Terminal/TerminalTranscriptCapture.swift; sourceTree = "<group>"; };
+		A12900000000000000000101 /* Services/Terminal/TerminalInputRouter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Terminal/TerminalInputRouter.swift; sourceTree = "<group>"; };
+		A12900000000000000000102 /* Services/Terminal/TerminalKeyboardRouting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Terminal/TerminalKeyboardRouting.swift; sourceTree = "<group>"; };
+		A12900000000000000000103 /* Services/Terminal/TerminalMetadataAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Terminal/TerminalMetadataAdapter.swift; sourceTree = "<group>"; };
+		A12900000000000000000104 /* Services/Terminal/TerminalPointerRouting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Terminal/TerminalPointerRouting.swift; sourceTree = "<group>"; };
+		A12900000000000000000105 /* Services/Terminal/TerminalScrollbackAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Terminal/TerminalScrollbackAdapter.swift; sourceTree = "<group>"; };
+		A12900000000000000000106 /* Services/Terminal/TerminalSearchAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Terminal/TerminalSearchAdapter.swift; sourceTree = "<group>"; };
+		A12900000000000000000107 /* Services/Terminal/TerminalSelectionClipboardAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Terminal/TerminalSelectionClipboardAdapter.swift; sourceTree = "<group>"; };
+		A12900000000000000000108 /* Services/Terminal/TerminalSemanticCommands.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Terminal/TerminalSemanticCommands.swift; sourceTree = "<group>"; };
+		A12900000000000000000109 /* Services/Terminal/TerminalSurfaceState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Terminal/TerminalSurfaceState.swift; sourceTree = "<group>"; };
 		BB2C3D4E5F6A7B8C9D0E1F2A /* Views/Shell/Controls/ShellFormControls.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Views/Shell/Controls/ShellFormControls.swift"; sourceTree = "<group>"; };
 		0000000000000000000001F0 /* Views/Shell/ShellSpaceCreationForm.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Shell/ShellSpaceCreationForm.swift; sourceTree = "<group>"; };
 		00000000000000000000011B /* Views/Shell/ShellWorkspaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Shell/ShellWorkspaceView.swift; sourceTree = "<group>"; };
@@ -412,7 +430,6 @@
 				000000000000000000000106 /* ShellHostController.swift */,
 				000000000000000000000107 /* TerminalPaneView.swift */,
 				A11000000000000000000105 /* AlanDarwinPtySpawn.c */,
-				000000000000000000000111 /* TerminalSurfaceController.swift */,
 				00000000000000000000010F /* TerminalRuntimeRegistry.swift */,
 				00000000000000000000010A /* GhosttyLiveHost.swift */,
 				00000000000000000000010E /* ShellControlPlane.swift */,
@@ -609,6 +626,16 @@
 				A12800000000000000000108 /* Services/Terminal/TerminalRuntimeDelivery.swift */,
 				A12800000000000000000109 /* Services/Terminal/TerminalSurfaceContracts.swift */,
 				A1280000000000000000010A /* Services/Terminal/TerminalTranscriptCapture.swift */,
+				A12900000000000000000101 /* Services/Terminal/TerminalInputRouter.swift */,
+				A12900000000000000000102 /* Services/Terminal/TerminalKeyboardRouting.swift */,
+				A12900000000000000000103 /* Services/Terminal/TerminalMetadataAdapter.swift */,
+				A12900000000000000000104 /* Services/Terminal/TerminalPointerRouting.swift */,
+				A12900000000000000000105 /* Services/Terminal/TerminalScrollbackAdapter.swift */,
+				A12900000000000000000106 /* Services/Terminal/TerminalSearchAdapter.swift */,
+				A12900000000000000000107 /* Services/Terminal/TerminalSelectionClipboardAdapter.swift */,
+				A12900000000000000000108 /* Services/Terminal/TerminalSemanticCommands.swift */,
+				000000000000000000000111 /* Services/Terminal/TerminalSurfaceController.swift */,
+				A12900000000000000000109 /* Services/Terminal/TerminalSurfaceState.swift */,
 				000000000000000000000110 /* Services/Terminal/WindowTerminalRuntimeService.swift */,
 				A12000000000000000000108 /* Services/Terminal/TerminalAgentActivityAdapter.swift */,
 				000000000000000000000127 /* Services/Terminal/TerminalHostRuntimeReporter.swift */,
@@ -859,7 +886,16 @@
 				A12800000000000000000009 /* Services/Terminal/TerminalSurfaceContracts.swift in Sources */,
 				A1280000000000000000000A /* Services/Terminal/TerminalTranscriptCapture.swift in Sources */,
 				000000000000000000000010 /* Services/Terminal/WindowTerminalRuntimeService.swift in Sources */,
-				000000000000000000000011 /* TerminalSurfaceController.swift in Sources */,
+				A12900000000000000000001 /* Services/Terminal/TerminalInputRouter.swift in Sources */,
+				A12900000000000000000002 /* Services/Terminal/TerminalKeyboardRouting.swift in Sources */,
+				A12900000000000000000003 /* Services/Terminal/TerminalMetadataAdapter.swift in Sources */,
+				A12900000000000000000004 /* Services/Terminal/TerminalPointerRouting.swift in Sources */,
+				A12900000000000000000005 /* Services/Terminal/TerminalScrollbackAdapter.swift in Sources */,
+				A12900000000000000000006 /* Services/Terminal/TerminalSearchAdapter.swift in Sources */,
+				A12900000000000000000007 /* Services/Terminal/TerminalSelectionClipboardAdapter.swift in Sources */,
+				A12900000000000000000008 /* Services/Terminal/TerminalSemanticCommands.swift in Sources */,
+				000000000000000000000011 /* Services/Terminal/TerminalSurfaceController.swift in Sources */,
+				A12900000000000000000009 /* Services/Terminal/TerminalSurfaceState.swift in Sources */,
 				000000000000000000000012 /* AlanAppSingletonGuard.swift in Sources */,
 				00000000000000000000000E /* ShellControlPlane.swift in Sources */,
 				00000000000000000000000F /* TerminalRuntimeRegistry.swift in Sources */,
