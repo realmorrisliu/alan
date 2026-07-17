@@ -5,15 +5,17 @@
 //! adapters without shaping the core API around binding-generator constraints.
 
 use alan_shell_core::{
-    EnvelopeVersion, ManagedTerminalAccountIdentifierValidator, ManagedTerminalAccountRequest,
-    ManagedTerminalAccountSettingsSummary, ReducerError, ReducerOperation, ShellActionId,
-    ShellActionRegistry, ShellActionShortcut, ShellActionTarget, ShellContentWorkspaceManifest,
-    ShellControlCommand, ShellCoreErrorCode, ShellCoreErrorEnvelope, ShellCoreRequestEnvelope,
-    ShellCoreResponseEnvelope, ShellSettingsDiagnosticsSummary, ShellSettingsLocalSummary,
-    ShellSettingsSummaryRows, TerminalExecutableAvailability, TerminalLaunchEnvironment,
-    TerminalLaunchIntent, TerminalProfileDefinition, TerminalProfileDocument,
-    TerminalProfileEditor, TerminalProfileEditorDraft, TerminalProfileSettingsSummary,
-    TerminalProfileValidator, WorkspaceState, should_capture_global_default_terminal_profile,
+    EnvelopeVersion, ManagedTerminalAccountDiagnosis, ManagedTerminalAccountIdentifierValidator,
+    ManagedTerminalAccountPlanner, ManagedTerminalAccountRequest,
+    ManagedTerminalAccountRollbackScope, ManagedTerminalAccountSettingsSummary, ReducerError,
+    ReducerOperation, ShellActionId, ShellActionRegistry, ShellActionShortcut, ShellActionTarget,
+    ShellContentWorkspaceManifest, ShellControlCommand, ShellCoreErrorCode, ShellCoreErrorEnvelope,
+    ShellCoreRequestEnvelope, ShellCoreResponseEnvelope, ShellSettingsDiagnosticsSummary,
+    ShellSettingsLocalSummary, ShellSettingsSummaryRows, TerminalExecutableAvailability,
+    TerminalLaunchEnvironment, TerminalLaunchIntent, TerminalProfileDefinition,
+    TerminalProfileDocument, TerminalProfileEditor, TerminalProfileEditorDraft,
+    TerminalProfileSettingsSummary, TerminalProfileValidator, WorkspaceState,
+    should_capture_global_default_terminal_profile,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -173,6 +175,7 @@ fn dispatch_request(request: ShellCoreRequestEnvelope) -> ShellCoreResponseEnvel
         "managed_terminal_account.validate_request" => {
             validate_managed_terminal_account_request(request.payload)
         }
+        "managed_terminal_account.plan" => plan_managed_terminal_account(request.payload),
         "settings.terminal_profile_rows" => terminal_profile_rows(request.payload),
         "settings.managed_terminal_account_rows" => managed_terminal_account_rows(request.payload),
         "settings.local_rows" => local_rows(request.payload),
@@ -206,6 +209,7 @@ fn supported_operations() -> &'static [&'static str] {
         "terminal_profile.should_capture_global_default",
         "terminal_profile.resolve_launch_intent",
         "managed_terminal_account.validate_request",
+        "managed_terminal_account.plan",
         "settings.terminal_profile_rows",
         "settings.managed_terminal_account_rows",
         "settings.local_rows",
@@ -357,6 +361,34 @@ fn validate_managed_terminal_account_request(
     Ok(json!({
         "errors": ManagedTerminalAccountIdentifierValidator::validate(&request),
     }))
+}
+
+fn plan_managed_terminal_account(payload: Value) -> Result<Value, ShellCoreErrorEnvelope> {
+    let input: ManagedTerminalAccountPlanInput =
+        decode_payload(payload, "managed_terminal_account.plan")?;
+    let plan = match input {
+        ManagedTerminalAccountPlanInput::Provision {
+            request,
+            diagnosis,
+            terminal_profiles,
+        } => ManagedTerminalAccountPlanner::plan_from_diagnosis(
+            request,
+            &diagnosis,
+            terminal_profiles.as_ref(),
+        ),
+        ManagedTerminalAccountPlanInput::Rollback {
+            request,
+            diagnosis,
+            scope,
+            terminal_profiles,
+        } => ManagedTerminalAccountPlanner::rollback_plan(
+            request,
+            &diagnosis,
+            &scope,
+            terminal_profiles.as_ref(),
+        ),
+    };
+    Ok(json!({ "plan": plan }))
 }
 
 fn terminal_profile_rows(payload: Value) -> Result<Value, ShellCoreErrorEnvelope> {
@@ -523,6 +555,22 @@ struct TerminalLaunchIntentInput {
     terminal_profiles: Option<TerminalProfileDocument>,
     availability: TerminalExecutableAvailability,
     environment: TerminalLaunchEnvironment,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum ManagedTerminalAccountPlanInput {
+    Provision {
+        request: ManagedTerminalAccountRequest,
+        diagnosis: ManagedTerminalAccountDiagnosis,
+        terminal_profiles: Option<TerminalProfileDocument>,
+    },
+    Rollback {
+        request: ManagedTerminalAccountRequest,
+        diagnosis: ManagedTerminalAccountDiagnosis,
+        scope: ManagedTerminalAccountRollbackScope,
+        terminal_profiles: Option<TerminalProfileDocument>,
+    },
 }
 
 #[derive(Debug, Deserialize)]

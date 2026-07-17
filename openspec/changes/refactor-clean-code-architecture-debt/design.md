@@ -113,6 +113,13 @@ platform adapters for shallow pass-throughs. It may delete debt without a
 warning of its own, but it must not reintroduce Apple domain fallbacks or widen
 the operation-owner allowlist.
 
+The completed audit keeps reducer and managed-terminal-account operations in
+dedicated operation-family adapters. Portable managed-account provisioning and
+rollback planning now run in shell-core; Swift projects platform diagnosis and
+Terminal Profile DTOs and fails closed when the facade is unavailable. The
+shallow reducer command coordinator and optional action metadata fallbacks are
+removed without increasing the operation-owner allowlist.
+
 Alternative considered: keep a permanent warning allowlist. Rejected because
 the 15 warnings describe known migration state, not supported architecture.
 

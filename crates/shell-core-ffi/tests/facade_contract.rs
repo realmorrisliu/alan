@@ -35,6 +35,12 @@ fn facade_describe_reports_c_abi_byte_envelope_boundary() {
         payload["supported_operations"]
             .as_array()
             .expect("supported operations")
+            .contains(&json!("managed_terminal_account.plan"))
+    );
+    assert!(
+        payload["supported_operations"]
+            .as_array()
+            .expect("supported operations")
             .contains(&json!("manifest.validate"))
     );
 }
@@ -320,6 +326,93 @@ fn facade_dispatches_managed_terminal_account_validation() {
     assert_eq!(
         invalid.payload.expect("validation payload")["errors"][0]["type"],
         json!("reserved_account_name")
+    );
+}
+
+#[test]
+fn facade_dispatches_managed_terminal_account_provision_and_rollback_plans() {
+    let request_payload = json!({
+        "account_name": "alan_smoke",
+        "full_name": "Alan Smoke",
+        "shell": "/bin/zsh",
+        "home_directory": "/Users/alan_smoke",
+        "hide_from_login_window": true
+    });
+    let missing_diagnosis = json!({
+        "ownership_state": "missing",
+        "readiness_state": "account_missing",
+        "account_exists": false,
+        "is_admin": false,
+        "home_directory_exists": false,
+        "shell_matches": false,
+        "hidden_from_login_window": false,
+        "terminal_profile_id": null,
+        "pty_smoke_verified": false
+    });
+    let provision = request(
+        "managed_terminal_account.plan",
+        json!({
+            "type": "provision",
+            "request": request_payload,
+            "diagnosis": missing_diagnosis,
+            "terminal_profiles": null
+        }),
+    );
+    assert!(provision.error.is_none());
+    let plan = &provision.payload.expect("provision plan payload")["plan"];
+    assert_eq!(plan["status"]["type"], json!("ready_to_apply"));
+    assert_eq!(plan["steps"][0]["kind"], json!("create_standard_account"));
+    assert_eq!(
+        plan["steps"][5]["kind"],
+        json!("create_or_update_terminal_profile")
+    );
+
+    let ready_diagnosis = json!({
+        "ownership_state": "alan_managed",
+        "readiness_state": "ready",
+        "account_exists": true,
+        "is_admin": false,
+        "home_directory_exists": true,
+        "shell_matches": true,
+        "hidden_from_login_window": true,
+        "terminal_profile_id": "alan_smoke",
+        "pty_smoke_verified": true
+    });
+    let rollback = request(
+        "managed_terminal_account.plan",
+        json!({
+            "type": "rollback",
+            "request": request_payload,
+            "diagnosis": ready_diagnosis,
+            "scope": { "type": "alan_integration_only" },
+            "terminal_profiles": {
+                "default_profile_id": "alan_smoke",
+                "profiles": [{
+                    "id": "alan_smoke",
+                    "title": "Alan Smoke",
+                    "launch": {
+                        "kind": "managed_user",
+                        "unix_user": "alan_smoke"
+                    },
+                    "default_working_directory": "/Users/alan_smoke",
+                    "managed_terminal_account_id": "alan_smoke"
+                }]
+            }
+        }),
+    );
+    assert!(rollback.error.is_none());
+    let plan = &rollback.payload.expect("rollback plan payload")["plan"];
+    assert_eq!(
+        plan["steps"]
+            .as_array()
+            .expect("rollback steps")
+            .iter()
+            .map(|step| step["kind"].as_str().expect("step kind"))
+            .collect::<Vec<_>>(),
+        vec![
+            "remove_managed_terminal_profile",
+            "remove_managed_user_integration"
+        ]
     );
 }
 

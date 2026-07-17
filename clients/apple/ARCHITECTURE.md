@@ -83,7 +83,7 @@ Xcode target.
 | `Models/Shell/TerminalActivityModels.swift` | 418 | Foundation | Terminal activity event, display, freshness, priority, progress, and snapshot values | `Models/Shell/` |
 | `Models/Shell/TerminalRuntimeSnapshots.swift` | 192 | CoreGraphics, Foundation; macOS gates | Terminal host, renderer, pane metadata, and shell-projection snapshot DTOs | `Models/Shell/` |
 | `Models/Shell/ShellContextSnapshot.swift` | 125 | Foundation | Process binding and shell runtime-context metadata DTOs | `Models/Shell/` |
-| `Services/Shell/ManagedTerminalAccountValidation.swift` | 11 | Foundation | Fail-closed managed-account request validation through shell-core FFI | `Services/Shell/` |
+| `Services/Shell/ManagedTerminalAccountValidation.swift` | 12 | Foundation | Fail-closed managed-account request validation through its narrow shell-core adapter | `Services/Shell/` |
 | `Services/Shell/AlanPrivilegedHelperContracts.swift` | 425 | Foundation, Security | Signing identity plus typed helper status, diagnosis, plan, PTY, diagnostic, and client contracts | `Services/Shell/` |
 | `Services/Shell/AlanPrivilegedHelperXPC.swift` | 356 | Foundation, Security | Channel identity, XPC operation/request/response values, sanitization, codec, and protocol | `Services/Shell/` |
 | `Services/Shell/AlanPrivilegedHelperXPCRequirementChecker.swift` | 37 | Darwin, Foundation, Security | Code-signing requirement validation for privileged-helper clients | `Services/Shell/` |
@@ -94,7 +94,7 @@ Xcode target.
 | `Services/Shell/AlanPrivilegedHelperManagedUserService.swift` | 641 | Darwin, Foundation | Managed-user diagnosis, repair, ownership marking, and destructive-operation revalidation | `Services/Shell/` |
 | `Services/Shell/AlanPrivilegedHelperPTYSessionStore.swift` | 441 | Darwin, Foundation | Connection-scoped managed-user PTY child ownership, nonblocking IO, control, exit, and cleanup | `Services/Shell/` |
 | `Services/Shell/AlanPrivilegedHelperPTYSupport.swift` | 98 | Darwin, Foundation | Darwin managed-user PTY spawn bridge plus environment, error, C-string, and wait-status support | `Services/Shell/` |
-| `Services/Shell/ManagedTerminalAccountPlanning.swift` | 413 | Foundation | Transitional macOS managed-account plan and rollback projection pending the 4.4 adapter audit | `Services/Shell/` |
+| `Services/Shell/ManagedTerminalAccountPlanning.swift` | 132 | Foundation | Fail-closed Swift-facing plan/rollback API over shell-core-owned portable planning | `Services/Shell/` |
 | `Services/Shell/ManagedTerminalAccountEffects.swift` | 226 | Foundation | Approved helper-plan execution and local Terminal Profile effects | `Services/Shell/` |
 | `Services/Terminal/TerminalAgentActivityAdapter.swift` | 177 | Foundation | Sanitized agent-event to terminal-activity projection | `Services/Terminal/` |
 | `Models/Shell/ShellPaneSnapshots.swift` | 127 | Foundation | Pane identity, viewport, Alan binding, and pane-local runtime metadata DTOs | `Models/Shell/` |
@@ -262,10 +262,11 @@ Swift around `ShellCoreFFIAdapter` is classified as follows:
   mutating profile documents locally. Managed-account request validation calls
   `managed_terminal_account.validate_request` through
   `Services/Shell/ShellCoreFFIManagedTerminalAccountAdapter.swift` and fails
-  closed when shell-core is unavailable. Provisioning and rollback projection
-  remains a transitional Swift service in
-  `Services/Shell/ManagedTerminalAccountPlanning.swift`; replacing that portable
-  planning path with its narrow shell-core adapter is explicit 4.4 debt.
+  closed when shell-core is unavailable. Provisioning and conservative rollback
+  now call `managed_terminal_account.plan` through the same operation-family
+  adapter. `Services/Shell/ManagedTerminalAccountPlanning.swift` retains only
+  Swift-facing plan DTOs, entry points, and explicit unavailable-state
+  projection; portable diagnosis/profile planning lives in shell-core.
   DTOs, helper contracts, platform effects, and activity projection now have
   separate model or service owners instead of a generalized value-types bucket.
   Reusable settings rows now come from shell-core or collapse to unavailable
@@ -274,13 +275,16 @@ Swift around `ShellCoreFFIAdapter` is classified as follows:
   Swift action/manifest parity support, and Swift reducer/tree
   parity support are gone. Script tests that still need constructed shell
   states use `clients/apple/scripts/support/ShellCoreFFITestStateBuilder.swift`,
-  which prepares state through `ShellCoreFFIAdapter.applyReducer`, while Rust
+  which prepares state through `ShellCoreReducerAdapter`, while Rust
   `crates/shell-core/tests/*_contract.rs` owns the action, manifest, reducer,
   and split-tree behavior contracts. Runtime code is guarded from using
   `ShellActionRegistry.standard`.
-- Adapter projection to keep narrow: `ShellCoreFFIAdapter` is now a facade with
-  sibling loader, envelope, materialization, and operation-family owners,
-  including separate Terminal Profile and managed terminal account adapters.
+- Adapter projection to keep narrow: `ShellCoreFFIAdapter` is now a transport
+  facade with sibling loader, envelope, materialization, and operation-family
+  owners. Reducer and managed-terminal-account runtime callers use
+  `ShellCoreReducerAdapter` and `ShellCoreManagedTerminalAccountAdapter`
+  directly instead of shallow pass-through coordinators or generic-facade
+  extensions.
   The materialization owner projects core state into current Swift runtime DTOs
   and preserves platform-only pane fields such as runtime metadata, renderer
   state, display identity, and terminal activity while avoiding independent
@@ -294,8 +298,8 @@ Swift around `ShellCoreFFIAdapter` is classified as follows:
   instead of owning those persistence rules directly.
 - Host action/reducer/metadata routing extracted from the observable
   controller: `ShellActionCoordinator` is the only Swift owner that calls the
-  Rust action registry FFI, `ShellReducerCommandCoordinator` is the only Swift
-  owner that calls the Rust reducer FFI, and
+  Rust action registry FFI, `ShellCoreReducerAdapter` is the only Swift owner
+  that calls the Rust reducer FFI, and
   `ShellPlatformMetadataPreserver` owns post-adoption preservation of live
   macOS-only pane context and runtime metadata.
 - Platform recovery/effect to keep in Swift: manifest file IO, corrupt-file
@@ -523,11 +527,11 @@ Rust-owned Swift legacy cleanup targets at this baseline:
 | `Models/Shell/ShellWorkspaceManifest.swift` | 513 | Cleaned: Swift manifest default/prune/materialize/migration parity implementations and fixture exporters are removed. Production keeps DTOs, repair, transcript cleanup, projection helpers, and file IO while Rust manifest contract tests own portable behavior. |
 | `Models/Shell/ShellActionRegistry.swift` | 248 | Cleaned: the Swift standard action registry table and resolver fixture are removed. Production keeps action IDs, targets, effects, keyboard action values, and terminal command target resolution while Rust action tests plus FFI adapter tests own registry behavior. |
 | `Models/Shell/ShellStateRuntimeSupport.swift` | 348 | Cleaned: production no longer compiles `ShellStateMutations.swift` or `ShellTreeMutations.swift`, and the script-side duplicate Swift reducer/tree implementations are removed. The app target keeps only bootstrap defaults, mutation result/error shapes, Terminal Profile inheritance queries, platform activity acknowledgement/projection, and inactive temporary-tab query support. Script state construction that still needs mutations uses the FFI-backed `ShellCoreFFITestStateBuilder.swift`. |
-| `Models/Shell/ShellValueTypes.swift` | Removed | Cleaned: shell, Terminal Profile, managed-account, activity, context, helper-contract, planning, and effect families now have named model/service owners. Request validation calls shell-core FFI and fails closed. The script-only helper fake is outside the app target, and the unused local command runner is deleted. Portable provisioning/rollback projection remains explicit 4.4 adapter-audit debt in `Services/Shell/ManagedTerminalAccountPlanning.swift`. |
+| `Models/Shell/ShellValueTypes.swift` | Removed | Cleaned: shell, Terminal Profile, managed-account, activity, context, helper-contract, planning, and effect families now have named model/service owners. Request validation, provisioning, and rollback call shell-core FFI and fail closed. Script-only managed-account state/fakes remain outside the app target, and the unused local command runner is deleted. |
 | `Models/Shell/ShellSettingsSurfaceModel.swift` | 531 | Cleaned below the report threshold: settings navigation/grouping and fail-closed row composition remain here, while Terminal Profile/helper summaries, managed-account discovery, catalog persistence, managed-user creation/provisioning, and local/diagnostics summaries live in adjacent domain modules. Managed terminal account row projection still calls `settings.managed_terminal_account_rows` through `Services/Shell/ShellCoreFFISettingsAdapter.swift`. |
-| `Services/Shell/ShellCoreFFIAdapter.swift` | 12 | Cleaned as adapter facade: loader, envelope, materialization, manifest, reducer, control, action, settings, Terminal Profile, and managed terminal account operation owners now live in sibling `ShellCoreFFI*` files; no Swift domain fallback was added. |
+| `Services/Shell/ShellCoreFFIAdapter.swift` | 12 | Cleaned as transport facade: loader, envelope, materialization, manifest, control, action, settings, and Terminal Profile operations remain in sibling owners; reducer and managed-terminal-account callers use dedicated operation-family adapter types, with no Swift domain fallback. |
 | `ShellHostController.swift` | 383 | Cleaned below the report threshold: the root keeps observable state, dependency assembly, startup, shutdown, and root lifecycle. Selection, space/tab lifecycle, actions, runtime projection, persistence, close/pane lifecycle, and automation adaptation live in focused `Controllers/Shell/ShellHost*` extensions while Rust shell-core and existing service coordinators retain domain authority. |
-| `Controllers/Shell/ShellHostControlCommandHandling.swift` | 1,199 | Cleaned below the report threshold: reusable reducer invocations route through `ShellReducerCommandCoordinator`, while response/list projection and observation/diagnostic commands live in adjacent controller modules. The dispatch owner retains control-command routing and pane mutation coordination without a second Rust-owned mutation implementation. |
+| `Controllers/Shell/ShellHostControlCommandHandling.swift` | 1,199 | Cleaned below the report threshold: reusable reducer invocations route through `ShellCoreReducerAdapter`, while response/list projection and observation/diagnostic commands live in adjacent controller modules. The dispatch owner retains control-command routing and pane mutation coordination without a second Rust-owned mutation implementation. |
 
 The first implementation batch targeted the production Swift legacy surface, not
 a line-count threshold. Manifest parity helpers and the Swift standard action
@@ -551,7 +555,7 @@ and this count in the same change.
 
 The gate also fails narrower regressions such as new root-level Swift files,
 project membership drift, reintroduced control-plane ownership in the wrong
-file, direct reducer FFI calls outside `ShellReducerCommandCoordinator`, or
+file, reducer operations outside `ShellCoreFFIReducerAdapter.swift`, or
 direct shell-core FFI calls outside the documented operation owner allowlist.
 Direct `ShellCoreFFIAdapter` construction is likewise restricted to the loader
 owner, and raw `alan_shell_core_ffi_*` symbol access must stay in that same

@@ -373,7 +373,7 @@ extension ShellHostController {
         let focusStartedAt = performanceDiagnosticsStartTime()
         let result: ShellStateMutationResult
         do {
-            let rustResult = try reducerCoordinator.apply(
+            let rustResult = try reducerAdapter.apply(
                 state: shellState,
                 operation: .focusPane(paneSlotID: paneID)
             )

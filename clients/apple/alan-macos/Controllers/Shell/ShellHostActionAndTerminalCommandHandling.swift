@@ -7,7 +7,7 @@ extension ShellHostController {
         let previousPaneID = shellState.focusedPaneID
         let rustResult: ShellStateMutationResult
         do {
-            rustResult = try reducerCoordinator.apply(
+            rustResult = try reducerAdapter.apply(
                 state: shellState,
                 operation: .focusAdjacentPane(direction: direction)
             )
@@ -221,7 +221,7 @@ extension ShellHostController {
     func resizeSplit(splitNodeID: String, ratio: Double, persist: Bool = true) -> Bool {
         let result: ShellStateMutationResult
         do {
-            result = try reducerCoordinator.apply(
+            result = try reducerAdapter.apply(
                 state: shellState,
                 operation: .resizeSplit(splitNodeID: splitNodeID, ratio: ratio)
             )
@@ -237,7 +237,7 @@ extension ShellHostController {
         let previousTab = selectedTab
         let result: ShellStateMutationResult
         do {
-            result = try reducerCoordinator.apply(
+            result = try reducerAdapter.apply(
                 state: shellState,
                 operation: .equalizeSplits(tabID: selectedTabID)
             )
@@ -316,7 +316,7 @@ extension ShellHostController {
     func setAttention(_ attention: ShellAttentionState, for paneID: String) -> Bool {
         let result: ShellStateMutationResult
         do {
-            result = try reducerCoordinator.apply(
+            result = try reducerAdapter.apply(
                 state: shellState,
                 operation: .setAttention(paneSlotID: paneID, attention: attention)
             )

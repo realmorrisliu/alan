@@ -72,7 +72,11 @@ struct ShellActionEffectHandlers {
 @MainActor
 struct ShellActionCoordinator {
     func title(_ id: ShellActionID) -> String {
-        (try? ShellCoreFFIAdapter.shared.actionTitle(id)) ?? id.rawValue
+        do {
+            return try ShellCoreFFIAdapter.shared.actionTitle(id)
+        } catch {
+            return "Unavailable action"
+        }
     }
 
     func availability(
@@ -91,7 +95,11 @@ struct ShellActionCoordinator {
         _ id: ShellActionID,
         target: ShellActionTarget
     ) -> ShellActionShortcut? {
-        try? ShellCoreFFIAdapter.shared.defaultActionShortcut(id, target: target)
+        do {
+            return try ShellCoreFFIAdapter.shared.defaultActionShortcut(id, target: target)
+        } catch {
+            return nil
+        }
     }
 
     func keyboardAction(for shortcut: ShellActionShortcut) throws -> ShellKeyboardAction? {

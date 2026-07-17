@@ -149,7 +149,6 @@
 		000000000000000000000064 /* Services/Shell/ShellWorkspaceManifestStartupCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000164 /* Services/Shell/ShellWorkspaceManifestStartupCoordinator.swift */; };
 		000000000000000000000065 /* Services/Shell/ShellWorkspacePersistenceCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000165 /* Services/Shell/ShellWorkspacePersistenceCoordinator.swift */; };
 		000000000000000000000066 /* Services/Shell/ShellActionCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000166 /* Services/Shell/ShellActionCoordinator.swift */; };
-		000000000000000000000067 /* Services/Shell/ShellReducerCommandCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000167 /* Services/Shell/ShellReducerCommandCoordinator.swift */; };
 		000000000000000000000068 /* Services/Shell/ShellPlatformMetadataPreserver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000168 /* Services/Shell/ShellPlatformMetadataPreserver.swift */; };
 		000000000000000000000069 /* Services/Shell/TerminalProfileStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000169 /* Services/Shell/TerminalProfileStore.swift */; };
 		00000000000000000000005A /* Services/Shell/ShellPersistenceWriter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000015A /* Services/Shell/ShellPersistenceWriter.swift */; };
@@ -376,7 +375,6 @@
 		000000000000000000000164 /* Services/Shell/ShellWorkspaceManifestStartupCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Shell/ShellWorkspaceManifestStartupCoordinator.swift; sourceTree = "<group>"; };
 		000000000000000000000165 /* Services/Shell/ShellWorkspacePersistenceCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Shell/ShellWorkspacePersistenceCoordinator.swift; sourceTree = "<group>"; };
 		000000000000000000000166 /* Services/Shell/ShellActionCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Shell/ShellActionCoordinator.swift; sourceTree = "<group>"; };
-		000000000000000000000167 /* Services/Shell/ShellReducerCommandCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Shell/ShellReducerCommandCoordinator.swift; sourceTree = "<group>"; };
 		000000000000000000000168 /* Services/Shell/ShellPlatformMetadataPreserver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Shell/ShellPlatformMetadataPreserver.swift; sourceTree = "<group>"; };
 		000000000000000000000169 /* Services/Shell/TerminalProfileStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Shell/TerminalProfileStore.swift; sourceTree = "<group>"; };
 		00000000000000000000015A /* Services/Shell/ShellPersistenceWriter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Shell/ShellPersistenceWriter.swift; sourceTree = "<group>"; };
@@ -613,7 +611,6 @@
 				000000000000000000000168 /* Services/Shell/ShellPlatformMetadataPreserver.swift */,
 				00000000000000000000015A /* Services/Shell/ShellPersistenceWriter.swift */,
 				00000000000000000000012C /* Services/Shell/ShellPublishedStateMerger.swift */,
-				000000000000000000000167 /* Services/Shell/ShellReducerCommandCoordinator.swift */,
 				00000000000000000000012B /* Services/Shell/ShellSocketServer.swift */,
 				000000000000000000000169 /* Services/Shell/TerminalProfileStore.swift */,
 				000000000000000000000164 /* Services/Shell/ShellWorkspaceManifestStartupCoordinator.swift */,
@@ -1041,7 +1038,6 @@
 				000000000000000000000064 /* Services/Shell/ShellWorkspaceManifestStartupCoordinator.swift in Sources */,
 				000000000000000000000065 /* Services/Shell/ShellWorkspacePersistenceCoordinator.swift in Sources */,
 				000000000000000000000066 /* Services/Shell/ShellActionCoordinator.swift in Sources */,
-				000000000000000000000067 /* Services/Shell/ShellReducerCommandCoordinator.swift in Sources */,
 				000000000000000000000068 /* Services/Shell/ShellPlatformMetadataPreserver.swift in Sources */,
 				00000000000000000000005A /* Services/Shell/ShellPersistenceWriter.swift in Sources */,
 				000000000000000000000039 /* Models/Shell/ShellWorkspaceManifest.swift in Sources */,

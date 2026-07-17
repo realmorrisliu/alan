@@ -1,11 +1,18 @@
 import Foundation
 
-extension ShellCoreFFIAdapter {
-    func applyReducer(
+struct ShellCoreReducerAdapter {
+    private let adapter: ShellCoreFFIAdapter?
+
+    init(adapter: ShellCoreFFIAdapter? = nil) {
+        self.adapter = adapter
+    }
+
+    func apply(
         state: ShellStateSnapshot,
         operation: ShellCoreReducerOperation
     ) throws -> ShellStateMutationResult {
-        let response: ShellCoreReducerApplyResponse = try send(
+        let ffi = try adapter ?? ShellCoreFFIAdapter.shared
+        let response: ShellCoreReducerApplyResponse = try ffi.send(
             operation: "reducer.apply",
             payload: ShellCoreReducerApplyPayload(
                 state: ShellCorePortableWorkspaceState(projecting: state),

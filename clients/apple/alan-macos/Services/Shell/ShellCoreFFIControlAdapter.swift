@@ -63,8 +63,8 @@ private struct ShellCoreControlResult: Decodable {
     func shellCommandResult(fallbackState: ShellStateSnapshot) throws -> ShellCoreControlCommandResult {
         // shell-core returns portable state that does not carry Swift-only pane fields
         // (live cwd/process/activity/viewport/alanBinding). Merge them back from the live
-        // fallback state, matching `applyReducer`, so adopted updates and local control
-        // responses don't drop platform data until the next terminal metadata callback.
+        // fallback state, matching `ShellCoreReducerAdapter.apply`, so adopted updates and
+        // local control responses don't drop platform data until the next metadata callback.
         let materializedUpdatedState = try updatedState?.materializedShellState()
             .preservingPlatformPaneFields(from: fallbackState)
         let materializedResponseState = try response.state?.materializedShellState()

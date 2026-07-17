@@ -35,15 +35,17 @@ pub use envelope::{
     ShellCoreResponseEnvelope,
 };
 pub use managed_terminal_account::{
-    ManagedTerminalAccountApplyResult, ManagedTerminalAccountFakeExecutor,
-    ManagedTerminalAccountIdentifierValidator, ManagedTerminalAccountOwnershipEvidence,
+    ManagedTerminalAccountApplyResult, ManagedTerminalAccountDiagnosis,
+    ManagedTerminalAccountFakeExecutor, ManagedTerminalAccountIdentifierValidator,
+    ManagedTerminalAccountOwnershipEvidence, ManagedTerminalAccountOwnershipKind,
     ManagedTerminalAccountOwnershipState, ManagedTerminalAccountPlan,
     ManagedTerminalAccountPlanStatus, ManagedTerminalAccountPlanStep,
     ManagedTerminalAccountPlanStepKind, ManagedTerminalAccountPlanner,
     ManagedTerminalAccountProfileHandoff, ManagedTerminalAccountProfileState,
-    ManagedTerminalAccountRecord, ManagedTerminalAccountRequest, ManagedTerminalAccountState,
-    ManagedTerminalAccountValidationError, ManagedTerminalAccountVerificationStatus,
-    ManagedTerminalAccountVerificationStep,
+    ManagedTerminalAccountReadinessState, ManagedTerminalAccountRecord,
+    ManagedTerminalAccountRequest, ManagedTerminalAccountRollbackScope,
+    ManagedTerminalAccountState, ManagedTerminalAccountValidationError,
+    ManagedTerminalAccountVerificationStatus, ManagedTerminalAccountVerificationStep,
 };
 pub use manifest::{
     ShellContentRestoreRecord, ShellContentTabRestoreSnapshot, ShellContentWorkspaceManifest,

@@ -73,7 +73,6 @@ CLANG_MODULE_CACHE_PATH="$MODULE_CACHE_DIR" swiftc \
     "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/ShellPlatformMetadataPreserver.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/ShellPerformanceDiagnostics.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/ShellPublishedStateMerger.swift" \
-    "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/ShellReducerCommandCoordinator.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/ShellSocketServer.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/ShellControlPlane.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/ShellPaneProjectionService.swift" \

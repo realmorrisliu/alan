@@ -62,6 +62,7 @@ enum ShellCoreFFIAdapterError: Error, CustomStringConvertible {
     case nullResponseBuffer
     case facadeError(ShellCoreErrorPayload)
     case missingPayload(String)
+    case missingActionDescriptor(String)
     case materializationFailed(String)
     case reducerError(code: String, message: String)
 
@@ -81,6 +82,8 @@ enum ShellCoreFFIAdapterError: Error, CustomStringConvertible {
             return "shell core FFI \(error.code): \(error.message)"
         case .missingPayload(let operation):
             return "shell core FFI operation \(operation) returned neither payload nor error"
+        case .missingActionDescriptor(let id):
+            return "shell core FFI action descriptor \(id) is unavailable"
         case .materializationFailed(let message):
             return "shell core FFI materialization failed: \(message)"
         case .reducerError(let code, let message):
@@ -103,6 +106,7 @@ enum ShellCoreFFIAdapterError: Error, CustomStringConvertible {
             return true
         case .facadeError,
              .missingPayload,
+             .missingActionDescriptor,
              .materializationFailed,
              .reducerError:
             return false

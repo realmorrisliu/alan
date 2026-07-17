@@ -15,7 +15,7 @@ extension ShellHostController {
         do {
             switch launchTarget {
             case .shell:
-                result = try reducerCoordinator.apply(
+                result = try reducerAdapter.apply(
                     state: shellState,
                     operation: .createTerminalSpace(
                         title: title,
@@ -54,7 +54,7 @@ extension ShellHostController {
     func setTerminalProfile(_ terminalProfileID: String?, forSpaceID spaceID: String) -> Bool {
         let result: ShellStateMutationResult
         do {
-            result = try reducerCoordinator.apply(
+            result = try reducerAdapter.apply(
                 state: shellState,
                 operation: .setTerminalProfile(
                     spaceID: spaceID,
@@ -76,7 +76,7 @@ extension ShellHostController {
     func setPresentationIcon(_ systemName: String?, forSpaceID spaceID: String) -> Bool {
         let result: ShellStateMutationResult
         do {
-            result = try reducerCoordinator.apply(
+            result = try reducerAdapter.apply(
                 state: shellState,
                 operation: .setPresentationIcon(
                     spaceID: spaceID,
@@ -94,7 +94,7 @@ extension ShellHostController {
     func deleteSpace(spaceID: String) -> Bool {
         let result: ShellStateMutationResult
         do {
-            result = try reducerCoordinator.apply(
+            result = try reducerAdapter.apply(
                 state: shellState,
                 operation: .deleteSpace(
                     spaceID: spaceID,
@@ -121,7 +121,7 @@ extension ShellHostController {
 
         let result: ShellStateMutationResult
         do {
-            result = try reducerCoordinator.apply(
+            result = try reducerAdapter.apply(
                 state: shellState,
                 operation: .pinTab(tabID: targetTabID)
             )
@@ -139,7 +139,7 @@ extension ShellHostController {
         guard isTabPinned(tabID: targetTabID) else { return true }
         let result: ShellStateMutationResult
         do {
-            result = try reducerCoordinator.apply(
+            result = try reducerAdapter.apply(
                 state: shellState,
                 operation: .unpinTab(tabID: targetTabID)
             )
@@ -173,7 +173,7 @@ extension ShellHostController {
         let wasPinned = isTabPinned(tabID: tabID)
         let result: ShellStateMutationResult
         do {
-            result = try reducerCoordinator.apply(
+            result = try reducerAdapter.apply(
                 state: shellState,
                 operation: .organizeTab(
                     tabID: tabID,
@@ -195,7 +195,7 @@ extension ShellHostController {
         guard let targetTabID = tabID ?? selectedTabID else { return false }
         let result: ShellStateMutationResult
         do {
-            result = try reducerCoordinator.apply(
+            result = try reducerAdapter.apply(
                 state: shellState,
                 operation: .moveTab(tabID: targetTabID, sectionOffset: offset)
             )
@@ -210,7 +210,7 @@ extension ShellHostController {
     func moveTabToSpace(tabID: String, targetSpaceID: String) -> Bool {
         let result: ShellStateMutationResult
         do {
-            result = try reducerCoordinator.apply(
+            result = try reducerAdapter.apply(
                 state: shellState,
                 operation: .moveTabToSpace(
                     tabID: tabID,
@@ -228,7 +228,7 @@ extension ShellHostController {
     func renameTab(tabID: String, title: String) -> Bool {
         let result: ShellStateMutationResult
         do {
-            result = try reducerCoordinator.apply(
+            result = try reducerAdapter.apply(
                 state: shellState,
                 operation: .renameTab(
                     tabID: tabID,
@@ -246,7 +246,7 @@ extension ShellHostController {
     func duplicateTab(tabID: String) -> Bool {
         let result: ShellStateMutationResult
         do {
-            result = try reducerCoordinator.apply(
+            result = try reducerAdapter.apply(
                 state: shellState,
                 operation: .duplicateTab(
                     tabID: tabID,
@@ -277,7 +277,7 @@ extension ShellHostController {
             let sourcePane = pane(paneID: paneID)
             let terminalProfileID = sourcePane?.terminalProfileID
                 ?? selectedSpace?.terminalProfileID
-            result = try reducerCoordinator.apply(
+            result = try reducerAdapter.apply(
                 state: shellState,
                 operation: .splitPane(
                     paneSlotID: paneID,
@@ -310,7 +310,7 @@ extension ShellHostController {
             let protectedTabIDs = activeTaskByTabID().compactMap { tabID, activeTask in
                 activeTask.protectsFromPruning ? tabID : nil
             }
-            result = try reducerCoordinator.apply(
+            result = try reducerAdapter.apply(
                 state: shellState,
                 operation: .clearInactiveTemporaryTabs(
                     spaceID: spaceID,
@@ -350,7 +350,7 @@ extension ShellHostController {
                         ?? (resolvedTerminalProfileID == nil
                             ? focusedPaneWorkingDirectory()
                             : nil)
-                    result = try reducerCoordinator.apply(
+                    result = try reducerAdapter.apply(
                         state: shellState,
                         operation: .openTerminalTab(
                             spaceID: spaceID,
@@ -363,7 +363,7 @@ extension ShellHostController {
                 }
             case .markdown(let fileURL, let title):
                 let content = markdownContentDescriptor(fileURL: fileURL, title: title)
-                result = try reducerCoordinator.apply(
+                result = try reducerAdapter.apply(
                     state: shellState,
                     operation: .openContentTab(
                         spaceID: spaceID,
@@ -375,7 +375,7 @@ extension ShellHostController {
                 )
             case .settings(let title):
                 let content = settingsContentDescriptor(title: title)
-                result = try reducerCoordinator.apply(
+                result = try reducerAdapter.apply(
                     state: shellState,
                     operation: .openContentTab(
                         spaceID: spaceID,
@@ -386,7 +386,7 @@ extension ShellHostController {
                     )
                 )
             case .agent(let attachment, let title):
-                result = try reducerCoordinator.apply(
+                result = try reducerAdapter.apply(
                     state: shellState,
                     operation: .openContentTab(
                         spaceID: spaceID,
@@ -436,7 +436,7 @@ extension ShellHostController {
     ) throws -> ShellStateMutationResult {
         switch launchTarget {
         case .shell:
-            return try reducerCoordinator.apply(
+            return try reducerAdapter.apply(
                 state: shellState,
                 operation: .openTerminalTab(
                     spaceID: spaceID,
@@ -592,7 +592,7 @@ extension ShellHostController {
                 case .terminal(let launchTarget, let title, let workingDirectory):
                     switch launchTarget {
                     case .shell:
-                        result = try reducerCoordinator.apply(
+                        result = try reducerAdapter.apply(
                             state: shellState,
                             operation: .splitPane(
                                 paneSlotID: paneID,
@@ -609,7 +609,7 @@ extension ShellHostController {
                     }
                 case .markdown(let fileURL, let title):
                     let content = markdownContentDescriptor(fileURL: fileURL, title: title)
-                    result = try reducerCoordinator.apply(
+                    result = try reducerAdapter.apply(
                         state: shellState,
                         operation: .splitContentPane(
                             paneSlotID: paneID,
@@ -622,7 +622,7 @@ extension ShellHostController {
                     )
                 case .settings(let title):
                     let content = settingsContentDescriptor(title: title)
-                    result = try reducerCoordinator.apply(
+                    result = try reducerAdapter.apply(
                         state: shellState,
                         operation: .splitContentPane(
                             paneSlotID: paneID,
@@ -634,7 +634,7 @@ extension ShellHostController {
                         )
                     )
                 case .agent(let attachment, let title):
-                    result = try reducerCoordinator.apply(
+                    result = try reducerAdapter.apply(
                         state: shellState,
                         operation: .splitContentPane(
                             paneSlotID: paneID,
@@ -647,7 +647,7 @@ extension ShellHostController {
                     )
                 }
             } else {
-                result = try reducerCoordinator.apply(
+                result = try reducerAdapter.apply(
                     state: shellState,
                     operation: .splitPane(
                         paneSlotID: paneID,
