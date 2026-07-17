@@ -96,7 +96,18 @@ CLANG_MODULE_CACHE_PATH="$MODULE_CACHE_DIR" swiftc \
     "$REPO_ROOT/clients/apple/alan-macos/Services/Terminal/TerminalContentProjectionAdapter.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Services/Terminal/TerminalNativeScrollViewAdapter.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/TerminalSurfaceController.swift" \
-    "$REPO_ROOT/clients/apple/alan-macos/TerminalRuntimeService.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Services/Terminal/TerminalRuntimeDelivery.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Services/Terminal/TerminalPtyContracts.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Services/Terminal/TerminalPtyControlSequenceResponder.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Services/Terminal/TerminalPtyRuntime.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Services/Terminal/ManagedUserTerminalPtyRuntime.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Services/Terminal/DarwinTerminalPtyRuntime.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Services/Terminal/GhosttyProcessBootstrap.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Services/Terminal/TerminalSurfaceContracts.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Services/Terminal/GhosttyTerminalSurfaceHandle.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Services/Terminal/TerminalTranscriptCapture.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Services/Terminal/WindowTerminalRuntimeService.swift" \
+    "$REPO_ROOT/clients/apple/scripts/support/TerminalRuntimeTestDoubles.swift" \
     "$REPO_ROOT/clients/apple/scripts/test-shell-runtime-metadata-host-stubs.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/TerminalRuntimeRegistry.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/ShellHostController.swift" \

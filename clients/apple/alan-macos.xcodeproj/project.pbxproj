@@ -24,7 +24,7 @@
 		00000000000000000000000D /* ghostty-terminfo in Resources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000010D /* ghostty-terminfo */; };
 		00000000000000000000000E /* ShellControlPlane.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000010E /* ShellControlPlane.swift */; };
 		00000000000000000000000F /* TerminalRuntimeRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000010F /* TerminalRuntimeRegistry.swift */; };
-		000000000000000000000010 /* TerminalRuntimeService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000110 /* TerminalRuntimeService.swift */; };
+		000000000000000000000010 /* Services/Terminal/WindowTerminalRuntimeService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000110 /* Services/Terminal/WindowTerminalRuntimeService.swift */; };
 		000000000000000000000011 /* TerminalSurfaceController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000111 /* TerminalSurfaceController.swift */; };
 		000000000000000000000012 /* AlanAppSingletonGuard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000112 /* AlanAppSingletonGuard.swift */; };
 		000000000000000000000013 /* App/AlanMacPrimaryShellOwner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000113 /* App/AlanMacPrimaryShellOwner.swift */; };
@@ -58,6 +58,16 @@
 		A12700000000000000000004 /* Services/Terminal/TerminalHostTextInput.swift in Sources */ = {isa = PBXBuildFile; fileRef = A12700000000000000000104 /* Services/Terminal/TerminalHostTextInput.swift */; };
 		A12700000000000000000005 /* Services/Terminal/TerminalInputTrace.swift in Sources */ = {isa = PBXBuildFile; fileRef = A12700000000000000000105 /* Services/Terminal/TerminalInputTrace.swift */; };
 		A12700000000000000000006 /* Services/Terminal/TerminalKeyboardLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = A12700000000000000000106 /* Services/Terminal/TerminalKeyboardLayout.swift */; };
+		A12800000000000000000001 /* Services/Terminal/DarwinTerminalPtyRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = A12800000000000000000101 /* Services/Terminal/DarwinTerminalPtyRuntime.swift */; };
+		A12800000000000000000002 /* Services/Terminal/GhosttyProcessBootstrap.swift in Sources */ = {isa = PBXBuildFile; fileRef = A12800000000000000000102 /* Services/Terminal/GhosttyProcessBootstrap.swift */; };
+		A12800000000000000000003 /* Services/Terminal/GhosttyTerminalSurfaceHandle.swift in Sources */ = {isa = PBXBuildFile; fileRef = A12800000000000000000103 /* Services/Terminal/GhosttyTerminalSurfaceHandle.swift */; };
+		A12800000000000000000004 /* Services/Terminal/ManagedUserTerminalPtyRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = A12800000000000000000104 /* Services/Terminal/ManagedUserTerminalPtyRuntime.swift */; };
+		A12800000000000000000005 /* Services/Terminal/TerminalPtyContracts.swift in Sources */ = {isa = PBXBuildFile; fileRef = A12800000000000000000105 /* Services/Terminal/TerminalPtyContracts.swift */; };
+		A12800000000000000000006 /* Services/Terminal/TerminalPtyControlSequenceResponder.swift in Sources */ = {isa = PBXBuildFile; fileRef = A12800000000000000000106 /* Services/Terminal/TerminalPtyControlSequenceResponder.swift */; };
+		A12800000000000000000007 /* Services/Terminal/TerminalPtyRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = A12800000000000000000107 /* Services/Terminal/TerminalPtyRuntime.swift */; };
+		A12800000000000000000008 /* Services/Terminal/TerminalRuntimeDelivery.swift in Sources */ = {isa = PBXBuildFile; fileRef = A12800000000000000000108 /* Services/Terminal/TerminalRuntimeDelivery.swift */; };
+		A12800000000000000000009 /* Services/Terminal/TerminalSurfaceContracts.swift in Sources */ = {isa = PBXBuildFile; fileRef = A12800000000000000000109 /* Services/Terminal/TerminalSurfaceContracts.swift */; };
+		A1280000000000000000000A /* Services/Terminal/TerminalTranscriptCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1280000000000000000010A /* Services/Terminal/TerminalTranscriptCapture.swift */; };
 		AA1B2C3D4E5F6A7B8C9D0E1F /* Views/Shell/Controls/ShellFormControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB2C3D4E5F6A7B8C9D0E1F2A /* Views/Shell/Controls/ShellFormControls.swift */; };
 		0000000000000000000000F0 /* Views/Shell/ShellSpaceCreationForm.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0000000000000000000001F0 /* Views/Shell/ShellSpaceCreationForm.swift */; };
 		00000000000000000000001B /* Views/Shell/ShellWorkspaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000011B /* Views/Shell/ShellWorkspaceView.swift */; };
@@ -206,7 +216,7 @@
 		00000000000000000000010D /* ghostty-terminfo */ = {isa = PBXFileReference; lastKnownFileType = folder; path = "ghostty-terminfo"; sourceTree = "<group>"; };
 		00000000000000000000010E /* ShellControlPlane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShellControlPlane.swift; sourceTree = "<group>"; };
 		00000000000000000000010F /* TerminalRuntimeRegistry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalRuntimeRegistry.swift; sourceTree = "<group>"; };
-		000000000000000000000110 /* TerminalRuntimeService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalRuntimeService.swift; sourceTree = "<group>"; };
+		000000000000000000000110 /* Services/Terminal/WindowTerminalRuntimeService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Terminal/WindowTerminalRuntimeService.swift; sourceTree = "<group>"; };
 		000000000000000000000111 /* TerminalSurfaceController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalSurfaceController.swift; sourceTree = "<group>"; };
 		000000000000000000000112 /* AlanAppSingletonGuard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlanAppSingletonGuard.swift; sourceTree = "<group>"; };
 		000000000000000000000113 /* App/AlanMacPrimaryShellOwner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App/AlanMacPrimaryShellOwner.swift; sourceTree = "<group>"; };
@@ -240,6 +250,16 @@
 		A12700000000000000000104 /* Services/Terminal/TerminalHostTextInput.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Terminal/TerminalHostTextInput.swift; sourceTree = "<group>"; };
 		A12700000000000000000105 /* Services/Terminal/TerminalInputTrace.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Terminal/TerminalInputTrace.swift; sourceTree = "<group>"; };
 		A12700000000000000000106 /* Services/Terminal/TerminalKeyboardLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Terminal/TerminalKeyboardLayout.swift; sourceTree = "<group>"; };
+		A12800000000000000000101 /* Services/Terminal/DarwinTerminalPtyRuntime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Terminal/DarwinTerminalPtyRuntime.swift; sourceTree = "<group>"; };
+		A12800000000000000000102 /* Services/Terminal/GhosttyProcessBootstrap.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Terminal/GhosttyProcessBootstrap.swift; sourceTree = "<group>"; };
+		A12800000000000000000103 /* Services/Terminal/GhosttyTerminalSurfaceHandle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Terminal/GhosttyTerminalSurfaceHandle.swift; sourceTree = "<group>"; };
+		A12800000000000000000104 /* Services/Terminal/ManagedUserTerminalPtyRuntime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Terminal/ManagedUserTerminalPtyRuntime.swift; sourceTree = "<group>"; };
+		A12800000000000000000105 /* Services/Terminal/TerminalPtyContracts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Terminal/TerminalPtyContracts.swift; sourceTree = "<group>"; };
+		A12800000000000000000106 /* Services/Terminal/TerminalPtyControlSequenceResponder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Terminal/TerminalPtyControlSequenceResponder.swift; sourceTree = "<group>"; };
+		A12800000000000000000107 /* Services/Terminal/TerminalPtyRuntime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Terminal/TerminalPtyRuntime.swift; sourceTree = "<group>"; };
+		A12800000000000000000108 /* Services/Terminal/TerminalRuntimeDelivery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Terminal/TerminalRuntimeDelivery.swift; sourceTree = "<group>"; };
+		A12800000000000000000109 /* Services/Terminal/TerminalSurfaceContracts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Terminal/TerminalSurfaceContracts.swift; sourceTree = "<group>"; };
+		A1280000000000000000010A /* Services/Terminal/TerminalTranscriptCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Terminal/TerminalTranscriptCapture.swift; sourceTree = "<group>"; };
 		BB2C3D4E5F6A7B8C9D0E1F2A /* Views/Shell/Controls/ShellFormControls.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Views/Shell/Controls/ShellFormControls.swift"; sourceTree = "<group>"; };
 		0000000000000000000001F0 /* Views/Shell/ShellSpaceCreationForm.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Shell/ShellSpaceCreationForm.swift; sourceTree = "<group>"; };
 		00000000000000000000011B /* Views/Shell/ShellWorkspaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Shell/ShellWorkspaceView.swift; sourceTree = "<group>"; };
@@ -392,7 +412,6 @@
 				000000000000000000000106 /* ShellHostController.swift */,
 				000000000000000000000107 /* TerminalPaneView.swift */,
 				A11000000000000000000105 /* AlanDarwinPtySpawn.c */,
-				000000000000000000000110 /* TerminalRuntimeService.swift */,
 				000000000000000000000111 /* TerminalSurfaceController.swift */,
 				00000000000000000000010F /* TerminalRuntimeRegistry.swift */,
 				00000000000000000000010A /* GhosttyLiveHost.swift */,
@@ -580,6 +599,17 @@
 				A12700000000000000000104 /* Services/Terminal/TerminalHostTextInput.swift */,
 				A12700000000000000000105 /* Services/Terminal/TerminalInputTrace.swift */,
 				A12700000000000000000106 /* Services/Terminal/TerminalKeyboardLayout.swift */,
+				A12800000000000000000101 /* Services/Terminal/DarwinTerminalPtyRuntime.swift */,
+				A12800000000000000000102 /* Services/Terminal/GhosttyProcessBootstrap.swift */,
+				A12800000000000000000103 /* Services/Terminal/GhosttyTerminalSurfaceHandle.swift */,
+				A12800000000000000000104 /* Services/Terminal/ManagedUserTerminalPtyRuntime.swift */,
+				A12800000000000000000105 /* Services/Terminal/TerminalPtyContracts.swift */,
+				A12800000000000000000106 /* Services/Terminal/TerminalPtyControlSequenceResponder.swift */,
+				A12800000000000000000107 /* Services/Terminal/TerminalPtyRuntime.swift */,
+				A12800000000000000000108 /* Services/Terminal/TerminalRuntimeDelivery.swift */,
+				A12800000000000000000109 /* Services/Terminal/TerminalSurfaceContracts.swift */,
+				A1280000000000000000010A /* Services/Terminal/TerminalTranscriptCapture.swift */,
+				000000000000000000000110 /* Services/Terminal/WindowTerminalRuntimeService.swift */,
 				A12000000000000000000108 /* Services/Terminal/TerminalAgentActivityAdapter.swift */,
 				000000000000000000000127 /* Services/Terminal/TerminalHostRuntimeReporter.swift */,
 				000000000000000000000128 /* Services/Terminal/TerminalHostWindowObserver.swift */,
@@ -818,7 +848,17 @@
 				A12700000000000000000005 /* Services/Terminal/TerminalInputTrace.swift in Sources */,
 				A12700000000000000000006 /* Services/Terminal/TerminalKeyboardLayout.swift in Sources */,
 				00000000000000000000000A /* GhosttyLiveHost.swift in Sources */,
-				000000000000000000000010 /* TerminalRuntimeService.swift in Sources */,
+				A12800000000000000000001 /* Services/Terminal/DarwinTerminalPtyRuntime.swift in Sources */,
+				A12800000000000000000002 /* Services/Terminal/GhosttyProcessBootstrap.swift in Sources */,
+				A12800000000000000000003 /* Services/Terminal/GhosttyTerminalSurfaceHandle.swift in Sources */,
+				A12800000000000000000004 /* Services/Terminal/ManagedUserTerminalPtyRuntime.swift in Sources */,
+				A12800000000000000000005 /* Services/Terminal/TerminalPtyContracts.swift in Sources */,
+				A12800000000000000000006 /* Services/Terminal/TerminalPtyControlSequenceResponder.swift in Sources */,
+				A12800000000000000000007 /* Services/Terminal/TerminalPtyRuntime.swift in Sources */,
+				A12800000000000000000008 /* Services/Terminal/TerminalRuntimeDelivery.swift in Sources */,
+				A12800000000000000000009 /* Services/Terminal/TerminalSurfaceContracts.swift in Sources */,
+				A1280000000000000000000A /* Services/Terminal/TerminalTranscriptCapture.swift in Sources */,
+				000000000000000000000010 /* Services/Terminal/WindowTerminalRuntimeService.swift in Sources */,
 				000000000000000000000011 /* TerminalSurfaceController.swift in Sources */,
 				000000000000000000000012 /* AlanAppSingletonGuard.swift in Sources */,
 				00000000000000000000000E /* ShellControlPlane.swift in Sources */,
