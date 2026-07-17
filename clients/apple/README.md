@@ -22,8 +22,9 @@ recorded in [`ARCHITECTURE.md`](./ARCHITECTURE.md).
 - `Support/`: shared design tokens, native material wrappers, and window
   placement support, plus small AppKit-backed shell support adapters
 - `MacShellRootView.swift`: thin primary macOS shell composition root
-- `Views/Shell/`: shell sidebar, workspace composition, command palette, and
-  other primary macOS shell SwiftUI components
+- `Views/Shell/`: shell composition plus focused sidebar, Space slider, tab-row,
+  drop-target, activity, pane-topology, workspace, and command-palette SwiftUI
+  components
 - `Models/Shell/`: focused shell, Terminal Profile, managed-account, activity,
   context, and pane/content/tree/tab/Space/workspace snapshot families; runtime support,
   focused presentation models, and settings navigation, Terminal Profile, managed-user,

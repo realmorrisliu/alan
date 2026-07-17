@@ -35,6 +35,11 @@ reject_active_shell_radius_drift() {
     for file in \
         "clients/apple/alan-macos/MacShellRootView.swift" \
         "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
+        "clients/apple/alan-macos/Views/Shell/ShellSidebarTabDrop.swift" \
+        "clients/apple/alan-macos/Views/Shell/ShellSidebarSpaceSlider.swift" \
+        "clients/apple/alan-macos/Views/Shell/ShellSidebarTabRow.swift" \
+        "clients/apple/alan-macos/Views/Shell/ShellSidebarActivityProgressRail.swift" \
+        "clients/apple/alan-macos/Views/Shell/ShellPaneTopologyIndicator.swift" \
         "clients/apple/alan-macos/TerminalPaneView.swift" \
         "clients/apple/alan-macos/TerminalHostView.swift"
     do
@@ -359,7 +364,7 @@ require_workspace_color_ownership_contract() {
 }
 
 require_active_complex_split_count_contrast() {
-    local file="$REPO_ROOT/clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift"
+    local file="$REPO_ROOT/clients/apple/alan-macos/Views/Shell/ShellPaneTopologyIndicator.swift"
 
     if ! awk '
         /private var complexCountOverlay: some View/ {
@@ -388,7 +393,7 @@ require_active_complex_split_count_contrast() {
 }
 
 require_tab_organization_sidebar_contract() {
-    local file="$REPO_ROOT/clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift"
+    local file="$REPO_ROOT/clients/apple/alan-macos/Views/Shell/ShellSidebarTabRow.swift"
 
     require_pattern \
         "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
@@ -396,17 +401,17 @@ require_tab_organization_sidebar_contract() {
         "tab rows must use an explicit drag threshold so short clicks keep selecting tabs"
 
     require_pattern \
-        "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
+        "clients/apple/alan-macos/Views/Shell/ShellSidebarTabDrop.swift" \
         "ShellSidebarTabInsertionLine" \
         "tab row drag/drop must expose a direct insertion preview"
 
     require_pattern \
-        "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
+        "clients/apple/alan-macos/Views/Shell/ShellSidebarTabRow.swift" \
         "static let hitHeight: CGFloat = 16" \
         "temporary tab divider hover target must stay compact at 16pt high"
 
     require_pattern \
-        "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
+        "clients/apple/alan-macos/Views/Shell/ShellSidebarTabRow.swift" \
         "ShellSidebarTabControlMetrics\\.horizontalInset" \
         "temporary tab divider must be inset from tab-row edges instead of spanning the full row"
 
@@ -416,22 +421,22 @@ require_tab_organization_sidebar_contract() {
         "sidebar tab list must use a shared spacing token for section rhythm"
 
     require_pattern \
-        "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
+        "clients/apple/alan-macos/Views/Shell/ShellSidebarTabRow.swift" \
         "static let height: CGFloat = 36" \
         "sidebar tab rows must stay compact at 36pt high"
 
     require_pattern \
-        "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
+        "clients/apple/alan-macos/Views/Shell/ShellSidebarTabRow.swift" \
         "static let horizontalInset: CGFloat = 8" \
         "sidebar tab rows must use compact 8pt internal horizontal padding"
 
     require_pattern \
-        "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
+        "clients/apple/alan-macos/Views/Shell/ShellSidebarTabRow.swift" \
         "static let titleSize: CGFloat = 14" \
         "sidebar tab row titles must stay readable at 14pt"
 
     require_pattern \
-        "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
+        "clients/apple/alan-macos/Views/Shell/ShellSidebarTabRow.swift" \
         "VStack\\(alignment: \\.leading, spacing: subtitle == nil \\? 0 : 1\\)" \
         "sidebar tab title and subtitle spacing must stay tight at 1pt"
 
@@ -465,7 +470,7 @@ require_tab_organization_sidebar_contract() {
     fi
 
     require_pattern \
-        "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
+        "clients/apple/alan-macos/Views/Shell/ShellSidebarTabRow.swift" \
         "static let sliderToListLift: CGFloat = 12" \
         "sidebar tab list must leave a compact 12pt lift below the space slider"
 
@@ -475,7 +480,7 @@ require_tab_organization_sidebar_contract() {
         "space slider bottom spacing must match tab-list rhythm"
 
     if ! awk '
-        /private struct ShellCompactEmptyAction: View/ {
+        /^(private )?struct ShellCompactEmptyAction: View/ {
             in_action = 1
         }
 
@@ -506,7 +511,7 @@ require_tab_organization_sidebar_contract() {
         "tab context menus must target the clicked tab when moving to another space"
 
     require_pattern \
-        "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
+        "clients/apple/alan-macos/Views/Shell/ShellSidebarTabDrop.swift" \
         "mutationIndex\\(for: insertionTarget, activeDrag: activeDrag\\)" \
         "same-section downward tab drops must convert preview index to mutation index"
 
@@ -515,7 +520,8 @@ require_tab_organization_sidebar_contract() {
         "\\.tabReorder" \
         "tab.reorder socket commands must route through the host so pin snapshots persist"
 
-    if grep -Eq 'Text\("(Pinned|Unpinned)"\)' "$file"; then
+    if grep -ERq 'Text\("(Pinned|Unpinned)"\)' \
+        "$REPO_ROOT/clients/apple/alan-macos/Views/Shell"; then
         printf 'error: tab organization sections must avoid heavy visible section headers\n' >&2
         exit 1
     fi
@@ -894,12 +900,12 @@ require_pattern \
     "continuous Space slider track must use a dedicated Safari-like gray track token"
 
 require_pattern \
-    "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
+    "clients/apple/alan-macos/Views/Shell/ShellSidebarSpaceSlider.swift" \
     "ShellPalette\\.sidebarSpaceSliderTrack" \
     "continuous Space slider track must render with the dedicated gray track token"
 
 reject_pattern \
-    "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
+    "clients/apple/alan-macos/Views/Shell/ShellSidebarSpaceSlider.swift" \
     "sidebarControl\\.opacity\\(0\\.46\\)" \
     "continuous Space slider track must not use the old too-light sidebar control fill"
 
@@ -924,17 +930,17 @@ require_pattern \
     "runtime tests must prove Space creation can exceed the old slider cap"
 
 require_pattern \
-    "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
+    "clients/apple/alan-macos/Views/Shell/ShellSidebarSpaceSlider.swift" \
     "spaceContextMenu\\(" \
     "Space profile selection must be exposed through the Space context menu"
 
 require_pattern \
-    "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
+    "clients/apple/alan-macos/Views/Shell/ShellSidebarSpaceSlider.swift" \
     "host\\.setTerminalProfile\\(.*forSpaceID: space\\.spaceID\\)" \
     "Space context-menu profile actions must target the Space whose menu was opened"
 
 require_pattern \
-    "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
+    "clients/apple/alan-macos/Views/Shell/ShellSidebarSpaceSlider.swift" \
     "onContextMenuIntent: cancelScrubPreview" \
     "Space context-menu opening must cancel active scrub preview before settings actions"
 
@@ -959,7 +965,7 @@ require_pattern \
     "Space slider vertical pass-through wheel input must be forwarded to the active tab list"
 
 require_pattern \
-    "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
+    "clients/apple/alan-macos/Views/Shell/ShellSidebarSpaceSlider.swift" \
     "locationX: value\\.location\\.x - ShellSidebarMetrics\\.edgeInset \\+ trackScrollOffsetX" \
     "Space slider drag scrub must account for the horizontal track scroll offset"
 
@@ -974,12 +980,12 @@ require_pattern \
     "Space slider layout tests must prove targets distribute across the full track before minimum-width overflow"
 
 require_pattern \
-    "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
+    "clients/apple/alan-macos/Views/Shell/ShellSidebarSpaceSlider.swift" \
     "onMoveCommand|onKeyPress\\(\\.return\\)|onExitCommand" \
     "Space slider must preserve keyboard preview, commit, and Escape cancel entry points"
 
 reject_pattern \
-    "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
+    "clients/apple/alan-macos/Views/Shell" \
     "spaceDock|createSpaceFromDock|ShellSidebarSpaceHeader" \
     "default sidebar must not keep the old bottom Space dock or header profile surface"
 
@@ -1004,7 +1010,7 @@ require_pattern \
     "sidebar titlebar controls must align within the sidebar surface width"
 
 reject_pattern \
-    "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
+    "clients/apple/alan-macos/Views/Shell" \
     "New Space with alan|createAlanSpace|menuIndicator\\(\\.hidden\\)" \
     "Space creation must not expose the removed New Space with alan menu path"
 
@@ -1359,7 +1365,7 @@ reject_pattern \
     "deleted floating Ask alan view must stay out of the Xcode project"
 
 reject_pattern \
-    "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
+    "clients/apple/alan-macos/Views/Shell" \
     "Ask alan\\.\\.\\.|Go to or Command|New alan tab|newAlanTab|openAlanTab" \
     "sidebar must not expose Ask alan or first-party alan tab creation"
 
@@ -1869,7 +1875,7 @@ require_pattern \
     "sidebar activity freshness must schedule refreshes for stale/expires deadlines"
 
 require_pattern \
-    "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
+    "clients/apple/alan-macos/Views/Shell/ShellSidebarSpaceSlider.swift" \
     "shellEffectiveAttention\\(for: .*now: activityFreshnessNow\\)" \
     "Space slider attention must use the state-driven freshness clock"
 
@@ -1894,7 +1900,7 @@ require_pattern \
     "pane title detail projection must pass the state-driven freshness clock"
 
 require_pattern \
-    "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
+    "clients/apple/alan-macos/Views/Shell/ShellSidebarTabRow.swift" \
     "private enum ShellSidebarTypography" \
     "sidebar tab typography must use role-based typography tokens"
 
@@ -1944,7 +1950,7 @@ require_pattern \
     "sidebar split indicators must preserve direct clicked-pane targeting"
 
 require_pattern \
-    "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
+    "clients/apple/alan-macos/Views/Shell/ShellPaneTopologyIndicator.swift" \
     "segmentButton\\(paneID: paneID\\)" \
     "two-pane sidebar split indicators must render pane-specific actions"
 
@@ -1959,17 +1965,17 @@ require_pattern \
     "Rust shell-core split-tree tests must cover split topology projection"
 
 require_pattern \
-    "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
+    "clients/apple/alan-macos/Views/Shell/ShellPaneTopologyIndicator.swift" \
     "complexCountOverlay" \
     "complex split indicators must overlay count on the pane-shaped topology base"
 
 require_pattern \
-    "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
+    "clients/apple/alan-macos/Views/Shell/ShellSidebarTabRow.swift" \
     "accessibilityHidden\\(!showsCloseButton\\)" \
     "hidden sidebar close buttons must not remain exposed to accessibility"
 
 reject_pattern \
-    "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
+    "clients/apple/alan-macos/Views/Shell/ShellPaneTopologyIndicator.swift" \
     "rectangle\\.split\\.3x1" \
     "complex split indicators must not render icon and count side by side"
 
@@ -2979,12 +2985,12 @@ require_pattern \
     "UI smoke restart restore must inspect the persisted workspace manifest"
 
 require_pattern \
-    "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
+    "clients/apple/alan-macos/Views/Shell/ShellSidebarTabRow.swift" \
     'frame\(maxWidth: \.infinity, minHeight: 1, maxHeight: 1\)' \
     "temporary tab divider must render as a full-width visible 1pt rule"
 
 require_pattern \
-    "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
+    "clients/apple/alan-macos/Views/Shell/ShellSidebarTabRow.swift" \
     "ShellPalette\\.sidebarDivider" \
     "temporary tab divider must use a sidebar-specific adaptive divider color"
 
@@ -2994,12 +3000,12 @@ require_pattern \
     "sidebar divider color must be adaptive for light and dark mode"
 
 require_pattern \
-    "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
+    "clients/apple/alan-macos/Views/Shell/ShellSidebarTabRow.swift" \
     "@State private var isControlHovered = false" \
     "temporary tab divider row must track hover to reveal Clear"
 
 require_pattern \
-    "clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift" \
+    "clients/apple/alan-macos/Views/Shell/ShellSidebarTabRow.swift" \
     '\.onHover \{ isControlHovered = \$0 \}' \
     "temporary tab divider row hover must update Clear reveal state"
 

@@ -7,4 +7,3 @@ large|TerminalHostView.swift|2010
 large|TerminalPaneView.swift|3839
 large|TerminalRuntimeService.swift|3995
 large|TerminalSurfaceController.swift|1837
-large|Views/Shell/ShellSidebarView.swift|2550

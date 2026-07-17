@@ -35,6 +35,11 @@
 		000000000000000000000018 /* Support/ShellDesignTokens.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000118 /* Support/ShellDesignTokens.swift */; };
 		000000000000000000000019 /* Support/ShellWindowPlacement.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000119 /* Support/ShellWindowPlacement.swift */; };
 		00000000000000000000001A /* Views/Shell/ShellSidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000011A /* Views/Shell/ShellSidebarView.swift */; };
+		A12100000000000000000001 /* Views/Shell/ShellSidebarTabDrop.swift in Sources */ = {isa = PBXBuildFile; fileRef = A12100000000000000000101 /* Views/Shell/ShellSidebarTabDrop.swift */; };
+		A12100000000000000000002 /* Views/Shell/ShellSidebarSpaceSlider.swift in Sources */ = {isa = PBXBuildFile; fileRef = A12100000000000000000102 /* Views/Shell/ShellSidebarSpaceSlider.swift */; };
+		A12100000000000000000003 /* Views/Shell/ShellSidebarTabRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = A12100000000000000000103 /* Views/Shell/ShellSidebarTabRow.swift */; };
+		A12100000000000000000004 /* Views/Shell/ShellSidebarActivityProgressRail.swift in Sources */ = {isa = PBXBuildFile; fileRef = A12100000000000000000104 /* Views/Shell/ShellSidebarActivityProgressRail.swift */; };
+		A12100000000000000000005 /* Views/Shell/ShellPaneTopologyIndicator.swift in Sources */ = {isa = PBXBuildFile; fileRef = A12100000000000000000105 /* Views/Shell/ShellPaneTopologyIndicator.swift */; };
 		AA1B2C3D4E5F6A7B8C9D0E1F /* Views/Shell/Controls/ShellFormControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB2C3D4E5F6A7B8C9D0E1F2A /* Views/Shell/Controls/ShellFormControls.swift */; };
 		0000000000000000000000F0 /* Views/Shell/ShellSpaceCreationForm.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0000000000000000000001F0 /* Views/Shell/ShellSpaceCreationForm.swift */; };
 		00000000000000000000001B /* Views/Shell/ShellWorkspaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000011B /* Views/Shell/ShellWorkspaceView.swift */; };
@@ -194,6 +199,11 @@
 		000000000000000000000118 /* Support/ShellDesignTokens.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Support/ShellDesignTokens.swift; sourceTree = "<group>"; };
 		000000000000000000000119 /* Support/ShellWindowPlacement.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Support/ShellWindowPlacement.swift; sourceTree = "<group>"; };
 		00000000000000000000011A /* Views/Shell/ShellSidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Shell/ShellSidebarView.swift; sourceTree = "<group>"; };
+		A12100000000000000000101 /* Views/Shell/ShellSidebarTabDrop.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Shell/ShellSidebarTabDrop.swift; sourceTree = "<group>"; };
+		A12100000000000000000102 /* Views/Shell/ShellSidebarSpaceSlider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Shell/ShellSidebarSpaceSlider.swift; sourceTree = "<group>"; };
+		A12100000000000000000103 /* Views/Shell/ShellSidebarTabRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Shell/ShellSidebarTabRow.swift; sourceTree = "<group>"; };
+		A12100000000000000000104 /* Views/Shell/ShellSidebarActivityProgressRail.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Shell/ShellSidebarActivityProgressRail.swift; sourceTree = "<group>"; };
+		A12100000000000000000105 /* Views/Shell/ShellPaneTopologyIndicator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Shell/ShellPaneTopologyIndicator.swift; sourceTree = "<group>"; };
 		BB2C3D4E5F6A7B8C9D0E1F2A /* Views/Shell/Controls/ShellFormControls.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Views/Shell/Controls/ShellFormControls.swift"; sourceTree = "<group>"; };
 		0000000000000000000001F0 /* Views/Shell/ShellSpaceCreationForm.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Shell/ShellSpaceCreationForm.swift; sourceTree = "<group>"; };
 		00000000000000000000011B /* Views/Shell/ShellWorkspaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Shell/ShellWorkspaceView.swift; sourceTree = "<group>"; };
@@ -410,6 +420,11 @@
 			isa = PBXGroup;
 			children = (
 				00000000000000000000011A /* Views/Shell/ShellSidebarView.swift */,
+				A12100000000000000000101 /* Views/Shell/ShellSidebarTabDrop.swift */,
+				A12100000000000000000102 /* Views/Shell/ShellSidebarSpaceSlider.swift */,
+				A12100000000000000000103 /* Views/Shell/ShellSidebarTabRow.swift */,
+				A12100000000000000000104 /* Views/Shell/ShellSidebarActivityProgressRail.swift */,
+				A12100000000000000000105 /* Views/Shell/ShellPaneTopologyIndicator.swift */,
 				BB2C3D4E5F6A7B8C9D0E1F2A /* Views/Shell/Controls/ShellFormControls.swift */,
 				0000000000000000000001F0 /* Views/Shell/ShellSpaceCreationForm.swift */,
 				00000000000000000000011B /* Views/Shell/ShellWorkspaceView.swift */,
@@ -753,6 +768,11 @@
 				000000000000000000000018 /* Support/ShellDesignTokens.swift in Sources */,
 				000000000000000000000019 /* Support/ShellWindowPlacement.swift in Sources */,
 				00000000000000000000001A /* Views/Shell/ShellSidebarView.swift in Sources */,
+				A12100000000000000000001 /* Views/Shell/ShellSidebarTabDrop.swift in Sources */,
+				A12100000000000000000002 /* Views/Shell/ShellSidebarSpaceSlider.swift in Sources */,
+				A12100000000000000000003 /* Views/Shell/ShellSidebarTabRow.swift in Sources */,
+				A12100000000000000000004 /* Views/Shell/ShellSidebarActivityProgressRail.swift in Sources */,
+				A12100000000000000000005 /* Views/Shell/ShellPaneTopologyIndicator.swift in Sources */,
 				AA1B2C3D4E5F6A7B8C9D0E1F /* Views/Shell/Controls/ShellFormControls.swift in Sources */,
 				0000000000000000000000F0 /* Views/Shell/ShellSpaceCreationForm.swift in Sources */,
 				00000000000000000000001B /* Views/Shell/ShellWorkspaceView.swift in Sources */,
