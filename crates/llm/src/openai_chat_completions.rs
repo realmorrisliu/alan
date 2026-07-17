@@ -8,15 +8,16 @@ use futures::StreamExt;
 use std::collections::HashMap;
 use tracing::{debug, instrument, warn};
 
-use crate::message::reject_retired_message_overrides;
 use crate::{
-    GenerationRequest, GenerationResponse, LlmProvider, Message as LlmMessage, MessageRole,
-    ReasoningEffort, SseEventParser, StreamChunk, TokenUsage, ToolCall as LlmToolCall,
-    ToolCallDelta, ToolDefinition as LlmToolDefinition,
+    GenerationRequest, GenerationResponse, LlmProvider, SseEventParser, StreamChunk, TokenUsage,
+    ToolCall as LlmToolCall, ToolCallDelta,
 };
+#[cfg(test)]
+use crate::{MessageRole, ReasoningEffort};
 use async_trait::async_trait;
 
 mod input_projection;
+mod request_projection;
 mod wire;
 
 pub use wire::{
@@ -36,9 +37,17 @@ pub use wire::{
     OpenAiResponsesResponse, OpenAiResponsesToolDefinition, OpenAiResponsesUsage,
 };
 
-use input_projection::{
-    convert_messages_for_openai_chat_completions_with_instruction_role, plain_text_content,
-    responses_content, responses_output,
+#[cfg(test)]
+pub(crate) use input_projection::convert_messages_for_openai_responses;
+use input_projection::is_non_empty;
+#[cfg(test)]
+use input_projection::openai_chat_completions_message_value;
+use request_projection::build_chat_completions_request_for_model;
+pub(crate) use request_projection::build_responses_request_for_model;
+#[cfg(test)]
+use request_projection::{
+    build_max_completion_tokens, build_reasoning_effort,
+    build_responses_input_tokens_request_for_model, convert_messages_for_openai_chat_completions,
 };
 
 /// Client for the OpenAI Chat Completions API and compatible endpoints.
@@ -858,40 +867,19 @@ impl OpenAiChatCompletionsClient {
 
     /// Simple chat helper
     pub async fn chat(&self, system: Option<&str>, user_message: &str) -> Result<String> {
-        let mut messages = Vec::new();
-
-        if let Some(sys) = system {
-            messages.push(openai_chat_completions_message_value(
-                self.instruction_role_name(),
-                Some(serde_json::Value::String(sys.to_string())),
-                None,
-                None,
-                None,
-                None,
-            ));
+        let mut generation_request = GenerationRequest::new()
+            .with_user_message(user_message)
+            .with_temperature(0.7)
+            .with_max_tokens(2048);
+        if let Some(system) = system {
+            generation_request = generation_request.with_system_prompt(system);
         }
-
-        messages.push(openai_chat_completions_message_value(
-            "user",
-            Some(serde_json::Value::String(user_message.to_string())),
-            None,
-            None,
-            None,
-            None,
-        ));
-
-        let request = OpenAiChatCompletionsRequest {
-            model: self.model.clone(),
-            messages,
-            tools: None,
-            tool_choice: None,
-            temperature: Some(0.7),
-            max_completion_tokens: Some(2048),
-            reasoning_effort: None,
-            stream: Some(false),
-            stream_options: None,
-            extra_params: HashMap::new(),
-        };
+        let request = build_chat_completions_request_for_model(
+            self.model.clone(),
+            self.instruction_role_name(),
+            generation_request,
+            false,
+        )?;
 
         let response = self.openai_chat_completions(request).await?;
 
@@ -906,345 +894,6 @@ impl OpenAiChatCompletionsClient {
 // ============================================================================
 // Helper functions
 // ============================================================================
-
-fn openai_chat_completions_message_value(
-    role: impl Into<String>,
-    content: Option<serde_json::Value>,
-    reasoning_content: Option<String>,
-    reasoning: Option<serde_json::Value>,
-    tool_calls: Option<Vec<OpenAiChatCompletionsToolCall>>,
-    tool_call_id: Option<String>,
-) -> serde_json::Value {
-    let mut message = serde_json::Map::new();
-    message.insert("role".to_string(), serde_json::Value::String(role.into()));
-    if let Some(content) = content {
-        message.insert("content".to_string(), content);
-    }
-    if let Some(reasoning_content) = reasoning_content {
-        message.insert(
-            "reasoning_content".to_string(),
-            serde_json::Value::String(reasoning_content),
-        );
-    }
-    if let Some(reasoning) = reasoning {
-        message.insert("reasoning".to_string(), reasoning);
-    }
-    if let Some(tool_calls) = tool_calls {
-        message.insert(
-            "tool_calls".to_string(),
-            serde_json::to_value(tool_calls).unwrap_or_else(|_| serde_json::Value::Array(vec![])),
-        );
-    }
-    if let Some(tool_call_id) = tool_call_id {
-        message.insert(
-            "tool_call_id".to_string(),
-            serde_json::Value::String(tool_call_id),
-        );
-    }
-    serde_json::Value::Object(message)
-}
-
-#[cfg(test)]
-pub(crate) fn convert_messages_for_openai_chat_completions(
-    messages: Vec<LlmMessage>,
-) -> Vec<serde_json::Value> {
-    convert_messages_for_openai_chat_completions_with_instruction_role(messages, "system")
-        .expect("test messages should have representable Chat Completions content")
-}
-
-pub(crate) fn convert_tools_for_openai_chat_completions(
-    tools: Vec<LlmToolDefinition>,
-) -> (
-    Option<Vec<OpenAiChatCompletionsToolDefinition>>,
-    Option<String>,
-) {
-    if tools.is_empty() {
-        (None, None)
-    } else {
-        (
-            Some(
-                tools
-                    .into_iter()
-                    .map(|tool| OpenAiChatCompletionsToolDefinition {
-                        r#type: "function".to_string(),
-                        function: OpenAiChatCompletionsFunctionDefinition {
-                            name: tool.name,
-                            description: tool.description,
-                            parameters: tool.parameters,
-                        },
-                    })
-                    .collect(),
-            ),
-            Some("auto".to_string()),
-        )
-    }
-}
-
-pub(crate) fn convert_tools_for_openai_responses(
-    tools: Vec<LlmToolDefinition>,
-) -> (Option<Vec<OpenAiResponsesToolDefinition>>, Option<String>) {
-    if tools.is_empty() {
-        (None, None)
-    } else {
-        (
-            Some(
-                tools
-                    .into_iter()
-                    .map(|tool| {
-                        OpenAiResponsesToolDefinition::new(
-                            &tool.name,
-                            &tool.description,
-                            tool.parameters,
-                        )
-                    })
-                    .collect(),
-            ),
-            Some("auto".to_string()),
-        )
-    }
-}
-
-pub(crate) fn normalize_responses_instructions(system_prompt: Option<String>) -> Option<String> {
-    system_prompt.filter(|value| is_non_empty(value))
-}
-
-pub(crate) fn build_responses_request_for_model(
-    model: String,
-    request: GenerationRequest,
-    stream: bool,
-) -> Result<OpenAiResponsesRequest> {
-    reject_retired_message_overrides(&request)?;
-    let GenerationRequest {
-        system_prompt,
-        messages,
-        tools,
-        temperature,
-        max_tokens,
-        reasoning,
-        mut extra_params,
-    } = request;
-
-    let previous_response_id = take_string_extra_param("previous_response_id", &mut extra_params);
-    let background = take_bool_extra_param("background", &mut extra_params);
-    let mut store = take_bool_extra_param("store", &mut extra_params);
-    if (matches!(background, Some(true)) || previous_response_id.is_some()) && store.is_none() {
-        store = Some(true);
-    }
-
-    let reasoning = build_openai_responses_reasoning(reasoning.effort, &mut extra_params);
-    let include = normalize_responses_include(
-        take_string_array_extra_param("include", &mut extra_params),
-        should_include_reasoning_encrypted_content(&messages, &tools, reasoning.is_some()),
-    );
-    let (response_tools, tool_choice) = convert_tools_for_openai_responses(tools);
-    let input = convert_messages_for_openai_responses(messages)?;
-
-    Ok(OpenAiResponsesRequest {
-        model,
-        instructions: normalize_responses_instructions(system_prompt),
-        previous_response_id,
-        store,
-        background,
-        include,
-        input,
-        tools: response_tools,
-        tool_choice,
-        temperature,
-        max_output_tokens: build_max_completion_tokens(max_tokens, &mut extra_params),
-        reasoning,
-        stream: Some(stream),
-        extra_params,
-    })
-}
-
-#[cfg(test)]
-pub(crate) fn build_responses_input_tokens_request_for_model(
-    model: String,
-    request: GenerationRequest,
-) -> Result<OpenAiResponsesInputTokensRequest> {
-    reject_retired_message_overrides(&request)?;
-    let GenerationRequest {
-        system_prompt,
-        messages,
-        tools,
-        temperature: _,
-        max_tokens: _,
-        reasoning,
-        mut extra_params,
-    } = request;
-
-    let reasoning = build_openai_responses_reasoning(reasoning.effort, &mut extra_params);
-    let (response_tools, tool_choice) = convert_tools_for_openai_responses(tools);
-    let input = convert_messages_for_openai_responses(messages)?;
-
-    extra_params.remove("previous_response_id");
-    extra_params.remove("background");
-    extra_params.remove("store");
-    extra_params.remove("include");
-    extra_params.remove("context_management");
-    extra_params.remove("stream");
-    extra_params.remove("max_completion_tokens");
-
-    Ok(OpenAiResponsesInputTokensRequest {
-        model,
-        instructions: normalize_responses_instructions(system_prompt),
-        input,
-        tools: response_tools,
-        tool_choice,
-        reasoning,
-        extra_params,
-    })
-}
-
-pub(crate) fn convert_messages_for_openai_responses(
-    messages: Vec<LlmMessage>,
-) -> Result<Vec<OpenAiResponsesInputItem>> {
-    let mut input = Vec::new();
-
-    for message in messages {
-        match message.role {
-            MessageRole::System | MessageRole::Context | MessageRole::User => {
-                if let Some(content) = responses_content(message.content, message.content_parts)? {
-                    let role = match message.role {
-                        MessageRole::User => "user",
-                        _ => "developer",
-                    };
-                    input.push(OpenAiResponsesInputItem::Message(
-                        OpenAiResponsesInputMessage {
-                            role: role.to_string(),
-                            content,
-                        },
-                    ));
-                }
-            }
-            MessageRole::Assistant => {
-                if let Some(signature) = message
-                    .thinking_signature
-                    .filter(|value| is_non_empty(value))
-                {
-                    input.push(OpenAiResponsesInputItem::Reasoning(
-                        OpenAiResponsesReasoningInputItem {
-                            kind: "reasoning".to_string(),
-                            encrypted_content: signature,
-                        },
-                    ));
-                }
-
-                if let Some(content) = responses_output(message.content, message.content_parts)? {
-                    input.push(OpenAiResponsesInputItem::Message(
-                        OpenAiResponsesInputMessage {
-                            role: "assistant".to_string(),
-                            content,
-                        },
-                    ));
-                }
-
-                if let Some(tool_calls) = message.tool_calls {
-                    for tool_call in tool_calls {
-                        let call_id = tool_call.id.unwrap_or_default();
-                        if call_id.is_empty() {
-                            warn!(
-                                tool_name = %tool_call.name,
-                                "Skipping assistant tool call without id in Responses API projection"
-                            );
-                            continue;
-                        }
-
-                        input.push(OpenAiResponsesInputItem::FunctionCall(
-                            OpenAiResponsesFunctionCallItem {
-                                kind: "function_call".to_string(),
-                                call_id,
-                                name: tool_call.name,
-                                arguments: tool_call.arguments.to_string(),
-                            },
-                        ));
-                    }
-                }
-            }
-            MessageRole::Tool => {
-                let output = plain_text_content(
-                    message.content,
-                    message.content_parts,
-                    "OpenAI Responses tool output",
-                )?;
-                let Some(call_id) = message.tool_call_id.filter(|value| is_non_empty(value)) else {
-                    warn!("Skipping tool message without tool_call_id in Responses API projection");
-                    continue;
-                };
-
-                input.push(OpenAiResponsesInputItem::FunctionCallOutput(
-                    OpenAiResponsesFunctionCallOutputItem {
-                        kind: "function_call_output".to_string(),
-                        call_id,
-                        output,
-                    },
-                ));
-            }
-        }
-    }
-
-    Ok(input)
-}
-
-#[cfg(test)]
-fn build_chat_completions_request_for_model(
-    model: String,
-    request: GenerationRequest,
-) -> OpenAiChatCompletionsRequest {
-    let GenerationRequest {
-        system_prompt,
-        messages: request_messages,
-        tools: request_tools,
-        temperature,
-        max_tokens,
-        reasoning,
-        mut extra_params,
-    } = request;
-
-    let mut messages: Vec<serde_json::Value> = Vec::new();
-    if let Some(system) = system_prompt {
-        messages.push(openai_chat_completions_message_value(
-            "developer",
-            Some(serde_json::Value::String(system)),
-            None,
-            None,
-            None,
-            None,
-        ));
-    }
-    messages.extend(
-        convert_messages_for_openai_chat_completions_with_instruction_role(
-            request_messages,
-            "developer",
-        )
-        .expect("test request should have representable Chat Completions content"),
-    );
-
-    let (tools, tool_choice) = convert_tools_for_openai_chat_completions(request_tools);
-    let reasoning_effort = build_reasoning_effort(reasoning.effort, &mut extra_params);
-    let max_completion_tokens = build_max_completion_tokens(max_tokens, &mut extra_params);
-
-    OpenAiChatCompletionsRequest {
-        model,
-        messages,
-        tools,
-        tool_choice,
-        temperature,
-        max_completion_tokens,
-        reasoning_effort,
-        stream: Some(false),
-        stream_options: None,
-        extra_params,
-    }
-}
-
-fn build_openai_responses_reasoning(
-    reasoning_effort: Option<ReasoningEffort>,
-    extra_params: &mut HashMap<String, serde_json::Value>,
-) -> Option<OpenAiResponsesReasoning> {
-    build_reasoning_effort(reasoning_effort, extra_params)
-        .map(|effort| OpenAiResponsesReasoning { effort })
-}
 
 fn convert_openai_responses_usage(usage: OpenAiResponsesUsage) -> TokenUsage {
     TokenUsage {
@@ -1493,100 +1142,6 @@ fn responses_stream_sequence_number(event: &serde_json::Value) -> Option<u64> {
         .and_then(serde_json::Value::as_u64)
 }
 
-fn is_valid_reasoning_effort(effort: &str) -> bool {
-    matches!(
-        effort,
-        "none" | "minimal" | "low" | "medium" | "high" | "xhigh"
-    )
-}
-
-fn take_string_extra_param(
-    key: &str,
-    extra_params: &mut HashMap<String, serde_json::Value>,
-) -> Option<String> {
-    let value = extra_params.remove(key)?;
-    match value {
-        serde_json::Value::String(value) if is_non_empty(&value) => Some(value),
-        other => {
-            debug!(key, value = %other, "Ignoring non-string or empty Responses extra_param");
-            None
-        }
-    }
-}
-
-fn take_bool_extra_param(
-    key: &str,
-    extra_params: &mut HashMap<String, serde_json::Value>,
-) -> Option<bool> {
-    let value = extra_params.remove(key)?;
-    match value {
-        serde_json::Value::Bool(value) => Some(value),
-        other => {
-            debug!(key, value = %other, "Ignoring non-boolean Responses extra_param");
-            None
-        }
-    }
-}
-
-fn take_string_array_extra_param(
-    key: &str,
-    extra_params: &mut HashMap<String, serde_json::Value>,
-) -> Option<Vec<String>> {
-    let value = extra_params.remove(key)?;
-    match value {
-        serde_json::Value::Array(values) => {
-            let collected: Vec<String> = values
-                .into_iter()
-                .filter_map(|value| value.as_str().map(ToString::to_string))
-                .filter(|value| is_non_empty(value))
-                .collect();
-            if collected.is_empty() {
-                None
-            } else {
-                Some(collected)
-            }
-        }
-        other => {
-            debug!(key, value = %other, "Ignoring non-array Responses extra_param");
-            None
-        }
-    }
-}
-
-fn should_include_reasoning_encrypted_content(
-    messages: &[LlmMessage],
-    tools: &[LlmToolDefinition],
-    reasoning_requested: bool,
-) -> bool {
-    reasoning_requested
-        || !tools.is_empty()
-        || messages.iter().any(|message| {
-            message
-                .thinking_signature
-                .as_deref()
-                .is_some_and(is_non_empty)
-        })
-}
-
-fn normalize_responses_include(
-    include: Option<Vec<String>>,
-    require_reasoning_encrypted_content: bool,
-) -> Option<Vec<String>> {
-    let mut include = include.unwrap_or_default();
-    if require_reasoning_encrypted_content
-        && !include
-            .iter()
-            .any(|value| value == "reasoning.encrypted_content")
-    {
-        include.push("reasoning.encrypted_content".to_string());
-    }
-    if include.is_empty() {
-        None
-    } else {
-        Some(include)
-    }
-}
-
 pub(crate) fn extract_responses_output_reasoning_signature(
     output: &[serde_json::Value],
 ) -> Option<String> {
@@ -1595,10 +1150,6 @@ pub(crate) fn extract_responses_output_reasoning_signature(
         .filter(|item| item.get("type").and_then(serde_json::Value::as_str) == Some("reasoning"))
         .filter_map(|item| extract_reasoning_signature(Some(item)))
         .next_back()
-}
-
-pub(crate) fn is_non_empty(value: &str) -> bool {
-    !value.trim().is_empty()
 }
 
 // Streamed text can arrive as standalone spaces/newlines that preserve formatting.
@@ -1678,51 +1229,6 @@ fn extract_reasoning_fields(
     let thinking_signature = extract_reasoning_signature(reasoning);
 
     (thinking, thinking_signature)
-}
-
-pub(crate) fn build_reasoning_effort(
-    reasoning_effort: Option<ReasoningEffort>,
-    extra_params: &mut HashMap<String, serde_json::Value>,
-) -> Option<String> {
-    if let Some(effort) = reasoning_effort {
-        extra_params.remove("reasoning_effort");
-        return Some(effort.as_str().to_string());
-    }
-
-    if let Some(value) = extra_params.remove("reasoning_effort") {
-        if let Some(effort) = value.as_str() {
-            if is_valid_reasoning_effort(effort) {
-                return Some(effort.to_string());
-            }
-            debug!(
-                effort,
-                "Ignoring invalid `reasoning_effort`; expected one of: none, minimal, low, medium, high, xhigh"
-            );
-        } else {
-            debug!(
-                value = %value,
-                "Ignoring non-string `reasoning_effort` in extra_params"
-            );
-        }
-    }
-
-    None
-}
-
-pub(crate) fn build_max_completion_tokens(
-    max_tokens: Option<i32>,
-    extra_params: &mut HashMap<String, serde_json::Value>,
-) -> Option<i32> {
-    if let Some(value) = extra_params.remove("max_completion_tokens") {
-        if let Some(tokens) = value.as_i64() {
-            return i32::try_from(tokens).ok();
-        }
-        debug!(
-            value = %value,
-            "Ignoring non-integer `max_completion_tokens` in extra_params"
-        );
-    }
-    max_tokens
 }
 
 fn convert_usage(usage: OpenAiChatCompletionsUsage) -> TokenUsage {
@@ -1814,51 +1320,12 @@ impl OpenAiChatCompletionsClient {
         &mut self,
         request: GenerationRequest,
     ) -> anyhow::Result<GenerationResponse> {
-        reject_retired_message_overrides(&request)?;
-        let GenerationRequest {
-            system_prompt,
-            messages: request_messages,
-            tools: request_tools,
-            temperature,
-            max_tokens,
-            reasoning,
-            mut extra_params,
-        } = request;
-
-        let mut messages: Vec<serde_json::Value> = Vec::new();
-        if let Some(system) = system_prompt {
-            messages.push(openai_chat_completions_message_value(
-                self.instruction_role_name(),
-                Some(serde_json::Value::String(system)),
-                None,
-                None,
-                None,
-                None,
-            ));
-        }
-        messages.extend(
-            convert_messages_for_openai_chat_completions_with_instruction_role(
-                request_messages,
-                self.instruction_role_name(),
-            )?,
-        );
-
-        let (tools, tool_choice) = convert_tools_for_openai_chat_completions(request_tools);
-        let reasoning_effort = build_reasoning_effort(reasoning.effort, &mut extra_params);
-        let max_completion_tokens = build_max_completion_tokens(max_tokens, &mut extra_params);
-
-        let chat_request = OpenAiChatCompletionsRequest {
-            model: self.model.clone(),
-            messages,
-            tools,
-            tool_choice,
-            temperature,
-            max_completion_tokens,
-            reasoning_effort,
-            stream: Some(false),
-            stream_options: None,
-            extra_params,
-        };
+        let chat_request = build_chat_completions_request_for_model(
+            self.model.clone(),
+            self.instruction_role_name(),
+            request,
+            false,
+        )?;
 
         let response = self.openai_chat_completions(chat_request).await?;
         convert_openai_chat_completions_response(response)
@@ -1868,53 +1335,12 @@ impl OpenAiChatCompletionsClient {
         &mut self,
         request: GenerationRequest,
     ) -> anyhow::Result<tokio::sync::mpsc::Receiver<StreamChunk>> {
-        reject_retired_message_overrides(&request)?;
-        let GenerationRequest {
-            system_prompt,
-            messages: request_messages,
-            tools: request_tools,
-            temperature,
-            max_tokens,
-            reasoning,
-            mut extra_params,
-        } = request;
-
-        let mut messages: Vec<serde_json::Value> = Vec::new();
-        if let Some(system) = system_prompt {
-            messages.push(openai_chat_completions_message_value(
-                self.instruction_role_name(),
-                Some(serde_json::Value::String(system)),
-                None,
-                None,
-                None,
-                None,
-            ));
-        }
-        messages.extend(
-            convert_messages_for_openai_chat_completions_with_instruction_role(
-                request_messages,
-                self.instruction_role_name(),
-            )?,
-        );
-
-        let (tools, tool_choice) = convert_tools_for_openai_chat_completions(request_tools);
-        let reasoning_effort = build_reasoning_effort(reasoning.effort, &mut extra_params);
-        let max_completion_tokens = build_max_completion_tokens(max_tokens, &mut extra_params);
-
-        let chat_request = OpenAiChatCompletionsRequest {
-            model: self.model.clone(),
-            messages,
-            tools,
-            tool_choice,
-            temperature,
-            max_completion_tokens,
-            reasoning_effort,
-            stream: Some(true),
-            stream_options: Some(OpenAiChatCompletionsStreamOptions {
-                include_usage: true,
-            }),
-            extra_params,
-        };
+        let chat_request = build_chat_completions_request_for_model(
+            self.model.clone(),
+            self.instruction_role_name(),
+            request,
+            true,
+        )?;
 
         let (tx, rx) = tokio::sync::mpsc::channel(100);
         let (chunk_tx, mut chunk_rx) = tokio::sync::mpsc::channel(100);
@@ -2591,7 +2017,13 @@ mod tests {
             .with_extra_param("reasoning_effort", serde_json::json!("high"))
             .with_reasoning_effort(ReasoningEffort::Low);
 
-        let built = build_chat_completions_request_for_model("gpt-5.4".to_string(), request);
+        let built = build_chat_completions_request_for_model(
+            "gpt-5.4".to_string(),
+            "developer",
+            request,
+            false,
+        )
+        .unwrap();
 
         assert_eq!(built.reasoning_effort.as_deref(), Some("low"));
         assert!(!built.extra_params.contains_key("reasoning_effort"));
