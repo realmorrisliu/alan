@@ -609,24 +609,24 @@ require_pattern \
     "terminal runtimes must be owned by a content-keyed registry"
 
 reject_pattern \
-    "clients/apple/alan-macos/Models/Shell/ShellValueTypes.swift" \
+    "clients/apple/alan-macos/Services/Shell/ManagedTerminalAccountValidation.swift" \
     "identifierPattern|reservedAccountNames|matchesIdentifier" \
     "managed terminal account identifier validation must not keep a Swift-owned duplicate"
 
 reject_pattern \
-    "clients/apple/alan-macos/Models/Shell/ShellValueTypes.swift" \
+    "clients/apple/alan-macos/Services/Shell/ManagedTerminalAccountPlanning.swift" \
     "shouldRepairUnreadableSudoers|repairNeeded|needsCreate" \
     "managed terminal account provisioning plans must not keep a Swift-owned duplicate"
 
 require_pattern \
-    "clients/apple/alan-macos/Models/Shell/ShellValueTypes.swift" \
+    "clients/apple/alan-macos/Services/Shell/ManagedTerminalAccountValidation.swift" \
     "ShellCoreFFIAdapter\\.shared\\.validateManagedTerminalAccountRequest" \
     "managed terminal account validation must route through shell-core authority"
 
 require_pattern \
-    "clients/apple/alan-macos/Models/Shell/ShellValueTypes.swift" \
-    "ShellCoreFFIAdapter\\.shared\\.managedTerminalAccountPlan" \
-    "managed terminal account provisioning plans must route through shell-core authority"
+    "clients/apple/alan-macos/Services/Shell/ManagedTerminalAccountPlanning.swift" \
+    "enum ManagedTerminalAccountPlanner" \
+    "transitional managed terminal account planning must stay in its explicit service owner"
 
 require_pattern \
     "clients/apple/alan-macos/Services/Shell/ShellCoreFFIManagedTerminalAccountAdapter.swift" \
@@ -634,9 +634,9 @@ require_pattern \
     "managed terminal account validation must have a shell-core FFI operation"
 
 require_pattern \
-    "clients/apple/alan-macos/Services/Shell/ShellCoreFFIManagedTerminalAccountAdapter.swift" \
-    "managed_terminal_account\\.plan" \
-    "managed terminal account provisioning plans must have a shell-core FFI operation"
+    "crates/shell-core/src/managed_terminal_account.rs" \
+    "pub struct ManagedTerminalAccountPlanner" \
+    "portable managed terminal account planning must remain owned by shell-core pending the 4.4 Swift adapter audit"
 
 reject_pattern \
     "clients/apple/alan-macos/Services/Shell/ShellCoreFFITerminalProfileAdapter.swift" \
@@ -1299,17 +1299,17 @@ require_pattern \
     "split resize preview persistence must be controlled at mutation application"
 
 require_pattern \
-    "clients/apple/alan-macos/Models/Shell/ShellValueTypes.swift" \
+    "clients/apple/alan-macos/Models/Shell/ShellWorkspaceValueTypes.swift" \
     "enum ShellPaneSplitDirection" \
     "split commands must model left/right/up/down placement separately from split axis"
 
 require_pattern \
-    "clients/apple/alan-macos/Models/Shell/ShellValueTypes.swift" \
+    "clients/apple/alan-macos/Models/Shell/ShellWorkspaceValueTypes.swift" \
     "enum ShellSpatialFocusDirection" \
     "spatial focus commands must use explicit left/right/up/down directions"
 
 require_pattern \
-    "clients/apple/alan-macos/Models/Shell/ShellValueTypes.swift" \
+    "clients/apple/alan-macos/Models/Shell/ShellWorkspaceValueTypes.swift" \
     "enum ShellWorkspaceCommand: String, (Codable, )?CaseIterable, Identifiable" \
     "shell workspace commands must remain a centralized shared vocabulary"
 
@@ -1759,7 +1759,7 @@ require_pattern \
     "pane title-bar close must route through a controller-owned targeted pane close path"
 
 require_pattern \
-    "crates/shell-core/tests/reducer_contract.rs" \
+    "crates/shell-core/tests/reducer_contract/workspace_lifecycle_contract.inc.rs" \
     "closing_selected_pane_removes_content_and_repairs_focus" \
     "Rust shell-core reducer tests must cover pane-scoped close targeting"
 
@@ -2779,7 +2779,7 @@ require_pattern \
     "dev channel install contract must expose the dev Alan OS Host executable name"
 
 require_pattern \
-    "crates/alan/src/main.rs" \
+    "crates/alan/src/cli/host.rs" \
     '\.arg\("submit"\)' \
     "macOS CLI startup must request the dedicated Alan OS Host through launchd"
 
@@ -3204,7 +3204,7 @@ require_pattern \
     "Rust shell-core tests must own manifest default/materialization contract coverage"
 
 reject_pattern \
-    "clients/apple/alan-macos/Models/Shell/ShellValueTypes.swift" \
+    "clients/apple/alan-macos/Services/Shell/ManagedTerminalAccountEffects.swift" \
     "final class ManagedTerminalAccountFakeExecutor|enum ManagedTerminalAccountProfileHandoff" \
     "fixture-only managed-account helpers must live outside production Apple sources"
 
@@ -3224,12 +3224,22 @@ require_pattern \
     "managed-account profile handoff fixture must live in explicit script support"
 
 reject_pattern \
-    "clients/apple/alan-macos/Models/Shell/ShellValueTypes.swift" \
+    "clients/apple/alan-macos" \
+    "final class AlanPrivilegedHelperFakeClient" \
+    "privileged-helper fake client must not compile into the Alan macOS app target"
+
+require_pattern \
+    "clients/apple/scripts/support/AlanPrivilegedHelperFakeClient.swift" \
+    "Script/test support only" \
+    "privileged-helper fake client must live in explicit script test support"
+
+reject_pattern \
+    "clients/apple/alan-macos/Models/Shell/TerminalProfileModels.swift" \
     "enum TerminalProfileValidator[[:space:]]*\\{|enum TerminalProfileEditor[[:space:]]*\\{|struct TerminalProfileStore[[:space:]]*\\{|static func requiredExecutablePath\\(|static func makeDefinition\\(|static func upserting\\(|func load\\(\\) -> TerminalProfileLoadResult|func save\\(_ document: TerminalProfileDocument\\)|var errors: \\[TerminalProfileValidationError\\] = \\[]" \
     "Swift Terminal Profile validation/editor/store behavior must live outside production value types and route through shell-core"
 
 reject_pattern \
-    "clients/apple/alan-macos/Models/Shell/ShellValueTypes.swift" \
+    "clients/apple/alan-macos/Models/Shell/TerminalProfileModels.swift" \
     "document\\.profiles\\.firstIndex\\(where:|document\\.profiles\\.append|defaultProfileID: document\\.defaultProfileID\\.isEmpty" \
     "Terminal Profile document editor semantics in value types must route through shell-core"
 

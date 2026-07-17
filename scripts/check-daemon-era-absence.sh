@@ -151,7 +151,7 @@ is_allowed_daemon_match() {
         clients/apple/alan-macos/Services/Shell/AlanPrivilegedHelperXPC.swift)
             return 0 # Unix account name
             ;;
-        clients/apple/alan-macos/Models/Shell/ShellValueTypes.swift)
+        clients/apple/alan-macos/Services/Shell/AlanPrivilegedHelperContracts.swift)
             return 0 # Apple SMAppService.daemon diagnostic label
             ;;
         clients/apple/scripts/test-shell-settings-surface.swift)
@@ -201,8 +201,17 @@ is_allowed_session_match() {
         clients/apple/alan-macos/Models/Shell/ShellSidebarTabPresentation.swift)
             return 0 # External command metadata redaction
             ;;
-        clients/apple/alan-macos/Models/Shell/ShellValueTypes.swift)
-            return 0 # External command metadata redaction
+        clients/apple/alan-macos/Models/Shell/TerminalActivityModels.swift)
+            return 0 # External agent activity metadata
+            ;;
+        clients/apple/alan-macos/Services/Terminal/TerminalAgentActivityAdapter.swift)
+            return 0 # External agent session label redaction
+            ;;
+        clients/apple/alan-macos/Services/Shell/AlanPrivilegedHelperContracts.swift)
+            return 0 # Managed User PTY session contract
+            ;;
+        clients/apple/scripts/support/AlanPrivilegedHelperFakeClient.swift)
+            return 0 # Managed User PTY test session fixture
             ;;
         openspec/changes/define-groove-master-alan-app/design.md)
             return 0 # Groove Master practice-session domain

@@ -24,17 +24,18 @@ recorded in [`ARCHITECTURE.md`](./ARCHITECTURE.md).
 - `MacShellRootView.swift`: thin primary macOS shell composition root
 - `Views/Shell/`: shell sidebar, workspace composition, command palette, and
   other primary macOS shell SwiftUI components
-- `Models/Shell/`: shell value types,
-  pane/content/tree/tab/Space/workspace snapshot families, runtime support,
+- `Models/Shell/`: focused shell, Terminal Profile, managed-account, activity,
+  context, and pane/content/tree/tab/Space/workspace snapshot families; runtime support,
   focused presentation models, and settings navigation, Terminal Profile, managed-user,
   catalog, local-runtime, and diagnostics domain models
 - `Controllers/`: target owner for observable app and shell controllers; current
   migration debt is tracked in `ARCHITECTURE.md`
 - `Services/Shell/`: shell projection, persistence, control-plane transport,
+  managed-account validation/planning/effects, privileged-helper contracts,
   file polling, event store, diagnostics, and command-execution services that
   keep runtime metadata and IO out of the observable host
 - `Services/Terminal/`: terminal host runtime reporting, window observation,
-  and terminal runtime service collaborators
+  agent-activity projection, and terminal runtime service collaborators
 - `TerminalPaneView.swift` / `TerminalHostView.swift`: current terminal pane and host surfaces
 - `ShellHostController.swift`: observable shell state and root controller lifecycle
 - `ShellControlPlane.swift`: thin shell control-plane orchestration across the

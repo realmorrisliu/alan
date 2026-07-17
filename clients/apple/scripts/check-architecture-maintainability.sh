@@ -304,7 +304,7 @@ require_existing_single_owner_pattern() {
 
 shell_core_ffi_shared_callsite_owner_allowlist=(
     "Models/Shell/ShellSettingsSurfaceModel.swift"
-    "Models/Shell/ShellValueTypes.swift"
+    "Services/Shell/ManagedTerminalAccountValidation.swift"
     "Services/Shell/ShellActionCoordinator.swift"
     "Services/Shell/ShellLocalCommandExecutor.swift"
     "Services/Shell/ShellReducerCommandCoordinator.swift"
@@ -563,12 +563,12 @@ require_single_owner_pattern \
 
 require_single_owner_pattern \
     "ShellCoreFFIAdapter.shared.validateManagedTerminalAccountRequest" \
-    "Models/Shell/ShellValueTypes.swift" \
+    "Services/Shell/ManagedTerminalAccountValidation.swift" \
     "shell-core managed terminal account validation"
 
 require_single_owner_pattern \
     "ShellCoreFFIAdapter.shared.managedTerminalAccountPlan" \
-    "Models/Shell/ShellValueTypes.swift" \
+    "Services/Shell/ManagedTerminalAccountPlanning.swift" \
     "shell-core managed terminal account provisioning planner"
 
 require_shell_core_ffi_shared_callsite_owners
