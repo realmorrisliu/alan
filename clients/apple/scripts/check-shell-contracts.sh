@@ -668,6 +668,11 @@ require_pattern \
     "managed terminal account diagnosis must preserve configured-home equality"
 
 require_pattern \
+    "clients/apple/alan-macos/Services/Shell/AlanPrivilegedHelperXPC.swift" \
+    "static let currentVersion = 3" \
+    "managed terminal account diagnosis schema changes must advance the helper protocol"
+
+require_pattern \
     "clients/apple/alan-macos/Services/Shell/ShellCoreFFIManagedTerminalAccountAdapter.swift" \
     "homeDirectoryMatches = diagnosis\\.homeDirectoryMatches" \
     "managed terminal account FFI planning must receive configured-home equality"
