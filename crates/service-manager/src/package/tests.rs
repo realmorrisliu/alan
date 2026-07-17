@@ -1,4 +1,6 @@
+use super::materializer::{MAX_SOURCE_FILE_BYTES, MaterializationManifest};
 use super::*;
+use alan_agent_engine::skills::{SkillScope, parse_skill_metadata};
 
 mod file_surface;
 
