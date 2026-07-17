@@ -127,6 +127,10 @@ The existing state-input planner remains a separate shell-core domain module:
 its invalid-record and verification evidence must not be lossily collapsed into
 the narrower helper diagnosis contract.
 
+After the view-owner splits, the design-token baseline follows the extracted
+files and lowers the aggregate raw-literal allowance from 75 to 50; no new
+literal allowance is introduced by the path migration.
+
 Alternative considered: keep a permanent warning allowlist. Rejected because
 the 15 warnings describe known migration state, not supported architecture.
 
