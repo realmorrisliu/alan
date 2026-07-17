@@ -63,7 +63,7 @@
   Apple tests, and strict OpenSpec validation.
 - [x] 5.2 Verify the dependency inventory contains no removed transitional edge,
   the Rust oversized baseline is empty, and Apple strict mode reports zero.
-- [ ] 5.3 Keep every implementation PR and Codex review clean, and confirm no
+- [x] 5.3 Keep every implementation PR and Codex review clean, and confirm no
   slice intentionally changed product behavior.
 - [ ] 5.4 After all implementation PRs merge, sync delta specs into canonical
   specs and archive this change.
