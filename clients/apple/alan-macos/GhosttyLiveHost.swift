@@ -27,7 +27,7 @@ final class AlanGhosttyLiveHost: NSObject {
     private var envStorage: [(UnsafeMutablePointer<CChar>, UnsafeMutablePointer<CChar>)] = []
     private let tickScheduleLock = NSLock()
     private var tickScheduled = false
-    private var appObservers: [NSObjectProtocol] = []
+    private let appFocusObserver = AlanGhosttyAppFocusObserver()
     private var didEmitFirstRefresh = false
     private var diagnostics = TerminalRendererSnapshot.placeholder
     private var metadata = TerminalPaneMetadataSnapshot.placeholder
@@ -36,13 +36,6 @@ final class AlanGhosttyLiveHost: NSObject {
     private var didEmitNonConfirmingCloseRequest = false
     private var foregroundCommandStartedAt: Date?
     private var queuedForegroundCommandSubmissions = 0
-
-    private enum KeyCode {
-        static let d: UInt32 = 2
-        static let c: UInt32 = 8
-        static let returnKey: UInt32 = 36
-        static let keypadEnter: UInt32 = 76
-    }
 
     func attach(
         to canvasView: AlanGhosttyCanvasView,
@@ -178,13 +171,13 @@ final class AlanGhosttyLiveHost: NSObject {
         let mods: ghostty_input_mods_e
         switch key {
         case .interrupt:
-            keycode = KeyCode.c
+            keycode = AlanGhosttyKeyCode.c
             mods = GHOSTTY_MODS_CTRL
         case .endOfTransmission:
-            keycode = KeyCode.d
+            keycode = AlanGhosttyKeyCode.d
             mods = GHOSTTY_MODS_CTRL
         case .returnKey:
-            keycode = KeyCode.returnKey
+            keycode = AlanGhosttyKeyCode.returnKey
             mods = GHOSTTY_MODS_NONE
         }
 
@@ -346,7 +339,7 @@ final class AlanGhosttyLiveHost: NSObject {
 
     func teardown() {
         teardownSurface()
-        removeAppObservers()
+        appFocusObserver.remove()
         if let app {
             ghostty_app_free(app)
             self.app = nil
@@ -386,7 +379,7 @@ final class AlanGhosttyLiveHost: NSObject {
                   let surface = host.surface
             else { return false }
 
-            let text = AlanGhosttyLiveHost.readClipboardText(location: location) ?? ""
+            let text = AlanGhosttyClipboard.readText(location: location) ?? ""
             text.withCString { cString in
                 ghostty_surface_complete_clipboard_request(surface, cString, state, false)
             }
@@ -399,7 +392,11 @@ final class AlanGhosttyLiveHost: NSObject {
             ghostty_surface_complete_clipboard_request(surface, string, state, true)
         }
         runtimeConfig.write_clipboard_cb = { _, location, content, len, _ in
-            AlanGhosttyLiveHost.writeClipboard(location: location, content: content, len: len)
+            AlanGhosttyClipboard.write(
+                location: location,
+                content: content,
+                len: len
+            )
         }
         runtimeConfig.close_surface_cb = { userdata, processAlive in
             AlanGhosttyLiveHost.from(userdata)?
@@ -420,7 +417,7 @@ final class AlanGhosttyLiveHost: NSObject {
         if let created = ghostty_app_new(&runtimeConfig, primaryConfig) {
             self.app = created
             self.config = primaryConfig
-            installAppObservers()
+            appFocusObserver.install(for: created)
             ghostty_app_set_focus(created, NSApp.isActive)
             transition(
                 kind: .ghosttyLive,
@@ -462,7 +459,7 @@ final class AlanGhosttyLiveHost: NSObject {
 
         self.app = created
         self.config = fallbackConfig
-        installAppObservers()
+        appFocusObserver.install(for: created)
         ghostty_app_set_focus(created, NSApp.isActive)
         transition(
             kind: .ghosttyLive,
@@ -515,7 +512,7 @@ final class AlanGhosttyLiveHost: NSObject {
                 ?? 2
         )
         surfaceConfig.context = GHOSTTY_SURFACE_CONTEXT_WINDOW
-        if let displayID = (canvasView.window?.screen ?? NSScreen.main)?.displayID,
+        if let displayID = (canvasView.window?.screen ?? NSScreen.main)?.alanGhosttyDisplayID,
            displayID != 0
         {
             surfaceConfig.initial_macos_display_id = displayID
@@ -601,7 +598,7 @@ final class AlanGhosttyLiveHost: NSObject {
             UInt32(max(1, Int(floor(backingSize.height))))
         )
 
-        if let displayID = (window.screen ?? NSScreen.main)?.displayID, displayID != 0 {
+        if let displayID = (window.screen ?? NSScreen.main)?.alanGhosttyDisplayID, displayID != 0 {
             ghostty_surface_set_display_id(surface, displayID)
         }
     }
@@ -1074,7 +1071,10 @@ final class AlanGhosttyLiveHost: NSObject {
 
     private func isCommandSubmissionKey(_ keyEvent: ghostty_input_key_s) -> Bool {
         keyEvent.action == GHOSTTY_ACTION_PRESS
-            && (keyEvent.keycode == KeyCode.returnKey || keyEvent.keycode == KeyCode.keypadEnter)
+            && (
+                keyEvent.keycode == AlanGhosttyKeyCode.returnKey
+                    || keyEvent.keycode == AlanGhosttyKeyCode.keypadEnter
+            )
     }
 
     private func isCommandSubmissionText(_ text: String) -> Bool {
@@ -1145,69 +1145,9 @@ final class AlanGhosttyLiveHost: NSObject {
         }
     }
 
-    private func installAppObservers() {
-        removeAppObservers()
-        guard let app else { return }
-        let center = NotificationCenter.default
-        appObservers = [
-            center.addObserver(
-                forName: NSApplication.didBecomeActiveNotification,
-                object: nil,
-                queue: .main
-            ) { _ in
-                ghostty_app_set_focus(app, true)
-            },
-            center.addObserver(
-                forName: NSApplication.didResignActiveNotification,
-                object: nil,
-                queue: .main
-            ) { _ in
-                ghostty_app_set_focus(app, false)
-            },
-        ]
-    }
-
-    private func removeAppObservers() {
-        appObservers.forEach(NotificationCenter.default.removeObserver)
-        appObservers.removeAll()
-    }
-
     private static func from(_ userdata: UnsafeMutableRawPointer?) -> AlanGhosttyLiveHost? {
         guard let userdata else { return nil }
         return Unmanaged<AlanGhosttyLiveHost>.fromOpaque(userdata).takeUnretainedValue()
-    }
-
-    private static func readClipboardText(location: ghostty_clipboard_e) -> String? {
-        let pasteboard: NSPasteboard?
-        switch location {
-        case GHOSTTY_CLIPBOARD_STANDARD:
-            pasteboard = .general
-        default:
-            pasteboard = nil
-        }
-
-        return pasteboard?.string(forType: .string)
-    }
-
-    private static func writeClipboard(
-        location: ghostty_clipboard_e,
-        content: UnsafePointer<ghostty_clipboard_content_s>?,
-        len: Int
-    ) {
-        guard location == GHOSTTY_CLIPBOARD_STANDARD,
-              let content,
-              len > 0
-        else { return }
-
-        let buffer = UnsafeBufferPointer(start: content, count: len)
-        guard let first = buffer.first,
-              let data = first.data
-        else { return }
-
-        let text = String(cString: data)
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.setString(text, forType: .string)
     }
 }
 
@@ -1236,23 +1176,4 @@ extension AlanGhosttyLiveHost: TerminalRenderCoordinatedHost {
     }
 }
 
-final class AlanGhosttyCanvasView: NSView {
-    override var mouseDownCanMoveWindow: Bool { false }
-
-    override func hitTest(_ point: NSPoint) -> NSView? { nil }
-
-    override init(frame frameRect: NSRect) {
-        super.init(frame: frameRect)
-    }
-
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) is not supported")
-    }
-}
-
-extension NSScreen {
-    var displayID: UInt32? {
-        (deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber).map { $0.uint32Value }
-    }
-}
 #endif

@@ -2293,12 +2293,12 @@ require_pattern \
     "fallback terminal canvas views must be transparent to AppKit hit-testing"
 
 require_pattern \
-    "clients/apple/alan-macos/GhosttyLiveHost.swift" \
+    "clients/apple/alan-macos/Services/Terminal/GhosttyPlatformAdapters.swift" \
     "override var mouseDownCanMoveWindow: Bool \\{ false \\}" \
     "Ghostty canvas views must not allow terminal pane clicks to drag the shell window"
 
 require_pattern \
-    "clients/apple/alan-macos/GhosttyLiveHost.swift" \
+    "clients/apple/alan-macos/Services/Terminal/GhosttyPlatformAdapters.swift" \
     "override func hitTest\\(_ point: NSPoint\\) -> NSView\\? \\{ nil \\}" \
     "Ghostty canvas views must be transparent to AppKit hit-testing"
 

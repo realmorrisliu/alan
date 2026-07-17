@@ -48,6 +48,7 @@
 		A12300000000000000000003 /* Views/Shell/Content/ShellBoundedContentViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = A12300000000000000000103 /* Views/Shell/Content/ShellBoundedContentViews.swift */; };
 		A12400000000000000000001 /* Views/Shell/Terminal/ShellPaneTitleBarViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = A12400000000000000000101 /* Views/Shell/Terminal/ShellPaneTitleBarViews.swift */; };
 		A12400000000000000000002 /* Views/Shell/Terminal/ShellTerminalOverlayViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = A12400000000000000000102 /* Views/Shell/Terminal/ShellTerminalOverlayViews.swift */; };
+		A12500000000000000000001 /* Services/Terminal/GhosttyPlatformAdapters.swift in Sources */ = {isa = PBXBuildFile; fileRef = A12500000000000000000101 /* Services/Terminal/GhosttyPlatformAdapters.swift */; };
 		AA1B2C3D4E5F6A7B8C9D0E1F /* Views/Shell/Controls/ShellFormControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB2C3D4E5F6A7B8C9D0E1F2A /* Views/Shell/Controls/ShellFormControls.swift */; };
 		0000000000000000000000F0 /* Views/Shell/ShellSpaceCreationForm.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0000000000000000000001F0 /* Views/Shell/ShellSpaceCreationForm.swift */; };
 		00000000000000000000001B /* Views/Shell/ShellWorkspaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000011B /* Views/Shell/ShellWorkspaceView.swift */; };
@@ -220,6 +221,7 @@
 		A12300000000000000000103 /* Views/Shell/Content/ShellBoundedContentViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Shell/Content/ShellBoundedContentViews.swift; sourceTree = "<group>"; };
 		A12400000000000000000101 /* Views/Shell/Terminal/ShellPaneTitleBarViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Shell/Terminal/ShellPaneTitleBarViews.swift; sourceTree = "<group>"; };
 		A12400000000000000000102 /* Views/Shell/Terminal/ShellTerminalOverlayViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Shell/Terminal/ShellTerminalOverlayViews.swift; sourceTree = "<group>"; };
+		A12500000000000000000101 /* Services/Terminal/GhosttyPlatformAdapters.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Terminal/GhosttyPlatformAdapters.swift; sourceTree = "<group>"; };
 		BB2C3D4E5F6A7B8C9D0E1F2A /* Views/Shell/Controls/ShellFormControls.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Views/Shell/Controls/ShellFormControls.swift"; sourceTree = "<group>"; };
 		0000000000000000000001F0 /* Views/Shell/ShellSpaceCreationForm.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Shell/ShellSpaceCreationForm.swift; sourceTree = "<group>"; };
 		00000000000000000000011B /* Views/Shell/ShellWorkspaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Shell/ShellWorkspaceView.swift; sourceTree = "<group>"; };
@@ -550,6 +552,7 @@
 		00000000000000000000030D /* Services/Terminal */ = {
 			isa = PBXGroup;
 			children = (
+				A12500000000000000000101 /* Services/Terminal/GhosttyPlatformAdapters.swift */,
 				A12000000000000000000108 /* Services/Terminal/TerminalAgentActivityAdapter.swift */,
 				000000000000000000000127 /* Services/Terminal/TerminalHostRuntimeReporter.swift */,
 				000000000000000000000128 /* Services/Terminal/TerminalHostWindowObserver.swift */,
@@ -805,6 +808,7 @@
 				A12300000000000000000003 /* Views/Shell/Content/ShellBoundedContentViews.swift in Sources */,
 				A12400000000000000000001 /* Views/Shell/Terminal/ShellPaneTitleBarViews.swift in Sources */,
 				A12400000000000000000002 /* Views/Shell/Terminal/ShellTerminalOverlayViews.swift in Sources */,
+				A12500000000000000000001 /* Services/Terminal/GhosttyPlatformAdapters.swift in Sources */,
 				AA1B2C3D4E5F6A7B8C9D0E1F /* Views/Shell/Controls/ShellFormControls.swift in Sources */,
 				0000000000000000000000F0 /* Views/Shell/ShellSpaceCreationForm.swift in Sources */,
 				00000000000000000000001B /* Views/Shell/ShellWorkspaceView.swift in Sources */,
