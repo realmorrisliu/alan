@@ -65,5 +65,5 @@
   the Rust oversized baseline is empty, and Apple strict mode reports zero.
 - [x] 5.3 Keep every implementation PR and Codex review clean, and confirm no
   slice intentionally changed product behavior.
-- [ ] 5.4 After all implementation PRs merge, sync delta specs into canonical
+- [x] 5.4 After all implementation PRs merge, sync delta specs into canonical
   specs and archive this change.
