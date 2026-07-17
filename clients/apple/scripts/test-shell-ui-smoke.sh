@@ -885,6 +885,11 @@ run_restart_restore_step() {
     fi
     require_control_applied "$terminal_result" "restart restore terminal.send_text before quit"
 
+    wait_for_json_transcript_text \
+        "$manifest_path" \
+        "$before_token" \
+        "persisted restart transcript token before quit"
+
     sleep 1
     capture_step restart-before-quit
 
