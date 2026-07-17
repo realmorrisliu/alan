@@ -82,7 +82,6 @@ RESTART_RESTORE_AFTER_TOKEN="alan-ui-smoke-restart-after"
 RESTART_RESTORE_PWD_FILE="alan-ui-smoke-after-pwd.txt"
 APP_PID=""
 CAPTURE_INDEX=0
-CONTROL_INDEX=0
 LAUNCHCTL_ENV_KEYS=""
 
 fail() {
@@ -365,8 +364,9 @@ require_control_applied() {
 
 next_request_id() {
     local label="$1"
-    CONTROL_INDEX=$((CONTROL_INDEX + 1))
-    printf 'ui-smoke-%02d-%s' "$CONTROL_INDEX" "$label"
+    local nonce
+    nonce=$(/usr/bin/uuidgen | /usr/bin/tr '[:upper:]' '[:lower:]')
+    printf 'ui-smoke-%s-%s' "$label" "${nonce%%-*}"
 }
 
 wait_for_file() {
@@ -532,6 +532,38 @@ control_pane_split() {
 }"
 }
 
+control_pane_focus() {
+    local pane_id="$1"
+    local request_id
+    request_id=$(next_request_id pane-focus)
+    send_control_json "$request_id" "{
+  \"request_id\": \"$request_id\",
+  \"command\": \"pane.focus\",
+  \"pane_id\": \"$pane_id\"
+}"
+}
+
+wait_for_focused_pane() {
+    local pane_id="$1"
+    local label="$2"
+    local focus_result=""
+    local state_result=""
+    local deadline=$((SECONDS + TIMEOUT_SECONDS))
+    while (( SECONDS < deadline )); do
+        focus_result=$(control_pane_focus "$pane_id")
+        if [[ "$(json_get "$focus_result" applied)" == "true" ]]; then
+            state_result=$(control_state)
+            require_control_applied "$state_result" "$label state"
+            if [[ "$(json_get "$state_result" focused_pane_id)" == "$pane_id" ]]; then
+                printf '%s\n' "$state_result"
+                return 0
+            fi
+        fi
+        sleep 0.2
+    done
+    fail "timed out waiting for $label to focus pane $pane_id"
+}
+
 control_terminal_send_text() {
     local pane_slot_id="$1"
     control_terminal_send_text_payload "$pane_slot_id" "printf \\\"alan-ui-smoke-input-ok\\\\n\\\"\\n" "terminal-send"
@@ -646,6 +678,23 @@ wait_for_json_transcript_without_text() {
     local deadline=$((SECONDS + TIMEOUT_SECONDS))
     while (( SECONDS < deadline )); do
         if [[ -f "$path" ]] && ! json_transcript_contains "$path" "$needle"; then
+            return 0
+        fi
+        sleep 0.2
+    done
+    fail "timed out waiting for $label"
+}
+
+wait_for_control_state_transcript_text() {
+    local needle="$1"
+    local label="$2"
+    local state_result=""
+    local deadline=$((SECONDS + TIMEOUT_SECONDS))
+    while (( SECONDS < deadline )); do
+        state_result=$(control_state)
+        require_control_applied "$state_result" "$label state"
+        if json_transcript_contains "$state_result" "$needle"; then
+            printf '%s\n' "$state_result"
             return 0
         fi
         sleep 0.2
@@ -871,6 +920,7 @@ run_restart_restore_step() {
     require_control_applied "$tab_result" "restart restore tab.open"
     pane_id=$(json_get "$tab_result" pane_id)
     [[ -n "$pane_id" ]] || fail "restart restore tab.open did not include a pane target"
+    state_result=$(wait_for_focused_pane "$pane_id" "restart restore pane before input")
 
     cwd_json=$(json_escape_fragment "$RESTART_RESTORE_CWD")
     before_json=$(json_escape_fragment "$before_token")
@@ -884,6 +934,7 @@ run_restart_restore_step() {
         require_control_applied "$terminal_result" "restart restore terminal.send_text before quit"
     fi
     require_control_applied "$terminal_result" "restart restore terminal.send_text before quit"
+    state_result=$(wait_for_focused_pane "$pane_id" "restart restore pane after input")
 
     wait_for_json_transcript_text \
         "$manifest_path" \
@@ -915,16 +966,15 @@ run_restart_restore_step() {
     wait_for_file "$STATE_PATH" "shell control-plane state after relaunch"
     sleep 1
 
-    state_result=$(control_state)
-    require_control_applied "$state_result" "restart restore state after relaunch"
-    wait_for_json_transcript_text \
-        "$state_result" \
+    state_result=$(wait_for_control_state_transcript_text \
         "$before_token" \
-        "restored control-state transcript token"
-    capture_step restart-restore
+        "restored control-state transcript token")
 
-    restored_pane_id=$(json_get "$state_result" focused_pane_id)
-    [[ -n "$restored_pane_id" ]] || fail "restart restore relaunch did not expose a focused pane"
+    restored_pane_id="$pane_id"
+    state_result=$(wait_for_focused_pane \
+        "$restored_pane_id" \
+        "restart restore pane after relaunch")
+    capture_step restart-restore
 
     run_ui_step terminal-clear \
         || fail "restart restore terminal clear delivery failed"
@@ -972,8 +1022,10 @@ run_restart_restore_step() {
     append_manifest "restart_restore_clear_relaunch_absent=$before_token"
     capture_step restart-after-clear-relaunch
 
-    restored_pane_id=$(json_get "$state_result" focused_pane_id)
-    [[ -n "$restored_pane_id" ]] || fail "restart restore clear relaunch did not expose a focused pane"
+    restored_pane_id="$pane_id"
+    state_result=$(wait_for_focused_pane \
+        "$restored_pane_id" \
+        "restart restore pane after clear relaunch")
 
     rm -f "$pwd_file"
     after_json=$(json_escape_fragment "$after_token")
@@ -987,6 +1039,9 @@ run_restart_restore_step() {
         require_control_applied "$terminal_result" "restart restore terminal.send_text after relaunch"
     fi
     require_control_applied "$terminal_result" "restart restore terminal.send_text after relaunch"
+    state_result=$(wait_for_focused_pane \
+        "$restored_pane_id" \
+        "restart restore pane before return")
     run_ui_step return \
         || fail "restart restore return key delivery failed"
 
