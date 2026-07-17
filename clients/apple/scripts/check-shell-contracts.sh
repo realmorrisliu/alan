@@ -3035,7 +3035,7 @@ require_pattern \
     "focused Apple shell tests must include settings surface coverage"
 
 require_pattern \
-    "clients/apple/alan-macos/TerminalPaneView.swift" \
+    "clients/apple/alan-macos/Views/Shell/Settings/ShellSettingsContentView.swift" \
     "@State private var selectedGroup = ShellSettingsNavigationGroup\\.general" \
     "Settings content must default internal navigation selection to General"
 
@@ -3075,17 +3075,17 @@ require_pattern \
     "Swift settings adapter must expose managed terminal account row operation"
 
 require_pattern \
-    "clients/apple/alan-macos/TerminalPaneView.swift" \
+    "clients/apple/alan-macos/Views/Shell/Settings/ShellSettingsContentView.swift" \
     "ShellSettingsNavigationView\\(" \
     "Settings content must render a compact internal navigation view"
 
 require_pattern \
-    "clients/apple/alan-macos/TerminalPaneView.swift" \
+    "clients/apple/alan-macos/Views/Shell/Settings/ShellSettingsContentView.swift" \
     "selectedGroupModel" \
     "Settings content must render only the selected navigation group"
 
 reject_pattern \
-    "clients/apple/alan-macos/TerminalPaneView.swift" \
+    "clients/apple/alan-macos/Views/Shell/Settings/ShellSettingsContentView.swift" \
     "ForEach\\(snapshot\\.sections\\)" \
     "Settings content must not render every section in one continuous scroll"
 

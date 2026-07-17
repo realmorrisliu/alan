@@ -32,7 +32,10 @@ Xcode target.
 | `Views/Shell/ShellPaneTopologyIndicator.swift` | 285 | SwiftUI; macOS gates | Pane topology rendering and direct split-pane focus actions | `Views/Shell/` |
 | `Views/Shell/ShellWorkspaceView.swift` | 46 | SwiftUI; macOS gates | Shell workspace composition and space keyboard shortcuts | `Views/Shell/` |
 | `Views/Shell/ShellCommandTabView.swift` | 621 | SwiftUI; macOS gates | Command palette search, routing, attention, and action presentation | `Views/Shell/` |
-| `TerminalPaneView.swift` | 3008 | Foundation, SwiftUI; macOS gates | Split-tree, pane leaf rendering, title bars, and restored transcript presentation | `Views/Shell/Terminal/` |
+| `TerminalPaneView.swift` | 2513 | Foundation, SwiftUI; macOS gates | Split-tree, pane leaf rendering, title bars, find, and restored transcript presentation | `Views/Shell/Terminal/` |
+| `Views/Shell/Settings/ShellSettingsContentView.swift` | 496 | Foundation, OSLog, SwiftUI; macOS gates | Settings composition, state refresh, managed-user actions, and diagnostics export | `Views/Shell/Settings/` |
+| `Views/Shell/Settings/ShellSettingsNavigationView.swift` | 190 | SwiftUI; macOS gates | Settings navigation rail, group selection, and pane backgrounds | `Views/Shell/Settings/` |
+| `Views/Shell/Settings/ShellSettingsComponents.swift` | 644 | SwiftUI; macOS gates | Settings rows, action accessories, managed-user sheets, metrics, and typography | `Views/Shell/Settings/` |
 | `TerminalHostView.swift` | 1911 | AppKit, Carbon, QuartzCore, GhosttyKit; macOS gates | AppKit terminal host bridge, focus, overlay composition, runtime attachment, and collaborator wiring | `Views/Shell/Terminal/` plus terminal collaborators |
 | `GhosttyLiveHost.swift` | 1227 | Foundation, AppKit, GhosttyKit, OSLog, QuartzCore; macOS/Ghostty gates | Ghostty canvas bridge and wakeup/occlusion integration | `Services/Terminal/` or `Support/TerminalBridge/` |
 | `TerminalHostRuntime.swift` | 1406 | CoreGraphics, Foundation; macOS gates | Terminal launch resolution, boot profiles, runtime protocols, and fallback runtime state | `Services/Terminal/` |
@@ -313,12 +316,12 @@ device support was not required for this validation.
 ## Remaining Architecture Debt
 
 `check-architecture-maintainability.sh` currently completes in report mode.
-7 known large-file / bridge-boundary warnings remain after the first eight Apple
+7 known large-file / bridge-boundary warnings remain after the first nine Apple
 ownership slices removed the `ShellHostController.swift` bridge warning and
 split control projection, observation commands, root-controller
 responsibilities, shell presentation models, settings models, snapshot DTO
-families, shell/platform value families, and sidebar presentation into focused
-owners. These warnings
+families, shell/platform value families, and sidebar and settings presentation
+into focused owners. These warnings
 are telemetry for the cleanup, not the cleanup
 definition. The real debt is any Swift production source that still carries a
 Rust-owned shell-domain implementation, fixture, or fallback after shell-core
@@ -395,6 +398,13 @@ composition, Space paging, activity freshness, and tab-list orchestration.
 Tab drop handling, the Space slider, tab-row chrome, activity progress, and
 pane-topology presentation now have focused owners under `Views/Shell/`; the
 current inventory is 7 large-file warnings.
+
+The ninth ownership slice removed the settings surface from
+`TerminalPaneView.swift`. Settings composition and managed-user actions,
+navigation presentation, and reusable settings controls now have focused owners
+under `Views/Shell/Settings/`. The warning count remains 7, while the hard
+`TerminalPaneView.swift` ceiling falls from 3,839 to 2,513 lines ahead of the
+remaining pane-tree, content, title-bar, find-bar, and terminal-leaf splits.
 
 Rust-owned Swift legacy cleanup targets at this baseline:
 
