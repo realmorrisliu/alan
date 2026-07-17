@@ -763,12 +763,12 @@ require_pattern \
     "renderer PTY output must buffer nonblocking socket short writes"
 
 require_pattern \
-    "clients/apple/alan-macos/Services/Shell/AlanPrivilegedHelperXPC.swift" \
+    "clients/apple/alan-macos/Services/Shell/AlanPrivilegedHelperPTYSessionStore.swift" \
     "let eof = Data\\(\\[UInt8\\(4\\)\\]\\)" \
     "managed_user helper EOF must send Ctrl-D data instead of closing the PTY master"
 
 require_pattern \
-    "clients/apple/alan-macos/Services/Shell/AlanPrivilegedHelperXPC.swift" \
+    "clients/apple/alan-macos/Services/Shell/AlanPrivilegedHelperPTYSessionStore.swift" \
     "session\\.pendingInput\\.append\\(eof\\)" \
     "managed_user helper EOF must use the pending input queue"
 
@@ -2848,7 +2848,7 @@ require_pattern \
     "privileged helper copy phase must use the channel-scoped helper build product"
 
 require_pattern \
-    "clients/apple/alan-macos/Services/Shell/AlanPrivilegedHelperXPC.swift" \
+    "clients/apple/alan-macos/Services/Shell/AlanPrivilegedHelperXPCService.swift" \
     'diagnose\(request: \$0, verifyPTY: true\)' \
     "helper-backed Managed User diagnosis must run PTY smoke before reporting ready"
 
@@ -3252,10 +3252,20 @@ reject_pattern \
     "final class AlanPrivilegedHelperFakeClient" \
     "privileged-helper fake client must not compile into the Alan macOS app target"
 
+reject_pattern \
+    "clients/apple/alan-macos" \
+    "struct AlanPrivilegedHelperFakeRequirementChecker" \
+    "privileged-helper requirement fake must not compile into a production target"
+
 require_pattern \
     "clients/apple/scripts/support/AlanPrivilegedHelperFakeClient.swift" \
     "Script/test support only" \
     "privileged-helper fake client must live in explicit script test support"
+
+require_pattern \
+    "clients/apple/scripts/support/AlanPrivilegedHelperFakeRequirementChecker.swift" \
+    "Script/test support only" \
+    "privileged-helper requirement fake must live in explicit script test support"
 
 reject_pattern \
     "clients/apple/alan-macos/Models/Shell/TerminalProfileModels.swift" \

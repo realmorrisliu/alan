@@ -19,8 +19,8 @@ rm -rf "$BUILD_DIR"
 mkdir -p "$MODULE_CACHE_DIR"
 
 clang -c \
-    "$REPO_ROOT/clients/apple/alan-macos/AlanDarwinPtySpawn.c" \
-    -o "$BUILD_DIR/AlanDarwinPtySpawn.o"
+    "$REPO_ROOT/clients/apple/alan-macos/AlanPrivilegedHelperPtySpawn.c" \
+    -o "$BUILD_DIR/AlanPrivilegedHelperPtySpawn.o"
 
 CLANG_MODULE_CACHE_PATH="$MODULE_CACHE_DIR" swiftc \
     "$REPO_ROOT/clients/apple/alan-macos/Support/AlanCommandLineToolInstaller.swift" \
@@ -42,9 +42,17 @@ CLANG_MODULE_CACHE_PATH="$MODULE_CACHE_DIR" swiftc \
     "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/ShellCoreFFIManagedTerminalAccountAdapter.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/TerminalProfileStore.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/AlanPrivilegedHelperXPC.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/AlanPrivilegedHelperXPCRequirementChecker.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/AlanPrivilegedHelperXPCClient.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/AlanPrivilegedHelperXPCListener.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/AlanPrivilegedHelperXPCService.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/AlanPrivilegedHelperManagedUserWire.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/AlanPrivilegedHelperManagedUserService.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/AlanPrivilegedHelperPTYSessionStore.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/AlanPrivilegedHelperPTYSupport.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/AlanPrivilegedHelperService.swift" \
     "$REPO_ROOT/clients/apple/scripts/smoke-privileged-helper-live.swift" \
-    "$BUILD_DIR/AlanDarwinPtySpawn.o" \
+    "$BUILD_DIR/AlanPrivilegedHelperPtySpawn.o" \
     -o "$TEST_BINARY"
 
 if [[ "$COMPILE_ONLY" -eq 1 ]]; then

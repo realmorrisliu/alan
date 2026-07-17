@@ -478,10 +478,10 @@ private func testPrivilegedHelperXPCBoundaryIsTypedAndChannelScoped() throws {
 
 private func testPrivilegedHelperPtyInputPreservesShortWrites() throws {
     let helperSource = try readRepositoryFile(
-        "clients/apple/alan-macos/Services/Shell/AlanPrivilegedHelperXPC.swift"
+        "clients/apple/alan-macos/Services/Shell/AlanPrivilegedHelperPTYSessionStore.swift"
     )
     let sessionStore = try sourceSlice(
-        named: "private final class AlanPrivilegedHelperPTYSessionStore",
+        named: "final class AlanPrivilegedHelperPTYSessionStore",
         in: helperSource,
         endingBefore: "private final class AlanPrivilegedHelperPTYSession"
     )
@@ -497,13 +497,8 @@ private func testPrivilegedHelperPtyInputPreservesShortWrites() throws {
 }
 
 private func testPrivilegedHelperManagedUserApplyUsesLongTimeout() throws {
-    let helperSource = try readRepositoryFile(
-        "clients/apple/alan-macos/Services/Shell/AlanPrivilegedHelperXPC.swift"
-    )
-    let client = try sourceSlice(
-        named: "final class AlanPrivilegedHelperXPCClient",
-        in: helperSource,
-        endingBefore: "private struct AlanXPCManagedTerminalAccountRequest"
+    let client = try readRepositoryFile(
+        "clients/apple/alan-macos/Services/Shell/AlanPrivilegedHelperXPCClient.swift"
     )
 
     try expect(
@@ -516,7 +511,7 @@ private func testPrivilegedHelperManagedUserApplyUsesLongTimeout() throws {
 
 private func testPrivilegedHelperRevalidatesOwnershipBeforeDestructiveDeletes() throws {
     let helperSource = try readRepositoryFile(
-        "clients/apple/alan-macos/Services/Shell/AlanPrivilegedHelperXPC.swift"
+        "clients/apple/alan-macos/Services/Shell/AlanPrivilegedHelperManagedUserService.swift"
     )
     let apply = try sourceSlice(
         named: "func apply(\n        plan: AlanXPCManagedUserHelperPlan,",
