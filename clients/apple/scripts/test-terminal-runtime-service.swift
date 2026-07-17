@@ -14,6 +14,7 @@ struct TerminalRuntimeServiceTestRunner {
 @MainActor
 private enum TerminalRuntimeServiceTests {
     static func run() {
+        verifiesSourceTreeRepositoryRootInference()
         verifiesControlSequenceResponderAnswersPrimaryDeviceAttributes()
         verifiesGhosttyTerminfoEnvironmentProjection()
         verifiesBootProfileExposesStructuredBootRequest()
@@ -57,6 +58,19 @@ private enum TerminalRuntimeServiceTests {
         verifiesRenderCoordinatorRecordsDiagnosticsWithoutChangingDrainBehavior()
         verifiesHiddenRuntimePublicationPolicyThrottlesNoisyUpdates()
         print("Terminal runtime service tests passed.")
+    }
+
+    private static func verifiesSourceTreeRepositoryRootInference() {
+        expect(
+            inferredAlanRepoRoot(
+                from: "/tmp/alan/clients/apple/alan-macos/Services/Terminal/TerminalBootResolution.swift"
+            ) == "/tmp/alan",
+            "repository root inference must remain correct when its source owner moves"
+        )
+        expect(
+            inferredAlanRepoRoot(from: "/tmp/TerminalBootResolution.swift") == nil,
+            "repository root inference must fail closed outside the canonical clients/apple tree"
+        )
     }
 
     private static func verifiesControlSequenceResponderAnswersPrimaryDeviceAttributes() {

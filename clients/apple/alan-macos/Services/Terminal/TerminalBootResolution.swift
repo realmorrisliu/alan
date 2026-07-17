@@ -1,12 +1,19 @@
 import Foundation
 
 #if os(macOS)
-private func inferredAlanRepoRoot(from filePath: String = #filePath) -> String? {
-    var url = URL(fileURLWithPath: filePath)
-    for _ in 0..<4 {
-        url.deleteLastPathComponent()
+func inferredAlanRepoRoot(from filePath: String = #filePath) -> String? {
+    var directory = URL(fileURLWithPath: filePath)
+        .standardizedFileURL
+        .deletingLastPathComponent()
+
+    while true {
+        let parent = directory.deletingLastPathComponent()
+        if directory.lastPathComponent == "apple", parent.lastPathComponent == "clients" {
+            return parent.deletingLastPathComponent().path
+        }
+        guard parent.path != directory.path else { return nil }
+        directory = parent
     }
-    return url.path
 }
 
 struct GhosttyDependencyCandidate: Identifiable, Equatable {
