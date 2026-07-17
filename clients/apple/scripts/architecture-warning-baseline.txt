@@ -1,7 +1,6 @@
 # Exact Apple architecture-warning debt. Keep entries sorted.
 # large entries include their current line ceiling; every reduction tightens it.
 large|GhosttyLiveHost.swift|1258
-large|Models/Shell/ShellValueTypes.swift|2653
 large|Services/Shell/AlanPrivilegedHelperXPC.swift|2117
 large|TerminalHostRuntime.swift|1552
 large|TerminalHostView.swift|2010

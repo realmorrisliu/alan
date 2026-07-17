@@ -36,7 +36,16 @@ Xcode target.
 | `TerminalRuntimeRegistry.swift` | 598 | SwiftUI; macOS gates | Pane/content-keyed terminal host/runtime registry | `Services/Terminal/` |
 | `TerminalRuntimeService.swift` | 1815 | Foundation, AppKit, GhosttyKit; macOS/Ghostty gates | Window-scoped terminal runtime service, lifecycle ownership, and Ghostty bootstrap | `Services/Terminal/` |
 | `TerminalSurfaceController.swift` | 1735 | Foundation, AppKit, GhosttyKit; macOS/Ghostty gates | Terminal input, pointer, scrollback, search, semantic commands, and surface adapters | `Services/Terminal/` |
-| `Models/Shell/ShellValueTypes.swift` | 2178 | Foundation | Shell command enums, launch targets, process bindings, Terminal Profile DTOs, and managed-account platform/effect shapes | `Models/Shell/` plus future shell service collaborators |
+| `Models/Shell/ShellWorkspaceValueTypes.swift` | 159 | Foundation | Shared shell commands, split/focus directions, attention, tab organization, and launch-target values | `Models/Shell/` |
+| `Models/Shell/TerminalProfileModels.swift` | 337 | Foundation | Terminal Profile launch, definition, document, validation, editor, store, and resolution result DTOs | `Models/Shell/` |
+| `Models/Shell/ManagedTerminalAccountModels.swift` | 38 | Foundation | Managed-account request and validation-error DTOs | `Models/Shell/` |
+| `Models/Shell/TerminalActivityModels.swift` | 418 | Foundation | Terminal activity event, display, freshness, priority, progress, and snapshot values | `Models/Shell/` |
+| `Models/Shell/ShellContextSnapshot.swift` | 125 | Foundation | Process binding and shell runtime-context metadata DTOs | `Models/Shell/` |
+| `Services/Shell/ManagedTerminalAccountValidation.swift` | 11 | Foundation | Fail-closed managed-account request validation through shell-core FFI | `Services/Shell/` |
+| `Services/Shell/AlanPrivilegedHelperContracts.swift` | 425 | Foundation, Security | Signing identity plus typed helper status, diagnosis, plan, PTY, diagnostic, and client contracts | `Services/Shell/` |
+| `Services/Shell/ManagedTerminalAccountPlanning.swift` | 413 | Foundation | Transitional macOS managed-account plan and rollback projection pending the 4.4 adapter audit | `Services/Shell/` |
+| `Services/Shell/ManagedTerminalAccountEffects.swift` | 226 | Foundation | Approved helper-plan execution and local Terminal Profile effects | `Services/Shell/` |
+| `Services/Terminal/TerminalAgentActivityAdapter.swift` | 177 | Foundation | Sanitized agent-event to terminal-activity projection | `Services/Terminal/` |
 | `Models/Shell/ShellPaneSnapshots.swift` | 127 | Foundation | Pane identity, viewport, Alan binding, and pane-local runtime metadata DTOs | `Models/Shell/` |
 | `Models/Shell/ShellContentSnapshots.swift` | 555 | CoreGraphics, Foundation | Terminal transcript, renderer state, content payload, and content-instance DTOs | `Models/Shell/` |
 | `Models/Shell/ShellPaneTreeSnapshots.swift` | 492 | Foundation | Pane-slot split-tree and portable slot-tree query models | `Models/Shell/` |
@@ -199,13 +208,15 @@ Swift around `ShellCoreFFIAdapter` is classified as follows:
   route through `ShellCoreFFIAdapter` from
   `Services/Shell/TerminalProfileStore.swift`; managed-account Terminal
   Profile handoff also uses that Rust-backed document editor instead of
-  mutating profile documents locally. Managed-account request validation and
-  provisioning-plan decisions now call `managed_terminal_account.validate_request`
-  and `managed_terminal_account.plan` through
-  `Services/Shell/ShellCoreFFIManagedTerminalAccountAdapter.swift`, failing
-  closed when shell-core is unavailable. `ShellValueTypes.swift` keeps the DTOs,
-  rollback plan, sudoers/platform effect helpers, and error/result shapes rather
-  than a second Swift implementation of Rust-owned validate/plan semantics.
+  mutating profile documents locally. Managed-account request validation calls
+  `managed_terminal_account.validate_request` through
+  `Services/Shell/ShellCoreFFIManagedTerminalAccountAdapter.swift` and fails
+  closed when shell-core is unavailable. Provisioning and rollback projection
+  remains a transitional Swift service in
+  `Services/Shell/ManagedTerminalAccountPlanning.swift`; replacing that portable
+  planning path with its narrow shell-core adapter is explicit 4.4 debt.
+  DTOs, helper contracts, platform effects, and activity projection now have
+  separate model or service owners instead of a generalized value-types bucket.
   Reusable settings rows now come from shell-core or collapse to unavailable
   rows.
 - Parity fixture debt removed: migration fixture corpora, fixture exporters,
@@ -297,11 +308,11 @@ device support was not required for this validation.
 ## Remaining Architecture Debt
 
 `check-architecture-maintainability.sh` currently completes in report mode.
-9 known large-file / bridge-boundary warnings remain after the first six Apple
+8 known large-file / bridge-boundary warnings remain after the first seven Apple
 ownership slices removed the `ShellHostController.swift` bridge warning and
 split control projection, observation commands, root-controller
-responsibilities, shell presentation models, settings models, and snapshot DTO
-families into focused owners. These warnings
+responsibilities, shell presentation models, settings models, snapshot DTO
+families, and shell/platform value families into focused owners. These warnings
 are telemetry for the cleanup, not the cleanup
 definition. The real debt is any Swift production source that still carries a
 Rust-owned shell-domain implementation, fixture, or fallback after shell-core
@@ -367,6 +378,12 @@ Pane primitives, content and transcript payloads, pane trees, tab/Space models,
 and workspace snapshots now have separate DTO-family owners under `Models/Shell/`;
 the current inventory is 9 large-file warnings.
 
+The seventh ownership slice removed the generalized `ShellValueTypes.swift`
+bucket. Shell, Terminal Profile, managed-account, activity, context, privileged-
+helper, planning, and platform-effect families now live beside their durable
+model or service owners. The helper fake is script-only, and the unused local
+command runner is deleted; the current inventory is 8 large-file warnings.
+
 Rust-owned Swift legacy cleanup targets at this baseline:
 
 | File | Lines | Cleanup target |
@@ -374,7 +391,7 @@ Rust-owned Swift legacy cleanup targets at this baseline:
 | `Models/Shell/ShellWorkspaceManifest.swift` | 513 | Cleaned: Swift manifest default/prune/materialize/migration parity implementations and fixture exporters are removed. Production keeps DTOs, repair, transcript cleanup, projection helpers, and file IO while Rust manifest contract tests own portable behavior. |
 | `Models/Shell/ShellActionRegistry.swift` | 248 | Cleaned: the Swift standard action registry table and resolver fixture are removed. Production keeps action IDs, targets, effects, keyboard action values, and terminal command target resolution while Rust action tests plus FFI adapter tests own registry behavior. |
 | `Models/Shell/ShellStateRuntimeSupport.swift` | 348 | Cleaned: production no longer compiles `ShellStateMutations.swift` or `ShellTreeMutations.swift`, and the script-side duplicate Swift reducer/tree implementations are removed. The app target keeps only bootstrap defaults, mutation result/error shapes, Terminal Profile inheritance queries, platform activity acknowledgement/projection, and inactive temporary-tab query support. Script state construction that still needs mutations uses the FFI-backed `ShellCoreFFITestStateBuilder.swift`. |
-| `Models/Shell/ShellValueTypes.swift` | 2,178 | Partially cleaned: Terminal Profile validator/editor/store behavior moved to `Services/Shell/TerminalProfileStore.swift`, where validation, editor definition construction, document upsert, and global default capture policy call shell-core FFI and fail closed on core errors. Fixture-only managed-account fake execution/profile handoff support now lives in `clients/apple/scripts/support/ManagedTerminalAccountTestSupport.swift`. Managed-account request validation and provisioning planning now call shell-core FFI and fail closed on core errors. Production value types still keep Terminal Profile DTOs, error/result shapes, managed-account platform models, local discovery/readiness, sudoers file validation/projection, rollback planning, and authorized executor helpers until later platform-effect or FFI adapter slices. |
+| `Models/Shell/ShellValueTypes.swift` | Removed | Cleaned: shell, Terminal Profile, managed-account, activity, context, helper-contract, planning, and effect families now have named model/service owners. Request validation calls shell-core FFI and fails closed. The script-only helper fake is outside the app target, and the unused local command runner is deleted. Portable provisioning/rollback projection remains explicit 4.4 adapter-audit debt in `Services/Shell/ManagedTerminalAccountPlanning.swift`. |
 | `Models/Shell/ShellSettingsSurfaceModel.swift` | 531 | Cleaned below the report threshold: settings navigation/grouping and fail-closed row composition remain here, while Terminal Profile/helper summaries, managed-account discovery, catalog persistence, managed-user creation/provisioning, and local/diagnostics summaries live in adjacent domain modules. Managed terminal account row projection still calls `settings.managed_terminal_account_rows` through `Services/Shell/ShellCoreFFISettingsAdapter.swift`. |
 | `Services/Shell/ShellCoreFFIAdapter.swift` | 12 | Cleaned as adapter facade: loader, envelope, materialization, manifest, reducer, control, action, settings, Terminal Profile, and managed terminal account operation owners now live in sibling `ShellCoreFFI*` files; no Swift domain fallback was added. |
 | `ShellHostController.swift` | 383 | Cleaned below the report threshold: the root keeps observable state, dependency assembly, startup, shutdown, and root lifecycle. Selection, space/tab lifecycle, actions, runtime projection, persistence, close/pane lifecycle, and automation adaptation live in focused `Controllers/Shell/ShellHost*` extensions while Rust shell-core and existing service coordinators retain domain authority. |
