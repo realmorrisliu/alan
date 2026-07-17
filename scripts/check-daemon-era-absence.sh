@@ -127,8 +127,8 @@ is_allowed_daemon_match() {
     [[ "$text" == *"guard-daemon-era-absence"* ]] && return 0
 
     case "$file" in
-        crates/shell-core/src/terminal_profile.rs)
-            return 0 # Unix account name
+        crates/shell-core/src/managed_terminal_account.rs)
+            return 0 # Unix reserved account name
             ;;
         crates/agent-engine/skills/swebench/scripts/check_swebench_harness_env.sh)
             return 0 # Docker daemon

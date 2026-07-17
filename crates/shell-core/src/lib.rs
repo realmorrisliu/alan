@@ -13,6 +13,7 @@
 mod actions;
 mod control;
 mod envelope;
+mod managed_terminal_account;
 mod manifest;
 mod model;
 mod reducer;
@@ -32,6 +33,17 @@ pub use control::{
 pub use envelope::{
     EnvelopeVersion, ShellCoreErrorCode, ShellCoreErrorEnvelope, ShellCoreRequestEnvelope,
     ShellCoreResponseEnvelope,
+};
+pub use managed_terminal_account::{
+    ManagedTerminalAccountApplyResult, ManagedTerminalAccountFakeExecutor,
+    ManagedTerminalAccountIdentifierValidator, ManagedTerminalAccountOwnershipEvidence,
+    ManagedTerminalAccountOwnershipState, ManagedTerminalAccountPlan,
+    ManagedTerminalAccountPlanStatus, ManagedTerminalAccountPlanStep,
+    ManagedTerminalAccountPlanStepKind, ManagedTerminalAccountPlanner,
+    ManagedTerminalAccountProfileHandoff, ManagedTerminalAccountProfileState,
+    ManagedTerminalAccountRecord, ManagedTerminalAccountRequest, ManagedTerminalAccountState,
+    ManagedTerminalAccountValidationError, ManagedTerminalAccountVerificationStatus,
+    ManagedTerminalAccountVerificationStep,
 };
 pub use manifest::{
     ShellContentRestoreRecord, ShellContentTabRestoreSnapshot, ShellContentWorkspaceManifest,
@@ -58,20 +70,11 @@ pub use settings_summary::{
     ShellSettingsSummaryRows, TerminalProfileSettingsSummary,
 };
 pub use terminal_profile::{
-    ManagedTerminalAccountApplyResult, ManagedTerminalAccountFakeExecutor,
-    ManagedTerminalAccountIdentifierValidator, ManagedTerminalAccountOwnershipEvidence,
-    ManagedTerminalAccountOwnershipState, ManagedTerminalAccountPlan,
-    ManagedTerminalAccountPlanStatus, ManagedTerminalAccountPlanStep,
-    ManagedTerminalAccountPlanStepKind, ManagedTerminalAccountPlanner,
-    ManagedTerminalAccountProfileHandoff, ManagedTerminalAccountProfileState,
-    ManagedTerminalAccountRecord, ManagedTerminalAccountRequest, ManagedTerminalAccountState,
-    ManagedTerminalAccountValidationError, ManagedTerminalAccountVerificationStatus,
-    ManagedTerminalAccountVerificationStep, TerminalExecutableAvailability,
-    TerminalLaunchEnvironment, TerminalLaunchIntent, TerminalLaunchStrategy,
-    TerminalProfileDefinition, TerminalProfileDocument, TerminalProfileDocumentEditorResult,
-    TerminalProfileEditor, TerminalProfileEditorDraft, TerminalProfileEditorResult,
-    TerminalProfileLaunch, TerminalProfileLaunchKind, TerminalProfilePresentation,
-    TerminalProfileResolutionState, TerminalProfileValidationError,
+    TerminalExecutableAvailability, TerminalLaunchEnvironment, TerminalLaunchIntent,
+    TerminalLaunchStrategy, TerminalProfileDefinition, TerminalProfileDocument,
+    TerminalProfileDocumentEditorResult, TerminalProfileEditor, TerminalProfileEditorDraft,
+    TerminalProfileEditorResult, TerminalProfileLaunch, TerminalProfileLaunchKind,
+    TerminalProfilePresentation, TerminalProfileResolutionState, TerminalProfileValidationError,
     TerminalProfileValidationResult, TerminalProfileValidator, shell_quoted,
     should_capture_global_default_terminal_profile,
 };
