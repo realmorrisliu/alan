@@ -40,6 +40,9 @@
 		A12100000000000000000003 /* Views/Shell/ShellSidebarTabRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = A12100000000000000000103 /* Views/Shell/ShellSidebarTabRow.swift */; };
 		A12100000000000000000004 /* Views/Shell/ShellSidebarActivityProgressRail.swift in Sources */ = {isa = PBXBuildFile; fileRef = A12100000000000000000104 /* Views/Shell/ShellSidebarActivityProgressRail.swift */; };
 		A12100000000000000000005 /* Views/Shell/ShellPaneTopologyIndicator.swift in Sources */ = {isa = PBXBuildFile; fileRef = A12100000000000000000105 /* Views/Shell/ShellPaneTopologyIndicator.swift */; };
+		A12200000000000000000001 /* Views/Shell/Settings/ShellSettingsContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A12200000000000000000101 /* Views/Shell/Settings/ShellSettingsContentView.swift */; };
+		A12200000000000000000002 /* Views/Shell/Settings/ShellSettingsNavigationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A12200000000000000000102 /* Views/Shell/Settings/ShellSettingsNavigationView.swift */; };
+		A12200000000000000000003 /* Views/Shell/Settings/ShellSettingsComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = A12200000000000000000103 /* Views/Shell/Settings/ShellSettingsComponents.swift */; };
 		AA1B2C3D4E5F6A7B8C9D0E1F /* Views/Shell/Controls/ShellFormControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB2C3D4E5F6A7B8C9D0E1F2A /* Views/Shell/Controls/ShellFormControls.swift */; };
 		0000000000000000000000F0 /* Views/Shell/ShellSpaceCreationForm.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0000000000000000000001F0 /* Views/Shell/ShellSpaceCreationForm.swift */; };
 		00000000000000000000001B /* Views/Shell/ShellWorkspaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000011B /* Views/Shell/ShellWorkspaceView.swift */; };
@@ -204,6 +207,9 @@
 		A12100000000000000000103 /* Views/Shell/ShellSidebarTabRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Shell/ShellSidebarTabRow.swift; sourceTree = "<group>"; };
 		A12100000000000000000104 /* Views/Shell/ShellSidebarActivityProgressRail.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Shell/ShellSidebarActivityProgressRail.swift; sourceTree = "<group>"; };
 		A12100000000000000000105 /* Views/Shell/ShellPaneTopologyIndicator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Shell/ShellPaneTopologyIndicator.swift; sourceTree = "<group>"; };
+		A12200000000000000000101 /* Views/Shell/Settings/ShellSettingsContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Shell/Settings/ShellSettingsContentView.swift; sourceTree = "<group>"; };
+		A12200000000000000000102 /* Views/Shell/Settings/ShellSettingsNavigationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Shell/Settings/ShellSettingsNavigationView.swift; sourceTree = "<group>"; };
+		A12200000000000000000103 /* Views/Shell/Settings/ShellSettingsComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Shell/Settings/ShellSettingsComponents.swift; sourceTree = "<group>"; };
 		BB2C3D4E5F6A7B8C9D0E1F2A /* Views/Shell/Controls/ShellFormControls.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Views/Shell/Controls/ShellFormControls.swift"; sourceTree = "<group>"; };
 		0000000000000000000001F0 /* Views/Shell/ShellSpaceCreationForm.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Shell/ShellSpaceCreationForm.swift; sourceTree = "<group>"; };
 		00000000000000000000011B /* Views/Shell/ShellWorkspaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Shell/ShellWorkspaceView.swift; sourceTree = "<group>"; };
@@ -425,6 +431,9 @@
 				A12100000000000000000103 /* Views/Shell/ShellSidebarTabRow.swift */,
 				A12100000000000000000104 /* Views/Shell/ShellSidebarActivityProgressRail.swift */,
 				A12100000000000000000105 /* Views/Shell/ShellPaneTopologyIndicator.swift */,
+				A12200000000000000000101 /* Views/Shell/Settings/ShellSettingsContentView.swift */,
+				A12200000000000000000102 /* Views/Shell/Settings/ShellSettingsNavigationView.swift */,
+				A12200000000000000000103 /* Views/Shell/Settings/ShellSettingsComponents.swift */,
 				BB2C3D4E5F6A7B8C9D0E1F2A /* Views/Shell/Controls/ShellFormControls.swift */,
 				0000000000000000000001F0 /* Views/Shell/ShellSpaceCreationForm.swift */,
 				00000000000000000000011B /* Views/Shell/ShellWorkspaceView.swift */,
@@ -773,6 +782,9 @@
 				A12100000000000000000003 /* Views/Shell/ShellSidebarTabRow.swift in Sources */,
 				A12100000000000000000004 /* Views/Shell/ShellSidebarActivityProgressRail.swift in Sources */,
 				A12100000000000000000005 /* Views/Shell/ShellPaneTopologyIndicator.swift in Sources */,
+				A12200000000000000000001 /* Views/Shell/Settings/ShellSettingsContentView.swift in Sources */,
+				A12200000000000000000002 /* Views/Shell/Settings/ShellSettingsNavigationView.swift in Sources */,
+				A12200000000000000000003 /* Views/Shell/Settings/ShellSettingsComponents.swift in Sources */,
 				AA1B2C3D4E5F6A7B8C9D0E1F /* Views/Shell/Controls/ShellFormControls.swift in Sources */,
 				0000000000000000000000F0 /* Views/Shell/ShellSpaceCreationForm.swift in Sources */,
 				00000000000000000000001B /* Views/Shell/ShellWorkspaceView.swift in Sources */,

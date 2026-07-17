@@ -4,6 +4,6 @@ large|GhosttyLiveHost.swift|1258
 large|Services/Shell/AlanPrivilegedHelperXPC.swift|2117
 large|TerminalHostRuntime.swift|1552
 large|TerminalHostView.swift|2010
-large|TerminalPaneView.swift|3839
+large|TerminalPaneView.swift|2513
 large|TerminalRuntimeService.swift|3995
 large|TerminalSurfaceController.swift|1837
