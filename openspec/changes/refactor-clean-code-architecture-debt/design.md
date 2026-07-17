@@ -123,6 +123,9 @@ removed without increasing the operation-owner allowlist.
 The managed-account diagnosis boundary carries requested-home existence and
 configured-home equality as separate facts from the privileged helper through
 the Swift adapter, so shell-core can plan repair without re-reading host state.
+The existing state-input planner remains a separate shell-core domain module:
+its invalid-record and verification evidence must not be lossily collapsed into
+the narrower helper diagnosis contract.
 
 Alternative considered: keep a permanent warning allowlist. Rejected because
 the 15 warnings describe known migration state, not supported architecture.

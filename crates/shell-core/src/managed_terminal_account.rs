@@ -4,6 +4,8 @@ use crate::terminal_profile::{
 };
 use serde::{Deserialize, Serialize};
 
+mod state_planner;
+
 /// Portable request to prepare a managed local terminal account.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ManagedTerminalAccountRequest {
@@ -402,8 +404,7 @@ impl ManagedTerminalAccountPlanner {
         request: ManagedTerminalAccountRequest,
         state: &ManagedTerminalAccountState,
     ) -> ManagedTerminalAccountPlan {
-        let diagnosis = diagnosis_from_state(&request, state);
-        Self::plan_with_profile_state(request, &diagnosis, state.terminal_profile.clone())
+        state_planner::plan(request, state)
     }
 
     /// Builds a provisioning or repair plan from a portable platform diagnosis.
@@ -697,102 +698,6 @@ impl ManagedTerminalAccountProfileHandoff {
                 managed_terminal_account_id: Some(request.account_name.clone()),
             }
         })
-    }
-}
-
-fn diagnosis_from_state(
-    request: &ManagedTerminalAccountRequest,
-    state: &ManagedTerminalAccountState,
-) -> ManagedTerminalAccountDiagnosis {
-    let ownership_state = match state.ownership {
-        ManagedTerminalAccountOwnershipState::Missing => {
-            ManagedTerminalAccountOwnershipKind::Missing
-        }
-        ManagedTerminalAccountOwnershipState::AlanManaged { .. } => {
-            ManagedTerminalAccountOwnershipKind::AlanManaged
-        }
-        ManagedTerminalAccountOwnershipState::NotAlanManaged { .. } => {
-            ManagedTerminalAccountOwnershipKind::NotAlanManaged
-        }
-    };
-    let (account_exists, is_admin, home_directory_matches, shell_matches, hidden_from_login_window) =
-        match &state.account {
-            ManagedTerminalAccountRecord::Missing => (false, false, true, false, false),
-            ManagedTerminalAccountRecord::Standard {
-                home_directory,
-                shell,
-                hidden,
-            } => (
-                true,
-                false,
-                home_directory == &request.home_directory,
-                shell == &request.shell,
-                *hidden,
-            ),
-            ManagedTerminalAccountRecord::Admin {
-                home_directory,
-                shell,
-                hidden,
-            } => (
-                true,
-                true,
-                home_directory == &request.home_directory,
-                shell == &request.shell,
-                *hidden,
-            ),
-            ManagedTerminalAccountRecord::Invalid { reason } => (
-                !reason.to_ascii_lowercase().contains("incomplete"),
-                false,
-                true,
-                false,
-                false,
-            ),
-        };
-    let pty_smoke_verified = state.verification == ManagedTerminalAccountVerificationStatus::Passed;
-    let account_needs_repair = account_exists
-        && (is_admin
-            || !home_directory_matches
-            || !state.home_directory_exists
-            || !shell_matches
-            || (request.hide_from_login_window && !hidden_from_login_window));
-    let readiness_state =
-        if account_exists && ownership_state != ManagedTerminalAccountOwnershipKind::AlanManaged {
-            ManagedTerminalAccountReadinessState::AccountNotAlanManaged
-        } else if !account_exists {
-            ManagedTerminalAccountReadinessState::AccountMissing
-        } else if matches!(
-            state.verification,
-            ManagedTerminalAccountVerificationStatus::Failed {
-                step: ManagedTerminalAccountVerificationStep::ManagedUserPty,
-                ..
-            }
-        ) {
-            ManagedTerminalAccountReadinessState::PtySpawnFailed
-        } else if pty_smoke_verified && !account_needs_repair {
-            ManagedTerminalAccountReadinessState::Ready
-        } else {
-            ManagedTerminalAccountReadinessState::Repairable
-        };
-    let terminal_profile_id = match &state.terminal_profile {
-        ManagedTerminalAccountProfileState::Missing => None,
-        ManagedTerminalAccountProfileState::ExistingManaged { profile_id }
-        | ManagedTerminalAccountProfileState::ExistingManagedOutdated { profile_id }
-        | ManagedTerminalAccountProfileState::ExistingUnmanaged { profile_id } => {
-            Some(profile_id.clone())
-        }
-    };
-
-    ManagedTerminalAccountDiagnosis {
-        ownership_state,
-        readiness_state,
-        account_exists,
-        is_admin,
-        home_directory_exists: state.home_directory_exists,
-        home_directory_matches,
-        shell_matches,
-        hidden_from_login_window,
-        terminal_profile_id,
-        pty_smoke_verified,
     }
 }
 

@@ -406,6 +406,34 @@ fn managed_terminal_account_dry_run_uses_helper_owned_steps() {
         Some(ManagedTerminalAccountPlanStepKind::CreateStandardAccount)
     );
 
+    let invalid_state = ManagedTerminalAccountState {
+        account: ManagedTerminalAccountRecord::Invalid {
+            reason: "Local account record is unreadable.".to_string(),
+        },
+        ownership: ManagedTerminalAccountOwnershipState::Missing,
+        terminal_profile: ManagedTerminalAccountProfileState::Missing,
+        verification: ManagedTerminalAccountVerificationStatus::NotRun,
+        home_directory_exists: true,
+    };
+    let invalid_plan = ManagedTerminalAccountPlanner::plan(request.clone(), &invalid_state);
+    assert_eq!(
+        invalid_plan.status,
+        ManagedTerminalAccountPlanStatus::Repair
+    );
+    assert_eq!(
+        invalid_plan
+            .steps
+            .iter()
+            .map(|step| step.kind)
+            .collect::<Vec<_>>(),
+        vec![
+            ManagedTerminalAccountPlanStepKind::RepairAccountType,
+            ManagedTerminalAccountPlanStepKind::VerifyAccount,
+            ManagedTerminalAccountPlanStepKind::VerifyManagedUserPty,
+            ManagedTerminalAccountPlanStepKind::CreateOrUpdateTerminalProfile,
+        ]
+    );
+
     let ordinary_account_state = ManagedTerminalAccountState {
         account: ManagedTerminalAccountRecord::Standard {
             home_directory: "/Users/alan_smoke".to_string(),
@@ -471,11 +499,75 @@ fn managed_terminal_account_dry_run_uses_helper_owned_steps() {
     };
     let mismatched_home_plan =
         ManagedTerminalAccountPlanner::plan(request.clone(), &mismatched_home_state);
-    assert!(
+    assert_eq!(
+        mismatched_home_plan.status,
+        ManagedTerminalAccountPlanStatus::Repair
+    );
+    assert_eq!(
         mismatched_home_plan
             .steps
             .iter()
-            .any(|step| { step.kind == ManagedTerminalAccountPlanStepKind::RepairHomeDirectory })
+            .map(|step| step.kind)
+            .collect::<Vec<_>>(),
+        vec![ManagedTerminalAccountPlanStepKind::RepairHomeDirectory]
+    );
+
+    let unverified_managed_profile_state = ManagedTerminalAccountState {
+        account: ManagedTerminalAccountRecord::Standard {
+            home_directory: request.home_directory.clone(),
+            shell: request.shell.clone(),
+            hidden: true,
+        },
+        ownership: ManagedTerminalAccountOwnershipState::AlanManaged {
+            evidence: ManagedTerminalAccountOwnershipEvidence::HelperMarker {
+                path: "/Library/Application Support/alan-macos-dev/managed-users/alan_smoke/ownership.json".to_string(),
+            },
+        },
+        terminal_profile: ManagedTerminalAccountProfileState::ExistingManaged {
+            profile_id: request.terminal_profile_id().to_string(),
+        },
+        verification: ManagedTerminalAccountVerificationStatus::NotRun,
+        home_directory_exists: true,
+    };
+    let unverified_managed_profile_plan =
+        ManagedTerminalAccountPlanner::plan(request.clone(), &unverified_managed_profile_state);
+    assert_eq!(
+        unverified_managed_profile_plan.status,
+        ManagedTerminalAccountPlanStatus::Repair
+    );
+    assert_eq!(
+        unverified_managed_profile_plan
+            .steps
+            .iter()
+            .map(|step| step.kind)
+            .collect::<Vec<_>>(),
+        vec![
+            ManagedTerminalAccountPlanStepKind::VerifyAccount,
+            ManagedTerminalAccountPlanStepKind::VerifyManagedUserPty,
+            ManagedTerminalAccountPlanStepKind::CreateOrUpdateTerminalProfile,
+        ]
+    );
+
+    let outdated_profile_state = ManagedTerminalAccountState {
+        terminal_profile: ManagedTerminalAccountProfileState::ExistingManagedOutdated {
+            profile_id: request.terminal_profile_id().to_string(),
+        },
+        verification: ManagedTerminalAccountVerificationStatus::Passed,
+        ..unverified_managed_profile_state
+    };
+    let outdated_profile_plan =
+        ManagedTerminalAccountPlanner::plan(request.clone(), &outdated_profile_state);
+    assert_eq!(
+        outdated_profile_plan.status,
+        ManagedTerminalAccountPlanStatus::Repair
+    );
+    assert_eq!(
+        outdated_profile_plan
+            .steps
+            .iter()
+            .map(|step| step.kind)
+            .collect::<Vec<_>>(),
+        vec![ManagedTerminalAccountPlanStepKind::CreateOrUpdateTerminalProfile]
     );
 
     let cancelled = ManagedTerminalAccountFakeExecutor::apply(&plan, true, None);
