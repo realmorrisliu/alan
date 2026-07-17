@@ -49,7 +49,7 @@ reject_active_shell_radius_drift() {
         "clients/apple/alan-macos/Views/Shell/Terminal/ShellTerminalOverlayViews.swift" \
         "clients/apple/alan-macos/Views/Shell/Content/ShellBoundedContentViews.swift" \
         "clients/apple/alan-macos/TerminalPaneView.swift" \
-        "clients/apple/alan-macos/TerminalHostView.swift"
+        "clients/apple/alan-macos/Views/Shell/Terminal/TerminalHostView.swift"
     do
         if grep -En 'RoundedRectangle\(cornerRadius: (1[4-9]|[2-9][0-9])|cornerRadius = (1[4-9]|[2-9][0-9])' "$REPO_ROOT/$file" >&2; then
             matched=1
@@ -78,7 +78,7 @@ reject_ghosttykit_umbrella_modulemap() {
 }
 
 reject_keydown_programmatic_text_delivery() {
-    local file="$REPO_ROOT/clients/apple/alan-macos/TerminalHostView.swift"
+    local file="$REPO_ROOT/clients/apple/alan-macos/Services/Terminal/TerminalHostKeyboardInput.swift"
 
     if ! awk '
         /override func keyDown\(with event: NSEvent\) \{/ {
@@ -868,7 +868,7 @@ reject_pattern \
     "legacy shell voice commands must not expose inspector commands"
 
 reject_pattern \
-    "clients/apple/alan-macos/TerminalHostView.swift" \
+    "clients/apple/alan-macos/Services/Terminal/TerminalHostKeyboardInput.swift" \
     "handleSearchKeyIfNeeded|current \\+ characters|dropLast\\(\\)" \
     "Find query editing must be owned by the SwiftUI Find bar instead of terminal key capture"
 
@@ -1498,12 +1498,12 @@ require_pattern \
     "terminal keyboard shortcuts must query shell-core action metadata before terminal bindings"
 
 require_pattern \
-    "clients/apple/alan-macos/TerminalHostView.swift" \
+    "clients/apple/alan-macos/Services/Terminal/TerminalHostKeyboardInput.swift" \
     "routeShellActionKeyIfNeeded\\(event\\)" \
     "terminal host key equivalents must give alan shell actions priority over Ghostty bindings"
 
 require_pattern \
-    "clients/apple/alan-macos/TerminalHostView.swift" \
+    "clients/apple/alan-macos/Views/Shell/Terminal/TerminalHostView.swift" \
     "private let runtimeReporter = TerminalHostRuntimeReporter\\(\\)" \
     "terminal host runtime snapshot publication must be owned by a focused collaborator"
 
@@ -1513,7 +1513,7 @@ require_pattern \
     "terminal runtime reporter must preserve timestamp-insensitive snapshot deduplication"
 
 require_pattern \
-    "clients/apple/alan-macos/TerminalHostView.swift" \
+    "clients/apple/alan-macos/Views/Shell/Terminal/TerminalHostView.swift" \
     "private let windowObserver = TerminalHostWindowObserver\\(\\)" \
     "terminal host window notifications must be owned by a focused collaborator"
 
@@ -1613,7 +1613,7 @@ reject_pattern \
         "terminal pane must apply state-aware workspace panel edge insets"
 
     reject_pattern \
-        "clients/apple/alan-macos/TerminalHostView.swift" \
+        "clients/apple/alan-macos/Views/Shell/Terminal/TerminalHostView.swift" \
         "cornerRadius = ShellRadii\\.workspacePanel" \
         "terminal host view must not apply an inner rounded corner inside the outer workspace panel"
 
@@ -1818,7 +1818,7 @@ reject_pattern \
     "split divider must not render as a high-contrast primary-color line"
 
 require_pattern \
-    "clients/apple/alan-macos/TerminalHostView.swift" \
+    "clients/apple/alan-macos/Views/Shell/Terminal/TerminalHostView.swift" \
     "hasTornDownRuntime" \
     "terminal teardown must be idempotent"
 
@@ -1828,7 +1828,7 @@ require_pattern \
     "terminal hosts must know whether their pane is selected"
 
 require_pattern \
-    "clients/apple/alan-macos/TerminalHostView.swift" \
+    "clients/apple/alan-macos/Services/Terminal/TerminalHostFocusAndPointerInput.swift" \
     "guard isSelected, pane != nil else \\{ return \\}" \
     "terminal auto-focus must be gated to the selected pane"
 
@@ -1843,7 +1843,7 @@ require_pattern \
     "terminal auto-focus must not refocus the same selected pane on every SwiftUI update"
 
 require_pattern \
-    "clients/apple/alan-macos/TerminalHostView.swift" \
+    "clients/apple/alan-macos/Services/Terminal/TerminalHostFocusAndPointerInput.swift" \
     "guard !pendingFocusRequest else \\{ return \\}" \
     "terminal auto-focus must coalesce pending first-responder requests"
 
@@ -1863,7 +1863,7 @@ require_pattern \
     "terminal runtime registry must thread the weak activation boundary"
 
 require_pattern \
-    "clients/apple/alan-macos/TerminalHostView.swift" \
+    "clients/apple/alan-macos/Views/Shell/Terminal/TerminalHostView.swift" \
     "weak var activationDelegate" \
     "registry-owned terminal host views must not strongly retain activation owners"
 
@@ -2008,92 +2008,92 @@ reject_pattern \
     "sidebar tab selection must not be view-local-only"
 
 require_pattern \
-    "clients/apple/alan-macos/TerminalHostView.swift" \
+    "clients/apple/alan-macos/Services/Terminal/TerminalHostFocusAndPointerInput.swift" \
     "terminalHostDidRequestActivation\\(paneID:" \
     "terminal host mouse events must request pane activation through the delegate"
 
 require_pattern \
-    "clients/apple/alan-macos/TerminalHostView.swift" \
+    "clients/apple/alan-macos/Services/Terminal/TerminalHostFocusAndPointerInput.swift" \
     "override func mouseDown\\(with event: NSEvent\\)" \
     "terminal pointer down events must remain owned by the AppKit terminal host"
 
 require_pattern \
-    "clients/apple/alan-macos/TerminalHostView.swift" \
-    "private func routePointer\\(_ input: AlanTerminalPointerInput\\)" \
+    "clients/apple/alan-macos/Services/Terminal/TerminalHostFocusAndPointerInput.swift" \
+    "func routePointer\\(_ input: AlanTerminalPointerInput\\)" \
     "terminal pointer routing must stay behind the AppKit terminal host boundary"
 
 require_pattern \
-    "clients/apple/alan-macos/TerminalHostView.swift" \
-    "private func routeScrollWheel\\(_ event: NSEvent\\)" \
+    "clients/apple/alan-macos/Services/Terminal/TerminalHostFocusAndPointerInput.swift" \
+    "func routeScrollWheel\\(_ event: NSEvent\\)" \
     "terminal scroll routing must stay behind the AppKit terminal host boundary"
 
 require_pattern \
-    "clients/apple/alan-macos/TerminalHostView.swift" \
+    "clients/apple/alan-macos/Services/Terminal/TerminalHostFocusAndPointerInput.swift" \
     "override func scrollWheel\\(with event: NSEvent\\)" \
     "terminal scroll wheel events must remain owned by the AppKit terminal host"
 
 require_pattern \
-    "clients/apple/alan-macos/TerminalHostView.swift" \
+    "clients/apple/alan-macos/Services/Terminal/TerminalHostKeyboardInput.swift" \
     "override func keyDown\\(with event: NSEvent\\)" \
     "terminal key events must remain owned by the AppKit terminal host"
 
 require_pattern \
-    "clients/apple/alan-macos/TerminalHostView.swift" \
+    "clients/apple/alan-macos/Services/Terminal/TerminalHostKeyboardInput.swift" \
     "override func performKeyEquivalent\\(with event: NSEvent\\)" \
     "terminal key equivalents must stay behind the AppKit terminal host boundary"
 
 require_pattern \
-    "clients/apple/alan-macos/TerminalHostView.swift" \
+    "clients/apple/alan-macos/Services/Terminal/TerminalHostTextInput.swift" \
     "override func doCommand\\(by selector: Selector\\)" \
     "terminal key-equivalent doCommand redispatch must stay in the AppKit terminal host"
 
 require_pattern \
-    "clients/apple/alan-macos/TerminalHostView.swift" \
+    "clients/apple/alan-macos/Views/Shell/Terminal/TerminalHostView.swift" \
     "NSEvent\\.addLocalMonitorForEvents" \
     "terminal host must own Ghostty-style local keyUp and focus-click event monitoring"
 
 require_pattern \
-    "clients/apple/alan-macos/TerminalHostView.swift" \
-    "private var terminalInputIsActive: Bool" \
+    "clients/apple/alan-macos/Views/Shell/Terminal/TerminalHostView.swift" \
+    "var terminalInputIsActive: Bool" \
     "terminal focus-transfer routing must combine shell selection with AppKit first-responder state"
 
 require_pattern \
-    "clients/apple/alan-macos/TerminalHostView.swift" \
+    "clients/apple/alan-macos/Services/Terminal/TerminalInputTrace.swift" \
     "terminal-input-trace\\.log" \
     "terminal input trace logs must write to a stable file by default"
 
 require_pattern \
-    "clients/apple/alan-macos/TerminalHostView.swift" \
+    "clients/apple/alan-macos/Services/Terminal/TerminalInputTrace.swift" \
     "ALAN_TERMINAL_INPUT_TRACE" \
     "terminal input trace logs must be opt-in by environment"
 
 require_pattern \
-    "clients/apple/alan-macos/TerminalHostView.swift" \
+    "clients/apple/alan-macos/Services/Terminal/TerminalInputTrace.swift" \
     "ALAN_TERMINAL_INPUT_TRACE_PATH" \
     "terminal input trace logs must support a file path override"
 
 require_pattern \
-    "clients/apple/alan-macos/TerminalHostView.swift" \
+    "clients/apple/alan-macos/Services/Terminal/TerminalInputTrace.swift" \
     "AlanTerminalInputTraceEnabled" \
     "terminal input trace logs must be opt-in by user defaults"
 
 require_pattern \
-    "clients/apple/alan-macos/TerminalHostView.swift" \
+    "clients/apple/alan-macos/Services/Terminal/TerminalInputTrace.swift" \
     "synchronize\\(\\)" \
     "terminal input trace defaults must refresh without restarting alan"
 
 require_pattern \
-    "clients/apple/alan-macos/TerminalHostView.swift" \
+    "clients/apple/alan-macos/Services/Terminal/TerminalInputTrace.swift" \
     "configRefreshInterval" \
     "terminal input trace must bound live default refresh overhead"
 
 require_pattern \
-    "clients/apple/alan-macos/TerminalHostView.swift" \
+    "clients/apple/alan-macos/Views/Shell/Terminal/TerminalHostView.swift" \
     "local-leftMouseDown" \
     "terminal focus-click diagnostics must log local monitor routing"
 
 require_pattern \
-    "clients/apple/alan-macos/TerminalHostView.swift" \
+    "clients/apple/alan-macos/Views/Shell/Terminal/TerminalHostView.swift" \
     "isFirstResponder: terminalInputIsActive" \
     "focus-only mouse routing must use active terminal input, not raw first-responder state"
 
@@ -2103,12 +2103,12 @@ require_pattern \
     "surface controller tests must prove the terminal input router owns focus-only pointer sequences"
 
 reject_pattern \
-    "clients/apple/alan-macos/TerminalHostView.swift" \
+    "clients/apple/alan-macos/Services/Terminal/TerminalHostFocusAndPointerInput.swift" \
     "FocusClickAdapter|focusClickAdapter|consumeSuppressedLeftMouseUp|shouldSuppressLeftMouseDrag" \
     "focus-only pointer sequence state must not live in TerminalHostView"
 
 reject_pattern \
-    "clients/apple/alan-macos/TerminalHostView.swift" \
+    "clients/apple/alan-macos/Services/Terminal/TerminalHostKeyboardInput.swift" \
     "surfaceController\\.sendText" \
     "physical terminal keyboard code must not use a generic text delivery path"
 
@@ -2118,12 +2118,12 @@ require_pattern \
     "Ghostty text injection must be named as programmatic text, not physical keyboard input"
 
 require_pattern \
-    "clients/apple/alan-macos/TerminalHostView.swift" \
+    "clients/apple/alan-macos/Services/Terminal/TerminalHostTextInput.swift" \
     "func insertText\\(_ string: Any, replacementRange: NSRange\\)" \
     "terminal IME text insertion must remain owned by the AppKit terminal host"
 
 require_pattern \
-    "clients/apple/alan-macos/TerminalHostView.swift" \
+    "clients/apple/alan-macos/Services/Terminal/TerminalHostKeyboardInput.swift" \
     "shellActionHandler\\?\\(actionID, target\\)" \
     "terminal workspace shortcuts must leave the AppKit host through the shared shell action callback"
 
@@ -2278,7 +2278,7 @@ require_pattern \
     "floating sidebar traffic lights must be rechecked after standard button visibility changes"
 
 require_pattern \
-    "clients/apple/alan-macos/TerminalHostView.swift" \
+    "clients/apple/alan-macos/Views/Shell/Terminal/TerminalHostView.swift" \
     "override var mouseDownCanMoveWindow: Bool \\{ false \\}" \
     "terminal host views must not allow terminal pane clicks to drag the shell window"
 

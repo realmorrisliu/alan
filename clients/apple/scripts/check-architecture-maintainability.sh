@@ -202,7 +202,6 @@ current_root_swift_allowlist=(
     "MacShellRootView.swift"
     "ShellControlPlane.swift"
     "ShellHostController.swift"
-    "TerminalHostView.swift"
     "TerminalPaneView.swift"
     "TerminalRuntimeRegistry.swift"
     "TerminalRuntimeService.swift"
@@ -416,9 +415,14 @@ reject_swiftui_shell_hot_path_sync_boundaries() {
     local pattern
     local search_roots=(
         "$SOURCE_ROOT/MacShellRootView.swift"
-        "$SOURCE_ROOT/TerminalHostView.swift"
         "$SOURCE_ROOT/TerminalPaneView.swift"
         "$SOURCE_ROOT/Views/Shell"
+        "$SOURCE_ROOT/Services/Terminal/TerminalHostFocusAndPointerInput.swift"
+        "$SOURCE_ROOT/Services/Terminal/TerminalHostInputTracing.swift"
+        "$SOURCE_ROOT/Services/Terminal/TerminalHostKeyboardInput.swift"
+        "$SOURCE_ROOT/Services/Terminal/TerminalHostTextInput.swift"
+        "$SOURCE_ROOT/Services/Terminal/TerminalInputTrace.swift"
+        "$SOURCE_ROOT/Services/Terminal/TerminalKeyboardLayout.swift"
     )
 
     for pattern in \
@@ -605,7 +609,7 @@ while IFS= read -r file; do
 
     if grep -Eq '^import (AppKit|Darwin)$' "$file"; then
         case "$rel" in
-            App/*|Services/*|Support/*|Views/Shell/Terminal/*|AlanApp.swift|AlanAppSingletonGuard.swift|GhosttyLiveHost.swift|ShellControlPlane.swift|TerminalHostView.swift|TerminalRuntimeService.swift|TerminalSurfaceController.swift)
+            App/*|Services/*|Support/*|Views/Shell/Terminal/*|AlanApp.swift|AlanAppSingletonGuard.swift|GhosttyLiveHost.swift|ShellControlPlane.swift|TerminalRuntimeService.swift|TerminalSurfaceController.swift)
                 ;;
             MacShellRootView.swift|ShellHostController.swift|TerminalRuntimeRegistry.swift)
                 warn "bridge|$rel|appkit-or-darwin-outside-bridge" \

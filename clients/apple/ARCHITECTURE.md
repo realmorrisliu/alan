@@ -41,17 +41,23 @@ Xcode target.
 | `Views/Shell/Terminal/ShellPaneTitleBarViews.swift` | 585 | Foundation, SwiftUI; macOS gates | Terminal and bounded-content title bars, responsive accessories, and activity freshness | `Views/Shell/Terminal/` |
 | `Views/Shell/Terminal/ShellTerminalOverlayViews.swift` | 128 | SwiftUI; macOS gates | Pane-scoped Find interaction and passive inactive-pane dimming | `Views/Shell/Terminal/` |
 | `Views/Shell/Content/ShellBoundedContentViews.swift` | 647 | Foundation, SwiftUI; macOS gates | Bounded Agent and Markdown content renderers plus unavailable-content presentation | `Views/Shell/Content/` |
-| `TerminalHostView.swift` | 1911 | AppKit, Carbon, QuartzCore, GhosttyKit; macOS gates | AppKit terminal host bridge, focus, overlay composition, runtime attachment, and collaborator wiring | `Views/Shell/Terminal/` plus terminal collaborators |
+| `Views/Shell/Terminal/TerminalHostView.swift` | 574 | AppKit, QuartzCore, GhosttyKit; macOS gates | AppKit terminal host lifecycle, runtime attachment, overlay composition, and collaborator wiring | `Views/Shell/Terminal/` |
 | `GhosttyLiveHost.swift` | 1179 | Foundation, AppKit, GhosttyKit, OSLog, QuartzCore; macOS/Ghostty gates | Ghostty app/surface lifecycle, callbacks, and renderer coordination | `Services/Terminal/` |
 | `Services/Terminal/GhosttyPlatformAdapters.swift` | 104 | Foundation, AppKit, GhosttyKit; macOS/Ghostty gates | Ghostty key-code, clipboard, app-focus, canvas, and display adapters | `Services/Terminal/` |
-| `Services/Terminal/TerminalBootResolution.swift` | 980 | Foundation; macOS gates | Terminal launch resolution, Ghostty discovery, boot profiles, and profile cache | `Services/Terminal/` |
+| `Services/Terminal/TerminalHostFocusAndPointerInput.swift` | 427 | AppKit, GhosttyKit; macOS/Ghostty gates | First-responder activation, pointer translation, mouse delivery, pressure, and scroll routing | `Services/Terminal/` |
+| `Services/Terminal/TerminalHostInputTracing.swift` | 82 | AppKit; macOS gates | Host input trace projection, timing, and AppKit responder/view diagnostics | `Services/Terminal/` |
+| `Services/Terminal/TerminalHostKeyboardInput.swift` | 637 | AppKit, Carbon, GhosttyKit; macOS/Ghostty gates | Physical keyboard translation, shell shortcut routing, Ghostty key delivery, and terminal command adaptation | `Services/Terminal/` |
+| `Services/Terminal/TerminalHostTextInput.swift` | 173 | AppKit, GhosttyKit; macOS/Ghostty gates | `NSTextInputClient`, IME composition, selection, search, and semantic command adaptation | `Services/Terminal/` |
+| `Services/Terminal/TerminalInputTrace.swift` | 134 | Foundation; macOS gates | Opt-in terminal input trace configuration, refresh, and diagnostic file sink | `Services/Terminal/` |
+| `Services/Terminal/TerminalKeyboardLayout.swift` | 17 | Carbon; macOS gates | Current macOS keyboard input-source lookup during text composition | `Services/Terminal/` |
+| `Services/Terminal/TerminalBootResolution.swift` | 987 | Foundation; macOS gates | Terminal launch resolution, Ghostty discovery, boot profiles, and profile cache | `Services/Terminal/` |
 | `Services/Terminal/TerminalRenderCoordinator.swift` | 344 | Foundation; macOS gates | Render priority, wakeup coalescing, refresh scheduling, and diagnostics | `Services/Terminal/` |
 | `Services/Terminal/TerminalRuntimePublicationPolicy.swift` | 46 | macOS gates | Shell-facing runtime snapshot publication policy | `Services/Terminal/` |
-| `Services/Terminal/TerminalHostRuntimeReporter.swift` | 47 | Foundation; macOS gates | Runtime snapshot deduplication and main-queue publication for terminal host updates | `Services/Terminal/` |
+| `Services/Terminal/TerminalHostRuntimeReporter.swift` | 48 | Foundation; macOS gates | Runtime snapshot deduplication and main-queue publication for terminal host updates | `Services/Terminal/` |
 | `Services/Terminal/TerminalHostWindowObserver.swift` | 55 | AppKit; macOS gates | Terminal host window key, screen, and occlusion notification ownership | `Services/Terminal/` |
 | `TerminalRuntimeRegistry.swift` | 598 | SwiftUI; macOS gates | Pane/content-keyed terminal host/runtime registry | `Services/Terminal/` |
-| `TerminalRuntimeService.swift` | 1815 | Foundation, AppKit, GhosttyKit; macOS/Ghostty gates | Window-scoped terminal runtime service, lifecycle ownership, and Ghostty bootstrap | `Services/Terminal/` |
-| `TerminalSurfaceController.swift` | 1735 | Foundation, AppKit, GhosttyKit; macOS/Ghostty gates | Terminal input, pointer, scrollback, search, semantic commands, and surface adapters | `Services/Terminal/` |
+| `TerminalRuntimeService.swift` | 3995 | Foundation, AppKit, GhosttyKit; macOS/Ghostty gates | Window-scoped terminal runtime service, lifecycle ownership, and Ghostty bootstrap | `Services/Terminal/` |
+| `TerminalSurfaceController.swift` | 1837 | Foundation, AppKit, GhosttyKit; macOS/Ghostty gates | Terminal input, pointer, scrollback, search, semantic commands, and surface adapters | `Services/Terminal/` |
 | `Models/Shell/ShellWorkspaceValueTypes.swift` | 159 | Foundation | Shared shell commands, split/focus directions, attention, tab organization, and launch-target values | `Models/Shell/` |
 | `Models/Shell/TerminalProfileModels.swift` | 337 | Foundation | Terminal Profile launch, definition, document, validation, editor, store, and resolution result DTOs | `Models/Shell/` |
 | `Models/Shell/ManagedTerminalAccountModels.swift` | 38 | Foundation | Managed-account request and validation-error DTOs | `Models/Shell/` |
@@ -325,14 +331,15 @@ device support was not required for this validation.
 ## Remaining Architecture Debt
 
 `check-architecture-maintainability.sh` currently completes in report mode.
-4 known large-file / bridge-boundary warnings remain after the first thirteen Apple
+3 known large-file / bridge-boundary warnings remain after the first fourteen Apple
 ownership slices removed the `ShellHostController.swift` bridge warning and
 split control projection, observation commands, root-controller
 responsibilities, shell presentation models, settings models, snapshot DTO
 families, shell/platform value families, sidebar and settings presentation,
 pane-tree/content rendering, and pane title/overlay presentation into focused
 owners, then isolated Ghostty's macOS platform adapters and terminal runtime
-responsibilities into focused owners. These warnings
+responsibilities into focused owners and split terminal host lifecycle, pointer,
+keyboard, text-input, and tracing responsibilities. These warnings
 are telemetry for the cleanup, not the cleanup
 definition. The real debt is any Swift production source that still carries a
 Rust-owned shell-domain implementation, fixture, or fallback after shell-core
@@ -441,7 +448,13 @@ The thirteenth ownership slice removed the generalized
 `TerminalHostRuntime.swift` root. Boot resolution and profile caching, render
 coordination, shell publication policy, and runtime snapshot DTOs now live in
 separate `Services/Terminal/` and `Models/Shell/` owners. No replacement file
-exceeds 980 lines, and the warning count falls from 5 to 4.
+exceeds 987 lines, and the warning count falls from 5 to 4.
+
+The fourteenth ownership slice moved `TerminalHostView.swift` into its durable
+terminal-view folder and split first-responder/pointer routing, physical keyboard
+translation, `NSTextInputClient`, keyboard-layout lookup, and input tracing into
+focused `Services/Terminal/` adapters. The lifecycle owner is 574 lines, no
+replacement file exceeds 637 lines, and the warning count falls from 4 to 3.
 
 Rust-owned Swift legacy cleanup targets at this baseline:
 
