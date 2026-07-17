@@ -19,18 +19,19 @@ CLANG_MODULE_CACHE_PATH="$MODULE_CACHE_DIR" swiftc \
 
 APP_SOURCE="$REPO_ROOT/clients/apple/alan-macos"
 ATTACHMENT_SOURCE="$APP_SOURCE/Services/AlanOS/AlanOSAttachmentService.swift"
-PANE_SOURCE="$APP_SOURCE/TerminalPaneView.swift"
+PANE_LAYOUT_SOURCE="$APP_SOURCE/Views/Shell/Terminal/ShellPaneTreeLayoutView.swift"
+AGENT_CONTENT_SOURCE="$APP_SOURCE/Views/Shell/Content/ShellBoundedContentViews.swift"
 
 if grep -ERq 'AlanKernel|AlanAgentEngine|AgentExecutionEngine|bootRootAgent|requestHostStop|stopAlanOSHost|terminateAlanOSHost' "$APP_SOURCE"; then
     echo "Alan for macOS must not own Alan OS or Agent execution lifecycle." >&2
     exit 1
 fi
 grep -q 'sendAttachRequest(descriptor: descriptor)' "$ATTACHMENT_SOURCE"
-grep -q 'host.updateAgentRendererState' "$PANE_SOURCE"
+grep -q 'host.updateAgentRendererState' "$PANE_LAYOUT_SOURCE"
 grep -Fq 'writeDocument("/proc/\(reference.pid)/ctl"' "$ATTACHMENT_SOURCE"
 grep -Fq 'writeDocument("/agent/\(reference.pid)/machine/ctl"' "$ATTACHMENT_SOURCE"
-grep -Fq '.alert("Stop Agent Process?"' "$PANE_SOURCE"
-grep -Fq 'Closing this view only detaches.' "$PANE_SOURCE"
+grep -Fq '.alert("Stop Agent Process?"' "$AGENT_CONTENT_SOURCE"
+grep -Fq 'Closing this view only detaches.' "$AGENT_CONTENT_SOURCE"
 grep -Fq 'session.cat("/mnt/host-mount/request")' "$ATTACHMENT_SOURCE"
 grep -q 'let panel = NSOpenPanel()' "$ATTACHMENT_SOURCE"
 grep -q 'approveHostMount(' "$ATTACHMENT_SOURCE"

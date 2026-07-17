@@ -23,8 +23,8 @@ recorded in [`ARCHITECTURE.md`](./ARCHITECTURE.md).
   placement support, plus small AppKit-backed shell support adapters
 - `MacShellRootView.swift`: thin primary macOS shell composition root
 - `Views/Shell/`: shell composition plus focused sidebar, Space slider, tab-row,
-  drop-target, activity, pane-topology, workspace, command-palette, and settings
-  SwiftUI components
+  drop-target, activity, pane-topology, workspace, command-palette, settings,
+  pane-tree, terminal-leaf, and bounded-content SwiftUI components
 - `Models/Shell/`: focused shell, Terminal Profile, managed-account, activity,
   context, and pane/content/tree/tab/Space/workspace snapshot families; runtime support,
   focused presentation models, and settings navigation, Terminal Profile, managed-user,
@@ -38,7 +38,8 @@ recorded in [`ARCHITECTURE.md`](./ARCHITECTURE.md).
 - `Services/Terminal/`: terminal host runtime reporting, window observation,
   agent-activity projection, and terminal runtime service collaborators
 - `TerminalPaneView.swift` / `TerminalHostView.swift`: current terminal pane and host surfaces;
-  settings presentation lives under `Views/Shell/Settings/`
+  settings, bounded content, pane-tree, and terminal-leaf presentation live under
+  `Views/Shell/`
 - `ShellHostController.swift`: observable shell state and root controller lifecycle
 - `ShellControlPlane.swift`: thin shell control-plane orchestration across the
   shell service owners

@@ -40,6 +40,12 @@ reject_active_shell_radius_drift() {
         "clients/apple/alan-macos/Views/Shell/ShellSidebarTabRow.swift" \
         "clients/apple/alan-macos/Views/Shell/ShellSidebarActivityProgressRail.swift" \
         "clients/apple/alan-macos/Views/Shell/ShellPaneTopologyIndicator.swift" \
+        "clients/apple/alan-macos/Views/Shell/Settings/ShellSettingsContentView.swift" \
+        "clients/apple/alan-macos/Views/Shell/Settings/ShellSettingsNavigationView.swift" \
+        "clients/apple/alan-macos/Views/Shell/Settings/ShellSettingsComponents.swift" \
+        "clients/apple/alan-macos/Views/Shell/Terminal/ShellPaneTreeLayoutView.swift" \
+        "clients/apple/alan-macos/Views/Shell/Terminal/ShellTerminalLeafView.swift" \
+        "clients/apple/alan-macos/Views/Shell/Content/ShellBoundedContentViews.swift" \
         "clients/apple/alan-macos/TerminalPaneView.swift" \
         "clients/apple/alan-macos/TerminalHostView.swift"
     do
@@ -136,7 +142,7 @@ require_title_bar_full_width_hit_area() {
     local file="$REPO_ROOT/clients/apple/alan-macos/TerminalPaneView.swift"
 
     if ! awk '
-        /private struct ShellPaneTitleBarView: View/ {
+        /struct ShellPaneTitleBarView: View/ {
             in_view = 1
         }
 
@@ -204,7 +210,7 @@ require_pane_title_bar_trailing_close() {
 }
 
 require_restored_transcript_full_width_layout() {
-    local file="$REPO_ROOT/clients/apple/alan-macos/TerminalPaneView.swift"
+    local file="$REPO_ROOT/clients/apple/alan-macos/Views/Shell/Terminal/ShellTerminalLeafView.swift"
 
     if ! awk '
         /private struct RestoredTerminalTranscriptView: View/ {
@@ -237,7 +243,8 @@ require_restored_transcript_full_width_layout() {
 }
 
 require_split_terminal_full_pane_layout() {
-    local file="$REPO_ROOT/clients/apple/alan-macos/TerminalPaneView.swift"
+    local layout_file="$REPO_ROOT/clients/apple/alan-macos/Views/Shell/Terminal/ShellPaneTreeLayoutView.swift"
+    local leaf_file="$REPO_ROOT/clients/apple/alan-macos/Views/Shell/Terminal/ShellTerminalLeafView.swift"
 
     if ! awk '
         /private struct ShellSplitLayoutView: View/ {
@@ -256,7 +263,16 @@ require_split_terminal_full_pane_layout() {
             in_split_layout = 0
         }
 
-        /private struct ShellTerminalLeafView: View/ {
+        END {
+            exit split_max_height >= 2 && split_max_width >= 2 ? 0 : 1
+        }
+    ' "$layout_file"; then
+        printf 'error: split pane layouts must keep both axes expanded and top-leading aligned\n' >&2
+        exit 1
+    fi
+
+    if ! awk '
+        /struct ShellTerminalLeafView: View/ {
             in_terminal_leaf = 1
         }
 
@@ -269,9 +285,9 @@ require_split_terminal_full_pane_layout() {
         }
 
         END {
-            exit split_max_height >= 2 && split_max_width >= 2 && saw_terminal_leaf_full_frame ? 0 : 1
+            exit saw_terminal_leaf_full_frame ? 0 : 1
         }
-    ' "$file"; then
+    ' "$leaf_file"; then
         printf 'error: split terminal panes must keep child terminals expanded and top-leading aligned\n' >&2
         exit 1
     fi
@@ -1255,42 +1271,42 @@ require_pattern \
     "queued pasted commands must keep tab activity protected until the final completion"
 
 require_pattern \
-    "clients/apple/alan-macos/TerminalPaneView.swift" \
+    "clients/apple/alan-macos/Views/Shell/Terminal/ShellTerminalLeafView.swift" \
     "\\.id\\(pane\\.paneID\\)" \
     "terminal host views must be keyed by stable pane identity"
 
 require_pattern \
-    "clients/apple/alan-macos/TerminalPaneView.swift" \
+    "clients/apple/alan-macos/Views/Shell/Terminal/ShellPaneTreeLayoutView.swift" \
     "ShellSplitDividerView" \
     "split panes must use an explicit divider instead of visual spacing gaps"
 
 require_pattern \
-    "clients/apple/alan-macos/TerminalPaneView.swift" \
+    "clients/apple/alan-macos/Views/Shell/Terminal/ShellPaneTreeLayoutView.swift" \
     "ShellSplitDividerTint" \
     "split divider tint must stay subtle instead of rendering as a hard line"
 
 require_pattern \
-    "clients/apple/alan-macos/TerminalPaneView.swift" \
+    "clients/apple/alan-macos/Views/Shell/Terminal/ShellPaneTreeLayoutView.swift" \
     "ShellSplitDividerMetrics\\.thickness" \
     "split divider must use an intentional seam thickness instead of a hard 1px line"
 
 require_pattern \
-    "clients/apple/alan-macos/TerminalPaneView.swift" \
+    "clients/apple/alan-macos/Views/Shell/Terminal/ShellPaneTreeLayoutView.swift" \
     "ShellSplitDividerTint\\.shadow" \
     "split divider must use a subtle bevel seam rather than a single flat line"
 
 require_pattern \
-    "clients/apple/alan-macos/TerminalPaneView.swift" \
+    "clients/apple/alan-macos/Views/Shell/Terminal/ShellPaneTreeLayoutView.swift" \
     "dragPreviewRatio" \
     "split divider drag must track the live preview ratio until drag end"
 
 require_pattern \
-    "clients/apple/alan-macos/TerminalPaneView.swift" \
+    "clients/apple/alan-macos/Views/Shell/Terminal/ShellPaneTreeLayoutView.swift" \
     "resizeSplit\\(splitNodeID: node\\.nodeID, ratio: nextRatio, persist: false\\)" \
     "split divider drag previews must not persist every pointer sample"
 
 require_pattern \
-    "clients/apple/alan-macos/TerminalPaneView.swift" \
+    "clients/apple/alan-macos/Views/Shell/Terminal/ShellPaneTreeLayoutView.swift" \
     "resizeSplit\\(splitNodeID: node\\.nodeID, ratio: finalRatio, persist: true\\)" \
     "split divider drag end must persist the final ratio"
 
@@ -1510,7 +1526,7 @@ require_pattern \
     "architecture guard must reject synchronous FFI/JSON/reducer calls from SwiftUI shell hot paths"
 
 require_pattern \
-    "clients/apple/alan-macos/TerminalPaneView.swift" \
+    "clients/apple/alan-macos/Views/Shell/Terminal/ShellPaneTreeLayoutView.swift" \
     "host\\.performShellAction\\(actionID, target: target, source: \\.terminalHost\\)" \
     "terminal shortcut routing must enter the shared shell action registry handler"
 
@@ -1750,12 +1766,12 @@ reject_pattern \
         "workspace panel must not apply equal workspace inset when the sidebar is expanded"
 
 require_pattern \
-    "clients/apple/alan-macos/TerminalPaneView.swift" \
+    "clients/apple/alan-macos/Views/Shell/Terminal/ShellTerminalLeafView.swift" \
     "ShellPaneTitleBarView" \
     "visible terminal panes must render a compact pane title bar"
 
 require_pattern \
-    "clients/apple/alan-macos/TerminalPaneView.swift" \
+    "clients/apple/alan-macos/Views/Shell/Terminal/ShellTerminalLeafView.swift" \
     "shellPaneTitleBarTitle" \
     "pane title bars must use a dedicated title helper with terminal-title-first priority"
 
@@ -1770,7 +1786,7 @@ require_pattern \
     "Rust shell-core reducer tests must cover pane-scoped close targeting"
 
 require_pattern \
-    "clients/apple/alan-macos/TerminalPaneView.swift" \
+    "clients/apple/alan-macos/Views/Shell/Terminal/ShellTerminalLeafView.swift" \
     "ShellInactivePaneDim" \
     "inactive split panes must use a lightweight dim treatment"
 
@@ -1780,22 +1796,22 @@ require_pattern \
     "inactive pane dimming must not intercept terminal pointer input"
 
 require_pattern \
-    "clients/apple/alan-macos/TerminalPaneView.swift" \
+    "clients/apple/alan-macos/Views/Shell/Terminal/ShellTerminalLeafView.swift" \
     "@AppStorage\\(\"alanShellDimsInactiveSplitPanes\"\\)" \
     "inactive pane dimming must be backed by a user-default preference"
 
 reject_pattern \
-    "clients/apple/alan-macos/TerminalPaneView.swift" \
+    "clients/apple/alan-macos/Views/Shell/Terminal" \
     "splitChildren" \
     "split panes must not leave a fixed gap between adjacent terminal panes"
 
 reject_pattern \
-    "clients/apple/alan-macos/TerminalPaneView.swift" \
+    "clients/apple/alan-macos/Views/Shell/Terminal" \
     "paneSelectorStrip" \
     "split panes must not show a bottom pane tab strip by default"
 
 reject_pattern \
-    "clients/apple/alan-macos/TerminalPaneView.swift" \
+    "clients/apple/alan-macos/Views/Shell/Terminal" \
     "Color\\.primary\\.opacity\\(0\\.16\\)" \
     "split divider must not render as a high-contrast primary-color line"
 
@@ -2115,7 +2131,7 @@ require_pattern \
     "passive terminal overlays must use a non-interactive overlay view"
 
 reject_pattern \
-    "clients/apple/alan-macos/TerminalPaneView.swift" \
+    "clients/apple/alan-macos/Views/Shell/Terminal" \
     "onTapGesture\\(perform: onSelect\\)" \
     "terminal leaf selection must not be owned by a SwiftUI tap wrapper"
 
