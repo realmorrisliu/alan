@@ -70,6 +70,11 @@
 		000000000000000000000047 /* App/AlanMacUpdateController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000151 /* App/AlanMacUpdateController.swift */; };
 		000000000000000000000048 /* Support/AlanMacUpdatePolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000152 /* Support/AlanMacUpdatePolicy.swift */; };
 		000000000000000000000049 /* Models/Shell/ShellSettingsSurfaceModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000153 /* Models/Shell/ShellSettingsSurfaceModel.swift */; };
+		A11E00000000000000000001 /* Models/Shell/TerminalSettingsSummaries.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11E00000000000000000101 /* Models/Shell/TerminalSettingsSummaries.swift */; };
+		A11E00000000000000000002 /* Models/Shell/ManagedTerminalAccountSettingsSummary.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11E00000000000000000102 /* Models/Shell/ManagedTerminalAccountSettingsSummary.swift */; };
+		A11E00000000000000000003 /* Models/Shell/ManagedTerminalAccountCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11E00000000000000000103 /* Models/Shell/ManagedTerminalAccountCatalog.swift */; };
+		A11E00000000000000000004 /* Models/Shell/ManagedTerminalUserSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11E00000000000000000104 /* Models/Shell/ManagedTerminalUserSettings.swift */; };
+		A11E00000000000000000005 /* Models/Shell/ShellSettingsHostSummaries.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11E00000000000000000105 /* Models/Shell/ShellSettingsHostSummaries.swift */; };
 		00000000000000000000004A /* Services/Shell/ShellPerformanceDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000154 /* Services/Shell/ShellPerformanceDiagnostics.swift */; };
 		00000000000000000000004B /* Services/Shell/ShellPerformanceDiagnosticsExportPresenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000155 /* Services/Shell/ShellPerformanceDiagnosticsExportPresenter.swift */; };
 		00000000000000000000004C /* Support/ShellSidebarSpaceSliderLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000156 /* Support/ShellSidebarSpaceSliderLayout.swift */; };
@@ -229,6 +234,11 @@
 		000000000000000000000151 /* App/AlanMacUpdateController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App/AlanMacUpdateController.swift; sourceTree = "<group>"; };
 		000000000000000000000152 /* Support/AlanMacUpdatePolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Support/AlanMacUpdatePolicy.swift; sourceTree = "<group>"; };
 		000000000000000000000153 /* Models/Shell/ShellSettingsSurfaceModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/Shell/ShellSettingsSurfaceModel.swift; sourceTree = "<group>"; };
+		A11E00000000000000000101 /* Models/Shell/TerminalSettingsSummaries.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/Shell/TerminalSettingsSummaries.swift; sourceTree = "<group>"; };
+		A11E00000000000000000102 /* Models/Shell/ManagedTerminalAccountSettingsSummary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/Shell/ManagedTerminalAccountSettingsSummary.swift; sourceTree = "<group>"; };
+		A11E00000000000000000103 /* Models/Shell/ManagedTerminalAccountCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/Shell/ManagedTerminalAccountCatalog.swift; sourceTree = "<group>"; };
+		A11E00000000000000000104 /* Models/Shell/ManagedTerminalUserSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/Shell/ManagedTerminalUserSettings.swift; sourceTree = "<group>"; };
+		A11E00000000000000000105 /* Models/Shell/ShellSettingsHostSummaries.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/Shell/ShellSettingsHostSummaries.swift; sourceTree = "<group>"; };
 		000000000000000000000154 /* Services/Shell/ShellPerformanceDiagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Shell/ShellPerformanceDiagnostics.swift; sourceTree = "<group>"; };
 		000000000000000000000155 /* Services/Shell/ShellPerformanceDiagnosticsExportPresenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Shell/ShellPerformanceDiagnosticsExportPresenter.swift; sourceTree = "<group>"; };
 		000000000000000000000156 /* Support/ShellSidebarSpaceSliderLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Support/ShellSidebarSpaceSliderLayout.swift; sourceTree = "<group>"; };
@@ -400,6 +410,11 @@
 				000000000000000000000144 /* Models/Shell/ShellAutomationEntities.swift */,
 				000000000000000000000145 /* Models/Shell/ShellAutomationIntents.swift */,
 				000000000000000000000153 /* Models/Shell/ShellSettingsSurfaceModel.swift */,
+				A11E00000000000000000101 /* Models/Shell/TerminalSettingsSummaries.swift */,
+				A11E00000000000000000102 /* Models/Shell/ManagedTerminalAccountSettingsSummary.swift */,
+				A11E00000000000000000103 /* Models/Shell/ManagedTerminalAccountCatalog.swift */,
+				A11E00000000000000000104 /* Models/Shell/ManagedTerminalUserSettings.swift */,
+				A11E00000000000000000105 /* Models/Shell/ShellSettingsHostSummaries.swift */,
 			);
 			name = Models/Shell;
 			sourceTree = "<group>";
@@ -750,6 +765,11 @@
 				000000000000000000000048 /* Support/AlanMacUpdatePolicy.swift in Sources */,
 				000000000000000000000047 /* App/AlanMacUpdateController.swift in Sources */,
 				000000000000000000000049 /* Models/Shell/ShellSettingsSurfaceModel.swift in Sources */,
+				A11E00000000000000000001 /* Models/Shell/TerminalSettingsSummaries.swift in Sources */,
+				A11E00000000000000000002 /* Models/Shell/ManagedTerminalAccountSettingsSummary.swift in Sources */,
+				A11E00000000000000000003 /* Models/Shell/ManagedTerminalAccountCatalog.swift in Sources */,
+				A11E00000000000000000004 /* Models/Shell/ManagedTerminalUserSettings.swift in Sources */,
+				A11E00000000000000000005 /* Models/Shell/ShellSettingsHostSummaries.swift in Sources */,
 				A11000000000000000000008 /* Services/Shell/AlanPrivilegedHelperAppClient.swift in Sources */,
 				A11000000000000000000003 /* Services/Shell/AlanPrivilegedHelperService.swift in Sources */,
 				A11000000000000000000004 /* Services/Shell/AlanPrivilegedHelperXPC.swift in Sources */,
