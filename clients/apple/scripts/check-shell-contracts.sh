@@ -45,6 +45,8 @@ reject_active_shell_radius_drift() {
         "clients/apple/alan-macos/Views/Shell/Settings/ShellSettingsComponents.swift" \
         "clients/apple/alan-macos/Views/Shell/Terminal/ShellPaneTreeLayoutView.swift" \
         "clients/apple/alan-macos/Views/Shell/Terminal/ShellTerminalLeafView.swift" \
+        "clients/apple/alan-macos/Views/Shell/Terminal/ShellPaneTitleBarViews.swift" \
+        "clients/apple/alan-macos/Views/Shell/Terminal/ShellTerminalOverlayViews.swift" \
         "clients/apple/alan-macos/Views/Shell/Content/ShellBoundedContentViews.swift" \
         "clients/apple/alan-macos/TerminalPaneView.swift" \
         "clients/apple/alan-macos/TerminalHostView.swift"
@@ -139,7 +141,7 @@ require_primary_window_summon_command() {
 }
 
 require_title_bar_full_width_hit_area() {
-    local file="$REPO_ROOT/clients/apple/alan-macos/TerminalPaneView.swift"
+    local file="$REPO_ROOT/clients/apple/alan-macos/Views/Shell/Terminal/ShellPaneTitleBarViews.swift"
 
     if ! awk '
         /struct ShellPaneTitleBarView: View/ {
@@ -178,7 +180,7 @@ require_title_bar_full_width_hit_area() {
 }
 
 require_pane_title_bar_trailing_close() {
-    local file="$REPO_ROOT/clients/apple/alan-macos/TerminalPaneView.swift"
+    local file="$REPO_ROOT/clients/apple/alan-macos/Views/Shell/Terminal/ShellPaneTitleBarViews.swift"
 
     if ! awk '
         /private func titleBarContent\(presentation: ShellPaneTitleBarPresentation\) -> some View/ {
@@ -851,7 +853,7 @@ require_pattern \
     "surface controller tests must prove search actions reach the surface engine"
 
 require_pattern \
-    "clients/apple/alan-macos/TerminalPaneView.swift" \
+    "clients/apple/alan-macos/Views/Shell/Terminal/ShellTerminalOverlayViews.swift" \
     "ShellFindBarView" \
     "pane-scoped Find must render as a real SwiftUI find bar"
 
@@ -1791,7 +1793,7 @@ require_pattern \
     "inactive split panes must use a lightweight dim treatment"
 
 require_pattern \
-    "clients/apple/alan-macos/TerminalPaneView.swift" \
+    "clients/apple/alan-macos/Views/Shell/Terminal/ShellTerminalOverlayViews.swift" \
     "allowsHitTesting\\(false\\)" \
     "inactive pane dimming must not intercept terminal pointer input"
 
@@ -1896,22 +1898,22 @@ require_pattern \
     "Space slider attention must use the state-driven freshness clock"
 
 require_pattern \
-    "clients/apple/alan-macos/TerminalPaneView.swift" \
+    "clients/apple/alan-macos/Views/Shell/Terminal/ShellPaneTitleBarViews.swift" \
     "activityFreshnessNow" \
     "pane title activity freshness must be driven by state that can invalidate idle title bars"
 
 require_pattern \
-    "clients/apple/alan-macos/TerminalPaneView.swift" \
+    "clients/apple/alan-macos/Views/Shell/Terminal/ShellPaneTitleBarViews.swift" \
     "task\\(id: activityFreshnessRefreshID\\)" \
     "pane title activity freshness must schedule refreshes for stale/expires deadlines"
 
 require_pattern \
-    "clients/apple/alan-macos/TerminalPaneView.swift" \
+    "clients/apple/alan-macos/Views/Shell/Terminal/ShellPaneTitleBarViews.swift" \
     "shellPaneTitleBarDetailProjection\\(" \
     "pane title detail projection must use the state-driven freshness clock"
 
 require_pattern \
-    "clients/apple/alan-macos/TerminalPaneView.swift" \
+    "clients/apple/alan-macos/Views/Shell/Terminal/ShellPaneTitleBarViews.swift" \
     "now: activityFreshnessNow" \
     "pane title detail projection must pass the state-driven freshness clock"
 
@@ -1921,42 +1923,42 @@ require_pattern \
     "sidebar tab typography must use role-based typography tokens"
 
 require_pattern \
-    "clients/apple/alan-macos/TerminalPaneView.swift" \
+    "clients/apple/alan-macos/Views/Shell/Terminal/ShellPaneTitleBarViews.swift" \
     "private enum ShellPaneTitleTypography" \
     "pane title typography must use role-based typography tokens"
 
 require_pattern \
-    "clients/apple/alan-macos/TerminalPaneView.swift" \
+    "clients/apple/alan-macos/Views/Shell/Terminal/ShellPaneTitleBarViews.swift" \
     "ViewThatFits\\(in: \\.horizontal\\)" \
     "pane title bars must use staged responsive fallback instead of fixed-width accessory columns"
 
 require_pattern \
-    "clients/apple/alan-macos/TerminalPaneView.swift" \
+    "clients/apple/alan-macos/Views/Shell/Terminal/ShellPaneTitleBarViews.swift" \
     "private enum ShellPaneTitleBarPresentation" \
     "pane title bars must encode full, compact, and minimal presentation tiers"
 
 require_pattern \
-    "clients/apple/alan-macos/TerminalPaneView.swift" \
+    "clients/apple/alan-macos/Views/Shell/Terminal/ShellPaneTitleBarViews.swift" \
     "private var titleView" \
     "pane title bars must keep title text as a persistent title view"
 
 require_pattern \
-    "clients/apple/alan-macos/TerminalPaneView.swift" \
+    "clients/apple/alan-macos/Views/Shell/Terminal/ShellPaneTitleBarViews.swift" \
     "Text\\(title\\)" \
     "pane title bars must render the title as text instead of icon-only content"
 
 require_pattern \
-    "clients/apple/alan-macos/TerminalPaneView.swift" \
+    "clients/apple/alan-macos/Views/Shell/Terminal/ShellPaneTitleBarViews.swift" \
     "minimumTitleWidth" \
     "pane title bars must preserve a minimum text title width before accessory fallback"
 
 reject_pattern \
-    "clients/apple/alan-macos/TerminalPaneView.swift" \
+    "clients/apple/alan-macos/Views/Shell/Terminal/ShellPaneTitleBarViews.swift" \
     "terminalChromeSelected\\.fill|terminalChrome\\.fill" \
     "pane title bars must not reintroduce selected/unselected overlay fills"
 
 reject_pattern \
-    "clients/apple/alan-macos/TerminalPaneView.swift" \
+    "clients/apple/alan-macos/Views/Shell/Terminal/ShellPaneTitleBarViews.swift" \
     "accessoryMaxWidth|maxWidth: accessory\\.maxWidth" \
     "pane title-bar accessories must not use fixed max-width columns"
 

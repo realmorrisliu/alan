@@ -46,7 +46,7 @@
 
 - [x] 4.1 Reconfirm and classify the 15-warning ledger by durable owner before
   changing Apple source.
-- [ ] 4.2 Split large shell root/controller owners into named orchestration,
+- [x] 4.2 Split large shell root/controller owners into named orchestration,
   presentation, persistence, and command collaborators.
 - [ ] 4.3 Split terminal host/runtime owners along attachment, input, surface,
   overlay, and metadata responsibilities.
