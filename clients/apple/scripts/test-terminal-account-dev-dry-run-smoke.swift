@@ -36,6 +36,7 @@ private enum TerminalAccountDevDryRunSmoke {
             accountExists: false,
             isAdmin: false,
             homeDirectoryExists: false,
+            homeDirectoryMatches: false,
             shellMatches: false,
             hiddenFromLoginWindow: false,
             terminalProfileID: nil,

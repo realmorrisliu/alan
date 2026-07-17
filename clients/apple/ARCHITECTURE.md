@@ -84,14 +84,14 @@ Xcode target.
 | `Models/Shell/TerminalRuntimeSnapshots.swift` | 192 | CoreGraphics, Foundation; macOS gates | Terminal host, renderer, pane metadata, and shell-projection snapshot DTOs | `Models/Shell/` |
 | `Models/Shell/ShellContextSnapshot.swift` | 125 | Foundation | Process binding and shell runtime-context metadata DTOs | `Models/Shell/` |
 | `Services/Shell/ManagedTerminalAccountValidation.swift` | 12 | Foundation | Fail-closed managed-account request validation through its narrow shell-core adapter | `Services/Shell/` |
-| `Services/Shell/AlanPrivilegedHelperContracts.swift` | 425 | Foundation, Security | Signing identity plus typed helper status, diagnosis, plan, PTY, diagnostic, and client contracts | `Services/Shell/` |
+| `Services/Shell/AlanPrivilegedHelperContracts.swift` | 427 | Foundation, Security | Signing identity plus typed helper status, diagnosis, plan, PTY, diagnostic, and client contracts | `Services/Shell/` |
 | `Services/Shell/AlanPrivilegedHelperXPC.swift` | 356 | Foundation, Security | Channel identity, XPC operation/request/response values, sanitization, codec, and protocol | `Services/Shell/` |
 | `Services/Shell/AlanPrivilegedHelperXPCRequirementChecker.swift` | 37 | Darwin, Foundation, Security | Code-signing requirement validation for privileged-helper clients | `Services/Shell/` |
 | `Services/Shell/AlanPrivilegedHelperXPCClient.swift` | 112 | Foundation | Privileged XPC connection lifecycle, typed request dispatch, timeout policy, and response projection | `Services/Shell/` |
 | `Services/Shell/AlanPrivilegedHelperXPCListener.swift` | 49 | Foundation | Authenticated XPC connection acceptance and connection-scoped session cleanup | `Services/Shell/` |
 | `Services/Shell/AlanPrivilegedHelperXPCService.swift` | 248 | Foundation | Channel validation, typed payload dispatch, and helper response construction | `Services/Shell/` |
 | `Services/Shell/AlanPrivilegedHelperManagedUserWire.swift` | 150 | Foundation | Module-internal managed-user account, plan, diagnosis, PTY, and diagnostic wire values | `Services/Shell/` |
-| `Services/Shell/AlanPrivilegedHelperManagedUserService.swift` | 641 | Darwin, Foundation | Managed-user diagnosis, repair, ownership marking, and destructive-operation revalidation | `Services/Shell/` |
+| `Services/Shell/AlanPrivilegedHelperManagedUserService.swift` | 642 | Darwin, Foundation | Managed-user diagnosis, repair, ownership marking, and destructive-operation revalidation | `Services/Shell/` |
 | `Services/Shell/AlanPrivilegedHelperPTYSessionStore.swift` | 441 | Darwin, Foundation | Connection-scoped managed-user PTY child ownership, nonblocking IO, control, exit, and cleanup | `Services/Shell/` |
 | `Services/Shell/AlanPrivilegedHelperPTYSupport.swift` | 98 | Darwin, Foundation | Darwin managed-user PTY spawn bridge plus environment, error, C-string, and wait-status support | `Services/Shell/` |
 | `Services/Shell/ManagedTerminalAccountPlanning.swift` | 132 | Foundation | Fail-closed Swift-facing plan/rollback API over shell-core-owned portable planning | `Services/Shell/` |

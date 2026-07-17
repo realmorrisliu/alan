@@ -385,6 +385,10 @@ private func testPrivilegedHelperXPCBoundaryIsTypedAndChannelScoped() throws {
         diagnosis.diagnostic?.code == .invalidAccountIdentifier,
         "helper XPC diagnose must return typed validation diagnostics"
     )
+    try expect(
+        diagnosis.homeDirectoryMatches == false,
+        "helper XPC diagnose must carry configured-home match state"
+    )
 
     let invalidPlan = AlanManagedUserHelperPlan(
         operationID: "op-apply-invalid",
@@ -1565,6 +1569,7 @@ private func helperDiagnosis(
     ptySmokeVerified: Bool = false,
     isAdmin: Bool = false,
     homeDirectoryExists: Bool = true,
+    homeDirectoryMatches: Bool = true,
     shellMatches: Bool = true,
     hiddenFromLoginWindow: Bool = true
 ) -> AlanManagedUserDiagnosis {
@@ -1579,6 +1584,7 @@ private func helperDiagnosis(
         accountExists: readiness != .accountMissing,
         isAdmin: isAdmin,
         homeDirectoryExists: homeDirectoryExists,
+        homeDirectoryMatches: homeDirectoryMatches,
         shellMatches: shellMatches,
         hiddenFromLoginWindow: hiddenFromLoginWindow,
         terminalProfileID: terminalProfileID,

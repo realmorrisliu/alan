@@ -754,7 +754,7 @@ fn managed_account_diagnosis(
         account_exists: ready,
         is_admin: false,
         home_directory_exists: ready,
-        home_directory_matches: Some(true),
+        home_directory_matches: true,
         shell_matches: ready,
         hidden_from_login_window: ready,
         terminal_profile_id: ready.then(|| "alan_smoke".to_string()),

@@ -120,6 +120,10 @@ Terminal Profile DTOs and fails closed when the facade is unavailable. The
 shallow reducer command coordinator and optional action metadata fallbacks are
 removed without increasing the operation-owner allowlist.
 
+The managed-account diagnosis boundary carries requested-home existence and
+configured-home equality as separate facts from the privileged helper through
+the Swift adapter, so shell-core can plan repair without re-reading host state.
+
 Alternative considered: keep a permanent warning allowlist. Rejected because
 the 15 warnings describe known migration state, not supported architecture.
 

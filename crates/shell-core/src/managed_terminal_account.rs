@@ -265,9 +265,8 @@ pub struct ManagedTerminalAccountDiagnosis {
     pub is_admin: bool,
     /// Whether the requested home directory exists.
     pub home_directory_exists: bool,
-    /// Whether the account's configured home directory matches the request, when known.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub home_directory_matches: Option<bool>,
+    /// Whether the account's configured home directory matches the request.
+    pub home_directory_matches: bool,
     /// Whether the account shell matches the request.
     pub shell_matches: bool,
     /// Whether the account is hidden from login-window lists.
@@ -789,7 +788,7 @@ fn diagnosis_from_state(
         account_exists,
         is_admin,
         home_directory_exists: state.home_directory_exists,
-        home_directory_matches: Some(home_directory_matches),
+        home_directory_matches,
         shell_matches,
         hidden_from_login_window,
         terminal_profile_id,
@@ -854,7 +853,7 @@ fn helper_backed_steps(
                 true,
             ));
         }
-        if !diagnosis.home_directory_exists || diagnosis.home_directory_matches == Some(false) {
+        if !diagnosis.home_directory_exists || !diagnosis.home_directory_matches {
             steps.push(managed_account_step(
                 ManagedTerminalAccountPlanStepKind::RepairHomeDirectory,
                 "Repair terminal account home directory",

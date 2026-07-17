@@ -663,6 +663,16 @@ require_pattern \
     "managed terminal account planning must have a shell-core FFI operation"
 
 require_pattern \
+    "clients/apple/alan-macos/Services/Shell/AlanPrivilegedHelperManagedUserService.swift" \
+    "homeDirectoryMatches: account\\?\\.homeDirectory == request\\.homeDirectory" \
+    "managed terminal account diagnosis must preserve configured-home equality"
+
+require_pattern \
+    "clients/apple/alan-macos/Services/Shell/ShellCoreFFIManagedTerminalAccountAdapter.swift" \
+    "homeDirectoryMatches = diagnosis\\.homeDirectoryMatches" \
+    "managed terminal account FFI planning must receive configured-home equality"
+
+require_pattern \
     "crates/shell-core/src/managed_terminal_account.rs" \
     "pub struct ManagedTerminalAccountPlanner" \
     "portable managed terminal account planning must remain owned by shell-core"

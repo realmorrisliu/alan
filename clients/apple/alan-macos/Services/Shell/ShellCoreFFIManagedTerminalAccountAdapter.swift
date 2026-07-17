@@ -157,6 +157,7 @@ private struct ShellCoreManagedAccountDiagnosisPayload: Encodable {
     let accountExists: Bool
     let isAdmin: Bool
     let homeDirectoryExists: Bool
+    let homeDirectoryMatches: Bool
     let shellMatches: Bool
     let hiddenFromLoginWindow: Bool
     let terminalProfileID: String?
@@ -168,6 +169,7 @@ private struct ShellCoreManagedAccountDiagnosisPayload: Encodable {
         case accountExists = "account_exists"
         case isAdmin = "is_admin"
         case homeDirectoryExists = "home_directory_exists"
+        case homeDirectoryMatches = "home_directory_matches"
         case shellMatches = "shell_matches"
         case hiddenFromLoginWindow = "hidden_from_login_window"
         case terminalProfileID = "terminal_profile_id"
@@ -180,6 +182,7 @@ private struct ShellCoreManagedAccountDiagnosisPayload: Encodable {
         accountExists = diagnosis.accountExists
         isAdmin = diagnosis.isAdmin
         homeDirectoryExists = diagnosis.homeDirectoryExists
+        homeDirectoryMatches = diagnosis.homeDirectoryMatches
         shellMatches = diagnosis.shellMatches
         hiddenFromLoginWindow = diagnosis.hiddenFromLoginWindow
         terminalProfileID = diagnosis.terminalProfileID

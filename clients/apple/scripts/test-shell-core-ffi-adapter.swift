@@ -1306,6 +1306,7 @@ private func testProductionAdapterManagedTerminalAccountPlanning() throws {
         accountExists: false,
         isAdmin: false,
         homeDirectoryExists: false,
+        homeDirectoryMatches: false,
         shellMatches: false,
         hiddenFromLoginWindow: false,
         terminalProfileID: nil,
@@ -1333,6 +1334,34 @@ private func testProductionAdapterManagedTerminalAccountPlanning() throws {
         "managed-account adapter must preserve helper and local plan-step ownership"
     )
 
+    let mismatchedHomeDiagnosis = AlanManagedUserDiagnosis(
+        request: request,
+        ownershipState: .alanManaged,
+        readinessState: .repairable,
+        accountExists: true,
+        isAdmin: false,
+        homeDirectoryExists: true,
+        homeDirectoryMatches: false,
+        shellMatches: true,
+        hiddenFromLoginWindow: true,
+        terminalProfileID: request.terminalProfileID,
+        ptySmokeVerified: true,
+        diagnostic: nil
+    )
+    let homeRepair = try managedAccountAdapter.managedTerminalAccountPlan(
+        request: request,
+        diagnosis: mismatchedHomeDiagnosis,
+        terminalProfiles: nil
+    )
+    try expect(
+        homeRepair.status == .repair
+            && homeRepair.steps.map(\.kind) == [
+                .helperStep(.repairHomeDirectory),
+                .helperStep(.verifyAccount),
+            ],
+        "managed-account adapter must propagate configured-home mismatches into repair steps"
+    )
+
     let readyDiagnosis = AlanManagedUserDiagnosis(
         request: request,
         ownershipState: .alanManaged,
@@ -1340,6 +1369,7 @@ private func testProductionAdapterManagedTerminalAccountPlanning() throws {
         accountExists: true,
         isAdmin: false,
         homeDirectoryExists: true,
+        homeDirectoryMatches: true,
         shellMatches: true,
         hiddenFromLoginWindow: true,
         terminalProfileID: request.terminalProfileID,
