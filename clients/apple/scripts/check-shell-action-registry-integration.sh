@@ -8,6 +8,11 @@ SURFACE_FILES=(
   "$REPO_ROOT/clients/apple/alan-macos/App/AlanMacShellCommands.swift"
   "$REPO_ROOT/clients/apple/alan-macos/Views/Shell/ShellWorkspaceView.swift"
   "$REPO_ROOT/clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift"
+  "$REPO_ROOT/clients/apple/alan-macos/Views/Shell/ShellSidebarTabDrop.swift"
+  "$REPO_ROOT/clients/apple/alan-macos/Views/Shell/ShellSidebarSpaceSlider.swift"
+  "$REPO_ROOT/clients/apple/alan-macos/Views/Shell/ShellSidebarTabRow.swift"
+  "$REPO_ROOT/clients/apple/alan-macos/Views/Shell/ShellSidebarActivityProgressRail.swift"
+  "$REPO_ROOT/clients/apple/alan-macos/Views/Shell/ShellPaneTopologyIndicator.swift"
 )
 
 if rg -n \

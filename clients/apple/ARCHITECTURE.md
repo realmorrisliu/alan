@@ -24,7 +24,12 @@ Xcode target.
 | `Support/ShellWindowPlacement.swift` | 205 | AppKit, SwiftUI; macOS gates | Hidden-titlebar placement, min-size, traffic-light metrics, and primary window activation | `Support/` |
 | `Support/ShellVoiceCommandController.swift` | 63 | AppKit, SwiftUI; macOS gates | Narrow speech-recognizer bridge for command palette voice actions | `Support/` |
 | `MacShellRootView.swift` | 63 | SwiftUI; macOS gates | Thin primary shell composition root | `Views/Shell/` |
-| `Views/Shell/ShellSidebarView.swift` | 538 | SwiftUI; macOS gates | Primary shell sidebar, tab rows, space dock, and sidebar state | `Views/Shell/` |
+| `Views/Shell/ShellSidebarView.swift` | 882 | SwiftUI, UniformTypeIdentifiers; macOS gates | Sidebar composition, Space paging, activity freshness, and tab-list orchestration | `Views/Shell/` |
+| `Views/Shell/ShellSidebarTabDrop.swift` | 158 | SwiftUI, UniformTypeIdentifiers; macOS gates | Tab-list offsets, drop targeting, and insertion feedback | `Views/Shell/` |
+| `Views/Shell/ShellSidebarSpaceSlider.swift` | 739 | SwiftUI; macOS gates | Space selection, scrub and wheel input, profile menus, and attention presentation | `Views/Shell/` |
+| `Views/Shell/ShellSidebarTabRow.swift` | 447 | SwiftUI; macOS gates | Tab row chrome, labels, activity details, close controls, and empty actions | `Views/Shell/` |
+| `Views/Shell/ShellSidebarActivityProgressRail.swift` | 45 | SwiftUI; macOS gates | Compact sidebar activity progress presentation | `Views/Shell/` |
+| `Views/Shell/ShellPaneTopologyIndicator.swift` | 285 | SwiftUI; macOS gates | Pane topology rendering and direct split-pane focus actions | `Views/Shell/` |
 | `Views/Shell/ShellWorkspaceView.swift` | 46 | SwiftUI; macOS gates | Shell workspace composition and space keyboard shortcuts | `Views/Shell/` |
 | `Views/Shell/ShellCommandTabView.swift` | 621 | SwiftUI; macOS gates | Command palette search, routing, attention, and action presentation | `Views/Shell/` |
 | `TerminalPaneView.swift` | 3008 | Foundation, SwiftUI; macOS gates | Split-tree, pane leaf rendering, title bars, and restored transcript presentation | `Views/Shell/Terminal/` |
@@ -308,11 +313,12 @@ device support was not required for this validation.
 ## Remaining Architecture Debt
 
 `check-architecture-maintainability.sh` currently completes in report mode.
-8 known large-file / bridge-boundary warnings remain after the first seven Apple
+7 known large-file / bridge-boundary warnings remain after the first eight Apple
 ownership slices removed the `ShellHostController.swift` bridge warning and
 split control projection, observation commands, root-controller
 responsibilities, shell presentation models, settings models, snapshot DTO
-families, and shell/platform value families into focused owners. These warnings
+families, shell/platform value families, and sidebar presentation into focused
+owners. These warnings
 are telemetry for the cleanup, not the cleanup
 definition. The real debt is any Swift production source that still carries a
 Rust-owned shell-domain implementation, fixture, or fallback after shell-core
@@ -383,6 +389,12 @@ bucket. Shell, Terminal Profile, managed-account, activity, context, privileged-
 helper, planning, and platform-effect families now live beside their durable
 model or service owners. The helper fake is script-only, and the unused local
 command runner is deleted; the current inventory is 8 large-file warnings.
+
+The eighth ownership slice reduced `ShellSidebarView.swift` to sidebar
+composition, Space paging, activity freshness, and tab-list orchestration.
+Tab drop handling, the Space slider, tab-row chrome, activity progress, and
+pane-topology presentation now have focused owners under `Views/Shell/`; the
+current inventory is 7 large-file warnings.
 
 Rust-owned Swift legacy cleanup targets at this baseline:
 
