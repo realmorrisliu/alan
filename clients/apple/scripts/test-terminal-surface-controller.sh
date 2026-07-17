@@ -75,7 +75,10 @@ CLANG_MODULE_CACHE_PATH="$MODULE_CACHE_DIR" swiftc \
     "$REPO_ROOT/clients/apple/alan-macos/ShellControlPlane.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Support/AlanCommandLineToolInstaller.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Support/AlanMacUpdatePolicy.swift" \
-    "$REPO_ROOT/clients/apple/alan-macos/TerminalHostRuntime.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Models/Shell/TerminalRuntimeSnapshots.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Services/Terminal/TerminalBootResolution.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Services/Terminal/TerminalRenderCoordinator.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Services/Terminal/TerminalRuntimePublicationPolicy.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Services/Terminal/TerminalNativeScrollViewAdapter.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/TerminalRuntimeService.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/TerminalSurfaceController.swift" \

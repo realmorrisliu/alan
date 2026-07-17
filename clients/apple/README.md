@@ -27,7 +27,7 @@ recorded in [`ARCHITECTURE.md`](./ARCHITECTURE.md).
   pane-tree, terminal-leaf, pane-title, terminal-overlay, and bounded-content
   SwiftUI components
 - `Models/Shell/`: focused shell, Terminal Profile, managed-account, activity,
-  context, and pane/content/tree/tab/Space/workspace snapshot families; runtime support,
+  context, terminal runtime, and pane/content/tree/tab/Space/workspace snapshot families; runtime support,
   focused presentation models, and settings navigation, Terminal Profile, managed-user,
   catalog, local-runtime, and diagnostics domain models
 - `Controllers/`: target owner for observable app and shell controllers; current
@@ -37,8 +37,8 @@ recorded in [`ARCHITECTURE.md`](./ARCHITECTURE.md).
   file polling, event store, diagnostics, and command-execution services that
   keep runtime metadata and IO out of the observable host
 - `Services/Terminal/`: terminal host runtime reporting, window observation,
-  Ghostty platform adapters, agent-activity projection, and terminal runtime
-  service collaborators
+  Ghostty platform adapters, boot resolution, render coordination, publication
+  policy, agent-activity projection, and terminal runtime service collaborators
 - `TerminalPaneView.swift` / `TerminalHostView.swift`: current terminal pane and host surfaces;
   settings, bounded content, pane-tree, terminal-leaf, title-bar, and overlay
   presentation live under `Views/Shell/`
