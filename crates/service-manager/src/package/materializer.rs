@@ -12,9 +12,9 @@ use anyhow::{Context, Result, bail, ensure};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use super::fs_safety::{ensure_owned_directory, ensure_owned_file, sync_tree};
 use super::{
-    MATERIALIZER_VERSION, PackageExport, PackageSnapshot, PackageSnapshotEntry,
-    ensure_owned_directory, ensure_owned_file, revision_root, sync_tree, validate_package_id,
+    MATERIALIZER_VERSION, PackageExport, PackageSnapshot, PackageSnapshotEntry, validate_package_id,
 };
 
 const MAX_SOURCE_FILES: usize = 4_096;
@@ -622,6 +622,10 @@ fn list_relative_files(root: &Path) -> Result<Vec<String>> {
     }
     files.sort();
     Ok(files)
+}
+
+fn revision_root(root: &Path, package_id: &str, revision: &str) -> PathBuf {
+    root.join("revisions").join(package_id).join(revision)
 }
 
 fn copy_tree(source: &Path, target: &Path) -> Result<()> {
