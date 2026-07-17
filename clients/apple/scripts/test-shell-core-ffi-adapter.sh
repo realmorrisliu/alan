@@ -13,8 +13,8 @@ mkdir -p "$MODULE_CACHE_DIR"
 cargo build -p alan-shell-core-ffi
 
 clang -c \
-    "$REPO_ROOT/clients/apple/alan-macos/AlanDarwinPtySpawn.c" \
-    -o "$BUILD_DIR/AlanDarwinPtySpawn.o"
+    "$REPO_ROOT/clients/apple/alan-macos/AlanPrivilegedHelperPtySpawn.c" \
+    -o "$BUILD_DIR/AlanPrivilegedHelperPtySpawn.o"
 
 CLANG_MODULE_CACHE_PATH="$MODULE_CACHE_DIR" swiftc \
     -parse-as-library \
@@ -48,6 +48,14 @@ CLANG_MODULE_CACHE_PATH="$MODULE_CACHE_DIR" swiftc \
     "$REPO_ROOT/clients/apple/alan-macos/Models/Shell/ManagedTerminalUserSettings.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Models/Shell/ShellSettingsHostSummaries.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/AlanPrivilegedHelperXPC.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/AlanPrivilegedHelperXPCRequirementChecker.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/AlanPrivilegedHelperXPCClient.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/AlanPrivilegedHelperXPCListener.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/AlanPrivilegedHelperXPCService.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/AlanPrivilegedHelperManagedUserWire.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/AlanPrivilegedHelperManagedUserService.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/AlanPrivilegedHelperPTYSessionStore.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/AlanPrivilegedHelperPTYSupport.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/AlanPrivilegedHelperService.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/ShellActionCoordinator.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/ShellCoreFFIAdapter.swift" \
@@ -64,7 +72,7 @@ CLANG_MODULE_CACHE_PATH="$MODULE_CACHE_DIR" swiftc \
     "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/ShellCoreFFIManagedTerminalAccountAdapter.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/TerminalProfileStore.swift" \
     "$REPO_ROOT/clients/apple/scripts/test-shell-core-ffi-adapter.swift" \
-    "$BUILD_DIR/AlanDarwinPtySpawn.o" \
+    "$BUILD_DIR/AlanPrivilegedHelperPtySpawn.o" \
     -L "$REPO_ROOT/target/debug" \
     -lalan_shell_core_ffi \
     -o "$TEST_BINARY"

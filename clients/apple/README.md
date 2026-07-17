@@ -34,6 +34,7 @@ recorded in [`ARCHITECTURE.md`](./ARCHITECTURE.md).
   migration debt is tracked in `ARCHITECTURE.md`
 - `Services/Shell/`: shell projection, persistence, control-plane transport,
   managed-account validation/planning/effects, privileged-helper contracts,
+  XPC wire/client/listener adapters, managed-user account and PTY helper owners,
   file polling, event store, diagnostics, and command-execution services that
   keep runtime metadata and IO out of the observable host
 - `Services/Terminal/`: terminal host runtime reporting, window observation,

@@ -1,4 +1,5 @@
 #include <errno.h>
+#include <grp.h>
 #include <sys/ioctl.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -6,18 +7,22 @@
 
 #include "AlanPtySpawnSupport.h"
 
-int alan_darwin_pty_spawn(
+int alan_darwin_pty_spawn_as_user(
     const char *executable_path,
     char *const argv[],
     char *const envp[],
     const char *working_directory,
+    const char *account_name,
+    uid_t uid,
+    gid_t gid,
     unsigned short rows,
     unsigned short columns,
     int *master_fd_out,
     pid_t *pid_out
 ) {
     if (executable_path == NULL || argv == NULL || envp == NULL ||
-        working_directory == NULL || master_fd_out == NULL || pid_out == NULL) {
+        working_directory == NULL || account_name == NULL ||
+        master_fd_out == NULL || pid_out == NULL) {
         return EINVAL;
     }
 
@@ -49,6 +54,12 @@ int alan_darwin_pty_spawn(
             _exit(126);
         }
         if (ioctl(slave_fd, TIOCSCTTY, 0) < 0) {
+            _exit(126);
+        }
+        if (initgroups(account_name, gid) != 0) {
+            _exit(126);
+        }
+        if (setgid(gid) != 0 || setuid(uid) != 0) {
             _exit(126);
         }
         if (chdir(working_directory) != 0) {

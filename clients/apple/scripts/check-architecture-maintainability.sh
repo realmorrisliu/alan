@@ -47,6 +47,48 @@ fail() {
     failures=$((failures + 1))
 }
 
+xcode_source_phase_contains() {
+    local phase_id="$1"
+    local source_name="$2"
+
+    awk -v phase_id="$phase_id" -v source_name="$source_name" '
+        index($0, phase_id " /* Sources */ = {") {
+            in_phase = 1
+        }
+        in_phase && index($0, source_name " in Sources") {
+            found = 1
+        }
+        in_phase && /runOnlyForDeploymentPostprocessing = 0;/ {
+            exit found ? 0 : 1
+        }
+        END {
+            if (!in_phase || !found) {
+                exit 1
+            }
+        }
+    ' "$PROJECT_FILE"
+}
+
+require_xcode_source_phase() {
+    local phase_id="$1"
+    local source_name="$2"
+    local owner="$3"
+
+    if ! xcode_source_phase_contains "$phase_id" "$source_name"; then
+        fail "$owner must compile $source_name"
+    fi
+}
+
+reject_xcode_source_phase() {
+    local phase_id="$1"
+    local source_name="$2"
+    local owner="$3"
+
+    if xcode_source_phase_contains "$phase_id" "$source_name"; then
+        fail "$owner must not compile $source_name"
+    fi
+}
+
 validate_warning_baseline() {
     local duplicate
 
@@ -246,6 +288,42 @@ fi
 if ! grep -Fq "ShellStateRuntimeSupport.swift in Sources" "$PROJECT_FILE"; then
     fail "alan-macos target must keep the narrow runtime shell-state support owner"
 fi
+
+app_source_phase="000000000000000000000202"
+helper_source_phase="A11000000000000000000202"
+
+require_xcode_source_phase \
+    "$app_source_phase" \
+    "Services/Shell/AlanPrivilegedHelperXPC.swift" \
+    "Alan macOS app target"
+require_xcode_source_phase \
+    "$helper_source_phase" \
+    "Services/Shell/AlanPrivilegedHelperXPC.swift" \
+    "privileged-helper target"
+
+for app_only_source in \
+    "AlanDarwinPtySpawn.c" \
+    "Services/Shell/AlanPrivilegedHelperAppClient.swift" \
+    "Services/Shell/AlanPrivilegedHelperService.swift" \
+    "Services/Shell/AlanPrivilegedHelperXPCClient.swift"
+do
+    require_xcode_source_phase "$app_source_phase" "$app_only_source" "Alan macOS app target"
+    reject_xcode_source_phase "$helper_source_phase" "$app_only_source" "privileged-helper target"
+done
+
+for helper_only_source in \
+    "AlanPrivilegedHelperPtySpawn.c" \
+    "Services/Shell/AlanPrivilegedHelperXPCRequirementChecker.swift" \
+    "Services/Shell/AlanPrivilegedHelperXPCListener.swift" \
+    "Services/Shell/AlanPrivilegedHelperXPCService.swift" \
+    "Services/Shell/AlanPrivilegedHelperManagedUserWire.swift" \
+    "Services/Shell/AlanPrivilegedHelperManagedUserService.swift" \
+    "Services/Shell/AlanPrivilegedHelperPTYSessionStore.swift" \
+    "Services/Shell/AlanPrivilegedHelperPTYSupport.swift"
+do
+    reject_xcode_source_phase "$app_source_phase" "$helper_only_source" "Alan macOS app target"
+    require_xcode_source_phase "$helper_source_phase" "$helper_only_source" "privileged-helper target"
+done
 
 require_rust_reducer_adapter() {
     local file="$1"

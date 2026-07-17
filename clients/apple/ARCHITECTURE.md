@@ -85,6 +85,15 @@ Xcode target.
 | `Models/Shell/ShellContextSnapshot.swift` | 125 | Foundation | Process binding and shell runtime-context metadata DTOs | `Models/Shell/` |
 | `Services/Shell/ManagedTerminalAccountValidation.swift` | 11 | Foundation | Fail-closed managed-account request validation through shell-core FFI | `Services/Shell/` |
 | `Services/Shell/AlanPrivilegedHelperContracts.swift` | 425 | Foundation, Security | Signing identity plus typed helper status, diagnosis, plan, PTY, diagnostic, and client contracts | `Services/Shell/` |
+| `Services/Shell/AlanPrivilegedHelperXPC.swift` | 356 | Foundation, Security | Channel identity, XPC operation/request/response values, sanitization, codec, and protocol | `Services/Shell/` |
+| `Services/Shell/AlanPrivilegedHelperXPCRequirementChecker.swift` | 37 | Darwin, Foundation, Security | Code-signing requirement validation for privileged-helper clients | `Services/Shell/` |
+| `Services/Shell/AlanPrivilegedHelperXPCClient.swift` | 112 | Foundation | Privileged XPC connection lifecycle, typed request dispatch, timeout policy, and response projection | `Services/Shell/` |
+| `Services/Shell/AlanPrivilegedHelperXPCListener.swift` | 49 | Foundation | Authenticated XPC connection acceptance and connection-scoped session cleanup | `Services/Shell/` |
+| `Services/Shell/AlanPrivilegedHelperXPCService.swift` | 248 | Foundation | Channel validation, typed payload dispatch, and helper response construction | `Services/Shell/` |
+| `Services/Shell/AlanPrivilegedHelperManagedUserWire.swift` | 150 | Foundation | Module-internal managed-user account, plan, diagnosis, PTY, and diagnostic wire values | `Services/Shell/` |
+| `Services/Shell/AlanPrivilegedHelperManagedUserService.swift` | 641 | Darwin, Foundation | Managed-user diagnosis, repair, ownership marking, and destructive-operation revalidation | `Services/Shell/` |
+| `Services/Shell/AlanPrivilegedHelperPTYSessionStore.swift` | 441 | Darwin, Foundation | Connection-scoped managed-user PTY child ownership, nonblocking IO, control, exit, and cleanup | `Services/Shell/` |
+| `Services/Shell/AlanPrivilegedHelperPTYSupport.swift` | 98 | Darwin, Foundation | Darwin managed-user PTY spawn bridge plus environment, error, C-string, and wait-status support | `Services/Shell/` |
 | `Services/Shell/ManagedTerminalAccountPlanning.swift` | 413 | Foundation | Transitional macOS managed-account plan and rollback projection pending the 4.4 adapter audit | `Services/Shell/` |
 | `Services/Shell/ManagedTerminalAccountEffects.swift` | 226 | Foundation | Approved helper-plan execution and local Terminal Profile effects | `Services/Shell/` |
 | `Services/Terminal/TerminalAgentActivityAdapter.swift` | 177 | Foundation | Sanitized agent-event to terminal-activity projection | `Services/Terminal/` |
@@ -349,8 +358,8 @@ device support was not required for this validation.
 
 ## Remaining Architecture Debt
 
-`check-architecture-maintainability.sh` currently completes in report mode.
-1 known large-file / bridge-boundary warning remains after the first sixteen Apple
+`check-architecture-maintainability.sh` currently completes in report and strict modes.
+0 known large-file / bridge-boundary warnings remain after the first seventeen Apple
 ownership slices removed the `ShellHostController.swift` bridge warning and
 split control projection, observation commands, root-controller
 responsibilities, shell presentation models, settings models, snapshot DTO
@@ -361,8 +370,10 @@ responsibilities into focused owners, split terminal host lifecycle, pointer,
 keyboard, text-input, and tracing responsibilities, separated the window
 runtime service from PTY, bootstrap, surface, transcript, and test-double owners,
 and split terminal-surface state, scrollback, semantic, input, search, selection,
-metadata, and coordination owners. This warning is telemetry for the cleanup, not the cleanup
-definition. The real debt is any Swift production source that still carries a
+metadata, and coordination owners, then separated privileged-helper XPC wire,
+client/listener, dispatch, managed-user account, and managed-user PTY ownership.
+The warning ledger is now empty and report mode is equivalent to strict mode.
+The remaining 4.4 debt is any Swift production source that still carries a
 Rust-owned shell-domain implementation, fixture, or fallback after shell-core
 has become authoritative.
 
@@ -492,6 +503,18 @@ search, selection and clipboard behavior, surface state, metadata projection,
 and lifecycle coordination now live in focused `Services/Terminal/` owners. The
 coordinator is 640 lines, no other replacement exceeds 240 lines, and the
 warning count falls from 2 to 1.
+
+The seventeenth ownership slice reduced `AlanPrivilegedHelperXPC.swift` to
+channel identity and the XPC wire protocol. Requirement validation, client and
+listener lifecycle, request dispatch, managed-user wire values and account
+operations, PTY session ownership, and Darwin spawn support now live in focused
+`Services/Shell/` owners. No replacement file exceeds 641 lines. Only the XPC
+wire protocol is shared across production targets: the client compiles into the
+app, while requirement checking, listener/service dispatch, managed-user
+operations, and PTY ownership compile only into the helper. The native PTY
+boundary follows the same split: `AlanDarwinPtySpawn.c` is app-only,
+`AlanPrivilegedHelperPtySpawn.c` is helper-only, and their shared child-signal
+setup is an inline C header. The warning count falls from 1 to 0.
 
 Rust-owned Swift legacy cleanup targets at this baseline:
 

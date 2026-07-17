@@ -48,13 +48,13 @@
   changing Apple source.
 - [x] 4.2 Split large shell root/controller owners into named orchestration,
   presentation, persistence, and command collaborators.
-- [ ] 4.3 Split terminal host/runtime owners along attachment, input, surface,
+- [x] 4.3 Split terminal host/runtime owners along attachment, input, surface,
   overlay, and metadata responsibilities.
 - [ ] 4.4 Delete shallow pass-through bridges and keep shell-core FFI operations
   in their documented narrow adapter owners.
-- [ ] 4.5 Lower the Apple warning ledger and executable ceiling in every focused
+- [x] 4.5 Lower the Apple warning ledger and executable ceiling in every focused
   PR, with fresh Alan Dev rendered verification for touched surfaces.
-- [ ] 4.6 Remove the non-zero ledger and make report and strict modes both pass
+- [x] 4.6 Remove the non-zero ledger and make report and strict modes both pass
   with zero warnings.
 
 ## 5. Final Verification And Archive

@@ -148,8 +148,8 @@ is_allowed_daemon_match() {
         clients/apple/alan-macos/Services/Shell/AlanPrivilegedHelperService.swift)
             return 0 # Apple SMAppService.daemon
             ;;
-        clients/apple/alan-macos/Services/Shell/AlanPrivilegedHelperXPC.swift)
-            return 0 # Unix account name
+        clients/apple/alan-macos/Services/Shell/AlanPrivilegedHelperManagedUserService.swift)
+            return 0 # Reserved Unix account name rejected by Managed User validation
             ;;
         clients/apple/alan-macos/Services/Shell/AlanPrivilegedHelperContracts.swift)
             return 0 # Apple SMAppService.daemon diagnostic label
