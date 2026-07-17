@@ -39,7 +39,11 @@ Xcode target.
 | `Models/Shell/ShellValueTypes.swift` | 2178 | Foundation | Shell command enums, launch targets, process bindings, Terminal Profile DTOs, and managed-account platform/effect shapes | `Models/Shell/` plus future shell service collaborators |
 | `Models/Shell/ShellSnapshots.swift` | 2093 | CoreGraphics, Foundation | Shell panes, tabs, spaces, split tree, state snapshots, snapshot query helpers, and portable projection DTOs | `Models/Shell/` |
 | `Models/Shell/ShellStateRuntimeSupport.swift` | 348 | Foundation | Narrow app-target shell bootstrap defaults, mutation result/error types, Terminal Profile inheritance queries, platform activity acknowledgement/projection, and inactive temporary-tab query support | `Models/Shell/` |
-| `ShellModel.swift` | 1227 | Foundation | Shell title, label, sidebar, and status presentation helpers | `Models/Shell/` or `Support/ShellPresentation/` |
+| `Models/Shell/ShellTitlePresentation.swift` | 371 | Foundation | Shell titles, visible labels, terminal status, and pane title-bar detail projection | `Models/Shell/` |
+| `Models/Shell/ShellSidebarTabPresentation.swift` | 342 | Foundation | Sidebar tab projection, temporary-tab controls, and context-menu presentation | `Models/Shell/` |
+| `Models/Shell/ShellSidebarTabDragDrop.swift` | 57 | Foundation | Sidebar tab drag payloads, insertion targets, and drop-index projection | `Models/Shell/` |
+| `Models/Shell/ShellSidebarPaneTopology.swift` | 265 | Foundation | Visible pane summaries and sidebar split-topology classification | `Models/Shell/` |
+| `Models/Shell/ShellActivityNotificationPresentation.swift` | 194 | Foundation | Activity attention, notification identity, visibility, and route projection | `Models/Shell/` |
 | `ShellHostController.swift` | 383 | Foundation, Combine; macOS gates | Observable shell state, dependency assembly, startup, shutdown, and root lifecycle | Root controller with focused `Controllers/Shell/` responsibility extensions |
 | `Controllers/Shell/ShellHostControlCommandHandling.swift` | 1199 | Foundation; macOS gates | Shell control-plane command dispatch and pane mutation routing | `Controllers/Shell/` |
 | `Controllers/Shell/ShellHostControlProjection.swift` | 268 | Foundation; macOS gates | Control response, list, routing-candidate, and terminal-delivery projection | `Controllers/Shell/` |
@@ -283,10 +287,11 @@ device support was not required for this validation.
 ## Remaining Architecture Debt
 
 `check-architecture-maintainability.sh` currently completes in report mode.
-12 known large-file / bridge-boundary warnings remain after the first three Apple
+11 known large-file / bridge-boundary warnings remain after the first four Apple
 ownership slices removed the `ShellHostController.swift` bridge warning and
-split control projection, observation commands, and root-controller
-responsibilities into focused owners; all 12 are now large-file warnings. These warnings
+split control projection, observation commands, root-controller
+responsibilities, and shell presentation models into focused owners; all 11 are
+now large-file warnings. These warnings
 are telemetry for the cleanup, not the cleanup
 definition. The real debt is any Swift production source that still carries a
 Rust-owned shell-domain implementation, fixture, or fallback after shell-core
@@ -335,6 +340,11 @@ state, dependency assembly, startup, shutdown, and root lifecycle. Selection,
 space/tab lifecycle, actions, runtime projection, persistence, close/pane
 lifecycle, and automation adaptation now live in focused controller extensions;
 the root is 383 lines and the current inventory is 12 large-file warnings.
+
+The fourth ownership slice removed the root `ShellModel.swift` bucket. Title
+and status text, sidebar tab projection, tab drag/drop, pane topology, and
+activity notifications now have separate presentation-model owners under
+`Models/Shell/`; the current inventory is 11 large-file warnings.
 
 Rust-owned Swift legacy cleanup targets at this baseline:
 

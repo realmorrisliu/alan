@@ -1949,7 +1949,7 @@ require_pattern \
     "two-pane sidebar split indicators must render pane-specific actions"
 
 require_pattern \
-    "clients/apple/alan-macos/ShellModel.swift" \
+    "clients/apple/alan-macos/Models/Shell/ShellSidebarPaneTopology.swift" \
     "enum ShellSidebarPaneTopologyKind" \
     "sidebar split topology classification must live in the testable shell model layer"
 
