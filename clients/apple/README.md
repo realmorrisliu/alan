@@ -24,8 +24,9 @@ recorded in [`ARCHITECTURE.md`](./ARCHITECTURE.md).
 - `MacShellRootView.swift`: thin primary macOS shell composition root
 - `Views/Shell/`: shell sidebar, workspace composition, command palette, and
   other primary macOS shell SwiftUI components
-- `Models/Shell/`: shell value types, snapshots, runtime support, and focused
-  title, sidebar, topology, drag/drop, and activity presentation models
+- `Models/Shell/`: shell value types, snapshots, runtime support, focused
+  presentation models, and settings navigation, Terminal Profile, managed-user,
+  catalog, local-runtime, and diagnostics domain models
 - `Controllers/`: target owner for observable app and shell controllers; current
   migration debt is tracked in `ARCHITECTURE.md`
 - `Services/Shell/`: shell projection, persistence, control-plane transport,

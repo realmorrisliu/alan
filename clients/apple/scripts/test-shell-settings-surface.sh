@@ -13,7 +13,14 @@ mkdir -p "$MODULE_CACHE_DIR"
 cargo build -p alan-shell-core-ffi
 
 TERMINAL_PANE_VIEW="$REPO_ROOT/clients/apple/alan-macos/TerminalPaneView.swift"
-SHELL_SETTINGS_SURFACE_MODEL="$REPO_ROOT/clients/apple/alan-macos/Models/Shell/ShellSettingsSurfaceModel.swift"
+SHELL_SETTINGS_MODEL_FILES=(
+    "$REPO_ROOT/clients/apple/alan-macos/Models/Shell/ShellSettingsSurfaceModel.swift"
+    "$REPO_ROOT/clients/apple/alan-macos/Models/Shell/TerminalSettingsSummaries.swift"
+    "$REPO_ROOT/clients/apple/alan-macos/Models/Shell/ManagedTerminalAccountSettingsSummary.swift"
+    "$REPO_ROOT/clients/apple/alan-macos/Models/Shell/ManagedTerminalAccountCatalog.swift"
+    "$REPO_ROOT/clients/apple/alan-macos/Models/Shell/ManagedTerminalUserSettings.swift"
+    "$REPO_ROOT/clients/apple/alan-macos/Models/Shell/ShellSettingsHostSummaries.swift"
+)
 if grep -q 'TextField("Mac user"' "$TERMINAL_PANE_VIEW"; then
     echo "Managed User creation form must not expose Mac user as a primary input." >&2
     exit 1
@@ -42,7 +49,9 @@ if ! grep -Fq '10 * 60 * 1_000_000_000' "$TERMINAL_PANE_VIEW"; then
     echo "Managed User apply timeout must be a documented 10 minute administrator approval budget." >&2
     exit 1
 fi
-if grep -Eq 'ManagedTerminalAccountLocalAccountNameDiscoverer|localAccountNames|dscl \. -list /Users' "$SHELL_SETTINGS_SURFACE_MODEL"; then
+if grep -Eq 'ManagedTerminalAccountLocalAccountNameDiscoverer|localAccountNames|dscl \. -list /Users' \
+    "${SHELL_SETTINGS_MODEL_FILES[@]}"
+then
     echo "Managed Users must be sourced from Alan catalog/profile state, not arbitrary local user scans." >&2
     exit 1
 fi
@@ -73,6 +82,11 @@ CLANG_MODULE_CACHE_PATH="$MODULE_CACHE_DIR" swiftc \
     "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/ShellCoreFFIManagedTerminalAccountAdapter.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/TerminalProfileStore.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Models/Shell/ShellSettingsSurfaceModel.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Models/Shell/TerminalSettingsSummaries.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Models/Shell/ManagedTerminalAccountSettingsSummary.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Models/Shell/ManagedTerminalAccountCatalog.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Models/Shell/ManagedTerminalUserSettings.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Models/Shell/ShellSettingsHostSummaries.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/AlanPrivilegedHelperXPC.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/AlanPrivilegedHelperService.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/ShellLocalFolderOpener.swift" \
