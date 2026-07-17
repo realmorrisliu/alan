@@ -583,6 +583,18 @@ control_terminal_send_text_payload() {
 }"
 }
 
+control_terminal_send_return() {
+    local pane_slot_id="$1"
+    local request_id
+    request_id=$(next_request_id terminal-return)
+    send_control_json "$request_id" "{
+  \"request_id\": \"$request_id\",
+  \"command\": \"terminal.send_key\",
+  \"pane_slot_id\": \"$pane_slot_id\",
+  \"key\": \"return\"
+}"
+}
+
 control_tab_open_cwd() {
     local cwd="$1"
     local request_id
@@ -1042,8 +1054,8 @@ run_restart_restore_step() {
     state_result=$(wait_for_focused_pane \
         "$restored_pane_id" \
         "restart restore pane before return")
-    run_ui_step return \
-        || fail "restart restore return key delivery failed"
+    terminal_result=$(control_terminal_send_return "$restored_pane_id")
+    require_control_applied "$terminal_result" "restart restore terminal.send_key after relaunch"
 
     wait_for_file "$pwd_file" "restart restore cwd proof file"
     cwd_result=$(cat "$pwd_file")
