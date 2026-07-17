@@ -17,7 +17,11 @@ CLANG_MODULE_CACHE_PATH="$MODULE_CACHE_DIR" swiftc \
     "$REPO_ROOT/clients/apple/alan-macos/Models/Shell/ShellValueTypes.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Models/Shell/ShellSnapshots.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Models/Shell/ShellStateRuntimeSupport.swift" \
-    "$REPO_ROOT/clients/apple/alan-macos/ShellModel.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Models/Shell/ShellTitlePresentation.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Models/Shell/ShellSidebarTabPresentation.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Models/Shell/ShellSidebarTabDragDrop.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Models/Shell/ShellSidebarPaneTopology.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Models/Shell/ShellActivityNotificationPresentation.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Models/Shell/ShellActionRegistry.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/ShellCoreFFIAdapter.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/ShellCoreFFIActionAdapter.swift" \

@@ -198,7 +198,7 @@ is_allowed_session_match() {
         clients/apple/scripts/test-shell-runtime-metadata.swift)
             return 0 # External Codex metadata redaction fixture
             ;;
-        clients/apple/alan-macos/ShellModel.swift)
+        clients/apple/alan-macos/Models/Shell/ShellSidebarTabPresentation.swift)
             return 0 # External command metadata redaction
             ;;
         clients/apple/alan-macos/Models/Shell/ShellValueTypes.swift)

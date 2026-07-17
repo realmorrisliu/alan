@@ -202,7 +202,6 @@ current_root_swift_allowlist=(
     "MacShellRootView.swift"
     "ShellControlPlane.swift"
     "ShellHostController.swift"
-    "ShellModel.swift"
     "TerminalHostRuntime.swift"
     "TerminalHostView.swift"
     "TerminalPaneView.swift"

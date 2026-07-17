@@ -9,7 +9,11 @@
 /* Begin PBXBuildFile section */
 		000000000000000000000001 /* AlanApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000101 /* AlanApp.swift */; };
 		000000000000000000000004 /* MacShellRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000104 /* MacShellRootView.swift */; };
-		000000000000000000000005 /* ShellModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000105 /* ShellModel.swift */; };
+		000000000000000000000005 /* Models/Shell/ShellTitlePresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000105 /* Models/Shell/ShellTitlePresentation.swift */; };
+		A11D00000000000000000001 /* Models/Shell/ShellSidebarTabPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11D00000000000000000101 /* Models/Shell/ShellSidebarTabPresentation.swift */; };
+		A11D00000000000000000002 /* Models/Shell/ShellSidebarTabDragDrop.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11D00000000000000000102 /* Models/Shell/ShellSidebarTabDragDrop.swift */; };
+		A11D00000000000000000003 /* Models/Shell/ShellSidebarPaneTopology.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11D00000000000000000103 /* Models/Shell/ShellSidebarPaneTopology.swift */; };
+		A11D00000000000000000004 /* Models/Shell/ShellActivityNotificationPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11D00000000000000000104 /* Models/Shell/ShellActivityNotificationPresentation.swift */; };
 		000000000000000000000006 /* ShellHostController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000106 /* ShellHostController.swift */; };
 		000000000000000000000007 /* TerminalPaneView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000107 /* TerminalPaneView.swift */; };
 		000000000000000000000008 /* TerminalHostRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000108 /* TerminalHostRuntime.swift */; };
@@ -146,7 +150,11 @@
 		A110000000000000000000F1 /* app.alanworks.macos.privileged-helper */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = "$(ALAN_PRIVILEGED_HELPER_LABEL)"; sourceTree = BUILT_PRODUCTS_DIR; };
 		000000000000000000000101 /* AlanApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlanApp.swift; sourceTree = "<group>"; };
 		000000000000000000000104 /* MacShellRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacShellRootView.swift; sourceTree = "<group>"; };
-		000000000000000000000105 /* ShellModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShellModel.swift; sourceTree = "<group>"; };
+		000000000000000000000105 /* Models/Shell/ShellTitlePresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/Shell/ShellTitlePresentation.swift; sourceTree = "<group>"; };
+		A11D00000000000000000101 /* Models/Shell/ShellSidebarTabPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/Shell/ShellSidebarTabPresentation.swift; sourceTree = "<group>"; };
+		A11D00000000000000000102 /* Models/Shell/ShellSidebarTabDragDrop.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/Shell/ShellSidebarTabDragDrop.swift; sourceTree = "<group>"; };
+		A11D00000000000000000103 /* Models/Shell/ShellSidebarPaneTopology.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/Shell/ShellSidebarPaneTopology.swift; sourceTree = "<group>"; };
+		A11D00000000000000000104 /* Models/Shell/ShellActivityNotificationPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/Shell/ShellActivityNotificationPresentation.swift; sourceTree = "<group>"; };
 		000000000000000000000106 /* ShellHostController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShellHostController.swift; sourceTree = "<group>"; };
 		000000000000000000000107 /* TerminalPaneView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalPaneView.swift; sourceTree = "<group>"; };
 		000000000000000000000108 /* TerminalHostRuntime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalHostRuntime.swift; sourceTree = "<group>"; };
@@ -299,7 +307,6 @@
 				000000000000000000000101 /* AlanApp.swift */,
 				000000000000000000000112 /* AlanAppSingletonGuard.swift */,
 				000000000000000000000104 /* MacShellRootView.swift */,
-				000000000000000000000105 /* ShellModel.swift */,
 				000000000000000000000106 /* ShellHostController.swift */,
 				000000000000000000000107 /* TerminalPaneView.swift */,
 				000000000000000000000108 /* TerminalHostRuntime.swift */,
@@ -377,6 +384,11 @@
 		00000000000000000000030B /* Models/Shell */ = {
 			isa = PBXGroup;
 			children = (
+				000000000000000000000105 /* Models/Shell/ShellTitlePresentation.swift */,
+				A11D00000000000000000101 /* Models/Shell/ShellSidebarTabPresentation.swift */,
+				A11D00000000000000000102 /* Models/Shell/ShellSidebarTabDragDrop.swift */,
+				A11D00000000000000000103 /* Models/Shell/ShellSidebarPaneTopology.swift */,
+				A11D00000000000000000104 /* Models/Shell/ShellActivityNotificationPresentation.swift */,
 				000000000000000000000121 /* Models/Shell/ShellValueTypes.swift */,
 				000000000000000000000122 /* Models/Shell/ShellSnapshots.swift */,
 				000000000000000000000129 /* Models/Shell/ShellControlPlaneDTOs.swift */,
@@ -664,7 +676,11 @@
 			files = (
 				000000000000000000000001 /* AlanApp.swift in Sources */,
 				000000000000000000000004 /* MacShellRootView.swift in Sources */,
-				000000000000000000000005 /* ShellModel.swift in Sources */,
+				000000000000000000000005 /* Models/Shell/ShellTitlePresentation.swift in Sources */,
+				A11D00000000000000000001 /* Models/Shell/ShellSidebarTabPresentation.swift in Sources */,
+				A11D00000000000000000002 /* Models/Shell/ShellSidebarTabDragDrop.swift in Sources */,
+				A11D00000000000000000003 /* Models/Shell/ShellSidebarPaneTopology.swift in Sources */,
+				A11D00000000000000000004 /* Models/Shell/ShellActivityNotificationPresentation.swift in Sources */,
 				000000000000000000000006 /* ShellHostController.swift in Sources */,
 				000000000000000000000007 /* TerminalPaneView.swift in Sources */,
 				000000000000000000000008 /* TerminalHostRuntime.swift in Sources */,
