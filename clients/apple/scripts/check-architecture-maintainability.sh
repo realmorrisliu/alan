@@ -202,7 +202,6 @@ current_root_swift_allowlist=(
     "MacShellRootView.swift"
     "ShellControlPlane.swift"
     "ShellHostController.swift"
-    "TerminalHostRuntime.swift"
     "TerminalHostView.swift"
     "TerminalPaneView.swift"
     "TerminalRuntimeRegistry.swift"
@@ -311,7 +310,7 @@ shell_core_ffi_shared_callsite_owner_allowlist=(
     "Services/Shell/ShellWorkspaceManifestStartupCoordinator.swift"
     "Services/Shell/ShellWorkspaceManifestStore.swift"
     "Services/Shell/TerminalProfileStore.swift"
-    "TerminalHostRuntime.swift"
+    "Services/Terminal/TerminalBootResolution.swift"
 )
 
 shell_core_ffi_direct_init_owner_allowlist=(
@@ -538,7 +537,7 @@ require_single_owner_pattern \
 
 require_single_owner_pattern \
     "ShellCoreFFIAdapter.shared.resolveTerminalLaunchIntent" \
-    "TerminalHostRuntime.swift" \
+    "Services/Terminal/TerminalBootResolution.swift" \
     "shell-core Terminal Profile launch intent resolution"
 
 require_single_owner_pattern \

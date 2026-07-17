@@ -88,7 +88,10 @@ CLANG_MODULE_CACHE_PATH="$MODULE_CACHE_DIR" swiftc \
     "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/AlanPrivilegedHelperXPC.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/AlanPrivilegedHelperService.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/AlanPrivilegedHelperAppClient.swift" \
-    "$REPO_ROOT/clients/apple/alan-macos/TerminalHostRuntime.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Models/Shell/TerminalRuntimeSnapshots.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Services/Terminal/TerminalBootResolution.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Services/Terminal/TerminalRenderCoordinator.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Services/Terminal/TerminalRuntimePublicationPolicy.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Services/Terminal/TerminalContentLifecycleAdapter.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Services/Terminal/TerminalContentProjectionAdapter.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Services/Terminal/TerminalNativeScrollViewAdapter.swift" \

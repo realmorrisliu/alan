@@ -1413,7 +1413,7 @@ reject_pattern \
     "shell test support must not create first-party alan tabs"
 
 reject_pattern \
-    "clients/apple/alan-macos/TerminalHostRuntime.swift" \
+    "clients/apple/alan-macos/Services/Terminal/TerminalBootResolution.swift" \
     "resolveAlan|alan chat|launchTarget: \\.alan|ShellLaunchTarget\\.alan|case \\.alan" \
     "terminal runtime must not auto-launch first-party alan tabs"
 
@@ -2443,17 +2443,17 @@ require_pattern \
     "local install must detect existing Homebrew-managed links before creating alternate PATH links"
 
 require_pattern \
-    "clients/apple/alan-macos/TerminalHostRuntime.swift" \
+    "clients/apple/alan-macos/Services/Terminal/TerminalBootResolution.swift" \
     "case \\.shell:" \
     "terminal launch resolution must keep normal shell launch support"
 
 reject_pattern \
-    "clients/apple/alan-macos/TerminalHostRuntime.swift" \
+    "clients/apple/alan-macos/Services/Terminal/TerminalBootResolution.swift" \
     "bundled_resource_binary|repo_debug_binary|repo_release_binary|path_binary|shell_lookup" \
     "terminal launch resolution must not retain first-party alan tab CLI boot strategies"
 
 reject_pattern \
-    "clients/apple/alan-macos/TerminalHostRuntime.swift" \
+    "clients/apple/alan-macos/Services/Terminal/TerminalBootResolution.swift" \
     "\\.alan/bin" \
     "alan launch resolution must not use ~/.alan/bin"
 
@@ -3183,7 +3183,7 @@ reject_pattern \
     "runtime shell-core calls must fail closed instead of using optional Swift fallback"
 
 require_pattern \
-    "clients/apple/alan-macos/TerminalHostRuntime.swift" \
+    "clients/apple/alan-macos/Services/Terminal/TerminalBootResolution.swift" \
     "if !hasExplicitTerminalProfileReference" \
     "default terminal shell-core-unavailable fallback must stay scoped to the no-explicit-profile path"
 
