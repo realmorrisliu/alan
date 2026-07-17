@@ -98,6 +98,8 @@
 		A11000000000000000000007 /* AlanDarwinPtySpawn.c in Sources */ = {isa = PBXBuildFile; fileRef = A11000000000000000000105 /* AlanDarwinPtySpawn.c */; };
 		A11000000000000000000008 /* Services/Shell/AlanPrivilegedHelperAppClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11000000000000000000106 /* Services/Shell/AlanPrivilegedHelperAppClient.swift */; };
 		000000000000000000000037 /* Controllers/Shell/ShellHostControlCommandHandling.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000137 /* Controllers/Shell/ShellHostControlCommandHandling.swift */; };
+		A11C00000000000000000003 /* Controllers/Shell/ShellHostControlProjection.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11C00000000000000000103 /* Controllers/Shell/ShellHostControlProjection.swift */; };
+		A11C00000000000000000004 /* Controllers/Shell/ShellHostObservationControlCommandHandling.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11C00000000000000000104 /* Controllers/Shell/ShellHostObservationControlCommandHandling.swift */; };
 		000000000000000000000038 /* Support/ShellSidebarSwipeMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000138 /* Support/ShellSidebarSwipeMonitor.swift */; };
 		000000000000000000000039 /* Models/Shell/ShellWorkspaceManifest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000139 /* Models/Shell/ShellWorkspaceManifest.swift */; };
 		00000000000000000000003A /* Services/Shell/ShellWorkspaceManifestStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000013A /* Services/Shell/ShellWorkspaceManifestStore.swift */; };
@@ -191,6 +193,8 @@
 		000000000000000000000144 /* Models/Shell/ShellAutomationEntities.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/Shell/ShellAutomationEntities.swift; sourceTree = "<group>"; };
 		000000000000000000000145 /* Models/Shell/ShellAutomationIntents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/Shell/ShellAutomationIntents.swift; sourceTree = "<group>"; };
 		000000000000000000000137 /* Controllers/Shell/ShellHostControlCommandHandling.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Controllers/Shell/ShellHostControlCommandHandling.swift; sourceTree = "<group>"; };
+		A11C00000000000000000103 /* Controllers/Shell/ShellHostControlProjection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Controllers/Shell/ShellHostControlProjection.swift; sourceTree = "<group>"; };
+		A11C00000000000000000104 /* Controllers/Shell/ShellHostObservationControlCommandHandling.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Controllers/Shell/ShellHostObservationControlCommandHandling.swift; sourceTree = "<group>"; };
 		000000000000000000000138 /* Support/ShellSidebarSwipeMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Support/ShellSidebarSwipeMonitor.swift; sourceTree = "<group>"; };
 		000000000000000000000139 /* Models/Shell/ShellWorkspaceManifest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/Shell/ShellWorkspaceManifest.swift; sourceTree = "<group>"; };
 		00000000000000000000013A /* Services/Shell/ShellWorkspaceManifestStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Shell/ShellWorkspaceManifestStore.swift; sourceTree = "<group>"; };
@@ -443,6 +447,8 @@
 			isa = PBXGroup;
 			children = (
 				000000000000000000000137 /* Controllers/Shell/ShellHostControlCommandHandling.swift */,
+				A11C00000000000000000103 /* Controllers/Shell/ShellHostControlProjection.swift */,
+				A11C00000000000000000104 /* Controllers/Shell/ShellHostObservationControlCommandHandling.swift */,
 			);
 			name = Controllers/Shell;
 			sourceTree = "<group>";
@@ -689,6 +695,8 @@
 				000000000000000000000032 /* Services/Terminal/TerminalHostOverlayPresenter.swift in Sources */,
 				000000000000000000000033 /* Services/Terminal/TerminalHostViewSupport.swift in Sources */,
 				000000000000000000000037 /* Controllers/Shell/ShellHostControlCommandHandling.swift in Sources */,
+				A11C00000000000000000003 /* Controllers/Shell/ShellHostControlProjection.swift in Sources */,
+				A11C00000000000000000004 /* Controllers/Shell/ShellHostObservationControlCommandHandling.swift in Sources */,
 				000000000000000000000038 /* Support/ShellSidebarSwipeMonitor.swift in Sources */,
 				00000000000000000000003D /* Support/ShellSidebarPresentation.swift in Sources */,
 				00000000000000000000003B /* Support/ShellSidebarSpaceContentPager.swift in Sources */,
