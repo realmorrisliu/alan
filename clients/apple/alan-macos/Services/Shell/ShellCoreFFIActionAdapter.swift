@@ -2,7 +2,10 @@ import Foundation
 
 extension ShellCoreFFIAdapter {
     func actionTitle(_ id: ShellActionID) throws -> String {
-        try standardActionDescriptor(id)?.title ?? id.rawValue
+        guard let descriptor = try standardActionDescriptor(id) else {
+            throw ShellCoreFFIAdapterError.missingActionDescriptor(id.rawValue)
+        }
+        return descriptor.title
     }
 
     func actionAvailability(

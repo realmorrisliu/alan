@@ -1,3 +1,10 @@
 clients/apple/alan-macos/MacShellRootView.swift:1
-clients/apple/alan-macos/TerminalPaneView.swift:58
-clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift:16
+clients/apple/alan-macos/Views/Shell/Content/ShellBoundedContentViews.swift:10
+clients/apple/alan-macos/Views/Shell/Settings/ShellSettingsComponents.swift:15
+clients/apple/alan-macos/Views/Shell/ShellPaneTopologyIndicator.swift:2
+clients/apple/alan-macos/Views/Shell/ShellSidebarSpaceSlider.swift:6
+clients/apple/alan-macos/Views/Shell/ShellSidebarTabDrop.swift:2
+clients/apple/alan-macos/Views/Shell/ShellSidebarTabRow.swift:4
+clients/apple/alan-macos/Views/Shell/ShellSidebarView.swift:1
+clients/apple/alan-macos/Views/Shell/Terminal/ShellTerminalLeafView.swift:1
+clients/apple/alan-macos/Views/Shell/Terminal/ShellTerminalOverlayViews.swift:8

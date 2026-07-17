@@ -1,4 +1,65 @@
 // Script/test support only. Production managed-account semantics are owned by shell-core.
+enum ManagedTerminalAccountRecord: Equatable {
+    case missing
+    case standard(homeDirectory: String, shell: String, hidden: Bool)
+    case admin(homeDirectory: String, shell: String, hidden: Bool)
+    case invalid(reason: String)
+}
+
+enum ManagedTerminalAccountOwnershipEvidence: Equatable {
+    case helperMarker(path: String)
+}
+
+enum ManagedTerminalAccountOwnershipState: Equatable {
+    case missing
+    case alanManaged(ManagedTerminalAccountOwnershipEvidence)
+    case notAlanManaged(reason: String)
+}
+
+enum ManagedTerminalAccountProfileState: Equatable {
+    case missing
+    case existingManaged(profileID: String)
+    case existingManagedOutdated(profileID: String)
+    case existingUnmanaged(profileID: String)
+}
+
+enum ManagedTerminalAccountVerificationStep: String, Equatable {
+    case accountLookup = "account_lookup"
+    case nonAdminAccount = "non_admin_account"
+    case homeDirectory = "home_directory"
+    case shell
+    case ownership
+    case managedUserPTY = "managed_user_pty"
+}
+
+enum ManagedTerminalAccountVerificationStatus: Equatable {
+    case notRun
+    case passed
+    case failed(step: ManagedTerminalAccountVerificationStep, message: String)
+}
+
+struct ManagedTerminalAccountState: Equatable {
+    let account: ManagedTerminalAccountRecord
+    let ownership: ManagedTerminalAccountOwnershipState
+    let terminalProfile: ManagedTerminalAccountProfileState
+    let verification: ManagedTerminalAccountVerificationStatus
+    let homeDirectoryExists: Bool
+
+    init(
+        account: ManagedTerminalAccountRecord,
+        ownership: ManagedTerminalAccountOwnershipState = .missing,
+        terminalProfile: ManagedTerminalAccountProfileState,
+        verification: ManagedTerminalAccountVerificationStatus,
+        homeDirectoryExists: Bool = true
+    ) {
+        self.account = account
+        self.ownership = ownership
+        self.terminalProfile = terminalProfile
+        self.verification = verification
+        self.homeDirectoryExists = homeDirectoryExists
+    }
+}
+
 final class ManagedTerminalAccountFakeExecutor: ManagedTerminalAccountPrivilegedExecuting {
     var failAt: ManagedTerminalAccountPlanStepKind?
     var cancelBeforeApply = false

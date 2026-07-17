@@ -378,10 +378,10 @@ require_existing_single_owner_pattern() {
 
 shell_core_ffi_shared_callsite_owner_allowlist=(
     "Models/Shell/ShellSettingsSurfaceModel.swift"
-    "Services/Shell/ManagedTerminalAccountValidation.swift"
+    "Services/Shell/ShellCoreFFIManagedTerminalAccountAdapter.swift"
     "Services/Shell/ShellActionCoordinator.swift"
     "Services/Shell/ShellLocalCommandExecutor.swift"
-    "Services/Shell/ShellReducerCommandCoordinator.swift"
+    "Services/Shell/ShellCoreFFIReducerAdapter.swift"
     "Services/Shell/ShellWorkspaceManifestStartupCoordinator.swift"
     "Services/Shell/ShellWorkspaceManifestStore.swift"
     "Services/Shell/TerminalProfileStore.swift"
@@ -503,8 +503,8 @@ reject_swiftui_shell_hot_path_sync_boundaries() {
 
     for pattern in \
         "ShellCoreFFIAdapter" \
-        "ShellReducerCommandCoordinator" \
-        "reducerCoordinator.apply" \
+        "ShellCoreReducerAdapter" \
+        "reducerAdapter.apply" \
         "AlanShellLocalCommandExecutor.execute" \
         "actions.execute" \
         "actions.standard_descriptors" \
@@ -565,10 +565,15 @@ require_rust_reducer_adapter \
     "shellState.openingContentTab(" \
     "shellState.splittingPane("
 
-require_single_owner_pattern \
-    "ShellCoreFFIAdapter.shared.applyReducer" \
-    "Services/Shell/ShellReducerCommandCoordinator.swift" \
-    "shell-core reducer invocation"
+require_existing_single_owner_pattern \
+    'operation: "reducer.apply"' \
+    "Services/Shell/ShellCoreFFIReducerAdapter.swift" \
+    "shell-core reducer FFI operation"
+
+if grep -RIl --include='*.swift' -F "ShellReducerCommandCoordinator" "$SOURCE_ROOT" \
+    >/dev/null; then
+    fail "shell-core reducer calls must not retain a shallow pass-through coordinator"
+fi
 
 require_single_owner_pattern \
     "ShellCoreFFIAdapter.shared.executeAction" \
@@ -640,15 +645,25 @@ require_single_owner_pattern \
     "Models/Shell/ShellSettingsSurfaceModel.swift" \
     "shell-core local settings row projection"
 
-require_single_owner_pattern \
-    "ShellCoreFFIAdapter.shared.validateManagedTerminalAccountRequest" \
-    "Services/Shell/ManagedTerminalAccountValidation.swift" \
-    "shell-core managed terminal account validation"
+require_existing_single_owner_pattern \
+    'operation: "managed_terminal_account.validate_request"' \
+    "Services/Shell/ShellCoreFFIManagedTerminalAccountAdapter.swift" \
+    "shell-core managed terminal account validation FFI operation"
 
-require_single_owner_pattern \
-    "ShellCoreFFIAdapter.shared.managedTerminalAccountPlan" \
+require_existing_single_owner_pattern \
+    'operation: "managed_terminal_account.plan"' \
+    "Services/Shell/ShellCoreFFIManagedTerminalAccountAdapter.swift" \
+    "shell-core managed terminal account planning FFI operation"
+
+require_existing_single_owner_pattern \
+    "ShellCoreManagedTerminalAccountAdapter().managedTerminalAccountPlan" \
     "Services/Shell/ManagedTerminalAccountPlanning.swift" \
     "shell-core managed terminal account provisioning planner"
+
+require_existing_single_owner_pattern \
+    "ShellCoreManagedTerminalAccountAdapter().managedTerminalAccountRollbackPlan" \
+    "Services/Shell/ManagedTerminalAccountPlanning.swift" \
+    "shell-core managed terminal account rollback planner"
 
 require_shell_core_ffi_shared_callsite_owners
 require_shell_core_ffi_direct_init_owners

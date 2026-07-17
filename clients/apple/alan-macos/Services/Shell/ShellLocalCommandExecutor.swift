@@ -12,7 +12,7 @@ struct AlanShellLocalCommandResult {
 }
 
 enum AlanShellLocalCommandExecutor {
-    private static let reducerCoordinator = ShellReducerCommandCoordinator()
+    private static let reducerAdapter = ShellCoreReducerAdapter()
 
     static func execute(
         command: AlanShellControlCommand,
@@ -94,7 +94,7 @@ enum AlanShellLocalCommandExecutor {
                 )
             }
             do {
-                let result = try reducerCoordinator.apply(
+                let result = try reducerAdapter.apply(
                     state: state,
                     operation: .setTerminalProfile(
                         spaceID: spaceID,

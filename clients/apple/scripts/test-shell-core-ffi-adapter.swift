@@ -55,6 +55,7 @@ private enum ShellCoreFFIAdapterTestRunner {
             try testProductionAdapterControlCommandsPreservePlatformPaneFields()
             try testProductionAdapterContentTabRendererState()
             try testProductionAdapterTerminalProfiles()
+            try testProductionAdapterManagedTerminalAccountPlanning()
             print("Shell core FFI adapter tests passed.")
         } catch {
             fputs("Shell core FFI adapter tests failed: \(error)\n", stderr)
@@ -87,6 +88,7 @@ private func testShellCoreUnavailableErrorClassification() throws {
     let domainErrors: [ShellCoreFFIAdapterError] = [
         .facadeError(ShellCoreErrorPayload(code: "invalid_payload", message: "bad")),
         .missingPayload("state"),
+        .missingActionDescriptor("shell.unknown"),
         .materializationFailed("could not project"),
         .reducerError(code: "pane_not_found", message: "missing pane"),
     ]
@@ -284,6 +286,7 @@ private func testManifestReducerAndActionCalls() throws {
 
 private func testProductionAdapterReducerFocus() throws {
     let adapter = try ShellCoreFFIAdapter()
+    let reducer = ShellCoreReducerAdapter(adapter: adapter)
     let state = ShellStateSnapshot.bootstrapDefault(
         windowID: "window_main",
         workingDirectory: "/repo/app"
@@ -293,7 +296,7 @@ private func testProductionAdapterReducerFocus() throws {
         throw TestFailure.message("split fixture must create a pane")
     }
 
-    let focusResult = try adapter.applyReducer(
+    let focusResult = try reducer.apply(
         state: splitResult.state,
         operation: .focusPane(paneSlotID: targetPaneID)
     )
@@ -307,7 +310,7 @@ private func testProductionAdapterReducerFocus() throws {
         "focus reducer must preserve selected tab"
     )
 
-    let adjacentResult = try adapter.applyReducer(
+    let adjacentResult = try reducer.apply(
         state: focusResult.state,
         operation: .focusAdjacentPane(direction: .left)
     )
@@ -320,7 +323,7 @@ private func testProductionAdapterReducerFocus() throws {
         "adjacent focus must materialize the Rust-focused pane"
     )
 
-    let liftedPane = try adapter.applyReducer(
+    let liftedPane = try reducer.apply(
         state: adjacentResult.state,
         operation: .movePaneToNewTab(paneSlotID: targetPaneID, title: "Lifted")
     )
@@ -338,7 +341,7 @@ private func testProductionAdapterReducerFocus() throws {
         title: "Move Target",
         workingDirectory: "/repo/target"
     ).state
-    let movedPaneToTab = try adapter.applyReducer(
+    let movedPaneToTab = try reducer.apply(
         state: movePaneTargetInput,
         operation: .movePaneToTab(
             paneSlotID: targetPaneID,
@@ -355,7 +358,7 @@ private func testProductionAdapterReducerFocus() throws {
         "production adapter must attach moved panes into the target tab tree"
     )
 
-    let closedPane = try adapter.applyReducer(
+    let closedPane = try reducer.apply(
         state: adjacentResult.state,
         operation: .closePane(paneSlotID: targetPaneID)
     )
@@ -364,7 +367,7 @@ private func testProductionAdapterReducerFocus() throws {
         "production adapter must apply pane close through Rust"
     )
 
-    let renamed = try adapter.applyReducer(
+    let renamed = try reducer.apply(
         state: closedPane.state,
         operation: .renameTab(tabID: "tab_main", title: " Main ")
     )
@@ -373,7 +376,7 @@ private func testProductionAdapterReducerFocus() throws {
         "production adapter must apply tab rename through Rust"
     )
 
-    let pinned = try adapter.applyReducer(
+    let pinned = try reducer.apply(
         state: renamed.state,
         operation: .pinTab(tabID: "tab_main")
     )
@@ -382,7 +385,7 @@ private func testProductionAdapterReducerFocus() throws {
         "production adapter must apply tab pin through Rust"
     )
 
-    let unpinned = try adapter.applyReducer(
+    let unpinned = try reducer.apply(
         state: pinned.state,
         operation: .unpinTab(tabID: "tab_main")
     )
@@ -391,7 +394,7 @@ private func testProductionAdapterReducerFocus() throws {
         "production adapter must apply tab unpin through Rust"
     )
 
-    let attention = try adapter.applyReducer(
+    let attention = try reducer.apply(
         state: unpinned.state,
         operation: .setAttention(paneSlotID: "pane_1", attention: .awaitingUser)
     )
@@ -401,7 +404,7 @@ private func testProductionAdapterReducerFocus() throws {
     )
 
     let markdownURL = "file:///repo/Guide.md"
-    let openedMarkdown = try adapter.applyReducer(
+    let openedMarkdown = try reducer.apply(
         state: attention.state,
         operation: .openContentTab(
             spaceID: "space_main",
@@ -435,7 +438,7 @@ private func testProductionAdapterReducerFocus() throws {
         "production adapter must focus the Rust-opened markdown pane"
     )
 
-    let openedSettings = try adapter.applyReducer(
+    let openedSettings = try reducer.apply(
         state: openedMarkdown.state,
         operation: .openContentTab(
             spaceID: "space_main",
@@ -462,7 +465,7 @@ private func testProductionAdapterReducerFocus() throws {
         "production adapter must preserve settings payload through Rust"
     )
 
-    let reopenedSettings = try adapter.applyReducer(
+    let reopenedSettings = try reducer.apply(
         state: openedSettings.state,
         operation: .openContentTab(
             spaceID: "space_main",
@@ -489,7 +492,7 @@ private func testProductionAdapterReducerFocus() throws {
         "production adapter must not duplicate settings content through Rust"
     )
 
-    let splitMarkdown = try adapter.applyReducer(
+    let splitMarkdown = try reducer.apply(
         state: attention.state,
         operation: .splitContentPane(
             paneSlotID: "pane_1",
@@ -526,7 +529,7 @@ private func testProductionAdapterReducerFocus() throws {
         title: "Second",
         workingDirectory: "/repo/app"
     ).state
-    let movedLeft = try adapter.applyReducer(
+    let movedLeft = try reducer.apply(
         state: secondTab,
         operation: .moveTab(tabID: "tab_2", sectionOffset: -1)
     )
@@ -539,7 +542,7 @@ private func testProductionAdapterReducerFocus() throws {
         title: "Lab",
         workingDirectory: "/repo/lab"
     ).state
-    let organizedToSpace = try adapter.applyReducer(
+    let organizedToSpace = try reducer.apply(
         state: movedToSpaceInput,
         operation: .organizeTab(
             tabID: "tab_2",
@@ -560,7 +563,7 @@ private func testProductionAdapterReducerFocus() throws {
         organizedToSpace.state.pane(paneID: "pane_2")?.spaceID == "space_2",
         "production adapter must update pane space ownership during tab organization"
     )
-    let movedToSpace = try adapter.applyReducer(
+    let movedToSpace = try reducer.apply(
         state: movedToSpaceInput,
         operation: .moveTabToSpace(tabID: "tab_2", targetSpaceID: "space_2")
     )
@@ -574,7 +577,7 @@ private func testProductionAdapterReducerFocus() throws {
         title: "Close Me",
         workingDirectory: "/repo/app"
     ).state
-    let closed = try adapter.applyReducer(
+    let closed = try reducer.apply(
         state: closeInput,
         operation: .closeTab(tabID: "tab_3")
     )
@@ -599,7 +602,7 @@ private func testProductionAdapterReducerFocus() throws {
     guard let selectedTabID = selectedOpened.tabID else {
         throw TestFailure.message("selected tab fixture must create a tab")
     }
-    let cleaned = try adapter.applyReducer(
+    let cleaned = try reducer.apply(
         state: selectedOpened.state,
         operation: .clearInactiveTemporaryTabs(
             spaceID: "space_main",
@@ -613,7 +616,7 @@ private func testProductionAdapterReducerFocus() throws {
     )
 
     let reservedOpenPaneID = "pane_4"
-    let openedTerminal = try adapter.applyReducer(
+    let openedTerminal = try reducer.apply(
         state: cleaned.state,
         operation: .openTerminalTab(
             spaceID: "space_main",
@@ -636,7 +639,7 @@ private func testProductionAdapterReducerFocus() throws {
     )
 
     let reservedSplitPaneID = "pane_6"
-    let splitTerminal = try adapter.applyReducer(
+    let splitTerminal = try reducer.apply(
         state: openedTerminal.state,
         operation: .splitPane(
             paneSlotID: openedPaneID,
@@ -660,7 +663,7 @@ private func testProductionAdapterReducerFocus() throws {
     )
 
     let reservedDuplicatePaneID = "pane_7"
-    let duplicated = try adapter.applyReducer(
+    let duplicated = try reducer.apply(
         state: splitTerminal.state,
         operation: .duplicateTab(
             tabID: selectedTabID,
@@ -684,7 +687,7 @@ private func testProductionAdapterReducerFocus() throws {
     )
 
     let reservedSpacePaneID = "pane_8"
-    let createdTerminalSpace = try adapter.applyReducer(
+    let createdTerminalSpace = try reducer.apply(
         state: duplicated.state,
         operation: .createTerminalSpace(
             title: nil,
@@ -714,7 +717,7 @@ private func testProductionAdapterReducerFocus() throws {
         "production adapter must preserve supported presentation icons for terminal Spaces"
     )
 
-    let profiledSpace = try adapter.applyReducer(
+    let profiledSpace = try reducer.apply(
         state: createdTerminalSpace.state,
         operation: .setTerminalProfile(
             spaceID: createdSpaceID,
@@ -726,7 +729,7 @@ private func testProductionAdapterReducerFocus() throws {
         "production adapter must update Space terminal profiles through Rust"
     )
 
-    let clearedIcon = try adapter.applyReducer(
+    let clearedIcon = try reducer.apply(
         state: profiledSpace.state,
         operation: .setPresentationIcon(
             spaceID: createdSpaceID,
@@ -738,7 +741,7 @@ private func testProductionAdapterReducerFocus() throws {
         "production adapter must clear unsupported presentation icons through Rust"
     )
 
-    let deletedSpace = try adapter.applyReducer(
+    let deletedSpace = try reducer.apply(
         state: clearedIcon.state,
         operation: .deleteSpace(
             spaceID: createdSpaceID,
@@ -755,7 +758,7 @@ private func testProductionAdapterReducerFocus() throws {
     )
 
     do {
-        _ = try adapter.applyReducer(
+        _ = try reducer.apply(
             state: state,
             operation: .focusPane(paneSlotID: "pane_missing")
         )
@@ -767,6 +770,7 @@ private func testProductionAdapterReducerFocus() throws {
 
 private func testProductionAdapterActions() throws {
     let adapter = try ShellCoreFFIAdapter()
+    let reducer = ShellCoreReducerAdapter(adapter: adapter)
     let state = ShellStateSnapshot.bootstrapDefault(
         windowID: "window_main",
         workingDirectory: "/repo/app"
@@ -825,7 +829,7 @@ private func testProductionAdapterActions() throws {
     guard let focusedPaneID = splitResult.paneID else {
         throw TestFailure.message("split fixture must create a pane for action execution")
     }
-    let focusedState = try adapter.applyReducer(
+    let focusedState = try reducer.apply(
         state: splitResult.state,
         operation: .focusPane(paneSlotID: focusedPaneID)
     ).state
@@ -1068,6 +1072,7 @@ private extension ShellStateSnapshot {
 
 private func testProductionAdapterContentTabRendererState() throws {
     let adapter = try ShellCoreFFIAdapter()
+    let reducer = ShellCoreReducerAdapter(adapter: adapter)
     let state = ShellStateSnapshot.bootstrapDefault(
         windowID: "window_main",
         workingDirectory: "/repo/app"
@@ -1076,7 +1081,7 @@ private func testProductionAdapterContentTabRendererState() throws {
     // shell-core does not carry the Swift-only content `rendererState`. Markdown/settings panes
     // have no runtime to repopulate it, so the materialized content must report the same "ready"
     // state the native mount path assigns rather than `.placeholder`.
-    let markdownResult = try adapter.applyReducer(
+    let markdownResult = try reducer.apply(
         state: state,
         operation: .openContentTab(
             spaceID: nil,
@@ -1098,7 +1103,7 @@ private func testProductionAdapterContentTabRendererState() throws {
         "production adapter must recover markdown renderer detail from the payload file path"
     )
 
-    let settingsResult = try adapter.applyReducer(
+    let settingsResult = try reducer.apply(
         state: markdownResult.state,
         operation: .openContentTab(
             spaceID: nil,
@@ -1123,7 +1128,7 @@ private func testProductionAdapterContentTabRendererState() throws {
     guard let splitTargetPaneID = settingsResult.state.panes.first?.paneID else {
         throw TestFailure.message("content fixture must expose a pane to split")
     }
-    let unrelatedMutation = try adapter.applyReducer(
+    let unrelatedMutation = try reducer.apply(
         state: settingsResult.state,
         operation: .splitPane(
             paneSlotID: splitTargetPaneID,
@@ -1284,6 +1289,117 @@ private func testProductionAdapterTerminalProfiles() throws {
     try expect(
         launchIntent.profileEnvironment["ALAN_TERMINAL_PROFILE_KIND"] == "sudo_user",
         "profile launch intent adapter must decode Rust profile environment"
+    )
+}
+
+private func testProductionAdapterManagedTerminalAccountPlanning() throws {
+    let adapter = try ShellCoreFFIAdapter()
+    let managedAccountAdapter = ShellCoreManagedTerminalAccountAdapter(adapter: adapter)
+    let request = ManagedTerminalAccountRequest(
+        accountName: "alan_smoke",
+        fullName: "Alan Smoke"
+    )
+    let missingDiagnosis = AlanManagedUserDiagnosis(
+        request: request,
+        ownershipState: .missing,
+        readinessState: .accountMissing,
+        accountExists: false,
+        isAdmin: false,
+        homeDirectoryExists: false,
+        homeDirectoryMatches: false,
+        shellMatches: false,
+        hiddenFromLoginWindow: false,
+        terminalProfileID: nil,
+        ptySmokeVerified: false,
+        diagnostic: nil
+    )
+    let provision = try managedAccountAdapter.managedTerminalAccountPlan(
+        request: request,
+        diagnosis: missingDiagnosis,
+        terminalProfiles: nil
+    )
+    try expect(
+        provision.status == .readyToApply,
+        "managed-account adapter must decode a shell-core provisioning status"
+    )
+    try expect(
+        provision.steps.map(\.kind) == [
+            .helperStep(.createStandardAccount),
+            .helperStep(.hideAccount),
+            .helperStep(.writeOwnershipMarker),
+            .helperStep(.verifyAccount),
+            .helperStep(.verifyManagedUserPTY),
+            .createOrUpdateTerminalProfile,
+        ],
+        "managed-account adapter must preserve helper and local plan-step ownership"
+    )
+
+    let mismatchedHomeDiagnosis = AlanManagedUserDiagnosis(
+        request: request,
+        ownershipState: .alanManaged,
+        readinessState: .repairable,
+        accountExists: true,
+        isAdmin: false,
+        homeDirectoryExists: true,
+        homeDirectoryMatches: false,
+        shellMatches: true,
+        hiddenFromLoginWindow: true,
+        terminalProfileID: request.terminalProfileID,
+        ptySmokeVerified: true,
+        diagnostic: nil
+    )
+    let homeRepair = try managedAccountAdapter.managedTerminalAccountPlan(
+        request: request,
+        diagnosis: mismatchedHomeDiagnosis,
+        terminalProfiles: nil
+    )
+    try expect(
+        homeRepair.status == .repair
+            && homeRepair.steps.map(\.kind) == [
+                .helperStep(.repairHomeDirectory),
+                .helperStep(.verifyAccount),
+            ],
+        "managed-account adapter must propagate configured-home mismatches into repair steps"
+    )
+
+    let readyDiagnosis = AlanManagedUserDiagnosis(
+        request: request,
+        ownershipState: .alanManaged,
+        readinessState: .ready,
+        accountExists: true,
+        isAdmin: false,
+        homeDirectoryExists: true,
+        homeDirectoryMatches: true,
+        shellMatches: true,
+        hiddenFromLoginWindow: true,
+        terminalProfileID: request.terminalProfileID,
+        ptySmokeVerified: true,
+        diagnostic: nil
+    )
+    let managedProfile = TerminalProfileDefinition(
+        id: request.terminalProfileID,
+        title: request.fullName ?? request.accountName,
+        launch: .managedUser(unixUser: request.accountName),
+        defaultWorkingDirectory: request.homeDirectory,
+        presentation: nil,
+        managedTerminalAccountID: request.accountName
+    )
+    let profiles = TerminalProfileDocument(
+        defaultProfileID: managedProfile.id,
+        profiles: [managedProfile]
+    )
+    let rollback = try managedAccountAdapter.managedTerminalAccountRollbackPlan(
+        request: request,
+        diagnosis: readyDiagnosis,
+        scope: .alanIntegrationOnly,
+        terminalProfiles: profiles
+    )
+    try expect(
+        rollback.steps.map(\.kind) == [
+            .removeManagedTerminalProfile,
+            .helperStep(.removeManagedUserIntegration),
+        ],
+        "managed-account adapter must decode conservative rollback ownership"
     )
 }
 

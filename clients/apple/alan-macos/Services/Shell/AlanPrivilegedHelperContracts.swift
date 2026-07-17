@@ -178,6 +178,7 @@ struct AlanManagedUserDiagnosis: Codable, Equatable {
     let accountExists: Bool
     let isAdmin: Bool
     let homeDirectoryExists: Bool
+    let homeDirectoryMatches: Bool
     let shellMatches: Bool
     let hiddenFromLoginWindow: Bool
     let terminalProfileID: String?
@@ -197,6 +198,7 @@ extension AlanManagedUserDiagnosis {
             accountExists: false,
             isAdmin: false,
             homeDirectoryExists: false,
+            homeDirectoryMatches: false,
             shellMatches: false,
             hiddenFromLoginWindow: false,
             terminalProfileID: nil,

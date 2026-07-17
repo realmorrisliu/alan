@@ -114,7 +114,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     private let windowContext: ShellWindowContext
     let persistenceCoordinator: ShellWorkspacePersistenceCoordinator
     let actionCoordinator = ShellActionCoordinator()
-    let reducerCoordinator = ShellReducerCommandCoordinator()
+    let reducerAdapter = ShellCoreReducerAdapter()
     var terminalActiveTasksByPaneID: [String: ShellTabActiveTaskState] = [:]
     var terminalContentIDsSuppressingAutoClose: Set<String> = []
     private let paneProjection: ShellPaneProjectionService
@@ -317,7 +317,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         presentation: AlanAgentContentPresentation
     ) {
         do {
-            let result = try reducerCoordinator.apply(
+            let result = try reducerAdapter.apply(
                 state: shellState,
                 operation: .updateAgentRendererState(
                     paneSlotID: paneID,

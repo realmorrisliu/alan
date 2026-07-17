@@ -498,6 +498,7 @@ final class AlanPrivilegedHelperManagedUserService {
             accountExists: account != nil,
             isAdmin: account?.isAdmin == true,
             homeDirectoryExists: fileManager.fileExists(atPath: request.homeDirectory),
+            homeDirectoryMatches: account?.homeDirectory == request.homeDirectory,
             shellMatches: account?.shell == request.shell,
             hiddenFromLoginWindow: account?.hidden == true,
             terminalProfileID: nil,

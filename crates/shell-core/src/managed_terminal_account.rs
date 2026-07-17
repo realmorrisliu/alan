@@ -1,7 +1,10 @@
 use crate::terminal_profile::{
-    TerminalProfileDefinition, TerminalProfileLaunch, TerminalProfilePresentation,
+    TerminalProfileDefinition, TerminalProfileDocument, TerminalProfileLaunch,
+    TerminalProfilePresentation,
 };
 use serde::{Deserialize, Serialize};
+
+mod state_planner;
 
 /// Portable request to prepare a managed local terminal account.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -114,12 +117,6 @@ pub enum ManagedTerminalAccountRecord {
     },
 }
 
-impl ManagedTerminalAccountRecord {
-    fn requires_alan_managed_ownership(&self) -> bool {
-        matches!(self, Self::Standard { .. } | Self::Admin { .. })
-    }
-}
-
 /// Evidence that an existing account is owned by Alan.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
@@ -148,12 +145,6 @@ pub enum ManagedTerminalAccountOwnershipState {
         /// Redacted reason.
         reason: String,
     },
-}
-
-impl ManagedTerminalAccountOwnershipState {
-    fn is_alan_managed(&self) -> bool {
-        matches!(self, Self::AlanManaged { .. })
-    }
 }
 
 /// Discovered managed Terminal Profile state.
@@ -229,6 +220,78 @@ pub struct ManagedTerminalAccountState {
     /// Whether the account home directory exists on disk.
     #[serde(default = "default_true")]
     pub home_directory_exists: bool,
+}
+
+/// Ownership classification projected by a platform diagnosis adapter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ManagedTerminalAccountOwnershipKind {
+    /// No ownership evidence is present.
+    Missing,
+    /// Current Alan helper ownership is verified.
+    AlanManaged,
+    /// The account exists outside Alan management.
+    NotAlanManaged,
+}
+
+/// Readiness classification projected by a platform diagnosis adapter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ManagedTerminalAccountReadinessState {
+    /// The local account is absent.
+    AccountMissing,
+    /// Existing Alan-managed state needs repair.
+    Repairable,
+    /// Helper-backed account and PTY verification passed.
+    Ready,
+    /// The account exists outside Alan management.
+    AccountNotAlanManaged,
+    /// The privileged helper is unavailable.
+    HelperUnavailable,
+    /// Helper-backed PTY verification failed.
+    PtySpawnFailed,
+    /// The requested operation needs destructive confirmation.
+    DestructiveConfirmationRequired,
+}
+
+/// Portable diagnosis input used to build provisioning and rollback plans.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ManagedTerminalAccountDiagnosis {
+    /// Current ownership classification.
+    pub ownership_state: ManagedTerminalAccountOwnershipKind,
+    /// Current readiness classification.
+    pub readiness_state: ManagedTerminalAccountReadinessState,
+    /// Whether the local account exists.
+    pub account_exists: bool,
+    /// Whether the account currently has administrator privileges.
+    pub is_admin: bool,
+    /// Whether the requested home directory exists.
+    pub home_directory_exists: bool,
+    /// Whether the account's configured home directory matches the request.
+    pub home_directory_matches: bool,
+    /// Whether the account shell matches the request.
+    pub shell_matches: bool,
+    /// Whether the account is hidden from login-window lists.
+    pub hidden_from_login_window: bool,
+    /// Terminal Profile id reported by the platform diagnosis, when any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal_profile_id: Option<String>,
+    /// Whether helper-backed PTY startup verification passed.
+    pub pty_smoke_verified: bool,
+}
+
+/// Scope for a conservative managed terminal account rollback plan.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ManagedTerminalAccountRollbackScope {
+    /// Remove only current Alan-owned integration.
+    AlanIntegrationOnly,
+    /// Delete the account and canonical home after explicit confirmation.
+    DeleteAccountAndHome {
+        /// Confirmation text, which must equal the account name.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        confirmation: Option<String>,
+    },
 }
 
 /// Managed terminal account plan step kind.
@@ -341,6 +404,24 @@ impl ManagedTerminalAccountPlanner {
         request: ManagedTerminalAccountRequest,
         state: &ManagedTerminalAccountState,
     ) -> ManagedTerminalAccountPlan {
+        state_planner::plan(request, state)
+    }
+
+    /// Builds a provisioning or repair plan from a portable platform diagnosis.
+    pub fn plan_from_diagnosis(
+        request: ManagedTerminalAccountRequest,
+        diagnosis: &ManagedTerminalAccountDiagnosis,
+        terminal_profiles: Option<&TerminalProfileDocument>,
+    ) -> ManagedTerminalAccountPlan {
+        let terminal_profile = terminal_profile_state(&request, diagnosis, terminal_profiles);
+        Self::plan_with_profile_state(request, diagnosis, terminal_profile)
+    }
+
+    fn plan_with_profile_state(
+        request: ManagedTerminalAccountRequest,
+        diagnosis: &ManagedTerminalAccountDiagnosis,
+        terminal_profile: ManagedTerminalAccountProfileState,
+    ) -> ManagedTerminalAccountPlan {
         let validation_errors = ManagedTerminalAccountIdentifierValidator::validate(&request);
         if !validation_errors.is_empty() {
             return ManagedTerminalAccountPlan {
@@ -351,15 +432,25 @@ impl ManagedTerminalAccountPlanner {
                 steps: Vec::new(),
             };
         }
-        if state.account.requires_alan_managed_ownership() && !state.ownership.is_alan_managed() {
+
+        if diagnosis.readiness_state == ManagedTerminalAccountReadinessState::HelperUnavailable {
+            return ManagedTerminalAccountPlan {
+                request,
+                status: ManagedTerminalAccountPlanStatus::HelperUnavailable,
+                steps: Vec::new(),
+            };
+        }
+        if diagnosis.readiness_state == ManagedTerminalAccountReadinessState::AccountNotAlanManaged
+        {
             return ManagedTerminalAccountPlan {
                 request,
                 status: ManagedTerminalAccountPlanStatus::AccountNotAlanManaged,
                 steps: Vec::new(),
             };
         }
+
         if let ManagedTerminalAccountProfileState::ExistingUnmanaged { profile_id } =
-            &state.terminal_profile
+            &terminal_profile
         {
             return ManagedTerminalAccountPlan {
                 request,
@@ -370,153 +461,143 @@ impl ManagedTerminalAccountPlanner {
             };
         }
 
-        let mut steps = Vec::new();
-        let mut needs_create = false;
-        let mut repair_needed = false;
-
-        match &state.account {
-            ManagedTerminalAccountRecord::Missing => {
-                needs_create = true;
-                steps.push(managed_account_step(
-                    ManagedTerminalAccountPlanStepKind::CreateStandardAccount,
-                    "Create standard local terminal account",
-                    true,
-                ));
-                if request.hide_from_login_window {
-                    steps.push(managed_account_step(
-                        ManagedTerminalAccountPlanStepKind::HideAccount,
-                        "Hide terminal account from login window lists",
-                        true,
-                    ));
+        match diagnosis.readiness_state {
+            ManagedTerminalAccountReadinessState::DestructiveConfirmationRequired => {
+                ManagedTerminalAccountPlan {
+                    steps: helper_backed_steps(&request, diagnosis, &terminal_profile),
+                    request,
+                    status: ManagedTerminalAccountPlanStatus::RequiresDestructiveConfirmation,
                 }
             }
-            ManagedTerminalAccountRecord::Admin { .. } => {
-                repair_needed = true;
-                steps.push(managed_account_step(
-                    ManagedTerminalAccountPlanStepKind::RepairAccountType,
-                    "Repair account so it is not an administrator",
-                    true,
-                ));
-            }
-            ManagedTerminalAccountRecord::Invalid { reason } => {
-                if reason.to_ascii_lowercase().contains("incomplete") {
-                    needs_create = true;
-                    steps.push(managed_account_step(
-                        ManagedTerminalAccountPlanStepKind::CreateStandardAccount,
-                        format!("Complete local terminal account record: {reason}"),
-                        true,
-                    ));
-                    if request.hide_from_login_window {
-                        steps.push(managed_account_step(
-                            ManagedTerminalAccountPlanStepKind::HideAccount,
-                            "Hide terminal account from login window lists",
-                            true,
-                        ));
-                    }
+            ManagedTerminalAccountReadinessState::Ready => {
+                let steps = terminal_profile_handoff_steps(&terminal_profile);
+                let status = if steps.is_empty() {
+                    ManagedTerminalAccountPlanStatus::AlreadyReady
                 } else {
-                    repair_needed = true;
-                    steps.push(managed_account_step(
-                        ManagedTerminalAccountPlanStepKind::RepairAccountType,
-                        format!("Repair account state: {reason}"),
-                        true,
-                    ));
+                    ManagedTerminalAccountPlanStatus::ReadyToApply
+                };
+                ManagedTerminalAccountPlan {
+                    request,
+                    status,
+                    steps,
                 }
             }
-            ManagedTerminalAccountRecord::Standard {
-                home_directory,
-                shell,
-                hidden,
-            } => {
-                if home_directory != &request.home_directory || !state.home_directory_exists {
-                    repair_needed = true;
-                    steps.push(managed_account_step(
-                        ManagedTerminalAccountPlanStepKind::RepairHomeDirectory,
-                        "Repair terminal account home directory",
-                        true,
-                    ));
-                }
-                if shell != &request.shell {
-                    repair_needed = true;
-                    steps.push(managed_account_step(
-                        ManagedTerminalAccountPlanStepKind::RepairShell,
-                        "Repair terminal account shell",
-                        true,
-                    ));
-                }
-                if request.hide_from_login_window && !hidden {
-                    repair_needed = true;
-                    steps.push(managed_account_step(
-                        ManagedTerminalAccountPlanStepKind::HideAccount,
-                        "Hide terminal account from login window lists",
-                        true,
-                    ));
-                }
-            }
+            ManagedTerminalAccountReadinessState::PtySpawnFailed => ManagedTerminalAccountPlan {
+                steps: helper_backed_steps(&request, diagnosis, &terminal_profile),
+                request,
+                status: ManagedTerminalAccountPlanStatus::PtySpawnFailed,
+            },
+            ManagedTerminalAccountReadinessState::AccountMissing
+            | ManagedTerminalAccountReadinessState::Repairable => ManagedTerminalAccountPlan {
+                steps: helper_backed_steps(&request, diagnosis, &terminal_profile),
+                status: if diagnosis.account_exists {
+                    ManagedTerminalAccountPlanStatus::Repair
+                } else {
+                    ManagedTerminalAccountPlanStatus::ReadyToApply
+                },
+                request,
+            },
+            ManagedTerminalAccountReadinessState::AccountNotAlanManaged
+            | ManagedTerminalAccountReadinessState::HelperUnavailable => unreachable!(),
+        }
+    }
+
+    /// Builds a conservative rollback plan from a portable platform diagnosis.
+    pub fn rollback_plan(
+        request: ManagedTerminalAccountRequest,
+        diagnosis: &ManagedTerminalAccountDiagnosis,
+        scope: &ManagedTerminalAccountRollbackScope,
+        terminal_profiles: Option<&TerminalProfileDocument>,
+    ) -> ManagedTerminalAccountPlan {
+        if diagnosis.readiness_state == ManagedTerminalAccountReadinessState::HelperUnavailable {
+            return ManagedTerminalAccountPlan {
+                request,
+                status: ManagedTerminalAccountPlanStatus::HelperUnavailable,
+                steps: Vec::new(),
+            };
+        }
+        if diagnosis.readiness_state == ManagedTerminalAccountReadinessState::AccountNotAlanManaged
+            || diagnosis.ownership_state == ManagedTerminalAccountOwnershipKind::NotAlanManaged
+        {
+            return ManagedTerminalAccountPlan {
+                request,
+                status: ManagedTerminalAccountPlanStatus::AccountNotAlanManaged,
+                steps: Vec::new(),
+            };
         }
 
-        if needs_create {
+        let terminal_profile = terminal_profile_state(&request, diagnosis, terminal_profiles);
+        let mut steps = Vec::new();
+        if matches!(
+            terminal_profile,
+            ManagedTerminalAccountProfileState::ExistingManaged { ref profile_id }
+                if profile_id == request.terminal_profile_id()
+        ) {
             steps.push(managed_account_step(
-                ManagedTerminalAccountPlanStepKind::WriteOwnershipMarker,
-                "Write helper ownership marker",
-                true,
+                ManagedTerminalAccountPlanStepKind::RemoveManagedTerminalProfile,
+                "Remove managed Terminal Profile",
+                false,
             ));
         }
 
-        if state.verification != ManagedTerminalAccountVerificationStatus::Passed {
-            if !needs_create {
-                repair_needed = true;
-            }
-            steps.push(managed_account_step(
-                ManagedTerminalAccountPlanStepKind::VerifyAccount,
-                "Verify helper-managed account state",
-                true,
-            ));
-            steps.push(managed_account_step(
-                ManagedTerminalAccountPlanStepKind::VerifyManagedUserPty,
-                "Verify helper-managed PTY startup",
-                true,
-            ));
-        }
-
-        match &state.terminal_profile {
-            ManagedTerminalAccountProfileState::Missing => {
+        match scope {
+            ManagedTerminalAccountRollbackScope::AlanIntegrationOnly => {
                 steps.push(managed_account_step(
-                    ManagedTerminalAccountPlanStepKind::CreateOrUpdateTerminalProfile,
-                    "Create matching Terminal Profile",
-                    false,
+                    ManagedTerminalAccountPlanStepKind::RemoveManagedUserIntegration,
+                    "Remove helper-managed account integration",
+                    true,
                 ));
-            }
-            ManagedTerminalAccountProfileState::ExistingManaged { .. } => {
-                if state.verification != ManagedTerminalAccountVerificationStatus::Passed {
-                    steps.push(managed_account_step(
-                        ManagedTerminalAccountPlanStepKind::CreateOrUpdateTerminalProfile,
-                        "Refresh matching Terminal Profile",
-                        false,
-                    ));
+                ManagedTerminalAccountPlan {
+                    request,
+                    status: ManagedTerminalAccountPlanStatus::ReadyToApply,
+                    steps,
                 }
             }
-            ManagedTerminalAccountProfileState::ExistingManagedOutdated { .. } => {
-                repair_needed = true;
+            ManagedTerminalAccountRollbackScope::DeleteAccountAndHome { confirmation } => {
+                if diagnosis.ownership_state != ManagedTerminalAccountOwnershipKind::AlanManaged {
+                    return ManagedTerminalAccountPlan {
+                        request,
+                        status: ManagedTerminalAccountPlanStatus::AccountNotAlanManaged,
+                        steps,
+                    };
+                }
+                if confirmation.as_deref() != Some(request.account_name.as_str()) {
+                    return ManagedTerminalAccountPlan {
+                        request,
+                        status: ManagedTerminalAccountPlanStatus::RequiresDestructiveConfirmation,
+                        steps,
+                    };
+                }
+                if diagnosis.account_exists {
+                    steps.push(managed_account_step(
+                        ManagedTerminalAccountPlanStepKind::DeleteAccount,
+                        "Delete terminal account",
+                        true,
+                    ));
+                }
+                if diagnosis.home_directory_exists
+                    && request.home_directory
+                        == ManagedTerminalAccountRequest::canonical_home_directory(
+                            &request.account_name,
+                        )
+                {
+                    steps.push(managed_account_step(
+                        ManagedTerminalAccountPlanStepKind::DeleteHomeDirectory,
+                        "Delete terminal account home directory",
+                        true,
+                    ));
+                }
                 steps.push(managed_account_step(
-                    ManagedTerminalAccountPlanStepKind::CreateOrUpdateTerminalProfile,
-                    "Refresh matching Terminal Profile",
-                    false,
+                    ManagedTerminalAccountPlanStepKind::RemoveManagedUserIntegration,
+                    "Remove helper-managed account integration",
+                    true,
                 ));
+                ManagedTerminalAccountPlan {
+                    request,
+                    status: ManagedTerminalAccountPlanStatus::ReadyToApply,
+                    steps,
+                }
             }
-            ManagedTerminalAccountProfileState::ExistingUnmanaged { .. } => {}
-        }
-
-        let status = if steps.is_empty() {
-            ManagedTerminalAccountPlanStatus::AlreadyReady
-        } else if repair_needed {
-            ManagedTerminalAccountPlanStatus::Repair
-        } else {
-            ManagedTerminalAccountPlanStatus::ReadyToApply
-        };
-        ManagedTerminalAccountPlan {
-            request,
-            status,
-            steps,
         }
     }
 }
@@ -617,6 +698,125 @@ impl ManagedTerminalAccountProfileHandoff {
                 managed_terminal_account_id: Some(request.account_name.clone()),
             }
         })
+    }
+}
+
+fn terminal_profile_state(
+    request: &ManagedTerminalAccountRequest,
+    diagnosis: &ManagedTerminalAccountDiagnosis,
+    terminal_profiles: Option<&TerminalProfileDocument>,
+) -> ManagedTerminalAccountProfileState {
+    let Some(document) = terminal_profiles else {
+        return if diagnosis.terminal_profile_id.as_deref() == Some(request.terminal_profile_id()) {
+            ManagedTerminalAccountProfileState::ExistingManaged {
+                profile_id: request.terminal_profile_id().to_string(),
+            }
+        } else {
+            ManagedTerminalAccountProfileState::Missing
+        };
+    };
+    let Some(profile) = document.profile(Some(request.terminal_profile_id())) else {
+        return ManagedTerminalAccountProfileState::Missing;
+    };
+    if profile.managed_terminal_account_id.as_deref() != Some(request.account_name.as_str()) {
+        return ManagedTerminalAccountProfileState::ExistingUnmanaged {
+            profile_id: profile.id.clone(),
+        };
+    }
+    if profile.launch
+        != (TerminalProfileLaunch::ManagedUser {
+            unix_user: request.account_name.clone(),
+        })
+        || profile.default_working_directory.as_deref() != Some(request.home_directory.as_str())
+    {
+        return ManagedTerminalAccountProfileState::ExistingManagedOutdated {
+            profile_id: profile.id.clone(),
+        };
+    }
+    ManagedTerminalAccountProfileState::ExistingManaged {
+        profile_id: profile.id.clone(),
+    }
+}
+
+fn helper_backed_steps(
+    request: &ManagedTerminalAccountRequest,
+    diagnosis: &ManagedTerminalAccountDiagnosis,
+    terminal_profile: &ManagedTerminalAccountProfileState,
+) -> Vec<ManagedTerminalAccountPlanStep> {
+    let mut steps = Vec::new();
+    if !diagnosis.account_exists {
+        steps.push(managed_account_step(
+            ManagedTerminalAccountPlanStepKind::CreateStandardAccount,
+            "Create standard local terminal account",
+            true,
+        ));
+    } else {
+        if diagnosis.is_admin {
+            steps.push(managed_account_step(
+                ManagedTerminalAccountPlanStepKind::RepairAccountType,
+                "Repair terminal account type",
+                true,
+            ));
+        }
+        if !diagnosis.home_directory_exists || !diagnosis.home_directory_matches {
+            steps.push(managed_account_step(
+                ManagedTerminalAccountPlanStepKind::RepairHomeDirectory,
+                "Repair terminal account home directory",
+                true,
+            ));
+        }
+        if !diagnosis.shell_matches {
+            steps.push(managed_account_step(
+                ManagedTerminalAccountPlanStepKind::RepairShell,
+                "Repair terminal account shell",
+                true,
+            ));
+        }
+    }
+    if request.hide_from_login_window && !diagnosis.hidden_from_login_window {
+        steps.push(managed_account_step(
+            ManagedTerminalAccountPlanStepKind::HideAccount,
+            "Hide terminal account from login window lists",
+            true,
+        ));
+    }
+    if diagnosis.ownership_state != ManagedTerminalAccountOwnershipKind::AlanManaged {
+        steps.push(managed_account_step(
+            ManagedTerminalAccountPlanStepKind::WriteOwnershipMarker,
+            "Write Alan-managed ownership marker",
+            true,
+        ));
+    }
+    steps.push(managed_account_step(
+        ManagedTerminalAccountPlanStepKind::VerifyAccount,
+        "Verify helper-managed account state",
+        true,
+    ));
+    if !diagnosis.pty_smoke_verified {
+        steps.push(managed_account_step(
+            ManagedTerminalAccountPlanStepKind::VerifyManagedUserPty,
+            "Verify helper-managed PTY startup",
+            true,
+        ));
+    }
+    steps.extend(terminal_profile_handoff_steps(terminal_profile));
+    steps
+}
+
+fn terminal_profile_handoff_steps(
+    terminal_profile: &ManagedTerminalAccountProfileState,
+) -> Vec<ManagedTerminalAccountPlanStep> {
+    match terminal_profile {
+        ManagedTerminalAccountProfileState::ExistingManaged { .. }
+        | ManagedTerminalAccountProfileState::ExistingUnmanaged { .. } => Vec::new(),
+        ManagedTerminalAccountProfileState::Missing
+        | ManagedTerminalAccountProfileState::ExistingManagedOutdated { .. } => {
+            vec![managed_account_step(
+                ManagedTerminalAccountPlanStepKind::CreateOrUpdateTerminalProfile,
+                "Create matching Terminal Profile",
+                false,
+            )]
+        }
     }
 }
 

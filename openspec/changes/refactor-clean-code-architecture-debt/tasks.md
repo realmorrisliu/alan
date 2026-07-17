@@ -50,7 +50,7 @@
   presentation, persistence, and command collaborators.
 - [x] 4.3 Split terminal host/runtime owners along attachment, input, surface,
   overlay, and metadata responsibilities.
-- [ ] 4.4 Delete shallow pass-through bridges and keep shell-core FFI operations
+- [x] 4.4 Delete shallow pass-through bridges and keep shell-core FFI operations
   in their documented narrow adapter owners.
 - [x] 4.5 Lower the Apple warning ledger and executable ceiling in every focused
   PR, with fresh Alan Dev rendered verification for touched surfaces.
@@ -59,11 +59,11 @@
 
 ## 5. Final Verification And Archive
 
-- [ ] 5.1 Run the canonical quality gate, workspace tests, focused runtime and
+- [x] 5.1 Run the canonical quality gate, workspace tests, focused runtime and
   Apple tests, and strict OpenSpec validation.
-- [ ] 5.2 Verify the dependency inventory contains no removed transitional edge,
+- [x] 5.2 Verify the dependency inventory contains no removed transitional edge,
   the Rust oversized baseline is empty, and Apple strict mode reports zero.
-- [ ] 5.3 Keep every implementation PR and Codex review clean, and confirm no
+- [x] 5.3 Keep every implementation PR and Codex review clean, and confirm no
   slice intentionally changed product behavior.
 - [ ] 5.4 After all implementation PRs merge, sync delta specs into canonical
   specs and archive this change.

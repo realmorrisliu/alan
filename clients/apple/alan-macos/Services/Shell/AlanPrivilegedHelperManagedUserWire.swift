@@ -70,6 +70,7 @@ struct AlanXPCManagedUserDiagnosis: Codable, Equatable {
     let accountExists: Bool
     let isAdmin: Bool
     let homeDirectoryExists: Bool
+    let homeDirectoryMatches: Bool
     let shellMatches: Bool
     let hiddenFromLoginWindow: Bool
     let terminalProfileID: String?

@@ -2,7 +2,7 @@ import Foundation
 
 extension ShellStateSnapshot {
     func focusingPane(_ paneID: String) throws -> ShellStateMutationResult {
-        return try ShellCoreFFIAdapter().applyReducer(
+        return try ShellCoreReducerAdapter(adapter: ShellCoreFFIAdapter()).apply(
             state: self,
             operation: .focusPane(paneSlotID: paneID)
         )
@@ -39,7 +39,7 @@ extension ShellStateSnapshot {
         now: Date = .now
     ) -> ShellStateMutationResult {
         do {
-            return try ShellCoreFFIAdapter().applyReducer(
+            return try ShellCoreReducerAdapter(adapter: ShellCoreFFIAdapter()).apply(
                 state: self,
                 operation: .createTerminalSpace(
                     title: title,
@@ -64,7 +64,7 @@ extension ShellStateSnapshot {
         _ terminalProfileID: String?,
         forSpaceID targetSpaceID: String
     ) -> ShellStateSnapshot? {
-        try? ShellCoreFFIAdapter().applyReducer(
+        try? ShellCoreReducerAdapter(adapter: ShellCoreFFIAdapter()).apply(
             state: self,
             operation: .setTerminalProfile(
                 spaceID: targetSpaceID,
@@ -86,7 +86,7 @@ extension ShellStateSnapshot {
             in: requestedSpaceID,
             explicit: terminalProfileID
         )
-        return try ShellCoreFFIAdapter().applyReducer(
+        return try ShellCoreReducerAdapter(adapter: ShellCoreFFIAdapter()).apply(
             state: self,
             operation: .openTerminalTab(
                 spaceID: requestedSpaceID,
@@ -105,7 +105,7 @@ extension ShellStateSnapshot {
         reservedPaneIDs: Set<String> = [],
         now: Date = .now
     ) throws -> ShellStateMutationResult {
-        try ShellCoreFFIAdapter().applyReducer(
+        try ShellCoreReducerAdapter(adapter: ShellCoreFFIAdapter()).apply(
             state: self,
             operation: .openContentTab(
                 spaceID: requestedSpaceID,
@@ -125,7 +125,7 @@ extension ShellStateSnapshot {
         reservedPaneIDs: Set<String> = [],
         now: Date = .now
     ) throws -> ShellStateMutationResult {
-        try ShellCoreFFIAdapter().applyReducer(
+        try ShellCoreReducerAdapter(adapter: ShellCoreFFIAdapter()).apply(
             state: self,
             operation: .openContentTab(
                 spaceID: requestedSpaceID,
@@ -183,7 +183,7 @@ extension ShellStateSnapshot {
                 reservedPaneIDs: reservedPaneIDs
             )
         }
-        return try ShellCoreFFIAdapter().applyReducer(
+        return try ShellCoreReducerAdapter(adapter: ShellCoreFFIAdapter()).apply(
             state: self,
             operation: .splitPane(
                 paneSlotID: paneID,
@@ -197,11 +197,11 @@ extension ShellStateSnapshot {
     }
 
     func pinningTab(_ tabID: String) throws -> ShellStateMutationResult {
-        try ShellCoreFFIAdapter().applyReducer(state: self, operation: .pinTab(tabID: tabID))
+        try ShellCoreReducerAdapter(adapter: ShellCoreFFIAdapter()).apply(state: self, operation: .pinTab(tabID: tabID))
     }
 
     func renamingTab(_ tabID: String, title: String) throws -> ShellStateMutationResult {
-        try ShellCoreFFIAdapter().applyReducer(
+        try ShellCoreReducerAdapter(adapter: ShellCoreFFIAdapter()).apply(
             state: self,
             operation: .renameTab(tabID: tabID, title: title)
         )
@@ -219,7 +219,7 @@ extension ShellStateSnapshot {
                 paneID: focusedPaneID
             )
         }
-        return try ShellCoreFFIAdapter().applyReducer(
+        return try ShellCoreReducerAdapter(adapter: ShellCoreFFIAdapter()).apply(
             state: self,
             operation: .renameTab(tabID: tabID, title: title ?? "Shell")
         )
@@ -232,7 +232,7 @@ extension ShellStateSnapshot {
         let protectedTabIDs = activeTaskByTabID.compactMap { tabID, activeTask in
             activeTask.protectsFromPruning ? tabID : nil
         }
-        return try ShellCoreFFIAdapter().applyReducer(
+        return try ShellCoreReducerAdapter(adapter: ShellCoreFFIAdapter()).apply(
             state: self,
             operation: .clearInactiveTemporaryTabs(
                 spaceID: spaceID,
@@ -245,14 +245,14 @@ extension ShellStateSnapshot {
         tabID: String,
         targetSpaceID: String
     ) throws -> ShellStateMutationResult {
-        try ShellCoreFFIAdapter().applyReducer(
+        try ShellCoreReducerAdapter(adapter: ShellCoreFFIAdapter()).apply(
             state: self,
             operation: .moveTabToSpace(tabID: tabID, targetSpaceID: targetSpaceID)
         )
     }
 
     func closingTab(_ tabID: String) throws -> ShellStateMutationResult {
-        try ShellCoreFFIAdapter().applyReducer(state: self, operation: .closeTab(tabID: tabID))
+        try ShellCoreReducerAdapter(adapter: ShellCoreFFIAdapter()).apply(state: self, operation: .closeTab(tabID: tabID))
     }
 
     private func splitContentPane(
@@ -292,7 +292,7 @@ extension ShellStateSnapshot {
             payload = .agent(attachment)
         }
 
-        return try ShellCoreFFIAdapter().applyReducer(
+        return try ShellCoreReducerAdapter(adapter: ShellCoreFFIAdapter()).apply(
             state: self,
             operation: .splitContentPane(
                 paneSlotID: paneID,

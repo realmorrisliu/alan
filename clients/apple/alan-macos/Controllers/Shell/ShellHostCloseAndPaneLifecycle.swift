@@ -41,7 +41,7 @@ extension ShellHostController {
 
     private func applyCloseTabMutation(tabID: String) -> ShellTabCloseResult {
         do {
-            let result = try reducerCoordinator.apply(
+            let result = try reducerAdapter.apply(
                 state: shellState,
                 operation: .closeTab(tabID: tabID)
             )
@@ -77,7 +77,7 @@ extension ShellHostController {
 
     private func applyClosePaneMutation(paneID: String) -> ShellPaneCloseResult {
         do {
-            let result = try reducerCoordinator.apply(
+            let result = try reducerAdapter.apply(
                 state: shellState,
                 operation: .closePane(paneSlotID: paneID)
             )
@@ -358,7 +358,7 @@ extension ShellHostController {
     ) -> Bool {
         let targetTabTitle = shellState.tab(tabID: targetTabID)?.title ?? targetTabID
         do {
-            let result = try reducerCoordinator.apply(
+            let result = try reducerAdapter.apply(
                 state: shellState,
                 operation: .movePaneToTab(
                     paneSlotID: paneID,
@@ -401,7 +401,7 @@ extension ShellHostController {
         }
 
         do {
-            let result = try reducerCoordinator.apply(
+            let result = try reducerAdapter.apply(
                 state: shellState,
                 operation: .movePaneWithinTab(paneSlotID: paneID, placement: placement)
             )
@@ -425,7 +425,7 @@ extension ShellHostController {
     func liftPaneToTab(paneID: String, title: String? = nil) -> ShellPaneLiftResult {
         let resolvedTitle = title ?? shellState.pane(paneID: paneID)?.viewport?.title ?? "Lifted Pane"
         do {
-            let result = try reducerCoordinator.apply(
+            let result = try reducerAdapter.apply(
                 state: shellState,
                 operation: .movePaneToNewTab(
                     paneSlotID: paneID,

@@ -113,6 +113,27 @@ platform adapters for shallow pass-throughs. It may delete debt without a
 warning of its own, but it must not reintroduce Apple domain fallbacks or widen
 the operation-owner allowlist.
 
+The completed audit keeps reducer and managed-terminal-account operations in
+dedicated operation-family adapters. Portable managed-account provisioning and
+rollback planning now run in shell-core; Swift projects platform diagnosis and
+Terminal Profile DTOs and fails closed when the facade is unavailable. The
+shallow reducer command coordinator and optional action metadata fallbacks are
+removed without increasing the operation-owner allowlist.
+
+The managed-account diagnosis boundary carries requested-home existence and
+configured-home equality as separate facts from the privileged helper through
+the Swift adapter, so shell-core can plan repair without re-reading host state.
+Because configured-home equality is a required wire fact, adding it advances
+the privileged-helper protocol to v3; a registered v2 helper is `outdated` and
+must be updated before managed-account diagnosis is consumed.
+The existing state-input planner remains a separate shell-core domain module:
+its invalid-record and verification evidence must not be lossily collapsed into
+the narrower helper diagnosis contract.
+
+After the view-owner splits, the design-token baseline follows the extracted
+files and lowers the aggregate raw-literal allowance from 75 to 50; no new
+literal allowance is introduced by the path migration.
+
 Alternative considered: keep a permanent warning allowlist. Rejected because
 the 15 warnings describe known migration state, not supported architecture.
 

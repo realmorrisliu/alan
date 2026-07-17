@@ -639,18 +639,18 @@ reject_pattern \
 
 reject_pattern \
     "clients/apple/alan-macos/Services/Shell/ManagedTerminalAccountPlanning.swift" \
-    "shouldRepairUnreadableSudoers|repairNeeded|needsCreate" \
+    "shouldRepairUnreadableSudoers|repairNeeded|needsCreate|helperBackedSteps|terminalProfileHandoffSteps|terminalProfileState" \
     "managed terminal account provisioning plans must not keep a Swift-owned duplicate"
 
 require_pattern \
     "clients/apple/alan-macos/Services/Shell/ManagedTerminalAccountValidation.swift" \
-    "ShellCoreFFIAdapter\\.shared\\.validateManagedTerminalAccountRequest" \
+    "ShellCoreManagedTerminalAccountAdapter" \
     "managed terminal account validation must route through shell-core authority"
 
 require_pattern \
     "clients/apple/alan-macos/Services/Shell/ManagedTerminalAccountPlanning.swift" \
     "enum ManagedTerminalAccountPlanner" \
-    "transitional managed terminal account planning must stay in its explicit service owner"
+    "managed terminal account fail-closed planning must stay in its explicit service owner"
 
 require_pattern \
     "clients/apple/alan-macos/Services/Shell/ShellCoreFFIManagedTerminalAccountAdapter.swift" \
@@ -658,9 +658,29 @@ require_pattern \
     "managed terminal account validation must have a shell-core FFI operation"
 
 require_pattern \
+    "clients/apple/alan-macos/Services/Shell/ShellCoreFFIManagedTerminalAccountAdapter.swift" \
+    "managed_terminal_account\\.plan" \
+    "managed terminal account planning must have a shell-core FFI operation"
+
+require_pattern \
+    "clients/apple/alan-macos/Services/Shell/AlanPrivilegedHelperManagedUserService.swift" \
+    "homeDirectoryMatches: account\\?\\.homeDirectory == request\\.homeDirectory" \
+    "managed terminal account diagnosis must preserve configured-home equality"
+
+require_pattern \
+    "clients/apple/alan-macos/Services/Shell/AlanPrivilegedHelperXPC.swift" \
+    "static let currentVersion = 3" \
+    "managed terminal account diagnosis schema changes must advance the helper protocol"
+
+require_pattern \
+    "clients/apple/alan-macos/Services/Shell/ShellCoreFFIManagedTerminalAccountAdapter.swift" \
+    "homeDirectoryMatches = diagnosis\\.homeDirectoryMatches" \
+    "managed terminal account FFI planning must receive configured-home equality"
+
+require_pattern \
     "crates/shell-core/src/managed_terminal_account.rs" \
     "pub struct ManagedTerminalAccountPlanner" \
-    "portable managed terminal account planning must remain owned by shell-core pending the 4.4 Swift adapter audit"
+    "portable managed terminal account planning must remain owned by shell-core"
 
 reject_pattern \
     "clients/apple/alan-macos/Services/Shell/ShellCoreFFITerminalProfileAdapter.swift" \
