@@ -67,7 +67,16 @@ Xcode target.
 | `Services/Terminal/TerminalSurfaceContracts.swift` | 263 | AppKit, Foundation, GhosttyKit; macOS/Ghostty gates | Surface lifecycle, teardown, transcript, event-surface, and runtime-service contracts | `Services/Terminal/` |
 | `Services/Terminal/TerminalTranscriptCapture.swift` | 84 | Foundation; macOS gates | Bounded live/fallback terminal transcript capture and dimension projection | `Services/Terminal/` |
 | `Services/Terminal/WindowTerminalRuntimeService.swift` | 198 | Foundation; macOS gates | Window-scoped content-keyed surface ownership, restored transcripts, delivery, and teardown | `Services/Terminal/` |
-| `TerminalSurfaceController.swift` | 1837 | Foundation, AppKit, GhosttyKit; macOS/Ghostty gates | Terminal input, pointer, scrollback, search, semantic commands, and surface adapters | `Services/Terminal/` |
+| `Services/Terminal/TerminalInputRouter.swift` | 240 | Foundation; macOS gates | Shell-action lookup, focus-transfer sequencing, and keyboard/pointer routing coordination | `Services/Terminal/` |
+| `Services/Terminal/TerminalKeyboardRouting.swift` | 178 | Foundation; macOS gates | Key models, IME control policy, clear-command tracking, and key-equivalent routing | `Services/Terminal/` |
+| `Services/Terminal/TerminalMetadataAdapter.swift` | 80 | Foundation; macOS gates | Renderer, process, and surface-readiness overlay projection | `Services/Terminal/` |
+| `Services/Terminal/TerminalPointerRouting.swift` | 191 | Foundation; macOS gates | Pointer/button normalization and terminal mouse, selection, and hover routing | `Services/Terminal/` |
+| `Services/Terminal/TerminalScrollbackAdapter.swift` | 163 | Foundation; macOS gates | Terminal-mode tracking, bounded scrollback state, and native row-scroll normalization | `Services/Terminal/` |
+| `Services/Terminal/TerminalSearchAdapter.swift` | 124 | Foundation; macOS gates | Pane-scoped search state and live surface search-engine contract | `Services/Terminal/` |
+| `Services/Terminal/TerminalSelectionClipboardAdapter.swift` | 70 | AppKit, Foundation; macOS gates | Selection-engine contract, pasteboard writing, and guarded paste delivery | `Services/Terminal/` |
+| `Services/Terminal/TerminalSemanticCommands.swift` | 97 | Foundation; macOS gates | Reliable command ranges, segments, semantic state, and command-buffer contract | `Services/Terminal/` |
+| `Services/Terminal/TerminalSurfaceController.swift` | 640 | AppKit, Foundation, GhosttyKit; macOS/Ghostty gates | Surface binding, lifecycle, delivery, semantic/search coordination, readiness, and Ghostty event forwarding | `Services/Terminal/` |
+| `Services/Terminal/TerminalSurfaceState.swift` | 92 | Foundation; macOS gates | Surface readiness, overlay state, and observable terminal-surface snapshots | `Services/Terminal/` |
 | `Models/Shell/ShellWorkspaceValueTypes.swift` | 159 | Foundation | Shared shell commands, split/focus directions, attention, tab organization, and launch-target values | `Models/Shell/` |
 | `Models/Shell/TerminalProfileModels.swift` | 337 | Foundation | Terminal Profile launch, definition, document, validation, editor, store, and resolution result DTOs | `Models/Shell/` |
 | `Models/Shell/ManagedTerminalAccountModels.swift` | 38 | Foundation | Managed-account request and validation-error DTOs | `Models/Shell/` |
@@ -341,7 +350,7 @@ device support was not required for this validation.
 ## Remaining Architecture Debt
 
 `check-architecture-maintainability.sh` currently completes in report mode.
-2 known large-file / bridge-boundary warnings remain after the first fifteen Apple
+1 known large-file / bridge-boundary warning remains after the first sixteen Apple
 ownership slices removed the `ShellHostController.swift` bridge warning and
 split control projection, observation commands, root-controller
 responsibilities, shell presentation models, settings models, snapshot DTO
@@ -349,9 +358,10 @@ families, shell/platform value families, sidebar and settings presentation,
 pane-tree/content rendering, and pane title/overlay presentation into focused
 owners, then isolated Ghostty's macOS platform adapters and terminal runtime
 responsibilities into focused owners, split terminal host lifecycle, pointer,
-keyboard, text-input, and tracing responsibilities, and separated the window
-runtime service from PTY, bootstrap, surface, transcript, and test-double owners. These warnings
-are telemetry for the cleanup, not the cleanup
+keyboard, text-input, and tracing responsibilities, separated the window
+runtime service from PTY, bootstrap, surface, transcript, and test-double owners,
+and split terminal-surface state, scrollback, semantic, input, search, selection,
+metadata, and coordination owners. This warning is telemetry for the cleanup, not the cleanup
 definition. The real debt is any Swift production source that still carries a
 Rust-owned shell-domain implementation, fixture, or fallback after shell-core
 has become authoritative.
@@ -474,6 +484,14 @@ surface adaptation, transcript capture, and window-scoped runtime ownership now
 live in focused `Services/Terminal/` files. Runtime fakes moved out of the app
 target into `scripts/support/TerminalRuntimeTestDoubles.swift`; no production
 replacement exceeds 820 lines, and the warning count falls from 3 to 2.
+
+The sixteenth ownership slice removed the generalized
+`TerminalSurfaceController.swift` root. Scrollback and terminal-mode state,
+semantic command ranges, keyboard and pointer routing, input coordination,
+search, selection and clipboard behavior, surface state, metadata projection,
+and lifecycle coordination now live in focused `Services/Terminal/` owners. The
+coordinator is 640 lines, no other replacement exceeds 240 lines, and the
+warning count falls from 2 to 1.
 
 Rust-owned Swift legacy cleanup targets at this baseline:
 

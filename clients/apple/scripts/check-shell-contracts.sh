@@ -547,17 +547,17 @@ require_tab_organization_sidebar_contract() {
 
 require_semantic_terminal_actions_contract() {
     require_pattern \
-        "clients/apple/alan-macos/TerminalSurfaceController.swift" \
+        "clients/apple/alan-macos/Services/Terminal/TerminalSemanticCommands.swift" \
         "struct AlanTerminalCommandSegment" \
         "semantic terminal command metadata must have pane-scoped command segment storage"
 
     require_pattern \
-        "clients/apple/alan-macos/TerminalSurfaceController.swift" \
+        "clients/apple/alan-macos/Services/Terminal/TerminalSemanticCommands.swift" \
         "enum AlanTerminalCommandBoundaryState" \
         "semantic terminal command actions must model boundary reliability explicitly"
 
     require_pattern \
-        "clients/apple/alan-macos/TerminalSurfaceController.swift" \
+        "clients/apple/alan-macos/Services/Terminal/TerminalSemanticCommands.swift" \
         "protocol AlanTerminalCommandBufferEngine" \
         "copy-last-output must read from a pane-owned command buffer range"
 
@@ -572,7 +572,7 @@ require_semantic_terminal_actions_contract() {
         "live Ghostty surfaces must use Ghostty range text reads for command output copying"
 
     require_pattern \
-        "clients/apple/alan-macos/TerminalSurfaceController.swift" \
+        "clients/apple/alan-macos/Services/Terminal/TerminalSurfaceController.swift" \
         "scrollbackAdapter\\.state\\.metrics\\.mode == \\.normalBuffer" \
         "semantic prompt/output actions must be gated to the normal terminal buffer"
 
@@ -798,32 +798,32 @@ require_pattern \
     "managed_user renderer tests must cover draining more than one helper output chunk"
 
 require_pattern \
-    "clients/apple/alan-macos/TerminalSurfaceController.swift" \
+    "clients/apple/alan-macos/Services/Terminal/TerminalSurfaceController.swift" \
     "final class AlanTerminalSurfaceController" \
     "terminal surface behavior must be owned by a controller boundary"
 
 require_pattern \
-    "clients/apple/alan-macos/TerminalSurfaceController.swift" \
+    "clients/apple/alan-macos/Services/Terminal/TerminalKeyboardRouting.swift" \
     "enum AlanTerminalTextCompositionPolicy" \
     "terminal IME composing control-character policy must have an explicit owner"
 
 reject_pattern \
-    "clients/apple/alan-macos/TerminalSurfaceController.swift" \
+    "clients/apple/alan-macos/Services/Terminal" \
     "final class AlanTerminalInputAdapter" \
     "terminal input routing must not keep a stale input adapter boundary"
 
 require_pattern \
-    "clients/apple/alan-macos/TerminalSurfaceController.swift" \
+    "clients/apple/alan-macos/Services/Terminal/TerminalInputRouter.swift" \
     "final class AlanTerminalInputRouter" \
     "terminal focus and pointer sequence policy must be owned by a single input router"
 
 require_pattern \
-    "clients/apple/alan-macos/TerminalSurfaceController.swift" \
+    "clients/apple/alan-macos/Services/Terminal/TerminalPointerRouting.swift" \
     "final class AlanTerminalPointerAdapter" \
     "terminal mouse and pointer behavior must be normalized through a pointer adapter"
 
 require_pattern \
-    "clients/apple/alan-macos/TerminalSurfaceController.swift" \
+    "clients/apple/alan-macos/Services/Terminal/TerminalScrollbackAdapter.swift" \
     "final class AlanTerminalScrollbackAdapter" \
     "terminal scrollback behavior must be normalized through a scrollback adapter"
 
@@ -833,17 +833,17 @@ require_pattern \
     "terminal scrollback must have an AppKit scroll view adapter"
 
 require_pattern \
-    "clients/apple/alan-macos/TerminalSurfaceController.swift" \
+    "clients/apple/alan-macos/Services/Terminal/TerminalScrollbackAdapter.swift" \
     "protocol AlanTerminalScrollbackEngine" \
     "terminal scrollback must delegate native row scrolls to a surface engine"
 
 require_pattern \
-    "clients/apple/alan-macos/TerminalSurfaceController.swift" \
+    "clients/apple/alan-macos/Services/Terminal/TerminalSearchAdapter.swift" \
     "final class AlanTerminalSearchAdapter" \
     "terminal search state must be pane scoped and adapter-owned"
 
 require_pattern \
-    "clients/apple/alan-macos/TerminalSurfaceController.swift" \
+    "clients/apple/alan-macos/Services/Terminal/TerminalSearchAdapter.swift" \
     "protocol AlanTerminalSearchEngine" \
     "terminal search queries must be delegated to a real surface search engine"
 
@@ -873,7 +873,7 @@ reject_pattern \
     "Find query editing must be owned by the SwiftUI Find bar instead of terminal key capture"
 
 reject_pattern \
-    "clients/apple/alan-macos/TerminalSurfaceController.swift" \
+    "clients/apple/alan-macos/Services/Terminal" \
     "Search terminal|Find text in this pane|Type to search this pane" \
     "Find UI must render through ShellFindBarView instead of the passive terminal overlay card"
 
@@ -1488,12 +1488,12 @@ reject_pattern \
     "collapsed sidebar reveal must not use the full titlebar/header width as a hover zone"
 
 require_pattern \
-    "clients/apple/alan-macos/TerminalSurfaceController.swift" \
+    "clients/apple/alan-macos/Services/Terminal/TerminalInputRouter.swift" \
     "func routeShellAction\\(_ input: AlanTerminalKeyInput\\) -> ShellKeyboardAction\\?" \
     "terminal input routing must recognize registered shell actions before terminal bindings"
 
 require_pattern \
-    "clients/apple/alan-macos/TerminalSurfaceController.swift" \
+    "clients/apple/alan-macos/Services/Terminal/TerminalInputRouter.swift" \
     "ShellActionCoordinator\\(\\)\\.keyboardAction" \
     "terminal keyboard shortcuts must query shell-core action metadata before terminal bindings"
 

@@ -41,7 +41,8 @@ recorded in [`ARCHITECTURE.md`](./ARCHITECTURE.md).
   input tracing, keyboard-layout lookup, boot resolution, render coordination,
   publication policy, agent-activity projection, PTY contracts and implementations,
   Ghostty bootstrap/surface adaptation, transcript capture, and the window-scoped
-  terminal runtime service
+  terminal runtime service, plus focused scrollback, semantic-command, input,
+  search, selection, metadata, surface-state, and lifecycle collaborators
 - `TerminalPaneView.swift` / `Views/Shell/Terminal/TerminalHostView.swift`: current
   terminal pane and AppKit host surfaces;
   settings, bounded content, pane-tree, terminal-leaf, title-bar, and overlay
