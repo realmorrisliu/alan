@@ -273,9 +273,10 @@ device support was not required for this validation.
 
 ## Remaining Architecture Debt
 
-`check-architecture-maintainability.sh` currently completes in report mode with
-15 known large-file / bridge-boundary warnings after the post-core cleanup
-slice moved Swift reducer parity support out of the app target. These warnings
+`check-architecture-maintainability.sh` currently completes in report mode.
+14 known large-file / bridge-boundary warnings remain after the first Apple
+ownership slice moved AppKit access out of `ShellHostController.swift`; all 14
+are now large-file warnings. These warnings
 are telemetry for the cleanup, not the cleanup
 definition. The real debt is any Swift production source that still carries a
 Rust-owned shell-domain implementation, fixture, or fallback after shell-core
@@ -309,6 +310,11 @@ coordinators from `ShellHostController.swift`, the warning classes are:
 - 14 large Swift files over the report threshold.
 - 1 bridge-boundary warning for `ShellHostController.swift` importing AppKit
   while still outside a narrow bridge owner.
+
+The first Apple ownership slice moved close confirmation, app activity, and
+pasteboard access behind narrow `Services/Shell` adapters. The controller now
+imports only Foundation and Combine, so the current warning inventory is the 14
+large Swift files above with no bridge-boundary warning.
 
 Rust-owned Swift legacy cleanup targets at this baseline:
 

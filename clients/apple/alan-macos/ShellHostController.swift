@@ -1,8 +1,7 @@
 import Foundation
 
 #if os(macOS)
-import AppKit
-import SwiftUI
+import Combine
 
 struct ShellAttentionItem: Identifiable, Equatable {
     let paneID: String
@@ -43,43 +42,6 @@ struct ShellCloseGuardImpact: Equatable {
 
     var requiresConfirmation: Bool {
         !activeTerminalContentIDs.isEmpty
-    }
-}
-
-@MainActor
-protocol ShellCloseConfirmationPresenting: AnyObject {
-    func confirmClose(impact: ShellCloseGuardImpact) -> Bool
-}
-
-@MainActor
-final class ShellNSAlertCloseConfirmationPresenter: ShellCloseConfirmationPresenting {
-    func confirmClose(impact: ShellCloseGuardImpact) -> Bool {
-        let alert = NSAlert()
-        alert.alertStyle = .warning
-        alert.messageText = closeTitle(for: impact.scope)
-        alert.informativeText = closeMessage(for: impact)
-        alert.addButton(withTitle: "Close")
-        alert.addButton(withTitle: "Cancel")
-        return alert.runModal() == .alertFirstButtonReturn
-    }
-
-    private func closeTitle(for scope: ShellCloseGuardScope) -> String {
-        switch scope {
-        case .paneSlot:
-            return "Close pane?"
-        case .tab:
-            return "Close tab?"
-        case .window:
-            return "Close window?"
-        case .app:
-            return "Quit alan?"
-        }
-    }
-
-    private func closeMessage(for impact: ShellCloseGuardImpact) -> String {
-        let count = impact.activeTerminalContentIDs.count
-        let noun = count == 1 ? "terminal has" : "terminals have"
-        return "\(count) \(noun) active work. Closing will stop the running process and save only restorable terminal history."
     }
 }
 
@@ -159,7 +121,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     private let platformMetadataPreserver: ShellPlatformMetadataPreserver
     private let terminalContentProjection: TerminalContentProjectionAdapter
     private let terminalContentLifecycle = TerminalContentLifecycleAdapter()
-    private let clipboardWriter: ShellClipboardWriter
+    private let pasteboard: ShellPasteboardAccessing
     private let closeConfirmationPresenter: ShellCloseConfirmationPresenting
     private let gracefulShutdownTimeout: TimeInterval
     private let performanceDiagnosticsRecorder: AlanPerformanceDiagnosticsRecorder?
@@ -280,11 +242,14 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         workspaceManifest: ShellContentWorkspaceManifest? = nil,
         persistenceWriter: ShellPersistenceWriting? = nil,
         manifestFlushScheduler: ManifestFlushScheduling? = nil,
+        pasteboard: ShellPasteboardAccessing? = nil,
         closeConfirmationPresenter: ShellCloseConfirmationPresenting? = nil,
         gracefulShutdownTimeout: TimeInterval = 3.0,
         performanceDiagnosticsRecorder: AlanPerformanceDiagnosticsRecorder? = nil,
         bootProfileCache: AlanShellBootProfileCache? = nil,
-        appIsActiveProvider: @escaping @MainActor () -> Bool = { NSApp.isActive }
+        appIsActiveProvider: @escaping @MainActor () -> Bool = {
+            ShellAppActivityProvider.isActive
+        }
     ) {
         self.fileManager = fileManager
         let resolvedBootProfileCache = bootProfileCache ?? AlanShellBootProfileCache()
@@ -306,7 +271,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
             persistenceWriter: persistenceWriter,
             manifestFlushScheduler: manifestFlushScheduler
         )
-        self.clipboardWriter = ShellClipboardWriter()
+        self.pasteboard = pasteboard ?? ShellSystemPasteboard()
         self.closeConfirmationPresenter =
             closeConfirmationPresenter ?? ShellNSAlertCloseConfirmationPresenter()
         self.gracefulShutdownTimeout = gracefulShutdownTimeout
@@ -1943,7 +1908,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     }
 
     func copySnapshotJSON() {
-        clipboardWriter.writeString(snapshotJSON)
+        pasteboard.writeString(snapshotJSON)
         lastCopiedAt = .now
     }
 
@@ -2019,7 +1984,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         source: ShellTerminalCommandSource = .keyboardShortcut,
         target: ShellActionTarget = .currentSelection
     ) -> Bool {
-        guard let text = NSPasteboard.general.string(forType: .string), !text.isEmpty else {
+        guard let text = pasteboard.readString(), !text.isEmpty else {
             return false
         }
         return pasteIntoTerminal(text, source: source, target: target)

@@ -1,13 +1,12 @@
 # Exact Apple architecture-warning debt. Keep entries sorted.
 # large entries include their current line ceiling; every reduction tightens it.
-bridge|ShellHostController.swift|appkit-or-darwin-outside-bridge
 large|Controllers/Shell/ShellHostControlCommandHandling.swift|1688
 large|GhosttyLiveHost.swift|1258
 large|Models/Shell/ShellSettingsSurfaceModel.swift|1209
 large|Models/Shell/ShellSnapshots.swift|2142
 large|Models/Shell/ShellValueTypes.swift|2653
 large|Services/Shell/AlanPrivilegedHelperXPC.swift|2117
-large|ShellHostController.swift|3920
+large|ShellHostController.swift|3885
 large|ShellModel.swift|1229
 large|TerminalHostRuntime.swift|1552
 large|TerminalHostView.swift|2010
