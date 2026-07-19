@@ -14,12 +14,12 @@ use super::response_guardrails::{
 use super::tool_batch::{ToolBatchOrchestratorOutcome, ToolOrchestratorInputs};
 use super::transition::{RuntimeLoopState, orchestrate_tool_batch};
 use super::turn_driver::TurnInputBroker;
+use super::turn_memory::{FinalizeTurnMemoryRequest, finalize_turn_memory_best_effort};
 use super::turn_support::{
     check_turn_cancelled, emit_streaming_chunks, emit_task_completed_success, emit_thinking_chunks,
     normalize_tool_calls,
 };
 use super::virtual_tools::virtual_tool_definitions;
-use crate::agent_machine::DeferredRuntimeAction;
 
 mod namespace_generation;
 
@@ -79,49 +79,6 @@ fn estimate_pending_turn_prompt_tokens(
             turn_recall_bundle,
             None,
         ))
-}
-
-async fn finalize_turn_memory_best_effort(
-    state: &mut RuntimeLoopState,
-    surfaces_refreshed: bool,
-    surfaces_context: &'static str,
-    promotion_context: &'static str,
-) {
-    if !surfaces_refreshed {
-        let memory_dir = state
-            .core_config
-            .memory
-            .enabled
-            .then_some(state.core_config.memory.store_dir.as_deref())
-            .flatten();
-        let process_path = state.process_path();
-        super::memory_surfaces::refresh_turn_memory_surfaces_best_effort(
-            &state.machine,
-            memory_dir,
-            &process_path,
-            surfaces_context,
-        )
-        .await;
-    }
-
-    let memory_dir = state
-        .core_config
-        .memory
-        .enabled
-        .then(|| state.core_config.memory.store_dir.clone())
-        .flatten();
-    let process_path = state.process_path();
-    if let Some(job) = super::memory_promotion::build_turn_memory_promotion_job(
-        &state.machine,
-        memory_dir,
-        process_path,
-        state.runtime_config.llm_request_timeout_secs,
-        promotion_context,
-    ) {
-        state
-            .machine
-            .push_deferred_runtime_action(DeferredRuntimeAction::TurnMemoryPromotion(job));
-    }
 }
 
 async fn turn_tool_definitions(
@@ -643,11 +600,14 @@ where
                 ToolBatchOrchestratorOutcome::PauseTurn => return Ok(TurnExecutionOutcome::Paused),
                 ToolBatchOrchestratorOutcome::EndTurn { surfaces_refreshed } => {
                     if !cancel.is_cancelled() {
+                        let memory_runtime = super::transition::turn_memory_runtime(state);
                         finalize_turn_memory_best_effort(
-                            state,
-                            surfaces_refreshed,
-                            "turn-ended-after-tool-batch",
-                            "after tool-driven end turn",
+                            memory_runtime,
+                            FinalizeTurnMemoryRequest {
+                                surfaces_refreshed,
+                                surfaces_context: "turn-ended-after-tool-batch",
+                                promotion_context: "after tool-driven end turn",
+                            },
                         )
                         .await;
                     }
@@ -676,11 +636,14 @@ where
                 .write_turn_tape_state(namespace_input_text.as_deref(), fallback_text)
                 .await
                 .context("write namespace fallback turn tape state")?;
+            let memory_runtime = super::transition::turn_memory_runtime(state);
             finalize_turn_memory_best_effort(
-                state,
-                false,
-                "fallback-turn-completed",
-                "after fallback turn",
+                memory_runtime,
+                FinalizeTurnMemoryRequest {
+                    surfaces_refreshed: false,
+                    surfaces_context: "fallback-turn-completed",
+                    promotion_context: "after fallback turn",
+                },
             )
             .await;
             emit(Event::TextDelta {
@@ -698,8 +661,16 @@ where
             return Ok(TurnExecutionOutcome::Finished);
         }
 
-        finalize_turn_memory_best_effort(state, false, "turn-completed", "after completed turn")
-            .await;
+        let memory_runtime = super::transition::turn_memory_runtime(state);
+        finalize_turn_memory_best_effort(
+            memory_runtime,
+            FinalizeTurnMemoryRequest {
+                surfaces_refreshed: false,
+                surfaces_context: "turn-completed",
+                promotion_context: "after completed turn",
+            },
+        )
+        .await;
         emit_task_completed_success(&agent_files, emit, "Task completed").await?;
         return Ok(TurnExecutionOutcome::Finished);
     }

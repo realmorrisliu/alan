@@ -50,6 +50,7 @@ use super::tool_resolution::{ToolResolutionOutcome, ToolResolutionRequest, resol
 use super::turn_driver::{TurnInputBroker, drive_turn_submission_with_cancel};
 pub(super) use super::turn_executor::run_turn_with_cancel;
 use super::turn_executor::{TurnExecutionOutcome, TurnRunKind};
+use super::turn_memory::{FinalizeTurnMemoryRequest, finalize_turn_memory_best_effort};
 #[allow(
     unused_imports,
     reason = "these helpers are imported here for the adjacent white-box test module"
@@ -353,6 +354,25 @@ pub(super) fn tool_execution_runtime(
         agent_files,
         tool_execution,
         process_path,
+    )
+}
+
+pub(super) fn turn_memory_runtime(
+    state: &mut RuntimeLoopState,
+) -> super::turn_memory::TurnMemoryRuntime<'_> {
+    let memory_dir = state
+        .core_config
+        .memory
+        .enabled
+        .then(|| state.core_config.memory.store_dir.clone())
+        .flatten();
+    let process_path = state.process_path();
+    let llm_request_timeout_secs = state.runtime_config.llm_request_timeout_secs;
+    super::turn_memory::TurnMemoryRuntime::new(
+        &mut state.machine,
+        memory_dir,
+        process_path,
+        llm_request_timeout_secs,
     )
 }
 
@@ -919,40 +939,16 @@ async fn finalize_replayed_tool_end_turn_best_effort(
     promotion_context: &'static str,
 ) {
     if !cancel.is_cancelled() {
-        if !surfaces_refreshed {
-            let memory_dir = state
-                .core_config
-                .memory
-                .enabled
-                .then_some(state.core_config.memory.store_dir.as_deref())
-                .flatten();
-            let process_path = state.process_path();
-            super::memory_surfaces::refresh_turn_memory_surfaces_best_effort(
-                &state.machine,
-                memory_dir,
-                &process_path,
+        let memory_runtime = turn_memory_runtime(state);
+        finalize_turn_memory_best_effort(
+            memory_runtime,
+            FinalizeTurnMemoryRequest {
+                surfaces_refreshed,
                 surfaces_context,
-            )
-            .await;
-        }
-        let memory_dir = state
-            .core_config
-            .memory
-            .enabled
-            .then(|| state.core_config.memory.store_dir.clone())
-            .flatten();
-        let process_path = state.process_path();
-        if let Some(job) = super::memory_promotion::build_turn_memory_promotion_job(
-            &state.machine,
-            memory_dir,
-            process_path,
-            state.runtime_config.llm_request_timeout_secs,
-            promotion_context,
-        ) {
-            state
-                .machine
-                .push_deferred_runtime_action(DeferredRuntimeAction::TurnMemoryPromotion(job));
-        }
+                promotion_context,
+            },
+        )
+        .await;
     }
 
     state.machine.set_turn_activity(TurnActivityState::Idle);

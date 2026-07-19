@@ -37,6 +37,7 @@ mod tool_resolution;
 mod transition;
 mod turn_driver;
 mod turn_executor;
+mod turn_memory;
 mod turn_support;
 mod ui_surfaces;
 mod virtual_tool;
