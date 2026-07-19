@@ -9,6 +9,7 @@ use tokio::sync::watch;
 use super::HostMountService;
 
 const MAX_REQUEST_BYTES: usize = 64 * 1024;
+const MAX_STATUS_COMMAND_BYTES: usize = 64;
 
 #[derive(Clone)]
 pub(super) struct HostMountEventStream {
@@ -304,6 +305,13 @@ impl FileServer for HostMountFs {
                 }
                 state.clone_id = Some(self.service.allocate_request_id());
             }
+            Node::RequestField(_, RequestField::Status) => {
+                let readable = mode == OpenMode::Read;
+                let cancellable = mode == OpenMode::Write && self.requesting_pid.is_some();
+                if !readable && !cancellable {
+                    return Err(ErrorCode::NoAccess);
+                }
+            }
             _ if mode != OpenMode::Read => return Err(ErrorCode::NoAccess),
             _ => {}
         }
@@ -346,12 +354,14 @@ impl FileServer for HostMountFs {
         if !matches!(state.mode, Some(OpenMode::Write | OpenMode::ReadWrite)) {
             return Err(ErrorCode::NoAccess);
         }
-        if !matches!(state.node, Node::RequestsClone) {
-            return Err(ErrorCode::Unsupported);
-        }
         let start = usize::try_from(offset).map_err(|_| ErrorCode::BadRequest)?;
         let end = start.checked_add(data.len()).ok_or(ErrorCode::BadRequest)?;
-        if end > MAX_REQUEST_BYTES {
+        let max_bytes = match &state.node {
+            Node::RequestsClone => MAX_REQUEST_BYTES,
+            Node::RequestField(_, RequestField::Status) => MAX_STATUS_COMMAND_BYTES,
+            _ => return Err(ErrorCode::Unsupported),
+        };
+        if end > max_bytes {
             return Err(ErrorCode::BadRequest);
         }
         if state.write_buf.len() < end {
@@ -374,7 +384,11 @@ impl FileServer for HostMountFs {
             qid: qid(&node, self.service.generation()),
             length,
             executable: false,
-            writable: matches!(node, Node::RequestsClone) && self.requesting_pid.is_some(),
+            writable: self.requesting_pid.is_some()
+                && matches!(
+                    node,
+                    Node::RequestsClone | Node::RequestField(_, RequestField::Status)
+                ),
         })
     }
 
@@ -402,11 +416,32 @@ impl FileServer for HostMountFs {
             .await
             .remove(&fid)
             .ok_or(ErrorCode::NotFound)?;
-        if matches!(state.node, Node::RequestsClone) && state.wrote {
-            let pid = self.requesting_pid.ok_or(ErrorCode::NoAccess)?;
-            let request_id = state.clone_id.ok_or(ErrorCode::BadRequest)?;
-            self.service
-                .commit_request(pid, request_id, &state.write_buf)?;
+        if state.wrote {
+            match state.node {
+                Node::RequestsClone => {
+                    let pid = self.requesting_pid.ok_or(ErrorCode::NoAccess)?;
+                    let request_id = state.clone_id.ok_or(ErrorCode::BadRequest)?;
+                    self.service
+                        .commit_request(pid, request_id, &state.write_buf)?;
+                }
+                Node::RequestField(request_id, RequestField::Status) => {
+                    let pid = self.requesting_pid.ok_or(ErrorCode::NoAccess)?;
+                    let command = std::str::from_utf8(&state.write_buf)
+                        .map_err(|_| ErrorCode::BadRequest)?
+                        .trim();
+                    if command != "cancelled" {
+                        return Err(ErrorCode::BadRequest);
+                    }
+                    self.service
+                        .cancel_request(
+                            &request_id,
+                            "cancelled by requesting Process",
+                            format!("process:{pid}"),
+                        )
+                        .map_err(|_| ErrorCode::BadRequest)?;
+                }
+                _ => return Err(ErrorCode::Unsupported),
+            }
         }
         Ok(())
     }
@@ -486,6 +521,119 @@ mod tests {
             )
             .await,
             Err(ErrorCode::NoAccess)
+        );
+    }
+
+    #[tokio::test]
+    async fn requesting_process_can_cancel_but_not_settle_status_otherwise() {
+        let service = HostMountService::unavailable();
+        let request_id = service
+            .enqueue(crate::host_mount::HostMountRequest {
+                id: "request-cancel".to_string(),
+                label: "Project".to_string(),
+                namespace_path: "/mnt/project".to_string(),
+                access: crate::host_mount::HostMountAccess::ReadOnly,
+                reason: "Read project files".to_string(),
+                requesting_pid: 7,
+            })
+            .unwrap();
+
+        let global = InProcessTransport::new(service.file_server());
+        call(
+            &global,
+            Request::Walk {
+                fid: Fid::ROOT,
+                newfid: Fid(1),
+                names: vec!["requests".into(), request_id.clone(), "status".into()],
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            call(
+                &global,
+                Request::Open {
+                    fid: Fid(1),
+                    mode: OpenMode::Write,
+                },
+            )
+            .await,
+            Err(ErrorCode::NoAccess)
+        );
+
+        let owner = InProcessTransport::new(service.file_server_for_process(7));
+        call(
+            &owner,
+            Request::Walk {
+                fid: Fid::ROOT,
+                newfid: Fid(2),
+                names: vec!["requests".into(), request_id.clone(), "status".into()],
+            },
+        )
+        .await
+        .unwrap();
+        call(
+            &owner,
+            Request::Open {
+                fid: Fid(2),
+                mode: OpenMode::Write,
+            },
+        )
+        .await
+        .unwrap();
+        call(
+            &owner,
+            Request::Write {
+                fid: Fid(2),
+                offset: 0,
+                data: b"approved\n".to_vec(),
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            call(&owner, Request::Clunk { fid: Fid(2) }).await,
+            Err(ErrorCode::BadRequest),
+            "requesters may never approve their own Host Mount"
+        );
+        assert_eq!(
+            service.request_snapshot(&request_id).unwrap().status,
+            crate::host_mount::HostMountStatus::Pending
+        );
+
+        call(
+            &owner,
+            Request::Walk {
+                fid: Fid::ROOT,
+                newfid: Fid(3),
+                names: vec!["requests".into(), request_id.clone(), "status".into()],
+            },
+        )
+        .await
+        .unwrap();
+        call(
+            &owner,
+            Request::Open {
+                fid: Fid(3),
+                mode: OpenMode::Write,
+            },
+        )
+        .await
+        .unwrap();
+        call(
+            &owner,
+            Request::Write {
+                fid: Fid(3),
+                offset: 0,
+                data: b"cancelled\n".to_vec(),
+            },
+        )
+        .await
+        .unwrap();
+        call(&owner, Request::Clunk { fid: Fid(3) }).await.unwrap();
+        assert_eq!(
+            service.request_snapshot(&request_id).unwrap().status,
+            crate::host_mount::HostMountStatus::Cancelled
         );
     }
 

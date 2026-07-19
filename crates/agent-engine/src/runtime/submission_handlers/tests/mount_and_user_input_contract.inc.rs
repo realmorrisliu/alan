@@ -64,6 +64,35 @@
     }
 
     #[tokio::test]
+    async fn new_turn_cancels_pending_host_mount_before_resetting_machine_state() {
+        let (mut state, host_mount, request_id) = pending_host_mount_state().await;
+        let cancel = CancellationToken::new();
+        let mut emit = |_event: Event| async {};
+
+        let action = handle_runtime_op_with_cancel(
+            &mut state,
+            Op::Turn {
+                parts: vec![ContentPart::text("Start over")],
+                context: None,
+            },
+            &mut emit,
+            &cancel,
+        )
+        .await
+        .unwrap();
+
+        assert!(matches!(
+            action,
+            RuntimeOpAction::RunTurn {
+                turn_kind: TurnRunKind::NewTurn,
+                ..
+            }
+        ));
+        assert!(state.machine.pending_host_mount(&request_id).is_none());
+        assert_eq!(host_mount.status(&request_id).await.as_deref(), Some("cancelled"));
+    }
+
+    #[tokio::test]
     async fn approved_service_request_resumes_with_opaque_grant_only() {
         let (mut state, host_mount, request_id) = pending_host_mount_state().await;
         state.environment = state

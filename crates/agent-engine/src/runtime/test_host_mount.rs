@@ -80,6 +80,15 @@ impl TestHostMountFs {
         request.error = error.unwrap_or_default().to_string();
     }
 
+    pub(crate) async fn status(&self, request_id: &str) -> Option<String> {
+        self.state
+            .lock()
+            .await
+            .requests
+            .get(request_id)
+            .map(|request| request.status.clone())
+    }
+
     fn qid(node: &Node) -> Qid {
         let (kind, key) = match node {
             Node::Root => (FileKind::Dir, "/".to_string()),
@@ -180,7 +189,14 @@ impl FileServer for TestHostMountFs {
         }
         let mut state = self.state.lock().await;
         let is_clone = matches!(state.fids.get(&fid).map(|fid| &fid.node), Some(Node::Clone));
-        if (is_clone && mode != OpenMode::ReadWrite) || (!is_clone && mode != OpenMode::Read) {
+        let is_status = matches!(
+            state.fids.get(&fid).map(|fid| &fid.node),
+            Some(Node::Field(_, "status"))
+        );
+        let valid_mode = (is_clone && mode == OpenMode::ReadWrite)
+            || (is_status && matches!(mode, OpenMode::Read | OpenMode::Write))
+            || (!is_clone && !is_status && mode == OpenMode::Read);
+        if !valid_mode {
             return Err(ErrorCode::NoAccess);
         }
         let clone_id = if is_clone {
@@ -218,12 +234,20 @@ impl FileServer for TestHostMountFs {
     async fn write(&self, fid: Fid, offset: Offset, data: &[u8]) -> Result<u32, ErrorCode> {
         let mut state = self.state.lock().await;
         let fid = state.fids.get_mut(&fid).ok_or(ErrorCode::NotFound)?;
-        if !matches!(fid.node, Node::Clone) || fid.mode != Some(OpenMode::ReadWrite) {
+        let valid_write = (matches!(fid.node, Node::Clone)
+            && fid.mode == Some(OpenMode::ReadWrite))
+            || (matches!(fid.node, Node::Field(_, "status")) && fid.mode == Some(OpenMode::Write));
+        if !valid_write {
             return Err(ErrorCode::NoAccess);
         }
         let start = offset as usize;
         let end = start.checked_add(data.len()).ok_or(ErrorCode::BadRequest)?;
-        if end > 64 * 1024 {
+        let max_bytes = if matches!(fid.node, Node::Clone) {
+            64 * 1024
+        } else {
+            64
+        };
+        if end > max_bytes {
             return Err(ErrorCode::BadRequest);
         }
         fid.write_buf.resize(fid.write_buf.len().max(end), 0);
@@ -248,7 +272,7 @@ impl FileServer for TestHostMountFs {
             qid: Self::qid(&node),
             length: Self::bytes(&state, &node)?.len() as u64,
             executable: false,
-            writable: matches!(node, Node::Clone),
+            writable: matches!(node, Node::Clone | Node::Field(_, "status")),
         })
     }
 
@@ -272,18 +296,40 @@ impl FileServer for TestHostMountFs {
         }
         let mut state = self.state.lock().await;
         let fid = state.fids.remove(&fid).ok_or(ErrorCode::NotFound)?;
-        if matches!(fid.node, Node::Clone) && fid.wrote {
-            let document =
-                serde_json::from_slice(&fid.write_buf).map_err(|_| ErrorCode::BadRequest)?;
-            state.requests.insert(
-                fid.clone_id.ok_or(ErrorCode::BadRequest)?,
-                RequestRecord {
-                    document,
-                    status: "pending".to_string(),
-                    grant: String::new(),
-                    error: String::new(),
-                },
-            );
+        if fid.wrote {
+            match fid.node {
+                Node::Clone => {
+                    let document = serde_json::from_slice(&fid.write_buf)
+                        .map_err(|_| ErrorCode::BadRequest)?;
+                    state.requests.insert(
+                        fid.clone_id.ok_or(ErrorCode::BadRequest)?,
+                        RequestRecord {
+                            document,
+                            status: "pending".to_string(),
+                            grant: String::new(),
+                            error: String::new(),
+                        },
+                    );
+                }
+                Node::Field(request_id, "status") => {
+                    let command = std::str::from_utf8(&fid.write_buf)
+                        .map_err(|_| ErrorCode::BadRequest)?
+                        .trim();
+                    if command != "cancelled" {
+                        return Err(ErrorCode::BadRequest);
+                    }
+                    let request = state
+                        .requests
+                        .get_mut(&request_id)
+                        .ok_or(ErrorCode::NotFound)?;
+                    if request.status != "pending" {
+                        return Err(ErrorCode::BadRequest);
+                    }
+                    request.status = "cancelled".to_string();
+                    request.error = "cancelled by requesting Process".to_string();
+                }
+                _ => return Err(ErrorCode::Unsupported),
+            }
         }
         Ok(())
     }

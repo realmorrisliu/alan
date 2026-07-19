@@ -106,6 +106,19 @@ impl NamespaceHostMountRequests {
             other => bail!("unknown Host Mount request status `{other}`"),
         }
     }
+
+    pub(crate) async fn cancel(&self, request_id: &str) -> Result<()> {
+        validate_request_id(request_id)?;
+        let status_path = format!("/mnt/host-mount/requests/{request_id}/status");
+        let client = NamespaceClient::new(self.root.clone());
+        if let Err(cancel_error) = client.write_document(&status_path, b"cancelled\n").await {
+            if self.terminal_result(request_id).await?.is_some() {
+                return Ok(());
+            }
+            return Err(cancel_error).context("cancel pending Host Mount Service request");
+        }
+        Ok(())
+    }
 }
 
 async fn read_optional_text(client: &NamespaceClient, path: &str) -> Result<Option<String>> {

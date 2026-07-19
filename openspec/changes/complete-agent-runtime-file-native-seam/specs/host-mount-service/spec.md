@@ -76,7 +76,10 @@ A committed Host Mount request SHALL move from `pending` to exactly one of
 immutable, `grant` SHALL identify an approved service grant, `error` SHALL carry
 concise terminal failure or rejection detail, and clients SHALL be able to
 resume waiting by request reference and event offset after a Yield or runtime
-restart.
+restart. The requesting Process MAY cancel only its own pending request through
+the Process-scoped request tree; it MUST NOT write an approval or any other
+terminal decision. Agent Runtime SHALL settle or cancel a pending service
+request before clearing the corresponding Agent Machine wait.
 
 #### Scenario: Pending request is approved
 - **WHEN** the Host adapter authorizes a directory and Host Mount Service creates
@@ -91,3 +94,12 @@ restart.
 - **THEN** it rereads status or continues the request event stream
 - **AND** it does not recreate the request or depend on an in-memory approval
   callback
+
+#### Scenario: Runtime abandons a pending mount Yield
+- **WHEN** a new turn or cancellation clears an Agent Machine wait for a pending
+  Host Mount request
+- **THEN** Agent Runtime first asks Host Mount Service to mark that request
+  `cancelled` through the requesting Process's scoped status file
+- **AND** the Machine wait is not cleared while the service request can still be
+  approved
+- **AND** approval-like status writes from the requesting Process are rejected

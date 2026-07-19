@@ -128,7 +128,7 @@ where
                         // Report and clear buffered in-turn submissions before cancel_current_task
                         // resets Machine turn state, otherwise the drop count under-reports.
                         emit_dropped_in_turn_submissions(emit, machine, broker).await;
-                        cancel_current_task(machine, agent_files, emit).await?;
+                        cancel_current_task(machine, agent_files, host_mount_requests, emit).await?;
                         return Ok(None);
                     }
                     emit_dropped_in_turn_submissions(emit, machine, broker).await;

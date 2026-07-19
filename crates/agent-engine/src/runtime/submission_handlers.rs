@@ -10,7 +10,7 @@ use crate::approval::{
 use crate::tape::ContentPart;
 
 use super::transition::{HostMountTerminalResult, NamespaceAgentFiles, TurnRunKind};
-use super::turn_support::cancel_current_task;
+use super::turn_support::{cancel_current_task, reset_turn_after_cancelling_host_mounts};
 use crate::agent_machine::{
     AgentMachine, HOST_MOUNT_REQUEST_TERMINAL_EVENT_TYPE, NormalizedToolCall,
     PendingHostMountRequest, PendingYield,
@@ -94,7 +94,13 @@ where
             .await;
         }
         Op::Interrupt => {
-            cancel_current_task(runtime.machine, &runtime.agent_files, emit).await?;
+            cancel_current_task(
+                runtime.machine,
+                &runtime.agent_files,
+                &runtime.host_mount_requests,
+                emit,
+            )
+            .await?;
         }
 
         // ====================================================================
@@ -111,7 +117,8 @@ where
             }
             merged_parts.extend(parts);
 
-            runtime.machine.reset_turn();
+            reset_turn_after_cancelling_host_mounts(runtime.machine, &runtime.host_mount_requests)
+                .await?;
             runtime.machine.set_active_turn_request_control_intent(
                 crate::RequestControlIntent::reasoning_effort(reasoning_effort),
             );
@@ -169,7 +176,11 @@ where
                         return Ok(RuntimeOpAction::NoTurn);
                     }
 
-                    runtime.machine.reset_turn();
+                    reset_turn_after_cancelling_host_mounts(
+                        runtime.machine,
+                        &runtime.host_mount_requests,
+                    )
+                    .await?;
                     return Ok(RuntimeOpAction::RunTurn {
                         turn_kind: TurnRunKind::NewTurn,
                         user_input: Some(parts),

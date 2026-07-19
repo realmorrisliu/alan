@@ -490,6 +490,57 @@ fn inherited_read_only_projection_does_not_recover_write_authority() {
     );
 }
 
+#[test]
+fn overlapping_projections_reconcile_tool_cwd_by_longest_namespace_prefix() {
+    let project = tempfile::tempdir().unwrap();
+    let docs = tempfile::tempdir().unwrap();
+    let service = service();
+    service.register_process(Pid(1), LiveNamespace::new(Namespace::new()));
+
+    for (id, namespace_path, host_path, access) in [
+        (
+            "grant-project",
+            "/mnt/project",
+            project.path(),
+            HostMountAccess::ReadWrite,
+        ),
+        (
+            "grant-docs",
+            "/mnt/project/docs",
+            docs.path(),
+            HostMountAccess::ReadOnly,
+        ),
+    ] {
+        service
+            .enqueue(HostMountRequest {
+                id: id.to_string(),
+                label: id.to_string(),
+                namespace_path: namespace_path.to_string(),
+                access,
+                reason: "test overlapping namespace mounts".to_string(),
+                requesting_pid: 1,
+            })
+            .unwrap();
+        service
+            .approve_export(
+                id,
+                test_export(namespace_path, host_path.to_path_buf(), access),
+                "user",
+                "tester",
+            )
+            .unwrap();
+    }
+
+    let binding = ToolExecutionBinding::awaiting_host_projection(
+        PathBuf::from("/mnt/project/docs/guides"),
+        project.path().join("scratch"),
+    );
+    let reconciled = service.reconcile(Pid(1), binding).unwrap();
+
+    assert_eq!(reconciled.host_mounts.len(), 2);
+    assert_eq!(reconciled.cwd, docs.path().join("guides"));
+}
+
 #[tokio::test]
 async fn projection_enforces_read_only_and_read_write_access() {
     for (pid, access, writable) in [

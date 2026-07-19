@@ -285,6 +285,7 @@ where
                             && check_turn_cancelled(
                                 &mut *runtime.machine,
                                 &runtime.agent_files,
+                                &runtime.host_mount_requests,
                                 emit,
                                 cancel,
                             )
@@ -319,6 +320,7 @@ where
                             && check_turn_cancelled(
                                 &mut *runtime.machine,
                                 &runtime.agent_files,
+                                &runtime.host_mount_requests,
                                 emit,
                                 cancel,
                             )

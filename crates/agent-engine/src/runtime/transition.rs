@@ -175,6 +175,7 @@ pub(super) fn delegated_skill_runtime(
     state: &mut RuntimeLoopState,
 ) -> super::delegated_skill_tool::DelegatedSkillRuntime<'_> {
     let agent_files = state.agent_files();
+    let host_mount_requests = state.environment.host_mount_requests();
     let child_run_registry = state.child_run_registry().clone();
     let child_launch = state.child_launch();
     let base_agent_config = child_launch_base_agent_config(state);
@@ -191,6 +192,7 @@ pub(super) fn delegated_skill_runtime(
         &mut state.machine,
         &mut state.prompt_cache,
         agent_files,
+        host_mount_requests,
         child_runtime_inputs,
     )
 }
@@ -249,9 +251,16 @@ where
     F: std::future::Future<Output = ()>,
 {
     let agent_files = state.agent_files();
+    let host_mount_requests = state.environment.host_mount_requests();
     if cancel.is_cancelled()
-        && super::turn_support::check_turn_cancelled(&mut state.machine, &agent_files, emit, cancel)
-            .await?
+        && super::turn_support::check_turn_cancelled(
+            &mut state.machine,
+            &agent_files,
+            &host_mount_requests,
+            emit,
+            cancel,
+        )
+        .await?
     {
         return Ok(super::virtual_tool::VirtualToolOutcome::EndTurn);
     }
@@ -345,11 +354,13 @@ pub(super) fn tool_execution_runtime(
     state: &mut RuntimeLoopState,
 ) -> super::tool_execution::ToolExecutionRuntime<'_> {
     let agent_files = state.agent_files();
+    let host_mount_requests = state.environment.host_mount_requests();
     let tool_execution = state.tool_execution();
     let process_path = state.process_path();
     super::tool_execution::ToolExecutionRuntime::new(
         &mut state.machine,
         agent_files,
+        host_mount_requests,
         tool_execution,
         process_path,
     )

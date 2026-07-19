@@ -219,7 +219,14 @@ where
     )
     .await;
     if cancel.is_cancelled()
-        && check_turn_cancelled(runtime.machine, &runtime.agent_files, emit, cancel).await?
+        && check_turn_cancelled(
+            runtime.machine,
+            &runtime.agent_files,
+            &runtime.host_mount_requests,
+            emit,
+            cancel,
+        )
+        .await?
     {
         return Ok(ToolExecutionOutcome::EndTurn);
     }
