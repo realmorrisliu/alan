@@ -416,9 +416,15 @@
             async {}
         };
 
-        let handled = handle_queued_steering_inputs(&mut state, &[], 0, Some(&broker), &mut emit)
-            .await
-            .unwrap();
+        let handled = handle_queued_steering_inputs(
+            &mut state.machine,
+            &[],
+            0,
+            Some(&broker),
+            &mut emit,
+        )
+        .await
+        .unwrap();
         assert!(!handled);
         assert_eq!(
             state.machine.buffered_inband_user_input_count(),
@@ -458,9 +464,15 @@
         );
         let mut emit = |_event: Event| async {};
 
-        let handled = handle_queued_steering_inputs(&mut state, &[], 0, Some(&broker), &mut emit)
-            .await
-            .unwrap();
+        let handled = handle_queued_steering_inputs(
+            &mut state.machine,
+            &[],
+            0,
+            Some(&broker),
+            &mut emit,
+        )
+        .await
+        .unwrap();
 
         assert!(handled);
         assert!(!state.machine.plan_snapshot_is_from_active_turn());

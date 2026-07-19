@@ -2,13 +2,12 @@ use alan_agent_protocol::{Event, InputMode, Op};
 use anyhow::Result;
 use serde_json::json;
 
-use super::transition::RuntimeLoopState;
 use super::turn_driver::{MAX_BUFFERED_INBAND_USER_INPUTS, TurnInputBroker};
 use super::turn_support::tool_result_preview;
-use crate::agent_machine::NormalizedToolCall;
+use crate::agent_machine::{AgentMachine, NormalizedToolCall};
 
 pub(super) async fn handle_queued_steering_inputs<E, F>(
-    state: &mut RuntimeLoopState,
+    machine: &mut AgentMachine,
     tool_calls: &[NormalizedToolCall],
     remaining_start_idx: usize,
     steering_broker: Option<&TurnInputBroker>,
@@ -39,7 +38,7 @@ where
                 mode: InputMode::FollowUp,
                 ..
             }
-        ) && state.machine.buffered_inband_user_input_count() >= MAX_BUFFERED_INBAND_USER_INPUTS
+        ) && machine.buffered_inband_user_input_count() >= MAX_BUFFERED_INBAND_USER_INPUTS
         {
             emit(Event::Error {
                 message: format!(
@@ -51,16 +50,16 @@ where
             continue;
         }
 
-        state.machine.push_buffered_inband_submission(submission);
+        machine.push_buffered_inband_submission(submission);
     }
 
     if steering_inputs.is_empty() {
         return Ok(false);
     }
 
-    state.machine.note_resumed_user_input();
+    machine.note_resumed_user_input();
     for parts in steering_inputs {
-        state.machine.add_user_message_parts(parts);
+        machine.add_user_message_parts(parts);
     }
 
     let remaining = &tool_calls[remaining_start_idx..];
@@ -96,15 +95,13 @@ where
             audit: None,
         })
         .await;
-        state.machine.record_tool_call(
+        machine.record_tool_call(
             &skipped.name,
             skipped.arguments.clone(),
             skipped_payload.clone(),
             false,
         );
-        state
-            .machine
-            .add_tool_message(&skipped.id, &skipped.name, skipped_payload);
+        machine.add_tool_message(&skipped.id, &skipped.name, skipped_payload);
     }
 
     Ok(true)
