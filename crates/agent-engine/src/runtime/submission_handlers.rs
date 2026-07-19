@@ -95,7 +95,8 @@ where
             .await;
         }
         Op::Interrupt => {
-            cancel_current_task(state, emit).await?;
+            let agent_files = state.agent_files();
+            cancel_current_task(&mut state.machine, &agent_files, emit).await?;
         }
 
         // ====================================================================

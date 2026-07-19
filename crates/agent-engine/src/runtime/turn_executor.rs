@@ -276,7 +276,7 @@ where
             warn!("Context compaction timeout - continuing without compaction");
         }
     }
-    if check_turn_cancelled(state, emit, cancel).await? {
+    if check_turn_cancelled(&mut state.machine, &agent_files, emit, cancel).await? {
         return Ok(TurnExecutionOutcome::Finished);
     }
 
@@ -361,7 +361,7 @@ where
     let mut response_guardrails = ResponseGuardrails::default();
     let mut pending_guardrail_instruction: Option<String> = None;
     loop {
-        if check_turn_cancelled(state, emit, cancel).await? {
+        if check_turn_cancelled(&mut state.machine, &agent_files, emit, cancel).await? {
             return Ok(TurnExecutionOutcome::Finished);
         }
         let provider = generation.provider();
@@ -439,7 +439,9 @@ where
         {
             Ok(response) => response,
             Err(error) => {
-                if cancel.is_cancelled() && check_turn_cancelled(state, emit, cancel).await? {
+                if cancel.is_cancelled()
+                    && check_turn_cancelled(&mut state.machine, &agent_files, emit, cancel).await?
+                {
                     return Ok(TurnExecutionOutcome::Finished);
                 }
                 log_generation_failure(request_start, &error);
@@ -509,7 +511,7 @@ where
                     ),
                 )
                 .await?;
-                if check_turn_cancelled(state, emit, cancel).await? {
+                if check_turn_cancelled(&mut state.machine, &agent_files, emit, cancel).await? {
                     return Ok(TurnExecutionOutcome::Finished);
                 }
                 continue;
@@ -611,7 +613,7 @@ where
                         ),
                     )
                     .await?;
-                    if check_turn_cancelled(state, emit, cancel).await? {
+                    if check_turn_cancelled(&mut state.machine, &agent_files, emit, cancel).await? {
                         return Ok(TurnExecutionOutcome::Finished);
                     }
                 }
@@ -675,7 +677,7 @@ where
 
         finalize_turn_memory_best_effort(state, false, "turn-completed", "after completed turn")
             .await;
-        emit_task_completed_success(state, emit, "Task completed").await?;
+        emit_task_completed_success(&agent_files, emit, "Task completed").await?;
         return Ok(TurnExecutionOutcome::Finished);
     }
 }

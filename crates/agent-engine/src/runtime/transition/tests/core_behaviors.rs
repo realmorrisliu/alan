@@ -170,7 +170,8 @@ async fn test_cancel_current_task() {
         async {}
     };
 
-    let result = cancel_current_task(&mut state, &mut emit).await;
+    let agent_files = state.agent_files();
+    let result = cancel_current_task(&mut state.machine, &agent_files, &mut emit).await;
 
     assert!(result.is_ok());
     assert!(state.machine.pending_confirmation().is_none());

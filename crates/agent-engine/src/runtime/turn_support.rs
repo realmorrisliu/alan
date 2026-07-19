@@ -4,11 +4,12 @@ use tokio_util::sync::CancellationToken;
 use tracing::warn;
 use uuid::Uuid;
 
-use super::transition::RuntimeLoopState;
-use crate::agent_machine::NormalizedToolCall;
+use super::transition::NamespaceAgentFiles;
+use crate::agent_machine::{AgentMachine, NormalizedToolCall};
 
 pub(super) async fn cancel_current_task<E, F>(
-    state: &mut RuntimeLoopState,
+    machine: &mut AgentMachine,
+    agent_files: &NamespaceAgentFiles,
     emit: &mut E,
 ) -> Result<()>
 where
@@ -18,10 +19,10 @@ where
     warn!("Cancelling current task");
     // Clear turn-scoped pending state, but preserve machine history so the user can
     // continue the same conversation after an interrupt/cancel.
-    state.machine.reset_turn();
-    state.machine.clear_plan_snapshot();
-    state.machine.clear_active_task();
-    super::ui_surfaces::turn_completed(&state.agent_files(), true).await?;
+    machine.reset_turn();
+    machine.clear_plan_snapshot();
+    machine.clear_active_task();
+    super::ui_surfaces::turn_completed(agent_files, true).await?;
     emit(Event::TurnCompleted {
         summary: Some("Task cancelled by user".to_string()),
     })
@@ -30,7 +31,7 @@ where
 }
 
 pub(super) async fn emit_task_completed_success<E, F>(
-    state: &RuntimeLoopState,
+    agent_files: &NamespaceAgentFiles,
     emit: &mut E,
     summary: impl Into<String>,
 ) -> Result<()>
@@ -39,7 +40,7 @@ where
     F: std::future::Future<Output = ()>,
 {
     let summary = summary.into();
-    super::ui_surfaces::turn_completed(&state.agent_files(), false).await?;
+    super::ui_surfaces::turn_completed(agent_files, false).await?;
     emit(Event::TurnCompleted {
         summary: Some(summary),
     })
@@ -173,7 +174,8 @@ where
 }
 
 pub(super) async fn check_turn_cancelled<E, F>(
-    state: &mut RuntimeLoopState,
+    machine: &mut AgentMachine,
+    agent_files: &NamespaceAgentFiles,
     emit: &mut E,
     cancel: &CancellationToken,
 ) -> Result<bool>
@@ -184,7 +186,7 @@ where
     if !cancel.is_cancelled() {
         return Ok(false);
     }
-    if !state.machine.is_turn_active() && !state.machine.has_pending_interaction() {
+    if !machine.is_turn_active() && !machine.has_pending_interaction() {
         emit(Event::Error {
             message: "No active turn to cancel.".to_string(),
             recoverable: true,
@@ -192,6 +194,6 @@ where
         .await;
         return Ok(false);
     }
-    cancel_current_task(state, emit).await?;
+    cancel_current_task(machine, agent_files, emit).await?;
     Ok(true)
 }
