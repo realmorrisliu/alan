@@ -358,9 +358,9 @@ fn test_parse_structured_user_input_request_fallback_request_id() {
     assert_eq!(result.unwrap().request_id, "fallback_id");
 }
 
-// Tests for try_handle_virtual_tool_call
+// Tests for dispatch_virtual_tool_call
 #[tokio::test]
-async fn test_try_handle_virtual_tool_call_request_confirmation() {
+async fn test_dispatch_virtual_tool_call_request_confirmation() {
     let mut state = create_test_transition_state();
 
     let tool_call = NormalizedToolCall {
@@ -379,7 +379,7 @@ async fn test_try_handle_virtual_tool_call_request_confirmation() {
         async {}
     };
 
-    let result = try_handle_virtual_tool_call_for_test(&mut state, &tool_call, &mut emit).await;
+    let result = dispatch_virtual_tool_call_for_test(&mut state, &tool_call, &mut emit).await;
     assert!(result.is_ok());
     assert!(matches!(result.unwrap(), VirtualToolOutcome::PauseTurn));
 
@@ -408,7 +408,7 @@ async fn namespace_request_confirmation_writes_request_file_and_waits_on_file_id
         async {}
     };
 
-    let result = try_handle_virtual_tool_call_for_test(&mut state, &tool_call, &mut emit)
+    let result = dispatch_virtual_tool_call_for_test(&mut state, &tool_call, &mut emit)
         .await
         .unwrap();
     assert!(matches!(result, VirtualToolOutcome::PauseTurn));
@@ -443,7 +443,7 @@ async fn namespace_request_confirmation_writes_request_file_and_waits_on_file_id
 }
 
 #[tokio::test]
-async fn test_try_handle_virtual_tool_call_invalid_confirmation() {
+async fn test_dispatch_virtual_tool_call_invalid_confirmation() {
     let mut state = create_test_transition_state();
 
     let tool_call = NormalizedToolCall {
@@ -461,13 +461,13 @@ async fn test_try_handle_virtual_tool_call_invalid_confirmation() {
         async {}
     };
 
-    let result = try_handle_virtual_tool_call_for_test(&mut state, &tool_call, &mut emit).await;
+    let result = dispatch_virtual_tool_call_for_test(&mut state, &tool_call, &mut emit).await;
     assert!(result.is_ok());
     assert!(matches!(result.unwrap(), VirtualToolOutcome::EndTurn));
 }
 
 #[tokio::test]
-async fn test_try_handle_virtual_tool_call_request_user_input() {
+async fn test_dispatch_virtual_tool_call_request_user_input() {
     let mut state = create_test_transition_state();
 
     let tool_call = NormalizedToolCall {
@@ -486,7 +486,7 @@ async fn test_try_handle_virtual_tool_call_request_user_input() {
         async {}
     };
 
-    let result = try_handle_virtual_tool_call_for_test(&mut state, &tool_call, &mut emit).await;
+    let result = dispatch_virtual_tool_call_for_test(&mut state, &tool_call, &mut emit).await;
     assert!(result.is_ok());
     assert!(matches!(result.unwrap(), VirtualToolOutcome::PauseTurn));
 
@@ -514,7 +514,7 @@ async fn namespace_request_user_input_writes_request_file_and_waits_on_file_id()
         async {}
     };
 
-    let result = try_handle_virtual_tool_call_for_test(&mut state, &tool_call, &mut emit)
+    let result = dispatch_virtual_tool_call_for_test(&mut state, &tool_call, &mut emit)
         .await
         .unwrap();
     assert!(matches!(result, VirtualToolOutcome::PauseTurn));
@@ -544,7 +544,7 @@ async fn namespace_request_user_input_writes_request_file_and_waits_on_file_id()
 }
 
 #[tokio::test]
-async fn test_try_handle_virtual_tool_call_invalid_user_input() {
+async fn test_dispatch_virtual_tool_call_invalid_user_input() {
     let mut state = create_test_transition_state();
 
     let tool_call = NormalizedToolCall {
@@ -562,7 +562,7 @@ async fn test_try_handle_virtual_tool_call_invalid_user_input() {
         async {}
     };
 
-    let result = try_handle_virtual_tool_call_for_test(&mut state, &tool_call, &mut emit).await;
+    let result = dispatch_virtual_tool_call_for_test(&mut state, &tool_call, &mut emit).await;
     assert!(result.is_ok());
     assert!(matches!(result.unwrap(), VirtualToolOutcome::EndTurn));
 }

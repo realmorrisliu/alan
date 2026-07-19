@@ -21,7 +21,7 @@ fn test_terminate_child_run_tool_definition() {
     );
 }
 #[tokio::test]
-async fn test_try_handle_virtual_tool_call_terminate_child_run_success() {
+async fn test_dispatch_virtual_tool_call_terminate_child_run_success() {
     let mut state = create_test_transition_state();
     let child_run_id = format!("child-run-{}", uuid::Uuid::new_v4());
     state
@@ -44,7 +44,7 @@ async fn test_try_handle_virtual_tool_call_terminate_child_run_success() {
         async {}
     };
 
-    let result = try_handle_virtual_tool_call_for_test(&mut state, &tool_call, &mut emit).await;
+    let result = dispatch_virtual_tool_call_for_test(&mut state, &tool_call, &mut emit).await;
     assert!(result.is_ok());
     assert!(matches!(
         result.unwrap(),
@@ -81,7 +81,7 @@ async fn test_try_handle_virtual_tool_call_terminate_child_run_success() {
 }
 
 #[tokio::test]
-async fn test_try_handle_virtual_tool_call_terminate_child_run_unknown_child() {
+async fn test_dispatch_virtual_tool_call_terminate_child_run_unknown_child() {
     let mut state = create_test_transition_state();
     let child_run_id = format!("missing-child-run-{}", uuid::Uuid::new_v4());
 
@@ -101,7 +101,7 @@ async fn test_try_handle_virtual_tool_call_terminate_child_run_unknown_child() {
         async {}
     };
 
-    let result = try_handle_virtual_tool_call_for_test(&mut state, &tool_call, &mut emit).await;
+    let result = dispatch_virtual_tool_call_for_test(&mut state, &tool_call, &mut emit).await;
     assert!(result.is_ok());
     assert!(matches!(
         result.unwrap(),
@@ -121,7 +121,7 @@ async fn test_try_handle_virtual_tool_call_terminate_child_run_unknown_child() {
 }
 
 #[tokio::test]
-async fn test_try_handle_virtual_tool_call_terminate_child_run_already_terminal() {
+async fn test_dispatch_virtual_tool_call_terminate_child_run_already_terminal() {
     let mut state = create_test_transition_state();
     let child_run_id = format!("child-run-{}", uuid::Uuid::new_v4());
     state
@@ -147,7 +147,7 @@ async fn test_try_handle_virtual_tool_call_terminate_child_run_already_terminal(
         async {}
     };
 
-    let result = try_handle_virtual_tool_call_for_test(&mut state, &tool_call, &mut emit).await;
+    let result = dispatch_virtual_tool_call_for_test(&mut state, &tool_call, &mut emit).await;
     assert!(result.is_ok());
     assert!(matches!(
         result.unwrap(),
@@ -174,7 +174,7 @@ async fn test_try_handle_virtual_tool_call_terminate_child_run_already_terminal(
 }
 
 #[tokio::test]
-async fn test_try_handle_virtual_tool_call_terminate_child_run_escalates_under_escalating_policy() {
+async fn test_dispatch_virtual_tool_call_terminate_child_run_escalates_under_escalating_policy() {
     let mut state = create_test_transition_state();
     state.runtime_config.governance = alan_agent_protocol::GovernanceConfig {
         profile: alan_agent_protocol::GovernanceProfile::Autonomous,
@@ -202,7 +202,7 @@ async fn test_try_handle_virtual_tool_call_terminate_child_run_escalates_under_e
         async {}
     };
 
-    let result = try_handle_virtual_tool_call_for_test(&mut state, &tool_call, &mut emit).await;
+    let result = dispatch_virtual_tool_call_for_test(&mut state, &tool_call, &mut emit).await;
     assert!(result.is_ok());
     assert!(matches!(result.unwrap(), VirtualToolOutcome::PauseTurn));
     assert!(state.machine.pending_confirmation().is_some());
@@ -221,7 +221,7 @@ async fn test_try_handle_virtual_tool_call_terminate_child_run_escalates_under_e
 }
 
 #[tokio::test]
-async fn test_try_handle_virtual_tool_call_terminate_child_run_denied_by_policy() {
+async fn test_dispatch_virtual_tool_call_terminate_child_run_denied_by_policy() {
     let mut state = create_test_transition_state();
     let temp = TempDir::new().unwrap();
     std::fs::write(
@@ -264,7 +264,7 @@ default_action: allow
         async {}
     };
 
-    let result = try_handle_virtual_tool_call_for_test(&mut state, &tool_call, &mut emit).await;
+    let result = dispatch_virtual_tool_call_for_test(&mut state, &tool_call, &mut emit).await;
     assert!(result.is_ok());
     assert!(matches!(
         result.unwrap(),

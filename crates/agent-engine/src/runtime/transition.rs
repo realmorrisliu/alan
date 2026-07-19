@@ -26,10 +26,8 @@ use anyhow::Result;
 use tokio_util::sync::CancellationToken;
 use tracing::warn;
 
-#[cfg(test)]
-use crate::agent_machine::NormalizedToolCall;
 use crate::{
-    agent_machine::{AgentMachine, DeferredRuntimeAction, TurnActivityState},
+    agent_machine::{AgentMachine, DeferredRuntimeAction, NormalizedToolCall, TurnActivityState},
     config::Config,
     runtime::RuntimeConfig,
 };
@@ -226,6 +224,88 @@ pub(super) fn agent_interaction_runtime(
 ) -> super::interaction_tools::AgentInteractionRuntime<'_> {
     let agent_files = state.agent_files();
     super::interaction_tools::AgentInteractionRuntime::new(&mut state.machine, agent_files)
+}
+
+pub(super) async fn dispatch_virtual_tool_call<E, F>(
+    state: &mut RuntimeLoopState,
+    tool_call: &NormalizedToolCall,
+    tool_arguments: &serde_json::Value,
+    cancel: &CancellationToken,
+    allow_approved_tool_escalation_execution: bool,
+    emit: &mut E,
+) -> Result<super::virtual_tool::VirtualToolOutcome>
+where
+    E: FnMut(Event) -> F,
+    F: std::future::Future<Output = ()>,
+{
+    let agent_files = state.agent_files();
+    if cancel.is_cancelled()
+        && super::turn_support::check_turn_cancelled(&mut state.machine, &agent_files, emit, cancel)
+            .await?
+    {
+        return Ok(super::virtual_tool::VirtualToolOutcome::EndTurn);
+    }
+
+    match tool_call.name.as_str() {
+        "request_confirmation" => {
+            let runtime = agent_interaction_runtime(state);
+            super::interaction_tools::handle_request_confirmation(
+                runtime,
+                tool_call,
+                tool_arguments,
+                emit,
+            )
+            .await
+        }
+        "request_mount" => {
+            let runtime = mount_request_runtime(state);
+            super::mount_request_tool::handle_request_mount(
+                runtime,
+                tool_call,
+                tool_arguments,
+                emit,
+            )
+            .await
+        }
+        "request_user_input" => {
+            let runtime = agent_interaction_runtime(state);
+            super::interaction_tools::handle_request_user_input(
+                runtime,
+                tool_call,
+                tool_arguments,
+                emit,
+            )
+            .await
+        }
+        "update_plan" => {
+            let runtime = agent_interaction_runtime(state);
+            super::interaction_tools::handle_update_plan(runtime, tool_call, tool_arguments, emit)
+                .await
+        }
+        "invoke_delegated_skill" => {
+            let runtime = delegated_skill_runtime(state);
+            super::delegated_skill_tool::handle_invoke_delegated_skill(
+                runtime,
+                tool_call,
+                tool_arguments,
+                cancel,
+                emit,
+            )
+            .await
+        }
+        "terminate_child_run" => {
+            let runtime = child_run_termination_runtime(state);
+            super::child_run_termination_tool::handle_terminate_child_run(
+                runtime,
+                tool_call,
+                tool_arguments,
+                allow_approved_tool_escalation_execution,
+                emit,
+            )
+            .await
+        }
+        _ => Ok(super::virtual_tool::VirtualToolOutcome::NotVirtual),
+    }
 }
 
 pub(super) fn tool_authorization_runtime(

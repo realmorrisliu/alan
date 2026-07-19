@@ -1,6 +1,6 @@
 use super::*;
 use crate::{
-    agent_machine::{AgentMachine, TurnActivityState},
+    agent_machine::{AgentMachine, NormalizedToolCall, TurnActivityState},
     config::Config,
     rollout::{RolloutItem, RolloutRecorder},
     runtime::{
@@ -16,8 +16,13 @@ use crate::{
             handle_invoke_delegated_skill_with_spawn as handle_invoke_delegated_skill_with_runtime,
         },
         delegation_capabilities::DelegatedSpawnRejected,
-        mount_request_tool::MountRequestAccess,
+        interaction_tools::{
+            parse_confirmation_request, parse_plan_status, parse_plan_update,
+            parse_structured_user_input_request,
+        },
+        mount_request_tool::{MountRequestAccess, parse_mount_request},
         transition::NamespaceActionRecord,
+        virtual_tool::VirtualToolOutcome,
     },
     skills::{
         ActiveSkillEnvelope, DelegatedSkillInvocationRecord, ResolvedCapabilityView,
@@ -26,11 +31,13 @@ use crate::{
     },
     tools::ToolRegistry,
 };
-use alan_agent_protocol::{SpawnHandle, SpawnSpec};
+use alan_agent_protocol::{Event, SpawnHandle, SpawnSpec};
 use alan_agentfs::AgentFs;
 use alan_ap::InProcessTransport;
 use alan_kernel::{Access, MountFs, Namespace};
 use alan_shell::Shell;
+use anyhow::Result;
+use serde_json::json;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tempfile::TempDir;
@@ -195,7 +202,7 @@ fn tool_result_text_for_call(
         .expect("expected tool result")
 }
 
-async fn try_handle_virtual_tool_call_for_test<E, F>(
+async fn dispatch_virtual_tool_call_for_test<E, F>(
     state: &mut super::super::transition::RuntimeLoopState,
     tool_call: &NormalizedToolCall,
     emit: &mut E,
@@ -205,7 +212,15 @@ where
     F: std::future::Future<Output = ()>,
 {
     let cancel = CancellationToken::new();
-    try_handle_virtual_tool_call(state, tool_call, &tool_call.arguments, &cancel, false, emit).await
+    super::super::transition::dispatch_virtual_tool_call(
+        state,
+        tool_call,
+        &tool_call.arguments,
+        &cancel,
+        false,
+        emit,
+    )
+    .await
 }
 
 async fn handle_invoke_delegated_skill_with_spawn<E, F, S>(
@@ -268,7 +283,7 @@ async fn test_try_handle_non_virtual_tool() {
         async {}
     };
 
-    let result = try_handle_virtual_tool_call_for_test(&mut state, &tool_call, &mut emit).await;
+    let result = dispatch_virtual_tool_call_for_test(&mut state, &tool_call, &mut emit).await;
     assert!(result.is_ok());
     assert!(matches!(result.unwrap(), VirtualToolOutcome::NotVirtual));
 }
@@ -289,7 +304,7 @@ async fn test_try_handle_unknown_tool() {
         async {}
     };
 
-    let result = try_handle_virtual_tool_call_for_test(&mut state, &tool_call, &mut emit).await;
+    let result = dispatch_virtual_tool_call_for_test(&mut state, &tool_call, &mut emit).await;
     assert!(result.is_ok());
     assert!(matches!(result.unwrap(), VirtualToolOutcome::NotVirtual));
 }

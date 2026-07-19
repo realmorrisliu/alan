@@ -123,7 +123,7 @@ fn test_parse_plan_status_invalid_values() {
 }
 
 #[tokio::test]
-async fn test_try_handle_virtual_tool_call_update_plan() {
+async fn test_dispatch_virtual_tool_call_update_plan() {
     let mut state = create_test_transition_state();
     let expected_items = vec![alan_agent_protocol::PlanItem {
         id: "1".to_string(),
@@ -146,7 +146,7 @@ async fn test_try_handle_virtual_tool_call_update_plan() {
         async {}
     };
 
-    let result = try_handle_virtual_tool_call_for_test(&mut state, &tool_call, &mut emit).await;
+    let result = dispatch_virtual_tool_call_for_test(&mut state, &tool_call, &mut emit).await;
     assert!(result.is_ok());
     assert!(matches!(
         result.unwrap(),
@@ -177,7 +177,7 @@ async fn test_try_handle_virtual_tool_call_update_plan() {
 }
 
 #[tokio::test]
-async fn test_try_handle_virtual_tool_call_invalid_update_plan() {
+async fn test_dispatch_virtual_tool_call_invalid_update_plan() {
     let mut state = create_test_transition_state();
 
     let tool_call = NormalizedToolCall {
@@ -195,7 +195,7 @@ async fn test_try_handle_virtual_tool_call_invalid_update_plan() {
         async {}
     };
 
-    let result = try_handle_virtual_tool_call_for_test(&mut state, &tool_call, &mut emit).await;
+    let result = dispatch_virtual_tool_call_for_test(&mut state, &tool_call, &mut emit).await;
     assert!(result.is_ok());
     assert!(matches!(
         result.unwrap(),
