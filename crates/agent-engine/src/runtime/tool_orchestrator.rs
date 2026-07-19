@@ -19,10 +19,10 @@ use super::tool_execution::{
 };
 #[cfg(test)]
 use super::tool_execution::{execute_tool_effect, tool_payload_for_tape};
-use super::transition::RuntimeLoopState;
+use super::transition::{RuntimeLoopState, dispatch_virtual_tool_call};
 use super::turn_driver::TurnInputBroker;
 use super::turn_support::tool_result_preview;
-use super::virtual_tools::{VirtualToolOutcome, try_handle_virtual_tool_call};
+use super::virtual_tool::VirtualToolOutcome;
 use crate::agent_machine::NormalizedToolCall;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -193,7 +193,7 @@ where
         return Ok(ToolOrchestratorOutcome::EndTurn);
     }
 
-    match try_handle_virtual_tool_call(
+    match dispatch_virtual_tool_call(
         state,
         tool_call,
         &tool_arguments,

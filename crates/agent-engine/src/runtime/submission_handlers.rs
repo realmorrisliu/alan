@@ -581,7 +581,7 @@ fn validated_mount_escalation_request(
         .filter(|raw| !raw.is_empty())?
         .to_string();
     let mount_request = pending.details.get("mount_request")?;
-    let mount_request = super::virtual_tools::parse_mount_request(mount_request)
+    let mount_request = super::mount_request_tool::parse_mount_request(mount_request)
         .ok()?
         .payload();
     Some((tool_call_id, mount_request))

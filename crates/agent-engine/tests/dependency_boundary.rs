@@ -343,6 +343,7 @@ fn transition_leaf_workflows_do_not_receive_the_runtime_loop_aggregate() {
         "tool_execution.rs",
         "tool_execution/runtime_inputs.rs",
         "turn_support.rs",
+        "virtual_tools.rs",
     ] {
         let source = read_runtime_source(path);
         assert!(
@@ -427,6 +428,11 @@ fn transition_leaf_workflows_do_not_receive_the_runtime_loop_aggregate() {
     assert!(delegated_runtime.contains("ChildLaunchRuntime"));
     let transition = read_runtime_source("transition.rs");
     assert!(transition.contains("fn delegated_skill_runtime("));
+    assert!(transition.contains("async fn dispatch_virtual_tool_call"));
+    assert!(
+        !read_runtime_source("virtual_tools.rs").contains("dispatch_virtual_tool_call"),
+        "virtual Tool definitions must not regain full-state dispatch authority"
+    );
 
     let termination_runtime = read_runtime_source("child_run_termination_tool/runtime_inputs.rs");
     for forbidden in [

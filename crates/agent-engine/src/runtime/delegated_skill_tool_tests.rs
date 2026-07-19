@@ -1,7 +1,7 @@
 use super::*;
 
 #[tokio::test]
-async fn test_try_handle_virtual_tool_call_invoke_delegated_skill() {
+async fn test_dispatch_virtual_tool_call_invoke_delegated_skill() {
     let mut state = create_test_transition_state();
     activate_test_delegated_skill(&mut state, "repo-review", "reviewer");
 
@@ -159,8 +159,7 @@ async fn test_delegated_capability_rejection_is_recorded_on_parent_tape() {
 }
 
 #[tokio::test]
-async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_from_catalog_without_activation()
-{
+async fn test_dispatch_virtual_tool_call_invoke_delegated_skill_from_catalog_without_activation() {
     let temp = TempDir::new().unwrap();
     let package_store = temp.path().join("package-store");
     let skill_dir = package_store.join("repo-review");
@@ -251,7 +250,7 @@ Use this skill when asked.
 }
 
 #[tokio::test]
-async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_rejects_when_runtime_support_is_disabled()
+async fn test_dispatch_virtual_tool_call_invoke_delegated_skill_rejects_when_runtime_support_is_disabled()
  {
     let temp = TempDir::new().unwrap();
     let package_store = temp.path().join("package-store");
@@ -350,7 +349,7 @@ Use this skill when asked.
 }
 
 #[tokio::test]
-async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_records_successful_tool_call() {
+async fn test_dispatch_virtual_tool_call_invoke_delegated_skill_records_successful_tool_call() {
     let temp = TempDir::new().unwrap();
     let mut state = create_test_transition_state();
     state.machine = AgentMachine::new_with_recorder_in_dir("/proc/test", "gpt-5-mini", temp.path())
@@ -417,7 +416,7 @@ async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_records_succes
 }
 
 #[tokio::test]
-async fn test_try_handle_virtual_tool_call_records_normalized_namespace_cwd() {
+async fn test_dispatch_virtual_tool_call_records_normalized_namespace_cwd() {
     let temp = TempDir::new().unwrap();
     let mut state = create_test_transition_state();
     state.machine = AgentMachine::new_with_recorder_in_dir("/proc/test", "gpt-5-mini", temp.path())
@@ -488,7 +487,7 @@ async fn test_try_handle_virtual_tool_call_records_normalized_namespace_cwd() {
 }
 
 #[tokio::test]
-async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_bounds_preview_and_payload() {
+async fn test_dispatch_virtual_tool_call_invoke_delegated_skill_bounds_preview_and_payload() {
     let mut state = create_test_transition_state();
     let long_skill_id = format!("repo-review-{}", "x".repeat(150));
     let long_target = format!("reviewer-{}", "y".repeat(150));
@@ -620,7 +619,7 @@ async fn test_pre_cancelled_delegated_invocation_does_not_project_or_spawn_child
 }
 
 #[tokio::test]
-async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_honors_interrupt() {
+async fn test_dispatch_virtual_tool_call_invoke_delegated_skill_honors_interrupt() {
     let mut state = create_test_transition_state();
     activate_test_delegated_skill(&mut state, "repo-review", "reviewer");
     state.machine.set_turn_activity(TurnActivityState::Running);
@@ -689,8 +688,7 @@ async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_honors_interru
 }
 
 #[tokio::test]
-async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_honors_interrupt_during_startup()
-{
+async fn test_dispatch_virtual_tool_call_invoke_delegated_skill_honors_interrupt_during_startup() {
     let mut state = create_test_transition_state();
     activate_test_delegated_skill(&mut state, "repo-review", "reviewer");
     state.machine.set_turn_activity(TurnActivityState::Running);
@@ -747,7 +745,7 @@ async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_honors_interru
 }
 
 #[tokio::test]
-async fn test_try_handle_virtual_tool_call_invalid_delegated_skill_request() {
+async fn test_dispatch_virtual_tool_call_invalid_delegated_skill_request() {
     let mut state = create_test_transition_state();
 
     let tool_call = NormalizedToolCall {
@@ -765,7 +763,7 @@ async fn test_try_handle_virtual_tool_call_invalid_delegated_skill_request() {
         async {}
     };
 
-    let result = try_handle_virtual_tool_call_for_test(&mut state, &tool_call, &mut emit).await;
+    let result = dispatch_virtual_tool_call_for_test(&mut state, &tool_call, &mut emit).await;
     assert!(result.is_ok());
     assert!(matches!(
         result.unwrap(),
@@ -785,7 +783,7 @@ async fn test_try_handle_virtual_tool_call_invalid_delegated_skill_request() {
 }
 
 #[tokio::test]
-async fn test_try_handle_virtual_tool_call_rejects_target_mismatch() {
+async fn test_dispatch_virtual_tool_call_rejects_target_mismatch() {
     let mut state = create_test_transition_state();
     activate_test_delegated_skill(&mut state, "repo-review", "reviewer");
 
