@@ -67,11 +67,12 @@ fn namespace_summary_from_child_plan(
 async fn namespace_summary_from_parent(
     parent: &RuntimeLoopState,
 ) -> Result<alan_agent_protocol::DelegatedNamespaceSummary> {
-    let mut described = parent
-        .namespace_environment()
-        .launch_context()
+    let child_launch = parent.child_launch();
+    let launch_context = child_launch.launch_context();
+    let mut described = launch_context
         .map(|context| context.namespace.describe())
         .unwrap_or_default();
+    let cwd = launch_context.map(|context| PathBuf::from(&context.cwd));
     described.extend([
         ("/agent".to_string(), alan_kernel::Access::ReadWrite),
         ("/mnt/llm".to_string(), alan_kernel::Access::ReadWrite),
@@ -91,10 +92,7 @@ async fn namespace_summary_from_parent(
             .into_iter()
             .map(|tool| format!("/bin/{tool}"))
             .collect(),
-        parent
-            .namespace_environment()
-            .launch_context()
-            .map(|context| PathBuf::from(&context.cwd)),
+        cwd,
         Some(
             parent
                 .core_config

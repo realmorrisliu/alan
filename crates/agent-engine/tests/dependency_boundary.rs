@@ -410,6 +410,51 @@ fn tool_workflows_use_only_the_narrow_tool_execution_handle() {
 }
 
 #[test]
+fn child_launch_workflows_use_only_the_narrow_child_launch_handle() {
+    let namespace = read_runtime_source("transition/namespace_environment.rs");
+    let child_launch = rust_item_body(&namespace, "pub(crate) struct NamespaceChildLaunch");
+    for required_field in [
+        "llm_connection: String",
+        "launch_context: Option<crate::ProcessLaunchContext>",
+        "child_process_assembler: Option<Arc<dyn super::super::ChildAgentProcessAssembler>>",
+    ] {
+        assert!(
+            child_launch.contains(required_field),
+            "child launch handle must retain {required_field}"
+        );
+    }
+    for forbidden_field in [
+        "root: InProcessTransport",
+        "agent_path",
+        "tool_process_context",
+        "mount_grant_applicator",
+        "child_run_registry",
+    ] {
+        assert!(
+            !child_launch.contains(forbidden_field),
+            "child launch handle must not gain {forbidden_field}"
+        );
+    }
+
+    let operations = read_runtime_source("transition/namespace_environment/child_launch.rs");
+    assert!(operations.contains("impl NamespaceChildLaunch"));
+    assert!(!operations.contains("impl NamespaceRuntimeEnvironment"));
+
+    for path in [
+        "child_agents.rs",
+        "child_agents/launch_context.rs",
+        "child_agents/delegated_launch.rs",
+        "delegated_skill_tool.rs",
+    ] {
+        let source = read_runtime_source(path);
+        assert!(
+            !source.contains("namespace_environment()"),
+            "{path} must not reach complete namespace environment for child launch work"
+        );
+    }
+}
+
+#[test]
 fn engine_does_not_assemble_alan_os() {
     let source = read_runtime_source("engine.rs");
     let production = source.split("\n#[cfg(test)]\nmod tests").next().unwrap();
@@ -459,7 +504,8 @@ fn engine_has_no_host_connection_store_or_provider_factory_authority() {
         );
     }
     assert!(child.contains("ensure_child_connection_is_passed"));
-    assert!(child.contains("child_process_assembler()"));
+    assert!(child.contains(".child_launch()"));
+    assert!(child.contains(".assembler()"));
     assert!(child.contains("Agent Runtime Service child assembly capability"));
 }
 

@@ -742,7 +742,7 @@
         assert_eq!(grants[0].reason, "Need to edit project files");
 
         let child_context = state
-            .namespace_environment()
+            .child_launch()
             .launch_context()
             .expect("approved grant should persist in the Process Launch Context")
             .child();

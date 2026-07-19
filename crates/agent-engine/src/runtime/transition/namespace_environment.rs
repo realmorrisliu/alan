@@ -6,6 +6,7 @@
 //! spawned through `/proc/clone`, and state is written back to `/agent/<pid>`.
 
 mod agent_files;
+mod child_launch;
 mod client;
 mod generation;
 mod process_files;
@@ -266,6 +267,14 @@ pub(crate) struct NamespaceProcessFiles {
     agent_path: String,
 }
 
+/// Narrow handle for child Agent Process launch capabilities.
+#[derive(Clone)]
+pub(crate) struct NamespaceChildLaunch {
+    llm_connection: String,
+    launch_context: Option<crate::ProcessLaunchContext>,
+    child_process_assembler: Option<Arc<dyn super::super::ChildAgentProcessAssembler>>,
+}
+
 /// Narrow handle for Tool package discovery, policy capability, and execution.
 #[derive(Clone)]
 pub(crate) struct NamespaceToolExecution {
@@ -343,6 +352,14 @@ impl NamespaceRuntimeEnvironment {
         }
     }
 
+    pub(crate) fn child_launch(&self) -> NamespaceChildLaunch {
+        NamespaceChildLaunch {
+            llm_connection: self.llm_connection.clone(),
+            launch_context: self.launch_context.clone(),
+            child_process_assembler: self.child_process_assembler.clone(),
+        }
+    }
+
     pub(crate) fn tool_execution(&self) -> NamespaceToolExecution {
         NamespaceToolExecution {
             root: self.root.clone(),
@@ -350,10 +367,6 @@ impl NamespaceRuntimeEnvironment {
             agent_files: self.agent_files(),
             tool_process_context: self.tool_process_context.clone(),
         }
-    }
-
-    pub(crate) fn launch_context(&self) -> Option<&crate::ProcessLaunchContext> {
-        self.launch_context.as_ref()
     }
 
     /// Bind transition-local Tool execution to its already-created Process.
@@ -429,16 +442,6 @@ impl NamespaceRuntimeEnvironment {
     ) -> Self {
         self.child_process_assembler = Some(assembler);
         self
-    }
-
-    pub(crate) fn child_process_assembler(
-        &self,
-    ) -> Option<Arc<dyn super::super::ChildAgentProcessAssembler>> {
-        self.child_process_assembler.clone()
-    }
-
-    pub fn llm_connection(&self) -> &str {
-        &self.llm_connection
     }
 
     pub fn root_transport(&self) -> InProcessTransport {

@@ -15,7 +15,8 @@ pub use namespace_environment::{
     NamespaceTurnRuntime, NamespaceTurnRuntimeConfig,
 };
 pub(crate) use namespace_environment::{
-    NamespaceAgentFiles, NamespaceGeneration, NamespaceProcessFiles, NamespaceToolExecution,
+    NamespaceAgentFiles, NamespaceChildLaunch, NamespaceGeneration, NamespaceProcessFiles,
+    NamespaceToolExecution,
 };
 
 use std::collections::VecDeque;
@@ -96,6 +97,10 @@ impl RuntimeLoopState {
 
     pub(crate) fn process_files(&self) -> NamespaceProcessFiles {
         self.environment.process_files()
+    }
+
+    pub(crate) fn child_launch(&self) -> NamespaceChildLaunch {
+        self.environment.child_launch()
     }
 
     pub(crate) fn tool_execution(&self) -> NamespaceToolExecution {

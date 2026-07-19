@@ -58,8 +58,10 @@ fn runtime_assembly_call_paths_have_explicit_owners() {
 
     let child_runtime = include_str!("../../agent-engine/src/runtime/child_agents.rs");
     let live_child_launch = rust_item_body(child_runtime, "async fn spawn_child_runtime_inner");
-    assert!(live_child_launch.contains("child_process_assembler()"));
+    assert!(live_child_launch.contains(".child_launch()"));
+    assert!(live_child_launch.contains(".assembler()"));
     for displaced in [
+        "child_process_assembler()",
         "AgentFs::new()",
         "bind_process(",
         "LiveNamespace::new(",
