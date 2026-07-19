@@ -14,6 +14,7 @@ mod delegated_skill_tool;
 mod delegation_capabilities;
 mod engine;
 mod guardian;
+mod interaction_tools;
 mod launch_config;
 mod loop_guard;
 mod memory_flush;

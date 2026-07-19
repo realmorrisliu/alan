@@ -221,6 +221,13 @@ pub(super) fn mount_request_runtime(
     )
 }
 
+pub(super) fn agent_interaction_runtime(
+    state: &mut RuntimeLoopState,
+) -> super::interaction_tools::AgentInteractionRuntime<'_> {
+    let agent_files = state.agent_files();
+    super::interaction_tools::AgentInteractionRuntime::new(&mut state.machine, agent_files)
+}
+
 fn child_launch_base_agent_config(state: &RuntimeLoopState) -> super::launch_config::AgentConfig {
     let mut config = super::launch_config::AgentConfig::from(state.core_config.clone());
     config.runtime_config = state.runtime_config.clone();

@@ -329,6 +329,8 @@ fn transition_leaf_workflows_do_not_receive_the_runtime_loop_aggregate() {
         "delegated_skill_tool.rs",
         "delegated_skill_tool/runtime_inputs.rs",
         "delegated_skill_evidence.rs",
+        "interaction_tools.rs",
+        "interaction_tools/runtime_inputs.rs",
         "memory_flush.rs",
         "memory_promotion.rs",
         "memory_surfaces.rs",
@@ -448,6 +450,20 @@ fn transition_leaf_workflows_do_not_receive_the_runtime_loop_aggregate() {
     }
     assert!(mount_runtime.contains("MountRequestRuntime"));
     assert!(transition.contains("fn mount_request_runtime("));
+
+    let interaction_runtime = read_runtime_source("interaction_tools/runtime_inputs.rs");
+    for forbidden in [
+        "RuntimeLoopState",
+        "RuntimeConfig",
+        "NamespaceRuntimeEnvironment",
+    ] {
+        assert!(
+            !interaction_runtime.contains(forbidden),
+            "Agent interaction runtime must not regain {forbidden}"
+        );
+    }
+    assert!(interaction_runtime.contains("AgentInteractionRuntime"));
+    assert!(transition.contains("fn agent_interaction_runtime("));
 
     for marker in [
         "fn compaction_submission_id",
