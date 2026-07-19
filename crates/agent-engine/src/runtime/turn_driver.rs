@@ -205,10 +205,10 @@ where
 pub(super) async fn namespace_pending_resume_submission(
     state: &RuntimeLoopState,
 ) -> Result<Option<Submission>> {
-    let namespace = state.namespace_environment();
+    let agent_files = state.agent_files();
 
     for request_id in state.machine.pending_request_ids() {
-        if let Some(submission) = namespace
+        if let Some(submission) = agent_files
             .resume_submission_from_answered_request(&request_id)
             .await?
         {
@@ -446,6 +446,7 @@ mod tests {
             super::super::transition::NamespaceRuntimeEnvironment::new(root, "/agent/1", "default");
 
         let request_id = environment
+            .agent_files()
             .write_request(super::super::transition::NamespaceRequestRecord::new(
                 "structured_input",
                 "Provide the missing value",

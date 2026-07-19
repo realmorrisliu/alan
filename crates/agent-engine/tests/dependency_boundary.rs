@@ -276,6 +276,52 @@ fn turn_generation_uses_only_the_file_native_namespace_boundary() {
 }
 
 #[test]
+fn agent_file_workflows_use_only_the_narrow_agent_files_handle() {
+    let namespace = read_runtime_source("transition/namespace_environment.rs");
+    let agent_files_handle = rust_item_body(&namespace, "pub(crate) struct NamespaceAgentFiles");
+    for required_field in ["root: InProcessTransport", "agent_path: String"] {
+        assert!(
+            agent_files_handle.contains(required_field),
+            "agent files handle must retain {required_field}"
+        );
+    }
+    for forbidden_field in [
+        "llm_connection",
+        "tool_process_context",
+        "child_run_registry",
+        "launch_context",
+    ] {
+        assert!(
+            !agent_files_handle.contains(forbidden_field),
+            "agent files handle must not gain {forbidden_field}"
+        );
+    }
+
+    let file_operations = read_runtime_source("transition/namespace_environment/agent_files.rs");
+    assert!(file_operations.contains("impl NamespaceAgentFiles"));
+    assert!(!file_operations.contains("impl NamespaceRuntimeEnvironment"));
+
+    let ui = read_runtime_source("ui_surfaces.rs");
+    let ui_production = ui.split("\n#[cfg(test)]\nmod tests").next().unwrap();
+    assert!(ui_production.contains("&NamespaceAgentFiles"));
+    assert!(!ui_production.contains("NamespaceRuntimeEnvironment"));
+
+    let supervisor = read_runtime_source("delegated_child_run/supervisor.rs");
+    assert!(supervisor.contains("agent_files: NamespaceAgentFiles"));
+    for operation in [
+        "read_ui_activity_snapshot",
+        "read_assistant_output",
+        "request_ids",
+        "action_ids",
+    ] {
+        assert!(
+            supervisor.contains(&format!("agent_files.{operation}")),
+            "delegated supervisor must read {operation} through NamespaceAgentFiles"
+        );
+    }
+}
+
+#[test]
 fn engine_does_not_assemble_alan_os() {
     let source = read_runtime_source("engine.rs");
     let production = source.split("\n#[cfg(test)]\nmod tests").next().unwrap();

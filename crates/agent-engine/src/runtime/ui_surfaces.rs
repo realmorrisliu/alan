@@ -6,7 +6,7 @@ use alan_agent_protocol::{
 };
 use anyhow::Result;
 
-use super::transition::NamespaceRuntimeEnvironment;
+use super::transition::NamespaceAgentFiles;
 
 fn now_unix_ms() -> u64 {
     SystemTime::now()
@@ -15,7 +15,7 @@ fn now_unix_ms() -> u64 {
         .as_millis() as u64
 }
 
-pub(crate) async fn initialize(namespace: &NamespaceRuntimeEnvironment) -> Result<()> {
+pub(crate) async fn initialize(namespace: &NamespaceAgentFiles) -> Result<()> {
     namespace
         .write_ui_activity_snapshot(&UiActivitySnapshot::idle())
         .await?;
@@ -30,7 +30,7 @@ pub(crate) async fn initialize(namespace: &NamespaceRuntimeEnvironment) -> Resul
         .await
 }
 
-pub(crate) async fn turn_started(namespace: &NamespaceRuntimeEnvironment) -> Result<()> {
+pub(crate) async fn turn_started(namespace: &NamespaceAgentFiles) -> Result<()> {
     let activity = UiActivitySnapshot::running(now_unix_ms());
     namespace.write_ui_activity_snapshot(&activity).await?;
     namespace
@@ -48,10 +48,7 @@ pub(crate) async fn turn_started(namespace: &NamespaceRuntimeEnvironment) -> Res
         .await
 }
 
-pub(crate) async fn turn_completed(
-    namespace: &NamespaceRuntimeEnvironment,
-    cancelled: bool,
-) -> Result<()> {
+pub(crate) async fn turn_completed(namespace: &NamespaceAgentFiles, cancelled: bool) -> Result<()> {
     if cancelled {
         plan_updated(namespace, None, Vec::new()).await?;
     }
@@ -62,10 +59,7 @@ pub(crate) async fn turn_completed(
         .await
 }
 
-pub(crate) async fn turn_failed(
-    namespace: &NamespaceRuntimeEnvironment,
-    message: &str,
-) -> Result<()> {
+pub(crate) async fn turn_failed(namespace: &NamespaceAgentFiles, message: &str) -> Result<()> {
     let notice = UiNoticeSnapshot::new(UiNoticeKind::Error, message);
     namespace.write_ui_notice_snapshot(&notice).await?;
     namespace
@@ -80,7 +74,7 @@ pub(crate) async fn turn_failed(
     turn_completed(namespace, false).await
 }
 
-pub(crate) async fn paused(namespace: &NamespaceRuntimeEnvironment) -> Result<()> {
+pub(crate) async fn paused(namespace: &NamespaceAgentFiles) -> Result<()> {
     let activity = UiActivitySnapshot::paused(None);
     namespace.write_ui_activity_snapshot(&activity).await?;
     namespace
@@ -88,7 +82,7 @@ pub(crate) async fn paused(namespace: &NamespaceRuntimeEnvironment) -> Result<()
         .await
 }
 
-pub(crate) async fn resumed(namespace: &NamespaceRuntimeEnvironment) -> Result<()> {
+pub(crate) async fn resumed(namespace: &NamespaceAgentFiles) -> Result<()> {
     let activity = UiActivitySnapshot::running(now_unix_ms());
     namespace.write_ui_activity_snapshot(&activity).await?;
     namespace
@@ -96,7 +90,7 @@ pub(crate) async fn resumed(namespace: &NamespaceRuntimeEnvironment) -> Result<(
         .await
 }
 
-pub(crate) async fn heartbeat(namespace: &NamespaceRuntimeEnvironment) -> Result<()> {
+pub(crate) async fn heartbeat(namespace: &NamespaceAgentFiles) -> Result<()> {
     if namespace.read_ui_activity_snapshot().await?.state != UiActivityState::Running {
         return Ok(());
     }
@@ -106,7 +100,7 @@ pub(crate) async fn heartbeat(namespace: &NamespaceRuntimeEnvironment) -> Result
 }
 
 pub(crate) async fn plan_updated(
-    namespace: &NamespaceRuntimeEnvironment,
+    namespace: &NamespaceAgentFiles,
     explanation: Option<String>,
     items: Vec<alan_agent_protocol::PlanItem>,
 ) -> Result<()> {
@@ -115,7 +109,7 @@ pub(crate) async fn plan_updated(
     namespace.append_ui_event(&UiEvent::Plan { snapshot }).await
 }
 
-pub(crate) async fn rollback(namespace: &NamespaceRuntimeEnvironment, turns: u32) -> Result<()> {
+pub(crate) async fn rollback(namespace: &NamespaceAgentFiles, turns: u32) -> Result<()> {
     let snapshot =
         UiNoticeSnapshot::new(UiNoticeKind::Rollback, format!("rolled back {turns} turns"));
     namespace.write_ui_notice_snapshot(&snapshot).await?;
@@ -124,7 +118,7 @@ pub(crate) async fn rollback(namespace: &NamespaceRuntimeEnvironment, turns: u32
         .await
 }
 
-pub(crate) async fn thinking(namespace: &NamespaceRuntimeEnvironment, text: &str) -> Result<()> {
+pub(crate) async fn thinking(namespace: &NamespaceAgentFiles, text: &str) -> Result<()> {
     let started = Instant::now();
     let mut visible = String::new();
     for chunk in super::turn_support::split_text_for_typing(text) {
@@ -143,7 +137,7 @@ pub(crate) async fn thinking(namespace: &NamespaceRuntimeEnvironment, text: &str
 }
 
 pub(crate) async fn warning(
-    namespace: &NamespaceRuntimeEnvironment,
+    namespace: &NamespaceAgentFiles,
     message: impl Into<String>,
 ) -> Result<()> {
     let snapshot = UiNoticeSnapshot::new(UiNoticeKind::Warning, message.into());
@@ -154,7 +148,7 @@ pub(crate) async fn warning(
 }
 
 pub(crate) async fn compaction(
-    namespace: &NamespaceRuntimeEnvironment,
+    namespace: &NamespaceAgentFiles,
     attempt: &CompactionAttemptSnapshot,
 ) -> Result<()> {
     let snapshot =
@@ -166,7 +160,7 @@ pub(crate) async fn compaction(
 }
 
 pub(crate) async fn memory_flush(
-    namespace: &NamespaceRuntimeEnvironment,
+    namespace: &NamespaceAgentFiles,
     attempt: &MemoryFlushAttemptSnapshot,
 ) -> Result<()> {
     let snapshot = UiNoticeSnapshot::new(
@@ -231,8 +225,9 @@ mod tests {
     use serde_json::Value;
 
     use super::*;
+    use crate::runtime::transition::NamespaceRuntimeEnvironment;
 
-    fn namespace_environment() -> (NamespaceRuntimeEnvironment, alan_shell::Shell) {
+    fn agent_files() -> (NamespaceAgentFiles, alan_shell::Shell) {
         let agentfs = Arc::new(AgentFs::new());
         let mut namespace = Namespace::new();
         namespace.mount(
@@ -242,15 +237,13 @@ mod tests {
         );
         let root = InProcessTransport::new(Arc::new(MountFs::new(namespace)));
         let shell = alan_shell::Shell::new(root.clone());
-        (
-            NamespaceRuntimeEnvironment::new(root, "/agent/1", "default"),
-            shell,
-        )
+        let environment = NamespaceRuntimeEnvironment::new(root, "/agent/1", "default");
+        (environment.agent_files(), shell)
     }
 
     #[tokio::test]
     async fn owners_write_snapshots_and_append_ui_events() {
-        let (environment, shell) = namespace_environment();
+        let (environment, shell) = agent_files();
         initialize(&environment).await.unwrap();
         turn_started(&environment).await.unwrap();
         thinking(&environment, "reasoning").await.unwrap();
@@ -312,7 +305,7 @@ mod tests {
 
     #[tokio::test]
     async fn cancelled_turn_clears_plan_snapshot() {
-        let (environment, shell) = namespace_environment();
+        let (environment, shell) = agent_files();
         initialize(&environment).await.unwrap();
         plan_updated(
             &environment,
@@ -334,7 +327,7 @@ mod tests {
 
     #[tokio::test]
     async fn failed_turn_records_file_terminal_error() {
-        let (environment, _) = namespace_environment();
+        let (environment, _) = agent_files();
         initialize(&environment).await.unwrap();
         turn_started(&environment).await.unwrap();
         turn_failed(&environment, "provider failed").await.unwrap();
@@ -346,7 +339,7 @@ mod tests {
 
     #[tokio::test]
     async fn heartbeat_preserves_paused_activity() {
-        let (environment, _) = namespace_environment();
+        let (environment, _) = agent_files();
         initialize(&environment).await.unwrap();
         paused(&environment).await.unwrap();
 

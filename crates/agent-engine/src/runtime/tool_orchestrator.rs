@@ -267,14 +267,11 @@ async fn tool_payload_for_tape(state: &RuntimeLoopState, payload: &Value) -> Val
             Some("reference_unresolvable".to_string()),
         );
     }
-    let path = format!(
-        "{}/actions/{action_id}/output",
-        state.namespace_environment().agent_path()
-    );
-    let reference = state.namespace_environment().evidence_reference(path).await;
+    let path = format!("{}/actions/{action_id}/output", state.agent_path());
+    let agent_files = state.agent_files();
+    let reference = agent_files.evidence_reference(path).await;
     let redactions = if let Some(reference) = reference.as_ref() {
-        state
-            .namespace_environment()
+        agent_files
             .resolve_evidence_reference(reference, None, None)
             .await
             .ok()
@@ -487,17 +484,13 @@ where
                     super::guardian::ReviewOutcome::Deny { rationale } => {
                         let tripped = state.machine.record_guardian_review(true);
                         let message = format!("auto-review denied: {rationale}");
-                        super::ui_surfaces::warning(state.namespace_environment(), message.clone())
-                            .await?;
+                        super::ui_surfaces::warning(&state.agent_files(), message.clone()).await?;
                         emit(Event::Warning { message }).await;
                         if tripped {
                             let message =
                                 "auto-review circuit breaker tripped; pausing for you".to_string();
-                            super::ui_surfaces::warning(
-                                state.namespace_environment(),
-                                message.clone(),
-                            )
-                            .await?;
+                            super::ui_surfaces::warning(&state.agent_files(), message.clone())
+                                .await?;
                             emit(Event::Warning { message }).await;
                             true
                         } else {
@@ -566,7 +559,7 @@ where
                 state
                     .machine
                     .set_confirmation_for_request(request_id.clone(), pending.clone());
-                super::ui_surfaces::paused(state.namespace_environment()).await?;
+                super::ui_surfaces::paused(&state.agent_files()).await?;
                 emit(Event::Yield {
                     request_id,
                     kind: alan_agent_protocol::YieldKind::Confirmation,
@@ -684,7 +677,7 @@ where
         state
             .machine
             .set_confirmation_for_request(request_id.clone(), pending.clone());
-        super::ui_surfaces::paused(state.namespace_environment()).await?;
+        super::ui_surfaces::paused(&state.agent_files()).await?;
         emit(Event::Yield {
             request_id,
             kind: alan_agent_protocol::YieldKind::Confirmation,

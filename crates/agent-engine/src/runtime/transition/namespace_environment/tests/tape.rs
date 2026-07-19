@@ -13,10 +13,11 @@ async fn engine_tape_writer_holds_generating_lease_and_allows_readers() {
     let root = InProcessTransport::new(Arc::new(MountFs::new(ns)));
     let shell = Shell::new(root.clone());
     let environment = NamespaceRuntimeEnvironment::new(root, "/agent/1", "default");
+    let agent_files = environment.agent_files();
 
-    let mut writer = environment.begin_tape_generation().await.unwrap();
+    let mut writer = agent_files.begin_tape_generation().await.unwrap();
 
-    let second_writer = environment.begin_tape_generation().await;
+    let second_writer = agent_files.begin_tape_generation().await;
     assert!(
         second_writer.is_err(),
         "a second engine writer must not acquire machine/tape while GENERATING lease is held"
@@ -32,7 +33,7 @@ async fn engine_tape_writer_holds_generating_lease_and_allows_readers() {
     writer.append_record("assistant", "hi").await.unwrap();
     writer.finish().await.unwrap();
 
-    let mut next_writer = environment.begin_tape_generation().await.unwrap();
+    let mut next_writer = agent_files.begin_tape_generation().await.unwrap();
     next_writer
         .append_record("assistant", "after lease")
         .await

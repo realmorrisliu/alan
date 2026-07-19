@@ -373,8 +373,9 @@ async fn answered_request_response_resumes_engine_pending_yield_from_files() {
     let root = InProcessTransport::new(Arc::new(MountFs::new(ns)));
     let shell = Shell::new(root.clone());
     let environment = NamespaceRuntimeEnvironment::new(root.clone(), "/agent/1", "default");
+    let agent_files = environment.agent_files();
 
-    let request_id = environment
+    let request_id = agent_files
         .write_request(NamespaceRequestRecord::new(
             "structured_input",
             "Provide the missing detail",
@@ -383,7 +384,7 @@ async fn answered_request_response_resumes_engine_pending_yield_from_files() {
         .unwrap();
     assert_eq!(request_id, "r0");
     assert!(
-        environment
+        agent_files
             .resume_submission_from_answered_request(&request_id)
             .await
             .unwrap()
@@ -397,7 +398,7 @@ async fn answered_request_response_resumes_engine_pending_yield_from_files() {
         )
         .await
         .unwrap();
-    let submission = environment
+    let submission = agent_files
         .resume_submission_from_answered_request(&request_id)
         .await
         .unwrap()

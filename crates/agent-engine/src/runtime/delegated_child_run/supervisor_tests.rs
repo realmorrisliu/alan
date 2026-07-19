@@ -15,6 +15,7 @@ impl AgentProcessLifecycle for RecordingProcessLifecycle {
 
 fn test_supervisor(finish_count: Arc<AtomicUsize>) -> DelegatedChildRunSupervisor {
     let root = alan_ap::InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::new()));
+    let process_environment = NamespaceRuntimeEnvironment::new(root, "/agent/42", "default");
     DelegatedChildRunSupervisor::new(DelegatedChildRunSupervision {
         runtime: None,
         startup_metadata: RuntimeStartupMetadata {
@@ -34,7 +35,8 @@ fn test_supervisor(finish_count: Arc<AtomicUsize>) -> DelegatedChildRunSuperviso
         child_run_registry: ChildRunRegistry::default(),
         timeout: None,
         process_lifecycle: Arc::new(RecordingProcessLifecycle { finish_count }),
-        process_environment: NamespaceRuntimeEnvironment::new(root, "/agent/42", "default"),
+        agent_files: process_environment.agent_files(),
+        process_environment,
         process_pid: "42".to_string(),
     })
 }

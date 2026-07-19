@@ -233,7 +233,7 @@ where
             state
                 .machine
                 .set_confirmation_for_request(request_id.clone(), pending.clone());
-            super::ui_surfaces::paused(state.namespace_environment()).await?;
+            super::ui_surfaces::paused(&state.agent_files()).await?;
             emit(Event::Yield {
                 request_id,
                 kind: YieldKind::Confirmation,

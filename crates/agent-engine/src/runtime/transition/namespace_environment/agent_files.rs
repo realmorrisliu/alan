@@ -11,7 +11,7 @@ use anyhow::{Context, Result, bail};
 use serde::Serialize;
 
 use super::{
-    NamespaceActionRecord, NamespaceRequestRecord, NamespaceRuntimeEnvironment,
+    NamespaceActionRecord, NamespaceAgentFiles, NamespaceRequestRecord,
     client::{InputFrame, NamespaceClient},
 };
 use crate::evidence::{
@@ -19,7 +19,11 @@ use crate::evidence::{
     is_retention_expired_record,
 };
 
-impl NamespaceRuntimeEnvironment {
+impl NamespaceAgentFiles {
+    fn client(&self) -> NamespaceClient {
+        NamespaceClient::new(self.root.clone())
+    }
+
     pub async fn read_next_input(&self) -> Result<String> {
         let input_path = format!("{}/io/input", self.agent_path);
         let client = self.client();
@@ -122,16 +126,12 @@ impl NamespaceRuntimeEnvironment {
         Ok(Some(response))
     }
 
-    pub async fn write_assistant_state(&self, response: &str) -> Result<()> {
-        self.write_assistant_output(response).await?;
-        self.write_turn_tape_state(None, response).await
-    }
-
     pub async fn write_assistant_output(&self, response: &str) -> Result<()> {
         let client = NamespaceClient::new(self.root.clone());
         write_agent_output(&client, &self.agent_path, response).await
     }
 
+    #[cfg(test)]
     pub async fn write_user_state(&self, input: &str) -> Result<()> {
         let client = NamespaceClient::new(self.root.clone());
         write_tape_records(&client, &self.agent_path, [("user", input)]).await
@@ -147,6 +147,7 @@ impl NamespaceRuntimeEnvironment {
         write_tape_records(&client, &self.agent_path, records).await
     }
 
+    #[cfg(test)]
     pub async fn begin_tape_generation(&self) -> Result<NamespaceTapeWriter> {
         let client = NamespaceClient::new(self.root.clone());
         NamespaceTapeWriter::open(client, &self.agent_path).await

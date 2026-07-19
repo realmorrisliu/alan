@@ -92,7 +92,7 @@ where
                 state
                     .machine
                     .set_confirmation_for_request(request_id.clone(), pending.clone());
-                super::ui_surfaces::paused(state.namespace_environment()).await?;
+                super::ui_surfaces::paused(&state.agent_files()).await?;
                 emit(Event::Yield {
                     request_id,
                     kind: alan_agent_protocol::YieldKind::Confirmation,
@@ -178,7 +178,7 @@ where
                 state
                     .machine
                     .set_structured_input_for_request(request_id.clone(), request.clone());
-                super::ui_surfaces::paused(state.namespace_environment()).await?;
+                super::ui_surfaces::paused(&state.agent_files()).await?;
                 emit(Event::Yield {
                     request_id,
                     kind: alan_agent_protocol::YieldKind::StructuredInput,
@@ -235,7 +235,7 @@ where
                         state.machine.messages().len(),
                     );
                     super::ui_surfaces::plan_updated(
-                        state.namespace_environment(),
+                        &state.agent_files(),
                         explanation.clone(),
                         items.clone(),
                     )
