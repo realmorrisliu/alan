@@ -110,6 +110,33 @@ impl RuntimeLoopState {
     }
 }
 
+pub(super) fn compaction_runtime(
+    state: &mut RuntimeLoopState,
+) -> super::compaction::CompactionRuntime<'_> {
+    let generation = state.namespace_generation();
+    let agent_files = state.agent_files();
+    let process_path = state.process_path();
+    let settings = super::compaction::CompactionSettings::new(
+        state.runtime_config.compaction_trigger_messages,
+        state.runtime_config.compaction_keep_last,
+        state.runtime_config.context_window_tokens,
+        state.runtime_config.compaction_soft_trigger_ratio,
+        state.runtime_config.compaction_hard_trigger_ratio,
+    );
+    let memory = super::compaction::CompactionMemory::new(
+        state.core_config.memory.enabled,
+        state.core_config.memory.store_dir.clone(),
+        process_path,
+    );
+    super::compaction::CompactionRuntime::new(
+        &mut state.machine,
+        generation,
+        agent_files,
+        settings,
+        memory,
+    )
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TransitionCompletion {
     Completed,

@@ -1,5 +1,6 @@
 mod context;
 mod pressure;
+mod runtime_inputs;
 
 use alan_agent_protocol::{
     AppliedCompactionOutcome, CompactionAttemptSnapshot, CompactionMode, CompactionOutcome,
@@ -15,10 +16,7 @@ use crate::{
     agent_machine::AgentMachine, llm::build_generation_request, prompts, rollout::CompactedItem,
 };
 
-use super::{
-    memory_flush,
-    transition::{NamespaceAgentFiles, RuntimeLoopState},
-};
+use super::{memory_flush, transition::NamespaceAgentFiles};
 
 #[cfg(test)]
 pub(crate) use self::context::{
@@ -29,6 +27,7 @@ pub(crate) use self::context::{
     build_degraded_compaction_summary, sanitize_messages_for_compaction,
 };
 use self::pressure::{CompactionPressure, evaluate_compaction_pressure};
+pub(crate) use self::runtime_inputs::{CompactionMemory, CompactionRuntime, CompactionSettings};
 
 #[derive(Debug, Clone)]
 pub(crate) struct CompactionRequest {
@@ -322,7 +321,7 @@ where
 }
 
 async fn maybe_flush_memory_before_compaction<E, F>(
-    state: &mut RuntimeLoopState,
+    runtime: &mut CompactionRuntime<'_>,
     emit: &mut E,
     request: &CompactionRequest,
     pressure: CompactionPressure,
@@ -333,14 +332,13 @@ where
     E: FnMut(Event) -> F,
     F: std::future::Future<Output = ()>,
 {
-    let agent_files = state.agent_files();
     if !matches!(request.mode(), CompactionMode::AutoPreTurn)
         || !matches!(pressure.level, CompactionPressureLevel::Soft)
     {
         return None;
     }
 
-    if state.machine.auto_memory_flush_attempted_in_cycle() {
+    if runtime.machine.auto_memory_flush_attempted_in_cycle() {
         let attempt = memory_flush::skipped_memory_flush_attempt(
             request.mode(),
             pressure.level,
@@ -348,23 +346,21 @@ where
             Some(sanitized_to_summarize.len()),
         );
         return record_and_emit_memory_flush_attempt(
-            &mut state.machine,
-            &agent_files,
+            &mut *runtime.machine,
+            &runtime.agent_files,
             emit,
             attempt,
         )
         .await;
     }
 
-    let generation = state.namespace_generation();
-    let process_path = state.process_path();
     let attempt = memory_flush::perform_memory_flush_attempt(
         memory_flush::MemoryFlushInputs::new(
-            &state.machine,
-            &generation,
-            state.core_config.memory.enabled,
-            state.core_config.memory.store_dir.as_deref(),
-            &process_path,
+            &*runtime.machine,
+            &runtime.generation,
+            runtime.memory.enabled,
+            runtime.memory.store_dir.as_deref(),
+            &runtime.memory.process_path,
         ),
         request.mode(),
         pressure.level,
@@ -380,17 +376,18 @@ where
             Some(alan_agent_protocol::MemoryFlushSkipReason::Cancelled)
         )
     ) {
-        state.machine.note_auto_memory_flush_attempt();
+        runtime.machine.note_auto_memory_flush_attempt();
     }
 
     if let Some(message) = attempt.warning_message.clone() {
-        if let Err(err) = super::ui_surfaces::warning(&agent_files, message.clone()).await {
+        if let Err(err) = super::ui_surfaces::warning(&runtime.agent_files, message.clone()).await {
             error!(error = %err, "Failed to write memory warning UI state");
         }
         emit(Event::Warning { message }).await;
     }
 
-    record_and_emit_memory_flush_attempt(&mut state.machine, &agent_files, emit, attempt).await
+    record_and_emit_memory_flush_attempt(&mut *runtime.machine, &runtime.agent_files, emit, attempt)
+        .await
 }
 
 async fn handle_compaction_generation_failure<E, F>(
@@ -540,7 +537,7 @@ fn apply_tape_compaction(
 }
 
 pub(crate) async fn maybe_compact_context_for_request<E, F>(
-    state: &mut RuntimeLoopState,
+    runtime: CompactionRuntime<'_>,
     emit: &mut E,
     request: CompactionRequest,
 ) -> Result<CompactionOutcome>
@@ -549,11 +546,11 @@ where
     F: std::future::Future<Output = ()>,
 {
     let cancel = CancellationToken::new();
-    maybe_compact_context_with_cancel(state, emit, &request, &cancel).await
+    maybe_compact_context_with_cancel(runtime, emit, &request, &cancel).await
 }
 
 pub(crate) async fn maybe_compact_context_with_cancel<E, F>(
-    state: &mut RuntimeLoopState,
+    mut runtime: CompactionRuntime<'_>,
     emit: &mut E,
     request: &CompactionRequest,
     cancel: &CancellationToken,
@@ -562,14 +559,14 @@ where
     E: FnMut(Event) -> F,
     F: std::future::Future<Output = ()>,
 {
-    let keep_last = state.runtime_config.compaction_keep_last;
-    let message_count = state.machine.tape_len();
-    let estimated_prompt_tokens = state
+    let keep_last = runtime.settings.keep_last;
+    let message_count = runtime.machine.tape_len();
+    let estimated_prompt_tokens = runtime
         .machine
         .estimated_prompt_tokens()
         .saturating_add(request.additional_prompt_tokens());
     let pressure = evaluate_compaction_pressure(
-        &state.runtime_config,
+        &runtime.settings,
         request,
         message_count,
         estimated_prompt_tokens,
@@ -580,7 +577,7 @@ where
     if matches!(request.mode(), CompactionMode::AutoPreTurn)
         && matches!(pressure.level, CompactionPressureLevel::BelowSoft)
     {
-        state.machine.reset_auto_memory_flush_cycle();
+        runtime.machine.reset_auto_memory_flush_cycle();
     }
 
     if !matches!(request.mode(), CompactionMode::Manual)
@@ -593,8 +590,8 @@ where
         ));
     }
 
-    let messages = state.machine.messages().to_vec();
-    let retention_start = state.machine.compaction_retention_start(keep_last);
+    let messages = runtime.machine.messages().to_vec();
+    let retention_start = runtime.machine.compaction_retention_start(keep_last);
     let to_summarize = messages[..retention_start].to_vec();
 
     if to_summarize.is_empty() {
@@ -605,10 +602,10 @@ where
         ));
     }
 
-    let compaction_count = state.machine.compaction_count();
+    let compaction_count = runtime.machine.compaction_count();
     let sanitized_to_summarize = sanitize_messages_for_compaction(&to_summarize);
     let memory_flush_attempt_id = maybe_flush_memory_before_compaction(
-        state,
+        &mut runtime,
         emit,
         request,
         pressure,
@@ -628,7 +625,7 @@ where
     info!(
         total_messages = message_count,
         estimated_prompt_tokens,
-        context_window_tokens = state.runtime_config.context_window_tokens,
+        context_window_tokens = runtime.settings.context_window_tokens,
         context_window_utilization = pressure.context_window_utilization,
         compaction_pressure_level = ?pressure.level,
         compaction_soft_trigger_ratio = pressure.soft_trigger_ratio,
@@ -648,7 +645,7 @@ where
     let started_at = std::time::Instant::now();
     let mut llm_messages = Vec::new();
 
-    if let Some(existing_summary) = state.machine.tape_summary() {
+    if let Some(existing_summary) = runtime.machine.tape_summary() {
         llm_messages.push(crate::llm::Message::context(format!(
             "[Previous compaction summary (compaction #{})]\n{}",
             compaction_count, existing_summary
@@ -665,7 +662,6 @@ where
 
     let max_trim_retries = 5;
     let mut trimmed_count = 0usize;
-    let agent_files = state.agent_files();
     let summary = loop {
         let generation_request = build_generation_request(
             Some(prompts::COMPACT_PROMPT.to_string()),
@@ -675,8 +671,8 @@ where
             Some(2048),
         );
 
-        match state
-            .namespace_generation()
+        match runtime
+            .generation
             .generate_once_with_cancel(generation_request, cancel, "Compaction cancelled")
             .await
         {
@@ -723,8 +719,8 @@ where
 
                 warn!(error = %err, "Failed to generate compaction summary after retries");
                 return handle_compaction_generation_failure(
-                    &mut state.machine,
-                    &agent_files,
+                    &mut *runtime.machine,
+                    &runtime.agent_files,
                     emit,
                     CompactionFailureContext {
                         request,
@@ -745,8 +741,8 @@ where
 
     if summary.is_empty() {
         return handle_compaction_generation_failure(
-            &mut state.machine,
-            &agent_files,
+            &mut *runtime.machine,
+            &runtime.agent_files,
             emit,
             CompactionFailureContext {
                 request,
@@ -765,21 +761,21 @@ where
 
     let input_prompt_tokens = estimated_prompt_tokens;
     let success_result = compaction_success_result(trimmed_count);
-    let reference_context_revision = state.machine.context_revision();
+    let reference_context_revision = runtime.machine.context_revision();
     let attempt_id = uuid::Uuid::new_v4().to_string();
-    apply_tape_compaction(&mut state.machine, &summary, keep_last, retention_start);
-    state.machine.clear_responses_continuation("compaction");
-    let output_prompt_tokens = state
+    apply_tape_compaction(&mut *runtime.machine, &summary, keep_last, retention_start);
+    runtime.machine.clear_responses_continuation("compaction");
+    let output_prompt_tokens = runtime
         .machine
         .estimated_prompt_tokens()
         .saturating_add(request.additional_prompt_tokens());
-    let output_messages = state.machine.tape_len();
+    let output_messages = runtime.machine.tape_len();
     let timestamp = chrono::Utc::now().to_rfc3339();
     let duration_ms = duration_ms_since(started_at);
-    state.machine.reset_compaction_failure_streak();
+    runtime.machine.reset_compaction_failure_streak();
     let attempt = build_compaction_attempt_snapshot(
         attempt_id.clone(),
-        compaction_submission_id(&state.machine, request),
+        compaction_submission_id(runtime.machine, request),
         request,
         CompactionAttemptDetails {
             result: success_result,
@@ -795,7 +791,7 @@ where
             error_message: None,
             failure_streak: None,
             reference_context_revision_before: Some(reference_context_revision),
-            reference_context_revision_after: Some(state.machine.context_revision()),
+            reference_context_revision_after: Some(runtime.machine.context_revision()),
             timestamp: timestamp.clone(),
         },
     );
@@ -816,8 +812,8 @@ where
         timestamp,
     };
     record_and_emit_compaction_attempt(
-        &mut state.machine,
-        &agent_files,
+        &mut *runtime.machine,
+        &runtime.agent_files,
         emit,
         attempt,
         Some(compacted),
@@ -946,8 +942,9 @@ mod tests {
             async {}
         };
 
+        let runtime = crate::runtime::transition::compaction_runtime(&mut state);
         let outcome = maybe_compact_context_with_cancel(
-            &mut state,
+            runtime,
             &mut emit,
             &CompactionRequest::manual(None),
             &CancellationToken::new(),

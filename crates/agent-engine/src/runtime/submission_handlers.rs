@@ -51,7 +51,8 @@ where
 {
     match op {
         Op::CompactWithOptions { focus } => {
-            maybe_compact_context_for_request(state, emit, CompactionRequest::manual(focus))
+            let runtime = super::transition::compaction_runtime(state);
+            maybe_compact_context_for_request(runtime, emit, CompactionRequest::manual(focus))
                 .await?;
         }
         Op::Rollback { turns } => {

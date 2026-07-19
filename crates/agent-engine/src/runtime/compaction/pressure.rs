@@ -20,15 +20,15 @@ fn derived_soft_trigger_ratio(hard_trigger_ratio: f32) -> f32 {
     hard_trigger_ratio * 0.9
 }
 
-fn effective_hard_trigger_ratio(runtime_config: &super::super::RuntimeConfig) -> f32 {
-    runtime_config.compaction_hard_trigger_ratio.clamp(0.0, 1.0)
+fn effective_hard_trigger_ratio(settings: &super::CompactionSettings) -> f32 {
+    settings.hard_trigger_ratio.clamp(0.0, 1.0)
 }
 
 fn effective_soft_trigger_ratio(
-    runtime_config: &super::super::RuntimeConfig,
+    settings: &super::CompactionSettings,
     hard_trigger_ratio: f32,
 ) -> f32 {
-    let soft_trigger_ratio = runtime_config.compaction_soft_trigger_ratio.clamp(0.0, 1.0);
+    let soft_trigger_ratio = settings.soft_trigger_ratio.clamp(0.0, 1.0);
     if soft_trigger_ratio < hard_trigger_ratio {
         soft_trigger_ratio
     } else {
@@ -45,14 +45,14 @@ fn token_trigger_threshold(context_window_tokens: usize, ratio: f32) -> usize {
 }
 
 pub(super) fn evaluate_compaction_pressure(
-    runtime_config: &super::super::RuntimeConfig,
+    settings: &super::CompactionSettings,
     request: &CompactionRequest,
     message_count: usize,
     estimated_prompt_tokens: usize,
 ) -> CompactionPressure {
-    let context_window_tokens = runtime_config.context_window_tokens as usize;
-    let hard_trigger_ratio = effective_hard_trigger_ratio(runtime_config);
-    let soft_trigger_ratio = effective_soft_trigger_ratio(runtime_config, hard_trigger_ratio);
+    let context_window_tokens = settings.context_window_tokens as usize;
+    let hard_trigger_ratio = effective_hard_trigger_ratio(settings);
+    let soft_trigger_ratio = effective_soft_trigger_ratio(settings, hard_trigger_ratio);
     let soft_token_trigger_threshold =
         token_trigger_threshold(context_window_tokens, soft_trigger_ratio);
     let hard_token_trigger_threshold =
@@ -62,7 +62,7 @@ pub(super) fn evaluate_compaction_pressure(
     } else {
         estimated_prompt_tokens as f64 / context_window_tokens as f64
     };
-    let over_message_threshold = message_count > runtime_config.compaction_trigger_messages;
+    let over_message_threshold = message_count > settings.trigger_messages;
     let over_hard_token_threshold =
         context_window_tokens > 0 && estimated_prompt_tokens >= hard_token_trigger_threshold;
     let over_soft_token_threshold =

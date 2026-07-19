@@ -171,7 +171,8 @@ where
     let compaction_cancel = CancellationToken::new();
     let timeout = tokio::time::sleep(timeout);
     tokio::pin!(timeout);
-    let compaction = maybe_compact_context_with_cancel(state, emit, request, &compaction_cancel);
+    let runtime = super::transition::compaction_runtime(state);
+    let compaction = maybe_compact_context_with_cancel(runtime, emit, request, &compaction_cancel);
     tokio::pin!(compaction);
 
     tokio::select! {
