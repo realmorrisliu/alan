@@ -1,5 +1,7 @@
 //! Pending interactive request types and checkpoint taxonomy.
 
+use alan_agent_protocol::{AdaptivePresentationHint, ConfirmationYieldPayload};
+
 use crate::skills::ActiveSkillEnvelope;
 
 pub const TOOL_ESCALATION_CHECKPOINT_TYPE: &str = "tool_escalation";
@@ -62,6 +64,31 @@ pub struct PendingConfirmation {
     pub summary: String,
     pub details: serde_json::Value,
     pub options: Vec<String>,
+}
+
+/// Builds the protocol payload for a runtime-owned confirmation checkpoint.
+pub fn runtime_confirmation_yield_payload(
+    pending: &PendingConfirmation,
+) -> ConfirmationYieldPayload {
+    let default_option = pending
+        .options
+        .iter()
+        .find(|option| option.as_str() == "approve")
+        .cloned()
+        .or_else(|| pending.options.first().cloned());
+
+    ConfirmationYieldPayload {
+        checkpoint_type: pending.checkpoint_type.clone(),
+        summary: pending.summary.clone(),
+        details: Some(pending.details.clone()),
+        options: pending.options.clone(),
+        default_option,
+        presentation_hints: if is_runtime_confirmation_checkpoint_type(&pending.checkpoint_type) {
+            vec![AdaptivePresentationHint::Dangerous]
+        } else {
+            vec![]
+        },
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
@@ -188,6 +215,25 @@ mod tests {
         assert_eq!(pending.checkpoint_id, "chk-123");
         assert_eq!(pending.checkpoint_type, TOOL_ESCALATION_CHECKPOINT_TYPE);
         assert_eq!(pending.options.len(), 2);
+    }
+
+    #[test]
+    fn runtime_confirmation_yield_payload_is_dangerous_and_defaults_to_approve() {
+        let pending = PendingConfirmation {
+            checkpoint_id: "tool_escalation_call-1".to_string(),
+            checkpoint_type: TOOL_ESCALATION_CHECKPOINT_TYPE.to_string(),
+            summary: "Approve Tool execution".to_string(),
+            details: serde_json::json!({"tool": "bash"}),
+            options: vec!["approve".to_string(), "reject".to_string()],
+        };
+
+        let payload = runtime_confirmation_yield_payload(&pending);
+
+        assert_eq!(payload.default_option.as_deref(), Some("approve"));
+        assert_eq!(
+            payload.presentation_hints,
+            vec![AdaptivePresentationHint::Dangerous]
+        );
     }
 
     #[test]

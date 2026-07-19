@@ -1,29 +1,28 @@
-use alan_agent_protocol::{AdaptivePresentationHint, ConfirmationYieldPayload, Event};
-use anyhow::{Context, Result};
-use serde_json::{Value, json};
-use std::time::Instant;
+use alan_agent_protocol::Event;
+use anyhow::Result;
+#[cfg(test)]
+use serde_json::Value;
+use serde_json::json;
 use tokio_util::sync::CancellationToken;
-use tracing::info;
 
 use crate::approval::{
-    EFFECT_REPLAY_CHECKPOINT_PREFIX, EFFECT_REPLAY_CHECKPOINT_TYPE, PendingConfirmation,
-    TOOL_ESCALATION_CHECKPOINT_PREFIX, TOOL_ESCALATION_CHECKPOINT_TYPE,
-    append_skill_permission_hints, is_runtime_confirmation_checkpoint_type, replays_tool_calls,
-};
-use crate::evidence::{
-    payload_needs_projection, project_evidence_payload, redact_evidence_payload,
-    redaction_markers_in_text,
+    PendingConfirmation, TOOL_ESCALATION_CHECKPOINT_PREFIX, TOOL_ESCALATION_CHECKPOINT_TYPE,
+    append_skill_permission_hints, replays_tool_calls, runtime_confirmation_yield_payload,
 };
 
 use super::loop_guard::ToolLoopGuard;
 use super::steering_queue::handle_queued_steering_inputs;
 #[cfg(test)]
 use super::tool_effect_lifecycle::{EffectCategory, build_effect_identity};
-use super::tool_effect_lifecycle::{ToolEffectLifecycle, ToolEffectPlan};
+use super::tool_execution::{
+    ToolExecutionOutcome, ToolExecutionRequest, execute_allowed_tool_call,
+};
+#[cfg(test)]
+use super::tool_execution::{execute_tool_effect, tool_payload_for_tape};
 use super::tool_policy::{ToolPolicyDecision, evaluate_tool_policy};
-use super::transition::{NamespaceAgentFiles, RuntimeLoopState};
+use super::transition::RuntimeLoopState;
 use super::turn_driver::TurnInputBroker;
-use super::turn_support::{check_turn_cancelled, tool_result_preview};
+use super::turn_support::tool_result_preview;
 use super::virtual_tools::{VirtualToolOutcome, try_handle_virtual_tool_call};
 use crate::agent_machine::NormalizedToolCall;
 
@@ -39,34 +38,6 @@ pub(super) enum ToolBatchOrchestratorOutcome {
     ContinueTurnLoop { refresh_context: bool },
     PauseTurn,
     EndTurn { surfaces_refreshed: bool },
-}
-
-fn confirmation_payload(
-    checkpoint_type: String,
-    summary: String,
-    details: Value,
-    options: Vec<String>,
-) -> ConfirmationYieldPayload {
-    let presentation_hints = if is_runtime_confirmation_checkpoint_type(&checkpoint_type) {
-        vec![AdaptivePresentationHint::Dangerous]
-    } else {
-        vec![]
-    };
-
-    let default_option = options
-        .iter()
-        .find(|option| option.as_str() == "approve")
-        .cloned()
-        .or_else(|| options.first().cloned());
-
-    ConfirmationYieldPayload {
-        checkpoint_type,
-        summary,
-        details: Some(details),
-        options,
-        default_option,
-        presentation_hints,
-    }
 }
 
 pub(super) struct ToolTurnOrchestrator {
@@ -210,101 +181,6 @@ fn maybe_allow_approved_tool_escalation_replay(
         }
         other => other,
     }
-}
-
-fn namespace_tool_payload(
-    tool: crate::runtime::NamespaceToolActionOutput,
-) -> Result<serde_json::Value> {
-    let trimmed = tool.output.trim();
-    let mut payload = if trimmed.is_empty() {
-        json!({})
-    } else {
-        serde_json::from_str::<Value>(trimmed)
-            .unwrap_or_else(|_| json!({ "output": tool.output.clone() }))
-    };
-    let process = format!("/proc/{}", tool.pid);
-    match &mut payload {
-        Value::Object(object) => {
-            object
-                .entry("success")
-                .or_insert(Value::Bool(tool.exit_code == 0));
-            object.entry("exit_code").or_insert(json!(tool.exit_code));
-            object.entry("process").or_insert(json!(process));
-            object.insert("action_id".to_string(), json!(tool.action_id));
-        }
-        other => {
-            payload = json!({
-                "success": tool.exit_code == 0,
-                "exit_code": tool.exit_code,
-                "output": other.clone(),
-                "process": process,
-                "action_id": tool.action_id,
-            });
-        }
-    }
-    Ok(payload)
-}
-
-async fn tool_payload_for_tape(agent_files: &NamespaceAgentFiles, payload: &Value) -> Value {
-    let redacted_payload = redact_evidence_payload(payload);
-    if !payload_needs_projection(&redacted_payload) {
-        return redacted_payload;
-    }
-
-    let Some(action_id) = payload.get("action_id").and_then(Value::as_str) else {
-        return project_evidence_payload(
-            payload,
-            None,
-            Vec::new(),
-            Some("reference_unresolvable".to_string()),
-        );
-    };
-    if action_id.is_empty() || action_id.contains('/') {
-        return project_evidence_payload(
-            payload,
-            None,
-            Vec::new(),
-            Some("reference_unresolvable".to_string()),
-        );
-    }
-    let reference = agent_files.action_output_reference(action_id).await;
-    let redactions = if let Some(reference) = reference.as_ref() {
-        agent_files
-            .resolve_evidence_reference(reference, None, None)
-            .await
-            .ok()
-            .and_then(|bytes| String::from_utf8(bytes).ok())
-            .map(|text| redaction_markers_in_text(&text))
-            .unwrap_or_default()
-    } else {
-        Vec::new()
-    };
-    let fallback_reason = reference
-        .is_none()
-        .then(|| "reference_unresolvable".to_string());
-    project_evidence_payload(payload, reference, redactions, fallback_reason)
-}
-
-async fn execute_tool_effect(
-    tools: crate::runtime::transition::NamespaceToolExecution,
-    tool_name: &str,
-    tool_arguments: Value,
-    cancel: &CancellationToken,
-    timeout_secs: usize,
-) -> Result<Value> {
-    let executable = format!("/bin/{tool_name}");
-    let arguments_doc =
-        serde_json::to_string(&tool_arguments).context("serialize tool arguments")?;
-    let tool = tools
-        .run_action_with_cancel_and_timeout(
-            tool_name,
-            &executable,
-            [arguments_doc],
-            cancel,
-            timeout_secs,
-        )
-        .await?;
-    namespace_tool_payload(tool)
 }
 
 async fn orchestrate_tool_call_with_guard<E, F>(
@@ -562,13 +438,8 @@ where
                 emit(Event::Yield {
                     request_id,
                     kind: alan_agent_protocol::YieldKind::Confirmation,
-                    payload: serde_json::to_value(confirmation_payload(
-                        pending.checkpoint_type.clone(),
-                        pending.summary.clone(),
-                        pending.details.clone(),
-                        pending.options.clone(),
-                    ))
-                    .unwrap_or_else(|_| json!({})),
+                    payload: serde_json::to_value(runtime_confirmation_yield_payload(&pending))
+                        .unwrap_or_else(|_| json!({})),
                 })
                 .await;
                 return Ok(ToolOrchestratorOutcome::PauseTurn);
@@ -615,279 +486,22 @@ where
         }
     };
 
-    let effect_lifecycle = ToolEffectLifecycle::for_call(
-        &state.machine,
-        state.process_path(),
-        tool_call.id.clone(),
-        tool_call.name.clone(),
-        &tool_arguments,
+    let runtime = super::transition::tool_execution_runtime(state);
+    let request = ToolExecutionRequest {
+        tool_call,
+        tool_arguments: &tool_arguments,
+        tool_timeout_secs: tool_package.timeout_secs,
         tool_capability,
-    );
-    let effect_plan = effect_lifecycle
-        .as_ref()
-        .map(|effect| effect.plan(&state.machine, allow_approved_unknown_effect_execution));
-
-    if matches!(effect_plan.as_ref(), Some(ToolEffectPlan::ConfirmUnknown)) {
-        let effect = effect_lifecycle
-            .as_ref()
-            .expect("effect plan requires a lifecycle");
-        let escalation_reason =
-            "Previous side effect attempt has unknown status; explicit confirmation required";
-        effect.record_unknown_confirmation(&mut state.machine, escalation_reason);
-
-        let pending = PendingConfirmation {
-            checkpoint_id: format!("{EFFECT_REPLAY_CHECKPOINT_PREFIX}{}", tool_call.id),
-            checkpoint_type: EFFECT_REPLAY_CHECKPOINT_TYPE.to_string(),
-            summary: "Potential duplicate side effect requires confirmation".to_string(),
-            details: append_skill_permission_hints(
-                json!({
-                    "reason": escalation_reason,
-                    "effect_status": "unknown",
-                    "effect_type": effect.effect_type(),
-                    "idempotency_key": effect.idempotency_key(),
-                    "request_fingerprint": effect.request_fingerprint(),
-                    "replay_tool_call": {
-                        "call_id": tool_call.id,
-                        "tool_name": tool_call.name,
-                        "arguments": tool_arguments,
-                    }
-                }),
-                state.machine.active_skills(),
-            ),
-            options: vec!["approve".to_string(), "reject".to_string()],
-        };
-        let request_id = state
-            .agent_files()
-            .write_confirmation_request(&pending)
-            .await?;
-        state.machine.record_tool_call_with_audit(
-            &tool_call.name,
-            tool_arguments.clone(),
-            json!({
-                "status": "escalation_required",
-                "reason": escalation_reason,
-                "idempotency_key": effect.idempotency_key(),
-                "effect_status": "unknown",
-                "request_id": request_id.clone()
-            }),
-            true,
-            tool_audit.clone(),
-        );
-        state
-            .machine
-            .set_confirmation_for_request(request_id.clone(), pending.clone());
-        super::ui_surfaces::paused(&state.agent_files()).await?;
-        emit(Event::Yield {
-            request_id,
-            kind: alan_agent_protocol::YieldKind::Confirmation,
-            payload: serde_json::to_value(confirmation_payload(
-                pending.checkpoint_type.clone(),
-                pending.summary.clone(),
-                pending.details.clone(),
-                pending.options.clone(),
-            ))
-            .unwrap_or_else(|_| json!({})),
-        })
-        .await;
-        return Ok(ToolOrchestratorOutcome::PauseTurn);
-    }
-
-    emit(Event::ToolCallStarted {
-        title: super::tool_presentation::tool_title(&tool_call.name, &tool_arguments),
-        id: tool_call.id.clone(),
-        name: tool_call.name.clone(),
-        audit: tool_audit.clone(),
-    })
-    .await;
-
-    if let Some(ToolEffectPlan::ReplayApplied {
-        payload: replay_payload,
-    }) = effect_plan
-    {
-        let dedupe_reason = "Matching applied side effect found; skipped physical execution";
-        emit(Event::ToolCallCompleted {
-            presentation: None,
-            id: tool_call.id.clone(),
-            name: Some(tool_call.name.clone()),
-            success: Some(true),
-            result_preview: tool_result_preview(&replay_payload),
-            audit: tool_audit.clone(),
-        })
-        .await;
-        state.machine.record_tool_call_with_audit(
-            &tool_call.name,
-            tool_arguments.clone(),
-            replay_payload.clone(),
-            true,
-            tool_audit,
-        );
-        state
-            .machine
-            .add_tool_message(&tool_call.id, &tool_call.name, replay_payload.clone());
-        effect_lifecycle
-            .as_ref()
-            .expect("replay plan requires a lifecycle")
-            .commit_replay(&mut state.machine, &replay_payload, dedupe_reason);
-        return Ok(ToolOrchestratorOutcome::ContinueToolBatch {
-            refresh_context: false,
-        });
-    }
-
-    let effect_start = if let Some(effect) = effect_lifecycle.as_ref() {
-        effect.record_execute_decision(&mut state.machine, "No applied effect record found");
-        match effect.begin(&mut state.machine).await {
-            Ok(record) => Some(record),
-            Err(failure) => {
-                emit(Event::Error {
-                    message: failure.message.clone(),
-                    recoverable: true,
-                })
-                .await;
-                emit(Event::ToolCallCompleted {
-                    presentation: None,
-                    id: tool_call.id.clone(),
-                    name: Some(tool_call.name.clone()),
-                    success: Some(false),
-                    result_preview: tool_result_preview(&failure.payload),
-                    audit: tool_audit.clone(),
-                })
-                .await;
-                state.machine.record_tool_call_with_audit(
-                    &tool_call.name,
-                    tool_arguments.clone(),
-                    failure.payload.clone(),
-                    false,
-                    tool_audit,
-                );
-                state
-                    .machine
-                    .add_tool_message(&tool_call.id, &tool_call.name, failure.payload);
-                return Ok(ToolOrchestratorOutcome::ContinueToolBatch {
-                    refresh_context: false,
-                });
-            }
-        }
-    } else {
-        None
+        tool_audit,
+        allow_approved_unknown_effect_execution,
+        cancel: inputs.cancel,
     };
-
-    let execution_target = state.tool_execution();
-    let tool_start = Instant::now();
-    let tool_timeout_secs = tool_package.timeout_secs;
-    let tool_result = execute_tool_effect(
-        execution_target,
-        &tool_call.name,
-        tool_arguments.clone(),
-        inputs.cancel,
-        tool_timeout_secs,
-    )
-    .await;
-    let agent_files = state.agent_files();
-    if inputs.cancel.is_cancelled()
-        && check_turn_cancelled(&mut state.machine, &agent_files, emit, inputs.cancel).await?
-    {
-        return Ok(ToolOrchestratorOutcome::EndTurn);
-    }
-
-    match tool_result {
-        Ok(value) => {
-            // `Ok` is only the transport result — the tool may report a logical
-            // failure in its payload (e.g. bash `{ "success": false, "exit_code": 1
-            // }`). Derive completion + effect status from that, so a failed
-            // side-effecting command is not cached as `Applied` (which would make a
-            // retry skip physical execution) and is not rendered as a success.
-            let payload_success =
-                value.get("success").and_then(serde_json::Value::as_bool) != Some(false);
-            if let (Some(effect), Some(effect_start)) =
-                (effect_lifecycle.as_ref(), effect_start.as_ref())
-            {
-                let reason =
-                    (!payload_success).then(|| "tool reported failure in payload".to_string());
-                effect.complete(
-                    &mut state.machine,
-                    effect_start,
-                    &value,
-                    payload_success,
-                    reason,
-                );
-            }
-            let tape_value = tool_payload_for_tape(&agent_files, &value).await;
-            emit(Event::ToolCallCompleted {
-                presentation: super::tool_presentation::tool_presentation(
-                    &tool_call.name,
-                    &tool_arguments,
-                    &value,
-                ),
-                id: tool_call.id.clone(),
-                name: Some(tool_call.name.clone()),
-                success: Some(payload_success),
-                result_preview: tool_result_preview(&value),
-                audit: tool_audit.clone(),
-            })
-            .await;
-            state.machine.record_tool_call_with_audit(
-                &tool_call.name,
-                tool_arguments.clone(),
-                value.clone(),
-                payload_success,
-                tool_audit.clone(),
-            );
-            state
-                .machine
-                .add_tool_message(&tool_call.id, &tool_call.name, tape_value);
-            info!(
-                tool_name = %tool_call.name,
-                elapsed_ms = tool_start.elapsed().as_millis(),
-                success = payload_success,
-                "Tool done"
-            );
-            Ok(ToolOrchestratorOutcome::ContinueToolBatch {
-                refresh_context: false,
-            })
-        }
-        Err(err) => {
-            let error_payload = json!({"error": err.to_string()});
-            if let (Some(effect), Some(effect_start)) =
-                (effect_lifecycle.as_ref(), effect_start.as_ref())
-            {
-                effect.complete(
-                    &mut state.machine,
-                    effect_start,
-                    &error_payload,
-                    false,
-                    Some(err.to_string()),
-                );
-            }
-            emit(Event::ToolCallCompleted {
-                presentation: None,
-                id: tool_call.id.clone(),
-                name: Some(tool_call.name.clone()),
-                success: Some(false),
-                result_preview: tool_result_preview(&error_payload),
-                audit: tool_audit.clone(),
-            })
-            .await;
-            state.machine.record_tool_call_with_audit(
-                &tool_call.name,
-                tool_arguments.clone(),
-                error_payload.clone(),
-                false,
-                tool_audit,
-            );
-            state
-                .machine
-                .add_tool_message(&tool_call.id, &tool_call.name, error_payload);
-            info!(
-                tool_name = %tool_call.name,
-                elapsed_ms = tool_start.elapsed().as_millis(),
-                success = false,
-                error = %err,
-                "Tool done"
-            );
-            Ok(ToolOrchestratorOutcome::ContinueToolBatch {
-                refresh_context: false,
-            })
-        }
+    match execute_allowed_tool_call(runtime, request, emit).await? {
+        ToolExecutionOutcome::Completed => Ok(ToolOrchestratorOutcome::ContinueToolBatch {
+            refresh_context: false,
+        }),
+        ToolExecutionOutcome::PauseTurn => Ok(ToolOrchestratorOutcome::PauseTurn),
+        ToolExecutionOutcome::EndTurn => Ok(ToolOrchestratorOutcome::EndTurn),
     }
 }
 

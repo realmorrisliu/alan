@@ -43,7 +43,8 @@ pub(super) struct EffectCheckpointFailure {
 }
 
 /// Owns one effectful Tool call from stable identity through its terminal durable record.
-/// Policy evaluation and physical Tool Process execution stay with the orchestrator.
+/// Policy evaluation stays with the orchestrator; physical execution is driven by the narrow
+/// Tool execution transition owner.
 #[derive(Debug, Clone)]
 pub(super) struct ToolEffectLifecycle {
     identity: EffectIdentity,

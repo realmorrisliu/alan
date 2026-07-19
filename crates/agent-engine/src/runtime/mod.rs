@@ -27,6 +27,7 @@ mod response_guardrails;
 mod steering_queue;
 mod submission_handlers;
 mod tool_effect_lifecycle;
+mod tool_execution;
 mod tool_orchestrator;
 mod tool_packages;
 mod tool_policy;

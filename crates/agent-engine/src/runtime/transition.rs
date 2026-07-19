@@ -228,6 +228,20 @@ pub(super) fn agent_interaction_runtime(
     super::interaction_tools::AgentInteractionRuntime::new(&mut state.machine, agent_files)
 }
 
+pub(super) fn tool_execution_runtime(
+    state: &mut RuntimeLoopState,
+) -> super::tool_execution::ToolExecutionRuntime<'_> {
+    let agent_files = state.agent_files();
+    let tool_execution = state.tool_execution();
+    let process_path = state.process_path();
+    super::tool_execution::ToolExecutionRuntime::new(
+        &mut state.machine,
+        agent_files,
+        tool_execution,
+        process_path,
+    )
+}
+
 fn child_launch_base_agent_config(state: &RuntimeLoopState) -> super::launch_config::AgentConfig {
     let mut config = super::launch_config::AgentConfig::from(state.core_config.clone());
     config.runtime_config = state.runtime_config.clone();

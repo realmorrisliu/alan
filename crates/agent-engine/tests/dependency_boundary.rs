@@ -338,6 +338,8 @@ fn transition_leaf_workflows_do_not_receive_the_runtime_loop_aggregate() {
         "mount_request_tool/runtime_inputs.rs",
         "response_guardrails.rs",
         "steering_queue.rs",
+        "tool_execution.rs",
+        "tool_execution/runtime_inputs.rs",
         "turn_support.rs",
     ] {
         let source = read_runtime_source(path);
@@ -358,7 +360,8 @@ fn transition_leaf_workflows_do_not_receive_the_runtime_loop_aggregate() {
     assert!(tool_definitions.contains("NamespaceToolExecution"));
 
     let tool_orchestrator = read_runtime_source("tool_orchestrator.rs");
-    let tool_evidence = &tool_orchestrator[tool_orchestrator
+    let tool_execution_source = read_runtime_source("tool_execution.rs");
+    let tool_evidence = &tool_execution_source[tool_execution_source
         .find("async fn tool_payload_for_tape")
         .expect("find tool_payload_for_tape")..];
     let tool_evidence = &tool_evidence[..tool_evidence
@@ -464,6 +467,22 @@ fn transition_leaf_workflows_do_not_receive_the_runtime_loop_aggregate() {
     }
     assert!(interaction_runtime.contains("AgentInteractionRuntime"));
     assert!(transition.contains("fn agent_interaction_runtime("));
+
+    let tool_execution_runtime = read_runtime_source("tool_execution/runtime_inputs.rs");
+    for forbidden in [
+        "RuntimeLoopState",
+        "RuntimeConfig",
+        "NamespaceRuntimeEnvironment",
+    ] {
+        assert!(
+            !tool_execution_runtime.contains(forbidden),
+            "Tool execution runtime must not regain {forbidden}"
+        );
+    }
+    assert!(tool_execution_runtime.contains("ToolExecutionRuntime"));
+    assert!(transition.contains("fn tool_execution_runtime("));
+    assert!(read_runtime_source("tool_execution.rs").contains("execute_allowed_tool_call"));
+    assert!(!tool_orchestrator.contains("ToolEffectLifecycle"));
 
     for marker in [
         "fn compaction_submission_id",
