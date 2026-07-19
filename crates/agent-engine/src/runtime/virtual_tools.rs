@@ -312,8 +312,9 @@ where
             handle_invoke_delegated_skill(runtime, tool_call, tool_arguments, cancel, emit).await
         }
         "terminate_child_run" => {
+            let runtime = super::transition::child_run_termination_runtime(state);
             handle_terminate_child_run(
-                state,
+                runtime,
                 tool_call,
                 tool_arguments,
                 allow_approved_tool_escalation_execution,
