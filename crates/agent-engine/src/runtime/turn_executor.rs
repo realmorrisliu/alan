@@ -103,14 +103,13 @@ async fn finalize_turn_memory_best_effort(
 }
 
 async fn turn_tool_definitions(
-    state: &RuntimeLoopState,
+    include_runtime_delegated_tool: bool,
+    tool_execution: &super::transition::NamespaceToolExecution,
 ) -> anyhow::Result<(
     Vec<super::ToolPackageManifest>,
     Vec<crate::llm::ToolDefinition>,
 )> {
-    let include_runtime_delegated_tool = state.prompt_cache.supports_delegated_skill_invocation();
-
-    let tool_packages = state.tool_execution().discover_packages().await?;
+    let tool_packages = tool_execution.discover_packages().await?;
     let mut tools = tool_packages
         .iter()
         .map(|package| package.model_definition())
@@ -320,7 +319,10 @@ where
     let _domain_prompt = prompt_build.domain_prompt;
     let system_prompt = prompt_build.system_prompt;
 
-    let (tool_packages, tools) = turn_tool_definitions(state).await?;
+    let include_runtime_delegated_tool = state.prompt_cache.supports_delegated_skill_invocation();
+    let tool_execution = state.tool_execution();
+    let (tool_packages, tools) =
+        turn_tool_definitions(include_runtime_delegated_tool, &tool_execution).await?;
     let tool_names = tools
         .iter()
         .map(|tool| tool.name.clone())
@@ -472,7 +474,9 @@ where
 
         let tool_calls = normalize_tool_calls(response.tool_calls);
 
-        let guardrail_context = ResponseGuardrailContext::from_state(state, &tool_packages);
+        let tool_execution = state.tool_execution();
+        let guardrail_context =
+            ResponseGuardrailContext::from_machine(&state.machine, &tool_execution, &tool_packages);
         let guardrail_draft = AssistantDraft::new(&response.content, !tool_calls.is_empty());
         match response_guardrails.evaluate(&guardrail_context, &guardrail_draft) {
             GuardrailDecision::Accept => {

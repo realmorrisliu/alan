@@ -311,6 +311,27 @@ fn turn_generation_uses_only_the_file_native_namespace_boundary() {
 }
 
 #[test]
+fn transition_leaf_workflows_do_not_receive_the_runtime_loop_aggregate() {
+    for path in ["response_guardrails.rs", "steering_queue.rs"] {
+        let source = read_runtime_source(path);
+        assert!(
+            !source.contains("RuntimeLoopState"),
+            "{path} must receive Agent Machine state and namespace handles directly"
+        );
+    }
+
+    let executor = read_runtime_source("turn_executor.rs");
+    let tool_definitions = &executor[executor
+        .find("async fn turn_tool_definitions")
+        .expect("find turn_tool_definitions")..];
+    let tool_definitions = &tool_definitions[..tool_definitions
+        .find("fn log_generation_failure")
+        .expect("find end of turn_tool_definitions")];
+    assert!(!tool_definitions.contains("RuntimeLoopState"));
+    assert!(tool_definitions.contains("NamespaceToolExecution"));
+}
+
+#[test]
 fn agent_file_workflows_use_only_the_narrow_agent_files_handle() {
     let namespace = read_runtime_source("transition/namespace_environment.rs");
     let agent_files_handle = rust_item_body(&namespace, "pub(crate) struct NamespaceAgentFiles");

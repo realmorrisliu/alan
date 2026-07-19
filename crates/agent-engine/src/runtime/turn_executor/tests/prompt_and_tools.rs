@@ -9,7 +9,8 @@ async fn test_turn_tool_definitions_include_runtime_delegated_schema_when_suppor
             .with_delegated_skill_invocation(),
     );
 
-    let (_, tools) = turn_tool_definitions(&state).await.unwrap();
+    let tool_execution = state.tool_execution();
+    let (_, tools) = turn_tool_definitions(true, &tool_execution).await.unwrap();
     assert!(
         tools
             .iter()
@@ -21,7 +22,8 @@ async fn test_turn_tool_definitions_include_runtime_delegated_schema_when_suppor
 async fn unmounted_tool_is_not_model_callable() {
     let state = create_test_state_with_provider(ContentMockProvider::new("ok"));
 
-    let (_, tools) = turn_tool_definitions(&state).await.unwrap();
+    let tool_execution = state.tool_execution();
+    let (_, tools) = turn_tool_definitions(false, &tool_execution).await.unwrap();
     assert!(!tools.iter().any(|tool| tool.name == "network_probe"));
 }
 
