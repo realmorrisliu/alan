@@ -207,6 +207,20 @@ pub(super) fn child_run_termination_runtime(
     )
 }
 
+pub(super) fn mount_request_runtime(
+    state: &mut RuntimeLoopState,
+) -> super::mount_request_tool::MountRequestRuntime<'_> {
+    let agent_files = state.agent_files();
+    let tool_execution = state.tool_execution();
+    super::mount_request_tool::MountRequestRuntime::new(
+        &mut state.machine,
+        &state.runtime_config.policy_engine,
+        &state.runtime_config.governance,
+        agent_files,
+        tool_execution,
+    )
+}
+
 fn child_launch_base_agent_config(state: &RuntimeLoopState) -> super::launch_config::AgentConfig {
     let mut config = super::launch_config::AgentConfig::from(state.core_config.clone());
     config.runtime_config = state.runtime_config.clone();

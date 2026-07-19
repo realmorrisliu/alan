@@ -332,6 +332,8 @@ fn transition_leaf_workflows_do_not_receive_the_runtime_loop_aggregate() {
         "memory_flush.rs",
         "memory_promotion.rs",
         "memory_surfaces.rs",
+        "mount_request_tool.rs",
+        "mount_request_tool/runtime_inputs.rs",
         "response_guardrails.rs",
         "steering_queue.rs",
         "turn_support.rs",
@@ -432,6 +434,20 @@ fn transition_leaf_workflows_do_not_receive_the_runtime_loop_aggregate() {
     }
     assert!(termination_runtime.contains("ChildRunTerminationRuntime"));
     assert!(transition.contains("fn child_run_termination_runtime("));
+
+    let mount_runtime = read_runtime_source("mount_request_tool/runtime_inputs.rs");
+    for forbidden in [
+        "RuntimeLoopState",
+        "RuntimeConfig",
+        "NamespaceRuntimeEnvironment",
+    ] {
+        assert!(
+            !mount_runtime.contains(forbidden),
+            "mount request runtime must not regain {forbidden}"
+        );
+    }
+    assert!(mount_runtime.contains("MountRequestRuntime"));
+    assert!(transition.contains("fn mount_request_runtime("));
 
     for marker in [
         "fn compaction_submission_id",
