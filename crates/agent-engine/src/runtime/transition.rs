@@ -6,8 +6,10 @@
 
 mod accepted_submission;
 mod namespace_environment;
+mod turn_execution;
 
 pub(crate) use accepted_submission::{accepts_inband_submissions, advance_accepted_submission};
+use turn_execution::run_turn_with_cancel;
 
 #[cfg(test)]
 pub(super) use namespace_environment::NamespaceRequestRecord;
@@ -52,8 +54,6 @@ use super::tool_execution::{
     ToolExecutionOutcome, ToolExecutionRequest, execute_allowed_tool_call,
 };
 use super::tool_resolution::{ToolResolutionOutcome, ToolResolutionRequest, resolve_tool_call};
-pub(super) use super::turn_executor::run_turn_with_cancel;
-use super::turn_executor::{TurnExecutionOutcome, TurnRunKind};
 use super::turn_input::TurnInputBroker;
 use super::turn_memory::{FinalizeTurnMemoryRequest, finalize_turn_memory_best_effort};
 #[allow(
@@ -92,6 +92,18 @@ pub(crate) struct AcceptedSubmissionOutcome {
     pub(crate) result: Result<TransitionCompletion>,
     pub(crate) requeue_inband_submissions: bool,
     pub(crate) deferred_actions: VecDeque<DeferredRuntimeAction>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum TurnRunKind {
+    NewTurn,
+    ResumeTurn,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum TurnExecutionOutcome {
+    Finished,
+    Paused,
 }
 
 impl RuntimeLoopState {

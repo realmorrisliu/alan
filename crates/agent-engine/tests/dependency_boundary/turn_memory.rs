@@ -20,7 +20,7 @@ fn turn_memory_finalization_uses_only_explicit_runtime_inputs() {
     let owner = read_runtime_source("turn_memory.rs");
     assert!(owner.contains("finalize_turn_memory_best_effort"));
 
-    let executor = read_runtime_source("turn_executor.rs");
+    let executor = read_runtime_source("transition/turn_execution.rs");
     for (name, source) in [("turn executor", executor), ("transition", transition)] {
         for displaced_operation in [
             "build_turn_memory_promotion_job(",

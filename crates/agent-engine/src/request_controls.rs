@@ -345,7 +345,7 @@ mod tests {
 
     #[test]
     fn layering_contract_keeps_effective_resolution_out_of_call_sites() {
-        let turn_executor = include_str!("runtime/turn_executor.rs");
+        let turn_execution = include_str!("runtime/transition/turn_execution.rs");
         for forbidden in [
             "effective_model_reasoning_effort",
             "validate_reasoning_effort_for_resolved_model",
@@ -353,8 +353,8 @@ mod tests {
             "runtime_config.model_reasoning_effort",
         ] {
             assert!(
-                !turn_executor.contains(forbidden),
-                "`turn_executor` must consume request-control resolver output, found `{forbidden}`"
+                !turn_execution.contains(forbidden),
+                "turn execution must consume request-control resolver output, found `{forbidden}`"
             );
         }
     }
