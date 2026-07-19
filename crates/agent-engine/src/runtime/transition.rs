@@ -15,7 +15,7 @@ pub use namespace_environment::{
     NamespaceTurnRuntime, NamespaceTurnRuntimeConfig,
 };
 pub(crate) use namespace_environment::{
-    NamespaceAgentFiles, NamespaceGeneration, NamespaceProcessFiles,
+    NamespaceAgentFiles, NamespaceGeneration, NamespaceProcessFiles, NamespaceToolExecution,
 };
 
 use std::collections::VecDeque;
@@ -96,6 +96,10 @@ impl RuntimeLoopState {
 
     pub(crate) fn process_files(&self) -> NamespaceProcessFiles {
         self.environment.process_files()
+    }
+
+    pub(crate) fn tool_execution(&self) -> NamespaceToolExecution {
+        self.environment.tool_execution()
     }
 
     pub(crate) async fn write_namespace_confirmation_request(
@@ -196,8 +200,8 @@ impl RuntimeLoopState {
 
     pub(crate) async fn static_tool_names(&self) -> Result<Vec<String>> {
         Ok(self
-            .namespace_environment()
-            .discover_tool_packages()
+            .tool_execution()
+            .discover_packages()
             .await?
             .into_iter()
             .map(|manifest| manifest.name)
@@ -205,8 +209,8 @@ impl RuntimeLoopState {
     }
 
     pub(crate) fn default_tool_cwd(&self) -> Option<std::path::PathBuf> {
-        self.namespace_environment()
-            .tool_execution_binding()
+        self.tool_execution()
+            .execution_binding()
             .map(|binding| binding.cwd)
     }
 }

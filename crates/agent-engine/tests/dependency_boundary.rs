@@ -365,6 +365,51 @@ fn process_file_workflows_use_only_the_narrow_process_files_handle() {
 }
 
 #[test]
+fn tool_workflows_use_only_the_narrow_tool_execution_handle() {
+    let namespace = read_runtime_source("transition/namespace_environment.rs");
+    let tool_handle = rust_item_body(&namespace, "pub(crate) struct NamespaceToolExecution");
+    for required_field in [
+        "root: InProcessTransport",
+        "process_files: NamespaceProcessFiles",
+        "agent_files: NamespaceAgentFiles",
+        "tool_process_context: Option<NamespaceToolProcessContext>",
+    ] {
+        assert!(
+            tool_handle.contains(required_field),
+            "Tool execution handle must retain {required_field}"
+        );
+    }
+    for forbidden_field in [
+        "llm_connection",
+        "launch_context",
+        "child_run_registry",
+        "mount_grant_applicator",
+    ] {
+        assert!(
+            !tool_handle.contains(forbidden_field),
+            "Tool execution handle must not gain {forbidden_field}"
+        );
+    }
+
+    let tool_operations = read_runtime_source("transition/namespace_environment/tool_execution.rs");
+    assert!(tool_operations.contains("impl NamespaceToolExecution"));
+    assert!(!tool_operations.contains("impl NamespaceRuntimeEnvironment"));
+
+    for path in [
+        "tool_orchestrator.rs",
+        "turn_executor.rs",
+        "response_guardrails.rs",
+        "submission_handlers.rs",
+    ] {
+        let source = read_runtime_source(path);
+        assert!(
+            !source.contains("namespace_environment()"),
+            "{path} must not reach complete namespace environment for Tool work"
+        );
+    }
+}
+
+#[test]
 fn engine_does_not_assemble_alan_os() {
     let source = read_runtime_source("engine.rs");
     let production = source.split("\n#[cfg(test)]\nmod tests").next().unwrap();

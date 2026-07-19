@@ -343,10 +343,7 @@ async fn build_child_namespace_assembly_plan(
         launch_context,
     };
 
-    let packages = parent
-        .namespace_environment()
-        .discover_tool_packages()
-        .await?;
+    let packages = parent.tool_execution().discover_packages().await?;
     plan.tool_packages = if let Some(profile) = spec.runtime_overrides.tool_profile.as_ref() {
         let available = packages
             .iter()

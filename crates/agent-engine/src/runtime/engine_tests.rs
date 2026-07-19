@@ -116,7 +116,8 @@ async fn namespace_discovery_ignores_incomplete_tool_packages() {
 
     assert!(
         environment
-            .discover_tool_packages()
+            .tool_execution()
+            .discover_packages()
             .await
             .unwrap()
             .is_empty()
@@ -139,7 +140,13 @@ async fn namespace_discovery_rejects_invalid_mounted_manifest() {
     let root = InProcessTransport::new(Arc::new(alan_kernel::MountFs::new(mounts)));
     let environment = crate::runtime::NamespaceRuntimeEnvironment::new(root, "/agent/1", "default");
 
-    assert!(environment.discover_tool_packages().await.is_err());
+    assert!(
+        environment
+            .tool_execution()
+            .discover_packages()
+            .await
+            .is_err()
+    );
 }
 
 #[test]

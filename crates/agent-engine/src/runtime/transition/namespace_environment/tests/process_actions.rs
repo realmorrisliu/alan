@@ -92,7 +92,8 @@ async fn engine_runs_tool_as_process_and_projects_action_files() {
     let environment = NamespaceRuntimeEnvironment::new(root, "/agent/1", "default");
 
     let action = environment
-        .run_tool_action(
+        .tool_execution()
+        .run_action(
             "echo",
             "/bin/greeting",
             ["hello".to_string(), "from-process".to_string()],
@@ -147,7 +148,8 @@ async fn run_tool_action_projects_logical_payload_failure_as_failed_action() {
     let (environment, shell) = tool_test_environment(Arc::new(LogicalFailureRunner));
 
     let action = environment
-        .run_tool_action("bash", "/bin/bash", ["{}"])
+        .tool_execution()
+        .run_action("bash", "/bin/bash", ["{}"])
         .await
         .unwrap();
 
@@ -182,12 +184,8 @@ async fn run_tool_action_cancels_spawned_process_on_cancel() {
         let cancel = cancel.clone();
         async move {
             environment
-                .run_tool_action_with_cancel(
-                    "blocked",
-                    "/bin/blocked",
-                    Vec::<String>::new(),
-                    &cancel,
-                )
+                .tool_execution()
+                .run_action_with_cancel("blocked", "/bin/blocked", Vec::<String>::new(), &cancel)
                 .await
         }
     });
@@ -225,7 +223,8 @@ async fn run_tool_action_cancels_spawned_process_on_wait_timeout() {
         let cancel = cancel.clone();
         async move {
             environment
-                .run_tool_action_with_cancel_and_timeout(
+                .tool_execution()
+                .run_action_with_cancel_and_timeout(
                     "blocked",
                     "/bin/blocked",
                     Vec::<String>::new(),
@@ -264,7 +263,8 @@ async fn run_tool_action_reads_output_larger_than_initial_read() {
     let (environment, _shell) = tool_test_environment(Arc::new(LargeOutputRunner));
 
     let action = environment
-        .run_tool_action("large", "/bin/large", Vec::<String>::new())
+        .tool_execution()
+        .run_action("large", "/bin/large", Vec::<String>::new())
         .await
         .unwrap();
 
@@ -279,7 +279,9 @@ async fn run_tool_action_reads_exact_chunk_output_without_waiting_for_more() {
 
     let action = tokio::time::timeout(
         std::time::Duration::from_secs(1),
-        environment.run_tool_action("exact", "/bin/exact", Vec::<String>::new()),
+        environment
+            .tool_execution()
+            .run_action("exact", "/bin/exact", Vec::<String>::new()),
     )
     .await
     .expect("exact chunk output should not wait at the live stream edge")

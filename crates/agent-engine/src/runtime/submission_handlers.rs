@@ -491,8 +491,8 @@ fn handle_mount_escalation_resolution(
     });
     let namespace_applied = approved && namespace_application.namespace_applied;
     let scratch_dir = state
-        .namespace_environment()
-        .tool_execution_binding()
+        .tool_execution()
+        .execution_binding()
         .map(|binding| binding.scratch_dir)
         .or_else(|| {
             state
@@ -510,7 +510,7 @@ fn handle_mount_escalation_resolution(
         });
     let tool_sandbox_applied = namespace_applied
         && grant.as_ref().is_some_and(|grant| {
-            let binding = state.namespace_environment().tool_execution_binding();
+            let binding = state.tool_execution().execution_binding();
             binding.is_some_and(|binding| {
                 binding.host_mounts.iter().any(|mounted| {
                     mounted.namespace_path == grant.namespace_path

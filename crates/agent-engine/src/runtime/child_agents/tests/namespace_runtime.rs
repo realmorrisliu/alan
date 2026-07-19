@@ -570,7 +570,8 @@ async fn child_namespace_launch_and_supervisor_reattachment_use_proc_pid_files()
 
     let tool = launch
         .environment
-        .run_tool_action("alpha", "/bin/alpha", ["{}"])
+        .tool_execution()
+        .run_action("alpha", "/bin/alpha", ["{}"])
         .await
         .unwrap();
     assert_eq!(tool.pid, "3");

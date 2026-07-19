@@ -110,10 +110,7 @@ async fn turn_tool_definitions(
 )> {
     let include_runtime_delegated_tool = state.prompt_cache.supports_delegated_skill_invocation();
 
-    let tool_packages = state
-        .namespace_environment()
-        .discover_tool_packages()
-        .await?;
+    let tool_packages = state.tool_execution().discover_packages().await?;
     let mut tools = tool_packages
         .iter()
         .map(|package| package.model_definition())
