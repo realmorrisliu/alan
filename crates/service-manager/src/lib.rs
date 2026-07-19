@@ -33,7 +33,8 @@ pub use control_fs::{
 };
 pub use host_mount::{
     HostMountAccess, HostMountApplicatorFactory, HostMountExport, HostMountExportAdapter,
-    HostMountGrantRecord, HostMountRequest, HostMountService, UnavailableHostMountExportAdapter,
+    HostMountGrantRecord, HostMountRequest, HostMountService, HostMountStatus,
+    UnavailableHostMountExportAdapter,
 };
 pub use local_entry::LocalEntryService;
 pub use package::{

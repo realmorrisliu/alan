@@ -1,5 +1,8 @@
 use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicU32, Ordering},
+};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use alan_agent_engine::runtime::{
@@ -11,15 +14,18 @@ use alan_kernel::{Access, LiveNamespace, Namespace, Pid};
 use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
 
-use crate::flat_fs::{FlatFileService, FlatServiceFs};
+mod file_server;
 
-const FILES: &[(&str, bool)] = &[
-    ("request", true),
-    ("grants", false),
-    ("status", false),
-    ("audit", false),
-    ("projection", true),
-    ("revoke", true),
+use file_server::{HostMountEventStreams, HostMountFs};
+
+const RESERVED_MOUNT_NAMESPACE_ROOTS: &[&str] = &[
+    "connections",
+    "host-mount",
+    "llm",
+    "mem",
+    "package",
+    "route",
+    "service-manager",
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -47,10 +53,11 @@ pub trait HostMountExport: std::fmt::Debug + Send + Sync {
     fn apply_tool_authority(&self, binding: &mut ToolExecutionBinding) -> Result<()>;
 }
 
-/// Platform boundary used by runtime-approved mount requests.
+/// Transitional platform boundary for pre-authorized launch declarations.
 ///
-/// Only the Host implementation may inspect the raw path carried by the legacy
-/// engine approval object while that engine surface is being replaced.
+/// Logical runtime requests use [`HostMountExport`] directly after native authorization. Only the
+/// Host implementation may inspect the raw path carried by the launch-only engine record while
+/// that record is replaced with a service-issued handle.
 pub trait HostMountExportAdapter: std::fmt::Debug + Send + Sync {
     fn export_approved(&self, grant: &ApprovedMountGrant) -> Result<Arc<dyn HostMountExport>>;
 }
@@ -73,6 +80,42 @@ pub struct HostMountRequest {
     pub access: HostMountAccess,
     pub reason: String,
     pub requesting_pid: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct HostMountRequestDocument {
+    namespace_path: String,
+    access: HostMountAccess,
+    reason: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    label: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HostMountStatus {
+    Pending,
+    Approved,
+    Rejected,
+    Cancelled,
+    Failed,
+}
+
+impl HostMountStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Approved => "approved",
+            Self::Rejected => "rejected",
+            Self::Cancelled => "cancelled",
+            Self::Failed => "failed",
+        }
+    }
+
+    fn is_terminal(self) -> bool {
+        !matches!(self, Self::Pending)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -106,9 +149,25 @@ struct Grant {
     projections: Vec<Projection>,
 }
 
+struct RequestState {
+    request: HostMountRequest,
+    status: HostMountStatus,
+    decision_in_progress: bool,
+    grant: Option<String>,
+    error: Option<String>,
+}
+
+#[derive(Clone)]
+pub(super) struct HostMountRequestSnapshot {
+    pub(super) request: HostMountRequest,
+    pub(super) status: HostMountStatus,
+    pub(super) grant: Option<String>,
+    pub(super) error: Option<String>,
+}
+
 #[derive(Default)]
 struct State {
-    requests: BTreeMap<String, HostMountRequest>,
+    requests: BTreeMap<String, RequestState>,
     grants: BTreeMap<String, Grant>,
     processes: BTreeMap<Pid, LiveNamespace>,
     audit: Vec<AuditRecord>,
@@ -119,6 +178,9 @@ struct State {
 pub struct HostMountService {
     adapter: Arc<dyn HostMountExportAdapter>,
     state: Mutex<State>,
+    generation: AtomicU32,
+    request_events: HostMountEventStreams,
+    events: HostMountEventStreams,
 }
 
 impl std::fmt::Debug for HostMountService {
@@ -132,6 +194,9 @@ impl HostMountService {
         Arc::new(Self {
             adapter,
             state: Mutex::new(State::default()),
+            generation: AtomicU32::new(0),
+            request_events: HostMountEventStreams::new(),
+            events: HostMountEventStreams::new(),
         })
     }
 
@@ -140,7 +205,12 @@ impl HostMountService {
     }
 
     pub fn file_server(self: &Arc<Self>) -> Arc<dyn FileServer> {
-        Arc::new(FlatServiceFs::new(self.clone()))
+        Arc::new(HostMountFs::new(self.clone(), None))
+    }
+
+    /// Return the Process-scoped request view mounted into one Agent Process.
+    pub fn file_server_for_process(self: &Arc<Self>, pid: u64) -> Arc<dyn FileServer> {
+        Arc::new(HostMountFs::new(self.clone(), Some(pid)))
     }
 
     pub fn register_process(&self, pid: Pid, namespace: LiveNamespace) {
@@ -195,7 +265,15 @@ impl HostMountService {
     }
 
     pub fn pending_request(&self, request_id: &str) -> Option<HostMountRequest> {
-        self.state.lock().unwrap().requests.get(request_id).cloned()
+        self.state
+            .lock()
+            .unwrap()
+            .requests
+            .get(request_id)
+            .filter(|request| {
+                request.status == HostMountStatus::Pending && !request.decision_in_progress
+            })
+            .map(|request| request.request.clone())
     }
 
     pub fn approve_export(
@@ -205,11 +283,8 @@ impl HostMountService {
         provenance: impl Into<String>,
         actor: impl Into<String>,
     ) -> Result<HostMountGrantRecord> {
-        let mut state = self.state.lock().unwrap();
-        let request = state
-            .requests
-            .remove(request_id)
-            .with_context(|| format!("unknown Host Mount request `{request_id}`"))?;
+        let actor = actor.into();
+        let request = self.claim_pending_request(request_id)?;
         let record = HostMountGrantRecord {
             id: request.id.clone(),
             label: request.label.clone(),
@@ -218,6 +293,7 @@ impl HostMountService {
             provenance: provenance.into(),
             active: true,
         };
+        let mut state = self.state.lock().unwrap();
         state.grants.insert(
             record.id.clone(),
             Grant {
@@ -227,22 +303,132 @@ impl HostMountService {
                 projections: Vec::new(),
             },
         );
-        audit(&mut state, "approve", &record.id, actor.into(), Vec::new());
         drop(state);
         if let Err(error) = self.project(&record.id, request.requesting_pid) {
             let mut state = self.state.lock().unwrap();
             state.grants.remove(&record.id);
-            state.requests.insert(request.id.clone(), request);
+            if let Some(request) = state.requests.get_mut(&record.id) {
+                request.status = HostMountStatus::Failed;
+                request.error = Some("Host Mount namespace projection failed".to_string());
+            }
             audit(
                 &mut state,
-                "approval_rollback",
+                "approval_failed",
                 &record.id,
                 "service-manager".to_string(),
                 Vec::new(),
             );
+            drop(state);
+            self.bump_generation();
+            self.append_request_event(
+                &record.id,
+                HostMountStatus::Failed,
+                None,
+                Some("Host Mount namespace projection failed"),
+            );
             return Err(error);
         }
+        let mut state = self.state.lock().unwrap();
+        let request_state = state
+            .requests
+            .get_mut(&record.id)
+            .expect("approved request remains retained");
+        request_state.status = HostMountStatus::Approved;
+        request_state.grant = Some(record.id.clone());
+        audit(&mut state, "approve", &record.id, actor, Vec::new());
+        drop(state);
+        self.bump_generation();
+        self.append_request_event(
+            &record.id,
+            HostMountStatus::Approved,
+            Some(&record.id),
+            None,
+        );
         Ok(record)
+    }
+
+    fn claim_pending_request(&self, request_id: &str) -> Result<HostMountRequest> {
+        let mut state = self.state.lock().unwrap();
+        let request = state
+            .requests
+            .get_mut(request_id)
+            .with_context(|| format!("unknown Host Mount request `{request_id}`"))?;
+        ensure!(
+            request.status == HostMountStatus::Pending && !request.decision_in_progress,
+            "Host Mount request `{request_id}` is already settled or being settled"
+        );
+        request.decision_in_progress = true;
+        Ok(request.request.clone())
+    }
+
+    pub fn reject_request(
+        &self,
+        request_id: &str,
+        reason: impl Into<String>,
+        actor: impl Into<String>,
+    ) -> Result<()> {
+        self.set_terminal_request(
+            request_id,
+            HostMountStatus::Rejected,
+            reason.into(),
+            actor.into(),
+        )
+    }
+
+    pub fn cancel_request(
+        &self,
+        request_id: &str,
+        reason: impl Into<String>,
+        actor: impl Into<String>,
+    ) -> Result<()> {
+        self.set_terminal_request(
+            request_id,
+            HostMountStatus::Cancelled,
+            reason.into(),
+            actor.into(),
+        )
+    }
+
+    pub fn fail_request(
+        &self,
+        request_id: &str,
+        reason: impl Into<String>,
+        actor: impl Into<String>,
+    ) -> Result<()> {
+        self.set_terminal_request(
+            request_id,
+            HostMountStatus::Failed,
+            reason.into(),
+            actor.into(),
+        )
+    }
+
+    fn set_terminal_request(
+        &self,
+        request_id: &str,
+        status: HostMountStatus,
+        reason: String,
+        actor: String,
+    ) -> Result<()> {
+        ensure!(status.is_terminal(), "terminal request status is required");
+        let reason = concise_terminal_reason(&reason);
+        let mut state = self.state.lock().unwrap();
+        let request = state
+            .requests
+            .get_mut(request_id)
+            .with_context(|| format!("unknown Host Mount request `{request_id}`"))?;
+        ensure!(
+            request.status == HostMountStatus::Pending && !request.decision_in_progress,
+            "Host Mount request `{request_id}` is already settled or being settled"
+        );
+        request.decision_in_progress = true;
+        request.status = status;
+        request.error = Some(reason.clone());
+        audit(&mut state, status.as_str(), request_id, actor, Vec::new());
+        drop(state);
+        self.bump_generation();
+        self.append_request_event(request_id, status, None, Some(&reason));
+        Ok(())
     }
 
     pub fn project(&self, grant_id: &str, pid: u64) -> Result<()> {
@@ -301,7 +487,22 @@ impl HostMountService {
                 projection.pid.0
             })
             .collect::<Vec<_>>();
-        audit(&mut state, "revoke", grant_id, actor.into(), affected);
+        audit(
+            &mut state,
+            "revoke",
+            grant_id,
+            actor.into(),
+            affected.clone(),
+        );
+        drop(state);
+        self.bump_generation();
+        self.append_service_event(
+            serde_json::json!({
+                "type": "grant_revoked",
+                "grant_id": grant_id,
+            }),
+            &affected,
+        );
         Ok(())
     }
 
@@ -330,7 +531,16 @@ impl HostMountService {
             request.id
         );
         let id = request.id.clone();
-        state.requests.insert(id.clone(), request);
+        state.requests.insert(
+            id.clone(),
+            RequestState {
+                request,
+                status: HostMountStatus::Pending,
+                decision_in_progress: false,
+                grant: None,
+                error: None,
+            },
+        );
         audit(
             &mut state,
             "request",
@@ -338,7 +548,181 @@ impl HostMountService {
             "process".to_string(),
             Vec::new(),
         );
+        drop(state);
+        self.bump_generation();
+        self.append_request_event(&id, HostMountStatus::Pending, None, None);
         Ok(id)
+    }
+
+    pub(super) fn allocate_request_id(&self) -> String {
+        let mut state = self.state.lock().unwrap();
+        state.next_id += 1;
+        format!("request-{}", state.next_id)
+    }
+
+    pub(super) fn commit_request(
+        &self,
+        requesting_pid: u64,
+        request_id: String,
+        bytes: &[u8],
+    ) -> Result<(), ErrorCode> {
+        let document: HostMountRequestDocument =
+            serde_json::from_slice(bytes).map_err(|_| ErrorCode::BadRequest)?;
+        let label = match document.label {
+            Some(label) => {
+                let label = label.trim();
+                if label.is_empty() {
+                    return Err(ErrorCode::BadRequest);
+                }
+                label.to_string()
+            }
+            None => default_label(&document.namespace_path),
+        };
+        let request = HostMountRequest {
+            id: request_id,
+            label,
+            namespace_path: document.namespace_path,
+            access: document.access,
+            reason: document.reason.trim().to_string(),
+            requesting_pid,
+        };
+        self.enqueue(request).map_err(|_| ErrorCode::BadRequest)?;
+        Ok(())
+    }
+
+    pub(super) fn generation(&self) -> u32 {
+        self.generation.load(Ordering::Acquire)
+    }
+
+    #[cfg(test)]
+    pub(super) fn has_request(&self, id: &str) -> bool {
+        self.state.lock().unwrap().requests.contains_key(id)
+    }
+
+    pub(super) fn request_is_visible_to(&self, id: &str, pid: Option<u64>) -> bool {
+        self.state
+            .lock()
+            .unwrap()
+            .requests
+            .get(id)
+            .is_some_and(|request| pid.is_none_or(|pid| request.request.requesting_pid == pid))
+    }
+
+    pub(super) fn request_ids_visible_to(&self, pid: Option<u64>) -> Vec<String> {
+        self.state
+            .lock()
+            .unwrap()
+            .requests
+            .iter()
+            .filter(|(_, request)| pid.is_none_or(|pid| request.request.requesting_pid == pid))
+            .map(|(id, _)| id.clone())
+            .collect()
+    }
+
+    pub(super) fn request_snapshot(&self, id: &str) -> Option<HostMountRequestSnapshot> {
+        self.state
+            .lock()
+            .unwrap()
+            .requests
+            .get(id)
+            .map(|request| HostMountRequestSnapshot {
+                request: request.request.clone(),
+                status: request.status,
+                grant: request.grant.clone(),
+                error: request.error.clone(),
+            })
+    }
+
+    pub(super) fn grant_is_visible_to(&self, id: &str, pid: Option<u64>) -> bool {
+        self.state
+            .lock()
+            .unwrap()
+            .grants
+            .get(id)
+            .is_some_and(|grant| {
+                pid.is_none_or(|pid| {
+                    grant.owner.0 == pid
+                        || grant
+                            .projections
+                            .iter()
+                            .any(|projection| projection.pid.0 == pid)
+                })
+            })
+    }
+
+    pub(super) fn grant_ids_visible_to(&self, pid: Option<u64>) -> Vec<String> {
+        self.state
+            .lock()
+            .unwrap()
+            .grants
+            .iter()
+            .filter(|(_, grant)| {
+                pid.is_none_or(|pid| {
+                    grant.owner.0 == pid
+                        || grant
+                            .projections
+                            .iter()
+                            .any(|projection| projection.pid.0 == pid)
+                })
+            })
+            .map(|(id, _)| id.clone())
+            .collect()
+    }
+
+    pub(super) fn grant_record(&self, id: &str) -> Option<HostMountGrantRecord> {
+        self.state
+            .lock()
+            .unwrap()
+            .grants
+            .get(id)
+            .map(|grant| grant.public.clone())
+    }
+
+    fn request_events(&self, pid: Option<u64>) -> file_server::HostMountEventStream {
+        self.request_events.stream(pid)
+    }
+
+    fn events(&self, pid: Option<u64>) -> file_server::HostMountEventStream {
+        self.events.stream(pid)
+    }
+
+    fn bump_generation(&self) {
+        self.generation.fetch_add(1, Ordering::AcqRel);
+    }
+
+    fn append_request_event(
+        &self,
+        request_id: &str,
+        status: HostMountStatus,
+        grant: Option<&str>,
+        error: Option<&str>,
+    ) {
+        let event = serde_json::json!({
+            "type": "request_status",
+            "request_id": request_id,
+            "status": status,
+            "grant": grant,
+            "error": error,
+        });
+        let mut bytes = serde_json::to_vec(&event).expect("Host Mount event serializes");
+        bytes.push(b'\n');
+        let requesting_pid = self
+            .state
+            .lock()
+            .unwrap()
+            .requests
+            .get(request_id)
+            .expect("Host Mount request remains retained")
+            .request
+            .requesting_pid;
+        self.request_events.append_for(requesting_pid, &bytes);
+        self.events.append_for(requesting_pid, &bytes);
+    }
+
+    fn append_service_event(&self, event: serde_json::Value, affected_processes: &[u64]) {
+        let mut bytes = serde_json::to_vec(&event).expect("Host Mount event serializes");
+        bytes.push(b'\n');
+        self.events.append_for_many(affected_processes, &bytes);
     }
 }
 
@@ -383,73 +767,6 @@ impl ToolExecutionAuthority for HostMountService {
             "Tool Process has no active Host Mount"
         );
         Ok(binding)
-    }
-}
-
-#[async_trait::async_trait]
-impl FlatFileService for HostMountService {
-    fn files(&self) -> &'static [(&'static str, bool)] {
-        FILES
-    }
-
-    fn read(&self, name: &str) -> Result<Vec<u8>, ErrorCode> {
-        let state = self.state.lock().unwrap();
-        let rendered = match name {
-            "request" => serde_json::to_string(&state.requests.values().collect::<Vec<_>>()),
-            "grants" => serde_json::to_string(
-                &state
-                    .grants
-                    .values()
-                    .map(|grant| &grant.public)
-                    .collect::<Vec<_>>(),
-            ),
-            "status" => Ok(format!(
-                "requests={} grants={} active={}\n",
-                state.requests.len(),
-                state.grants.len(),
-                state
-                    .grants
-                    .values()
-                    .filter(|grant| grant.public.active)
-                    .count()
-            )),
-            "audit" => serde_json::to_string(&state.audit),
-            "projection" => Ok("write {\"grant_id\":\"...\",\"pid\":1}\n".to_string()),
-            "revoke" => Ok("write a grant id\n".to_string()),
-            _ => return Err(ErrorCode::NotFound),
-        }
-        .map_err(|_| ErrorCode::Io)?;
-        Ok(rendered.into_bytes())
-    }
-
-    async fn commit(&self, name: &str, bytes: &[u8]) -> Result<(), ErrorCode> {
-        match name {
-            "request" => {
-                let request = serde_json::from_slice(bytes).map_err(|_| ErrorCode::BadRequest)?;
-                self.enqueue(request).map_err(|_| ErrorCode::BadRequest)?;
-                Ok(())
-            }
-            "projection" => {
-                #[derive(Deserialize)]
-                #[serde(deny_unknown_fields)]
-                struct Command {
-                    grant_id: String,
-                    pid: u64,
-                }
-                let command: Command =
-                    serde_json::from_slice(bytes).map_err(|_| ErrorCode::BadRequest)?;
-                self.project(&command.grant_id, command.pid)
-                    .map_err(|_| ErrorCode::BadRequest)
-            }
-            "revoke" => {
-                let id = std::str::from_utf8(bytes)
-                    .map_err(|_| ErrorCode::BadRequest)?
-                    .trim();
-                self.revoke(id, "file-control")
-                    .map_err(|_| ErrorCode::BadRequest)
-            }
-            _ => Err(ErrorCode::NoAccess),
-        }
     }
 }
 
@@ -522,20 +839,60 @@ fn validate_request(request: &HostMountRequest, allow_agent_definition: bool) ->
         !request.label.trim().is_empty(),
         "Host Mount label is empty"
     );
-    ensure!(
-        (request.namespace_path.starts_with("/mnt/")
-            || (allow_agent_definition && request.namespace_path == "/agent-definition"))
-            && !request
-                .namespace_path
-                .split('/')
-                .any(|component| matches!(component, "." | "..")),
-        "Host Mount namespace path must be below /mnt"
-    );
+    validate_mount_namespace_path(&request.namespace_path, allow_agent_definition)?;
     ensure!(
         request.requesting_pid > 0,
         "requesting PID must be positive"
     );
+    ensure!(
+        !request.reason.trim().is_empty(),
+        "Host Mount reason is empty"
+    );
     Ok(())
+}
+
+fn validate_mount_namespace_path(path: &str, allow_agent_definition: bool) -> Result<()> {
+    if allow_agent_definition && path == "/agent-definition" {
+        return Ok(());
+    }
+    ensure!(
+        path == path.trim(),
+        "Host Mount namespace path is not normalized"
+    );
+    let suffix = path
+        .strip_prefix("/mnt/")
+        .context("Host Mount namespace path must be below /mnt")?;
+    let components = suffix.split('/').collect::<Vec<_>>();
+    ensure!(
+        !components.is_empty()
+            && components
+                .iter()
+                .all(|component| !component.is_empty() && !matches!(*component, "." | "..")),
+        "Host Mount namespace path is not normalized"
+    );
+    ensure!(
+        !RESERVED_MOUNT_NAMESPACE_ROOTS.contains(&components[0]),
+        "Host Mount namespace path targets a reserved mount root"
+    );
+    Ok(())
+}
+
+fn default_label(namespace_path: &str) -> String {
+    namespace_path
+        .rsplit('/')
+        .find(|component| !component.is_empty())
+        .unwrap_or("Host Mount")
+        .to_string()
+}
+
+fn concise_terminal_reason(reason: &str) -> String {
+    let trimmed = reason.trim();
+    let concise = if trimmed.is_empty() {
+        "Host Mount request was not approved"
+    } else {
+        trimmed
+    };
+    concise.chars().take(512).collect()
 }
 
 fn audit(
@@ -558,315 +915,5 @@ fn audit(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::path::PathBuf;
-
-    use alan_agent_engine::{HostMountGrant, tools::ToolExecutionBinding};
-
-    struct TestExport {
-        tree: InProcessTransport,
-        grant: HostMountGrant,
-    }
-
-    impl std::fmt::Debug for TestExport {
-        fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            formatter.write_str("TestExport")
-        }
-    }
-
-    impl HostMountExport for TestExport {
-        fn file_tree(&self) -> InProcessTransport {
-            self.tree.clone()
-        }
-
-        fn apply_tool_authority(&self, binding: &mut ToolExecutionBinding) -> Result<()> {
-            binding.apply_host_mount(self.grant.clone())
-        }
-    }
-
-    #[derive(Debug, Default)]
-    struct TestAdapter;
-
-    impl HostMountExportAdapter for TestAdapter {
-        fn export_approved(&self, grant: &ApprovedMountGrant) -> Result<Arc<dyn HostMountExport>> {
-            Ok(test_export(
-                &grant.namespace_path,
-                grant.host_path.clone(),
-                match grant.access {
-                    ApprovedMountGrantAccess::ReadOnly => HostMountAccess::ReadOnly,
-                    ApprovedMountGrantAccess::ReadWrite => HostMountAccess::ReadWrite,
-                },
-            ))
-        }
-    }
-
-    fn service() -> Arc<HostMountService> {
-        HostMountService::new(Arc::new(TestAdapter))
-    }
-
-    fn test_export(
-        namespace_path: &str,
-        host_path: PathBuf,
-        access: HostMountAccess,
-    ) -> Arc<dyn HostMountExport> {
-        Arc::new(TestExport {
-            tree: InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::new())),
-            grant: HostMountGrant::new(namespace_path, host_path, access.kernel()).unwrap(),
-        })
-    }
-
-    #[test]
-    fn grants_project_explicitly_hide_paths_and_revoke() {
-        let host = tempfile::tempdir().unwrap();
-        std::fs::write(host.path().join("note"), "hello").unwrap();
-        let service = service();
-        let namespace = LiveNamespace::new(Namespace::new());
-        service.register_process(Pid(7), namespace.clone());
-        let id = service
-            .enqueue(HostMountRequest {
-                id: "grant-a".to_string(),
-                label: "project".to_string(),
-                namespace_path: "/mnt/project".to_string(),
-                access: HostMountAccess::ReadWrite,
-                reason: "work".to_string(),
-                requesting_pid: 7,
-            })
-            .unwrap();
-        let export = test_export(
-            "/mnt/project",
-            host.path().to_path_buf(),
-            HostMountAccess::ReadWrite,
-        );
-        let record = service
-            .approve_export(&id, export.clone(), "user", "tester")
-            .unwrap();
-        assert_eq!(record.namespace_path, "/mnt/project");
-        assert!(
-            !serde_json::to_string(&record)
-                .unwrap()
-                .contains(host.path().to_str().unwrap())
-        );
-        assert!(
-            namespace
-                .describe()
-                .iter()
-                .any(|(path, _)| path == "/mnt/project")
-        );
-        let mut cached =
-            ToolExecutionBinding::new(host.path().to_path_buf(), host.path().join("scratch"));
-        export.apply_tool_authority(&mut cached).unwrap();
-        let reconciled = service.reconcile(Pid(7), cached.clone()).unwrap();
-        assert_eq!(reconciled.host_mounts.len(), 1);
-        assert_eq!(reconciled.sandbox_spec.unwrap().writable_roots.len(), 1);
-
-        service.revoke(&id, "tester").unwrap();
-        assert!(
-            !namespace
-                .describe()
-                .iter()
-                .any(|(path, _)| path == "/mnt/project")
-        );
-        assert!(service.reconcile(Pid(7), cached).is_err());
-    }
-
-    #[test]
-    fn knowing_grant_id_does_not_project_to_another_process() {
-        let host = tempfile::tempdir().unwrap();
-        let service = service();
-        let parent = LiveNamespace::new(Namespace::new());
-        let child = LiveNamespace::new(Namespace::new());
-        service.register_process(Pid(1), parent.clone());
-        service.register_process(Pid(2), child.clone());
-        let id = service
-            .enqueue(HostMountRequest {
-                id: "grant-parent".to_string(),
-                label: "parent".to_string(),
-                namespace_path: "/mnt/data".to_string(),
-                access: HostMountAccess::ReadOnly,
-                reason: "read".to_string(),
-                requesting_pid: 1,
-            })
-            .unwrap();
-        service
-            .approve_export(
-                &id,
-                test_export(
-                    "/mnt/data",
-                    host.path().to_path_buf(),
-                    HostMountAccess::ReadOnly,
-                ),
-                "user",
-                "tester",
-            )
-            .unwrap();
-        assert!(
-            parent
-                .describe()
-                .iter()
-                .any(|(path, _)| path == "/mnt/data")
-        );
-        assert!(!child.describe().iter().any(|(path, _)| path == "/mnt/data"));
-        assert!(service.project(&id, 2).is_err());
-    }
-
-    #[test]
-    fn failed_initial_projection_restores_the_request_and_removes_the_grant() {
-        let host = tempfile::tempdir().unwrap();
-        let service = service();
-        let namespace = LiveNamespace::new(Namespace::new());
-        service.register_process(Pid(7), namespace.clone());
-        let id = service
-            .enqueue(HostMountRequest {
-                id: "grant-retry".to_string(),
-                label: "retry".to_string(),
-                namespace_path: "/mnt/retry".to_string(),
-                access: HostMountAccess::ReadOnly,
-                reason: "retry after Process exit".to_string(),
-                requesting_pid: 7,
-            })
-            .unwrap();
-        let export = test_export(
-            "/mnt/retry",
-            host.path().to_path_buf(),
-            HostMountAccess::ReadOnly,
-        );
-
-        service.unregister_process(Pid(7));
-        assert!(
-            service
-                .approve_export(&id, export.clone(), "user", "tester")
-                .is_err()
-        );
-        assert!(service.pending_request(&id).is_some());
-        assert!(!service.state.lock().unwrap().grants.contains_key(&id));
-
-        service.register_process(Pid(7), namespace.clone());
-        service
-            .approve_export(&id, export, "user", "tester")
-            .unwrap();
-        assert!(service.pending_request(&id).is_none());
-        assert!(
-            namespace
-                .describe()
-                .iter()
-                .any(|(path, _)| path == "/mnt/retry")
-        );
-    }
-
-    #[test]
-    fn approved_agent_definition_uses_the_internal_projection_path_only() {
-        let host = tempfile::tempdir().unwrap();
-        let service = service();
-        let namespace = LiveNamespace::new(Namespace::new());
-        service.register_process(Pid(3), namespace.clone());
-        assert!(
-            service
-                .enqueue(HostMountRequest {
-                    id: "public-definition".to_string(),
-                    label: "definition".to_string(),
-                    namespace_path: "/agent-definition".to_string(),
-                    access: HostMountAccess::ReadOnly,
-                    reason: "public request".to_string(),
-                    requesting_pid: 3,
-                })
-                .is_err()
-        );
-
-        let factory = HostMountApplicatorFactory::new(service);
-        let applicator = factory.create(Pid(3), namespace.clone(), &[]);
-        applicator
-            .apply_mount_grant(&ApprovedMountGrant::new(
-                "/agent-definition",
-                host.path().to_path_buf(),
-                ApprovedMountGrantAccess::ReadOnly,
-                "Agent Definition launch reference",
-            ))
-            .unwrap();
-        assert!(
-            namespace
-                .describe()
-                .iter()
-                .any(|(path, access)| path == "/agent-definition" && *access == Access::ReadOnly)
-        );
-    }
-
-    #[test]
-    fn explicitly_passed_child_projection_is_revoked_with_its_parent() {
-        let host = tempfile::tempdir().unwrap();
-        let service = service();
-        let parent = LiveNamespace::new(Namespace::new());
-        service.register_process(Pid(1), parent.clone());
-        let id = service
-            .enqueue(HostMountRequest {
-                id: "grant-parent".to_string(),
-                label: "parent".to_string(),
-                namespace_path: "/mnt/data".to_string(),
-                access: HostMountAccess::ReadWrite,
-                reason: "write".to_string(),
-                requesting_pid: 1,
-            })
-            .unwrap();
-        let export = test_export(
-            "/mnt/data",
-            host.path().to_path_buf(),
-            HostMountAccess::ReadWrite,
-        );
-        service
-            .approve_export(&id, export.clone(), "user", "tester")
-            .unwrap();
-
-        let child = LiveNamespace::new(parent.snapshot());
-        let factory = HostMountApplicatorFactory::new(service.clone());
-        factory.create(Pid(2), child.clone(), &["/mnt/data".to_string()]);
-        let mut cached =
-            ToolExecutionBinding::new(host.path().to_path_buf(), host.path().join("scratch"));
-        export.apply_tool_authority(&mut cached).unwrap();
-        assert!(service.reconcile(Pid(2), cached.clone()).is_ok());
-
-        service.revoke(&id, "tester").unwrap();
-        assert!(parent.snapshot().resolve("/mnt/data").is_err());
-        assert!(child.snapshot().resolve("/mnt/data").is_err());
-        assert!(service.reconcile(Pid(2), cached).is_err());
-    }
-
-    #[tokio::test]
-    async fn projection_enforces_read_only_and_read_write_access() {
-        for (pid, access, writable) in [
-            (Pid(10), HostMountAccess::ReadOnly, false),
-            (Pid(11), HostMountAccess::ReadWrite, true),
-        ] {
-            let service = service();
-            let namespace = LiveNamespace::new(Namespace::new());
-            service.register_process(pid, namespace.clone());
-            let id = service
-                .enqueue(HostMountRequest {
-                    id: format!("grant-{}", pid.0),
-                    label: "data".to_string(),
-                    namespace_path: "/mnt/data".to_string(),
-                    access,
-                    reason: "test".to_string(),
-                    requesting_pid: pid.0,
-                })
-                .unwrap();
-            service
-                .approve_export(
-                    &id,
-                    test_export("/mnt/data", PathBuf::from("/tmp/data"), access),
-                    "test",
-                    "tester",
-                )
-                .unwrap();
-            let shell = alan_shell::Shell::new(InProcessTransport::new(Arc::new(
-                alan_kernel::MountFs::from_live_namespace(namespace),
-            )));
-            assert_eq!(shell.cat("/mnt/data/greeting").await.unwrap(), b"hi");
-            let write = shell.write("/mnt/data/submit", b"{}").await;
-            if writable {
-                assert_eq!(write, Ok(()));
-            } else {
-                assert_eq!(write, Err(ErrorCode::NoAccess));
-            }
-        }
-    }
-}
+#[path = "host_mount/tests.rs"]
+mod tests;

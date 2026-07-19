@@ -68,7 +68,17 @@ pub fn approve_host_mount(
     let request = service
         .pending_request(request_id)
         .with_context(|| format!("unknown Host Mount request `{request_id}`"))?;
-    let export = native_export(&request.namespace_path, host_path, request.access)?;
+    let export = match native_export(&request.namespace_path, host_path, request.access) {
+        Ok(export) => export,
+        Err(error) => {
+            let _ = service.fail_request(
+                request_id,
+                "Host adapter could not authorize or export the selected directory",
+                "host-adapter",
+            );
+            return Err(error);
+        }
+    };
     service.approve_export(request_id, export, provenance, actor)
 }
 

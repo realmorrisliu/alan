@@ -20,8 +20,8 @@ pub use namespace_environment::{
     NamespaceTurnOutput, NamespaceTurnRuntime, NamespaceTurnRuntimeConfig,
 };
 pub(crate) use namespace_environment::{
-    NamespaceAgentFiles, NamespaceChildLaunch, NamespaceGeneration, NamespaceProcessFiles,
-    NamespaceToolExecution,
+    HostMountTerminalResult, NamespaceAgentFiles, NamespaceChildLaunch, NamespaceGeneration,
+    NamespaceHostMountRequests, NamespaceProcessFiles, NamespaceToolExecution,
 };
 
 use std::collections::VecDeque;
@@ -217,12 +217,14 @@ pub(super) fn mount_request_runtime(
     state: &mut RuntimeLoopState,
 ) -> super::mount_request_tool::MountRequestRuntime<'_> {
     let agent_files = state.agent_files();
+    let host_mount_requests = state.environment.host_mount_requests();
     let tool_execution = state.tool_execution();
     super::mount_request_tool::MountRequestRuntime::new(
         &mut state.machine,
         &state.runtime_config.policy_engine,
         &state.runtime_config.governance,
         agent_files,
+        host_mount_requests,
         tool_execution,
     )
 }
@@ -657,23 +659,11 @@ fn submission_runtime(state: &mut RuntimeLoopState) -> SubmissionRuntime<'_> {
     let RuntimeLoopState {
         machine,
         environment,
-        runtime_config,
         ..
     } = state;
     let agent_files = environment.agent_files();
-    let tool_execution = environment.tool_execution();
-    let runtime_scratch_dir = runtime_config
-        .store_bindings
-        .as_ref()
-        .map(|stores| stores.tmp.clone());
-    let mount_control = environment.mount_control();
-    SubmissionRuntime::new(
-        machine,
-        agent_files,
-        mount_control,
-        tool_execution,
-        runtime_scratch_dir,
-    )
+    let host_mount_requests = environment.host_mount_requests();
+    SubmissionRuntime::new(machine, agent_files, host_mount_requests)
 }
 
 pub(super) async fn handle_runtime_op<E, F>(

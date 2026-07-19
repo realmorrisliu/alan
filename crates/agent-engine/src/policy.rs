@@ -502,14 +502,7 @@ fn collect_path_candidates(
     arguments: &serde_json::Value,
     current_cwd: Option<&Path>,
 ) -> Vec<NormalizedPathMatchValue> {
-    const PATH_KEYS: &[&str] = &[
-        "path",
-        "paths",
-        "directory",
-        "cwd",
-        "host_path",
-        "namespace_path",
-    ];
+    const PATH_KEYS: &[&str] = &["path", "paths", "directory", "cwd", "namespace_path"];
     const BASE_PATH_KEYS: &[&str] = &["directory", "cwd"];
 
     let Some(object) = arguments.as_object() else {

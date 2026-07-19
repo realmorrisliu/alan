@@ -77,7 +77,7 @@ enum HostAction {
 
 #[derive(Subcommand)]
 enum HostMountAction {
-    /// List pending requests and Alan OS-visible grants
+    /// List logical requests and Alan OS-visible grants
     List,
     /// Approve a pending request with a native Host directory
     Approve {
@@ -387,14 +387,7 @@ async fn main() -> Result<()> {
                 match action {
                     HostMountAction::List => {
                         let shell = alan_shell::Shell::new(attached.root);
-                        println!(
-                            "requests: {}",
-                            String::from_utf8(shell.cat("/mnt/host-mount/request").await?)?
-                        );
-                        println!(
-                            "grants: {}",
-                            String::from_utf8(shell.cat("/mnt/host-mount/grants").await?)?
-                        );
+                        print_host_mount_state(&shell).await?;
                     }
                     HostMountAction::Approve {
                         request_id,
@@ -705,6 +698,40 @@ fn print_host_status(status: &alan_os_host::HostStatus, json: bool) -> Result<()
         println!("boot: {}", status.boot_id);
         println!("host pid: {}", status.pid);
         println!("attachment: {}", status.socket.display());
+    }
+    Ok(())
+}
+
+async fn print_host_mount_state(shell: &alan_shell::Shell) -> Result<()> {
+    let request_ids = shell
+        .ls("/mnt/host-mount/requests")
+        .await?
+        .into_iter()
+        .filter(|entry| !matches!(entry.as_str(), "clone" | "events"))
+        .collect::<Vec<_>>();
+    println!("requests:");
+    if request_ids.is_empty() {
+        println!("  (none)");
+    }
+    for request_id in request_ids {
+        let base = format!("/mnt/host-mount/requests/{request_id}");
+        let status = String::from_utf8(shell.cat(&format!("{base}/status")).await?)?;
+        let request = String::from_utf8(shell.cat(&format!("{base}/request")).await?)?;
+        println!("  {request_id} [{}] {request}", status.trim());
+    }
+
+    let grant_ids = shell.ls("/mnt/host-mount/grants").await?;
+    println!("grants:");
+    if grant_ids.is_empty() {
+        println!("  (none)");
+    }
+    for grant_id in grant_ids {
+        let record = String::from_utf8(
+            shell
+                .cat(&format!("/mnt/host-mount/grants/{grant_id}/record"))
+                .await?,
+        )?;
+        println!("  {grant_id} {record}");
     }
     Ok(())
 }

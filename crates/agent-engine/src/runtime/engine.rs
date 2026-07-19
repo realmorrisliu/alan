@@ -76,7 +76,10 @@ async fn read_pending_namespace_resume_submission(
     }
 
     let agent_files = state.agent_files();
-    match namespace_pending_resume_submission(&state.machine, &agent_files).await {
+    let host_mount_requests = state.environment.host_mount_requests();
+    match namespace_pending_resume_submission(&state.machine, &agent_files, &host_mount_requests)
+        .await
+    {
         Ok(Some(submission)) => Some(Ok(submission)),
         Ok(None) => None,
         Err(err) => Some(Err(err)),

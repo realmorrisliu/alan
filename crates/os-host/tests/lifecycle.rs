@@ -1,7 +1,7 @@
 use std::os::unix::fs::{FileTypeExt, PermissionsExt, symlink};
 use std::time::Duration;
 
-use alan_agent_engine::{AgentProcessConfig, LlmClient, ToolRegistry};
+use alan_agent_engine::{AgentProcessConfig, LlmClient, ToolCall, ToolRegistry};
 use alan_llm::{GenerationResponse, MockLlmProvider};
 use alan_os_host::{
     AlanOsHost, HostBootConfig, HostCommandPlane, HostEndpointPaths, HostStorePaths,
@@ -39,6 +39,43 @@ fn config_for(channel_id: &str) -> HostBootConfig {
         ),
         ToolRegistry::new(),
     )
+}
+
+fn mount_request_config() -> HostBootConfig {
+    let mut request = response("");
+    request.tool_calls = vec![ToolCall {
+        id: Some("call-mount".to_string()),
+        name: "request_mount".to_string(),
+        arguments: serde_json::json!({
+            "label": "Documents",
+            "namespace_path": "/mnt/docs",
+            "access": "read_only",
+            "reason": "test"
+        }),
+    }];
+    HostBootConfig::ephemeral(
+        "test",
+        AgentProcessConfig::default(),
+        LlmClient::new(MockLlmProvider::new().with_responses(vec![request, response("done")])),
+        ToolRegistry::new(),
+    )
+}
+
+async fn wait_for_host_mount_request(shell: &alan_shell::Shell) -> String {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let requests = shell.ls("/mnt/host-mount/requests").await.unwrap();
+            if let Some(request_id) = requests
+                .into_iter()
+                .find(|entry| !matches!(entry.as_str(), "clone" | "events"))
+            {
+                return request_id;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("Agent request_mount should publish a logical service request")
 }
 
 async fn wait_for_turn_idle(events: &mut alan_shell::Tail, phase: &str) {
@@ -320,7 +357,9 @@ async fn native_host_mount_approval_keeps_host_path_out_of_namespace_records() {
     let runtime = tempfile::tempdir().unwrap();
     let host_dir = tempfile::tempdir().unwrap();
     let paths = HostEndpointPaths::from_runtime_dir(runtime.path(), "test").unwrap();
-    let host = AlanOsHost::boot(config(), paths.clone()).await.unwrap();
+    let host = AlanOsHost::boot(mount_request_config(), paths.clone())
+        .await
+        .unwrap();
     let shutdown = CancellationToken::new();
     let shutdown_request = shutdown.clone();
     let server =
@@ -337,29 +376,61 @@ async fn native_host_mount_approval_keeps_host_path_out_of_namespace_records() {
     .trim()
     .parse::<u64>()
     .unwrap();
+    let mut activity = shell.tail("/agent/root/machine/ui/events").await.unwrap();
     shell
-        .write(
-            "/mnt/host-mount/request",
-            &serde_json::to_vec(&serde_json::json!({
-                "id": "docs",
-                "label": "Documents",
-                "namespace_path": "/mnt/docs",
-                "access": "read_only",
-                "reason": "test",
-                "requesting_pid": root_pid,
-            }))
-            .unwrap(),
-        )
+        .write("/agent/root/io/input", b"request documents")
         .await
         .unwrap();
+    let request_id = wait_for_host_mount_request(&shell).await;
+    assert_eq!(
+        shell
+            .cat(&format!("/mnt/host-mount/requests/{request_id}/status"))
+            .await
+            .unwrap(),
+        b"pending\n"
+    );
 
     HostCommandPlane::new(paths)
-        .approve_host_mount("docs", host_dir.path().to_path_buf())
+        .approve_host_mount(request_id.clone(), host_dir.path().to_path_buf())
         .await
         .unwrap();
-    let grants = String::from_utf8(shell.cat("/mnt/host-mount/grants").await.unwrap()).unwrap();
-    assert!(grants.contains("\"namespace_path\":\"/mnt/docs\""));
-    assert!(!grants.contains(&host_dir.path().display().to_string()));
+    wait_for_turn_idle(&mut activity, "Host Mount approval").await;
+    activity.close().await.unwrap();
+    assert_eq!(
+        shell
+            .cat(&format!("/mnt/host-mount/requests/{request_id}/status"))
+            .await
+            .unwrap(),
+        b"approved\n"
+    );
+    let grant_record = String::from_utf8(
+        shell
+            .cat(&format!("/mnt/host-mount/grants/{request_id}/record"))
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(grant_record.contains("\"namespace_path\":\"/mnt/docs\""));
+    assert!(!grant_record.contains(&host_dir.path().display().to_string()));
+    let request_events =
+        String::from_utf8(shell.cat("/mnt/host-mount/requests/events").await.unwrap()).unwrap();
+    assert!(!request_events.contains(&host_dir.path().display().to_string()));
+    let process_namespace = String::from_utf8(
+        shell
+            .cat(&format!("/proc/{root_pid}/namespace"))
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(process_namespace.lines().any(|line| line == "/mnt/docs ro"));
+    for retired in ["request", "projection", "approval", "status"] {
+        assert!(
+            shell
+                .stat(&format!("/mnt/host-mount/{retired}"))
+                .await
+                .is_err()
+        );
+    }
 
     shutdown.cancel();
     server.await.unwrap().unwrap();

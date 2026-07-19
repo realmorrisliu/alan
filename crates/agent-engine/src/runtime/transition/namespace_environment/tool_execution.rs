@@ -50,27 +50,6 @@ impl NamespaceToolExecution {
             .unwrap_or(alan_agent_protocol::ToolCapability::Unknown)
     }
 
-    #[cfg(test)]
-    pub(crate) fn set_execution_binding(
-        &self,
-        binding: crate::tools::ToolExecutionBinding,
-    ) -> bool {
-        self.tool_process_context.as_ref().is_some_and(|context| {
-            context
-                .tool_runner
-                .register_process_binding(context.pid, binding);
-            true
-        })
-    }
-
-    #[cfg(test)]
-    pub(crate) fn sandbox_writable_roots(&self) -> Vec<std::path::PathBuf> {
-        self.execution_binding()
-            .and_then(|binding| binding.sandbox_spec)
-            .map(|spec| spec.writable_roots)
-            .unwrap_or_default()
-    }
-
     /// Discover model-callable Tools from complete packages visible in this namespace.
     pub(crate) async fn discover_packages(&self) -> Result<Vec<ToolPackageManifest>> {
         let client = self.client();

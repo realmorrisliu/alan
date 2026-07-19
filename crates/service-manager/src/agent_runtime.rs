@@ -188,6 +188,11 @@ impl AgentRuntimeService {
                 Access::ReadWrite,
             );
             self.host_mount.register_process(pid, namespace.clone());
+            namespace.replace_mount(
+                "/mnt/host-mount",
+                InProcessTransport::new(self.host_mount.file_server_for_process(pid.0)),
+                Access::ReadWrite,
+            );
             if self.connection.has_profile(&template.llm_connection) {
                 self.connection.select(pid.0, &template.llm_connection)?;
             }
@@ -417,15 +422,22 @@ impl AgentRuntimeService {
                 InProcessTransport::new(Arc::new(child_procfs)),
                 Access::ReadWrite,
             );
-            let root = InProcessTransport::new(Arc::new(
-                alan_kernel::MountFs::from_live_namespace(live_namespace.clone()),
-            ));
             let mount_applicator = self.mount_applicator(
                 child_pid,
-                live_namespace,
+                live_namespace.clone(),
                 &plan.launch_context,
                 &self.tool_runner,
             );
+            live_namespace.replace_mount(
+                "/mnt/host-mount",
+                InProcessTransport::new(
+                    self.host_mount.file_server_for_process(child_pid.0),
+                ),
+                Access::ReadWrite,
+            );
+            let root = InProcessTransport::new(Arc::new(
+                alan_kernel::MountFs::from_live_namespace(live_namespace),
+            ));
             let mut environment =
                 alan_agent_engine::runtime::NamespaceRuntimeEnvironment::new(
                     root,

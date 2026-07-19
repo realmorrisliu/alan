@@ -508,7 +508,13 @@ where
                 .map(|tc| crate::tape::ToolRequest {
                     id: tc.id.clone(),
                     name: tc.name.clone(),
-                    arguments: tc.arguments.clone(),
+                    arguments: if tc.name == "request_mount" {
+                        crate::runtime::mount_request_tool::durable_mount_request_arguments(
+                            &tc.arguments,
+                        )
+                    } else {
+                        tc.arguments.clone()
+                    },
                 })
                 .collect();
             state

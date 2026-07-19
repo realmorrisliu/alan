@@ -7,7 +7,7 @@ use anyhow::Result;
 use tokio::sync::{Mutex, Notify};
 use tokio_util::sync::CancellationToken;
 
-use super::transition::NamespaceAgentFiles;
+use super::transition::{NamespaceAgentFiles, NamespaceHostMountRequests};
 use super::turn_support::cancel_current_task;
 use crate::agent_machine::AgentMachine;
 
@@ -105,6 +105,7 @@ fn is_brokered_input(op: &Op) -> bool {
 pub(super) async fn next_pending_interaction_submission<E, F>(
     machine: &mut AgentMachine,
     agent_files: &NamespaceAgentFiles,
+    host_mount_requests: &NamespaceHostMountRequests,
     broker: &TurnInputBroker,
     emit: &mut E,
     cancel: &CancellationToken,
@@ -114,7 +115,9 @@ where
     F: std::future::Future<Output = ()>,
 {
     loop {
-        if let Some(submission) = namespace_pending_resume_submission(machine, agent_files).await? {
+        if let Some(submission) =
+            namespace_pending_resume_submission(machine, agent_files, host_mount_requests).await?
+        {
             return Ok(Some(submission));
         }
 
@@ -158,8 +161,25 @@ where
 pub(super) async fn namespace_pending_resume_submission(
     machine: &AgentMachine,
     agent_files: &NamespaceAgentFiles,
+    host_mount_requests: &NamespaceHostMountRequests,
 ) -> Result<Option<Submission>> {
     for request_id in machine.pending_request_ids() {
+        if machine.pending_host_mount(&request_id).is_some() {
+            if host_mount_requests
+                .terminal_result(&request_id)
+                .await?
+                .is_some()
+            {
+                return Ok(Some(Submission {
+                    id: format!("host-mount:{request_id}"),
+                    op: Op::Resume {
+                        request_id,
+                        content: Vec::new(),
+                    },
+                }));
+            }
+            continue;
+        }
         if let Some(submission) = agent_files
             .resume_submission_from_answered_request(&request_id)
             .await?
@@ -398,6 +418,7 @@ mod tests {
             super::super::transition::NamespaceRuntimeEnvironment::new(root, "/agent/1", "default");
 
         let agent_files = environment.agent_files();
+        let host_mount_requests = environment.host_mount_requests();
         let request_id = agent_files
             .write_request(super::super::transition::NamespaceRequestRecord::new(
                 "structured_input",
@@ -425,6 +446,7 @@ mod tests {
         let waiter = next_pending_interaction_submission(
             &mut machine,
             &agent_files,
+            &host_mount_requests,
             &broker,
             &mut emit,
             &cancel,
@@ -466,5 +488,84 @@ mod tests {
             other => panic!("expected Op::Resume from namespace response, got {other:?}"),
         }
         assert!(events.is_empty());
+    }
+
+    #[tokio::test]
+    async fn host_mount_service_terminal_status_unblocks_recovered_logical_wait() {
+        let agentfs = Arc::new(AgentFs::new());
+        let host_mount = crate::runtime::test_host_mount::TestHostMountFs::new();
+        let mut ns = Namespace::new();
+        ns.mount(
+            "/agent/1",
+            InProcessTransport::new(agentfs),
+            Access::ReadWrite,
+        );
+        ns.mount(
+            "/mnt/host-mount",
+            InProcessTransport::new(host_mount.clone()),
+            Access::ReadWrite,
+        );
+        let root = InProcessTransport::new(Arc::new(MountFs::new(ns)));
+        let environment =
+            super::super::transition::NamespaceRuntimeEnvironment::new(root, "/agent/1", "default");
+        let agent_files = environment.agent_files();
+        let host_mount_requests = environment.host_mount_requests();
+        let request_document = serde_json::json!({
+            "namespace_path": "/mnt/project",
+            "access": "read_only",
+            "reason": "Read project files"
+        });
+        let request_id = host_mount_requests
+            .create(&serde_json::to_vec(&request_document).unwrap())
+            .await
+            .unwrap();
+        let mut machine = AgentMachine::new();
+        machine.set_host_mount_request(crate::agent_machine::PendingHostMountRequest {
+            request_id: request_id.clone(),
+            tool_call_id: "call-mount".to_string(),
+            namespace_path: "/mnt/project".to_string(),
+            access: "read_only".to_string(),
+            reason: "Read project files".to_string(),
+            label: None,
+            request_events_offset: 0,
+        });
+        assert!(agent_files.request_ids().await.unwrap().is_empty());
+
+        let broker = TurnInputBroker::default();
+        let cancel = CancellationToken::new();
+        let mut emit = |_event| async {};
+        let waiter = next_pending_interaction_submission(
+            &mut machine,
+            &agent_files,
+            &host_mount_requests,
+            &broker,
+            &mut emit,
+            &cancel,
+        );
+        let settler = async {
+            tokio::time::sleep(Duration::from_millis(25)).await;
+            host_mount
+                .settle(&request_id, "approved", Some("grant-opaque"), None)
+                .await;
+        };
+        let (submission, _) = tokio::time::timeout(Duration::from_secs(1), async {
+            tokio::join!(waiter, settler)
+        })
+        .await
+        .expect("Host Mount terminal status should unblock pending wait");
+        let submission = submission
+            .unwrap()
+            .expect("service status becomes a submission");
+        assert_eq!(submission.id, format!("host-mount:{request_id}"));
+        match submission.op {
+            Op::Resume {
+                request_id: resumed_id,
+                content,
+            } => {
+                assert_eq!(resumed_id, request_id);
+                assert!(content.is_empty());
+            }
+            other => panic!("expected Host Mount Op::Resume, got {other:?}"),
+        }
     }
 }

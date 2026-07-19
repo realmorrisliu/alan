@@ -1,552 +1,297 @@
 use super::*;
 
 #[test]
-fn test_request_mount_tool_definition() {
-    let def = request_mount_tool_definition();
-    assert_eq!(def.name, "request_mount");
-    assert!(def.description.contains("host directory mount"));
-    assert_eq!(def.parameters["type"], "object");
+fn request_mount_schema_accepts_only_logical_intent() {
+    let definition = request_mount_tool_definition();
+    assert_eq!(definition.name, "request_mount");
+    assert_eq!(definition.parameters["type"], "object");
+    assert_eq!(definition.parameters["additionalProperties"], false);
+    assert!(
+        definition.parameters["properties"]
+            .get("host_path")
+            .is_none()
+    );
     assert_eq!(
-        def.parameters["properties"]["namespace_path"]["type"],
+        definition.parameters["properties"]["label"]["type"],
         "string"
     );
-    assert_eq!(def.parameters["properties"]["host_path"]["type"], "string");
     assert_eq!(
-        def.parameters["properties"]["access"]["enum"],
-        json!(["read_only", "read_write"])
-    );
-    assert_eq!(
-        def.parameters["required"],
-        json!(["namespace_path", "host_path", "access", "reason"])
+        definition.parameters["required"],
+        json!(["namespace_path", "access", "reason"])
     );
 }
+
 #[test]
-fn test_parse_mount_request_valid() {
+fn parse_mount_request_normalizes_logical_document() {
     let request = parse_mount_request(&json!({
         "namespace_path": "/mnt/project",
-        "host_path": "/Users/morris/Developer/alan",
         "access": "read_only",
-        "reason": "Read project docs"
+        "reason": "  Read project docs  ",
+        "label": "  Project  "
     }))
-    .expect("valid mount request");
+    .expect("valid logical mount request");
 
     assert_eq!(request.namespace_path, "/mnt/project");
-    assert_eq!(
-        request.host_path,
-        PathBuf::from("/Users/morris/Developer/alan")
-    );
     assert_eq!(request.access, MountRequestAccess::ReadOnly);
     assert_eq!(request.reason, "Read project docs");
-    assert_eq!(request.payload()["access"], "read_only");
+    assert_eq!(request.label.as_deref(), Some("Project"));
+    assert_eq!(
+        request.payload(),
+        json!({
+            "namespace_path": "/mnt/project",
+            "access": "read_only",
+            "reason": "Read project docs",
+            "label": "Project"
+        })
+    );
 }
 
 #[test]
-fn test_parse_mount_request_rejects_invalid_fields() {
+fn parse_mount_request_rejects_invalid_or_host_owned_fields() {
     let cases = [
         (
             json!({
                 "namespace_path": "/proc/project",
-                "host_path": "/Users/morris/Developer/alan",
                 "access": "read_only",
-                "reason": "Read project docs"
-            }),
-            "namespace_path",
-        ),
-        (
-            json!({
-                "namespace_path": "/mnt",
-                "host_path": "/Users/morris/Developer/alan",
-                "access": "read_only",
-                "reason": "Read project docs"
+                "reason": "Read docs"
             }),
             "namespace_path",
         ),
         (
             json!({
                 "namespace_path": "/mnt/../project",
-                "host_path": "/Users/morris/Developer/alan",
                 "access": "read_only",
-                "reason": "Read project docs"
+                "reason": "Read docs"
             }),
             "namespace_path",
         ),
         (
             json!({
                 "namespace_path": "/mnt/llm",
-                "host_path": "/Users/morris/Developer/alan",
                 "access": "read_only",
-                "reason": "Read project docs"
+                "reason": "Read docs"
             }),
             "namespace_path",
         ),
         (
             json!({
-                "namespace_path": "/mnt/llm/connections",
-                "host_path": "/Users/morris/Developer/alan",
+                "namespace_path": "/mnt/host-mount",
                 "access": "read_only",
-                "reason": "Read project docs"
-            }),
-            "namespace_path",
-        ),
-        (
-            json!({
-                "namespace_path": "/mnt/mem",
-                "host_path": "/Users/morris/Developer/alan",
-                "access": "read_only",
-                "reason": "Read project docs"
-            }),
-            "namespace_path",
-        ),
-        (
-            json!({
-                "namespace_path": "/mnt/route/send",
-                "host_path": "/Users/morris/Developer/alan",
-                "access": "read_only",
-                "reason": "Read project docs"
+                "reason": "Read docs"
             }),
             "namespace_path",
         ),
         (
             json!({
                 "namespace_path": "/mnt/project",
-                "host_path": "relative/path",
-                "access": "read_only",
-                "reason": "Read project docs"
-            }),
-            "host_path",
-        ),
-        (
-            json!({
-                "namespace_path": "/mnt/project",
-                "host_path": "/",
-                "access": "read_only",
-                "reason": "Read project docs"
-            }),
-            "host_path",
-        ),
-        (
-            json!({
-                "namespace_path": "/mnt/project",
-                "host_path": "C:\\",
-                "access": "read_only",
-                "reason": "Read project docs"
-            }),
-            "host_path",
-        ),
-        (
-            json!({
-                "namespace_path": "/mnt/project",
-                "host_path": "\\\\server\\share\\",
-                "access": "read_only",
-                "reason": "Read project docs"
-            }),
-            "host_path",
-        ),
-        (
-            json!({
-                "namespace_path": "/mnt/project",
-                "host_path": "/Users/morris/./alan",
-                "access": "read_only",
-                "reason": "Read project docs"
-            }),
-            "host_path",
-        ),
-        (
-            json!({
-                "namespace_path": "/mnt/project",
-                "host_path": "/Users/morris//alan",
-                "access": "read_only",
-                "reason": "Read project docs"
-            }),
-            "host_path",
-        ),
-        (
-            json!({
-                "namespace_path": "/mnt/project",
-                "host_path": "/Users/morris/alan/",
-                "access": "read_only",
-                "reason": "Read project docs"
-            }),
-            "host_path",
-        ),
-        (
-            json!({
-                "namespace_path": "/mnt/project",
-                "host_path": "/Users/morris/Developer/alan",
                 "access": "admin",
-                "reason": "Read project docs"
+                "reason": "Read docs"
             }),
             "access",
         ),
         (
             json!({
                 "namespace_path": "/mnt/project",
-                "host_path": "/Users/morris/Developer/alan",
                 "access": "read_only",
                 "reason": "   "
             }),
             "reason",
         ),
+        (
+            json!({
+                "namespace_path": "/mnt/project",
+                "access": "read_only",
+                "reason": "Read docs",
+                "label": "   "
+            }),
+            "label",
+        ),
+        (
+            json!({
+                "namespace_path": "/mnt/project",
+                "host_path": "/Users/example/project",
+                "access": "read_only",
+                "reason": "Read docs"
+            }),
+            "unsupported fields",
+        ),
     ];
 
-    for (args, expected_error_field) in cases {
-        let error = parse_mount_request(&args).expect_err("expected invalid mount request");
-        assert!(
-            error.contains(expected_error_field),
-            "expected error for {expected_error_field}, got {error}"
-        );
+    for (arguments, expected) in cases {
+        let error = parse_mount_request(&arguments).expect_err("request must be rejected");
+        assert!(error.contains(expected), "expected {expected} in {error}");
     }
 }
+
+#[test]
+fn durable_mount_request_arguments_keep_only_valid_logical_values() {
+    let raw_host_path = "/Users/example/private-project";
+    let rejected = durable_mount_request_arguments(&json!({
+        "namespace_path": "/mnt/project",
+        "host_path": raw_host_path,
+        "access": "read_only",
+        "reason": "Read docs"
+    }));
+    assert_eq!(rejected, json!({"invalid_request": true}));
+    assert!(!rejected.to_string().contains(raw_host_path));
+
+    let accepted = durable_mount_request_arguments(&json!({
+        "namespace_path": "/mnt/project",
+        "access": "read_only",
+        "reason": "  Read docs  "
+    }));
+    assert_eq!(
+        accepted,
+        json!({
+            "namespace_path": "/mnt/project",
+            "access": "read_only",
+            "reason": "Read docs",
+            "label": null
+        })
+    );
+}
+
 #[tokio::test]
-async fn test_dispatch_virtual_tool_call_request_mount_escalates_even_when_allowed() {
+async fn policy_allow_commits_one_service_request_and_yields_authorization_wait() {
     let mut state = create_test_transition_state();
     state.runtime_config.policy_engine = crate::policy::PolicyEngine::allow_all();
-    let temp = TempDir::new().unwrap();
-    let host_path = std::fs::canonicalize(temp.path()).unwrap();
-    let host_path_text = host_path.display().to_string();
-
     let tool_call = NormalizedToolCall {
         id: "call_mount".to_string(),
         name: "request_mount".to_string(),
         arguments: json!({
             "namespace_path": "/mnt/project",
-            "host_path": host_path_text.clone(),
             "access": "read_write",
-            "reason": "Need to edit project files"
+            "reason": "Need to edit project files",
+            "label": "Project"
         }),
     };
-
-    let mut events = vec![];
+    let mut events = Vec::new();
     let mut emit = |event: Event| {
         events.push(event);
         async {}
     };
 
-    let result = dispatch_virtual_tool_call_for_test(&mut state, &tool_call, &mut emit).await;
-    assert!(result.is_ok());
-    assert!(matches!(result.unwrap(), VirtualToolOutcome::PauseTurn));
+    let outcome = dispatch_virtual_tool_call_for_test(&mut state, &tool_call, &mut emit)
+        .await
+        .unwrap();
+    assert!(matches!(outcome, VirtualToolOutcome::PauseTurn));
 
     let pending = state
         .machine
-        .pending_confirmation()
-        .expect("mount request should pause for confirmation");
-    assert_eq!(
-        pending.checkpoint_type,
-        crate::approval::MOUNT_ESCALATION_CHECKPOINT_TYPE
-    );
-    assert_eq!(pending.checkpoint_id, "mount_escalation_call_mount");
-    assert_eq!(pending.details["tool_call_id"], "call_mount");
-    assert_eq!(
-        pending.details["mount_request"]["namespace_path"],
-        "/mnt/project"
-    );
-    assert_eq!(
-        pending.details["mount_request"]["host_path"],
-        host_path_text
-    );
-    assert_eq!(pending.details["mount_request"]["access"], "read_write");
-    assert_eq!(pending.details["policy"]["action"], "escalate");
-    assert_eq!(
-        pending.details["policy"]["reason"],
-        "host mount grants require approval"
-    );
+        .pending_host_mount("request-1")
+        .expect("Machine owns the opaque service wait");
+    assert_eq!(pending.tool_call_id, "call_mount");
+    assert_eq!(pending.namespace_path, "/mnt/project");
+    assert_eq!(pending.request_events_offset, 0);
+    assert!(state.machine.pending_confirmation().is_none());
 
+    let shell = Shell::new(state.environment.root_transport());
+    let request: serde_json::Value = serde_json::from_slice(
+        &shell
+            .cat("/mnt/host-mount/requests/request-1/request")
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(request, tool_call.arguments);
+    assert_eq!(
+        shell
+            .cat("/mnt/host-mount/requests/request-1/status")
+            .await
+            .unwrap(),
+        b"pending\n"
+    );
     assert!(events.iter().any(|event| matches!(
         event,
-        Event::ToolCallStarted { id, name, audit: None, .. }
-            if id == "call_mount" && name == "request_mount"
-    )));
-    assert!(events.iter().any(|event| matches!(
-        event,
-        Event::ToolCallCompleted { id, success: Some(true), audit: Some(audit), .. }
-            if id == "call_mount"
-                && audit.action == "escalate"
-                && audit.reason.as_deref() == Some("host mount grants require approval")
-    )));
-    assert!(events.iter().any(|event| matches!(
-        event,
-        Event::Yield { kind: alan_agent_protocol::YieldKind::Confirmation, payload, .. }
-            if payload["checkpoint_type"] == json!(crate::approval::MOUNT_ESCALATION_CHECKPOINT_TYPE)
-                && payload["details"]["mount_request"]["host_path"] == json!(host_path_text.clone())
-                && payload["default_option"] == json!("reject")
+        Event::Yield { request_id, kind: alan_agent_protocol::YieldKind::Custom(kind), payload }
+            if request_id == "request-1"
+                && kind == "authorization_wait"
+                && payload["details"]["request_reference"] == "request-1"
+                && !payload.to_string().contains("host_path")
     )));
 }
 
 #[tokio::test]
-async fn test_dispatch_virtual_tool_call_request_mount_does_not_probe_host_existence() {
+async fn raw_host_path_is_rejected_without_service_request_or_yield() {
     let mut state = create_test_transition_state();
-    state.runtime_config.policy_engine = crate::policy::PolicyEngine::allow_all();
-    let missing_host_path = TempDir::new()
-        .unwrap()
-        .path()
-        .join("missing-host-mount-root");
-    let missing_host_path_text = missing_host_path.display().to_string();
-
-    let tool_call = NormalizedToolCall {
-        id: "call_mount".to_string(),
-        name: "request_mount".to_string(),
-        arguments: json!({
-            "namespace_path": "/mnt/missing",
-            "host_path": missing_host_path_text.clone(),
-            "access": "read_only",
-            "reason": "Need to inspect files if available"
-        }),
-    };
-
-    let mut events = vec![];
-    let mut emit = |event: Event| {
-        events.push(event);
-        async {}
-    };
-
-    let result = dispatch_virtual_tool_call_for_test(&mut state, &tool_call, &mut emit).await;
-    assert!(result.is_ok());
-    assert!(matches!(result.unwrap(), VirtualToolOutcome::PauseTurn));
-
-    let pending = state
-        .machine
-        .pending_confirmation()
-        .expect("syntactically valid mount request should pause for confirmation");
-    assert_eq!(
-        pending.details["mount_request"]["host_path"],
-        missing_host_path_text
-    );
-    assert!(events.iter().any(|event| matches!(
-        event,
-        Event::Yield { kind: alan_agent_protocol::YieldKind::Confirmation, payload, .. }
-            if payload["details"]["mount_request"]["host_path"] == json!(missing_host_path_text.clone())
-                && payload["default_option"] == json!("reject")
-    )));
-}
-
-#[tokio::test]
-async fn test_dispatch_virtual_tool_call_request_mount_denied_by_policy() {
-    let mut state = create_test_transition_state();
-    state.runtime_config.policy_engine = crate::policy::PolicyEngine::deny_all();
-    let temp = TempDir::new().unwrap();
-    let host_path = std::fs::canonicalize(temp.path()).unwrap();
-
     let tool_call = NormalizedToolCall {
         id: "call_mount".to_string(),
         name: "request_mount".to_string(),
         arguments: json!({
             "namespace_path": "/mnt/project",
-            "host_path": host_path.display().to_string(),
-            "access": "read_only",
-            "reason": "Need to inspect project files"
-        }),
-    };
-
-    let mut events = vec![];
-    let mut emit = |event: Event| {
-        events.push(event);
-        async {}
-    };
-
-    let result = dispatch_virtual_tool_call_for_test(&mut state, &tool_call, &mut emit).await;
-    assert!(result.is_ok());
-    assert!(matches!(
-        result.unwrap(),
-        VirtualToolOutcome::Continue {
-            refresh_context: false
-        }
-    ));
-    assert!(state.machine.pending_confirmation().is_none());
-    assert!(!events.iter().any(|event| matches!(
-        event,
-        Event::Yield {
-            kind: alan_agent_protocol::YieldKind::Confirmation,
-            ..
-        }
-    )));
-    assert!(events.iter().any(|event| matches!(
-        event,
-        Event::ToolCallCompleted { success: Some(false), audit: Some(audit), .. }
-            if audit.action == "deny"
-    )));
-
-    let tool_result = tool_result_text_for_call(&state, "call_mount");
-    assert!(tool_result.contains("\"status\":\"blocked_by_policy\""));
-    assert!(tool_result.contains("/mnt/project"));
-}
-
-#[tokio::test]
-async fn test_dispatch_virtual_tool_call_request_mount_read_only_uses_read_policy() {
-    let mut state = create_test_transition_state();
-    let temp = TempDir::new().unwrap();
-    let host_dir = temp.path().join("ssh");
-    let host_path = host_dir.display().to_string();
-    std::fs::write(
-        temp.path().join("policy.yaml"),
-        format!(
-            r#"
-rules:
-  - id: deny-sensitive-read-mount
-    tool: request_mount
-    capability: read
-    match_path_prefix: "{}"
-    action: deny
-    reason: sensitive host reads are not allowed
-default_action: allow
-"#,
-            host_path
-        ),
-    )
-    .unwrap();
-    state.runtime_config.policy_engine =
-        crate::policy::PolicyEngine::load_or_default(Some(&temp.path().join("policy.yaml")));
-
-    let tool_call = NormalizedToolCall {
-        id: "call_mount".to_string(),
-        name: "request_mount".to_string(),
-        arguments: json!({
-            "namespace_path": "/mnt/ssh",
-            "host_path": host_path,
-            "access": "read_only",
-            "reason": "Need to inspect SSH configuration"
-        }),
-    };
-
-    let mut events = vec![];
-    let mut emit = |event: Event| {
-        events.push(event);
-        async {}
-    };
-
-    let result = dispatch_virtual_tool_call_for_test(&mut state, &tool_call, &mut emit).await;
-    assert!(result.is_ok());
-    assert!(matches!(
-        result.unwrap(),
-        VirtualToolOutcome::Continue {
-            refresh_context: false
-        }
-    ));
-    assert!(state.machine.pending_confirmation().is_none());
-    assert!(events.iter().any(|event| matches!(
-        event,
-        Event::ToolCallCompleted { success: Some(false), audit: Some(audit), .. }
-            if audit.action == "deny"
-                && audit.capability == "read"
-                && audit.rule_id.as_deref() == Some("deny-sensitive-read-mount")
-    )));
-
-    let tool_result = tool_result_text_for_call(&state, "call_mount");
-    assert!(tool_result.contains("\"status\":\"blocked_by_policy\""));
-    assert!(tool_result.contains("sensitive host reads are not allowed"));
-}
-
-#[tokio::test]
-async fn test_dispatch_virtual_tool_call_request_mount_read_write_honors_read_denies() {
-    let mut state = create_test_transition_state();
-    let temp = TempDir::new().unwrap();
-    let host_dir = temp.path().join("ssh");
-    let host_path = host_dir.display().to_string();
-    std::fs::write(
-        temp.path().join("policy.yaml"),
-        format!(
-            r#"
-rules:
-  - id: deny-sensitive-read-mount
-    tool: request_mount
-    capability: read
-    match_path_prefix: "{}"
-    action: deny
-    reason: sensitive host reads are not allowed
-default_action: allow
-"#,
-            host_path
-        ),
-    )
-    .unwrap();
-    state.runtime_config.policy_engine =
-        crate::policy::PolicyEngine::load_or_default(Some(&temp.path().join("policy.yaml")));
-
-    let tool_call = NormalizedToolCall {
-        id: "call_mount".to_string(),
-        name: "request_mount".to_string(),
-        arguments: json!({
-            "namespace_path": "/mnt/ssh",
-            "host_path": host_path,
-            "access": "read_write",
-            "reason": "Need to update SSH configuration"
-        }),
-    };
-
-    let mut events = vec![];
-    let mut emit = |event: Event| {
-        events.push(event);
-        async {}
-    };
-
-    let result = dispatch_virtual_tool_call_for_test(&mut state, &tool_call, &mut emit).await;
-    assert!(result.is_ok());
-    assert!(matches!(
-        result.unwrap(),
-        VirtualToolOutcome::Continue {
-            refresh_context: false
-        }
-    ));
-    assert!(state.machine.pending_confirmation().is_none());
-    assert!(events.iter().any(|event| matches!(
-        event,
-        Event::ToolCallCompleted { success: Some(false), audit: Some(audit), .. }
-            if audit.action == "deny"
-                && audit.capability == "read"
-                && audit.rule_id.as_deref() == Some("deny-sensitive-read-mount")
-    )));
-
-    let tool_result = tool_result_text_for_call(&state, "call_mount");
-    assert!(tool_result.contains("\"status\":\"blocked_by_policy\""));
-    assert!(tool_result.contains("sensitive host reads are not allowed"));
-}
-
-#[tokio::test]
-async fn test_dispatch_virtual_tool_call_request_mount_rejects_invalid_request() {
-    let mut state = create_test_transition_state();
-
-    let tool_call = NormalizedToolCall {
-        id: "call_mount".to_string(),
-        name: "request_mount".to_string(),
-        arguments: json!({
-            "namespace_path": "/proc/project",
-            "host_path": "relative/path",
+            "host_path": "/Users/example/project",
             "access": "read_only",
             "reason": "Need files"
         }),
     };
-
-    let mut events = vec![];
+    let mut events = Vec::new();
     let mut emit = |event: Event| {
         events.push(event);
         async {}
     };
 
-    let result = dispatch_virtual_tool_call_for_test(&mut state, &tool_call, &mut emit).await;
-    assert!(result.is_ok());
+    let outcome = dispatch_virtual_tool_call_for_test(&mut state, &tool_call, &mut emit)
+        .await
+        .unwrap();
     assert!(matches!(
-        result.unwrap(),
+        outcome,
         VirtualToolOutcome::Continue {
             refresh_context: true
         }
     ));
-    assert!(state.machine.pending_confirmation().is_none());
-    assert!(!events.iter().any(|event| matches!(
-        event,
-        Event::Yield {
-            kind: alan_agent_protocol::YieldKind::Confirmation,
-            ..
-        }
-    )));
-    assert!(events.iter().any(|event| matches!(
-        event,
-        Event::ToolCallCompleted {
-            success: Some(false),
-            audit: None,
-            ..
-        }
-    )));
+    assert!(!state.machine.has_pending_interaction());
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, Event::Yield { .. }))
+    );
+    let shell = Shell::new(state.environment.root_transport());
+    assert_eq!(
+        shell.ls("/mnt/host-mount/requests").await.unwrap(),
+        vec!["clone".to_string()]
+    );
+    let result = tool_result_text_for_call(&state, "call_mount");
+    assert!(!result.contains("/Users/example/project"));
+    assert!(!result.contains("host_path"));
+}
 
-    let tool_result = tool_result_text_for_call(&state, "call_mount");
-    assert!(tool_result.contains("\"status\":\"invalid_request\""));
-    assert!(tool_result.contains("namespace_path"));
+#[tokio::test]
+async fn policy_deny_does_not_create_service_request() {
+    let mut state = create_test_transition_state();
+    state.runtime_config.policy_engine = crate::policy::PolicyEngine::deny_all();
+    let tool_call = NormalizedToolCall {
+        id: "call_mount".to_string(),
+        name: "request_mount".to_string(),
+        arguments: json!({
+            "namespace_path": "/mnt/project",
+            "access": "read_only",
+            "reason": "Need files"
+        }),
+    };
+    let mut events = Vec::new();
+    let mut emit = |event: Event| {
+        events.push(event);
+        async {}
+    };
+
+    let outcome = dispatch_virtual_tool_call_for_test(&mut state, &tool_call, &mut emit)
+        .await
+        .unwrap();
+    assert!(matches!(
+        outcome,
+        VirtualToolOutcome::Continue {
+            refresh_context: false
+        }
+    ));
+    assert!(!state.machine.has_pending_interaction());
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, Event::Yield { .. }))
+    );
+    let shell = Shell::new(state.environment.root_transport());
+    assert_eq!(
+        shell.ls("/mnt/host-mount/requests").await.unwrap(),
+        vec!["clone".to_string()]
+    );
 }
