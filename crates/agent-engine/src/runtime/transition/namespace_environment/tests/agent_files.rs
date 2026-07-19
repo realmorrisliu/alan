@@ -112,8 +112,9 @@ async fn engine_writes_requests_and_actions_as_agent_files() {
     agent_root.bind_process(pid.clone(), agentfs.clone()).await;
     agent_root.set_root_process(pid).await;
     let environment = NamespaceRuntimeEnvironment::new(root.clone(), "/agent/1", "default");
+    let agent_files = environment.agent_files();
 
-    let request_id = environment
+    let request_id = agent_files
         .write_request(
             NamespaceRequestRecord::new("confirmation", "approve this action?")
                 .with_options(r#"{"choices":["approve","deny"]}"#),
@@ -152,7 +153,7 @@ async fn engine_writes_requests_and_actions_as_agent_files() {
         r#"{"choices":["approve","deny"]}"#
     );
 
-    let action_id = environment
+    let action_id = agent_files
         .write_action(
             NamespaceActionRecord::new("read", "completed")
                 .with_output("file contents")

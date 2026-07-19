@@ -291,8 +291,7 @@ async fn record_and_emit_compaction_attempt<E, F>(
         error!(error = %err, "Failed to persist compaction observation batch");
         return;
     }
-    if let Err(err) = super::ui_surfaces::compaction(state.namespace_environment(), &attempt).await
-    {
+    if let Err(err) = super::ui_surfaces::compaction(&state.agent_files(), &attempt).await {
         error!(error = %err, "Failed to write compaction UI state");
     }
     emit(Event::CompactionObserved { attempt }).await;
@@ -316,9 +315,7 @@ where
         return None;
     }
     let attempt_id = attempt.attempt_id.clone();
-    if let Err(err) =
-        super::ui_surfaces::memory_flush(state.namespace_environment(), &attempt).await
-    {
+    if let Err(err) = super::ui_surfaces::memory_flush(&state.agent_files(), &attempt).await {
         error!(error = %err, "Failed to write memory flush UI state");
     }
     emit(Event::MemoryFlushObserved { attempt }).await;
@@ -373,9 +370,7 @@ where
     }
 
     if let Some(message) = attempt.warning_message.clone() {
-        if let Err(err) =
-            super::ui_surfaces::warning(state.namespace_environment(), message.clone()).await
-        {
+        if let Err(err) = super::ui_surfaces::warning(&state.agent_files(), message.clone()).await {
             error!(error = %err, "Failed to write memory warning UI state");
         }
         emit(Event::Warning { message }).await;
@@ -417,7 +412,7 @@ where
             retry_count,
             failure_streak,
         );
-        super::ui_surfaces::warning(state.namespace_environment(), warning_message.clone()).await?;
+        super::ui_surfaces::warning(&state.agent_files(), warning_message.clone()).await?;
         emit(Event::Warning {
             message: warning_message.clone(),
         })
@@ -486,7 +481,7 @@ where
         retry_count,
         failure_streak,
     );
-    super::ui_surfaces::warning(state.namespace_environment(), warning_message.clone()).await?;
+    super::ui_surfaces::warning(&state.agent_files(), warning_message.clone()).await?;
     emit(Event::Warning {
         message: warning_message.clone(),
     })

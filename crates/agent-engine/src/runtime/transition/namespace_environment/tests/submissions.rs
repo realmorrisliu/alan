@@ -12,9 +12,10 @@ async fn pending_request_selection_ignores_lexicographic_id_order() {
     let root = InProcessTransport::new(Arc::new(MountFs::new(ns)));
     let shell = Shell::new(root.clone());
     let environment = NamespaceRuntimeEnvironment::new(root, "/agent/1", "default");
+    let agent_files = environment.agent_files();
 
     for index in 0..11 {
-        let id = environment
+        let id = agent_files
             .write_request(NamespaceRequestRecord::new("confirmation", "approve?"))
             .await
             .unwrap();
@@ -27,9 +28,9 @@ async fn pending_request_selection_ignores_lexicographic_id_order() {
         }
     }
 
-    let ids = environment.request_ids().await.unwrap();
+    let ids = agent_files.request_ids().await.unwrap();
     assert_eq!(
-        environment.pending_request_id(&ids).await.unwrap(),
+        agent_files.pending_request_id(&ids).await.unwrap(),
         Some("r10".into())
     );
 }
@@ -46,6 +47,7 @@ async fn machine_ctl_records_become_control_submissions_in_order() {
     let root = InProcessTransport::new(Arc::new(MountFs::new(ns)));
     let shell = Shell::new(root.clone());
     let environment = NamespaceRuntimeEnvironment::new(root, "/agent/1", "default");
+    let agent_files = environment.agent_files();
 
     shell
         .write("/agent/1/io/output", b"assistant output")
@@ -60,14 +62,14 @@ async fn machine_ctl_records_become_control_submissions_in_order() {
         .await
         .unwrap();
 
-    let compact = environment
+    let compact = agent_files
         .read_next_machine_control_submission()
         .await
         .unwrap()
         .expect("compact command should produce a submission");
     assert!(matches!(compact.op, Op::CompactWithOptions { focus: None }));
 
-    let rollback = environment
+    let rollback = agent_files
         .read_next_machine_control_submission()
         .await
         .unwrap()
@@ -75,7 +77,7 @@ async fn machine_ctl_records_become_control_submissions_in_order() {
     assert!(matches!(rollback.op, Op::Rollback { turns: 1 }));
 
     assert!(
-        environment
+        agent_files
             .read_next_machine_control_submission()
             .await
             .unwrap()
@@ -88,7 +90,7 @@ async fn machine_ctl_records_become_control_submissions_in_order() {
         .write("/agent/1/machine/ctl", b"interrupt")
         .await
         .unwrap();
-    let interrupt = environment
+    let interrupt = agent_files
         .read_next_machine_control_submission()
         .await
         .unwrap()
@@ -108,12 +110,13 @@ async fn input_frame_becomes_engine_input_submission() {
     let root = InProcessTransport::new(Arc::new(MountFs::new(ns)));
     let shell = Shell::new(root.clone());
     let environment = NamespaceRuntimeEnvironment::new(root, "/agent/1", "default");
+    let agent_files = environment.agent_files();
 
     shell
         .write("/agent/1/io/input", b"continue from files")
         .await
         .unwrap();
-    let submission = environment
+    let submission = agent_files
         .read_next_input_submission(InputMode::FollowUp)
         .await
         .unwrap();
@@ -139,13 +142,14 @@ async fn input_frame_larger_than_initial_read_becomes_submission() {
     let root = InProcessTransport::new(Arc::new(MountFs::new(ns)));
     let shell = Shell::new(root.clone());
     let environment = NamespaceRuntimeEnvironment::new(root, "/agent/1", "default");
+    let agent_files = environment.agent_files();
     let message = "x".repeat(70 * 1024);
 
     shell
         .write("/agent/1/io/input", message.as_bytes())
         .await
         .unwrap();
-    let submission = environment
+    let submission = agent_files
         .read_next_input_submission(InputMode::FollowUp)
         .await
         .unwrap();

@@ -6,7 +6,6 @@
 
 mod namespace_environment;
 
-pub(crate) use namespace_environment::NamespaceGeneration;
 #[cfg(test)]
 pub(super) use namespace_environment::NamespaceRequestRecord;
 pub use namespace_environment::{
@@ -15,6 +14,7 @@ pub use namespace_environment::{
     NamespaceRuntimeEnvironment, NamespaceToolActionOutput, NamespaceTurnOutput,
     NamespaceTurnRuntime, NamespaceTurnRuntimeConfig,
 };
+pub(crate) use namespace_environment::{NamespaceAgentFiles, NamespaceGeneration};
 
 use std::collections::VecDeque;
 
@@ -88,6 +88,10 @@ impl RuntimeLoopState {
         self.environment.generation()
     }
 
+    pub(crate) fn agent_files(&self) -> NamespaceAgentFiles {
+        self.environment.agent_files()
+    }
+
     pub(crate) async fn write_namespace_confirmation_request(
         &self,
         pending: &crate::approval::PendingConfirmation,
@@ -101,7 +105,7 @@ impl RuntimeLoopState {
             "options": pending.options.clone(),
         }))?;
         let request_id = self
-            .namespace_environment()
+            .agent_files()
             .write_request(
                 namespace_environment::NamespaceRequestRecord::new(kind, pending.summary.clone())
                     .with_options(options),
@@ -120,7 +124,7 @@ impl RuntimeLoopState {
             "questions": pending.questions.clone(),
         }))?;
         let request_id = self
-            .namespace_environment()
+            .agent_files()
             .write_request(
                 namespace_environment::NamespaceRequestRecord::new(
                     "structured_input",

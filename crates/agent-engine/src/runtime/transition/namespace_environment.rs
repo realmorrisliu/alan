@@ -252,6 +252,15 @@ pub(crate) struct NamespaceGeneration {
     llm_connection: String,
 }
 
+/// Narrow handle for files owned by one AgentFS process layout.
+#[derive(Clone)]
+pub(crate) struct NamespaceAgentFiles {
+    root: InProcessTransport,
+    agent_path: String,
+    input_offset: Arc<AtomicU64>,
+    control_offset: Arc<AtomicU64>,
+}
+
 #[derive(Clone)]
 struct NamespaceToolProcessContext {
     pub(crate) pid: alan_kernel::Pid,
@@ -301,6 +310,15 @@ impl NamespaceRuntimeEnvironment {
         NamespaceGeneration {
             root: self.root.clone(),
             llm_connection: self.llm_connection.clone(),
+        }
+    }
+
+    pub(crate) fn agent_files(&self) -> NamespaceAgentFiles {
+        NamespaceAgentFiles {
+            root: self.root.clone(),
+            agent_path: self.agent_path.clone(),
+            input_offset: Arc::clone(&self.input_offset),
+            control_offset: Arc::clone(&self.control_offset),
         }
     }
 
@@ -653,6 +671,7 @@ impl NamespaceRuntimeEnvironment {
         }
         let durable_output = redact_durable_evidence_text(&result.output);
         let action_id = self
+            .agent_files()
             .write_action(
                 NamespaceActionRecord::new(tool_name, action_status)
                     .with_output(durable_output.text)
@@ -799,7 +818,10 @@ impl NamespaceTurnRuntime {
 
     /// Read the current root-hash checkpoint for this runtime's `machine/tape`.
     pub async fn current_tape_checkpoint(&self) -> Result<String> {
-        self.environment.current_tape_checkpoint().await
+        self.environment
+            .agent_files()
+            .current_tape_checkpoint()
+            .await
     }
 }
 

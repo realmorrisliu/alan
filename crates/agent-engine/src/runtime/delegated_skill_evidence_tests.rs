@@ -115,7 +115,7 @@ async fn long_delegated_output_uses_parent_resolvable_namespace_reference() {
         length: output_ref.length,
     };
     let resolved = state
-        .namespace_environment()
+        .agent_files()
         .resolve_evidence_reference(&namespace_ref, None, None)
         .await
         .unwrap();
@@ -187,7 +187,7 @@ async fn evidence_resolution_distinguishes_missing_and_retention_expired() {
     };
 
     let missing = state
-        .namespace_environment()
+        .agent_files()
         .resolve_evidence_reference(&missing_ref, preview.clone(), child_run.clone())
         .await
         .unwrap_err();
@@ -204,7 +204,7 @@ async fn evidence_resolution_distinguishes_missing_and_retention_expired() {
         "cause": "simulated_gc"
     });
     let action_id = state
-        .namespace_environment()
+        .agent_files()
         .write_action(
             NamespaceActionRecord::new("expired-test", "completed")
                 .with_output(expired_record.to_string()),
@@ -212,13 +212,13 @@ async fn evidence_resolution_distinguishes_missing_and_retention_expired() {
         .await
         .unwrap();
     let mut expired_ref = state
-        .namespace_environment()
+        .agent_files()
         .evidence_reference(format!("/agent/1/actions/{action_id}/output"))
         .await
         .unwrap();
     expired_ref.length = Some(10_000);
     let expired = state
-        .namespace_environment()
+        .agent_files()
         .resolve_evidence_reference(&expired_ref, None, None)
         .await
         .unwrap_err();
@@ -232,7 +232,7 @@ async fn evidence_resolution_distinguishes_missing_and_retention_expired() {
 async fn evidence_resolution_honors_open_ended_ranges() {
     let (state, _shell) = create_namespace_transition_state_and_shell();
     let action_id = state
-        .namespace_environment()
+        .agent_files()
         .write_action(NamespaceActionRecord::new("range-test", "completed").with_output("abcdef"))
         .await
         .unwrap();
@@ -249,7 +249,7 @@ async fn evidence_resolution_honors_open_ended_ranges() {
             length,
         };
         let resolved = state
-            .namespace_environment()
+            .agent_files()
             .resolve_evidence_reference(&reference, None, None)
             .await
             .unwrap();

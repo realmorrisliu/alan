@@ -56,7 +56,7 @@ pub(super) async fn persist_delegated_child_evidence(
         result_doc["child_agent_path"] = json!(agent_path);
     }
     let action_id = state
-        .namespace_environment()
+        .agent_files()
         .write_action(
             NamespaceActionRecord::new(
                 format!("delegate:{}", request.skill_id),
@@ -68,16 +68,10 @@ pub(super) async fn persist_delegated_child_evidence(
         )
         .await
         .ok()?;
-    let path = format!(
-        "{}/actions/{action_id}/output",
-        state.namespace_environment().agent_path()
-    );
-    let reference = state
-        .namespace_environment()
-        .evidence_reference(path)
-        .await?;
-    state
-        .namespace_environment()
+    let path = format!("{}/actions/{action_id}/output", state.agent_path());
+    let agent_files = state.agent_files();
+    let reference = agent_files.evidence_reference(path).await?;
+    agent_files
         .resolve_evidence_reference(&reference, None, result.child_run_value())
         .await
         .ok()?;

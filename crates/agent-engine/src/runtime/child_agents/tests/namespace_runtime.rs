@@ -604,12 +604,12 @@ async fn child_namespace_launch_and_supervisor_reattachment_use_proc_pid_files()
 
     let process_reader = launch.environment.clone();
     let process_pid = launch.pid.clone();
-    launch
-        .environment
+    let agent_files = launch.environment.agent_files();
+    agent_files
         .write_assistant_output("AgentFS child result")
         .await
         .unwrap();
-    crate::runtime::ui_surfaces::turn_completed(&launch.environment, false)
+    crate::runtime::ui_surfaces::turn_completed(&agent_files, false)
         .await
         .unwrap();
     let controller = DelegatedChildRunSupervisor::new(DelegatedChildRunSupervision {
@@ -619,6 +619,7 @@ async fn child_namespace_launch_and_supervisor_reattachment_use_proc_pid_files()
         child_run_registry: ChildRunRegistry::default(),
         timeout: None,
         process_lifecycle: launch.lifecycle,
+        agent_files,
         process_environment: launch.environment,
         process_pid: process_pid.clone(),
     });
@@ -688,6 +689,7 @@ async fn external_proc_ctl_stops_child_runtime_controller() {
     .unwrap();
     let process_pid = launch.pid.clone();
     let process_environment = launch.environment.clone();
+    let agent_files = launch.environment.agent_files();
     let controller = DelegatedChildRunSupervisor::new(DelegatedChildRunSupervision {
         runtime: None,
         startup_metadata: test_startup_metadata("child-machine", None, false),
@@ -695,11 +697,12 @@ async fn external_proc_ctl_stops_child_runtime_controller() {
         child_run_registry: ChildRunRegistry::default(),
         timeout: None,
         process_lifecycle: launch.lifecycle,
+        agent_files: agent_files.clone(),
         process_environment: launch.environment,
         process_pid: process_pid.clone(),
     });
 
-    assert_eq!(process_environment.ui_events_offset().await.unwrap(), 0);
+    assert_eq!(agent_files.ui_events_offset().await.unwrap(), 0);
     process_environment
         .write_process_control_for_pid(&process_pid, "cancel")
         .await

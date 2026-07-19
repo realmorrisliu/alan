@@ -17,10 +17,10 @@ async fn child_runtime_join_keeps_running_while_activity_file_is_fresh() {
     .await
     .unwrap();
     child.set_timeout_for_test(Duration::from_millis(200));
-    let environment = child.process_environment_for_test().clone();
+    let agent_files = child.process_environment_for_test().agent_files();
     tokio::spawn(async move {
         for _ in 0..5 {
-            crate::runtime::ui_surfaces::heartbeat(&environment)
+            crate::runtime::ui_surfaces::heartbeat(&agent_files)
                 .await
                 .unwrap();
             tokio::time::sleep(Duration::from_millis(35)).await;

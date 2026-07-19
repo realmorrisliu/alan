@@ -482,12 +482,12 @@
         let (environment, _shell) = namespace_environment_with_live_process_for_test().await;
         state.environment = environment;
         state
-            .namespace_environment()
+            .agent_files()
             .write_user_state("seed confirmation context")
             .await
             .unwrap();
         let expected_root = state
-            .namespace_environment()
+            .agent_files()
             .current_tape_checkpoint()
             .await
             .unwrap();

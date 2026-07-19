@@ -7,7 +7,6 @@ use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
 
-use super::agent_files::{write_agent_output, write_tape_records};
 use super::client::NamespaceClient;
 use super::{
     NamespaceGeneration, NamespaceLlmCapabilities, NamespaceTurnOutput, NamespaceTurnRuntime,
@@ -125,7 +124,8 @@ impl NamespaceTurnRuntime {
     pub async fn run_next_turn(&mut self) -> Result<NamespaceTurnOutput> {
         let client = NamespaceClient::new(self.environment.root.clone());
         let generation = self.environment.generation();
-        let message = self.environment.read_next_input().await?;
+        let agent_files = self.environment.agent_files();
+        let message = agent_files.read_next_input().await?;
 
         let request = GenerationRequest::new().with_user_message(message.clone());
         let request = if let Some(system_prompt) = self.config.system_prompt.clone() {
@@ -141,13 +141,10 @@ impl NamespaceTurnRuntime {
             read_generation_response(&client, &generation.llm_connection, &generation_id).await?;
         let response = generation_response.content;
 
-        write_agent_output(&client, &self.config.agent_path, &response).await?;
-        write_tape_records(
-            &client,
-            &self.config.agent_path,
-            [("user", message.as_str()), ("assistant", response.as_str())],
-        )
-        .await?;
+        agent_files.write_assistant_output(&response).await?;
+        agent_files
+            .write_turn_tape_state(Some(&message), &response)
+            .await?;
 
         Ok(NamespaceTurnOutput {
             input: message,

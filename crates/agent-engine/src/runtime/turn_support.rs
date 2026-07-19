@@ -21,7 +21,7 @@ where
     state.machine.reset_turn();
     state.machine.clear_plan_snapshot();
     state.machine.clear_active_task();
-    super::ui_surfaces::turn_completed(state.namespace_environment(), true).await?;
+    super::ui_surfaces::turn_completed(&state.agent_files(), true).await?;
     emit(Event::TurnCompleted {
         summary: Some("Task cancelled by user".to_string()),
     })
@@ -39,7 +39,7 @@ where
     F: std::future::Future<Output = ()>,
 {
     let summary = summary.into();
-    super::ui_surfaces::turn_completed(state.namespace_environment(), false).await?;
+    super::ui_surfaces::turn_completed(&state.agent_files(), false).await?;
     emit(Event::TurnCompleted {
         summary: Some(summary),
     })

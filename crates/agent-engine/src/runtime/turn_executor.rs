@@ -220,19 +220,19 @@ where
 {
     if matches!(turn_kind, TurnRunKind::NewTurn) {
         state.machine.reset_auto_mid_turn_compaction_state();
-        super::ui_surfaces::turn_started(state.namespace_environment())
+        super::ui_surfaces::turn_started(&state.agent_files())
             .await
             .context("write turn-start UI state")?;
         emit(Event::TurnStarted {}).await;
     } else {
-        super::ui_surfaces::resumed(state.namespace_environment())
+        super::ui_surfaces::resumed(&state.agent_files())
             .await
             .context("write resumed turn UI state")?;
     }
 
-    let namespace_generation = state.namespace_environment().clone();
+    let agent_files = state.agent_files();
     if matches!(turn_kind, TurnRunKind::NewTurn) && user_input.is_none() {
-        let input = namespace_generation
+        let input = agent_files
             .read_next_input()
             .await
             .context("read next namespace agent input")?;
@@ -464,7 +464,7 @@ where
         }
 
         for warning in &response.warnings {
-            super::ui_surfaces::warning(state.namespace_environment(), warning.clone())
+            super::ui_surfaces::warning(&state.agent_files(), warning.clone())
                 .await
                 .context("write provider warning UI state")?;
             emit(Event::Warning {
@@ -493,7 +493,7 @@ where
                 );
                 let message =
                     format!("Guardrail recovered ({rule_id}): {reason}. Retrying before output.");
-                super::ui_surfaces::warning(state.namespace_environment(), message.clone())
+                super::ui_surfaces::warning(&state.agent_files(), message.clone())
                     .await
                     .context("write guardrail warning UI state")?;
                 emit(Event::Warning { message }).await;
@@ -518,7 +518,7 @@ where
         if let Some(ref thinking) = response.thinking
             && !thinking.is_empty()
         {
-            super::ui_surfaces::thinking(state.namespace_environment(), thinking)
+            super::ui_surfaces::thinking(&state.agent_files(), thinking)
                 .await
                 .context("write thinking UI state")?;
             emit_thinking_chunks(emit, thinking).await;
@@ -576,11 +576,11 @@ where
 
         if assistant_message_persisted && !response.content.is_empty() {
             let namespace_input_text = namespace_user_input_for_tape.take();
-            namespace_generation
+            agent_files
                 .write_assistant_output(&response.content)
                 .await
                 .context("write namespace assistant output")?;
-            namespace_generation
+            agent_files
                 .write_turn_tape_state(namespace_input_text.as_deref(), &response.content)
                 .await
                 .context("write namespace turn tape state")?;
@@ -642,11 +642,11 @@ where
                 &response.redacted_thinking,
             );
             let namespace_input_text = namespace_user_input_for_tape.take();
-            namespace_generation
+            agent_files
                 .write_assistant_output(fallback_text)
                 .await
                 .context("write namespace fallback assistant output")?;
-            namespace_generation
+            agent_files
                 .write_turn_tape_state(namespace_input_text.as_deref(), fallback_text)
                 .await
                 .context("write namespace fallback turn tape state")?;
@@ -666,7 +666,7 @@ where
                 summary: Some("Turn completed with empty response fallback".to_string()),
             })
             .await;
-            super::ui_surfaces::turn_completed(state.namespace_environment(), false)
+            super::ui_surfaces::turn_completed(&state.agent_files(), false)
                 .await
                 .context("write fallback turn completion UI state")?;
             return Ok(TurnExecutionOutcome::Finished);

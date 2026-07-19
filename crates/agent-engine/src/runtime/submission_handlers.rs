@@ -65,10 +65,8 @@ where
             }
             let rollback = state.machine.rollback_last_turns(turns);
             state.machine.clear_plan_snapshot();
-            super::ui_surfaces::plan_updated(state.namespace_environment(), None, Vec::new())
-                .await?;
-            super::ui_surfaces::rollback(state.namespace_environment(), rollback.removed_turns)
-                .await?;
+            super::ui_surfaces::plan_updated(&state.agent_files(), None, Vec::new()).await?;
+            super::ui_surfaces::rollback(&state.agent_files(), rollback.removed_turns).await?;
             emit(Event::MachineRolledBack {
                 turns: rollback.removed_turns,
                 removed_messages: rollback.removed_messages,
@@ -90,11 +88,7 @@ where
                 is_final: true,
             })
             .await;
-            super::ui_surfaces::warning(
-                state.namespace_environment(),
-                ROLLBACK_NON_DURABLE_WARNING,
-            )
-            .await?;
+            super::ui_surfaces::warning(&state.agent_files(), ROLLBACK_NON_DURABLE_WARNING).await?;
             emit(Event::Warning {
                 message: ROLLBACK_NON_DURABLE_WARNING.to_string(),
             })
@@ -127,7 +121,7 @@ where
                 let message = format!(
                     "Applied {queued_next_turn_count} queued next_turn input(s) to this turn."
                 );
-                super::ui_surfaces::warning(state.namespace_environment(), message.clone()).await?;
+                super::ui_surfaces::warning(&state.agent_files(), message.clone()).await?;
                 emit(Event::Warning { message }).await;
             }
 
@@ -169,8 +163,7 @@ where
                             }));
                         let message =
                             "Queued follow_up input for execution after current turn.".to_string();
-                        super::ui_surfaces::warning(state.namespace_environment(), message.clone())
-                            .await?;
+                        super::ui_surfaces::warning(&state.agent_files(), message.clone()).await?;
                         emit(Event::Warning { message }).await;
                         return Ok(RuntimeOpAction::NoTurn);
                     }
@@ -189,11 +182,8 @@ where
                             let message = format!(
                                 "Queued next_turn input (queue_size={size}); it will apply to the next explicit turn."
                             );
-                            super::ui_surfaces::warning(
-                                state.namespace_environment(),
-                                message.clone(),
-                            )
-                            .await?;
+                            super::ui_surfaces::warning(&state.agent_files(), message.clone())
+                                .await?;
                             emit(Event::Warning { message }).await;
                         }
                         None => {
@@ -327,11 +317,7 @@ async fn persist_runtime_confirmation_checkpoint(
     pending: &crate::approval::PendingConfirmation,
     choice_str: &str,
 ) {
-    let knowledge_root = match state
-        .namespace_environment()
-        .current_tape_checkpoint()
-        .await
-    {
+    let knowledge_root = match state.agent_files().current_tape_checkpoint().await {
         Ok(root) => {
             let trimmed = root.trim();
             if trimmed.is_empty() { None } else { Some(root) }

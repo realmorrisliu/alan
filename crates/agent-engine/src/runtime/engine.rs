@@ -3,8 +3,9 @@
 use super::controller::{AgentMachineDurabilityState, RuntimeController, RuntimeStartupMetadata};
 use super::launch_config::AgentProcessConfig;
 use super::transition::{
-    DeferredRuntimeActionExit, TransitionCompletion, accepts_inband_submissions,
-    advance_accepted_submission, run_deferred_runtime_action_with_cancel,
+    DeferredRuntimeActionExit, NamespaceAgentFiles, TransitionCompletion,
+    accepts_inband_submissions, advance_accepted_submission,
+    run_deferred_runtime_action_with_cancel,
 };
 use super::turn_driver::{
     NAMESPACE_PENDING_RESPONSE_POLL_INTERVAL, TurnInputBroker, is_turn_inband_submission,
@@ -82,7 +83,7 @@ async fn read_pending_namespace_resume_submission(
 }
 
 async fn read_pending_namespace_control_submission(
-    namespace: &super::NamespaceRuntimeEnvironment,
+    namespace: &NamespaceAgentFiles,
 ) -> Option<Result<Submission>> {
     match namespace.read_next_machine_control_submission().await {
         Ok(Some(submission)) => Some(Ok(submission)),
@@ -432,7 +433,7 @@ fn spawn_with_prepared_runtime_environment(
             definition_persona_dirs: prompt_cache_persona_dirs.clone(),
             prompt_cache,
         };
-        match super::ui_surfaces::initialize(state.namespace_environment()).await {
+        match super::ui_surfaces::initialize(&state.agent_files()).await {
             Ok(()) => {}
             Err(err) => {
                 let _ = ready_tx.send(Err(format!("{:#}", err)));
@@ -452,7 +453,7 @@ fn spawn_with_prepared_runtime_environment(
         let mut shutdown_requested = false;
 
         let mut queues = RuntimeSubmissionQueues::default();
-        let input_environment = state.namespace_environment().clone();
+        let input_environment = state.agent_files();
         let (namespace_input_tx, mut namespace_input_rx) = mpsc::channel(1);
         let namespace_input_task = tokio::spawn(async move {
             loop {
@@ -484,7 +485,7 @@ fn spawn_with_prepared_runtime_environment(
                     }
                 }
             } else if let Some(namespace_control) =
-                read_pending_namespace_control_submission(state.namespace_environment()).await
+                read_pending_namespace_control_submission(&state.agent_files()).await
             {
                 match namespace_control {
                     Ok(submission) => Some(QueuedRuntimeItem::Submission(submission)),
@@ -499,7 +500,7 @@ fn spawn_with_prepared_runtime_environment(
             } else if submissions_closed {
                 None
             } else {
-                let namespace_control = state.namespace_environment().clone();
+                let namespace_control = state.agent_files();
                 let poll_pending_namespace_response = state.machine.has_pending_interaction();
                 tokio::select! {
                     submission = sub_rx.recv() => submission.map(QueuedRuntimeItem::Submission),
@@ -568,8 +569,8 @@ fn spawn_with_prepared_runtime_environment(
                     let cancel = CancellationToken::new();
 
                     let broker_for_submission = queues.active_turn_broker.clone();
-                    let namespace_control = state.namespace_environment().clone();
-                    let namespace_heartbeat = state.namespace_environment().clone();
+                    let namespace_control = state.agent_files();
+                    let namespace_heartbeat = state.agent_files();
                     let mut submission_fut = Box::pin(advance_accepted_submission(
                         &mut state,
                         submission,
@@ -707,7 +708,7 @@ fn spawn_with_prepared_runtime_environment(
                     let action_for_requeue = action.clone();
                     let mut requeue_if_cancelled = false;
                     let cancel = CancellationToken::new();
-                    let namespace_control = state.namespace_environment().clone();
+                    let namespace_control = state.agent_files();
                     let mut action_fut = Box::pin(run_deferred_runtime_action_with_cancel(
                         &mut state, action, &cancel,
                     ));
