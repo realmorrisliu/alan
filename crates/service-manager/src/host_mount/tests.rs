@@ -110,6 +110,23 @@ fn grants_project_explicitly_hide_paths_and_revoke() {
 }
 
 #[test]
+fn mount_free_tool_binding_reconciles_without_acquiring_authority() {
+    let service = service();
+    let namespace = LiveNamespace::new(Namespace::new());
+    service.register_process(Pid(7), namespace);
+    let binding = ToolExecutionBinding::awaiting_host_projection(
+        PathBuf::from("/"),
+        PathBuf::from("/tmp/alan-scratch"),
+    );
+
+    let reconciled = service.reconcile(Pid(7), binding.clone()).unwrap();
+
+    assert_eq!(reconciled, binding);
+    assert!(reconciled.host_mounts.is_empty());
+    assert!(reconciled.sandbox_spec.is_none());
+}
+
+#[test]
 fn knowing_grant_id_does_not_project_to_another_process() {
     let host = tempfile::tempdir().unwrap();
     let service = service();
@@ -295,7 +312,9 @@ fn explicitly_passed_child_projection_is_revoked_with_its_parent() {
     service.revoke(&id, "tester").unwrap();
     assert!(parent.snapshot().resolve("/mnt/data").is_err());
     assert!(child.snapshot().resolve("/mnt/data").is_err());
-    assert!(service.reconcile(Pid(2), cached).is_err());
+    let revoked = service.reconcile(Pid(2), cached).unwrap();
+    assert!(revoked.host_mounts.is_empty());
+    assert!(revoked.sandbox_spec.is_none());
 }
 
 #[tokio::test]
