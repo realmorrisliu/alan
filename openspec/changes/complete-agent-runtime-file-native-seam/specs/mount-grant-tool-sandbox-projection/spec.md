@@ -54,10 +54,9 @@ records.
 - **AND** bash launch records do not expose the raw Host path to Agent Execution
   Engine
 
-#### Scenario: Tool cwd is below overlapping delegated mounts
-- **WHEN** a Tool Process cwd is below both a parent Host Mount and a more
-  specific nested Host Mount
-- **THEN** native cwd projection uses the longest matching Alan OS namespace
-  prefix, consistent with Kernel path resolution
-- **AND** the parent grant cannot replace or amplify the nested grant's backing
-  or access
+#### Scenario: Process requests overlapping Host Mount projections
+- **WHEN** a Process already holds an active Host Mount projection and another
+  grant would mount at a strict parent or child namespace path
+- **THEN** Host Mount Service rejects the overlapping projection before native
+  Tool sandbox authority is constructed
+- **AND** the existing projection remains unchanged

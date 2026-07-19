@@ -480,6 +480,21 @@ impl HostMountService {
                 grant.export.clone(),
             )
         };
+        ensure!(
+            !state.grants.iter().any(|(id, existing)| {
+                id != grant_id
+                    && existing.public.active
+                    && existing
+                        .projections
+                        .iter()
+                        .any(|projection| projection.pid == pid)
+                    && namespace_paths_strictly_overlap(
+                        &namespace_path,
+                        &existing.public.namespace_path,
+                    )
+            }),
+            "Host Mount namespace path overlaps an active Process projection"
+        );
         for (id, grant) in &mut state.grants {
             if id != grant_id && grant.public.namespace_path == namespace_path {
                 grant.projections.retain(|projection| projection.pid != pid);
@@ -934,6 +949,12 @@ fn validate_mount_namespace_path(path: &str, allow_agent_definition: bool) -> Re
         "Host Mount namespace path targets a reserved mount root"
     );
     Ok(())
+}
+
+fn namespace_paths_strictly_overlap(left: &str, right: &str) -> bool {
+    left != right
+        && (std::path::Path::new(left).starts_with(right)
+            || std::path::Path::new(right).starts_with(left))
 }
 
 fn default_label(namespace_path: &str) -> String {

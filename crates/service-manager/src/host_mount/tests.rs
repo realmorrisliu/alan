@@ -491,54 +491,81 @@ fn inherited_read_only_projection_does_not_recover_write_authority() {
 }
 
 #[test]
-fn overlapping_projections_reconcile_tool_cwd_by_longest_namespace_prefix() {
-    let project = tempfile::tempdir().unwrap();
-    let docs = tempfile::tempdir().unwrap();
-    let service = service();
-    service.register_process(Pid(1), LiveNamespace::new(Namespace::new()));
-
-    for (id, namespace_path, host_path, access) in [
+fn process_projection_rejects_strictly_overlapping_namespace_paths() {
+    for (case, first_path, first_access, second_path, second_access) in [
         (
-            "grant-project",
+            "parent-first",
             "/mnt/project",
-            project.path(),
             HostMountAccess::ReadWrite,
-        ),
-        (
-            "grant-docs",
             "/mnt/project/docs",
-            docs.path(),
             HostMountAccess::ReadOnly,
         ),
+        (
+            "child-first",
+            "/mnt/project/docs",
+            HostMountAccess::ReadOnly,
+            "/mnt/project",
+            HostMountAccess::ReadWrite,
+        ),
     ] {
+        let first_host = tempfile::tempdir().unwrap();
+        let second_host = tempfile::tempdir().unwrap();
+        let service = service();
+        service.register_process(Pid(1), LiveNamespace::new(Namespace::new()));
+        let first_id = format!("grant-first-{case}");
         service
             .enqueue(HostMountRequest {
-                id: id.to_string(),
-                label: id.to_string(),
-                namespace_path: namespace_path.to_string(),
-                access,
+                id: first_id.clone(),
+                label: first_id.clone(),
+                namespace_path: first_path.to_string(),
+                access: first_access,
                 reason: "test overlapping namespace mounts".to_string(),
                 requesting_pid: 1,
             })
             .unwrap();
         service
             .approve_export(
-                id,
-                test_export(namespace_path, host_path.to_path_buf(), access),
+                &first_id,
+                test_export(first_path, first_host.path().to_path_buf(), first_access),
                 "user",
                 "tester",
             )
             .unwrap();
+        let second_id = format!("grant-second-{case}");
+        service
+            .enqueue(HostMountRequest {
+                id: second_id.clone(),
+                label: second_id.clone(),
+                namespace_path: second_path.to_string(),
+                access: second_access,
+                reason: "test overlapping namespace mounts".to_string(),
+                requesting_pid: 1,
+            })
+            .unwrap();
+
+        let error = service
+            .approve_export(
+                &second_id,
+                test_export(second_path, second_host.path().to_path_buf(), second_access),
+                "user",
+                "tester",
+            )
+            .unwrap_err();
+
+        assert!(error.to_string().contains("overlaps"));
+        assert_eq!(
+            service.request_snapshot(&second_id).unwrap().status,
+            HostMountStatus::Failed
+        );
+        assert!(service.grant_record(&second_id).is_none());
+        let binding = ToolExecutionBinding::awaiting_host_projection(
+            PathBuf::from(format!("{first_path}/guides")),
+            first_host.path().join("scratch"),
+        );
+        let reconciled = service.reconcile(Pid(1), binding).unwrap();
+        assert_eq!(reconciled.host_mounts.len(), 1);
+        assert_eq!(reconciled.cwd, first_host.path().join("guides"));
     }
-
-    let binding = ToolExecutionBinding::awaiting_host_projection(
-        PathBuf::from("/mnt/project/docs/guides"),
-        project.path().join("scratch"),
-    );
-    let reconciled = service.reconcile(Pid(1), binding).unwrap();
-
-    assert_eq!(reconciled.host_mounts.len(), 2);
-    assert_eq!(reconciled.cwd, docs.path().join("guides"));
 }
 
 #[tokio::test]
