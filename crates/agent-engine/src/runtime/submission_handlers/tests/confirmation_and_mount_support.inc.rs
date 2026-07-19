@@ -144,7 +144,7 @@
             .clone()
             .with_launch_context(launch_context.clone());
         assert!(
-            state.namespace_environment().set_tool_execution_binding(
+            state.tool_execution().set_execution_binding(
                 crate::tools::ToolExecutionBinding::from_launch_context(
                     &launch_context,
                     source.join("scratch"),
@@ -652,7 +652,7 @@
             tool_result["mount_request"]["namespace_path"],
             "/mnt/project"
         );
-        let roots = state.namespace_environment().tool_sandbox_writable_roots();
+        let roots = state.tool_execution().sandbox_writable_roots();
         assert_eq!(
             roots,
             vec![dunce::canonicalize(host_mount_root.path()).unwrap()]
@@ -728,7 +728,7 @@
         assert_eq!(tool_result["tool_sandbox_applied"], true);
         assert_eq!(tool_result["tool_sandbox_projection_changed"], true);
         assert_eq!(
-            state.namespace_environment().tool_sandbox_writable_roots(),
+            state.tool_execution().sandbox_writable_roots(),
             vec![
                 dunce::canonicalize(host_mount_root.path()).unwrap(),
                 dunce::canonicalize(approved_host.path()).unwrap()

@@ -288,7 +288,7 @@ async fn tool_payload_for_tape(state: &RuntimeLoopState, payload: &Value) -> Val
 }
 
 async fn execute_tool_effect(
-    namespace: crate::runtime::NamespaceRuntimeEnvironment,
+    tools: crate::runtime::transition::NamespaceToolExecution,
     tool_name: &str,
     tool_arguments: Value,
     cancel: &CancellationToken,
@@ -297,8 +297,8 @@ async fn execute_tool_effect(
     let executable = format!("/bin/{tool_name}");
     let arguments_doc =
         serde_json::to_string(&tool_arguments).context("serialize tool arguments")?;
-    let tool = namespace
-        .run_tool_action_with_cancel_and_timeout(
+    let tool = tools
+        .run_action_with_cancel_and_timeout(
             tool_name,
             &executable,
             [arguments_doc],
@@ -357,8 +357,8 @@ where
     }
 
     let tool_package = state
-        .namespace_environment()
-        .discover_tool_packages()
+        .tool_execution()
+        .discover_packages()
         .await?
         .into_iter()
         .find(|package| package.name == tool_call.name);
@@ -400,8 +400,8 @@ where
         });
     };
     let tool_capability = state
-        .namespace_environment()
-        .resolve_tool_capability(&tool_package, &tool_arguments);
+        .tool_execution()
+        .resolve_capability(&tool_package, &tool_arguments);
     let current_tool_cwd = state.default_tool_cwd();
     let policy_decision = maybe_allow_approved_tool_escalation_replay(
         evaluate_tool_policy(
@@ -772,7 +772,7 @@ where
         None
     };
 
-    let execution_target = state.namespace_environment().clone();
+    let execution_target = state.tool_execution();
     let tool_start = Instant::now();
     let tool_timeout_secs = tool_package.timeout_secs;
     let tool_result = execute_tool_effect(

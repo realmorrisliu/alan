@@ -295,12 +295,12 @@
     #[tokio::test]
     async fn namespace_execution_target_spawns_every_builtin_bin_tool() {
         let (state, shell) = create_namespace_test_state_and_shell();
-        let namespace = state.namespace_environment().clone();
+        let tools = state.tool_execution();
         let cancel = CancellationToken::new();
 
         for (idx, tool_name) in BUILTIN_BIN_TOOLS.iter().enumerate() {
             let payload = execute_tool_effect(
-                namespace.clone(),
+                tools.clone(),
                 tool_name,
                 json!({ "tool": tool_name, "call_index": idx }),
                 &cancel,

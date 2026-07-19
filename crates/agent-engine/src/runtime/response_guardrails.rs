@@ -214,8 +214,8 @@ fn capability_for_tool_request(
         .find(|package| package.name == request.name)
         .map(|package| {
             state
-                .namespace_environment()
-                .resolve_tool_capability(package, &request.arguments)
+                .tool_execution()
+                .resolve_capability(package, &request.arguments)
         })
 }
 

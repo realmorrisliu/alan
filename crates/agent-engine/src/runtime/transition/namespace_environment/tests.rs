@@ -16,7 +16,9 @@ use alan_llm::{GenerationRequest, GenerationResponse, LlmProvider, MockLlmProvid
 use alan_llmfs::LlmFs;
 use alan_shell::Shell;
 use tokio::sync::Notify;
+use tokio_util::sync::CancellationToken;
 
+use super::client::NamespaceClient;
 use super::*;
 
 struct EchoRunner;

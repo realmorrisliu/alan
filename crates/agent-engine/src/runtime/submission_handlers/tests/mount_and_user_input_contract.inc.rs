@@ -37,8 +37,8 @@
         .unwrap();
 
         let binding = state
-            .namespace_environment()
-            .tool_execution_binding()
+            .tool_execution()
+            .execution_binding()
             .expect("first approved Host Mount should create a Tool binding");
         assert_eq!(
             binding.cwd,
@@ -119,7 +119,7 @@
         assert_eq!(tool_result["tool_sandbox_applied"], true);
         assert_eq!(tool_result["tool_sandbox_projection_changed"], true);
         assert_eq!(
-            state.namespace_environment().tool_sandbox_writable_roots(),
+            state.tool_execution().sandbox_writable_roots(),
             vec![dunce::canonicalize(host_mount_root.path()).unwrap()]
         );
         let grants = applicator.grants();
@@ -164,7 +164,7 @@
         assert_eq!(tool_result["tool_sandbox_applied"], false);
         assert_eq!(tool_result["tool_sandbox_projection_changed"], false);
         assert_eq!(
-            state.namespace_environment().tool_sandbox_writable_roots(),
+            state.tool_execution().sandbox_writable_roots(),
             vec![dunce::canonicalize(host_mount_root.path()).unwrap()]
         );
         let grants = applicator.grants();
@@ -203,7 +203,7 @@
             .unwrap();
         }
 
-        let roots = state.namespace_environment().tool_sandbox_writable_roots();
+        let roots = state.tool_execution().sandbox_writable_roots();
         assert_eq!(
             roots,
             vec![
@@ -258,7 +258,7 @@
             Some(replacement_host.path().join("file.txt"))
         );
         assert_eq!(
-            state.namespace_environment().tool_sandbox_writable_roots(),
+            state.tool_execution().sandbox_writable_roots(),
             vec![
                 dunce::canonicalize(host_mount_root.path()).unwrap(),
                 dunce::canonicalize(replacement_host.path()).unwrap()
@@ -304,7 +304,7 @@
         assert_eq!(tool_result["tool_sandbox_applied"], true);
         assert_eq!(tool_result["tool_sandbox_projection_changed"], true);
         assert_eq!(
-            state.namespace_environment().tool_sandbox_writable_roots(),
+            state.tool_execution().sandbox_writable_roots(),
             vec![dunce::canonicalize(host_mount_root.path()).unwrap()]
         );
     }
@@ -352,7 +352,7 @@
         assert_eq!(tool_result["tool_sandbox_projection_changed"], false);
         assert_eq!(tool_result["live_applied"], false);
         assert_eq!(
-            state.namespace_environment().tool_sandbox_writable_roots(),
+            state.tool_execution().sandbox_writable_roots(),
             vec![dunce::canonicalize(host_mount_root.path()).unwrap()]
         );
 
