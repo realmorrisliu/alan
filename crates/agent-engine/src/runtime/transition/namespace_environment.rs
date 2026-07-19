@@ -9,6 +9,7 @@ mod agent_files;
 mod child_launch;
 mod client;
 mod generation;
+mod mount_control;
 mod process_files;
 mod tool_execution;
 
@@ -275,6 +276,13 @@ pub(crate) struct NamespaceChildLaunch {
     child_process_assembler: Option<Arc<dyn super::super::ChildAgentProcessAssembler>>,
 }
 
+/// Narrow control surface for applying and retaining approved Namespace mounts.
+pub struct NamespaceMountControl<'a> {
+    launch_context: &'a mut Option<crate::ProcessLaunchContext>,
+    mount_grant_applicator: Option<Arc<dyn MountGrantApplicator>>,
+    tool_process_context: Option<NamespaceToolProcessContext>,
+}
+
 /// Narrow handle for Tool package discovery, policy capability, and execution.
 #[derive(Clone)]
 pub(crate) struct NamespaceToolExecution {
@@ -360,6 +368,15 @@ impl NamespaceRuntimeEnvironment {
         }
     }
 
+    /// Borrow the concrete control surface for approved Namespace mount changes.
+    pub fn mount_control(&mut self) -> NamespaceMountControl<'_> {
+        NamespaceMountControl {
+            launch_context: &mut self.launch_context,
+            mount_grant_applicator: self.mount_grant_applicator.clone(),
+            tool_process_context: self.tool_process_context.clone(),
+        }
+    }
+
     pub(crate) fn tool_execution(&self) -> NamespaceToolExecution {
         NamespaceToolExecution {
             root: self.root.clone(),
@@ -377,45 +394,6 @@ impl NamespaceRuntimeEnvironment {
     ) -> Self {
         self.tool_process_context = Some(NamespaceToolProcessContext { pid, tool_runner });
         self
-    }
-
-    pub(crate) fn persist_approved_host_mount(&mut self, grant: crate::HostMountGrant) -> bool {
-        let Some(context) = self.launch_context.as_mut() else {
-            return false;
-        };
-        if let Some(index) = context
-            .host_mounts
-            .iter()
-            .position(|existing| existing.namespace_path == grant.namespace_path)
-        {
-            let changed = context.host_mounts[index] != grant;
-            context.host_mounts[index] = grant;
-            return changed;
-        }
-        context.host_mounts.push(grant);
-        true
-    }
-
-    pub(crate) fn sync_tool_execution_binding(&self, scratch_dir: PathBuf) -> bool {
-        let Some(launch_context) = self.launch_context.as_ref() else {
-            return false;
-        };
-        let Ok(binding) =
-            crate::tools::ToolExecutionBinding::from_launch_context(launch_context, scratch_dir)
-        else {
-            return false;
-        };
-        let Some(process_context) = self.tool_process_context.as_ref() else {
-            return false;
-        };
-        let changed = process_context
-            .tool_runner
-            .process_binding(process_context.pid)
-            != Some(binding.clone());
-        process_context
-            .tool_runner
-            .register_process_binding(process_context.pid, binding);
-        changed
     }
 
     pub fn with_mount_grant_applicator(
@@ -446,26 +424,6 @@ impl NamespaceRuntimeEnvironment {
 
     pub fn root_transport(&self) -> InProcessTransport {
         self.root.clone()
-    }
-
-    pub fn apply_approved_mount_grant(
-        &mut self,
-        grant: &ApprovedMountGrant,
-    ) -> NamespaceMountApplication {
-        let Some(applicator) = self.mount_grant_applicator.clone() else {
-            return NamespaceMountApplication::unavailable(
-                "live namespace mount applicator unavailable",
-            );
-        };
-        match applicator.apply_mount_grant(grant) {
-            Ok(namespace) => {
-                if let Some(context) = self.launch_context.as_mut() {
-                    context.namespace = namespace;
-                }
-                NamespaceMountApplication::applied()
-            }
-            Err(error) => NamespaceMountApplication::failed(error),
-        }
     }
 }
 

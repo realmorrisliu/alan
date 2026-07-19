@@ -56,9 +56,9 @@ pub use launch_config::{
 };
 pub use transition::{
     ApprovedMountGrant, ApprovedMountGrantAccess, MountGrantApplicator,
-    MountGrantApplicatorFactory, NamespaceMountApplication, NamespaceRuntimeEnvironment,
-    NamespaceToolActionOutput, NamespaceTurnOutput, NamespaceTurnRuntime,
-    NamespaceTurnRuntimeConfig,
+    MountGrantApplicatorFactory, NamespaceMountApplication, NamespaceMountControl,
+    NamespaceRuntimeEnvironment, NamespaceToolActionOutput, NamespaceTurnOutput,
+    NamespaceTurnRuntime, NamespaceTurnRuntimeConfig,
 };
 
 // Re-export the transition context for internal runtime modules.

@@ -315,15 +315,17 @@ pub(super) async fn spawn_child_namespace_runtime_environment(
         .iter()
         .find(|grant| grant.namespace_path == "/agent-definition")
     {
-        let applied = environment.apply_approved_mount_grant(&ApprovedMountGrant::new(
-            grant.namespace_path.clone(),
-            grant.host_path.clone(),
-            match grant.access {
-                alan_kernel::Access::ReadOnly => ApprovedMountGrantAccess::ReadOnly,
-                alan_kernel::Access::ReadWrite => ApprovedMountGrantAccess::ReadWrite,
-            },
-            "Agent Definition launch reference",
-        ));
+        let applied = environment
+            .mount_control()
+            .apply_approved_grant(&ApprovedMountGrant::new(
+                grant.namespace_path.clone(),
+                grant.host_path.clone(),
+                match grant.access {
+                    alan_kernel::Access::ReadOnly => ApprovedMountGrantAccess::ReadOnly,
+                    alan_kernel::Access::ReadWrite => ApprovedMountGrantAccess::ReadWrite,
+                },
+                "Agent Definition launch reference",
+            ));
         if has_mount_grant_applicator {
             anyhow::ensure!(
                 applied.namespace_applied,

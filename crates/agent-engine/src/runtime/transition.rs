@@ -11,8 +11,8 @@ pub(super) use namespace_environment::NamespaceRequestRecord;
 pub use namespace_environment::{
     ApprovedMountGrant, ApprovedMountGrantAccess, MountGrantApplicator,
     MountGrantApplicatorFactory, NamespaceActionRecord, NamespaceMountApplication,
-    NamespaceRuntimeEnvironment, NamespaceToolActionOutput, NamespaceTurnOutput,
-    NamespaceTurnRuntime, NamespaceTurnRuntimeConfig,
+    NamespaceMountControl, NamespaceRuntimeEnvironment, NamespaceToolActionOutput,
+    NamespaceTurnOutput, NamespaceTurnRuntime, NamespaceTurnRuntimeConfig,
 };
 pub(crate) use namespace_environment::{
     NamespaceAgentFiles, NamespaceChildLaunch, NamespaceGeneration, NamespaceProcessFiles,
@@ -76,15 +76,11 @@ impl RuntimeLoopState {
 
     /// AgentFS projection path for the owning Process.
     pub(crate) fn agent_path(&self) -> &str {
-        self.namespace_environment().agent_path()
+        self.environment.agent_path()
     }
 
     pub(crate) fn child_run_registry(&self) -> &super::child_runs::ChildRunRegistry {
-        self.namespace_environment().child_run_registry()
-    }
-
-    pub(crate) fn namespace_environment(&self) -> &NamespaceRuntimeEnvironment {
-        &self.environment
+        self.environment.child_run_registry()
     }
 
     pub(crate) fn namespace_generation(&self) -> NamespaceGeneration {
@@ -101,6 +97,10 @@ impl RuntimeLoopState {
 
     pub(crate) fn child_launch(&self) -> NamespaceChildLaunch {
         self.environment.child_launch()
+    }
+
+    pub(crate) fn mount_control(&mut self) -> NamespaceMountControl<'_> {
+        self.environment.mount_control()
     }
 
     pub(crate) fn tool_execution(&self) -> NamespaceToolExecution {
