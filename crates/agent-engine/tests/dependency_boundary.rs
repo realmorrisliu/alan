@@ -1,5 +1,8 @@
 //! Absence guards for the namespace-native Agent Execution Engine boundary.
 
+#[path = "dependency_boundary/turn_memory.rs"]
+mod turn_memory;
+
 fn read_runtime_source(path: &str) -> String {
     std::fs::read_to_string(format!("{}/src/runtime/{path}", env!("CARGO_MANIFEST_DIR")))
         .unwrap_or_else(|error| panic!("read src/runtime/{path}: {error}"))
@@ -345,6 +348,8 @@ fn transition_leaf_workflows_do_not_receive_the_runtime_loop_aggregate() {
         "tool_batch.rs",
         "tool_resolution.rs",
         "tool_resolution/runtime_inputs.rs",
+        "turn_memory.rs",
+        "turn_memory/runtime_inputs.rs",
         "turn_support.rs",
         "virtual_tools.rs",
     ] {
