@@ -2,7 +2,7 @@
 
 use std::{
     collections::BTreeSet,
-    path::Path,
+    path::{Path, PathBuf},
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
@@ -228,6 +228,15 @@ impl AgentRuntimeService {
             let launch_context = launch_context.rebound_live(namespace.clone(), credentials);
             let mount_applicator =
                 self.mount_applicator(pid, namespace.clone(), &launch_context, &tool_runner);
+            self.register_tool_execution_binding(
+                pid,
+                &launch_context,
+                template
+                    .process
+                    .store_bindings
+                    .as_ref()
+                    .map(|stores| stores.tmp.clone()),
+            )?;
             let environment = alan_agent_engine::runtime::NamespaceRuntimeEnvironment::new(
                 root.clone(),
                 format!("/agent/{}", pid.0),
@@ -306,6 +315,44 @@ impl AgentRuntimeService {
             tool_runner.register_process_authority(pid, authority);
         }
         applicator
+    }
+
+    /// Seed one Process with an explicit Tool binding.
+    ///
+    /// Host Mount Service reconciles this binding immediately before each Tool Process starts.
+    /// Keeping an authority-free seed for a mount-free Process means the first logical Host Mount
+    /// can supply native authority without recreating a binding in the Agent Execution Engine.
+    fn register_tool_execution_binding(
+        &self,
+        pid: Pid,
+        launch_context: &alan_agent_engine::ProcessLaunchContext,
+        scratch_dir: Option<PathBuf>,
+    ) -> Result<()> {
+        let Some(scratch_dir) = scratch_dir else {
+            ensure!(
+                !launch_context.has_host_mounts(),
+                "Agent Process with Host Mounts requires Agent Runtime Service store bindings",
+            );
+            return Ok(());
+        };
+        let binding = if launch_context.host_mounts.is_empty() {
+            alan_agent_engine::tools::ToolExecutionBinding::awaiting_host_projection(
+                Path::new(&launch_context.cwd).to_path_buf(),
+                scratch_dir,
+            )
+        } else {
+            alan_agent_engine::tools::ToolExecutionBinding::from_launch_context(
+                launch_context,
+                scratch_dir,
+            )?
+        };
+        let binding = if launch_context.has_host_mounts() {
+            self.host_mount.reconcile(pid, binding)?
+        } else {
+            binding
+        };
+        self.tool_runner.register_process_binding(pid, binding);
+        Ok(())
     }
 }
 
@@ -397,25 +444,7 @@ impl AgentRuntimeService {
                     .select(child_pid.0, &plan.llm_connection_name)?;
             }
 
-            if plan.launch_context.has_host_mounts() {
-                let scratch = scratch_dir.context(
-                    "child Agent Process with Host Mounts requires Agent Runtime Service store bindings",
-                )?;
-                let binding = if plan.launch_context.host_mounts.is_empty() {
-                    alan_agent_engine::tools::ToolExecutionBinding::awaiting_host_projection(
-                        Path::new(&plan.launch_context.cwd).to_path_buf(),
-                        scratch,
-                    )
-                } else {
-                    alan_agent_engine::tools::ToolExecutionBinding::from_launch_context(
-                        &plan.launch_context,
-                        scratch,
-                    )?
-                };
-                let binding = self.host_mount.reconcile(child_pid, binding)?;
-                self.tool_runner
-                    .register_process_binding(child_pid, binding);
-            }
+            self.register_tool_execution_binding(child_pid, &plan.launch_context, scratch_dir)?;
 
             let runtime_procfs = self
                 .procfs
@@ -436,24 +465,21 @@ impl AgentRuntimeService {
             );
             live_namespace.replace_mount(
                 "/mnt/host-mount",
-                InProcessTransport::new(
-                    self.host_mount.file_server_for_process(child_pid.0),
-                ),
+                InProcessTransport::new(self.host_mount.file_server_for_process(child_pid.0)),
                 Access::ReadWrite,
             );
             let root = InProcessTransport::new(Arc::new(
                 alan_kernel::MountFs::from_live_namespace(live_namespace.clone()),
             ));
-            let mut environment =
-                alan_agent_engine::runtime::NamespaceRuntimeEnvironment::new(
-                    root,
-                    format!("/agent/{pid}"),
-                    plan.llm_connection_name()?,
-                )
-                .with_launch_context(plan.launch_context.clone())
-                .with_tool_process_context(child_pid, self.tool_runner.clone())
-                .with_mount_grant_applicator(mount_applicator)
-                .with_child_process_assembler(self.child_process_assembler(child_pid));
+            let mut environment = alan_agent_engine::runtime::NamespaceRuntimeEnvironment::new(
+                root,
+                format!("/agent/{pid}"),
+                plan.llm_connection_name()?,
+            )
+            .with_launch_context(plan.launch_context.clone())
+            .with_tool_process_context(child_pid, self.tool_runner.clone())
+            .with_mount_grant_applicator(mount_applicator)
+            .with_child_process_assembler(self.child_process_assembler(child_pid));
             apply_agent_definition_grant(&mut environment, &plan)?;
             let observation_environment =
                 child_observation_environment(&self.procfs, &self.agent_root, &pid, &plan).await?;

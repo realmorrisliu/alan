@@ -1,7 +1,15 @@
 use std::os::unix::fs::{FileTypeExt, PermissionsExt, symlink};
+use std::path::Path;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 use std::time::Duration;
 
-use alan_agent_engine::{AgentProcessConfig, LlmClient, ToolCall, ToolRegistry};
+use alan_agent_engine::{
+    AgentProcessConfig, AgentRuntimeStoreBindings, LlmClient, ToolCall, ToolRegistry,
+    tools::{Tool, ToolContext, ToolResult},
+};
 use alan_llm::{GenerationResponse, MockLlmProvider};
 use alan_os_host::{
     AlanOsHost, HostBootConfig, HostCommandPlane, HostEndpointPaths, HostStorePaths,
@@ -41,7 +49,43 @@ fn config_for(channel_id: &str) -> HostBootConfig {
     )
 }
 
-fn mount_request_config() -> HostBootConfig {
+struct MountProbeTool {
+    completed: Arc<AtomicBool>,
+}
+
+impl Tool for MountProbeTool {
+    fn name(&self) -> &str {
+        "mount_probe"
+    }
+
+    fn description(&self) -> &str {
+        "Read a test file through an approved Alan OS Host Mount"
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "path": { "type": "string" }
+            },
+            "required": ["path"],
+            "additionalProperties": false
+        })
+    }
+
+    fn execute(&self, arguments: serde_json::Value, context: &ToolContext) -> ToolResult {
+        let path = arguments["path"].as_str().unwrap().to_string();
+        let resolved = context.resolve_path(&path);
+        let completed = self.completed.clone();
+        Box::pin(async move {
+            let contents = std::fs::read_to_string(resolved?)?;
+            completed.store(true, Ordering::Release);
+            Ok(serde_json::json!({ "contents": contents }))
+        })
+    }
+}
+
+fn mount_request_config(store_root: &Path, completed: Arc<AtomicBool>) -> HostBootConfig {
     let mut request = response("");
     request.tool_calls = vec![ToolCall {
         id: Some("call-mount".to_string()),
@@ -53,11 +97,43 @@ fn mount_request_config() -> HostBootConfig {
             "reason": "test"
         }),
     }];
+    let mut probe = response("");
+    probe.tool_calls = vec![ToolCall {
+        id: Some("call-probe".to_string()),
+        name: "mount_probe".to_string(),
+        arguments: serde_json::json!({ "path": "/mnt/docs/probe.txt" }),
+    }];
+    let stores = AgentRuntimeStoreBindings {
+        rollouts: store_root.join("rollouts"),
+        checkpoints: store_root.join("checkpoints"),
+        cache: store_root.join("cache"),
+        tmp: store_root.join("tmp"),
+        metadata: store_root.join("metadata"),
+    };
+    for path in [
+        &stores.rollouts,
+        &stores.checkpoints,
+        &stores.cache,
+        &stores.tmp,
+        &stores.metadata,
+    ] {
+        std::fs::create_dir_all(path).unwrap();
+    }
+    let process = AgentProcessConfig {
+        store_bindings: Some(stores),
+        ..AgentProcessConfig::default()
+    };
+    let mut tools = ToolRegistry::new();
+    tools.register(MountProbeTool { completed });
     HostBootConfig::ephemeral(
         "test",
-        AgentProcessConfig::default(),
-        LlmClient::new(MockLlmProvider::new().with_responses(vec![request, response("done")])),
-        ToolRegistry::new(),
+        process,
+        LlmClient::new(MockLlmProvider::new().with_responses(vec![
+            request,
+            probe,
+            response("done"),
+        ])),
+        tools,
     )
 }
 
@@ -352,14 +428,22 @@ async fn shell_client_exit_detaches_without_stopping_host_or_root_agent() {
 }
 
 #[tokio::test]
-async fn native_host_mount_approval_keeps_host_path_out_of_namespace_records() {
+async fn native_host_mount_approval_hides_host_path_and_enables_first_tool() {
     let _host_guard = TEST_HOST_LOCK.lock().await;
     let runtime = tempfile::tempdir().unwrap();
     let host_dir = tempfile::tempdir().unwrap();
+    std::fs::write(host_dir.path().join("probe.txt"), "visible through grant").unwrap();
+    let probe_completed = Arc::new(AtomicBool::new(false));
     let paths = HostEndpointPaths::from_runtime_dir(runtime.path(), "test").unwrap();
-    let host = AlanOsHost::boot(mount_request_config(), paths.clone())
-        .await
-        .unwrap();
+    let host = AlanOsHost::boot(
+        mount_request_config(
+            &runtime.path().join("system-store"),
+            probe_completed.clone(),
+        ),
+        paths.clone(),
+    )
+    .await
+    .unwrap();
     let shutdown = CancellationToken::new();
     let shutdown_request = shutdown.clone();
     let server =
@@ -394,6 +478,13 @@ async fn native_host_mount_approval_keeps_host_path_out_of_namespace_records() {
         .approve_host_mount(request_id.clone(), host_dir.path().to_path_buf())
         .await
         .unwrap();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !probe_completed.load(Ordering::Acquire) {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("the first approved logical Host Mount should establish Tool execution authority");
     wait_for_turn_idle(&mut activity, "Host Mount approval").await;
     activity.close().await.unwrap();
     assert_eq!(
