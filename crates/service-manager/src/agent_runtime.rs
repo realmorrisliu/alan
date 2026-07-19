@@ -22,7 +22,7 @@ use alan_agent_engine::{
 use alan_ap::{Fid, FileServer, InProcessTransport, OpenMode};
 use alan_kernel::{
     Access, Credentials, ExecNamespaceAccess, ExecNamespaceManifest, ExecNamespaceMount, ExecSpec,
-    LiveNamespace, Pid,
+    LiveNamespace, Namespace, Pid,
 };
 use alan_llm::ProviderCapabilities;
 use anyhow::{Context, Result, ensure};
@@ -227,7 +227,7 @@ impl AgentRuntimeService {
             ));
             let launch_context = launch_context.rebound_live(namespace.clone(), credentials);
             let mount_applicator =
-                self.mount_applicator(pid, namespace.clone(), &launch_context, &tool_runner);
+                self.mount_applicator(pid, namespace.clone(), &launch_context, &tool_runner, None);
             self.register_tool_execution_binding(
                 pid,
                 &launch_context,
@@ -307,10 +307,16 @@ impl AgentRuntimeService {
         namespace: LiveNamespace,
         launch_context: &alan_agent_engine::ProcessLaunchContext,
         tool_runner: &ToolProcessRunner,
+        inherited_from: Option<Pid>,
     ) -> Arc<dyn MountGrantApplicator> {
-        let factory = HostMountApplicatorFactory::new(self.host_mount.clone());
-        let inherited_mount_paths = launch_context.host_mount_namespace_paths();
-        let applicator = factory.create(pid, namespace, &inherited_mount_paths);
+        let factory = inherited_from.map_or_else(
+            || HostMountApplicatorFactory::new(self.host_mount.clone()),
+            |parent_pid| {
+                HostMountApplicatorFactory::inheriting_from(self.host_mount.clone(), parent_pid)
+            },
+        );
+        let inherited_mount_references = launch_context.projected_host_mount_references();
+        let applicator = factory.create(pid, namespace, &inherited_mount_references);
         if let Some(authority) = factory.tool_execution_authority() {
             tool_runner.register_process_authority(pid, authority);
         }
@@ -420,6 +426,7 @@ impl AgentRuntimeService {
             live_namespace.clone(),
             &plan.launch_context,
             &self.tool_runner,
+            Some(parent_pid),
         );
         plan.launch_context = plan
             .launch_context
@@ -610,6 +617,7 @@ fn child_namespace_manifest(
     plan: &ChildAgentProcessAssemblyPlan,
     _pid: &str,
 ) -> ExecNamespaceManifest {
+    let namespace = plan.launch_context.namespace_snapshot();
     let mut mounts = vec![
         ExecNamespaceMount::new(plan.agent_mount.clone(), ExecNamespaceAccess::ReadWrite),
         ExecNamespaceMount::new(plan.llm_mount.clone(), ExecNamespaceAccess::ReadWrite),
@@ -628,19 +636,16 @@ fn child_namespace_manifest(
     mounts.extend(plan.launch_context.host_mounts.iter().map(|grant| {
         ExecNamespaceMount::new(grant.namespace_path.clone(), exec_access(grant.access))
     }));
-    mounts.extend(
-        plan.launch_context
-            .projected_host_mounts()
-            .into_iter()
-            .map(|(path, access)| ExecNamespaceMount::new(path, exec_access(access))),
-    );
+    mounts.extend(live_projected_host_mounts(
+        &namespace,
+        plan.launch_context.projected_host_mounts(),
+    ));
     mounts.extend(
         plan.launch_context
             .package_references
             .iter()
             .filter_map(|reference| {
-                plan.launch_context
-                    .namespace
+                namespace
                     .resolve(&reference.namespace_path)
                     .ok()
                     .map(|resolved| {
@@ -665,16 +670,9 @@ fn child_namespace_manifest(
                     })
             })
             .filter_map(|descriptor| {
-                plan.launch_context
-                    .namespace
-                    .resolve(&descriptor.path)
-                    .ok()
-                    .map(|resolved| {
-                        ExecNamespaceMount::new(
-                            descriptor.path.clone(),
-                            exec_access(resolved.access),
-                        )
-                    })
+                namespace.resolve(&descriptor.path).ok().map(|resolved| {
+                    ExecNamespaceMount::new(descriptor.path.clone(), exec_access(resolved.access))
+                })
             }),
     );
     mounts.sort_by(|left, right| {
@@ -684,6 +682,21 @@ fn child_namespace_manifest(
     });
     mounts.dedup();
     ExecNamespaceManifest { mounts }
+}
+
+fn live_projected_host_mounts(
+    namespace: &Namespace,
+    projected: Vec<(String, Access)>,
+) -> Vec<ExecNamespaceMount> {
+    projected
+        .into_iter()
+        .filter_map(|(path, _)| {
+            namespace
+                .union_at(&path)
+                .last()
+                .map(|mount| ExecNamespaceMount::new(path, exec_access(mount.access)))
+        })
+        .collect()
 }
 
 fn exec_access(access: Access) -> ExecNamespaceAccess {
@@ -816,6 +829,37 @@ fn next_child_fid() -> Fid {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn child_manifest_omits_projected_mounts_missing_from_the_live_namespace() {
+        let mut namespace = Namespace::new();
+        namespace.mount(
+            "/",
+            InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::new())),
+            Access::ReadWrite,
+        );
+        namespace.mount(
+            "/mnt/live",
+            InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::new())),
+            Access::ReadOnly,
+        );
+
+        let mounts = live_projected_host_mounts(
+            &namespace,
+            vec![
+                ("/mnt/live".to_string(), Access::ReadOnly),
+                ("/mnt/revoked".to_string(), Access::ReadWrite),
+            ],
+        );
+
+        assert_eq!(
+            mounts,
+            vec![ExecNamespaceMount::new(
+                "/mnt/live",
+                ExecNamespaceAccess::ReadOnly,
+            )]
+        );
+    }
 
     #[tokio::test]
     async fn service_assembles_and_releases_child_agent_process() {

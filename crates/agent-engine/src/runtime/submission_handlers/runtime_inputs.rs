@@ -25,4 +25,14 @@ impl<'a> SubmissionRuntime<'a> {
             mount_control,
         }
     }
+
+    pub(super) fn record_projected_host_mount(
+        &mut self,
+        grant_reference: String,
+        namespace_path: String,
+        access: alan_kernel::Access,
+    ) {
+        self.mount_control
+            .record_projected_host_mount(grant_reference, namespace_path, access);
+    }
 }

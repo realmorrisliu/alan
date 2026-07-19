@@ -110,6 +110,58 @@ fn grants_project_explicitly_hide_paths_and_revoke() {
 }
 
 #[test]
+fn replacing_a_process_mount_path_retires_the_old_projection_identity() {
+    let old_host = tempfile::tempdir().unwrap();
+    let latest_host = tempfile::tempdir().unwrap();
+    let service = service();
+    let namespace = LiveNamespace::new(Namespace::new());
+    service.register_process(Pid(7), namespace.clone());
+
+    for (id, host) in [
+        ("grant-old", old_host.path()),
+        ("grant-latest", latest_host.path()),
+    ] {
+        service
+            .enqueue(HostMountRequest {
+                id: id.to_string(),
+                label: id.to_string(),
+                namespace_path: "/mnt/project".to_string(),
+                access: HostMountAccess::ReadOnly,
+                reason: "replace exact mount".to_string(),
+                requesting_pid: 7,
+            })
+            .unwrap();
+        service
+            .approve_export(
+                id,
+                test_export(
+                    "/mnt/project",
+                    host.to_path_buf(),
+                    HostMountAccess::ReadOnly,
+                ),
+                "user",
+                "tester",
+            )
+            .unwrap();
+    }
+
+    let binding = ToolExecutionBinding::awaiting_host_projection(
+        PathBuf::from("/mnt/project"),
+        latest_host.path().join("scratch"),
+    );
+    let reconciled = service.reconcile(Pid(7), binding.clone()).unwrap();
+    assert_eq!(reconciled.cwd, latest_host.path());
+
+    service.revoke("grant-old", "tester").unwrap();
+
+    assert!(namespace.snapshot().resolve("/mnt/project").is_ok());
+    assert_eq!(
+        service.reconcile(Pid(7), binding).unwrap().cwd,
+        latest_host.path()
+    );
+}
+
+#[test]
 fn mount_free_tool_binding_reconciles_without_acquiring_authority() {
     let service = service();
     let namespace = LiveNamespace::new(Namespace::new());
@@ -298,8 +350,8 @@ fn explicitly_passed_child_projection_is_revoked_with_its_parent() {
         .unwrap();
 
     let child = LiveNamespace::new(parent.snapshot());
-    let factory = HostMountApplicatorFactory::new(service.clone());
-    factory.create(Pid(2), child.clone(), &["/mnt/data".to_string()]);
+    let factory = HostMountApplicatorFactory::inheriting_from(service.clone(), Pid(1));
+    factory.create(Pid(2), child.clone(), std::slice::from_ref(&id));
     let cached = ToolExecutionBinding::awaiting_host_projection(
         PathBuf::from("/mnt/data"),
         host.path().join("scratch"),
@@ -315,6 +367,62 @@ fn explicitly_passed_child_projection_is_revoked_with_its_parent() {
     let revoked = service.reconcile(Pid(2), cached).unwrap();
     assert!(revoked.host_mounts.is_empty());
     assert!(revoked.sandbox_spec.is_none());
+}
+
+#[test]
+fn child_inheritance_uses_the_exact_grant_held_by_its_parent() {
+    let first_host = tempfile::tempdir().unwrap();
+    let other_host = tempfile::tempdir().unwrap();
+    let service = service();
+    let first_parent = LiveNamespace::new(Namespace::new());
+    let other_parent = LiveNamespace::new(Namespace::new());
+    service.register_process(Pid(1), first_parent.clone());
+    service.register_process(Pid(2), other_parent);
+
+    for (id, pid, host) in [
+        ("grant-a", Pid(1), first_host.path()),
+        ("grant-z", Pid(2), other_host.path()),
+    ] {
+        service
+            .enqueue(HostMountRequest {
+                id: id.to_string(),
+                label: id.to_string(),
+                namespace_path: "/mnt/project".to_string(),
+                access: HostMountAccess::ReadOnly,
+                reason: "test exact inheritance".to_string(),
+                requesting_pid: pid.0,
+            })
+            .unwrap();
+        service
+            .approve_export(
+                id,
+                test_export(
+                    "/mnt/project",
+                    host.to_path_buf(),
+                    HostMountAccess::ReadOnly,
+                ),
+                "user",
+                "tester",
+            )
+            .unwrap();
+    }
+
+    let child = LiveNamespace::new(first_parent.snapshot());
+    HostMountApplicatorFactory::inheriting_from(service.clone(), Pid(1)).create(
+        Pid(3),
+        child,
+        &["grant-a".to_string()],
+    );
+    let binding = ToolExecutionBinding::awaiting_host_projection(
+        PathBuf::from("/mnt/project"),
+        first_host.path().join("scratch"),
+    );
+
+    let reconciled = service.reconcile(Pid(3), binding).unwrap();
+
+    assert_eq!(reconciled.host_mounts.len(), 1);
+    assert_eq!(reconciled.cwd, first_host.path());
+    assert_ne!(reconciled.cwd, other_host.path());
 }
 
 #[tokio::test]

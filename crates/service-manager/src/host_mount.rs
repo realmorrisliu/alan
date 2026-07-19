@@ -217,22 +217,36 @@ impl HostMountService {
         self.state.lock().unwrap().processes.insert(pid, namespace);
     }
 
-    fn register_process_with_inherited_mounts(
+    fn register_process_with_inherited_grants(
         &self,
         pid: Pid,
         namespace: LiveNamespace,
-        inherited_mount_paths: &[String],
+        inherited_from: Option<Pid>,
+        inherited_grant_references: &[String],
     ) {
         let visible = namespace.snapshot();
         let mut state = self.state.lock().unwrap();
         state.processes.insert(pid, namespace.clone());
+        let Some(inherited_from) = inherited_from else {
+            return;
+        };
         let mut inherited = Vec::new();
-        for (id, grant) in &mut state.grants {
+        for id in inherited_grant_references {
+            let Some(grant) = state.grants.get_mut(id) else {
+                continue;
+            };
+            let visible_access = visible
+                .union_at(&grant.public.namespace_path)
+                .last()
+                .map(|mount| mount.access);
             if grant.public.active
-                && inherited_mount_paths
+                && grant
+                    .projections
                     .iter()
-                    .any(|path| path == &grant.public.namespace_path)
-                && visible.resolve(&grant.public.namespace_path).is_ok()
+                    .any(|projection| projection.pid == inherited_from)
+                && visible_access.is_some_and(|access| {
+                    grant.public.access.kernel() == Access::ReadWrite || access == Access::ReadOnly
+                })
                 && !grant
                     .projections
                     .iter()
@@ -439,15 +453,32 @@ impl HostMountService {
             .get(&pid)
             .cloned()
             .with_context(|| format!("unknown Process {pid:?}"))?;
+        let (namespace_path, access, export) = {
+            let grant = state
+                .grants
+                .get(grant_id)
+                .with_context(|| format!("unknown Host Mount grant `{grant_id}`"))?;
+            ensure!(grant.public.active, "Host Mount grant is revoked");
+            ensure!(
+                grant.owner == pid,
+                "Host Mount grant belongs to another Process"
+            );
+            (
+                grant.public.namespace_path.clone(),
+                grant.public.access,
+                grant.export.clone(),
+            )
+        };
+        for (id, grant) in &mut state.grants {
+            if id != grant_id && grant.public.namespace_path == namespace_path {
+                grant.projections.retain(|projection| projection.pid != pid);
+            }
+        }
+        namespace.replace_mount(&namespace_path, export.file_tree(), access.kernel());
         let grant = state
             .grants
             .get_mut(grant_id)
-            .with_context(|| format!("unknown Host Mount grant `{grant_id}`"))?;
-        ensure!(grant.public.active, "Host Mount grant is revoked");
-        ensure!(
-            grant.owner == pid,
-            "Host Mount grant belongs to another Process"
-        );
+            .expect("validated Host Mount grant remains retained");
         if grant
             .projections
             .iter()
@@ -455,11 +486,6 @@ impl HostMountService {
         {
             return Ok(());
         }
-        namespace.replace_mount(
-            &grant.public.namespace_path,
-            grant.export.file_tree(),
-            grant.public.access.kernel(),
-        );
         grant.projections.push(Projection { pid, namespace });
         audit(
             &mut state,
@@ -776,11 +802,23 @@ impl ToolExecutionAuthority for HostMountService {
 #[derive(Debug)]
 pub struct HostMountApplicatorFactory {
     service: Arc<HostMountService>,
+    inherited_from: Option<Pid>,
 }
 
 impl HostMountApplicatorFactory {
     pub fn new(service: Arc<HostMountService>) -> Self {
-        Self { service }
+        Self {
+            service,
+            inherited_from: None,
+        }
+    }
+
+    /// Create a factory that may delegate grants currently projected to `parent_pid`.
+    pub fn inheriting_from(service: Arc<HostMountService>, parent_pid: Pid) -> Self {
+        Self {
+            service,
+            inherited_from: Some(parent_pid),
+        }
     }
 }
 
@@ -789,12 +827,13 @@ impl MountGrantApplicatorFactory for HostMountApplicatorFactory {
         &self,
         pid: Pid,
         live_namespace: LiveNamespace,
-        inherited_mount_paths: &[String],
+        inherited_mount_references: &[String],
     ) -> Arc<dyn MountGrantApplicator> {
-        self.service.register_process_with_inherited_mounts(
+        self.service.register_process_with_inherited_grants(
             pid,
             live_namespace.clone(),
-            inherited_mount_paths,
+            self.inherited_from,
+            inherited_mount_references,
         );
         Arc::new(HostMountApplicator {
             service: self.service.clone(),

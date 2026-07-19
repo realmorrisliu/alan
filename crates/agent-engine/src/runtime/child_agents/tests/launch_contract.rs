@@ -572,7 +572,11 @@ fn child_launch_context_tracks_live_service_mounts_and_revocation() {
         alan_ap::InProcessTransport::new(std::sync::Arc::new(alan_ap::reference::MemFs::new())),
         alan_kernel::Access::ReadOnly,
     );
-    parent.record_projected_host_mount("/mnt/docs".to_string(), alan_kernel::Access::ReadOnly);
+    parent.record_projected_host_mount(
+        "grant-docs".to_string(),
+        "/mnt/docs".to_string(),
+        alan_kernel::Access::ReadOnly,
+    );
     parent = parent.rebound_live(live.clone(), parent.credentials.clone());
 
     let definition = host_launch_root(definition);
@@ -587,6 +591,10 @@ fn child_launch_context_tracks_live_service_mounts_and_revocation() {
     assert_eq!(
         child.projected_host_mounts(),
         vec![("/mnt/docs".to_string(), alan_kernel::Access::ReadOnly)]
+    );
+    assert_eq!(
+        child.projected_host_mount_references(),
+        vec!["grant-docs".to_string()]
     );
 
     live.unmount("/mnt/docs");
@@ -615,7 +623,11 @@ fn child_launch_context_removes_unpassed_live_service_mount() {
         alan_ap::InProcessTransport::new(std::sync::Arc::new(alan_ap::reference::MemFs::new())),
         alan_kernel::Access::ReadOnly,
     );
-    parent.record_projected_host_mount("/mnt/docs".to_string(), alan_kernel::Access::ReadOnly);
+    parent.record_projected_host_mount(
+        "grant-docs".to_string(),
+        "/mnt/docs".to_string(),
+        alan_kernel::Access::ReadOnly,
+    );
     parent = parent.rebound_live(live, parent.credentials.clone());
     let mut spec = launch_spec(temp.path().join("child-definition"));
     spec.handles.clear();

@@ -6,11 +6,12 @@ impl NamespaceMountControl<'_> {
     /// Retain logical projection metadata after Host Mount Service commits the live mount.
     pub fn record_projected_host_mount(
         &mut self,
+        grant_reference: String,
         namespace_path: String,
         access: alan_kernel::Access,
     ) {
         if let Some(context) = self.launch_context.as_mut() {
-            context.record_projected_host_mount(namespace_path, access);
+            context.record_projected_host_mount(grant_reference, namespace_path, access);
         }
     }
 

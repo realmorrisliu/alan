@@ -114,6 +114,15 @@
                 .projected_host_mounts(),
             vec![("/mnt/project".to_string(), alan_kernel::Access::ReadWrite)]
         );
+        assert_eq!(
+            state
+                .environment
+                .child_launch()
+                .launch_context()
+                .unwrap()
+                .projected_host_mount_references(),
+            vec!["grant-opaque-1".to_string()]
+        );
     }
 
     #[tokio::test]

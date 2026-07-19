@@ -462,14 +462,16 @@ fn handle_host_mount_terminal(
 ) -> RuntimeOpAction {
     let status = terminal.status.as_str();
     let approved = status == "approved";
-    if approved {
+    if approved && let Some(grant_reference) = terminal.grant_reference.clone() {
         let access = match pending.access.as_str() {
             "read_write" => alan_kernel::Access::ReadWrite,
             _ => alan_kernel::Access::ReadOnly,
         };
-        runtime
-            .mount_control
-            .record_projected_host_mount(pending.namespace_path.clone(), access);
+        runtime.record_projected_host_mount(
+            grant_reference,
+            pending.namespace_path.clone(),
+            access,
+        );
     }
     let result = json!({
         "status": status,

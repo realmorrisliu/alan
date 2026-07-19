@@ -188,12 +188,15 @@ pub trait MountGrantApplicator: std::fmt::Debug + Send + Sync {
 
 /// Host-provided factory that can build a mount grant applicator once the engine
 /// has created the live namespace handle for a runtime.
+///
+/// Inherited mount references are opaque metadata. The Host implementation must also verify that
+/// the spawning Process currently holds each referenced projection before delegating it.
 pub trait MountGrantApplicatorFactory: std::fmt::Debug + Send + Sync {
     fn create(
         &self,
         pid: alan_kernel::Pid,
         live_namespace: alan_kernel::LiveNamespace,
-        inherited_mount_paths: &[String],
+        inherited_mount_references: &[String],
     ) -> Arc<dyn MountGrantApplicator>;
 
     fn tool_execution_authority(&self) -> Option<Arc<dyn crate::tools::ToolExecutionAuthority>> {

@@ -231,6 +231,7 @@ pub struct ProcessLaunchContext {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct ProjectedHostMount {
+    grant_reference: String,
     namespace_path: String,
     access: Access,
 }
@@ -304,36 +305,37 @@ impl ProcessLaunchContext {
     }
 
     /// Record one Host-Mount-Service-owned projection without retaining Host backing.
-    pub(crate) fn record_projected_host_mount(&mut self, namespace_path: String, access: Access) {
+    pub(crate) fn record_projected_host_mount(
+        &mut self,
+        grant_reference: String,
+        namespace_path: String,
+        access: Access,
+    ) {
         if let Some(existing) = self
             .projected_host_mounts
             .iter_mut()
             .find(|mount| mount.namespace_path == namespace_path)
         {
+            existing.grant_reference = grant_reference;
             existing.access = access;
         } else {
             self.projected_host_mounts.push(ProjectedHostMount {
+                grant_reference,
                 namespace_path,
                 access,
             });
         }
     }
 
-    /// Logical Host Mount paths whose actual authority is retained by namespace handles.
-    pub fn host_mount_namespace_paths(&self) -> Vec<String> {
-        let mut paths = self
-            .host_mounts
+    /// Opaque Host Mount references selected for explicit child delegation.
+    ///
+    /// References are metadata, not authority: Host Mount Service must also prove that the
+    /// spawning Process currently holds the corresponding namespace projection.
+    pub fn projected_host_mount_references(&self) -> Vec<String> {
+        self.projected_host_mounts
             .iter()
-            .map(|grant| grant.namespace_path.clone())
-            .chain(
-                self.projected_host_mounts
-                    .iter()
-                    .map(|mount| mount.namespace_path.clone()),
-            )
-            .collect::<Vec<_>>();
-        paths.sort();
-        paths.dedup();
-        paths
+            .map(|mount| mount.grant_reference.clone())
+            .collect()
     }
 
     pub fn projected_host_mounts(&self) -> Vec<(String, Access)> {
@@ -413,11 +415,7 @@ impl ProcessLaunchContext {
 
     pub fn child(&self) -> Self {
         Self {
-            namespace: self
-                .live_namespace
-                .as_ref()
-                .map(LiveNamespace::snapshot)
-                .unwrap_or_else(|| self.namespace.child()),
+            namespace: self.namespace_snapshot(),
             host_mounts: self.host_mounts.clone(),
             descriptors: self.descriptors.clone(),
             package_references: self.package_references.clone(),
@@ -427,6 +425,14 @@ impl ProcessLaunchContext {
             live_namespace: None,
             retained_authorities: self.retained_authorities.clone(),
         }
+    }
+
+    /// Snapshot the current Process namespace, including live mount and revocation changes.
+    pub fn namespace_snapshot(&self) -> Namespace {
+        self.live_namespace
+            .as_ref()
+            .map(LiveNamespace::snapshot)
+            .unwrap_or_else(|| self.namespace.child())
     }
 
     /// Rebind inherited Process authority to a concrete live namespace and credentials.
@@ -548,6 +554,30 @@ mod tests {
         assert_eq!(child.host_mounts, context.host_mounts);
         assert_eq!(child.namespace.describe(), context.namespace.describe());
         assert_eq!(child.cwd, "/");
+    }
+
+    #[test]
+    fn latest_projected_grant_reference_replaces_the_same_namespace_path() {
+        let mut context = ProcessLaunchContext::root();
+        context.record_projected_host_mount(
+            "grant-old".to_string(),
+            "/mnt/project".to_string(),
+            Access::ReadOnly,
+        );
+        context.record_projected_host_mount(
+            "grant-latest".to_string(),
+            "/mnt/project".to_string(),
+            Access::ReadWrite,
+        );
+
+        assert_eq!(
+            context.projected_host_mount_references(),
+            vec!["grant-latest".to_string()]
+        );
+        assert_eq!(
+            context.projected_host_mounts(),
+            vec![("/mnt/project".to_string(), Access::ReadWrite)]
+        );
     }
 
     #[test]
