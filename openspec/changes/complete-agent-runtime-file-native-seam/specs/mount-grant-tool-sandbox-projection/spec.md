@@ -54,6 +54,13 @@ records.
 - **AND** bash launch records do not expose the raw Host path to Agent Execution
   Engine
 
+#### Scenario: Bash preserves cwd across multiple delegated mounts
+- **WHEN** a Tool Process cwd is below one of multiple explicitly delegated Host
+  Mounts
+- **THEN** Host authority reconciliation resolves the cwd through that covering
+  mount independent of grant iteration order
+- **AND** every other delegated mount remains available with its effective access
+
 #### Scenario: Process requests overlapping Host Mount projections
 - **WHEN** a Process already holds an active Host Mount projection and another
   grant would mount at a strict parent or child namespace path

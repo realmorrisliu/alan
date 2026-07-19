@@ -789,6 +789,7 @@ impl ToolExecutionAuthority for HostMountService {
         mut binding: ToolExecutionBinding,
     ) -> Result<ToolExecutionBinding> {
         let carried_host_mount_authority = !binding.host_mounts.is_empty();
+        let requested_namespace_cwd = binding.namespace_cwd.clone();
         let state = self.state.lock().unwrap();
         let managed_paths = state
             .grants
@@ -819,10 +820,10 @@ impl ToolExecutionAuthority for HostMountService {
 
         binding.remove_host_mount_paths(&managed_paths)?;
         for (export, effective_access) in exports {
+            binding.namespace_cwd = requested_namespace_cwd.clone();
             export.apply_tool_authority(effective_access, &mut binding)?;
         }
-        // An empty seed is a valid zero-authority binding for mount-free Tools. Fail closed only
-        // when reconciliation removed Host Mount authority that the cached binding carried.
+        // Fail closed only if reconciliation removed cached Host Mount authority.
         ensure!(
             !carried_host_mount_authority || !binding.host_mounts.is_empty(),
             "Tool Process has no active Host Mount"

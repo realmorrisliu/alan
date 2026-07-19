@@ -187,6 +187,54 @@ fn mount_free_tool_binding_reconciles_without_acquiring_authority() {
 }
 
 #[test]
+fn reconcile_preserves_cwd_until_all_projected_mounts_are_applied() {
+    let first_host = tempfile::tempdir().unwrap();
+    let cwd_host = tempfile::tempdir().unwrap();
+    std::fs::create_dir(cwd_host.path().join("work")).unwrap();
+    let service = service();
+    service.register_process(Pid(7), LiveNamespace::new(Namespace::new()));
+
+    for (id, namespace_path, host) in [
+        ("grant-a", "/mnt/a", first_host.path()),
+        ("grant-z", "/mnt/z", cwd_host.path()),
+    ] {
+        service
+            .enqueue(HostMountRequest {
+                id: id.to_string(),
+                label: id.to_string(),
+                namespace_path: namespace_path.to_string(),
+                access: HostMountAccess::ReadWrite,
+                reason: "test multi-mount cwd reconciliation".to_string(),
+                requesting_pid: 7,
+            })
+            .unwrap();
+        service
+            .approve_export(
+                id,
+                test_export(
+                    namespace_path,
+                    host.to_path_buf(),
+                    HostMountAccess::ReadWrite,
+                ),
+                "user",
+                "tester",
+            )
+            .unwrap();
+    }
+
+    let binding = ToolExecutionBinding::awaiting_host_projection(
+        PathBuf::from("/mnt/z/work"),
+        cwd_host.path().join("scratch"),
+    );
+
+    let reconciled = service.reconcile(Pid(7), binding).unwrap();
+
+    assert_eq!(reconciled.host_mounts.len(), 2);
+    assert_eq!(reconciled.namespace_cwd, PathBuf::from("/mnt/z/work"));
+    assert_eq!(reconciled.cwd, cwd_host.path().join("work"));
+}
+
+#[test]
 fn knowing_grant_id_does_not_project_to_another_process() {
     let host = tempfile::tempdir().unwrap();
     let service = service();
