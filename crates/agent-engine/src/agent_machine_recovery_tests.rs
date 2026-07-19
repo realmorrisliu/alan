@@ -89,6 +89,38 @@ fn test_load_from_rollout_recovers_only_unsettled_logical_host_mount_waits() {
         .unwrap();
         assert!(settled.pending_host_mount("request-42").is_none());
         assert!(!settled.has_pending_interaction());
+
+        items.pop();
+        items.push(RolloutItem::Event(EventRecord {
+            event_type: HOST_MOUNT_REQUEST_WAIT_CLEARED_EVENT_TYPE.to_string(),
+            payload: serde_json::json!({
+                "request_id": "request-42",
+                "reason": "turn_reset"
+            }),
+            timestamp: "2026-07-19T00:00:02Z".to_string(),
+        }));
+        tokio::fs::write(
+            &rollout_path,
+            items
+                .iter()
+                .map(serde_json::to_string)
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap()
+                .join("\n")
+                + "\n",
+        )
+        .await
+        .unwrap();
+        let cleared = AgentMachine::load_from_rollout_in_dir(
+            &rollout_path,
+            "/proc/restarted-after-turn-reset",
+            "test-model",
+            temp_dir.path(),
+        )
+        .await
+        .unwrap();
+        assert!(cleared.pending_host_mount("request-42").is_none());
+        assert!(!cleared.has_pending_interaction());
     });
 }
 

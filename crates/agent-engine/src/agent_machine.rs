@@ -21,8 +21,9 @@ use runtime_control::{ResponsesContinuationState, RollbackOutcome};
 use transition_state::MachineTransitionState;
 pub(crate) use transition_state::{
     DeferredRuntimeAction, HOST_MOUNT_REQUEST_TERMINAL_EVENT_TYPE,
-    HOST_MOUNT_REQUEST_WAITING_EVENT_TYPE, NormalizedToolCall, PendingHostMountRequest,
-    PendingYield, TurnActivityState, is_auto_mid_turn_compaction_emergency,
+    HOST_MOUNT_REQUEST_WAIT_CLEARED_EVENT_TYPE, HOST_MOUNT_REQUEST_WAITING_EVENT_TYPE,
+    NormalizedToolCall, PendingHostMountRequest, PendingYield, TurnActivityState,
+    is_auto_mid_turn_compaction_emergency,
 };
 
 pub use recovery::{

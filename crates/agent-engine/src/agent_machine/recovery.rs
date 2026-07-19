@@ -5,7 +5,8 @@ use alan_agent_protocol::{CompactionAttemptSnapshot, MemoryFlushAttemptSnapshot}
 use tracing::error;
 
 use super::{
-    AgentMachine, HOST_MOUNT_REQUEST_TERMINAL_EVENT_TYPE, HOST_MOUNT_REQUEST_WAITING_EVENT_TYPE,
+    AgentMachine, HOST_MOUNT_REQUEST_TERMINAL_EVENT_TYPE,
+    HOST_MOUNT_REQUEST_WAIT_CLEARED_EVENT_TYPE, HOST_MOUNT_REQUEST_WAITING_EVENT_TYPE,
     PendingHostMountRequest, ResponsesContinuationState, runtime_control,
 };
 use crate::rollout::{CompactedItem, EffectRecord, EventRecord, RolloutItem, RolloutRecorder};
@@ -25,7 +26,8 @@ impl AgentMachine {
                         pending.insert(request.request_id.clone(), request);
                     }
                 }
-                HOST_MOUNT_REQUEST_TERMINAL_EVENT_TYPE => {
+                HOST_MOUNT_REQUEST_TERMINAL_EVENT_TYPE
+                | HOST_MOUNT_REQUEST_WAIT_CLEARED_EVENT_TYPE => {
                     if let Some(request_id) = event
                         .payload
                         .get("request_id")
