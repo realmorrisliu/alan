@@ -158,7 +158,6 @@ async fn test_cancel_current_task() {
         )),
         core_config: config,
         runtime_config,
-        definition_persona_dirs: Vec::new(),
         prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
     };
     state.machine.add_user_message("existing history");
@@ -336,7 +335,6 @@ fn test_transition_state_creation() {
         )),
         core_config: config,
         runtime_config,
-        definition_persona_dirs: Vec::new(),
         prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
     };
 

@@ -918,7 +918,6 @@ mod tests {
                 compaction_keep_last: 1,
                 ..RuntimeConfig::default()
             },
-            definition_persona_dirs: Vec::new(),
             prompt_cache: PromptAssemblyCache::new(Vec::new()),
         }
     }

@@ -370,7 +370,6 @@ async fn refresh_turn_memory_surfaces_writes_expected_files() {
             config
         },
         runtime_config: super::super::RuntimeConfig::default(),
-        definition_persona_dirs: Vec::new(),
         prompt_cache: super::super::prompt_cache::PromptAssemblyCache::new(Vec::new()),
     };
 
@@ -411,7 +410,6 @@ async fn refresh_memory_surfaces_needs_no_model_request_or_llm_mount() {
             config
         },
         runtime_config: super::super::RuntimeConfig::default(),
-        definition_persona_dirs: Vec::new(),
         prompt_cache: super::super::prompt_cache::PromptAssemblyCache::new(Vec::new()),
     };
 

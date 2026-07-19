@@ -133,13 +133,6 @@ impl PromptAssemblyCache {
         }
     }
 
-    pub(crate) fn rebind_paths(&mut self, definition_persona_dirs: Vec<PathBuf>) {
-        if self.definition_persona_dirs != definition_persona_dirs {
-            self.definition_persona_dirs = definition_persona_dirs;
-            self.definition_persona_snapshot = None;
-        }
-    }
-
     pub(crate) fn set_fixed_definition_persona_section(&mut self, section: Option<String>) {
         self.fixed_definition_persona_section = section;
     }

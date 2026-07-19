@@ -123,7 +123,6 @@
             environment: namespace_environment_for_test(),
             core_config: config,
             runtime_config,
-            definition_persona_dirs: Vec::new(),
             prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
         }
     }

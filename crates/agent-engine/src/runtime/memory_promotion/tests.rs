@@ -433,7 +433,6 @@ async fn deferred_memory_promotion_uses_namespace_llmfs() {
         environment: NamespaceRuntimeEnvironment::new(root, "/agent/1", "default"),
         core_config: Config::default(),
         runtime_config: RuntimeConfig::default(),
-        definition_persona_dirs: Vec::new(),
         prompt_cache: PromptAssemblyCache::new(Vec::new()),
     };
     let job = TurnMemoryPromotionJob {

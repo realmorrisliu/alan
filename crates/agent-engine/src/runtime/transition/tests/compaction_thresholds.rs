@@ -12,7 +12,6 @@ async fn test_maybe_compact_context_no_compaction_needed() {
         )),
         core_config: config,
         runtime_config,
-        definition_persona_dirs: Vec::new(),
         prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
     };
 
@@ -54,7 +53,6 @@ async fn test_maybe_compact_context_with_mock_llm() {
         )),
         core_config: config,
         runtime_config,
-        definition_persona_dirs: Vec::new(),
         prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
     };
 
@@ -100,7 +98,6 @@ async fn test_maybe_compact_context_triggers_on_estimated_token_budget() {
         )),
         core_config: config,
         runtime_config,
-        definition_persona_dirs: Vec::new(),
         prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
     };
 
@@ -151,7 +148,6 @@ async fn test_maybe_compact_context_triggers_immediately_when_ratio_is_zero() {
         )),
         core_config: config,
         runtime_config,
-        definition_persona_dirs: Vec::new(),
         prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
     };
 
@@ -202,7 +198,6 @@ async fn test_maybe_compact_context_skips_when_context_window_budget_has_room() 
         )),
         core_config: config,
         runtime_config,
-        definition_persona_dirs: Vec::new(),
         prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
     };
 
@@ -257,7 +252,6 @@ async fn test_auto_pre_turn_soft_compaction_flushes_memory_before_compaction() {
         ])),
         core_config: config,
         runtime_config,
-        definition_persona_dirs: Vec::new(),
         prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
     };
 
@@ -348,7 +342,6 @@ async fn test_auto_pre_turn_soft_compaction_continues_after_memory_flush_failure
         ])),
         core_config: config,
         runtime_config,
-        definition_persona_dirs: Vec::new(),
         prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
     };
 
@@ -445,7 +438,6 @@ async fn test_auto_pre_turn_soft_compaction_skips_memory_flush_when_nothing_is_d
         ])),
         core_config: config,
         runtime_config,
-        definition_persona_dirs: Vec::new(),
         prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
     };
 
@@ -539,7 +531,6 @@ async fn test_auto_pre_turn_soft_compaction_records_already_flushed_cycle_skip()
         ])),
         core_config: config,
         runtime_config,
-        definition_persona_dirs: Vec::new(),
         prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
     };
 
@@ -630,7 +621,6 @@ async fn test_auto_pre_turn_hard_compaction_skips_memory_flush() {
         ])),
         core_config: config,
         runtime_config,
-        definition_persona_dirs: Vec::new(),
         prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
     };
 
@@ -692,7 +682,6 @@ async fn test_manual_compaction_bypasses_automatic_thresholds_without_memory_flu
         )),
         core_config: config,
         runtime_config,
-        definition_persona_dirs: Vec::new(),
         prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
     };
 
@@ -745,7 +734,6 @@ async fn test_maybe_compact_context_allows_mid_turn_emergency_near_hard_limit() 
         )),
         core_config: config,
         runtime_config,
-        definition_persona_dirs: Vec::new(),
         prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
     };
 

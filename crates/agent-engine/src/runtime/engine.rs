@@ -346,7 +346,6 @@ fn spawn_with_prepared_runtime_environment(
                 &runtime_config.governance,
             )
         };
-    let prompt_cache_persona_dirs = resolved_agent_definition.persona_dirs.clone();
     if core_config.memory.enabled
         && let Some(memory_dir) = core_config.memory.store_dir.as_deref()
         && let Err(err) = crate::prompts::ensure_memory_store_layout_at(memory_dir)
@@ -368,7 +367,7 @@ fn spawn_with_prepared_runtime_environment(
         super::prompt_cache::PromptAssemblyCache::with_fixed_capability_view_and_overrides(
             resolved_agent_definition.capability_view.clone(),
             resolved_agent_definition.skill_overrides.clone(),
-            prompt_cache_persona_dirs.clone(),
+            resolved_agent_definition.persona_dirs.clone(),
             host_capabilities,
         );
     prompt_cache.set_fixed_definition_persona_section(resolved_agent_definition.persona_context);
@@ -430,7 +429,6 @@ fn spawn_with_prepared_runtime_environment(
             environment,
             core_config,
             runtime_config,
-            definition_persona_dirs: prompt_cache_persona_dirs.clone(),
             prompt_cache,
         };
         match super::ui_surfaces::initialize(&state.agent_files()).await {

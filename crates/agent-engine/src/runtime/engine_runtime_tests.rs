@@ -409,7 +409,6 @@ async fn test_outer_idle_reads_answered_namespace_request_response() {
         environment: namespace_environment,
         core_config: crate::Config::default(),
         runtime_config: RuntimeConfig::default(),
-        definition_persona_dirs: Vec::new(),
         prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
     };
 

@@ -153,31 +153,14 @@ where
     }
 }
 
-fn resolve_definition_persona_dirs(state: &RuntimeLoopState) -> Vec<std::path::PathBuf> {
-    state.definition_persona_dirs.clone()
-}
-
 fn build_domain_prompt_with_skills(
-    state: &mut RuntimeLoopState,
+    prompt_cache: &mut super::prompt_cache::PromptAssemblyCache,
     user_input: Option<&[crate::tape::ContentPart]>,
     active_skills: Option<&[crate::skills::ActiveSkillEnvelope]>,
 ) -> super::prompt_cache::PromptAssemblyResult {
-    state
-        .prompt_cache
-        .rebind_paths(resolve_definition_persona_dirs(state));
-    state.prompt_cache.set_memory_store_dir(
-        state
-            .core_config
-            .memory
-            .enabled
-            .then(|| state.core_config.memory.store_dir.clone())
-            .flatten(),
-    );
     match active_skills {
-        Some(active_skills) => state
-            .prompt_cache
-            .build_with_active_skills(active_skills, user_input),
-        None => state.prompt_cache.build(user_input),
+        Some(active_skills) => prompt_cache.build_with_active_skills(active_skills, user_input),
+        None => prompt_cache.build(user_input),
     }
 }
 
@@ -275,7 +258,7 @@ where
         .then(|| state.machine.active_skills().to_vec())
         .filter(|active_skills| !active_skills.is_empty());
     let prompt_build = build_domain_prompt_with_skills(
-        state,
+        &mut state.prompt_cache,
         user_input_for_skills.as_deref(),
         resumed_active_skills.as_deref(),
     );

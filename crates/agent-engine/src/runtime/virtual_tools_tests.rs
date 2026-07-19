@@ -100,7 +100,6 @@ fn create_test_transition_state() -> super::super::transition::RuntimeLoopState 
             .with_launch_context(launch_context),
         core_config: config,
         runtime_config,
-        definition_persona_dirs: Vec::new(),
         prompt_cache,
     }
 }

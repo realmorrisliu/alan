@@ -22,7 +22,6 @@ async fn test_manual_compaction_records_audit_fields() {
         )),
         core_config: config,
         runtime_config,
-        definition_persona_dirs: Vec::new(),
         prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
     };
 
@@ -110,7 +109,6 @@ async fn test_compaction_retry_result_is_audited_when_trimming_succeeds() {
         )),
         core_config: config,
         runtime_config,
-        definition_persona_dirs: Vec::new(),
         prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
     };
 
@@ -174,7 +172,6 @@ async fn test_compaction_generation_failure_uses_degraded_fallback_and_audits_it
         )),
         core_config: config,
         runtime_config,
-        definition_persona_dirs: Vec::new(),
         prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
     };
 
@@ -253,7 +250,6 @@ async fn test_degraded_compaction_rebases_active_turn_start() {
         )),
         core_config: config,
         runtime_config,
-        definition_persona_dirs: Vec::new(),
         prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
     };
 
@@ -330,7 +326,6 @@ async fn test_compaction_failure_without_fallback_escalates_warning_and_preserve
         )),
         core_config: config,
         runtime_config,
-        definition_persona_dirs: Vec::new(),
         prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
     };
 
