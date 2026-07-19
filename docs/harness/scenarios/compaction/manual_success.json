@@ -3,7 +3,7 @@
   "category": "compaction",
   "description": "Validate manual compaction persists one coherent Agent Machine attempt.",
   "blocking": false,
-  "command": "cargo test -p alan-agent-engine --lib runtime::agent_loop::tests::test_manual_compaction_records_audit_fields -- --exact",
+  "command": "cargo test -p alan-agent-engine --lib runtime::transition::tests::test_manual_compaction_records_audit_fields -- --exact",
   "assertions": [
     "manual compaction completes successfully",
     "Agent Machine and rollout evidence agree on the attempt id",

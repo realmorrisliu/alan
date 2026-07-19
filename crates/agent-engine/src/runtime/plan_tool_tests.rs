@@ -124,7 +124,7 @@ fn test_parse_plan_status_invalid_values() {
 
 #[tokio::test]
 async fn test_try_handle_virtual_tool_call_update_plan() {
-    let mut state = create_test_agent_loop_state();
+    let mut state = create_test_transition_state();
     let expected_items = vec![alan_agent_protocol::PlanItem {
         id: "1".to_string(),
         content: "Step 1".to_string(),
@@ -178,7 +178,7 @@ async fn test_try_handle_virtual_tool_call_update_plan() {
 
 #[tokio::test]
 async fn test_try_handle_virtual_tool_call_invalid_update_plan() {
-    let mut state = create_test_agent_loop_state();
+    let mut state = create_test_transition_state();
 
     let tool_call = NormalizedToolCall {
         id: "call_1".to_string(),

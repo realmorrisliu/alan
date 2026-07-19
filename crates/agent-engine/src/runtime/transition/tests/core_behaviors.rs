@@ -32,13 +32,13 @@ fn test_sanitize_tool_text_for_compaction_enforces_hard_char_cap() {
 fn test_sanitize_tool_text_for_compaction_preserves_tail_identifiers_under_hard_cap() {
     let long_noise = "x".repeat(COMPACTION_TOOL_OUTPUT_CHAR_LIMIT);
     let tool_output = format!(
-        "{long_noise}\n{long_noise}\n{long_noise}\npath: crates/agent-engine/src/runtime/agent_loop.rs\ntool_call_id: call_tail_123\nfinal status: failed"
+        "{long_noise}\n{long_noise}\n{long_noise}\npath: crates/agent-engine/src/runtime/transition.rs\ntool_call_id: call_tail_123\nfinal status: failed"
     );
 
     let sanitized = sanitize_tool_text_for_compaction(&tool_output);
 
     assert!(sanitized.chars().count() <= COMPACTION_TOOL_OUTPUT_CHAR_LIMIT);
-    assert!(sanitized.contains("crates/agent-engine/src/runtime/agent_loop.rs"));
+    assert!(sanitized.contains("crates/agent-engine/src/runtime/transition.rs"));
     assert!(sanitized.contains("call_tail_123"));
     assert!(sanitized.contains("final status: failed"));
 }
@@ -322,7 +322,7 @@ async fn test_emit_streaming_chunks() {
 }
 
 #[test]
-fn test_agent_loop_state_creation() {
+fn test_transition_state_creation() {
     let config = Config::default();
     let machine = AgentMachine::new();
     let runtime_config = super::RuntimeConfig::default();

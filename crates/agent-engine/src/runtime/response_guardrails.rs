@@ -3,7 +3,7 @@
 //! These checks enforce runtime-level invariants before emitting a response.
 //! They are intentionally independent from task/domain skills.
 
-use super::agent_loop::RuntimeLoopState;
+use super::transition::RuntimeLoopState;
 use crate::tape::{ContentPart, Message, ToolRequest, ToolResponse};
 use alan_agent_protocol::ToolCapability;
 use serde_json::Value;

@@ -23,6 +23,36 @@ use std::{
 use tempfile::TempDir;
 use tokio_util::sync::CancellationToken;
 
+#[test]
+fn accepted_transition_classifies_only_turn_and_brokered_input_as_inband() {
+    assert!(accepts_inband_submissions(&Op::Turn {
+        parts: vec![alan_agent_protocol::ContentPart::text("turn")],
+        context: None,
+    }));
+    assert!(accepts_inband_submissions(&Op::Input {
+        parts: vec![alan_agent_protocol::ContentPart::text("steer")],
+        mode: InputMode::Steer,
+    }));
+    assert!(accepts_inband_submissions(&Op::Input {
+        parts: vec![alan_agent_protocol::ContentPart::text("follow-up")],
+        mode: InputMode::FollowUp,
+    }));
+
+    assert!(!accepts_inband_submissions(&Op::Input {
+        parts: vec![alan_agent_protocol::ContentPart::text("next turn")],
+        mode: InputMode::NextTurn,
+    }));
+    assert!(!accepts_inband_submissions(&Op::CompactWithOptions {
+        focus: None,
+    }));
+    assert!(!accepts_inband_submissions(&Op::Rollback { turns: 1 }));
+    assert!(!accepts_inband_submissions(&Op::Interrupt));
+    assert!(!accepts_inband_submissions(&Op::Resume {
+        request_id: "request-1".to_string(),
+        content: Vec::new(),
+    }));
+}
+
 fn maybe_memory_promotion_response(request: &GenerationRequest) -> Option<GenerationResponse> {
     let system_prompt = request.system_prompt.as_deref()?;
     if system_prompt != crate::prompts::MEMORY_PROMOTION_PROMPT {

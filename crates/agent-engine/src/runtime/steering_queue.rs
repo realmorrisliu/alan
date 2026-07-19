@@ -2,7 +2,7 @@ use alan_agent_protocol::{Event, InputMode, Op};
 use anyhow::Result;
 use serde_json::json;
 
-use super::agent_loop::RuntimeLoopState;
+use super::transition::RuntimeLoopState;
 use super::turn_driver::{MAX_BUFFERED_INBAND_USER_INPUTS, TurnInputBroker};
 use super::turn_support::tool_result_preview;
 use crate::agent_machine::NormalizedToolCall;

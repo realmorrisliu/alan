@@ -1,6 +1,8 @@
-//! Core agent loop implementation.
+//! Accepted-submission transition for one Agent Machine.
 //!
-//! This module contains the main agent execution logic.
+//! The outer Process loop owns input transport and lifecycle control. Once it accepts a
+//! submission, this module advances Machine state and returns only the control outcome the outer
+//! loop needs.
 
 mod namespace_environment;
 
@@ -13,7 +15,9 @@ pub use namespace_environment::{
     NamespaceTurnRuntime, NamespaceTurnRuntimeConfig,
 };
 
-use alan_agent_protocol::{Event, Submission};
+use std::collections::VecDeque;
+
+use alan_agent_protocol::{Event, InputMode, Op, Submission};
 use anyhow::Result;
 use tokio_util::sync::CancellationToken;
 use tracing::warn;
@@ -32,7 +36,7 @@ use super::tool_orchestrator::{
     ToolBatchOrchestratorOutcome, ToolOrchestratorInputs, replay_approved_tool_batch_with_cancel,
     replay_approved_tool_call_with_cancel,
 };
-use super::turn_driver::TurnInputBroker;
+use super::turn_driver::{TurnInputBroker, drive_turn_submission_with_cancel};
 pub(super) use super::turn_executor::run_turn_with_cancel;
 use super::turn_executor::{TurnExecutionOutcome, TurnRunKind};
 #[allow(
@@ -189,6 +193,62 @@ impl RuntimeLoopState {
         self.namespace_environment()
             .tool_execution_binding()
             .map(|binding| binding.cwd)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TransitionCompletion {
+    Completed,
+    Paused,
+}
+
+pub(crate) struct AcceptedSubmissionOutcome {
+    pub(crate) result: Result<TransitionCompletion>,
+    pub(crate) requeue_inband_submissions: bool,
+    pub(crate) deferred_actions: VecDeque<DeferredRuntimeAction>,
+}
+
+pub(crate) fn accepts_inband_submissions(op: &Op) -> bool {
+    matches!(
+        op,
+        Op::Turn { .. }
+            | Op::Input {
+                mode: InputMode::Steer | InputMode::FollowUp,
+                ..
+            }
+    )
+}
+
+pub(crate) async fn advance_accepted_submission(
+    state: &mut RuntimeLoopState,
+    submission: Submission,
+    broker: &TurnInputBroker,
+    cancel: &CancellationToken,
+) -> AcceptedSubmissionOutcome {
+    let requeue_inband_submissions = accepts_inband_submissions(&submission.op);
+    state.machine.accept_submission(submission.id.clone());
+    let mut emit = |_event: Event| async {};
+
+    let result = if requeue_inband_submissions {
+        drive_turn_submission_with_cancel(state, submission, broker, &mut emit, cancel).await
+    } else {
+        handle_submission_with_cancel(state, submission, &mut emit, cancel).await
+    }
+    .map(|()| {
+        if state.machine.has_pending_interaction() {
+            TransitionCompletion::Paused
+        } else {
+            TransitionCompletion::Completed
+        }
+    });
+
+    let deferred_actions = state.machine.drain_deferred_runtime_actions();
+    state.machine.finish_submission();
+
+    AcceptedSubmissionOutcome {
+        result,
+        requeue_inband_submissions,
+        deferred_actions,
     }
 }
 

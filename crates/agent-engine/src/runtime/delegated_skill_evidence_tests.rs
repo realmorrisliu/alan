@@ -2,7 +2,7 @@ use super::*;
 
 #[tokio::test]
 async fn redaction_expansion_preserves_delegated_output_reference_and_child_paths() {
-    let (state, shell) = create_namespace_agent_loop_state_and_shell();
+    let (state, shell) = create_namespace_transition_state_and_shell();
     let request = DelegatedSkillInvocationRequest {
         skill_id: "repo-review".to_string(),
         target: "reviewer".to_string(),
@@ -54,7 +54,7 @@ async fn redaction_expansion_preserves_delegated_output_reference_and_child_path
 
 #[tokio::test]
 async fn long_delegated_output_uses_parent_resolvable_namespace_reference() {
-    let (mut state, shell) = create_namespace_agent_loop_state_and_shell();
+    let (mut state, shell) = create_namespace_transition_state_and_shell();
     activate_test_delegated_skill(&mut state, "repo-review", "reviewer");
     let tool_call = NormalizedToolCall {
         id: "call_long_child".to_string(),
@@ -128,7 +128,7 @@ async fn failed_delegated_evidence_uses_namespace_refs_with_debug_rollout_paths(
         .into_iter()
         .enumerate()
     {
-        let (state, shell) = create_namespace_agent_loop_state_and_shell();
+        let (state, shell) = create_namespace_transition_state_and_shell();
         let request = DelegatedSkillInvocationRequest {
             skill_id: "repo-review".to_string(),
             target: "reviewer".to_string(),
@@ -177,7 +177,7 @@ async fn failed_delegated_evidence_uses_namespace_refs_with_debug_rollout_paths(
 
 #[tokio::test]
 async fn evidence_resolution_distinguishes_missing_and_retention_expired() {
-    let (state, _shell) = create_namespace_agent_loop_state_and_shell();
+    let (state, _shell) = create_namespace_transition_state_and_shell();
     let preview = Some("bounded preview".to_string());
     let child_run = Some(json!({"child_run_id": "child-1"}));
     let missing_ref = crate::evidence::NamespaceEvidenceReference {
@@ -230,7 +230,7 @@ async fn evidence_resolution_distinguishes_missing_and_retention_expired() {
 
 #[tokio::test]
 async fn evidence_resolution_honors_open_ended_ranges() {
-    let (state, _shell) = create_namespace_agent_loop_state_and_shell();
+    let (state, _shell) = create_namespace_transition_state_and_shell();
     let action_id = state
         .namespace_environment()
         .write_action(NamespaceActionRecord::new("range-test", "completed").with_output("abcdef"))

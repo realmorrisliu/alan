@@ -390,7 +390,7 @@ async fn test_outer_idle_reads_answered_namespace_request_response() {
         crate::runtime::NamespaceRuntimeEnvironment::new(root, "/agent/1", "default");
 
     let request_id = namespace_environment
-        .write_request(crate::runtime::agent_loop::NamespaceRequestRecord::new(
+        .write_request(crate::runtime::transition::NamespaceRequestRecord::new(
             "structured_input",
             "Provide the missing value",
         ))

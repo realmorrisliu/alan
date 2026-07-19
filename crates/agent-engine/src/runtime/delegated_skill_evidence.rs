@@ -7,7 +7,6 @@ use crate::skills::{
     DelegatedSkillResult, DelegatedSkillResultTruncation,
 };
 
-use super::agent_loop::{NamespaceActionRecord, RuntimeLoopState};
 use super::delegated_child_run::{
     ChildRuntimeResult, DelegatedChildRunReference, MAX_DELEGATED_RESULT_SUMMARY_CHARS,
 };
@@ -15,6 +14,7 @@ use super::delegated_skill_tool::{
     DelegatedSkillInvocationRequest, MAX_DELEGATED_PATH_CHARS, MAX_DELEGATED_SKILL_ID_CHARS,
     MAX_DELEGATED_TARGET_CHARS, MAX_DELEGATED_TASK_CHARS,
 };
+use super::transition::{NamespaceActionRecord, RuntimeLoopState};
 
 pub(super) const MAX_DELEGATED_STRUCTURED_OUTPUT_CHARS: usize = 4_000;
 pub(super) const MAX_DELEGATED_CHILD_RUN_METADATA_CHARS: usize = 2_000;

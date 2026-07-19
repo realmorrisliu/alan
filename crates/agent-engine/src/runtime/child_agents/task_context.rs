@@ -1,4 +1,4 @@
-use crate::runtime::agent_loop::RuntimeLoopState;
+use crate::runtime::transition::RuntimeLoopState;
 use crate::tape::Message;
 use alan_agent_protocol::{SpawnHandle, SpawnSpec};
 

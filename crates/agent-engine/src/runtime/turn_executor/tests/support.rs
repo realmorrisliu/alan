@@ -6,11 +6,11 @@ pub(super) async fn run_deferred_runtime_actions(state: &mut RuntimeLoopState) -
     let count = actions.len();
     for action in actions {
         assert_eq!(
-            crate::runtime::agent_loop::run_deferred_runtime_action_with_cancel(
+            crate::runtime::transition::run_deferred_runtime_action_with_cancel(
                 state, action, &cancel,
             )
             .await,
-            crate::runtime::agent_loop::DeferredRuntimeActionExit::Completed,
+            crate::runtime::transition::DeferredRuntimeActionExit::Completed,
             "run deferred runtime action"
         );
     }

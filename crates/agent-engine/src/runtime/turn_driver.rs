@@ -5,7 +5,7 @@ use anyhow::Result;
 use tokio::sync::{Mutex, Notify};
 use tokio_util::sync::CancellationToken;
 
-use super::agent_loop::{RuntimeLoopState, handle_submission_with_cancel_and_steering};
+use super::transition::{RuntimeLoopState, handle_submission_with_cancel_and_steering};
 use super::turn_support::cancel_current_task;
 use crate::agent_machine::AgentMachine;
 
@@ -82,17 +82,6 @@ impl TurnInputBroker {
     }
 }
 
-pub(super) fn should_drive_turn_submission(op: &Op) -> bool {
-    matches!(
-        op,
-        Op::Turn { .. }
-            | Op::Input {
-                mode: InputMode::Steer | InputMode::FollowUp,
-                ..
-            }
-    )
-}
-
 pub(super) fn is_turn_resume_submission(op: &Op) -> bool {
     matches!(op, Op::Resume { .. })
 }
@@ -124,10 +113,6 @@ where
 {
     broker.clear().await;
     let _ = state.machine.clear_buffered_inband_submissions();
-    state
-        .machine
-        .accept_submission(initial_submission.id.clone());
-
     handle_submission_with_cancel_and_steering(
         state,
         initial_submission,
@@ -267,23 +252,7 @@ mod tests {
     use alan_shell::Shell;
 
     #[test]
-    fn test_turn_submission_classification() {
-        assert!(should_drive_turn_submission(&Op::Input {
-            parts: vec![alan_agent_protocol::ContentPart::text("hi")],
-            mode: InputMode::Steer,
-        }));
-        assert!(should_drive_turn_submission(&Op::Input {
-            parts: vec![alan_agent_protocol::ContentPart::text("follow-up")],
-            mode: InputMode::FollowUp,
-        }));
-        assert!(!should_drive_turn_submission(&Op::Input {
-            parts: vec![alan_agent_protocol::ContentPart::text("next-turn")],
-            mode: InputMode::NextTurn,
-        }));
-        assert!(should_drive_turn_submission(&Op::Turn {
-            parts: vec![alan_agent_protocol::ContentPart::text("hi")],
-            context: None,
-        }));
+    fn test_inband_and_resume_submission_classification() {
         assert!(is_turn_resume_submission(&Op::Resume {
             request_id: "latest".to_string(),
             content: vec![alan_agent_protocol::ContentPart::structured(
@@ -319,12 +288,6 @@ mod tests {
             content: vec![alan_agent_protocol::ContentPart::structured(
                 serde_json::json!({"success": true})
             )],
-        }));
-        assert!(!should_drive_turn_submission(&Op::CompactWithOptions {
-            focus: None,
-        }));
-        assert!(!should_drive_turn_submission(&Op::CompactWithOptions {
-            focus: Some("preserve todos".to_string()),
         }));
     }
 
@@ -480,10 +443,10 @@ mod tests {
         let root = InProcessTransport::new(Arc::new(MountFs::new(ns)));
         let shell = Shell::new(root.clone());
         let environment =
-            super::super::agent_loop::NamespaceRuntimeEnvironment::new(root, "/agent/1", "default");
+            super::super::transition::NamespaceRuntimeEnvironment::new(root, "/agent/1", "default");
 
         let request_id = environment
-            .write_request(super::super::agent_loop::NamespaceRequestRecord::new(
+            .write_request(super::super::transition::NamespaceRequestRecord::new(
                 "structured_input",
                 "Provide the missing value",
             ))

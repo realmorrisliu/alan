@@ -3,7 +3,7 @@
   "category": "compaction",
   "description": "Validate repeated compaction failures escalate warning visibility while preserving the latest failed attempt across external surfaces.",
   "blocking": true,
-  "command": "cargo test -p alan-agent-engine --lib runtime::agent_loop::tests::test_compaction_failure_without_fallback_escalates_warning_and_preserves_tape -- --exact",
+  "command": "cargo test -p alan-agent-engine --lib runtime::transition::tests::test_compaction_failure_without_fallback_escalates_warning_and_preserves_tape -- --exact",
   "assertions": [
     "repeated compaction failure emits escalation warnings",
     "latest failed attempt remains stable in Agent Machine and rollout evidence",

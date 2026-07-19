@@ -3,7 +3,7 @@
   "category": "compaction",
   "description": "Validate a failed first compaction attempt that succeeds after trim is audited as retry and remains surface-consistent.",
   "blocking": true,
-  "command": "cargo test -p alan-agent-engine --lib runtime::agent_loop::tests::test_compaction_retry_result_is_audited_when_trimming_succeeds -- --exact",
+  "command": "cargo test -p alan-agent-engine --lib runtime::transition::tests::test_compaction_retry_result_is_audited_when_trimming_succeeds -- --exact",
   "assertions": [
     "trimmed retry path returns CompactionResult::Retry",
     "retry_count is preserved in Agent Machine and rollout evidence",

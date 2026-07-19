@@ -59,8 +59,8 @@ fn rust_item_body<'a>(source: &'a str, marker: &str) -> &'a str {
 
 #[test]
 fn runtime_state_and_handles_have_no_parallel_capability_or_event_authority() {
-    let loop_source = read_runtime_source("agent_loop.rs");
-    let state = rust_item_body(&loop_source, "pub(crate) struct RuntimeLoopState");
+    let transition_source = read_runtime_source("transition.rs");
+    let state = rust_item_body(&transition_source, "pub(crate) struct RuntimeLoopState");
     assert!(state.contains("pub(crate) environment: NamespaceRuntimeEnvironment"));
 
     let engine_source = read_runtime_source("engine.rs");
@@ -90,8 +90,8 @@ fn runtime_state_and_handles_have_no_parallel_capability_or_event_authority() {
             );
         }
     }
-    assert!(!loop_source.contains("pub enum RuntimeEnvironment"));
-    assert!(!loop_source.contains("pub environment: RuntimeEnvironment"));
+    assert!(!transition_source.contains("pub enum RuntimeEnvironment"));
+    assert!(!transition_source.contains("pub environment: RuntimeEnvironment"));
     assert!(!read_runtime_source("tool_orchestrator.rs").contains("ToolExecutionTarget"));
 
     for forbidden in [
@@ -112,14 +112,46 @@ fn runtime_state_and_handles_have_no_parallel_capability_or_event_authority() {
 }
 
 #[test]
+fn process_loop_uses_one_accepted_submission_transition() {
+    let engine_source = read_runtime_source("engine.rs");
+    let process_loop = rust_item_body(&engine_source, "fn spawn_with_prepared_runtime_environment");
+
+    assert!(process_loop.contains("advance_accepted_submission("));
+    for process_control in [
+        "sub_rx.recv()",
+        "submissions_closed",
+        "cancel.cancel()",
+        "heartbeat_interval.tick()",
+    ] {
+        assert!(
+            process_loop.contains(process_control),
+            "Process loop must retain {process_control}"
+        );
+    }
+
+    for displaced_transition in [
+        "handle_submission_with_cancel(",
+        "drive_turn_submission_with_cancel(",
+        ".machine.accept_submission(",
+        ".machine.finish_submission(",
+        ".machine.drain_deferred_runtime_actions(",
+    ] {
+        assert!(
+            !process_loop.contains(displaced_transition),
+            "Process loop must not bypass the accepted-submission transition via {displaced_transition}"
+        );
+    }
+}
+
+#[test]
 fn namespace_environment_reaches_capabilities_only_through_files() {
-    let environment = read_runtime_source("agent_loop/namespace_environment.rs");
+    let environment = read_runtime_source("transition/namespace_environment.rs");
     let production = environment
         .split("\n#[cfg(test)]\nmod tests")
         .next()
         .unwrap();
-    let agent_files = read_runtime_source("agent_loop/namespace_environment/agent_files.rs");
-    let generation = read_runtime_source("agent_loop/namespace_environment/generation.rs");
+    let agent_files = read_runtime_source("transition/namespace_environment/agent_files.rs");
+    let generation = read_runtime_source("transition/namespace_environment/generation.rs");
 
     for forbidden in ["LlmProvider", "ToolRegistry"] {
         assert!(!production.contains(forbidden));
@@ -333,8 +365,8 @@ fn agent_machine_state_is_not_a_public_or_runtime_field_surface() {
         "turn-local state must not retain a second runtime owner"
     );
 
-    let loop_source = read_runtime_source("agent_loop.rs");
-    let runtime_state = rust_item_body(&loop_source, "pub(crate) struct RuntimeLoopState");
+    let transition_source = read_runtime_source("transition.rs");
+    let runtime_state = rust_item_body(&transition_source, "pub(crate) struct RuntimeLoopState");
     for displaced_field in ["current_submission_id", "turn_state"] {
         assert!(
             !runtime_state.contains(&format!("{displaced_field}:")),

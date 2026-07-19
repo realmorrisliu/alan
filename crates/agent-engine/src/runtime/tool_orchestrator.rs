@@ -15,13 +15,13 @@ use crate::evidence::{
     redaction_markers_in_text,
 };
 
-use super::agent_loop::RuntimeLoopState;
 use super::loop_guard::ToolLoopGuard;
 use super::steering_queue::handle_queued_steering_inputs;
 #[cfg(test)]
 use super::tool_effect_lifecycle::{EffectCategory, build_effect_identity};
 use super::tool_effect_lifecycle::{ToolEffectLifecycle, ToolEffectPlan};
 use super::tool_policy::{ToolPolicyDecision, evaluate_tool_policy};
+use super::transition::RuntimeLoopState;
 use super::turn_driver::TurnInputBroker;
 use super::turn_support::{check_turn_cancelled, tool_result_preview};
 use super::virtual_tools::{VirtualToolOutcome, try_handle_virtual_tool_call};

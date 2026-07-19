@@ -1,5 +1,5 @@
-use crate::runtime::agent_loop::RuntimeLoopState;
 use crate::runtime::launch_config::AgentConfig;
+use crate::runtime::transition::RuntimeLoopState;
 use alan_agent_protocol::{GovernanceConfig, SpawnHandle, SpawnSpec, SpawnTarget};
 use anyhow::{Context, Result, bail};
 use std::path::PathBuf;

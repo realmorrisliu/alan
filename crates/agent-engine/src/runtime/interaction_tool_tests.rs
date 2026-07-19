@@ -361,7 +361,7 @@ fn test_parse_structured_user_input_request_fallback_request_id() {
 // Tests for try_handle_virtual_tool_call
 #[tokio::test]
 async fn test_try_handle_virtual_tool_call_request_confirmation() {
-    let mut state = create_test_agent_loop_state();
+    let mut state = create_test_transition_state();
 
     let tool_call = NormalizedToolCall {
         id: "call_1".to_string(),
@@ -389,7 +389,7 @@ async fn test_try_handle_virtual_tool_call_request_confirmation() {
 
 #[tokio::test]
 async fn namespace_request_confirmation_writes_request_file_and_waits_on_file_id() {
-    let (mut state, shell) = create_namespace_agent_loop_state_and_shell();
+    let (mut state, shell) = create_namespace_transition_state_and_shell();
 
     let tool_call = NormalizedToolCall {
         id: "call_1".to_string(),
@@ -444,7 +444,7 @@ async fn namespace_request_confirmation_writes_request_file_and_waits_on_file_id
 
 #[tokio::test]
 async fn test_try_handle_virtual_tool_call_invalid_confirmation() {
-    let mut state = create_test_agent_loop_state();
+    let mut state = create_test_transition_state();
 
     let tool_call = NormalizedToolCall {
         id: "call_1".to_string(),
@@ -468,7 +468,7 @@ async fn test_try_handle_virtual_tool_call_invalid_confirmation() {
 
 #[tokio::test]
 async fn test_try_handle_virtual_tool_call_request_user_input() {
-    let mut state = create_test_agent_loop_state();
+    let mut state = create_test_transition_state();
 
     let tool_call = NormalizedToolCall {
         id: "call_1".to_string(),
@@ -496,7 +496,7 @@ async fn test_try_handle_virtual_tool_call_request_user_input() {
 
 #[tokio::test]
 async fn namespace_request_user_input_writes_request_file_and_waits_on_file_id() {
-    let (mut state, shell) = create_namespace_agent_loop_state_and_shell();
+    let (mut state, shell) = create_namespace_transition_state_and_shell();
 
     let tool_call = NormalizedToolCall {
         id: "call_1".to_string(),
@@ -545,7 +545,7 @@ async fn namespace_request_user_input_writes_request_file_and_waits_on_file_id()
 
 #[tokio::test]
 async fn test_try_handle_virtual_tool_call_invalid_user_input() {
-    let mut state = create_test_agent_loop_state();
+    let mut state = create_test_transition_state();
 
     let tool_call = NormalizedToolCall {
         id: "call_1".to_string(),

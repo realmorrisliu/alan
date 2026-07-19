@@ -5,7 +5,6 @@ mod task_context;
 #[cfg(test)]
 mod test_namespace;
 
-use super::agent_loop::RuntimeLoopState;
 use super::child_runs::ChildRunRecord;
 #[cfg(test)]
 use super::child_runs::ChildRunRegistry;
@@ -14,6 +13,7 @@ use super::delegated_child_run::ChildRuntimeStatus;
 use super::delegated_child_run::{DelegatedChildRunSupervision, DelegatedChildRunSupervisor};
 use super::engine::{runtime_host_capabilities_for_tools, spawn_with_namespace_environment};
 use super::launch_config::{AgentProcessConfig, effective_core_config_for_runtime};
+use super::transition::RuntimeLoopState;
 #[cfg(test)]
 use crate::llm::LlmClient;
 use crate::tape::ContentPart;

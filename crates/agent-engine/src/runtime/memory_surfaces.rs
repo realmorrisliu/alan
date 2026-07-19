@@ -8,7 +8,7 @@ use tracing::warn;
 use crate::agent_machine::AgentMachine;
 use crate::tape::Message;
 
-use super::agent_loop::RuntimeLoopState;
+use super::transition::RuntimeLoopState;
 
 const MAX_INLINE_TEXT_CHARS: usize = 280;
 const MAX_RECENT_MESSAGE_ITEMS: usize = 6;
