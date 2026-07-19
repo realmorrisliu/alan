@@ -589,9 +589,7 @@ async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_bounds_preview
 async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_honors_interrupt() {
     let mut state = create_test_agent_loop_state();
     activate_test_delegated_skill(&mut state, "repo-review", "reviewer");
-    state
-        .turn_state
-        .set_turn_activity(TurnActivityState::Running);
+    state.machine.set_turn_activity(TurnActivityState::Running);
 
     let tool_call = NormalizedToolCall {
         id: "call_1".to_string(),
@@ -661,9 +659,7 @@ async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_honors_interru
 {
     let mut state = create_test_agent_loop_state();
     activate_test_delegated_skill(&mut state, "repo-review", "reviewer");
-    state
-        .turn_state
-        .set_turn_activity(TurnActivityState::Running);
+    state.machine.set_turn_activity(TurnActivityState::Running);
 
     let tool_call = NormalizedToolCall {
         id: "call_1".to_string(),

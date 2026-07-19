@@ -1,5 +1,6 @@
 use super::*;
-use crate::runtime::{RuntimeConfig, agent_loop::DeferredRuntimeAction, memory_promotion};
+use crate::agent_machine::DeferredRuntimeAction;
+use crate::runtime::{RuntimeConfig, memory_promotion};
 use alan_agent_protocol::{ContentPart, Op};
 use alan_ap::InProcessTransport;
 use alan_llm::{
@@ -56,8 +57,7 @@ fn make_deferred_action_for_test() -> DeferredRuntimeAction {
     let mut machine = AgentMachine::new();
     machine.add_user_message("My name is Morris.");
 
-    let mut turn_state = TurnState::default();
-    turn_state.begin_turn(0);
+    machine.begin_turn(0);
 
     let mut core_config = crate::Config::default();
     core_config.memory.enabled = true;
@@ -66,13 +66,11 @@ fn make_deferred_action_for_test() -> DeferredRuntimeAction {
 
     let state = RuntimeLoopState {
         machine,
-        current_submission_id: None,
         environment: namespace_environment_for_test(),
         core_config,
         runtime_config,
         definition_persona_dirs: Vec::new(),
         prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
-        turn_state,
     };
 
     memory_promotion::build_turn_memory_promotion_job(&state, "queue ordering test")

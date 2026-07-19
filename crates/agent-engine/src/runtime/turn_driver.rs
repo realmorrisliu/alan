@@ -6,8 +6,8 @@ use tokio::sync::{Mutex, Notify};
 use tokio_util::sync::CancellationToken;
 
 use super::agent_loop::{RuntimeLoopState, handle_submission_with_cancel_and_steering};
-use super::turn_state::TurnState;
 use super::turn_support::cancel_current_task;
+use crate::agent_machine::AgentMachine;
 
 const MAX_BROKERED_INBAND_USER_INPUTS: usize = 16;
 pub(super) const MAX_BUFFERED_INBAND_USER_INPUTS: usize = 16;
@@ -123,8 +123,10 @@ where
     F: std::future::Future<Output = ()>,
 {
     broker.clear().await;
-    let _ = state.turn_state.clear_buffered_inband_submissions();
-    state.current_submission_id = Some(initial_submission.id.clone());
+    let _ = state.machine.clear_buffered_inband_submissions();
+    state
+        .machine
+        .accept_submission(initial_submission.id.clone());
 
     handle_submission_with_cancel_and_steering(
         state,
@@ -136,9 +138,9 @@ where
     .await?;
 
     loop {
-        let next_submission = if state.turn_state.has_pending_interaction() {
+        let next_submission = if state.machine.has_pending_interaction() {
             next_pending_interaction_submission(state, broker, emit, cancel).await?
-        } else if let Some(buffered) = state.turn_state.pop_buffered_inband_submission() {
+        } else if let Some(buffered) = state.machine.pop_buffered_inband_submission() {
             Some(buffered)
         } else {
             broker.try_recv().await
@@ -147,7 +149,7 @@ where
         let Some(next_submission) = next_submission else {
             break;
         };
-        state.current_submission_id = Some(next_submission.id.clone());
+        state.machine.accept_submission(next_submission.id.clone());
 
         handle_submission_with_cancel_and_steering(
             state,
@@ -180,14 +182,14 @@ where
         tokio::select! {
             incoming = broker.recv(cancel) => {
                 let Some(incoming) = incoming else {
-                    if cancel.is_cancelled() && state.turn_state.has_pending_interaction() {
+                    if cancel.is_cancelled() && state.machine.has_pending_interaction() {
                         // Report and clear buffered in-turn submissions before cancel_current_task
-                        // clears turn_state, otherwise the drop count under-reports.
-                        emit_dropped_in_turn_submissions(emit, &mut state.turn_state, broker).await;
+                        // resets Machine turn state, otherwise the drop count under-reports.
+                        emit_dropped_in_turn_submissions(emit, &mut state.machine, broker).await;
                         cancel_current_task(state, emit).await?;
                         return Ok(None);
                     }
-                    emit_dropped_in_turn_submissions(emit, &mut state.turn_state, broker).await;
+                    emit_dropped_in_turn_submissions(emit, &mut state.machine, broker).await;
                     return Ok(None);
                 };
 
@@ -196,7 +198,7 @@ where
                 }
 
                 if is_brokered_input(&incoming.op)
-                    && state.turn_state.buffered_inband_user_input_count()
+                    && state.machine.buffered_inband_user_input_count()
                         >= MAX_BUFFERED_INBAND_USER_INPUTS
                 {
                     emit(Event::Error {
@@ -208,7 +210,7 @@ where
                     .await;
                     continue;
                 }
-                state.turn_state.push_buffered_inband_submission(incoming);
+                state.machine.push_buffered_inband_submission(incoming);
             }
             _ = tokio::time::sleep(NAMESPACE_PENDING_RESPONSE_POLL_INTERVAL) => {}
         }
@@ -220,7 +222,7 @@ pub(super) async fn namespace_pending_resume_submission(
 ) -> Result<Option<Submission>> {
     let namespace = state.namespace_environment();
 
-    for request_id in state.turn_state.pending_request_ids() {
+    for request_id in state.machine.pending_request_ids() {
         if let Some(submission) = namespace
             .resume_submission_from_answered_request(&request_id)
             .await?
@@ -234,13 +236,13 @@ pub(super) async fn namespace_pending_resume_submission(
 
 async fn emit_dropped_in_turn_submissions<E, F>(
     emit: &mut E,
-    turn_state: &mut TurnState,
+    machine: &mut AgentMachine,
     broker: &TurnInputBroker,
 ) where
     E: FnMut(Event) -> F,
     F: std::future::Future<Output = ()>,
 {
-    let dropped_buffered = turn_state.clear_buffered_inband_submissions();
+    let dropped_buffered = machine.clear_buffered_inband_submissions();
     let dropped_brokered = broker.drain().await.len();
     let dropped_total = dropped_buffered + dropped_brokered;
     if dropped_total > 0 {
@@ -427,8 +429,8 @@ mod tests {
     #[tokio::test]
     async fn test_emit_dropped_in_turn_submissions_reports_count() {
         let broker = TurnInputBroker::default();
-        let mut turn_state = TurnState::default();
-        turn_state.push_buffered_inband_submission(Submission {
+        let mut machine = AgentMachine::new();
+        machine.push_buffered_inband_submission(Submission {
             id: "u-1".to_string(),
             op: Op::Input {
                 parts: vec![alan_agent_protocol::ContentPart::text("queued")],
@@ -455,9 +457,9 @@ mod tests {
             async {}
         };
 
-        emit_dropped_in_turn_submissions(&mut emit, &mut turn_state, &broker).await;
+        emit_dropped_in_turn_submissions(&mut emit, &mut machine, &broker).await;
 
-        assert_eq!(turn_state.clear_buffered_inband_submissions(), 0);
+        assert_eq!(machine.clear_buffered_inband_submissions(), 0);
         assert!(broker.try_recv().await.is_none());
         assert!(events.iter().any(|event| matches!(
             event,
@@ -487,8 +489,8 @@ mod tests {
             ))
             .await
             .unwrap();
-        let mut turn_state = TurnState::default();
-        turn_state.set_structured_input(crate::approval::PendingStructuredInputRequest {
+        let mut machine = AgentMachine::new();
+        machine.set_structured_input(crate::approval::PendingStructuredInputRequest {
             request_id: request_id.clone(),
             title: "Missing value".to_string(),
             prompt: "Provide the missing value".to_string(),
@@ -496,14 +498,12 @@ mod tests {
         });
 
         let mut state = RuntimeLoopState {
-            machine: crate::agent_machine::AgentMachine::new(),
-            current_submission_id: None,
+            machine,
             environment,
             core_config: crate::Config::default(),
             runtime_config: super::super::RuntimeConfig::default(),
             definition_persona_dirs: Vec::new(),
             prompt_cache: super::super::prompt_cache::PromptAssemblyCache::new(Vec::new()),
-            turn_state,
         };
         let broker = TurnInputBroker::default();
         let cancel = CancellationToken::new();

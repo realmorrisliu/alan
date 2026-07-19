@@ -18,7 +18,14 @@ use anyhow::Result;
 use tokio_util::sync::CancellationToken;
 use tracing::warn;
 
-use crate::{agent_machine::AgentMachine, config::Config, retry, runtime::RuntimeConfig};
+#[cfg(test)]
+use crate::agent_machine::NormalizedToolCall;
+use crate::{
+    agent_machine::{AgentMachine, DeferredRuntimeAction, TurnActivityState},
+    config::Config,
+    retry,
+    runtime::RuntimeConfig,
+};
 
 use super::submission_handlers::{RuntimeOpAction, handle_runtime_op_with_cancel};
 use super::tool_orchestrator::{
@@ -28,7 +35,6 @@ use super::tool_orchestrator::{
 use super::turn_driver::TurnInputBroker;
 pub(super) use super::turn_executor::run_turn_with_cancel;
 use super::turn_executor::{TurnExecutionOutcome, TurnRunKind};
-use super::turn_state::{TurnActivityState, TurnState};
 #[allow(
     unused_imports,
     reason = "these helpers are imported here for the adjacent white-box test module"
@@ -36,19 +42,6 @@ use super::turn_state::{TurnActivityState, TurnState};
 use super::turn_support::{
     cancel_current_task, emit_streaming_chunks, normalize_tool_calls, split_text_for_typing,
 };
-/// Normalized tool call with guaranteed ID
-#[derive(Debug, Clone)]
-pub struct NormalizedToolCall {
-    pub id: String,
-    pub name: String,
-    pub arguments: serde_json::Value,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) enum DeferredRuntimeAction {
-    TurnMemoryPromotion(super::memory_promotion::TurnMemoryPromotionJob),
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum DeferredRuntimeActionExit {
     Completed,
@@ -56,15 +49,13 @@ pub(super) enum DeferredRuntimeActionExit {
 }
 
 /// Agent state for the execution loop
-pub struct RuntimeLoopState {
-    pub machine: AgentMachine,
-    pub current_submission_id: Option<String>,
-    pub environment: NamespaceRuntimeEnvironment,
-    pub core_config: Config,
-    pub runtime_config: RuntimeConfig,
-    pub definition_persona_dirs: Vec<std::path::PathBuf>,
-    pub prompt_cache: super::prompt_cache::PromptAssemblyCache,
-    pub turn_state: TurnState,
+pub(crate) struct RuntimeLoopState {
+    pub(crate) machine: AgentMachine,
+    pub(crate) environment: NamespaceRuntimeEnvironment,
+    pub(crate) core_config: Config,
+    pub(crate) runtime_config: RuntimeConfig,
+    pub(crate) definition_persona_dirs: Vec<std::path::PathBuf>,
+    pub(crate) prompt_cache: super::prompt_cache::PromptAssemblyCache,
 }
 
 impl RuntimeLoopState {
@@ -255,9 +246,7 @@ where
             user_input,
             activate_task,
         } => {
-            state
-                .turn_state
-                .set_turn_activity(TurnActivityState::Running);
+            state.machine.set_turn_activity(TurnActivityState::Running);
             let turn_outcome = match run_turn_with_cancel(
                 state,
                 turn_kind,
@@ -270,11 +259,11 @@ where
             {
                 Ok(outcome) => outcome,
                 Err(err) => {
-                    state.turn_state.set_turn_activity(TurnActivityState::Idle);
+                    state.machine.set_turn_activity(TurnActivityState::Idle);
                     return Err(err);
                 }
             };
-            state.turn_state.set_turn_activity(
+            state.machine.set_turn_activity(
                 if matches!(turn_outcome, TurnExecutionOutcome::Paused) {
                     TurnActivityState::Paused
                 } else {
@@ -291,9 +280,7 @@ where
             approved_unknown_effect_call_id,
             approved_tool_escalation_call_id,
         } => {
-            state
-                .turn_state
-                .set_turn_activity(TurnActivityState::Running);
+            state.machine.set_turn_activity(TurnActivityState::Running);
             match replay_approved_tool_call_with_cancel(
                 state,
                 &tool_call,
@@ -321,11 +308,11 @@ where
                         {
                             Ok(outcome) => outcome,
                             Err(err) => {
-                                state.turn_state.set_turn_activity(TurnActivityState::Idle);
+                                state.machine.set_turn_activity(TurnActivityState::Idle);
                                 return Err(err);
                             }
                         };
-                        state.turn_state.set_turn_activity(
+                        state.machine.set_turn_activity(
                             if matches!(turn_outcome, TurnExecutionOutcome::Paused) {
                                 TurnActivityState::Paused
                             } else {
@@ -334,9 +321,7 @@ where
                         );
                     }
                     ToolBatchOrchestratorOutcome::PauseTurn => {
-                        state
-                            .turn_state
-                            .set_turn_activity(TurnActivityState::Paused);
+                        state.machine.set_turn_activity(TurnActivityState::Paused);
                     }
                     ToolBatchOrchestratorOutcome::EndTurn { surfaces_refreshed } => {
                         finalize_replayed_tool_end_turn_best_effort(
@@ -350,7 +335,7 @@ where
                     }
                 },
                 Err(err) => {
-                    state.turn_state.set_turn_activity(TurnActivityState::Idle);
+                    state.machine.set_turn_activity(TurnActivityState::Idle);
                     return Err(err);
                 }
             };
@@ -361,9 +346,7 @@ where
             approved_unknown_effect_call_id,
             approved_tool_escalation_call_id,
         } => {
-            state
-                .turn_state
-                .set_turn_activity(TurnActivityState::Running);
+            state.machine.set_turn_activity(TurnActivityState::Running);
             match replay_approved_tool_batch_with_cancel(
                 state,
                 &tool_calls,
@@ -391,11 +374,11 @@ where
                         {
                             Ok(outcome) => outcome,
                             Err(err) => {
-                                state.turn_state.set_turn_activity(TurnActivityState::Idle);
+                                state.machine.set_turn_activity(TurnActivityState::Idle);
                                 return Err(err);
                             }
                         };
-                        state.turn_state.set_turn_activity(
+                        state.machine.set_turn_activity(
                             if matches!(turn_outcome, TurnExecutionOutcome::Paused) {
                                 TurnActivityState::Paused
                             } else {
@@ -404,9 +387,7 @@ where
                         );
                     }
                     ToolBatchOrchestratorOutcome::PauseTurn => {
-                        state
-                            .turn_state
-                            .set_turn_activity(TurnActivityState::Paused);
+                        state.machine.set_turn_activity(TurnActivityState::Paused);
                     }
                     ToolBatchOrchestratorOutcome::EndTurn { surfaces_refreshed } => {
                         finalize_replayed_tool_end_turn_best_effort(
@@ -420,7 +401,7 @@ where
                     }
                 },
                 Err(err) => {
-                    state.turn_state.set_turn_activity(TurnActivityState::Idle);
+                    state.machine.set_turn_activity(TurnActivityState::Idle);
                     return Err(err);
                 }
             };
@@ -448,12 +429,12 @@ async fn finalize_replayed_tool_end_turn_best_effort(
             super::memory_promotion::build_turn_memory_promotion_job(state, promotion_context)
         {
             state
-                .turn_state
+                .machine
                 .push_deferred_runtime_action(DeferredRuntimeAction::TurnMemoryPromotion(job));
         }
     }
 
-    state.turn_state.set_turn_activity(TurnActivityState::Idle);
+    state.machine.set_turn_activity(TurnActivityState::Idle);
 }
 
 pub(super) async fn run_deferred_runtime_action_with_cancel(

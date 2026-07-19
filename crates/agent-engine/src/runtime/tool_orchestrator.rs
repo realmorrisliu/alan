@@ -15,7 +15,7 @@ use crate::evidence::{
     redaction_markers_in_text,
 };
 
-use super::agent_loop::{NormalizedToolCall, RuntimeLoopState};
+use super::agent_loop::RuntimeLoopState;
 use super::loop_guard::ToolLoopGuard;
 use super::steering_queue::handle_queued_steering_inputs;
 #[cfg(test)]
@@ -25,6 +25,7 @@ use super::tool_policy::{ToolPolicyDecision, evaluate_tool_policy};
 use super::turn_driver::TurnInputBroker;
 use super::turn_support::{check_turn_cancelled, tool_result_preview};
 use super::virtual_tools::{VirtualToolOutcome, try_handle_virtual_tool_call};
+use crate::agent_machine::NormalizedToolCall;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ToolOrchestratorOutcome {
@@ -454,7 +455,7 @@ where
                 "tool_name": tool_call.name,
                 "arguments": tool_arguments,
             });
-            details = append_skill_permission_hints(details, state.turn_state.active_skills());
+            details = append_skill_permission_hints(details, state.machine.active_skills());
 
             // Reviewer-routed escalations consult the guardian before pausing for
             // a human. The sandbox + the deterministic red line remain the
@@ -480,11 +481,11 @@ where
                 };
                 match outcome {
                     super::guardian::ReviewOutcome::Allow => {
-                        state.turn_state.record_guardian_review(false);
+                        state.machine.record_guardian_review(false);
                         false
                     }
                     super::guardian::ReviewOutcome::Deny { rationale } => {
-                        let tripped = state.turn_state.record_guardian_review(true);
+                        let tripped = state.machine.record_guardian_review(true);
                         let message = format!("auto-review denied: {rationale}");
                         super::ui_surfaces::warning(state.namespace_environment(), message.clone())
                             .await?;
@@ -563,7 +564,7 @@ where
                     Some(audit),
                 );
                 state
-                    .turn_state
+                    .machine
                     .set_confirmation_for_request(request_id.clone(), pending.clone());
                 super::ui_surfaces::paused(state.namespace_environment()).await?;
                 emit(Event::Yield {
@@ -659,7 +660,7 @@ where
                         "arguments": tool_arguments,
                     }
                 }),
-                state.turn_state.active_skills(),
+                state.machine.active_skills(),
             ),
             options: vec!["approve".to_string(), "reject".to_string()],
         };
@@ -681,7 +682,7 @@ where
             tool_audit.clone(),
         );
         state
-            .turn_state
+            .machine
             .set_confirmation_for_request(request_id.clone(), pending.clone());
         super::ui_surfaces::paused(state.namespace_environment()).await?;
         emit(Event::Yield {
@@ -945,11 +946,11 @@ where
                 }
             }
             ToolOrchestratorOutcome::PauseTurn => {
-                if let Some(pending) = state.turn_state.pending_confirmation()
+                if let Some(pending) = state.machine.pending_confirmation()
                     && replays_tool_calls(&pending.checkpoint_type)
                 {
                     state
-                        .turn_state
+                        .machine
                         .set_tool_replay_batch(pending.checkpoint_id, tool_calls[idx..].to_vec());
                 }
                 return Ok(ToolBatchOrchestratorOutcome::PauseTurn);

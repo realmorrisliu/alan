@@ -9,13 +9,13 @@ async fn test_manual_compaction_records_audit_fields() {
     for i in 0..65 {
         machine.add_user_message(&format!("Message {}", i));
     }
+    machine.accept_submission("sub-compact");
 
     let rollout_path = machine.rollout_path().unwrap().clone();
     let runtime_config = super::RuntimeConfig::default();
 
     let mut state = RuntimeLoopState {
         machine,
-        current_submission_id: Some("sub-compact".to_string()),
         environment: namespace_environment_with_provider(DelayedMockProvider::new(
             tokio::time::Duration::from_millis(0),
             "Manual compaction summary",
@@ -24,7 +24,6 @@ async fn test_manual_compaction_records_audit_fields() {
         runtime_config,
         definition_persona_dirs: Vec::new(),
         prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
-        turn_state: TurnState::default(),
     };
 
     let mut events = vec![];
@@ -105,7 +104,6 @@ async fn test_compaction_retry_result_is_audited_when_trimming_succeeds() {
 
     let mut state = RuntimeLoopState {
         machine,
-        current_submission_id: None,
         environment: namespace_environment_with_provider(FailThenSucceedMockProvider::new(
             1,
             "Compaction summary after retry",
@@ -114,7 +112,6 @@ async fn test_compaction_retry_result_is_audited_when_trimming_succeeds() {
         runtime_config,
         definition_persona_dirs: Vec::new(),
         prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
-        turn_state: TurnState::default(),
     };
 
     let mut emit = |_event: Event| async {};
@@ -172,7 +169,6 @@ async fn test_compaction_generation_failure_uses_degraded_fallback_and_audits_it
 
     let mut state = RuntimeLoopState {
         machine,
-        current_submission_id: None,
         environment: namespace_environment_with_provider(ErrorMockProvider::new(
             "synthetic compaction failure",
         )),
@@ -180,7 +176,6 @@ async fn test_compaction_generation_failure_uses_degraded_fallback_and_audits_it
         runtime_config,
         definition_persona_dirs: Vec::new(),
         prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
-        turn_state: TurnState::default(),
     };
 
     let mut events = vec![];
@@ -253,7 +248,6 @@ async fn test_degraded_compaction_rebases_active_turn_start() {
 
     let mut state = RuntimeLoopState {
         machine,
-        current_submission_id: None,
         environment: namespace_environment_with_provider(ErrorMockProvider::new(
             "synthetic compaction failure",
         )),
@@ -261,13 +255,12 @@ async fn test_degraded_compaction_rebases_active_turn_start() {
         runtime_config,
         definition_persona_dirs: Vec::new(),
         prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
-        turn_state: TurnState::default(),
     };
 
     let retention_start = state
         .machine.compaction_retention_start(state.runtime_config.compaction_keep_last);
     assert!(retention_start > 0);
-    state.turn_state.begin_turn(retention_start);
+    state.machine.begin_turn(retention_start);
 
     let mut emit = |_event: Event| async {};
     let outcome =
@@ -282,7 +275,7 @@ async fn test_degraded_compaction_rebases_active_turn_start() {
         _ => panic!("expected degraded compaction to apply"),
     }
 
-    assert_eq!(state.turn_state.active_turn_message_start(), Some(0));
+    assert_eq!(state.machine.active_turn_message_start(), Some(0));
 }
 
 #[test]
@@ -332,7 +325,6 @@ async fn test_compaction_failure_without_fallback_escalates_warning_and_preserve
 
     let mut state = RuntimeLoopState {
         machine,
-        current_submission_id: None,
         environment: namespace_environment_with_provider(ErrorMockProvider::new(
             "synthetic compaction failure",
         )),
@@ -340,7 +332,6 @@ async fn test_compaction_failure_without_fallback_escalates_warning_and_preserve
         runtime_config,
         definition_persona_dirs: Vec::new(),
         prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
-        turn_state: TurnState::default(),
     };
 
     let mut events = vec![];

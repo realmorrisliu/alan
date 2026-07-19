@@ -1,6 +1,5 @@
 use super::*;
 use crate::agent_machine::AgentMachine;
-use crate::runtime::turn_state::TurnState;
 use std::sync::Arc;
 
 fn namespace_environment_for_test() -> crate::runtime::NamespaceRuntimeEnvironment {
@@ -16,8 +15,7 @@ fn render_memory_surfaces_follow_pure_text_layout_and_content() {
     machine.add_user_message("Finish the pure-text memory slice.");
     machine.add_assistant_message("Added scaffolding and prompt bootstrap.", None);
 
-    let mut turn_state = TurnState::default();
-    turn_state.set_plan_snapshot(
+    machine.set_plan_snapshot(
         Some("Finish the pure-text memory slice.".to_string()),
         vec![
             alan_agent_protocol::PlanItem {
@@ -36,13 +34,7 @@ fn render_memory_surfaces_follow_pure_text_layout_and_content() {
     let now = DateTime::parse_from_rfc3339("2026-04-15T15:30:00Z")
         .unwrap()
         .with_timezone(&Utc);
-    let rendered = render_memory_surfaces(
-        &machine,
-        &turn_state,
-        "/proc/1",
-        machine.memory_record_id(),
-        now,
-    );
+    let rendered = render_memory_surfaces(&machine, "/proc/1", machine.memory_record_id(), now);
 
     assert!(rendered.working_memory.contains("# Working Memory"));
     assert!(rendered.handoff.contains("# Latest Handoff"));
@@ -85,20 +77,13 @@ fn render_memory_surfaces_scopes_latest_assistant_state_to_active_turn() {
     machine.add_user_message("Earlier task");
     machine.add_assistant_message("Earlier assistant response.", None);
 
-    let mut turn_state = TurnState::default();
-    turn_state.begin_turn(machine.messages().len());
+    machine.begin_turn(machine.messages().len());
     machine.add_user_message("Current tool-only turn");
 
     let now = DateTime::parse_from_rfc3339("2026-04-15T15:30:00Z")
         .unwrap()
         .with_timezone(&Utc);
-    let rendered = render_memory_surfaces(
-        &machine,
-        &turn_state,
-        "/proc/1",
-        machine.memory_record_id(),
-        now,
-    );
+    let rendered = render_memory_surfaces(&machine, "/proc/1", machine.memory_record_id(), now);
 
     assert!(
         rendered
@@ -117,7 +102,7 @@ fn one_letter_follow_up_carries_prior_substantive_goal() {
     machine.add_assistant_message("Ready for confirmation.", None);
     machine.add_user_message("y");
 
-    let goal = derive_current_goal(&machine, &TurnState::default());
+    let goal = derive_current_goal(&machine);
 
     assert_eq!(
         goal,
@@ -143,7 +128,7 @@ fn request_response_control_message_does_not_replace_goal() {
     )]);
 
     assert_eq!(
-        derive_current_goal(&machine, &TurnState::default()),
+        derive_current_goal(&machine),
         "Remove the obsolete compatibility endpoints."
     );
 }
@@ -152,13 +137,12 @@ fn request_response_control_message_does_not_replace_goal() {
 fn new_substantive_turn_request_replaces_stale_plan_goal() {
     let mut machine = AgentMachine::new();
     machine.add_user_message("Finish the old memory task.");
-    let mut turn_state = TurnState::default();
-    turn_state.set_plan_snapshot(Some("Finish the old memory task.".to_string()), Vec::new());
-    turn_state.begin_turn(machine.messages().len());
+    machine.set_plan_snapshot(Some("Finish the old memory task.".to_string()), Vec::new());
+    machine.begin_turn(machine.messages().len());
     machine.add_user_message("Rewrite the provider connection documentation.");
 
     assert_eq!(
-        derive_current_goal(&machine, &turn_state),
+        derive_current_goal(&machine),
         "Rewrite the provider connection documentation."
     );
 }
@@ -166,16 +150,15 @@ fn new_substantive_turn_request_replaces_stale_plan_goal() {
 #[test]
 fn in_turn_plan_update_refines_the_initial_user_goal() {
     let mut machine = AgentMachine::new();
-    let mut turn_state = TurnState::default();
-    turn_state.begin_turn(machine.messages().len());
+    machine.begin_turn(machine.messages().len());
     machine.add_user_message("Implement the memory contract changes.");
-    turn_state.set_plan_snapshot(
+    machine.set_plan_snapshot(
         Some("Validate salience and compaction fallback behavior.".to_string()),
         Vec::new(),
     );
 
     assert_eq!(
-        derive_current_goal(&machine, &turn_state),
+        derive_current_goal(&machine),
         "Validate salience and compaction fallback behavior."
     );
 }
@@ -183,18 +166,17 @@ fn in_turn_plan_update_refines_the_initial_user_goal() {
 #[test]
 fn substantive_resume_input_overrides_earlier_active_plan() {
     let mut machine = AgentMachine::new();
-    let mut turn_state = TurnState::default();
-    turn_state.begin_turn(machine.messages().len());
+    machine.begin_turn(machine.messages().len());
     machine.add_user_message("Implement the old memory contract.");
-    turn_state.set_plan_snapshot(
+    machine.set_plan_snapshot(
         Some("Finish the old memory contract.".to_string()),
         Vec::new(),
     );
-    turn_state.note_resumed_user_input();
+    machine.note_resumed_user_input();
     machine.add_user_message("Switch to the provider connection contract.");
 
     assert_eq!(
-        derive_current_goal(&machine, &turn_state),
+        derive_current_goal(&machine),
         "Switch to the provider connection contract."
     );
 }
@@ -203,29 +185,27 @@ fn substantive_resume_input_overrides_earlier_active_plan() {
 fn terse_imperative_passes_salience_filter() {
     let mut machine = AgentMachine::new();
     machine.add_user_message("Prepare the release.");
-    let mut turn_state = TurnState::default();
-    turn_state.set_plan_snapshot(Some("Prepare the release.".to_string()), Vec::new());
-    turn_state.begin_turn(machine.messages().len());
+    machine.set_plan_snapshot(Some("Prepare the release.".to_string()), Vec::new());
+    machine.begin_turn(machine.messages().len());
     machine.add_user_message("deploy it");
 
-    assert_eq!(derive_current_goal(&machine, &turn_state), "deploy it");
+    assert_eq!(derive_current_goal(&machine), "deploy it");
 }
 
 #[test]
 fn active_plan_goal_wins_when_latest_message_is_acknowledgement() {
     let mut machine = AgentMachine::new();
     machine.add_user_message("Complete the broader migration.");
-    let mut turn_state = TurnState::default();
-    turn_state.set_plan_snapshot_at_message_count(
+    machine.set_plan_snapshot_at_message_count(
         Some("Validate the namespace-native migration.".to_string()),
         Vec::new(),
         machine.messages().len(),
     );
-    turn_state.begin_turn(machine.messages().len());
+    machine.begin_turn(machine.messages().len());
     machine.add_user_message("ok");
 
     assert_eq!(
-        derive_current_goal(&machine, &turn_state),
+        derive_current_goal(&machine),
         "[carried forward] Validate the namespace-native migration."
     );
 }
@@ -234,8 +214,7 @@ fn active_plan_goal_wins_when_latest_message_is_acknowledgement() {
 fn later_substantive_goal_wins_before_stale_plan_on_acknowledgement() {
     let mut machine = AgentMachine::new();
     machine.add_user_message("Finish task A.");
-    let mut turn_state = TurnState::default();
-    turn_state.set_plan_snapshot_at_message_count(
+    machine.set_plan_snapshot_at_message_count(
         Some("Complete task A plan.".to_string()),
         Vec::new(),
         machine.messages().len(),
@@ -246,7 +225,7 @@ fn later_substantive_goal_wins_before_stale_plan_on_acknowledgement() {
     machine.add_user_message("ok");
 
     assert_eq!(
-        derive_current_goal(&machine, &turn_state),
+        derive_current_goal(&machine),
         "[carried forward] Switch to substantive task B."
     );
 }
@@ -261,7 +240,7 @@ fn compaction_summary_wins_before_acknowledgement_fallback() {
     machine.add_user_message("ok");
 
     assert_eq!(
-        derive_current_goal(&machine, &TurnState::default()),
+        derive_current_goal(&machine),
         "[carried forward] Complete the namespace-native lifecycle migration and verify parent visibility."
     );
 }
@@ -274,7 +253,7 @@ fn acknowledgement_token_sequences_and_emoji_modifiers_do_not_replace_goal() {
         machine.add_user_message(acknowledgement);
 
         assert_eq!(
-            derive_current_goal(&machine, &TurnState::default()),
+            derive_current_goal(&machine),
             "[carried forward] Archive the completed Alan OS contract changes.",
             "acknowledgement {acknowledgement:?} must not become the goal"
         );
@@ -283,8 +262,8 @@ fn acknowledgement_token_sequences_and_emoji_modifiers_do_not_replace_goal() {
 
 #[test]
 fn active_plan_goal_prefers_in_progress_before_pending_order() {
-    let mut turn_state = TurnState::default();
-    turn_state.set_plan_snapshot(
+    let mut machine = AgentMachine::new();
+    machine.set_plan_snapshot(
         None,
         vec![
             alan_agent_protocol::PlanItem {
@@ -301,7 +280,7 @@ fn active_plan_goal_prefers_in_progress_before_pending_order() {
     );
 
     assert_eq!(
-        derive_active_plan_goal(&turn_state).as_deref(),
+        derive_active_plan_goal(&machine).as_deref(),
         Some("Verify the current contract.")
     );
 }
@@ -311,7 +290,7 @@ fn acknowledgement_is_used_verbatim_when_no_better_context_exists() {
     let mut machine = AgentMachine::new();
     machine.add_user_message("ok");
 
-    assert_eq!(derive_current_goal(&machine, &TurnState::default()), "ok");
+    assert_eq!(derive_current_goal(&machine), "ok");
 }
 
 #[test]
@@ -372,8 +351,7 @@ async fn refresh_turn_memory_surfaces_writes_expected_files() {
     machine.add_user_message("Keep the latest handoff fresh.");
     machine.add_assistant_message("Wrote the memory surfaces.", None);
 
-    let mut turn_state = TurnState::default();
-    turn_state.set_plan_snapshot(
+    machine.set_plan_snapshot(
         Some("Keep the latest handoff fresh.".to_string()),
         vec![alan_agent_protocol::PlanItem {
             id: "p1".to_string(),
@@ -384,7 +362,6 @@ async fn refresh_turn_memory_surfaces_writes_expected_files() {
 
     let state = RuntimeLoopState {
         machine,
-        current_submission_id: None,
         environment: namespace_environment_for_test(),
         core_config: {
             let mut config = crate::Config::default();
@@ -394,7 +371,6 @@ async fn refresh_turn_memory_surfaces_writes_expected_files() {
         runtime_config: super::super::RuntimeConfig::default(),
         definition_persona_dirs: Vec::new(),
         prompt_cache: super::super::prompt_cache::PromptAssemblyCache::new(Vec::new()),
-        turn_state,
     };
 
     refresh_turn_memory_surfaces(&state).await.unwrap();
@@ -424,7 +400,6 @@ async fn refresh_memory_surfaces_needs_no_model_request_or_llm_mount() {
     let message_count = machine.messages().len();
     let state = RuntimeLoopState {
         machine,
-        current_submission_id: None,
         environment: namespace_environment_for_test(),
         core_config: {
             let mut config = crate::Config::default();
@@ -434,7 +409,6 @@ async fn refresh_memory_surfaces_needs_no_model_request_or_llm_mount() {
         runtime_config: super::super::RuntimeConfig::default(),
         definition_persona_dirs: Vec::new(),
         prompt_cache: super::super::prompt_cache::PromptAssemblyCache::new(Vec::new()),
-        turn_state: TurnState::default(),
     };
 
     refresh_turn_memory_surfaces(&state).await.unwrap();

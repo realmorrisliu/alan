@@ -270,7 +270,7 @@ fn compaction_submission_id(
     request: &CompactionRequest,
 ) -> Option<String> {
     matches!(request.mode(), CompactionMode::Manual)
-        .then(|| state.current_submission_id.clone())
+        .then(|| state.machine.current_submission_id().map(str::to_owned))
         .flatten()
 }
 
@@ -525,7 +525,7 @@ fn apply_tape_compaction(
     retention_start: usize,
 ) {
     state.machine.compact_tape(summary.to_string(), keep_last);
-    state.turn_state.note_tape_compaction(retention_start);
+    state.machine.note_tape_compaction(retention_start);
 }
 
 pub(crate) async fn maybe_compact_context_for_request<E, F>(
@@ -827,7 +827,7 @@ mod tests {
         agent_machine::AgentMachine,
         config::Config,
         runtime::{
-            NamespaceRuntimeEnvironment, RuntimeConfig, RuntimeLoopState, TurnState,
+            NamespaceRuntimeEnvironment, RuntimeConfig, RuntimeLoopState,
             prompt_cache::PromptAssemblyCache,
         },
     };
@@ -893,7 +893,6 @@ mod tests {
 
         RuntimeLoopState {
             machine: AgentMachine::new(),
-            current_submission_id: None,
             environment: NamespaceRuntimeEnvironment::new(root, "/agent/1", "default"),
             core_config: Config::default(),
             runtime_config: RuntimeConfig {
@@ -903,7 +902,6 @@ mod tests {
             },
             definition_persona_dirs: Vec::new(),
             prompt_cache: PromptAssemblyCache::new(Vec::new()),
-            turn_state: TurnState::default(),
         }
     }
 

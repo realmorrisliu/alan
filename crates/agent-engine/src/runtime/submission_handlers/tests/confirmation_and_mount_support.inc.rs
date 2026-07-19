@@ -5,7 +5,7 @@
         agent_machine::AgentMachine,
         config::Config,
         rollout::{RolloutItem, RolloutRecorder},
-        runtime::{MountGrantApplicator, NamespaceRuntimeEnvironment, RuntimeConfig, TurnState},
+        runtime::{MountGrantApplicator, NamespaceRuntimeEnvironment, RuntimeConfig},
         tape::ContentPart,
         tools::ToolRegistry,
     };
@@ -120,13 +120,11 @@
 
         RuntimeLoopState {
             machine,
-            current_submission_id: None,
             environment: namespace_environment_for_test(),
             core_config: config,
             runtime_config,
             definition_persona_dirs: Vec::new(),
             prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
-            turn_state: TurnState::default(),
         }
     }
 
@@ -271,7 +269,7 @@
                 );
                 assert_eq!(
                     state
-                        .turn_state
+                        .machine
                         .active_turn_request_control_intent()
                         .reasoning_effort,
                     Some(alan_agent_protocol::ReasoningEffort::High)
@@ -358,7 +356,7 @@
     async fn test_handle_confirm_wrong_checkpoint() {
         let mut state = create_test_state();
         state
-            .turn_state
+            .machine
             .set_confirmation(crate::approval::PendingConfirmation {
                 checkpoint_id: "other_checkpoint".to_string(),
                 checkpoint_type: "test".to_string(),
@@ -397,7 +395,7 @@
     async fn test_handle_confirm_approve() {
         let mut state = create_test_state();
         state
-            .turn_state
+            .machine
             .set_confirmation(crate::approval::PendingConfirmation {
                 checkpoint_id: "chk_123".to_string(),
                 checkpoint_type: "test".to_string(),
@@ -437,7 +435,7 @@
     async fn test_handle_confirm_with_modifications() {
         let mut state = create_test_state();
         state
-            .turn_state
+            .machine
             .set_confirmation(crate::approval::PendingConfirmation {
                 checkpoint_id: "chk_123".to_string(),
                 checkpoint_type: "test".to_string(),
@@ -494,7 +492,7 @@
             .await
             .unwrap();
         state
-            .turn_state
+            .machine
             .set_confirmation(crate::approval::PendingConfirmation {
                 checkpoint_id: "tool_escalation_call_123".to_string(),
                 checkpoint_type: crate::approval::TOOL_ESCALATION_CHECKPOINT_TYPE.to_string(),
@@ -560,7 +558,7 @@
         let root = InProcessTransport::new(Arc::new(MountFs::new(Namespace::new())));
         state.environment = NamespaceRuntimeEnvironment::new(root, "/agent/1", "default");
         state
-            .turn_state
+            .machine
             .set_confirmation(crate::approval::PendingConfirmation {
                 checkpoint_id: "tool_escalation_call_456".to_string(),
                 checkpoint_type: crate::approval::TOOL_ESCALATION_CHECKPOINT_TYPE.to_string(),
@@ -616,7 +614,7 @@
                 .unwrap();
         bind_test_source_mount(&mut state, host_mount_root.path());
         state
-            .turn_state
+            .machine
             .set_confirmation(mount_escalation_pending_confirmation_with(
                 approved_host.path().to_str().unwrap(),
                 "read_write",
@@ -703,7 +701,7 @@
             namespace_environment_with_mount_applicator_for_test(applicator.clone());
         bind_test_source_mount(&mut state, host_mount_root.path());
         state
-            .turn_state
+            .machine
             .set_confirmation(mount_escalation_pending_confirmation_with(
                 approved_host.path().to_str().unwrap(),
                 "read_write",

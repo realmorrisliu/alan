@@ -558,7 +558,7 @@ async fn test_run_turn_uses_turn_reasoning_effort_before_runtime_effort() {
     state.runtime_config.request_control_intent = crate::RequestControlIntent::reasoning_effort(
         Some(alan_agent_protocol::ReasoningEffort::High),
     );
-    state.turn_state.set_active_turn_request_control_intent(
+    state.machine.set_active_turn_request_control_intent(
         crate::RequestControlIntent::reasoning_effort(Some(
             alan_agent_protocol::ReasoningEffort::Low,
         )),

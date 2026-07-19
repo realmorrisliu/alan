@@ -268,7 +268,7 @@ pub(crate) fn build_turn_memory_promotion_job(
     let memory_dir = state.core_config.memory.store_dir.clone()?;
     let active_turn_user_messages = active_turn_user_messages(
         state.machine.messages(),
-        state.turn_state.active_turn_message_start(),
+        state.machine.active_turn_message_start(),
     );
     if active_turn_user_messages.is_empty() {
         return None;

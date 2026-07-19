@@ -15,6 +15,14 @@ use crate::tape::{ContextItem, ContextItemsDelta, Tape};
 
 mod recovery;
 mod runtime_control;
+mod transition_state;
+
+use runtime_control::{ResponsesContinuationState, RollbackOutcome};
+use transition_state::MachineTransitionState;
+pub(crate) use transition_state::{
+    DeferredRuntimeAction, NormalizedToolCall, PendingYield, TurnActivityState,
+    is_auto_mid_turn_compaction_emergency,
+};
 
 pub use recovery::{
     latest_compaction_attempt_from_rollout_items, latest_memory_flush_attempt_from_rollout_items,
@@ -23,24 +31,6 @@ pub use recovery::{
 /// Warning emitted when rollback succeeds but remains in-memory only.
 pub const ROLLBACK_NON_DURABLE_WARNING: &str =
     "Rollback is in-memory only and will not survive runtime restart.";
-
-/// Structured outcome for an in-memory rollback request.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct RollbackOutcome {
-    /// Number of logical user turns actually removed.
-    pub removed_turns: u32,
-    /// Number of tape messages removed by the rollback.
-    pub removed_messages: usize,
-}
-
-/// Server-managed continuation state for Responses-compatible providers.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ResponsesContinuationState {
-    pub provider: String,
-    pub last_response_id: String,
-    pub boundary_message_count: usize,
-    pub reference_context_revision: u64,
-}
 
 /// Transition state for one Agent Process.
 #[derive(Debug)]
@@ -53,6 +43,8 @@ pub(crate) struct AgentMachine {
     memory_record_id: String,
     /// Whether a sourcing task has been started in this machine
     has_active_task: bool,
+    /// All in-memory state local to an accepted submission and logical turn.
+    transition_state: MachineTransitionState,
     /// Latest effect record by idempotency key (used for side-effect dedupe).
     effect_index: HashMap<String, EffectRecord>,
     /// Last prompt snapshot fingerprint written to rollout (used to skip duplicates).
@@ -81,6 +73,7 @@ impl AgentMachine {
             recorder: None,
             memory_record_id: uuid::Uuid::new_v4().to_string(),
             has_active_task: false,
+            transition_state: MachineTransitionState::default(),
             effect_index: HashMap::new(),
             last_turn_context_snapshot_fingerprint: None,
             user_turn_ordinal: 0,
@@ -212,6 +205,7 @@ impl AgentMachine {
             recorder: Some(recorder),
             memory_record_id,
             has_active_task: false,
+            transition_state: MachineTransitionState::default(),
             effect_index: HashMap::new(),
             last_turn_context_snapshot_fingerprint: None,
             user_turn_ordinal: 0,

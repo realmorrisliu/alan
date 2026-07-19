@@ -118,13 +118,11 @@ fn runtime_state_with_provider(provider: impl LlmProvider + 'static) -> RuntimeL
 fn runtime_state_with_environment(environment: NamespaceRuntimeEnvironment) -> RuntimeLoopState {
     RuntimeLoopState {
         machine: AgentMachine::new(),
-        current_submission_id: None,
         environment,
         core_config: Config::default(),
         runtime_config: super::RuntimeConfig::default(),
         definition_persona_dirs: Vec::new(),
         prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
-        turn_state: TurnState::default(),
     }
 }
 
@@ -307,12 +305,10 @@ impl LlmProvider for TimeoutThenSucceedStreamProvider {
 
 fn create_replay_memory_test_state(
     memory_dir: std::path::PathBuf,
-    turn_state: TurnState,
     machine: AgentMachine,
 ) -> RuntimeLoopState {
     RuntimeLoopState {
         machine,
-        current_submission_id: None,
         environment: namespace_environment_with_provider(DelayedMockProvider::new(
             tokio::time::Duration::from_millis(0),
             "",
@@ -326,13 +322,12 @@ fn create_replay_memory_test_state(
         runtime_config: super::RuntimeConfig::default(),
         definition_persona_dirs: Vec::new(),
         prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
-        turn_state,
     }
 }
 
 async fn run_deferred_runtime_actions(state: &mut RuntimeLoopState) -> usize {
     let cancel = CancellationToken::new();
-    let actions = state.turn_state.drain_deferred_runtime_actions();
+    let actions = state.machine.drain_deferred_runtime_actions();
     let count = actions.len();
     for action in actions {
         assert_eq!(

@@ -4,7 +4,8 @@ use tokio_util::sync::CancellationToken;
 use tracing::warn;
 use uuid::Uuid;
 
-use super::agent_loop::{NormalizedToolCall, RuntimeLoopState};
+use super::agent_loop::RuntimeLoopState;
+use crate::agent_machine::NormalizedToolCall;
 
 pub(super) async fn cancel_current_task<E, F>(
     state: &mut RuntimeLoopState,
@@ -17,8 +18,8 @@ where
     warn!("Cancelling current task");
     // Clear turn-scoped pending state, but preserve machine history so the user can
     // continue the same conversation after an interrupt/cancel.
-    state.turn_state.clear();
-    state.turn_state.clear_plan_snapshot();
+    state.machine.reset_turn();
+    state.machine.clear_plan_snapshot();
     state.machine.clear_active_task();
     super::ui_surfaces::turn_completed(state.namespace_environment(), true).await?;
     emit(Event::TurnCompleted {
@@ -183,7 +184,7 @@ where
     if !cancel.is_cancelled() {
         return Ok(false);
     }
-    if !state.turn_state.is_turn_active() && !state.turn_state.has_pending_interaction() {
+    if !state.machine.is_turn_active() && !state.machine.has_pending_interaction() {
         emit(Event::Error {
             message: "No active turn to cancel.".to_string(),
             recoverable: true,

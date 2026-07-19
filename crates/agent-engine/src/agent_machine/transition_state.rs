@@ -1,6 +1,6 @@
 use std::collections::{HashMap, VecDeque};
 
-use super::agent_loop::{DeferredRuntimeAction, NormalizedToolCall};
+use super::AgentMachine;
 use crate::approval::{PendingConfirmation, PendingStructuredInputRequest};
 use crate::skills::ActiveSkillEnvelope;
 use crate::tape::ContentPart;
@@ -10,7 +10,7 @@ const MAX_QUEUED_NEXT_TURN_INPUTS: usize = 16;
 const AUTO_MID_TURN_COMPACTION_LIMIT: u32 = 2;
 const AUTO_MID_TURN_COMPACTION_MIN_GROWTH_TOKENS: usize = 256;
 
-pub(super) fn is_auto_mid_turn_compaction_emergency(
+pub(crate) fn is_auto_mid_turn_compaction_emergency(
     estimated_prompt_tokens: usize,
     context_window_tokens: usize,
 ) -> bool {
@@ -20,7 +20,7 @@ pub(super) fn is_auto_mid_turn_compaction_emergency(
 }
 
 #[derive(Debug, Clone)]
-pub(super) enum PendingYield {
+pub(crate) enum PendingYield {
     Confirmation(PendingConfirmation),
     StructuredInput(PendingStructuredInputRequest),
 }
@@ -39,8 +39,24 @@ pub(crate) struct PlanSnapshot {
     pub items: Vec<PlanItem>,
 }
 
+/// Tool call normalized at the Machine transition boundary.
+#[derive(Debug, Clone)]
+pub(crate) struct NormalizedToolCall {
+    pub(crate) id: String,
+    pub(crate) name: String,
+    pub(crate) arguments: serde_json::Value,
+}
+
+/// Best-effort work retained by Machine until the outer Process loop can run it.
+#[derive(Debug, Clone)]
+pub(crate) enum DeferredRuntimeAction {
+    TurnMemoryPromotion(crate::runtime::TurnMemoryPromotionJob),
+}
+
 #[derive(Debug, Clone, Default)]
-pub(crate) struct TurnState {
+pub(super) struct MachineTransitionState {
+    /// Identifier of the submission currently accepted by this Machine.
+    current_submission_id: Option<String>,
     pending: HashMap<String, PendingYield>,
     pending_tool_replay_batches: HashMap<String, Vec<NormalizedToolCall>>,
     /// Insertion order tracking for all pending items
@@ -80,70 +96,95 @@ const GUARDIAN_MAX_CONSECUTIVE_DENIALS: u32 = 3;
 const GUARDIAN_DENIAL_WINDOW: usize = 50;
 const GUARDIAN_MAX_DENIALS_IN_WINDOW: usize = 10;
 
-impl TurnState {
+impl AgentMachine {
+    pub(crate) fn accept_submission(&mut self, submission_id: impl Into<String>) {
+        self.transition_state.current_submission_id = Some(submission_id.into());
+    }
+
+    pub(crate) fn finish_submission(&mut self) {
+        self.transition_state.current_submission_id = None;
+    }
+
+    pub(crate) fn current_submission_id(&self) -> Option<&str> {
+        self.transition_state.current_submission_id.as_deref()
+    }
+
     /// Record a guardian review outcome (true = denied). Returns true when the
     /// rejection circuit breaker trips (≥3 consecutive, or ≥10 denials within
     /// the last 50 reviews this turn). A non-denial resets the consecutive count.
     pub(crate) fn record_guardian_review(&mut self, denied: bool) -> bool {
         if denied {
-            self.guardian_consecutive_denials = self.guardian_consecutive_denials.saturating_add(1);
+            self.transition_state.guardian_consecutive_denials = self
+                .transition_state
+                .guardian_consecutive_denials
+                .saturating_add(1);
         } else {
-            self.guardian_consecutive_denials = 0;
+            self.transition_state.guardian_consecutive_denials = 0;
         }
-        self.guardian_recent_reviews.push_back(denied);
-        while self.guardian_recent_reviews.len() > GUARDIAN_DENIAL_WINDOW {
-            self.guardian_recent_reviews.pop_front();
+        self.transition_state
+            .guardian_recent_reviews
+            .push_back(denied);
+        while self.transition_state.guardian_recent_reviews.len() > GUARDIAN_DENIAL_WINDOW {
+            self.transition_state.guardian_recent_reviews.pop_front();
         }
-        let denials_in_window = self.guardian_recent_reviews.iter().filter(|d| **d).count();
-        self.guardian_consecutive_denials >= GUARDIAN_MAX_CONSECUTIVE_DENIALS
+        let denials_in_window = self
+            .transition_state
+            .guardian_recent_reviews
+            .iter()
+            .filter(|d| **d)
+            .count();
+        self.transition_state.guardian_consecutive_denials >= GUARDIAN_MAX_CONSECUTIVE_DENIALS
             || denials_in_window >= GUARDIAN_MAX_DENIALS_IN_WINDOW
     }
 
     pub(crate) fn has_pending_interaction(&self) -> bool {
-        !self.pending.is_empty()
+        !self.transition_state.pending.is_empty()
     }
 
     pub(crate) fn pending_request_ids(&self) -> Vec<String> {
-        self.pending_order.clone()
+        self.transition_state.pending_order.clone()
     }
 
-    pub(crate) fn clear(&mut self) {
-        self.pending.clear();
-        self.pending_tool_replay_batches.clear();
-        self.pending_order.clear();
-        self.turn_activity = TurnActivityState::Idle;
-        self.buffered_inband_submissions.clear();
-        self.active_turn_message_start = None;
-        self.active_skills.clear();
-        self.active_turn_request_control_intent = crate::RequestControlIntent::default();
+    pub(crate) fn reset_turn(&mut self) {
+        self.transition_state.pending.clear();
+        self.transition_state.pending_tool_replay_batches.clear();
+        self.transition_state.pending_order.clear();
+        self.transition_state.turn_activity = TurnActivityState::Idle;
+        self.transition_state.buffered_inband_submissions.clear();
+        self.transition_state.active_turn_message_start = None;
+        self.transition_state.active_skills.clear();
+        self.transition_state.active_turn_request_control_intent =
+            crate::RequestControlIntent::default();
         self.reset_auto_mid_turn_compaction_state();
-        self.guardian_consecutive_denials = 0;
-        self.guardian_recent_reviews.clear();
+        self.transition_state.guardian_consecutive_denials = 0;
+        self.transition_state.guardian_recent_reviews.clear();
     }
 
     pub(crate) fn clear_plan_snapshot(&mut self) {
-        self.plan_snapshot = None;
-        self.plan_snapshot_turn_start = None;
-        self.plan_snapshot_message_count = None;
+        self.transition_state.plan_snapshot = None;
+        self.transition_state.plan_snapshot_turn_start = None;
+        self.transition_state.plan_snapshot_message_count = None;
     }
 
     pub(crate) fn reset_auto_mid_turn_compaction_state(&mut self) {
-        self.compactions_this_turn = 0;
-        self.last_compaction_prompt_tokens = None;
+        self.transition_state.compactions_this_turn = 0;
+        self.transition_state.last_compaction_prompt_tokens = None;
     }
 
     /// Queue `next_turn` input parts. Returns `Some(new_len)` on success, `None` on overflow.
     pub(crate) fn queue_next_turn_input(&mut self, parts: Vec<ContentPart>) -> Option<usize> {
-        if self.queued_next_turn_inputs.len() >= MAX_QUEUED_NEXT_TURN_INPUTS {
+        if self.transition_state.queued_next_turn_inputs.len() >= MAX_QUEUED_NEXT_TURN_INPUTS {
             return None;
         }
-        self.queued_next_turn_inputs.push_back(parts);
-        Some(self.queued_next_turn_inputs.len())
+        self.transition_state
+            .queued_next_turn_inputs
+            .push_back(parts);
+        Some(self.transition_state.queued_next_turn_inputs.len())
     }
 
     /// Drain queued `next_turn` input parts in FIFO order.
     pub(crate) fn drain_next_turn_inputs(&mut self) -> VecDeque<Vec<ContentPart>> {
-        std::mem::take(&mut self.queued_next_turn_inputs)
+        std::mem::take(&mut self.transition_state.queued_next_turn_inputs)
     }
 
     /// Number of queued `next_turn` payloads.
@@ -155,27 +196,32 @@ impl TurnState {
         )
     )]
     pub(crate) fn queued_next_turn_input_count(&self) -> usize {
-        self.queued_next_turn_inputs.len()
+        self.transition_state.queued_next_turn_inputs.len()
     }
 
     /// Drain all buffered inband submissions.
     pub(crate) fn drain_buffered_inband_submissions(&mut self) -> VecDeque<Submission> {
-        std::mem::take(&mut self.buffered_inband_submissions)
+        std::mem::take(&mut self.transition_state.buffered_inband_submissions)
     }
 
     /// Push a submission to the buffered inband submissions queue.
     pub(crate) fn push_buffered_inband_submission(&mut self, submission: Submission) {
-        self.buffered_inband_submissions.push_back(submission);
+        self.transition_state
+            .buffered_inband_submissions
+            .push_back(submission);
     }
 
     /// Pop a submission from the buffered inband submissions queue.
     pub(crate) fn pop_buffered_inband_submission(&mut self) -> Option<Submission> {
-        self.buffered_inband_submissions.pop_front()
+        self.transition_state
+            .buffered_inband_submissions
+            .pop_front()
     }
 
     /// Count user input submissions in the buffered queue
     pub(crate) fn buffered_inband_user_input_count(&self) -> usize {
-        self.buffered_inband_submissions
+        self.transition_state
+            .buffered_inband_submissions
             .iter()
             .filter(|submission| matches!(submission.op, alan_agent_protocol::Op::Input { .. }))
             .count()
@@ -183,8 +229,8 @@ impl TurnState {
 
     /// Clear buffered inband submissions and return the count
     pub(crate) fn clear_buffered_inband_submissions(&mut self) -> usize {
-        let count = self.buffered_inband_submissions.len();
-        self.buffered_inband_submissions.clear();
+        let count = self.transition_state.buffered_inband_submissions.len();
+        self.transition_state.buffered_inband_submissions.clear();
         count
     }
 
@@ -197,11 +243,11 @@ impl TurnState {
         )
     )]
     pub(crate) fn latest_pending_key(&self) -> Option<String> {
-        self.pending_order.last().cloned()
+        self.transition_state.pending_order.last().cloned()
     }
 
     pub(crate) fn set_turn_activity(&mut self, activity: TurnActivityState) {
-        self.turn_activity = activity;
+        self.transition_state.turn_activity = activity;
     }
 
     #[cfg_attr(
@@ -212,70 +258,79 @@ impl TurnState {
         )
     )]
     pub(crate) fn turn_activity(&self) -> TurnActivityState {
-        self.turn_activity
+        self.transition_state.turn_activity
     }
 
     pub(crate) fn is_turn_active(&self) -> bool {
-        !matches!(self.turn_activity, TurnActivityState::Idle)
+        !matches!(self.transition_state.turn_activity, TurnActivityState::Idle)
     }
 
     pub(crate) fn begin_turn(&mut self, tape_message_count: usize) {
-        self.active_turn_message_start = Some(tape_message_count);
+        self.transition_state.active_turn_message_start = Some(tape_message_count);
     }
 
     pub(crate) fn active_turn_message_start(&self) -> Option<usize> {
-        self.active_turn_message_start
+        self.transition_state.active_turn_message_start
     }
 
     pub(crate) fn set_active_turn_request_control_intent(
         &mut self,
         intent: crate::RequestControlIntent,
     ) {
-        self.active_turn_request_control_intent = intent;
+        self.transition_state.active_turn_request_control_intent = intent;
     }
 
     pub(crate) fn active_turn_request_control_intent(&self) -> crate::RequestControlIntent {
-        self.active_turn_request_control_intent
+        self.transition_state.active_turn_request_control_intent
     }
 
     pub(crate) fn note_tape_compaction(&mut self, retention_start: usize) {
-        if let Some(active_turn_message_start) = &mut self.active_turn_message_start {
+        if let Some(active_turn_message_start) =
+            &mut self.transition_state.active_turn_message_start
+        {
             *active_turn_message_start = active_turn_message_start.saturating_sub(retention_start);
         }
         if self
+            .transition_state
             .plan_snapshot_turn_start
             .is_some_and(|start| start < retention_start)
         {
-            self.plan_snapshot_turn_start = None;
-        } else if let Some(plan_snapshot_turn_start) = &mut self.plan_snapshot_turn_start {
+            self.transition_state.plan_snapshot_turn_start = None;
+        } else if let Some(plan_snapshot_turn_start) =
+            &mut self.transition_state.plan_snapshot_turn_start
+        {
             *plan_snapshot_turn_start -= retention_start;
         }
         if self
+            .transition_state
             .plan_snapshot_message_count
             .is_some_and(|count| count < retention_start)
         {
-            self.plan_snapshot_message_count = None;
-        } else if let Some(plan_snapshot_message_count) = &mut self.plan_snapshot_message_count {
+            self.transition_state.plan_snapshot_message_count = None;
+        } else if let Some(plan_snapshot_message_count) =
+            &mut self.transition_state.plan_snapshot_message_count
+        {
             *plan_snapshot_message_count -= retention_start;
         }
     }
 
     pub(crate) fn note_resumed_user_input(&mut self) {
-        self.plan_snapshot_turn_start = None;
+        self.transition_state.plan_snapshot_turn_start = None;
     }
 
     pub(crate) fn set_active_skills(&mut self, active_skills: Vec<ActiveSkillEnvelope>) {
-        self.active_skills = active_skills;
+        self.transition_state.active_skills = active_skills;
     }
 
     pub(crate) fn active_skills(&self) -> &[ActiveSkillEnvelope] {
-        &self.active_skills
+        &self.transition_state.active_skills
     }
 
     pub(crate) fn set_plan_snapshot(&mut self, explanation: Option<String>, items: Vec<PlanItem>) {
-        self.plan_snapshot = Some(PlanSnapshot { explanation, items });
-        self.plan_snapshot_turn_start = self.active_turn_message_start;
-        self.plan_snapshot_message_count = None;
+        self.transition_state.plan_snapshot = Some(PlanSnapshot { explanation, items });
+        self.transition_state.plan_snapshot_turn_start =
+            self.transition_state.active_turn_message_start;
+        self.transition_state.plan_snapshot_message_count = None;
     }
 
     pub(crate) fn set_plan_snapshot_at_message_count(
@@ -285,29 +340,33 @@ impl TurnState {
         tape_message_count: usize,
     ) {
         self.set_plan_snapshot(explanation, items);
-        self.plan_snapshot_message_count = Some(tape_message_count);
+        self.transition_state.plan_snapshot_message_count = Some(tape_message_count);
     }
 
     pub(crate) fn plan_snapshot(&self) -> Option<&PlanSnapshot> {
-        self.plan_snapshot.as_ref()
+        self.transition_state.plan_snapshot.as_ref()
     }
 
     pub(crate) fn plan_snapshot_is_from_active_turn(&self) -> bool {
-        self.active_turn_message_start.is_some()
-            && self.plan_snapshot_turn_start == self.active_turn_message_start
+        self.transition_state.active_turn_message_start.is_some()
+            && self.transition_state.plan_snapshot_turn_start
+                == self.transition_state.active_turn_message_start
     }
 
     pub(crate) fn plan_snapshot_postdates_message(&self, message_index: usize) -> bool {
-        self.plan_snapshot_message_count
+        self.transition_state
+            .plan_snapshot_message_count
             .is_some_and(|count| count > message_index)
     }
 
     pub(crate) fn push_deferred_runtime_action(&mut self, action: DeferredRuntimeAction) {
-        self.deferred_runtime_actions.push_back(action);
+        self.transition_state
+            .deferred_runtime_actions
+            .push_back(action);
     }
 
     pub(crate) fn drain_deferred_runtime_actions(&mut self) -> VecDeque<DeferredRuntimeAction> {
-        std::mem::take(&mut self.deferred_runtime_actions)
+        std::mem::take(&mut self.transition_state.deferred_runtime_actions)
     }
 
     pub(crate) fn can_auto_mid_turn_compact(
@@ -319,11 +378,11 @@ impl TurnState {
             return true;
         }
 
-        if self.compactions_this_turn >= AUTO_MID_TURN_COMPACTION_LIMIT {
+        if self.transition_state.compactions_this_turn >= AUTO_MID_TURN_COMPACTION_LIMIT {
             return false;
         }
 
-        if let Some(last_prompt_tokens) = self.last_compaction_prompt_tokens
+        if let Some(last_prompt_tokens) = self.transition_state.last_compaction_prompt_tokens
             && estimated_prompt_tokens
                 <= last_prompt_tokens.saturating_add(AUTO_MID_TURN_COMPACTION_MIN_GROWTH_TOKENS)
         {
@@ -334,8 +393,11 @@ impl TurnState {
     }
 
     pub(crate) fn record_auto_mid_turn_compaction(&mut self, output_prompt_tokens: usize) {
-        self.compactions_this_turn = self.compactions_this_turn.saturating_add(1);
-        self.last_compaction_prompt_tokens = Some(output_prompt_tokens);
+        self.transition_state.compactions_this_turn = self
+            .transition_state
+            .compactions_this_turn
+            .saturating_add(1);
+        self.transition_state.last_compaction_prompt_tokens = Some(output_prompt_tokens);
     }
 
     #[cfg_attr(
@@ -346,7 +408,7 @@ impl TurnState {
         )
     )]
     pub(crate) fn compactions_this_turn(&self) -> u32 {
-        self.compactions_this_turn
+        self.transition_state.compactions_this_turn
     }
 
     #[cfg_attr(
@@ -366,16 +428,18 @@ impl TurnState {
         pending: PendingConfirmation,
     ) {
         let key = request_id.into();
-        self.pending
+        self.transition_state
+            .pending
             .insert(key.clone(), PendingYield::Confirmation(pending));
-        push_latest_key(&mut self.pending_order, key);
+        push_latest_key(&mut self.transition_state.pending_order, key);
     }
 
     pub(crate) fn pending_confirmation(&self) -> Option<PendingConfirmation> {
-        self.pending_order
+        self.transition_state
+            .pending_order
             .iter()
             .rev()
-            .find_map(|key| match self.pending.get(key) {
+            .find_map(|key| match self.transition_state.pending.get(key) {
                 Some(PendingYield::Confirmation(value)) => Some(value.clone()),
                 _ => None,
             })
@@ -386,7 +450,8 @@ impl TurnState {
         checkpoint_id: impl Into<String>,
         tool_calls: Vec<NormalizedToolCall>,
     ) {
-        self.pending_tool_replay_batches
+        self.transition_state
+            .pending_tool_replay_batches
             .insert(checkpoint_id.into(), tool_calls);
     }
 
@@ -394,7 +459,9 @@ impl TurnState {
         &mut self,
         checkpoint_id: &str,
     ) -> Option<Vec<NormalizedToolCall>> {
-        self.pending_tool_replay_batches.remove(checkpoint_id)
+        self.transition_state
+            .pending_tool_replay_batches
+            .remove(checkpoint_id)
     }
 
     #[cfg_attr(
@@ -414,15 +481,16 @@ impl TurnState {
         pending: PendingStructuredInputRequest,
     ) {
         let key = request_id.into();
-        self.pending
+        self.transition_state
+            .pending
             .insert(key.clone(), PendingYield::StructuredInput(pending));
-        push_latest_key(&mut self.pending_order, key);
+        push_latest_key(&mut self.transition_state.pending_order, key);
     }
 
     /// Unified lookup: take any pending item by request_id.
-    pub(super) fn take_pending(&mut self, request_id: &str) -> Option<PendingYield> {
-        let item = self.pending.remove(request_id)?;
-        remove_key(&mut self.pending_order, request_id);
+    pub(crate) fn take_pending(&mut self, request_id: &str) -> Option<PendingYield> {
+        let item = self.transition_state.pending.remove(request_id)?;
+        remove_key(&mut self.transition_state.pending_order, request_id);
         Some(item)
     }
 }
@@ -444,8 +512,20 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn accepted_submission_identity_is_machine_owned() {
+        let mut machine = AgentMachine::new();
+        assert_eq!(machine.current_submission_id(), None);
+
+        machine.accept_submission("sub-1");
+        assert_eq!(machine.current_submission_id(), Some("sub-1"));
+
+        machine.finish_submission();
+        assert_eq!(machine.current_submission_id(), None);
+    }
+
+    #[test]
     fn guardian_breaker_trips_on_three_consecutive_denials() {
-        let mut state = TurnState::default();
+        let mut state = AgentMachine::new();
         assert!(!state.record_guardian_review(true));
         assert!(!state.record_guardian_review(true));
         assert!(state.record_guardian_review(true)); // third consecutive trips
@@ -453,7 +533,7 @@ mod tests {
 
     #[test]
     fn guardian_breaker_resets_on_allow() {
-        let mut state = TurnState::default();
+        let mut state = AgentMachine::new();
         assert!(!state.record_guardian_review(true));
         assert!(!state.record_guardian_review(true));
         assert!(!state.record_guardian_review(false)); // reset
@@ -464,7 +544,7 @@ mod tests {
 
     #[test]
     fn guardian_breaker_trips_on_ten_denials_in_window() {
-        let mut state = TurnState::default();
+        let mut state = AgentMachine::new();
         // Interleave allow/deny so it never hits 3 consecutive, but reaches 10
         // denials within the rolling window.
         let mut tripped = false;
@@ -477,7 +557,7 @@ mod tests {
 
     #[test]
     fn test_confirmation_set_and_pending() {
-        let mut state = TurnState::default();
+        let mut state = AgentMachine::new();
         state.set_confirmation(PendingConfirmation {
             checkpoint_id: "cp-1".to_string(),
             checkpoint_type: "tool_escalation".to_string(),
@@ -497,7 +577,7 @@ mod tests {
 
     #[test]
     fn test_clear_resets_pending_interactions() {
-        let mut state = TurnState::default();
+        let mut state = AgentMachine::new();
         state.set_confirmation(PendingConfirmation {
             checkpoint_id: "cp".to_string(),
             checkpoint_type: "tool_escalation".to_string(),
@@ -505,7 +585,7 @@ mod tests {
             details: json!({}),
             options: vec!["approve".to_string()],
         });
-        state.clear();
+        state.reset_turn();
         assert!(state.pending_confirmation().is_none());
         assert!(!state.has_pending_interaction());
         assert!(matches!(state.turn_activity(), TurnActivityState::Idle));
@@ -513,7 +593,7 @@ mod tests {
 
     #[test]
     fn test_turn_activity_state_roundtrip_and_clear() {
-        let mut state = TurnState::default();
+        let mut state = AgentMachine::new();
         assert!(matches!(state.turn_activity(), TurnActivityState::Idle));
 
         state.set_turn_activity(TurnActivityState::Running);
@@ -522,14 +602,14 @@ mod tests {
         state.set_turn_activity(TurnActivityState::Paused);
         assert!(matches!(state.turn_activity(), TurnActivityState::Paused));
 
-        state.clear();
+        state.reset_turn();
         assert!(matches!(state.turn_activity(), TurnActivityState::Idle));
         assert_eq!(state.compactions_this_turn(), 0);
     }
 
     #[test]
     fn test_clear_preserves_plan_snapshot() {
-        let mut state = TurnState::default();
+        let mut state = AgentMachine::new();
         state.set_plan_snapshot(
             Some("Keep the current plan".to_string()),
             vec![PlanItem {
@@ -539,7 +619,7 @@ mod tests {
             }],
         );
 
-        state.clear();
+        state.reset_turn();
 
         let snapshot = state.plan_snapshot().expect("plan snapshot should persist");
         assert_eq!(
@@ -551,7 +631,7 @@ mod tests {
 
     #[test]
     fn test_clear_plan_snapshot_removes_latest_plan() {
-        let mut state = TurnState::default();
+        let mut state = AgentMachine::new();
         state.set_plan_snapshot(
             Some("Drop the current plan".to_string()),
             vec![PlanItem {
@@ -568,7 +648,7 @@ mod tests {
 
     #[test]
     fn test_active_skills_roundtrip_and_clear() {
-        let mut state = TurnState::default();
+        let mut state = AgentMachine::new();
         state.set_active_skills(vec![crate::skills::ActiveSkillEnvelope::available(
             crate::skills::SkillMetadata {
                 id: "deploy".to_string(),
@@ -600,13 +680,13 @@ mod tests {
         assert_eq!(state.active_skills().len(), 1);
         assert_eq!(state.active_skills()[0].metadata.id, "deploy");
 
-        state.clear();
+        state.reset_turn();
         assert!(state.active_skills().is_empty());
     }
 
     #[test]
     fn test_active_turn_message_start_tracks_turn_start_and_compaction() {
-        let mut state = TurnState::default();
+        let mut state = AgentMachine::new();
         assert_eq!(state.active_turn_message_start(), None);
 
         state.begin_turn(5);
@@ -618,13 +698,13 @@ mod tests {
         state.note_tape_compaction(10);
         assert_eq!(state.active_turn_message_start(), Some(0));
 
-        state.clear();
+        state.reset_turn();
         assert_eq!(state.active_turn_message_start(), None);
     }
 
     #[test]
     fn dropped_plan_boundary_does_not_become_active_after_compaction() {
-        let mut state = TurnState::default();
+        let mut state = AgentMachine::new();
         state.begin_turn(2);
         state.set_plan_snapshot(Some("old plan".to_string()), Vec::new());
         state.begin_turn(5);
@@ -637,7 +717,7 @@ mod tests {
 
     #[test]
     fn test_auto_mid_turn_compaction_budget_and_growth_guard() {
-        let mut state = TurnState::default();
+        let mut state = AgentMachine::new();
         assert!(state.can_auto_mid_turn_compact(4_000, 8_192));
 
         state.record_auto_mid_turn_compaction(3_200);
@@ -650,7 +730,7 @@ mod tests {
         assert!(!state.can_auto_mid_turn_compact(3_700, 8_192));
         assert!(state.can_auto_mid_turn_compact(7_980, 8_192));
 
-        state.clear();
+        state.reset_turn();
         assert!(state.can_auto_mid_turn_compact(4_000, 8_192));
     }
 
@@ -663,7 +743,7 @@ mod tests {
 
     #[test]
     fn test_latest_pending_key_tracks_cross_type_insertion_order() {
-        let mut state = TurnState::default();
+        let mut state = AgentMachine::new();
         state.set_confirmation(PendingConfirmation {
             checkpoint_id: "cp-1".to_string(),
             checkpoint_type: "manual".to_string(),
@@ -687,7 +767,7 @@ mod tests {
 
     #[test]
     fn test_turn_state_buffers_inband_submissions_fifo() {
-        let mut state = TurnState::default();
+        let mut state = AgentMachine::new();
         state.push_buffered_inband_submission(Submission {
             id: "s1".to_string(),
             op: alan_agent_protocol::Op::Input {
@@ -725,7 +805,7 @@ mod tests {
 
     #[test]
     fn test_turn_state_drain_buffered_inband_submissions_preserves_order() {
-        let mut state = TurnState::default();
+        let mut state = AgentMachine::new();
         state.push_buffered_inband_submission(Submission {
             id: "s1".to_string(),
             op: alan_agent_protocol::Op::Input {
@@ -752,7 +832,7 @@ mod tests {
 
     #[test]
     fn test_clear_buffered_inband_submissions_returns_count() {
-        let mut state = TurnState::default();
+        let mut state = AgentMachine::new();
         state.push_buffered_inband_submission(Submission {
             id: "s1".to_string(),
             op: alan_agent_protocol::Op::Input {
@@ -775,7 +855,7 @@ mod tests {
 
     #[test]
     fn test_queue_next_turn_inputs_fifo_and_drain() {
-        let mut state = TurnState::default();
+        let mut state = AgentMachine::new();
         assert_eq!(
             state.queue_next_turn_input(vec![ContentPart::text("ctx-1")]),
             Some(1)
@@ -795,7 +875,7 @@ mod tests {
 
     #[test]
     fn test_queue_next_turn_inputs_overflow_is_rejected() {
-        let mut state = TurnState::default();
+        let mut state = AgentMachine::new();
         for _ in 0..MAX_QUEUED_NEXT_TURN_INPUTS {
             assert!(
                 state
@@ -812,7 +892,7 @@ mod tests {
 
     #[test]
     fn test_tool_replay_batch_roundtrip() {
-        let mut state = TurnState::default();
+        let mut state = AgentMachine::new();
         let tool_calls = vec![
             NormalizedToolCall {
                 id: "call-1".to_string(),

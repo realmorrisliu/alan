@@ -13,7 +13,6 @@ async fn test_handle_submission_cancel() {
 
     let mut state = RuntimeLoopState {
         machine,
-        current_submission_id: None,
         environment: namespace_environment_with_live_process(DelayedMockProvider::new(
             tokio::time::Duration::from_millis(0),
             "",
@@ -23,7 +22,6 @@ async fn test_handle_submission_cancel() {
         runtime_config,
         definition_persona_dirs: Vec::new(),
         prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
-        turn_state: TurnState::default(),
     };
 
     let mut events = vec![];
@@ -69,7 +67,6 @@ async fn test_handle_submission_rollback() {
 
     let mut state = RuntimeLoopState {
         machine,
-        current_submission_id: None,
         environment: namespace_environment_with_provider(DelayedMockProvider::new(
             tokio::time::Duration::from_millis(0),
             "",
@@ -78,7 +75,6 @@ async fn test_handle_submission_rollback() {
         runtime_config,
         definition_persona_dirs: Vec::new(),
         prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
-        turn_state: TurnState::default(),
     };
 
     let mut events = vec![];

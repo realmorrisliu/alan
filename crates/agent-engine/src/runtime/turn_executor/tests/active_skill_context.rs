@@ -46,9 +46,7 @@ runtime:
     let prior_prompt = state.prompt_cache.build(Some(&[ContentPart::text(
         "please use $release-check for this task",
     )]));
-    state
-        .turn_state
-        .set_active_skills(prior_prompt.active_skills);
+    state.machine.set_active_skills(prior_prompt.active_skills);
     state
         .machine
         .add_user_message("continue the prior approval flow");
@@ -145,9 +143,7 @@ runtime:
     let prior_prompt = state.prompt_cache.build(Some(&[ContentPart::text(
         "please use $release-check for this task",
     )]));
-    state
-        .turn_state
-        .set_active_skills(prior_prompt.active_skills);
+    state.machine.set_active_skills(prior_prompt.active_skills);
 
     let cancel = CancellationToken::new();
     let mut events = vec![];
@@ -359,9 +355,7 @@ runtime:
     let prior_prompt = state.prompt_cache.build(Some(&[ContentPart::text(
         "please use $release-check for this task",
     )]));
-    state
-        .turn_state
-        .set_active_skills(prior_prompt.active_skills);
+    state.machine.set_active_skills(prior_prompt.active_skills);
 
     let cancel = CancellationToken::new();
     let mut events = vec![];

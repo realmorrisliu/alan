@@ -14,9 +14,7 @@ async fn test_run_turn_refreshes_memory_surfaces_when_tool_batch_ends_turn() {
         "",
     ));
     state.core_config.memory.store_dir = Some(memory_dir.clone());
-    state
-        .turn_state
-        .set_turn_activity(TurnActivityState::Running);
+    state.machine.set_turn_activity(TurnActivityState::Running);
 
     let cancel = CancellationToken::new();
     let mut events = vec![];
@@ -66,9 +64,7 @@ async fn test_run_turn_promotes_direct_user_fact_when_tool_batch_ends_turn() {
     ));
     state.core_config.memory.store_dir = Some(memory_dir.clone());
     state.core_config.memory.enabled = true;
-    state
-        .turn_state
-        .set_turn_activity(TurnActivityState::Running);
+    state.machine.set_turn_activity(TurnActivityState::Running);
 
     let cancel = CancellationToken::new();
     let mut emit = |_event: Event| async {};
@@ -128,7 +124,7 @@ async fn test_run_turn_defers_memory_promotion_until_after_completion() {
             .iter()
             .any(|event| matches!(event, Event::TurnCompleted { .. }))
     );
-    assert_eq!(state.turn_state.drain_deferred_runtime_actions().len(), 1);
+    assert_eq!(state.machine.drain_deferred_runtime_actions().len(), 1);
 }
 
 struct SlowTool {
@@ -181,9 +177,7 @@ async fn test_run_turn_cancelled_tool_batch_does_not_refresh_memory_surfaces() {
         tools,
     );
     state.core_config.memory.store_dir = Some(memory_dir.clone());
-    state
-        .turn_state
-        .set_turn_activity(TurnActivityState::Running);
+    state.machine.set_turn_activity(TurnActivityState::Running);
 
     let cancel = CancellationToken::new();
     let cancel_for_task = cancel.clone();
@@ -305,6 +299,6 @@ async fn test_run_turn_tool_loop_guard_refreshes_memory_surfaces_before_completi
     assert!(result.is_ok());
     assert!(matches!(result.unwrap(), TurnExecutionOutcome::Finished));
     assert_eq!(generate_calls.load(Ordering::SeqCst), 2);
-    assert_eq!(state.turn_state.drain_deferred_runtime_actions().len(), 1);
+    assert_eq!(state.machine.drain_deferred_runtime_actions().len(), 1);
     assert!(saw_handoff_before_completion);
 }

@@ -227,7 +227,7 @@ async fn test_try_handle_virtual_tool_call_request_mount_escalates_even_when_all
     assert!(matches!(result.unwrap(), VirtualToolOutcome::PauseTurn));
 
     let pending = state
-        .turn_state
+        .machine
         .pending_confirmation()
         .expect("mount request should pause for confirmation");
     assert_eq!(
@@ -304,7 +304,7 @@ async fn test_try_handle_virtual_tool_call_request_mount_does_not_probe_host_exi
     assert!(matches!(result.unwrap(), VirtualToolOutcome::PauseTurn));
 
     let pending = state
-        .turn_state
+        .machine
         .pending_confirmation()
         .expect("syntactically valid mount request should pause for confirmation");
     assert_eq!(
@@ -351,7 +351,7 @@ async fn test_try_handle_virtual_tool_call_request_mount_denied_by_policy() {
             refresh_context: false
         }
     ));
-    assert!(state.turn_state.pending_confirmation().is_none());
+    assert!(state.machine.pending_confirmation().is_none());
     assert!(!events.iter().any(|event| matches!(
         event,
         Event::Yield {
@@ -421,7 +421,7 @@ default_action: allow
             refresh_context: false
         }
     ));
-    assert!(state.turn_state.pending_confirmation().is_none());
+    assert!(state.machine.pending_confirmation().is_none());
     assert!(events.iter().any(|event| matches!(
         event,
         Event::ToolCallCompleted { success: Some(false), audit: Some(audit), .. }
@@ -486,7 +486,7 @@ default_action: allow
             refresh_context: false
         }
     ));
-    assert!(state.turn_state.pending_confirmation().is_none());
+    assert!(state.machine.pending_confirmation().is_none());
     assert!(events.iter().any(|event| matches!(
         event,
         Event::ToolCallCompleted { success: Some(false), audit: Some(audit), .. }
@@ -529,7 +529,7 @@ async fn test_try_handle_virtual_tool_call_request_mount_rejects_invalid_request
             refresh_context: true
         }
     ));
-    assert!(state.turn_state.pending_confirmation().is_none());
+    assert!(state.machine.pending_confirmation().is_none());
     assert!(!events.iter().any(|event| matches!(
         event,
         Event::Yield {

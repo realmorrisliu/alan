@@ -6,7 +6,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::llm::build_generation_request;
 
-use super::agent_loop::{DeferredRuntimeAction, RuntimeLoopState};
+use super::agent_loop::RuntimeLoopState;
 use super::compaction::{CompactionRequest, maybe_compact_context_with_cancel};
 use super::response_guardrails::{
     AssistantDraft, GuardrailDecision, ResponseGuardrailContext, ResponseGuardrails,
@@ -20,6 +20,7 @@ use super::turn_support::{
     normalize_tool_calls,
 };
 use super::virtual_tools::virtual_tool_definitions;
+use crate::agent_machine::DeferredRuntimeAction;
 
 mod namespace_generation;
 
@@ -96,7 +97,7 @@ async fn finalize_turn_memory_best_effort(
         super::memory_promotion::build_turn_memory_promotion_job(state, promotion_context)
     {
         state
-            .turn_state
+            .machine
             .push_deferred_runtime_action(DeferredRuntimeAction::TurnMemoryPromotion(job));
     }
 }
@@ -218,7 +219,7 @@ where
     F: std::future::Future<Output = ()>,
 {
     if matches!(turn_kind, TurnRunKind::NewTurn) {
-        state.turn_state.reset_auto_mid_turn_compaction_state();
+        state.machine.reset_auto_mid_turn_compaction_state();
         super::ui_surfaces::turn_started(state.namespace_environment())
             .await
             .context("write turn-start UI state")?;
@@ -284,9 +285,9 @@ where
     }
 
     if matches!(turn_kind, TurnRunKind::NewTurn) {
-        state.turn_state.begin_turn(state.machine.messages().len());
+        state.machine.begin_turn(state.machine.messages().len());
     } else if user_input.is_some() {
-        state.turn_state.note_resumed_user_input();
+        state.machine.note_resumed_user_input();
     }
     if let Some(user_input) = user_input {
         state.machine.add_user_message_parts(user_input);
@@ -295,7 +296,7 @@ where
     // Resume turns keep the same active skill envelopes for the logical turn.
     // Current user input can still add new skills via prompt assembly merge logic.
     let resumed_active_skills = matches!(turn_kind, TurnRunKind::ResumeTurn)
-        .then(|| state.turn_state.active_skills().to_vec())
+        .then(|| state.machine.active_skills().to_vec())
         .filter(|active_skills| !active_skills.is_empty());
     let prompt_build = build_domain_prompt_with_skills(
         state,
@@ -312,7 +313,7 @@ where
         "Prepared prompt assembly inputs"
     );
     state
-        .turn_state
+        .machine
         .set_active_skills(prompt_build.active_skills.clone());
     let active_skill_ids = prompt_build
         .active_skills
@@ -333,7 +334,7 @@ where
         &state.core_config,
         initial_provider_capabilities,
         state.runtime_config.request_control_intent,
-        state.turn_state.active_turn_request_control_intent(),
+        state.machine.active_turn_request_control_intent(),
     )?;
     let model = state.core_config.effective_model().to_string();
     let memory_enabled = state.core_config.memory.enabled;
@@ -697,7 +698,7 @@ where
         .saturating_add(additional_prompt_tokens);
     let context_window_tokens = state.runtime_config.context_window_tokens as usize;
     if !state
-        .turn_state
+        .machine
         .can_auto_mid_turn_compact(estimated_prompt_tokens, context_window_tokens)
     {
         return Ok(());
@@ -716,7 +717,7 @@ where
     match compaction.result {
         Ok(CompactionOutcome::Applied(outcome)) => {
             state
-                .turn_state
+                .machine
                 .record_auto_mid_turn_compaction(outcome.output_prompt_tokens);
         }
         Ok(CompactionOutcome::Skipped(_)) => {}

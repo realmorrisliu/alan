@@ -9,7 +9,6 @@ use crate::agent_machine::AgentMachine;
 use crate::tape::Message;
 
 use super::agent_loop::RuntimeLoopState;
-use super::turn_state::TurnState;
 
 const MAX_INLINE_TEXT_CHARS: usize = 280;
 const MAX_RECENT_MESSAGE_ITEMS: usize = 6;
@@ -43,13 +42,7 @@ pub(crate) async fn refresh_turn_memory_surfaces(state: &RuntimeLoopState) -> Re
     let now = Utc::now();
     let process_path = state.process_path();
     let memory_record_id = state.machine.memory_record_id();
-    let rendered = render_memory_surfaces(
-        &state.machine,
-        &state.turn_state,
-        &process_path,
-        memory_record_id,
-        now,
-    );
+    let rendered = render_memory_surfaces(&state.machine, &process_path, memory_record_id, now);
 
     write_text_file(
         &working_memory_path(memory_dir, memory_record_id),
@@ -80,7 +73,7 @@ pub(crate) async fn refresh_active_turn_memory_surfaces_best_effort(
     state: &RuntimeLoopState,
     context: &'static str,
 ) {
-    if state.turn_state.active_turn_message_start().is_none() {
+    if state.machine.active_turn_message_start().is_none() {
         return;
     }
 
@@ -89,15 +82,14 @@ pub(crate) async fn refresh_active_turn_memory_surfaces_best_effort(
 
 fn render_memory_surfaces(
     machine: &AgentMachine,
-    turn_state: &TurnState,
     process_path: &str,
     memory_record_id: &str,
     now: DateTime<Utc>,
 ) -> RenderedMemorySurfaces {
-    let current_goal = derive_current_goal(machine, turn_state);
-    let latest_assistant_state = derive_latest_assistant_state(machine, turn_state);
-    let active_plan_items = render_plan_items(turn_state, &["in_progress", "pending"]);
-    let completed_plan_items = render_plan_items(turn_state, &["completed"]);
+    let current_goal = derive_current_goal(machine);
+    let latest_assistant_state = derive_latest_assistant_state(machine);
+    let active_plan_items = render_plan_items(machine, &["in_progress", "pending"]);
+    let completed_plan_items = render_plan_items(machine, &["completed"]);
     let recent_messages = render_recent_messages(machine);
     let compaction_summary = render_compaction_summary(machine);
     let latest_memory_flush = render_latest_memory_flush(machine);
@@ -127,7 +119,7 @@ fn render_memory_surfaces(
     }
 }
 
-fn derive_current_goal(machine: &AgentMachine, turn_state: &TurnState) -> String {
+fn derive_current_goal(machine: &AgentMachine) -> String {
     let source_ref = memory_source_ref(machine);
     let user_messages = machine
         .messages()
@@ -145,11 +137,11 @@ fn derive_current_goal(machine: &AgentMachine, turn_state: &TurnState) -> String
         .map(|(_, text)| is_substantive_goal_message(text))
         .unwrap_or(false);
     let latest_is_current_turn = latest_user
-        .zip(turn_state.active_turn_message_start())
+        .zip(machine.active_turn_message_start())
         .is_some_and(|((index, _), start)| *index >= start);
 
-    if turn_state.plan_snapshot_is_from_active_turn()
-        && let Some(plan_goal) = derive_active_plan_goal(turn_state)
+    if machine.plan_snapshot_is_from_active_turn()
+        && let Some(plan_goal) = derive_active_plan_goal(machine)
     {
         return plan_goal;
     }
@@ -167,8 +159,8 @@ fn derive_current_goal(machine: &AgentMachine, turn_state: &TurnState) -> String
         .rev()
         .find(|(_, text)| is_substantive_goal_message(text))
     {
-        if turn_state.plan_snapshot_postdates_message(*index)
-            && let Some(plan_goal) = derive_active_plan_goal(turn_state)
+        if machine.plan_snapshot_postdates_message(*index)
+            && let Some(plan_goal) = derive_active_plan_goal(machine)
         {
             return mark_carried_goal_if_needed(plan_goal, latest_user, latest_is_substantive);
         }
@@ -176,7 +168,7 @@ fn derive_current_goal(machine: &AgentMachine, turn_state: &TurnState) -> String
         return mark_carried_goal_if_needed(goal, latest_user, latest_is_substantive);
     }
 
-    if let Some(plan_goal) = derive_active_plan_goal(turn_state) {
+    if let Some(plan_goal) = derive_active_plan_goal(machine) {
         return mark_carried_goal_if_needed(plan_goal, latest_user, latest_is_substantive);
     }
 
@@ -195,8 +187,8 @@ fn derive_current_goal(machine: &AgentMachine, turn_state: &TurnState) -> String
         .unwrap_or_else(|| "No current goal recorded.".to_string())
 }
 
-fn derive_active_plan_goal(turn_state: &TurnState) -> Option<String> {
-    let snapshot = turn_state.plan_snapshot()?;
+fn derive_active_plan_goal(machine: &AgentMachine) -> Option<String> {
+    let snapshot = machine.plan_snapshot()?;
     snapshot
         .explanation
         .as_deref()
@@ -278,9 +270,9 @@ fn is_acknowledgement_class_fragment(text: &str) -> bool {
         })
 }
 
-fn derive_latest_assistant_state(machine: &AgentMachine, turn_state: &TurnState) -> String {
+fn derive_latest_assistant_state(machine: &AgentMachine) -> String {
     let source_ref = memory_source_ref(machine);
-    let messages = turn_state
+    let messages = machine
         .active_turn_message_start()
         .and_then(|start| machine.messages().get(start..))
         .unwrap_or_else(|| machine.messages());
@@ -293,7 +285,7 @@ fn derive_latest_assistant_state(machine: &AgentMachine, turn_state: &TurnState)
         .map(|text| truncate_memory_text(text.trim(), MAX_INLINE_TEXT_CHARS, &source_ref))
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| {
-            if turn_state.active_turn_message_start().is_some() {
+            if machine.active_turn_message_start().is_some() {
                 "This turn completed without a new assistant response.".to_string()
             } else {
                 "No assistant response recorded yet.".to_string()
@@ -301,8 +293,8 @@ fn derive_latest_assistant_state(machine: &AgentMachine, turn_state: &TurnState)
         })
 }
 
-fn render_plan_items(turn_state: &TurnState, statuses: &[&str]) -> String {
-    let Some(snapshot) = turn_state.plan_snapshot() else {
+fn render_plan_items(machine: &AgentMachine, statuses: &[&str]) -> String {
+    let Some(snapshot) = machine.plan_snapshot() else {
         return "- None recorded.\n".to_string();
     };
 

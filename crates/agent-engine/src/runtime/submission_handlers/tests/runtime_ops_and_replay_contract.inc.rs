@@ -45,7 +45,7 @@
         let mut state = create_test_state();
         state.machine.add_user_message("u1");
         state.machine.add_assistant_message("a1", None);
-        state.turn_state.set_plan_snapshot(
+        state.machine.set_plan_snapshot(
             Some("Stale plan".to_string()),
             vec![alan_agent_protocol::PlanItem {
                 id: "plan-1".to_string(),
@@ -63,7 +63,7 @@
         let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
         assert!(result.is_ok());
         assert!(matches!(result.unwrap(), RuntimeOpAction::NoTurn));
-        assert!(state.turn_state.plan_snapshot().is_none());
+        assert!(state.machine.plan_snapshot().is_none());
     }
 
     #[tokio::test]
@@ -233,7 +233,7 @@
     #[tokio::test]
     async fn test_handle_follow_up_without_active_turn_starts_new_turn() {
         let mut state = create_test_state();
-        state.turn_state.set_active_turn_request_control_intent(
+        state.machine.set_active_turn_request_control_intent(
             crate::RequestControlIntent::reasoning_effort(Some(
                 alan_agent_protocol::ReasoningEffort::High,
             )),
@@ -267,7 +267,7 @@
                 assert!(activate_task);
                 assert!(
                     state
-                        .turn_state
+                        .machine
                         .active_turn_request_control_intent()
                         .is_empty()
                 );
@@ -294,7 +294,7 @@
             handle_runtime_op_with_cancel(&mut state, queue_op, &mut emit, &cancel).await;
         assert!(queue_result.is_ok());
         assert!(matches!(queue_result.unwrap(), RuntimeOpAction::NoTurn));
-        assert_eq!(state.turn_state.queued_next_turn_input_count(), 1);
+        assert_eq!(state.machine.queued_next_turn_input_count(), 1);
 
         let turn_op = Op::Turn {
             parts: vec![ContentPart::text("explicit turn")],
@@ -318,7 +318,7 @@
             }
             _ => panic!("Expected RunTurn"),
         }
-        assert_eq!(state.turn_state.queued_next_turn_input_count(), 0);
+        assert_eq!(state.machine.queued_next_turn_input_count(), 0);
     }
 
     #[tokio::test]
@@ -369,8 +369,8 @@
     async fn test_handle_input_op_during_active_turn_uses_resume_turn() {
         let mut state = create_test_state();
         state
-            .turn_state
-            .set_turn_activity(crate::runtime::turn_state::TurnActivityState::Running);
+            .machine
+            .set_turn_activity(crate::agent_machine::TurnActivityState::Running);
         state.machine.activate_task();
         let cancel = CancellationToken::new();
         let mut events = vec![];
@@ -411,8 +411,8 @@
         state.environment = environment;
         state.machine.activate_task();
         state
-            .turn_state
-            .set_turn_activity(crate::runtime::turn_state::TurnActivityState::Running);
+            .machine
+            .set_turn_activity(crate::agent_machine::TurnActivityState::Running);
         let cancel = CancellationToken::new();
         let mut events = vec![];
         let mut emit = |event: Event| {
@@ -489,7 +489,7 @@
         use crate::approval::PendingConfirmation;
 
         let mut state = create_test_state();
-        state.turn_state.set_confirmation(PendingConfirmation {
+        state.machine.set_confirmation(PendingConfirmation {
             checkpoint_id: "cp-1".to_string(),
             checkpoint_type: "review".to_string(),
             summary: "Review this".to_string(),
@@ -525,7 +525,7 @@
         use crate::approval::PendingConfirmation;
 
         let mut state = create_test_state();
-        state.turn_state.set_confirmation(PendingConfirmation {
+        state.machine.set_confirmation(PendingConfirmation {
             checkpoint_id: "tool_escalation_tool_123".to_string(),
             checkpoint_type: "tool_escalation".to_string(),
             summary: "Approve?".to_string(),
@@ -571,7 +571,7 @@
         use crate::approval::PendingConfirmation;
 
         let mut state = create_test_state();
-        state.turn_state.set_confirmation(PendingConfirmation {
+        state.machine.set_confirmation(PendingConfirmation {
             checkpoint_id: "effect_replay_call-123".to_string(),
             checkpoint_type: "effect_replay_confirmation".to_string(),
             summary: "Replay side effect?".to_string(),
@@ -617,7 +617,7 @@
         use crate::approval::PendingConfirmation;
 
         let mut state = create_test_state();
-        state.turn_state.set_confirmation(PendingConfirmation {
+        state.machine.set_confirmation(PendingConfirmation {
             checkpoint_id: "cp-1".to_string(),
             checkpoint_type: "review".to_string(),
             summary: "Review?".to_string(),
@@ -653,7 +653,7 @@
         use crate::approval::PendingConfirmation;
 
         let mut state = create_test_state();
-        state.turn_state.set_confirmation(PendingConfirmation {
+        state.machine.set_confirmation(PendingConfirmation {
             checkpoint_id: "tool_escalation_call-1".to_string(),
             checkpoint_type: "tool_escalation".to_string(),
             summary: "Approve policy escalation".to_string(),
@@ -667,7 +667,7 @@
             }),
             options: vec!["approve".to_string(), "reject".to_string()],
         });
-        state.turn_state.set_tool_replay_batch(
+        state.machine.set_tool_replay_batch(
             "tool_escalation_call-1",
             vec![NormalizedToolCall {
                 id: "call-1".to_string(),
@@ -708,7 +708,7 @@
         use crate::approval::PendingConfirmation;
 
         let mut state = create_test_state();
-        state.turn_state.set_confirmation(PendingConfirmation {
+        state.machine.set_confirmation(PendingConfirmation {
             checkpoint_id: "effect_replay_call-1".to_string(),
             checkpoint_type: "effect_replay_confirmation".to_string(),
             summary: "Approve unknown-effect replay".to_string(),
@@ -722,7 +722,7 @@
             }),
             options: vec!["approve".to_string(), "reject".to_string()],
         });
-        state.turn_state.set_tool_replay_batch(
+        state.machine.set_tool_replay_batch(
             "effect_replay_call-1",
             vec![NormalizedToolCall {
                 id: "call-1".to_string(),

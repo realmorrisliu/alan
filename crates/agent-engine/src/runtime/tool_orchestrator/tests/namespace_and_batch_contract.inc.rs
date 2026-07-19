@@ -392,7 +392,7 @@
         let mut state = create_test_state();
         for idx in 0..MAX_BUFFERED_INBAND_USER_INPUTS {
             state
-                .turn_state
+                .machine
                 .push_buffered_inband_submission(alan_agent_protocol::Submission::new(Op::Input {
                     parts: vec![alan_agent_protocol::ContentPart::text(format!(
                         "buffered-{idx}"
@@ -421,7 +421,7 @@
             .unwrap();
         assert!(!handled);
         assert_eq!(
-            state.turn_state.buffered_inband_user_input_count(),
+            state.machine.buffered_inband_user_input_count(),
             MAX_BUFFERED_INBAND_USER_INPUTS
         );
         assert!(events.iter().any(|event| matches!(
@@ -435,15 +435,15 @@
     async fn queued_steering_input_invalidates_earlier_active_plan() {
         let mut state = create_test_state();
         state
-            .turn_state
+            .machine
             .begin_turn(state.machine.messages().len());
         state.machine.add_user_message("Initial task");
-        state.turn_state.set_plan_snapshot_at_message_count(
+        state.machine.set_plan_snapshot_at_message_count(
             Some("Initial plan".to_string()),
             Vec::new(),
             state.machine.messages().len(),
         );
-        assert!(state.turn_state.plan_snapshot_is_from_active_turn());
+        assert!(state.machine.plan_snapshot_is_from_active_turn());
 
         let broker = TurnInputBroker::default();
         assert!(
@@ -463,7 +463,7 @@
             .unwrap();
 
         assert!(handled);
-        assert!(!state.turn_state.plan_snapshot_is_from_active_turn());
+        assert!(!state.machine.plan_snapshot_is_from_active_turn());
         assert_eq!(
             state.machine.messages().last().unwrap().text_content(),
             "Steer to the new task"

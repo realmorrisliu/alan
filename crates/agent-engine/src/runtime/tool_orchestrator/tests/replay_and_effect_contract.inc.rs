@@ -40,10 +40,10 @@
     #[tokio::test]
     async fn test_orchestrate_tool_batch_with_cancel() {
         let mut state = create_test_state();
-        state.turn_state.begin_turn(0);
+        state.machine.begin_turn(0);
         state
-            .turn_state
-            .set_turn_activity(crate::runtime::turn_state::TurnActivityState::Running);
+            .machine
+            .set_turn_activity(crate::agent_machine::TurnActivityState::Running);
         let mut orchestrator = ToolTurnOrchestrator::new(None, 4);
         let cancel = CancellationToken::new();
 
