@@ -11,9 +11,14 @@ use anyhow::Result;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
-use crate::{llm::build_generation_request, prompts, rollout::CompactedItem};
+use crate::{
+    agent_machine::AgentMachine, llm::build_generation_request, prompts, rollout::CompactedItem,
+};
 
-use super::{memory_flush, transition::RuntimeLoopState};
+use super::{
+    memory_flush,
+    transition::{NamespaceAgentFiles, RuntimeLoopState},
+};
 
 #[cfg(test)]
 pub(crate) use self::context::{
@@ -265,17 +270,15 @@ fn build_compaction_attempt_snapshot(
     }
 }
 
-fn compaction_submission_id(
-    state: &RuntimeLoopState,
-    request: &CompactionRequest,
-) -> Option<String> {
+fn compaction_submission_id(machine: &AgentMachine, request: &CompactionRequest) -> Option<String> {
     matches!(request.mode(), CompactionMode::Manual)
-        .then(|| state.machine.current_submission_id().map(str::to_owned))
+        .then(|| machine.current_submission_id().map(str::to_owned))
         .flatten()
 }
 
 async fn record_and_emit_compaction_attempt<E, F>(
-    state: &mut RuntimeLoopState,
+    machine: &mut AgentMachine,
+    agent_files: &NamespaceAgentFiles,
     emit: &mut E,
     attempt: CompactionAttemptSnapshot,
     compacted: Option<CompactedItem>,
@@ -283,22 +286,22 @@ async fn record_and_emit_compaction_attempt<E, F>(
     E: FnMut(Event) -> F,
     F: std::future::Future<Output = ()>,
 {
-    if let Err(err) = state
-        .machine
+    if let Err(err) = machine
         .persist_compaction_observation(attempt.clone(), compacted)
         .await
     {
         error!(error = %err, "Failed to persist compaction observation batch");
         return;
     }
-    if let Err(err) = super::ui_surfaces::compaction(&state.agent_files(), &attempt).await {
+    if let Err(err) = super::ui_surfaces::compaction(agent_files, &attempt).await {
         error!(error = %err, "Failed to write compaction UI state");
     }
     emit(Event::CompactionObserved { attempt }).await;
 }
 
 async fn record_and_emit_memory_flush_attempt<E, F>(
-    state: &mut RuntimeLoopState,
+    machine: &mut AgentMachine,
+    agent_files: &NamespaceAgentFiles,
     emit: &mut E,
     attempt: MemoryFlushAttemptSnapshot,
 ) -> Option<String>
@@ -306,16 +309,12 @@ where
     E: FnMut(Event) -> F,
     F: std::future::Future<Output = ()>,
 {
-    if let Err(err) = state
-        .machine
-        .persist_memory_flush_attempt(attempt.clone())
-        .await
-    {
+    if let Err(err) = machine.persist_memory_flush_attempt(attempt.clone()).await {
         error!(error = %err, "Failed to persist memory flush attempt");
         return None;
     }
     let attempt_id = attempt.attempt_id.clone();
-    if let Err(err) = super::ui_surfaces::memory_flush(&state.agent_files(), &attempt).await {
+    if let Err(err) = super::ui_surfaces::memory_flush(agent_files, &attempt).await {
         error!(error = %err, "Failed to write memory flush UI state");
     }
     emit(Event::MemoryFlushObserved { attempt }).await;
@@ -334,6 +333,7 @@ where
     E: FnMut(Event) -> F,
     F: std::future::Future<Output = ()>,
 {
+    let agent_files = state.agent_files();
     if !matches!(request.mode(), CompactionMode::AutoPreTurn)
         || !matches!(pressure.level, CompactionPressureLevel::Soft)
     {
@@ -347,7 +347,13 @@ where
             alan_agent_protocol::MemoryFlushSkipReason::AlreadyFlushedThisCycle,
             Some(sanitized_to_summarize.len()),
         );
-        return record_and_emit_memory_flush_attempt(state, emit, attempt).await;
+        return record_and_emit_memory_flush_attempt(
+            &mut state.machine,
+            &agent_files,
+            emit,
+            attempt,
+        )
+        .await;
     }
 
     let generation = state.namespace_generation();
@@ -378,17 +384,18 @@ where
     }
 
     if let Some(message) = attempt.warning_message.clone() {
-        if let Err(err) = super::ui_surfaces::warning(&state.agent_files(), message.clone()).await {
+        if let Err(err) = super::ui_surfaces::warning(&agent_files, message.clone()).await {
             error!(error = %err, "Failed to write memory warning UI state");
         }
         emit(Event::Warning { message }).await;
     }
 
-    record_and_emit_memory_flush_attempt(state, emit, attempt).await
+    record_and_emit_memory_flush_attempt(&mut state.machine, &agent_files, emit, attempt).await
 }
 
 async fn handle_compaction_generation_failure<E, F>(
-    state: &mut RuntimeLoopState,
+    machine: &mut AgentMachine,
+    agent_files: &NamespaceAgentFiles,
     emit: &mut E,
     failure: CompactionFailureContext<'_>,
 ) -> Result<CompactionOutcome>
@@ -407,35 +414,35 @@ where
         error_message,
         started_at,
     } = failure;
-    let reference_context_revision = state.machine.context_revision();
+    let reference_context_revision = machine.context_revision();
 
     if let Some(summary) =
-        build_degraded_compaction_summary(sanitized_to_summarize, state.machine.tape_summary())
+        build_degraded_compaction_summary(sanitized_to_summarize, machine.tape_summary())
     {
         let attempt_id = uuid::Uuid::new_v4().to_string();
-        let failure_streak = state.machine.note_compaction_failure();
+        let failure_streak = machine.note_compaction_failure();
         let warning_message = compaction_warning_message(
             CompactionResult::Degraded,
             &error_message,
             retry_count,
             failure_streak,
         );
-        super::ui_surfaces::warning(&state.agent_files(), warning_message.clone()).await?;
+        super::ui_surfaces::warning(agent_files, warning_message.clone()).await?;
         emit(Event::Warning {
             message: warning_message.clone(),
         })
         .await;
 
-        let retention_start = state.machine.compaction_retention_start(keep_last);
-        apply_tape_compaction(state, &summary, keep_last, retention_start);
-        state.machine.clear_responses_continuation("compaction");
-        let output_prompt_tokens = state.machine.estimated_prompt_tokens();
-        let output_messages = state.machine.tape_len();
+        let retention_start = machine.compaction_retention_start(keep_last);
+        apply_tape_compaction(machine, &summary, keep_last, retention_start);
+        machine.clear_responses_continuation("compaction");
+        let output_prompt_tokens = machine.estimated_prompt_tokens();
+        let output_messages = machine.tape_len();
         let timestamp = chrono::Utc::now().to_rfc3339();
         let duration_ms = duration_ms_since(started_at);
         let attempt = build_compaction_attempt_snapshot(
             attempt_id.clone(),
-            compaction_submission_id(state, request),
+            compaction_submission_id(machine, request),
             request,
             CompactionAttemptDetails {
                 result: CompactionResult::Degraded,
@@ -451,7 +458,7 @@ where
                 error_message: Some(error_message),
                 failure_streak: Some(failure_streak),
                 reference_context_revision_before: Some(reference_context_revision),
-                reference_context_revision_after: Some(state.machine.context_revision()),
+                reference_context_revision_after: Some(machine.context_revision()),
                 timestamp: timestamp.clone(),
             },
         );
@@ -471,7 +478,8 @@ where
             reference_context_revision: Some(reference_context_revision),
             timestamp,
         };
-        record_and_emit_compaction_attempt(state, emit, attempt, Some(compacted)).await;
+        record_and_emit_compaction_attempt(machine, agent_files, emit, attempt, Some(compacted))
+            .await;
 
         return Ok(applied_outcome(
             request,
@@ -482,21 +490,21 @@ where
         ));
     }
 
-    let failure_streak = state.machine.note_compaction_failure();
+    let failure_streak = machine.note_compaction_failure();
     let warning_message = compaction_warning_message(
         CompactionResult::Failure,
         &error_message,
         retry_count,
         failure_streak,
     );
-    super::ui_surfaces::warning(&state.agent_files(), warning_message.clone()).await?;
+    super::ui_surfaces::warning(agent_files, warning_message.clone()).await?;
     emit(Event::Warning {
         message: warning_message.clone(),
     })
     .await;
     let attempt = build_compaction_attempt_snapshot(
         uuid::Uuid::new_v4().to_string(),
-        compaction_submission_id(state, request),
+        compaction_submission_id(machine, request),
         request,
         CompactionAttemptDetails {
             result: CompactionResult::Failure,
@@ -516,19 +524,19 @@ where
             timestamp: chrono::Utc::now().to_rfc3339(),
         },
     );
-    record_and_emit_compaction_attempt(state, emit, attempt, None).await;
+    record_and_emit_compaction_attempt(machine, agent_files, emit, attempt, None).await;
 
     Ok(failed_outcome(request, input_prompt_tokens, retry_count))
 }
 
 fn apply_tape_compaction(
-    state: &mut RuntimeLoopState,
+    machine: &mut AgentMachine,
     summary: &str,
     keep_last: usize,
     retention_start: usize,
 ) {
-    state.machine.compact_tape(summary.to_string(), keep_last);
-    state.machine.note_tape_compaction(retention_start);
+    machine.compact_tape(summary.to_string(), keep_last);
+    machine.note_tape_compaction(retention_start);
 }
 
 pub(crate) async fn maybe_compact_context_for_request<E, F>(
@@ -657,6 +665,7 @@ where
 
     let max_trim_retries = 5;
     let mut trimmed_count = 0usize;
+    let agent_files = state.agent_files();
     let summary = loop {
         let generation_request = build_generation_request(
             Some(prompts::COMPACT_PROMPT.to_string()),
@@ -714,7 +723,8 @@ where
 
                 warn!(error = %err, "Failed to generate compaction summary after retries");
                 return handle_compaction_generation_failure(
-                    state,
+                    &mut state.machine,
+                    &agent_files,
                     emit,
                     CompactionFailureContext {
                         request,
@@ -735,7 +745,8 @@ where
 
     if summary.is_empty() {
         return handle_compaction_generation_failure(
-            state,
+            &mut state.machine,
+            &agent_files,
             emit,
             CompactionFailureContext {
                 request,
@@ -756,7 +767,7 @@ where
     let success_result = compaction_success_result(trimmed_count);
     let reference_context_revision = state.machine.context_revision();
     let attempt_id = uuid::Uuid::new_v4().to_string();
-    apply_tape_compaction(state, &summary, keep_last, retention_start);
+    apply_tape_compaction(&mut state.machine, &summary, keep_last, retention_start);
     state.machine.clear_responses_continuation("compaction");
     let output_prompt_tokens = state
         .machine
@@ -768,7 +779,7 @@ where
     state.machine.reset_compaction_failure_streak();
     let attempt = build_compaction_attempt_snapshot(
         attempt_id.clone(),
-        compaction_submission_id(state, request),
+        compaction_submission_id(&state.machine, request),
         request,
         CompactionAttemptDetails {
             result: success_result,
@@ -804,7 +815,14 @@ where
         reference_context_revision: Some(reference_context_revision),
         timestamp,
     };
-    record_and_emit_compaction_attempt(state, emit, attempt, Some(compacted)).await;
+    record_and_emit_compaction_attempt(
+        &mut state.machine,
+        &agent_files,
+        emit,
+        attempt,
+        Some(compacted),
+    )
+    .await;
 
     Ok(applied_outcome(
         request,

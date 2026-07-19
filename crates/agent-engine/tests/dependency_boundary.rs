@@ -358,6 +358,20 @@ fn transition_leaf_workflows_do_not_receive_the_runtime_loop_aggregate() {
         .expect("find end of tool_payload_for_tape")];
     assert!(!tool_evidence.contains("RuntimeLoopState"));
     assert!(tool_evidence.contains("NamespaceAgentFiles"));
+
+    let compaction = read_runtime_source("compaction.rs");
+    for marker in [
+        "fn compaction_submission_id",
+        "async fn record_and_emit_compaction_attempt",
+        "async fn record_and_emit_memory_flush_attempt",
+        "async fn handle_compaction_generation_failure",
+        "fn apply_tape_compaction",
+    ] {
+        assert!(
+            !rust_item_body(&compaction, marker).contains("RuntimeLoopState"),
+            "{marker} must receive only its explicit Machine and AgentFS dependencies"
+        );
+    }
 }
 
 #[test]
