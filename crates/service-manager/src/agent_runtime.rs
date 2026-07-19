@@ -655,7 +655,7 @@ fn apply_agent_definition_grant(
     else {
         return Ok(());
     };
-    let applied = environment.apply_approved_mount_grant(
+    let applied = environment.mount_control().apply_approved_grant(
         &alan_agent_engine::runtime::ApprovedMountGrant::new(
             grant.namespace_path.clone(),
             grant.host_path.clone(),

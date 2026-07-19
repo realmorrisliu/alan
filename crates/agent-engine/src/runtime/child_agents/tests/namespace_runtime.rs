@@ -819,14 +819,16 @@ async fn child_namespace_launch_attaches_mount_grant_applicator_factory() {
             .any(|line| line == "/agent-definition ro"),
         "child Agent Process must receive its target definition: {definition_namespace:?}"
     );
-    let applied = launch
-        .environment
-        .apply_approved_mount_grant(&ApprovedMountGrant::new(
-            "/mnt/project",
-            PathBuf::from("/unused/by/test/applicator"),
-            ApprovedMountGrantAccess::ReadWrite,
-            "Need project files",
-        ));
+    let applied =
+        launch
+            .environment
+            .mount_control()
+            .apply_approved_grant(&ApprovedMountGrant::new(
+                "/mnt/project",
+                PathBuf::from("/unused/by/test/applicator"),
+                ApprovedMountGrantAccess::ReadWrite,
+                "Need project files",
+            ));
     assert!(applied.namespace_applied);
     assert_eq!(applied.namespace_error, None);
 

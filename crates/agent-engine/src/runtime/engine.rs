@@ -552,7 +552,7 @@ fn spawn_with_prepared_runtime_environment(
                 if shutdown_requested || submissions_closed {
                     if shutdown_requested {
                         info!(
-                            process_path = %state.namespace_environment().agent_path(),
+                            process_path = %state.agent_path(),
                             "Shutdown signal received, stopping runtime"
                         );
                     }
@@ -791,7 +791,7 @@ fn spawn_with_prepared_runtime_environment(
         namespace_input_task.abort();
         let _ = namespace_input_task.await;
         info!(
-            process_path = %state.namespace_environment().agent_path(),
+            process_path = %state.agent_path(),
             "Agent runtime stopped"
         );
         state.machine.flush().await;

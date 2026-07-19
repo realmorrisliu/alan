@@ -466,8 +466,8 @@ fn handle_mount_escalation_resolution(
             .as_ref()
             .map(|grant| {
                 state
-                    .environment
-                    .apply_approved_mount_grant(&grant.approved_mount_grant())
+                    .mount_control()
+                    .apply_approved_grant(&grant.approved_mount_grant())
             })
             .unwrap_or_else(|| {
                 NamespaceMountApplication::unavailable("missing approved mount grant details")
@@ -503,10 +503,11 @@ fn handle_mount_escalation_resolution(
         });
     let tool_sandbox_projection_changed = namespace_applied
         && native_grant.as_ref().is_some_and(|grant| {
-            state.environment.persist_approved_host_mount(grant.clone());
+            let mut mount_control = state.mount_control();
+            mount_control.retain_host_mount(grant.clone());
             scratch_dir
                 .clone()
-                .is_some_and(|scratch| state.environment.sync_tool_execution_binding(scratch))
+                .is_some_and(|scratch| mount_control.sync_tool_binding(scratch))
         });
     let tool_sandbox_applied = namespace_applied
         && grant.as_ref().is_some_and(|grant| {
