@@ -105,9 +105,20 @@ async fn finalize_turn_memory_best_effort(
         .await;
     }
 
-    if let Some(job) =
-        super::memory_promotion::build_turn_memory_promotion_job(state, promotion_context)
-    {
+    let memory_dir = state
+        .core_config
+        .memory
+        .enabled
+        .then(|| state.core_config.memory.store_dir.clone())
+        .flatten();
+    let process_path = state.process_path();
+    if let Some(job) = super::memory_promotion::build_turn_memory_promotion_job(
+        &state.machine,
+        memory_dir,
+        process_path,
+        state.runtime_config.llm_request_timeout_secs,
+        promotion_context,
+    ) {
         state
             .machine
             .push_deferred_runtime_action(DeferredRuntimeAction::TurnMemoryPromotion(job));
