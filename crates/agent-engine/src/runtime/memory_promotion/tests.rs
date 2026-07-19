@@ -13,8 +13,8 @@ use tempfile::TempDir;
 use crate::{
     config::Config,
     runtime::{
-        NamespaceRuntimeEnvironment, RuntimeConfig, RuntimeLoopState,
-        prompt_cache::PromptAssemblyCache,
+        NamespaceRuntimeEnvironment, RuntimeConfig, prompt_cache::PromptAssemblyCache,
+        transition::RuntimeLoopState,
     },
 };
 

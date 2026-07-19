@@ -11,7 +11,7 @@ use super::turn_driver::{
     NAMESPACE_PENDING_RESPONSE_POLL_INTERVAL, TurnInputBroker, is_turn_inband_submission,
     namespace_pending_resume_submission,
 };
-use super::{NamespaceRuntimeEnvironment, RuntimeLoopState};
+use super::{NamespaceRuntimeEnvironment, transition::RuntimeLoopState};
 use crate::agent_machine::AgentMachine;
 use alan_agent_protocol::{InputMode, Submission};
 use anyhow::Result;
