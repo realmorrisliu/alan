@@ -103,6 +103,7 @@ async fn controlled_generation_aborts_llmfs_on_cancel() {
             let request = GenerationRequest::new().with_user_message("hello");
             let mut ignore = |_event: Event| async {};
             environment
+                .generation()
                 .generate_with_text_events_controlled(&request, &mut ignore, 30, &cancel)
                 .await
         }

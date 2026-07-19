@@ -245,6 +245,13 @@ pub struct NamespaceRuntimeEnvironment {
     launch_context: Option<crate::ProcessLaunchContext>,
 }
 
+/// Narrow file-native handle for one mounted LLM Connection.
+#[derive(Clone)]
+pub(crate) struct NamespaceGeneration {
+    root: InProcessTransport,
+    llm_connection: String,
+}
+
 #[derive(Clone)]
 struct NamespaceToolProcessContext {
     pub(crate) pid: alan_kernel::Pid,
@@ -288,6 +295,13 @@ impl NamespaceRuntimeEnvironment {
     pub fn with_launch_context(mut self, launch_context: crate::ProcessLaunchContext) -> Self {
         self.launch_context = Some(launch_context);
         self
+    }
+
+    pub(crate) fn generation(&self) -> NamespaceGeneration {
+        NamespaceGeneration {
+            root: self.root.clone(),
+            llm_connection: self.llm_connection.clone(),
+        }
     }
 
     pub(crate) fn launch_context(&self) -> Option<&crate::ProcessLaunchContext> {

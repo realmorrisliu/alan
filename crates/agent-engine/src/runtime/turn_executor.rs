@@ -328,7 +328,8 @@ where
         .iter()
         .map(|tool| tool.name.clone())
         .collect::<Vec<_>>();
-    let generation = NamespaceTurnGeneration::load(state).await;
+    let llm_generation = state.namespace_generation();
+    let generation = NamespaceTurnGeneration::load(&llm_generation).await;
     let initial_provider_capabilities = generation.capabilities();
     let turn_request_controls = crate::resolve_turn_request_controls(
         &state.core_config,
@@ -434,7 +435,7 @@ where
         }
         let llm_request_timeout_secs = state.runtime_config.llm_request_timeout_secs;
         let (response, live_text_chunks) = match generation
-            .generate(state, request, llm_request_timeout_secs, cancel)
+            .generate(&llm_generation, request, llm_request_timeout_secs, cancel)
             .await
         {
             Ok(response) => response,

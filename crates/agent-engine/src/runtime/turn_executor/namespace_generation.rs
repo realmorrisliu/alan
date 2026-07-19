@@ -3,7 +3,7 @@ use anyhow::Result;
 use tokio_util::sync::CancellationToken;
 use tracing::warn;
 
-use super::RuntimeLoopState;
+use crate::runtime::transition::NamespaceGeneration;
 
 /// File-native generation context for one logical turn.
 ///
@@ -17,12 +17,8 @@ pub(super) struct NamespaceTurnGeneration {
 }
 
 impl NamespaceTurnGeneration {
-    pub(super) async fn load(state: &RuntimeLoopState) -> Self {
-        match state
-            .namespace_environment()
-            .read_llm_connection_capabilities()
-            .await
-        {
+    pub(super) async fn load(generation: &NamespaceGeneration) -> Self {
+        match generation.read_llm_connection_capabilities().await {
             Ok(info) => Self {
                 provider: info.provider,
                 capabilities: neutralize_namespace_capabilities(info.capabilities),
@@ -50,7 +46,7 @@ impl NamespaceTurnGeneration {
 
     pub(super) async fn generate(
         &self,
-        state: &RuntimeLoopState,
+        generation: &NamespaceGeneration,
         request: crate::llm::GenerationRequest,
         timeout_secs: u64,
         cancel: &CancellationToken,
@@ -63,7 +59,6 @@ impl NamespaceTurnGeneration {
                 return Err(anyhow::anyhow!("LLM request cancelled"));
             }
 
-            let namespace = state.namespace_environment().clone();
             let attempt_request = request.clone();
             let mut live_text_chunks = Vec::new();
             let mut collect_text = |event: Event| {
@@ -77,7 +72,7 @@ impl NamespaceTurnGeneration {
                 }
                 async {}
             };
-            let result = namespace
+            let result = generation
                 .generate_with_text_events_controlled(
                     &attempt_request,
                     &mut collect_text,
