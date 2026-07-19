@@ -586,6 +586,40 @@ async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_bounds_preview
 }
 
 #[tokio::test]
+async fn test_pre_cancelled_delegated_invocation_does_not_project_or_spawn_child_runtime() {
+    let mut state = create_test_transition_state();
+    activate_test_delegated_skill(&mut state, "repo-review", "reviewer");
+    state.machine.set_turn_activity(TurnActivityState::Running);
+    let tool_call = NormalizedToolCall {
+        id: "call_pre_cancelled".to_string(),
+        name: "invoke_delegated_skill".to_string(),
+        arguments: json!({
+            "skill_id": "repo-review",
+            "target": "reviewer",
+            "task": "Review the current diff."
+        }),
+    };
+    let cancel = CancellationToken::new();
+    cancel.cancel();
+    let mut emit = |_event: Event| async {};
+
+    let outcome = handle_invoke_delegated_skill_with_spawn(
+        &mut state,
+        &tool_call,
+        &tool_call.arguments,
+        &cancel,
+        &mut emit,
+        |_runtime, _spec, _cancel| {
+            Box::pin(async { panic!("pre-cancelled launch must not reach the spawn boundary") })
+        },
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(outcome, VirtualToolOutcome::EndTurn);
+}
+
+#[tokio::test]
 async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_honors_interrupt() {
     let mut state = create_test_transition_state();
     activate_test_delegated_skill(&mut state, "repo-review", "reviewer");

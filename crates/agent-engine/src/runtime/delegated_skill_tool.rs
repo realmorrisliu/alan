@@ -1,3 +1,5 @@
+mod runtime_inputs;
+
 use std::path::{Component, Path, PathBuf};
 use std::pin::Pin;
 
@@ -11,7 +13,7 @@ use tokio_util::sync::CancellationToken;
 use crate::llm::ToolDefinition;
 use crate::skills::{DelegatedSkillResult, DelegatedSkillResultStatus};
 
-use super::child_agents::spawn_child_runtime_cancellable;
+use super::child_agents::{ChildLaunchRuntime, spawn_child_runtime_cancellable};
 use super::delegated_child_run::ChildRuntimeResult;
 use super::delegated_skill_evidence::{
     build_bounded_delegated_invocation_persistence, persist_delegated_child_evidence,
@@ -19,10 +21,11 @@ use super::delegated_skill_evidence::{
 use super::delegation_capabilities::{
     DelegatedSpawnRejected, classify_delegated_task_requirements,
 };
-use super::transition::RuntimeLoopState;
 use super::turn_support::{check_turn_cancelled, tool_result_preview};
 use super::virtual_tool::VirtualToolOutcome;
 use crate::agent_machine::NormalizedToolCall;
+
+pub(crate) use runtime_inputs::{DelegatedChildRuntimeInputs, DelegatedSkillRuntime};
 
 pub(super) const MAX_DELEGATED_SKILL_ID_CHARS: usize = 120;
 pub(super) const MAX_DELEGATED_TARGET_CHARS: usize = 120;
@@ -148,7 +151,7 @@ pub(super) fn invoke_delegated_skill_tool_definition() -> ToolDefinition {
 }
 
 pub(super) async fn handle_invoke_delegated_skill<E, F>(
-    state: &mut RuntimeLoopState,
+    runtime: DelegatedSkillRuntime<'_>,
     tool_call: &NormalizedToolCall,
     tool_arguments: &serde_json::Value,
     cancel: &CancellationToken,
@@ -159,18 +162,18 @@ where
     F: std::future::Future<Output = ()>,
 {
     handle_invoke_delegated_skill_with_spawn(
-        state,
+        runtime,
         tool_call,
         tool_arguments,
         cancel,
         emit,
-        |state, spec, cancel| Box::pin(spawn_and_join_delegated_child(state, spec, cancel)),
+        |runtime, spec, cancel| Box::pin(spawn_and_join_delegated_child(runtime, spec, cancel)),
     )
     .await
 }
 
 pub(super) async fn handle_invoke_delegated_skill_with_spawn<E, F, S>(
-    state: &mut RuntimeLoopState,
+    mut runtime: DelegatedSkillRuntime<'_>,
     tool_call: &NormalizedToolCall,
     tool_arguments: &serde_json::Value,
     cancel: &CancellationToken,
@@ -181,7 +184,7 @@ where
     E: FnMut(Event) -> F,
     F: std::future::Future<Output = ()>,
     S: for<'a> FnOnce(
-        &'a RuntimeLoopState,
+        ChildLaunchRuntime,
         SpawnSpec,
         &'a CancellationToken,
     ) -> Pin<
@@ -210,13 +213,13 @@ where
             audit: None,
         })
         .await;
-        state.machine.record_tool_call(
+        runtime.machine.record_tool_call(
             &tool_call.name,
             tool_arguments.clone(),
             error_payload.clone(),
             false,
         );
-        state
+        runtime
             .machine
             .add_tool_message(&tool_call.id, &tool_call.name, error_payload.clone());
         emit(Event::Error {
@@ -229,7 +232,7 @@ where
         });
     };
 
-    if !state.prompt_cache.supports_delegated_skill_invocation() {
+    if !runtime.prompt_cache.supports_delegated_skill_invocation() {
         let error_payload = json!({
             "status": "delegated_invocation_unavailable",
             "error": "Delegated skill invocation is not available in this runtime."
@@ -243,13 +246,13 @@ where
             audit: None,
         })
         .await;
-        state.machine.record_tool_call(
+        runtime.machine.record_tool_call(
             &tool_call.name,
             tool_arguments.clone(),
             error_payload.clone(),
             false,
         );
-        state
+        runtime
             .machine
             .add_tool_message(&tool_call.id, &tool_call.name, error_payload);
         emit(Event::Error {
@@ -262,35 +265,48 @@ where
         });
     }
 
-    let agent_files = state.agent_files();
     let (persisted_request, result, child_run) =
-        match resolve_delegated_skill_invocation(state, &request) {
+        match resolve_delegated_skill_invocation(&mut runtime, &request) {
             Ok(spec) => {
                 let persisted_request = request.with_effective_launch_inputs(
                     spec.launch.cwd.clone(),
                     spec.launch.timeout_secs,
                 );
-                match spawn_child(state, spec, cancel).await {
+                let child_result = if cancel.is_cancelled() {
+                    Ok(ChildRuntimeResult::cancelled_before_launch())
+                } else {
+                    let child_runtime = runtime.child_launch_runtime(&spec);
+                    spawn_child(child_runtime, spec, cancel).await
+                };
+                match child_result {
                     Ok(mut child_result) => {
                         if cancel.is_cancelled()
                             && child_result.is_cancelled()
-                            && check_turn_cancelled(&mut state.machine, &agent_files, emit, cancel)
-                                .await?
+                            && check_turn_cancelled(
+                                &mut *runtime.machine,
+                                &runtime.agent_files,
+                                emit,
+                                cancel,
+                            )
+                            .await?
                         {
                             return Ok(VirtualToolOutcome::EndTurn);
                         }
 
-                        let output_reference =
-                            persist_delegated_child_evidence(&agent_files, &request, &child_result)
-                                .await;
+                        let output_reference = persist_delegated_child_evidence(
+                            &runtime.agent_files,
+                            &request,
+                            &child_result,
+                        )
+                        .await;
                         if let (Some(child_run_id), Some(reference)) = (
                             child_result.child_run_id.as_deref(),
                             output_reference.as_ref(),
                         ) {
-                            state
+                            runtime
                                 .child_run_registry()
                                 .set_state_ref(child_run_id, reference.clone());
-                            child_result.child_run = state.child_run_registry().get(child_run_id);
+                            child_result.child_run = runtime.child_run_registry().get(child_run_id);
                         }
                         (
                             persisted_request,
@@ -300,8 +316,13 @@ where
                     }
                     Err(err) => {
                         if cancel.is_cancelled()
-                            && check_turn_cancelled(&mut state.machine, &agent_files, emit, cancel)
-                                .await?
+                            && check_turn_cancelled(
+                                &mut *runtime.machine,
+                                &runtime.agent_files,
+                                emit,
+                                cancel,
+                            )
+                            .await?
                         {
                             return Ok(VirtualToolOutcome::EndTurn);
                         }
@@ -356,13 +377,13 @@ where
         audit: None,
     })
     .await;
-    state.machine.record_tool_call(
+    runtime.machine.record_tool_call(
         &tool_call.name,
         persisted_arguments,
         rollout_payload,
         invocation_succeeded,
     );
-    state
+    runtime
         .machine
         .add_tool_message(&tool_call.id, &tool_call.name, tape_payload);
     Ok(VirtualToolOutcome::Continue {
@@ -371,7 +392,7 @@ where
 }
 
 async fn spawn_and_join_delegated_child(
-    state: &RuntimeLoopState,
+    runtime: ChildLaunchRuntime,
     spec: SpawnSpec,
     cancel: &CancellationToken,
 ) -> Result<ChildRuntimeResult> {
@@ -379,16 +400,15 @@ async fn spawn_and_join_delegated_child(
         return Ok(ChildRuntimeResult::cancelled_before_launch());
     }
 
-    let runtime = super::transition::child_launch_runtime(state, &spec);
     let controller = spawn_child_runtime_cancellable(runtime, spec, cancel).await?;
     controller.join_until_cancelled(cancel).await
 }
 
 fn resolve_delegated_skill_invocation(
-    state: &mut RuntimeLoopState,
+    runtime: &mut DelegatedSkillRuntime<'_>,
     request: &DelegatedSkillInvocationRequest,
 ) -> DelegatedSkillSpawnResult<SpawnSpec> {
-    let active_skill = state
+    let active_skill = runtime
         .machine
         .active_skills()
         .iter()
@@ -410,7 +430,7 @@ fn resolve_delegated_skill_invocation(
         }
         skill.metadata
     } else {
-        match state
+        match runtime
             .prompt_cache
             .resolve_listed_skill_metadata(request.skill_id.as_str())
         {
@@ -477,16 +497,15 @@ fn resolve_delegated_skill_invocation(
         )));
     };
 
-    build_delegated_spawn_spec(state, request, spawn_target)
+    build_delegated_spawn_spec(runtime, request, spawn_target)
 }
 
 fn build_delegated_spawn_spec(
-    state: &RuntimeLoopState,
+    runtime: &DelegatedSkillRuntime<'_>,
     request: &DelegatedSkillInvocationRequest,
     target: alan_agent_protocol::SpawnTarget,
 ) -> DelegatedSkillSpawnResult<SpawnSpec> {
-    let child_launch = state.child_launch();
-    let launch_context = child_launch.launch_context();
+    let launch_context = runtime.child_launch_context();
     let parent_namespace_cwd = launch_context.map(|context| Path::new(&context.cwd));
     let cwd = request
         .cwd
