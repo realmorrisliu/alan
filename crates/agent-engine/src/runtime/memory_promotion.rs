@@ -10,7 +10,6 @@ use chrono::{DateTime, Datelike, Utc};
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
-#[cfg(test)]
 use crate::agent_machine::AgentMachine;
 #[cfg(test)]
 use crate::llm::LlmClient;
@@ -21,7 +20,7 @@ use crate::prompts::{
 };
 use crate::tape::Message;
 
-use super::transition::RuntimeLoopState;
+use super::transition::NamespaceGeneration;
 
 const DEFAULT_PROMOTED_FACTS_HEADER: &str = "## Promoted Facts";
 const DEFAULT_TOPIC_SUMMARY: &str = "Promoted from inbox entries.";
@@ -258,27 +257,24 @@ pub(crate) struct TurnMemoryPromotionJob {
 }
 
 pub(crate) fn build_turn_memory_promotion_job(
-    state: &RuntimeLoopState,
+    machine: &AgentMachine,
+    memory_dir: Option<PathBuf>,
+    process_path: String,
+    llm_request_timeout_secs: u64,
     warning_context: &'static str,
 ) -> Option<TurnMemoryPromotionJob> {
-    if !state.core_config.memory.enabled {
-        return None;
-    }
-
-    let memory_dir = state.core_config.memory.store_dir.clone()?;
-    let active_turn_user_messages = active_turn_user_messages(
-        state.machine.messages(),
-        state.machine.active_turn_message_start(),
-    );
+    let memory_dir = memory_dir?;
+    let active_turn_user_messages =
+        active_turn_user_messages(machine.messages(), machine.active_turn_message_start());
     if active_turn_user_messages.is_empty() {
         return None;
     }
 
     Some(TurnMemoryPromotionJob {
         memory_dir,
-        process_path: state.process_path(),
+        process_path,
         active_turn_user_messages,
-        llm_request_timeout_secs: state.runtime_config.llm_request_timeout_secs,
+        llm_request_timeout_secs,
         warning_context,
     })
 }
@@ -301,13 +297,12 @@ pub(crate) async fn run_turn_memory_promotion_job_with_cancel(
 }
 
 pub(crate) async fn run_turn_memory_promotion_job_for_runtime_with_cancel(
-    state: &mut RuntimeLoopState,
+    generation: &NamespaceGeneration,
     job: &TurnMemoryPromotionJob,
     cancel: &CancellationToken,
 ) -> Result<()> {
     let request = build_memory_promotion_request(job.active_turn_user_messages.clone());
-    let response = state
-        .namespace_generation()
+    let response = generation
         .generate_response_with_retry(request, job.llm_request_timeout_secs, cancel)
         .await
         .context("generate turn-end memory promotion plan")?;

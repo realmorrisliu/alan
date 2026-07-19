@@ -73,9 +73,15 @@ fn make_deferred_action_for_test() -> DeferredRuntimeAction {
         prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
     };
 
-    memory_promotion::build_turn_memory_promotion_job(&state, "queue ordering test")
-        .map(DeferredRuntimeAction::TurnMemoryPromotion)
-        .expect("build deferred memory promotion job")
+    memory_promotion::build_turn_memory_promotion_job(
+        &state.machine,
+        state.core_config.memory.store_dir.clone(),
+        state.process_path(),
+        state.runtime_config.llm_request_timeout_secs,
+        "queue ordering test",
+    )
+    .map(DeferredRuntimeAction::TurnMemoryPromotion)
+    .expect("build deferred memory promotion job")
 }
 
 fn queue_item_kinds(queue: &VecDeque<QueuedRuntimeItem>) -> Vec<&'static str> {

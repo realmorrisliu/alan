@@ -408,9 +408,20 @@ async fn finalize_replayed_tool_end_turn_best_effort(
             )
             .await;
         }
-        if let Some(job) =
-            super::memory_promotion::build_turn_memory_promotion_job(state, promotion_context)
-        {
+        let memory_dir = state
+            .core_config
+            .memory
+            .enabled
+            .then(|| state.core_config.memory.store_dir.clone())
+            .flatten();
+        let process_path = state.process_path();
+        if let Some(job) = super::memory_promotion::build_turn_memory_promotion_job(
+            &state.machine,
+            memory_dir,
+            process_path,
+            state.runtime_config.llm_request_timeout_secs,
+            promotion_context,
+        ) {
             state
                 .machine
                 .push_deferred_runtime_action(DeferredRuntimeAction::TurnMemoryPromotion(job));
@@ -427,8 +438,11 @@ pub(super) async fn run_deferred_runtime_action_with_cancel(
 ) -> DeferredRuntimeActionExit {
     match action {
         DeferredRuntimeAction::TurnMemoryPromotion(job) => {
+            let generation = state.namespace_generation();
             match super::memory_promotion::run_turn_memory_promotion_job_for_runtime_with_cancel(
-                state, &job, cancel,
+                &generation,
+                &job,
+                cancel,
             )
             .await
             {

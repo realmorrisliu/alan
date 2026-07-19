@@ -428,7 +428,7 @@ async fn deferred_memory_promotion_uses_namespace_llmfs() {
         Access::ReadWrite,
     );
     let root = InProcessTransport::new(Arc::new(MountFs::new(namespace)));
-    let mut state = RuntimeLoopState {
+    let state = RuntimeLoopState {
         machine: AgentMachine::new(),
         environment: NamespaceRuntimeEnvironment::new(root, "/agent/1", "default"),
         core_config: Config::default(),
@@ -444,8 +444,9 @@ async fn deferred_memory_promotion_uses_namespace_llmfs() {
         warning_context: "test",
     };
 
+    let generation = state.namespace_generation();
     run_turn_memory_promotion_job_for_runtime_with_cancel(
-        &mut state,
+        &generation,
         &job,
         &CancellationToken::new(),
     )
