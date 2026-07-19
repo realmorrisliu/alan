@@ -3,7 +3,7 @@
   "category": "compaction",
   "description": "Validate the soft-threshold auto-pre-turn path flushes durable memory before compaction and keeps the flush attempt consistent across all external surfaces.",
   "blocking": false,
-  "command": "cargo test -p alan-agent-engine --lib runtime::transition::tests::compaction_thresholds::test_auto_pre_turn_soft_compaction_flushes_memory_before_compaction -- --exact",
+  "command": "cargo test -p alan-agent-engine --lib runtime::transition::tests::test_auto_pre_turn_soft_compaction_flushes_memory_before_compaction -- --exact",
   "assertions": [
     "soft-threshold auto compaction emits a successful memory_flush_observed event before compaction",
     "memory flush output path and attempt id remain consistent in Agent Machine and rollout evidence",

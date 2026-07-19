@@ -3,7 +3,7 @@
   "category": "compaction",
   "description": "Validate the soft-threshold auto-pre-turn path records a skipped memory flush when the model returns no durable content, while compaction still succeeds.",
   "blocking": true,
-  "command": "cargo test -p alan-agent-engine --lib runtime::transition::tests::compaction_thresholds::test_auto_pre_turn_soft_compaction_skips_memory_flush_when_nothing_is_durable -- --exact",
+  "command": "cargo test -p alan-agent-engine --lib runtime::transition::tests::test_auto_pre_turn_soft_compaction_skips_memory_flush_when_nothing_is_durable -- --exact",
   "assertions": [
     "empty-but-valid memory flush output becomes MemoryFlushResult::Skipped with skip_reason=no_durable_content",
     "skip path remains visible in Agent Machine and rollout evidence",
