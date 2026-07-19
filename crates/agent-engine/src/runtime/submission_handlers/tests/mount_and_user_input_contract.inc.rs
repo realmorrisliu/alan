@@ -47,7 +47,7 @@
         assert_eq!(binding.namespace_cwd, std::path::Path::new("/mnt/project"));
         assert_eq!(
             state
-                .namespace_environment()
+                .child_launch()
                 .launch_context()
                 .expect("the Process Launch Context should remain available")
                 .cwd,
@@ -250,8 +250,9 @@
         }
 
         let launch_context = state
-            .namespace_environment()
+            .child_launch()
             .launch_context()
+            .cloned()
             .expect("approved grant should remain in the Process Launch Context");
         assert_eq!(
             launch_context.host_path("/mnt/project/file.txt"),

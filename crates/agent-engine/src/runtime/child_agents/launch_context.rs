@@ -8,7 +8,8 @@ pub(super) fn ensure_child_connection_is_passed(
     parent: &RuntimeLoopState,
     requested: &str,
 ) -> Result<()> {
-    let passed = parent.namespace_environment().llm_connection();
+    let child_launch = parent.child_launch();
+    let passed = child_launch.connection_name();
     if requested != passed {
         bail!(
             "Connection '{requested}' was not passed to the child Agent Process by the parent Process; available Connection is '{passed}'."
@@ -161,17 +162,15 @@ pub(super) fn resolve_launch_root_dir(
 ) -> Result<Option<ResolvedLaunchRoot>> {
     match target {
         SpawnTarget::DefinitionDescriptor { descriptor } => {
-            let descriptor = parent
-                .namespace_environment()
-                .launch_context()
+            let child_launch = parent.child_launch();
+            let launch_context = child_launch.launch_context();
+            let descriptor = launch_context
                 .and_then(|context| context.descriptor(descriptor))
                 .with_context(|| format!("parent Process has no `{descriptor}` descriptor"))?;
             let root = if descriptor.file_tree.is_some() {
                 PathBuf::from(&descriptor.path)
             } else {
-                parent
-                    .namespace_environment()
-                    .launch_context()
+                launch_context
                     .and_then(|context| context.host_path(&descriptor.path))
                     .with_context(|| {
                         format!(

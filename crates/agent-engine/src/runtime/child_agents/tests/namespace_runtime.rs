@@ -236,11 +236,7 @@ async fn child_namespace_plan_mounts_only_allowed_tools() {
         allowed_tools: vec!["alpha".to_string()],
     });
 
-    let launch_context = parent
-        .namespace_environment()
-        .launch_context()
-        .unwrap()
-        .child();
+    let launch_context = parent.child_launch().launch_context().unwrap().child();
     let plan =
         build_child_namespace_assembly_plan(&parent, &spec, &parent.core_config, launch_context)
             .await
@@ -458,7 +454,10 @@ async fn child_namespace_launch_and_supervisor_reattachment_use_proc_pid_files()
 
     assert_eq!(launch.pid, "1");
     assert_eq!(launch.environment.agent_path(), "/agent/1");
-    assert_eq!(launch.environment.llm_connection(), "default");
+    assert_eq!(
+        launch.environment.child_launch().connection_name(),
+        "default"
+    );
     assert_eq!(
         launch.exec,
         plan.clone_exec_spec_for_pid("1", "/bin/alan-agent", std::iter::empty::<String>())

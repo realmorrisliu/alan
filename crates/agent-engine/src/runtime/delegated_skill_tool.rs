@@ -480,10 +480,9 @@ fn build_delegated_spawn_spec(
     request: &DelegatedSkillInvocationRequest,
     target: alan_agent_protocol::SpawnTarget,
 ) -> DelegatedSkillSpawnResult<SpawnSpec> {
-    let parent_namespace_cwd = state
-        .namespace_environment()
-        .launch_context()
-        .map(|context| Path::new(&context.cwd));
+    let child_launch = state.child_launch();
+    let launch_context = child_launch.launch_context();
+    let parent_namespace_cwd = launch_context.map(|context| Path::new(&context.cwd));
     let cwd = request
         .cwd
         .as_deref()
@@ -493,15 +492,12 @@ fn build_delegated_spawn_spec(
     let requirements = classify_delegated_task_requirements(&request.task, cwd.as_deref());
     let mut handles = vec![SpawnHandle::ApprovalScope];
     if cwd.as_deref().is_some_and(|cwd| {
-        state
-            .namespace_environment()
-            .launch_context()
-            .is_some_and(|context| {
-                context
-                    .host_mounts
-                    .iter()
-                    .any(|grant| grant.resolve_host_path(&cwd.to_string_lossy()).is_some())
-            })
+        launch_context.is_some_and(|context| {
+            context
+                .host_mounts
+                .iter()
+                .any(|grant| grant.resolve_host_path(&cwd.to_string_lossy()).is_some())
+        })
     }) {
         handles.push(SpawnHandle::HostMounts);
     }

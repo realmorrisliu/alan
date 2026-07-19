@@ -79,11 +79,7 @@ async fn spawn_child_runtime_preserves_explicit_connection_profile() {
     let mut parent = make_parent_state(&temp, requests.clone(), response.clone());
     let profile_id = "explicit-main";
     parent.core_config.connection_profile = Some(profile_id.to_string());
-    let launch_context = parent
-        .namespace_environment()
-        .launch_context()
-        .unwrap()
-        .clone();
+    let launch_context = parent.child_launch().launch_context().unwrap().clone();
     parent.environment = namespace_environment_for_parent_test_with_connection(
         Arc::new(alan_routefs::RouteFs::new()),
         Arc::new(alan_llmfs::LlmFs::new()),
@@ -250,13 +246,14 @@ fn child_launch_context_does_not_inherit_parent_host_mounts_or_descriptors_by_de
         RecordedRequests::default(),
         completed_response("done"),
     );
-    let parent_context = parent.namespace_environment().launch_context().unwrap();
+    let parent_context = parent.child_launch().launch_context().cloned().unwrap();
     let definition = temp.path().join("child-definition");
     let mut spec = launch_spec(definition.clone());
     spec.handles.clear();
 
     let definition = host_launch_root(definition);
-    let child = build_child_launch_context(parent_context, &spec, None, Some(&definition)).unwrap();
+    let child =
+        build_child_launch_context(&parent_context, &spec, None, Some(&definition)).unwrap();
 
     assert_eq!(child.cwd, "/");
     assert!(child.namespace.resolve("/mnt/source").is_err());
@@ -541,12 +538,13 @@ fn child_launch_context_passes_parent_host_mounts_only_with_explicit_handle() {
         RecordedRequests::default(),
         completed_response("done"),
     );
-    let parent_context = parent.namespace_environment().launch_context().unwrap();
+    let parent_context = parent.child_launch().launch_context().cloned().unwrap();
     let definition = temp.path().join("child-definition");
     let spec = launch_spec(definition.clone());
 
     let definition = host_launch_root(definition);
-    let child = build_child_launch_context(parent_context, &spec, None, Some(&definition)).unwrap();
+    let child =
+        build_child_launch_context(&parent_context, &spec, None, Some(&definition)).unwrap();
 
     assert_eq!(child.cwd, "/mnt/source");
     assert!(child.namespace.resolve("/mnt/source").is_ok());
@@ -566,14 +564,14 @@ fn child_launch_rejects_cwd_inside_an_unpassed_host_mount() {
         RecordedRequests::default(),
         completed_response("done"),
     );
-    let parent_context = parent.namespace_environment().launch_context().unwrap();
+    let parent_context = parent.child_launch().launch_context().cloned().unwrap();
     let definition = temp.path().join("child-definition");
     let mut spec = launch_spec(definition.clone());
     spec.handles.clear();
 
     let definition = host_launch_root(definition);
     let error = build_child_launch_context(
-        parent_context,
+        &parent_context,
         &spec,
         Some("/mnt/source".to_string()),
         Some(&definition),

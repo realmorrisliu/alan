@@ -148,7 +148,7 @@ async fn spawn_child_runtime_inner(
     let launch_root_dir = resolve_launch_root_dir(parent, &spec.target)?;
     let child_agent_config = build_child_agent_config(parent, &spec);
     let parent_launch_context = parent
-        .namespace_environment()
+        .child_launch()
         .launch_context()
         .cloned()
         .unwrap_or_else(crate::ProcessLaunchContext::root);
@@ -221,8 +221,8 @@ async fn spawn_child_runtime_inner(
         None
     };
     let assembler = parent
-        .namespace_environment()
-        .child_process_assembler()
+        .child_launch()
+        .assembler()
         .context("parent Agent Process has no Agent Runtime Service child assembly capability")?;
     let assembly = assembler
         .assemble(super::ChildAgentProcessAssemblyRequest {

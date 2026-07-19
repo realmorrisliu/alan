@@ -539,7 +539,7 @@ fn parent_test_tools(config: &crate::Config) -> ToolRegistry {
 
 fn inherited_launch_context(parent: &RuntimeLoopState) -> crate::ProcessLaunchContext {
     parent
-        .namespace_environment()
+        .child_launch()
         .launch_context()
         .expect("test parent has a Process Launch Context")
         .child()
