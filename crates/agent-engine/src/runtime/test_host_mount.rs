@@ -12,6 +12,7 @@ struct RequestRecord {
     status: String,
     grant: String,
     error: String,
+    decision_in_progress: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -78,6 +79,21 @@ impl TestHostMountFs {
         request.status = status.to_string();
         request.grant = grant.unwrap_or_default().to_string();
         request.error = error.unwrap_or_default().to_string();
+        request.decision_in_progress = false;
+    }
+
+    pub(crate) async fn begin_decision(&self, request_id: &str) {
+        let mut state = self.state.lock().await;
+        let request = state
+            .requests
+            .get_mut(request_id)
+            .expect("test Host Mount request exists");
+        assert_eq!(
+            request.status, "pending",
+            "only pending requests can be claimed"
+        );
+        assert!(!request.decision_in_progress, "request is already claimed");
+        request.decision_in_progress = true;
     }
 
     pub(crate) async fn status(&self, request_id: &str) -> Option<String> {
@@ -308,6 +324,7 @@ impl FileServer for TestHostMountFs {
                             status: "pending".to_string(),
                             grant: String::new(),
                             error: String::new(),
+                            decision_in_progress: false,
                         },
                     );
                 }
@@ -322,7 +339,7 @@ impl FileServer for TestHostMountFs {
                         .requests
                         .get_mut(&request_id)
                         .ok_or(ErrorCode::NotFound)?;
-                    if request.status != "pending" {
+                    if request.status != "pending" || request.decision_in_progress {
                         return Err(ErrorCode::BadRequest);
                     }
                     request.status = "cancelled".to_string();

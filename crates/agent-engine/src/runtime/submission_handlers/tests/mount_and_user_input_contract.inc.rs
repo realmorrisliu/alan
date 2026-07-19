@@ -143,6 +143,60 @@
     }
 
     #[tokio::test]
+    async fn new_turn_waits_for_in_flight_host_mount_decision_before_reset() {
+        let (mut state, host_mount, request_id) = pending_host_mount_state().await;
+        state.environment = state
+            .environment
+            .clone()
+            .with_launch_context(crate::ProcessLaunchContext::root());
+        host_mount.begin_decision(&request_id).await;
+        let cancel = CancellationToken::new();
+        let mut emit = |_event: Event| async {};
+
+        let reset = handle_runtime_op_with_cancel(
+            &mut state,
+            Op::Turn {
+                parts: vec![ContentPart::text("Start over")],
+                context: None,
+            },
+            &mut emit,
+            &cancel,
+        );
+        let settle = async {
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            host_mount
+                .settle(&request_id, "approved", Some("grant-in-flight"), None)
+                .await;
+        };
+        let (action, ()) = tokio::join!(reset, settle);
+        let action = action.unwrap();
+
+        assert!(matches!(
+            action,
+            RuntimeOpAction::RunTurn {
+                turn_kind: TurnRunKind::NewTurn,
+                ..
+            }
+        ));
+        assert!(state.machine.pending_host_mount(&request_id).is_none());
+        assert_eq!(host_mount.status(&request_id).await.as_deref(), Some("approved"));
+        let launch_context = state
+            .environment
+            .child_launch()
+            .launch_context()
+            .unwrap()
+            .clone();
+        assert_eq!(
+            launch_context.projected_host_mounts(),
+            vec![("/mnt/project".to_string(), alan_kernel::Access::ReadWrite)]
+        );
+        assert_eq!(
+            launch_context.projected_host_mount_references(),
+            vec!["grant-in-flight".to_string()]
+        );
+    }
+
+    #[tokio::test]
     async fn approved_service_request_resumes_with_opaque_grant_only() {
         let (mut state, host_mount, request_id) = pending_host_mount_state().await;
         state.environment = state

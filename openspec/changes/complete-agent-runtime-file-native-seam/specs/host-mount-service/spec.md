@@ -105,9 +105,11 @@ request before clearing the corresponding Agent Machine wait.
 - **AND** approval-like status writes from the requesting Process are rejected
 
 #### Scenario: Approval wins the race with runtime abandonment
-- **WHEN** Host Mount Service reaches `approved` before the requesting runtime's
-  cancellation write commits
-- **THEN** Agent Runtime observes the immutable approved result and retains its
-  opaque grant reference and logical projection before clearing the Machine wait
+- **WHEN** Host Mount Service has claimed an approval decision before the
+  requesting runtime's cancellation write commits
+- **THEN** Agent Runtime waits for the service to publish an immutable terminal
+  result instead of treating the still-pending decision as cancellation failure
+- **AND** an approved result retains its opaque grant reference and logical
+  projection before clearing the Machine wait
 - **AND** later child launch isolation cannot mistake the live mount for ambient
   authority

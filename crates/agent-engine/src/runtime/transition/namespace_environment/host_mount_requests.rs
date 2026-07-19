@@ -1,8 +1,11 @@
 use anyhow::{Context, Result, bail};
+use std::time::Duration;
 
 use super::{NamespaceHostMountRequests, client::NamespaceClient};
 
 const HOST_MOUNT_REQUEST_CLONE: &str = "/mnt/host-mount/requests/clone";
+const HOST_MOUNT_TERMINAL_POLL_INTERVAL: Duration = Duration::from_millis(10);
+const HOST_MOUNT_DECISION_SETTLE_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum HostMountTerminalStatus {
@@ -115,7 +118,21 @@ impl NamespaceHostMountRequests {
             if let Some(terminal) = self.terminal_result(request_id).await? {
                 return Ok(terminal);
             }
-            return Err(cancel_error).context("cancel pending Host Mount Service request");
+            let terminal = tokio::time::timeout(HOST_MOUNT_DECISION_SETTLE_TIMEOUT, async {
+                loop {
+                    if let Some(terminal) = self.terminal_result(request_id).await? {
+                        return Ok::<_, anyhow::Error>(terminal);
+                    }
+                    tokio::time::sleep(HOST_MOUNT_TERMINAL_POLL_INTERVAL).await;
+                }
+            })
+            .await;
+            return match terminal {
+                Ok(result) => result,
+                Err(_) => Err(cancel_error).context(
+                    "Host Mount Service request stayed pending after cancellation was rejected",
+                ),
+            };
         }
         self.terminal_result(request_id)
             .await?
