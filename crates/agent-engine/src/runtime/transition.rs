@@ -56,14 +56,17 @@ pub(super) enum DeferredRuntimeActionExit {
     Cancelled,
 }
 
-/// Agent state for the execution loop
-pub(crate) struct RuntimeLoopState {
-    pub(crate) machine: AgentMachine,
-    pub(crate) environment: NamespaceRuntimeEnvironment,
-    pub(crate) core_config: Config,
-    pub(crate) runtime_config: RuntimeConfig,
-    pub(crate) definition_persona_dirs: Vec<std::path::PathBuf>,
-    pub(crate) prompt_cache: super::prompt_cache::PromptAssemblyCache,
+/// Process-loop aggregate for one Agent Machine and its stable transition dependencies.
+///
+/// Transition-local execution state belongs exclusively to `machine`; the remaining fields are
+/// configuration, namespace capability sources, and derived prompt inputs.
+pub(super) struct RuntimeLoopState {
+    pub(super) machine: AgentMachine,
+    pub(super) environment: NamespaceRuntimeEnvironment,
+    pub(super) core_config: Config,
+    pub(super) runtime_config: RuntimeConfig,
+    pub(super) definition_persona_dirs: Vec<std::path::PathBuf>,
+    pub(super) prompt_cache: super::prompt_cache::PromptAssemblyCache,
 }
 
 impl RuntimeLoopState {

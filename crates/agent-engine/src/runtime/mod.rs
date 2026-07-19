@@ -61,10 +61,9 @@ pub use transition::{
     NamespaceTurnRuntime, NamespaceTurnRuntimeConfig,
 };
 
-// Re-export the transition context for internal runtime modules.
+// Re-export the memory-promotion job for internal runtime modules.
 pub(crate) use memory_promotion::TurnMemoryPromotionJob;
 pub use tool_packages::ToolPackageManifest;
-pub(crate) use transition::RuntimeLoopState;
 
 /// Configuration for the agent runtime
 #[derive(Debug, Clone)]

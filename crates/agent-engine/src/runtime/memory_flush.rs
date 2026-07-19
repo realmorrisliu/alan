@@ -549,8 +549,8 @@ mod tests {
         agent_machine::AgentMachine,
         config::Config,
         runtime::{
-            NamespaceRuntimeEnvironment, RuntimeConfig, RuntimeLoopState,
-            prompt_cache::PromptAssemblyCache,
+            NamespaceRuntimeEnvironment, RuntimeConfig, prompt_cache::PromptAssemblyCache,
+            transition::RuntimeLoopState,
         },
     };
     use std::path::PathBuf;

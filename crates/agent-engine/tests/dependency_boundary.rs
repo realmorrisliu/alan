@@ -60,10 +60,45 @@ fn rust_item_body<'a>(source: &'a str, marker: &str) -> &'a str {
 #[test]
 fn runtime_state_and_handles_have_no_parallel_capability_or_event_authority() {
     let transition_source = read_runtime_source("transition.rs");
-    let state = rust_item_body(&transition_source, "pub(crate) struct RuntimeLoopState");
-    assert!(state.contains("pub(crate) environment: NamespaceRuntimeEnvironment"));
+    let state = rust_item_body(&transition_source, "pub(super) struct RuntimeLoopState");
+    for required_field in [
+        "pub(super) machine: AgentMachine",
+        "pub(super) environment: NamespaceRuntimeEnvironment",
+        "pub(super) core_config: Config",
+        "pub(super) runtime_config: RuntimeConfig",
+        "pub(super) definition_persona_dirs: Vec<std::path::PathBuf>",
+        "pub(super) prompt_cache: super::prompt_cache::PromptAssemblyCache",
+    ] {
+        assert!(
+            state.contains(required_field),
+            "runtime loop aggregate must retain {required_field}"
+        );
+    }
+    assert_eq!(
+        state
+            .lines()
+            .filter(|line| line.trim_start().starts_with("pub(super) "))
+            .count(),
+        6,
+        "runtime loop aggregate must keep exactly its six cohesive fields"
+    );
+    for displaced_state in [
+        "current_submission",
+        "turn_state",
+        "pending_yield",
+        "tool_replay",
+        "active_task",
+        "deferred_action",
+    ] {
+        assert!(
+            !state.contains(displaced_state),
+            "runtime loop aggregate must not regain Machine state {displaced_state}"
+        );
+    }
 
     let engine_source = read_runtime_source("engine.rs");
+    let runtime_module = read_runtime_source("mod.rs");
+    assert!(!runtime_module.contains("use transition::RuntimeLoopState"));
     let controller_source = read_runtime_source("controller.rs");
     let handle = rust_item_body(&controller_source, "pub struct RuntimeHandle");
     let controller = rust_item_body(&controller_source, "pub struct RuntimeController");
@@ -619,7 +654,7 @@ fn agent_machine_state_is_not_a_public_or_runtime_field_surface() {
     );
 
     let transition_source = read_runtime_source("transition.rs");
-    let runtime_state = rust_item_body(&transition_source, "pub(crate) struct RuntimeLoopState");
+    let runtime_state = rust_item_body(&transition_source, "pub(super) struct RuntimeLoopState");
     for displaced_field in ["current_submission_id", "turn_state"] {
         assert!(
             !runtime_state.contains(&format!("{displaced_field}:")),
