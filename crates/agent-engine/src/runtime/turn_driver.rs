@@ -467,7 +467,6 @@ mod tests {
             environment,
             core_config: crate::Config::default(),
             runtime_config: super::super::RuntimeConfig::default(),
-            definition_persona_dirs: Vec::new(),
             prompt_cache: super::super::prompt_cache::PromptAssemblyCache::new(Vec::new()),
         };
         let broker = TurnInputBroker::default();

@@ -375,7 +375,6 @@
             environment: NamespaceRuntimeEnvironment::new(root, "/agent/1", "default"),
             core_config: config,
             runtime_config,
-            definition_persona_dirs: Vec::new(),
             prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
         }
     }
@@ -461,7 +460,6 @@
             environment: NamespaceRuntimeEnvironment::new(root, "/agent/1", "default"),
             core_config: Config::default(),
             runtime_config: crate::runtime::RuntimeConfig::default(),
-            definition_persona_dirs: Vec::new(),
             prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
         };
         (state, shell)
@@ -649,7 +647,6 @@
                 .with_tool_process_context(alan_kernel::Pid(1), tool_runner),
             core_config: config,
             runtime_config: crate::runtime::RuntimeConfig::default(),
-            definition_persona_dirs: Vec::new(),
             prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
         }
     }

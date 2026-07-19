@@ -165,7 +165,6 @@ fn runtime_state_with_environment(environment: NamespaceRuntimeEnvironment) -> R
         environment,
         core_config: Config::default(),
         runtime_config: super::RuntimeConfig::default(),
-        definition_persona_dirs: Vec::new(),
         prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
     }
 }
@@ -364,7 +363,6 @@ fn create_replay_memory_test_state(
             config
         },
         runtime_config: super::RuntimeConfig::default(),
-        definition_persona_dirs: Vec::new(),
         prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
     }
 }

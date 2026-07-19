@@ -69,7 +69,6 @@ fn runtime_state_and_handles_have_no_parallel_capability_or_event_authority() {
         "pub(super) environment: NamespaceRuntimeEnvironment",
         "pub(super) core_config: Config",
         "pub(super) runtime_config: RuntimeConfig",
-        "pub(super) definition_persona_dirs: Vec<std::path::PathBuf>",
         "pub(super) prompt_cache: super::prompt_cache::PromptAssemblyCache",
     ] {
         assert!(
@@ -82,9 +81,10 @@ fn runtime_state_and_handles_have_no_parallel_capability_or_event_authority() {
             .lines()
             .filter(|line| line.trim_start().starts_with("pub(super) "))
             .count(),
-        6,
-        "runtime loop aggregate must keep exactly its six cohesive fields"
+        5,
+        "runtime loop aggregate must keep exactly its five cohesive fields"
     );
+    assert!(!state.contains("definition_persona_dirs"));
     for displaced_state in [
         "current_submission",
         "turn_state",
@@ -361,6 +361,15 @@ fn transition_leaf_workflows_do_not_receive_the_runtime_loop_aggregate() {
     }
 
     let executor = read_runtime_source("turn_executor.rs");
+    let prompt_build = &executor[executor
+        .find("fn build_domain_prompt_with_skills")
+        .expect("find prompt build")..];
+    let prompt_build = &prompt_build[..prompt_build
+        .find("/// Run a single agent turn")
+        .expect("find end of prompt build")];
+    assert!(!prompt_build.contains("RuntimeLoopState"));
+    assert!(prompt_build.contains("PromptAssemblyCache"));
+    assert!(!read_runtime_source("prompt_cache.rs").contains("rebind_paths"));
     let tool_definitions = &executor[executor
         .find("async fn turn_tool_definitions")
         .expect("find turn_tool_definitions")..];

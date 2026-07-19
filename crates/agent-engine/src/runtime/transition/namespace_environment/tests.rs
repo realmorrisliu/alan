@@ -433,7 +433,6 @@ async fn answered_request_response_resumes_engine_pending_yield_from_files() {
         environment,
         core_config: crate::Config::default(),
         runtime_config: super::super::super::RuntimeConfig::default(),
-        definition_persona_dirs: Vec::new(),
         prompt_cache: super::super::super::prompt_cache::PromptAssemblyCache::new(Vec::new()),
     };
     let cancel = tokio_util::sync::CancellationToken::new();

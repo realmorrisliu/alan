@@ -581,7 +581,6 @@ fn make_parent_state_with_capability_view(
             memory_store_backing: Some(memory_store),
             ..RuntimeConfig::default()
         },
-        definition_persona_dirs: Vec::new(),
         prompt_cache: super::super::prompt_cache::PromptAssemblyCache::with_fixed_capability_view(
             capability_view,
             Vec::new(),

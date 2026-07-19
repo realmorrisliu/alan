@@ -74,7 +74,6 @@ pub(super) struct RuntimeLoopState {
     pub(super) environment: NamespaceRuntimeEnvironment,
     pub(super) core_config: Config,
     pub(super) runtime_config: RuntimeConfig,
-    pub(super) definition_persona_dirs: Vec<std::path::PathBuf>,
     pub(super) prompt_cache: super::prompt_cache::PromptAssemblyCache,
 }
 

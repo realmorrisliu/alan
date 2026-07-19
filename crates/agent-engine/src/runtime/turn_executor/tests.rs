@@ -933,7 +933,6 @@ fn create_test_state_with_provider_and_tools_and_shell<P: LlmProvider + 'static>
             .with_launch_context(launch_context),
         core_config: config,
         runtime_config,
-        definition_persona_dirs: Vec::new(),
         prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
     };
     (state, alan_shell::Shell::new(root))
