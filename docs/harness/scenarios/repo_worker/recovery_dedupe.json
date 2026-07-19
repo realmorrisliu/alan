@@ -3,7 +3,7 @@
   "category": "repo_worker",
   "description": "Validate rollout recovery and side-effect dedupe continuity.",
   "blocking": true,
-  "command": "cargo test -p alan-agent-engine --lib runtime::tool_orchestrator::tests::test_side_effect_dedupe_survives_rollout_recovery_for_file_effects -- --exact",
+  "command": "cargo test -p alan-agent-engine --lib runtime::transition::tests::tool_batch::test_side_effect_dedupe_survives_rollout_recovery_for_file_effects -- --exact",
   "assertions": [
     "rollout evidence restores the prior effect decision",
     "duplicate irreversible file effects are skipped on recovery",
