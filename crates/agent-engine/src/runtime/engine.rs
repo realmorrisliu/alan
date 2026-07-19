@@ -7,7 +7,7 @@ use super::transition::{
     accepts_inband_submissions, advance_accepted_submission,
     run_deferred_runtime_action_with_cancel,
 };
-use super::turn_driver::{
+use super::turn_input::{
     NAMESPACE_PENDING_RESPONSE_POLL_INTERVAL, TurnInputBroker, is_turn_inband_submission,
     namespace_pending_resume_submission,
 };
@@ -75,7 +75,8 @@ async fn read_pending_namespace_resume_submission(
         return None;
     }
 
-    match namespace_pending_resume_submission(state).await {
+    let agent_files = state.agent_files();
+    match namespace_pending_resume_submission(&state.machine, &agent_files).await {
         Ok(Some(submission)) => Some(Ok(submission)),
         Ok(None) => None,
         Err(err) => Some(Err(err)),

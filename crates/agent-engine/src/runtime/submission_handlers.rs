@@ -156,7 +156,7 @@ where
                     if runtime.machine.is_turn_active() || runtime.machine.has_pending_interaction()
                     {
                         // In normal runtime flow this path should be handled by in-band queueing in
-                        // turn_driver. Keep this as a safe fallback.
+                        // accepted-submission transition. Keep this as a safe fallback.
                         runtime
                             .machine
                             .push_buffered_inband_submission(Submission::new(Op::Input {
