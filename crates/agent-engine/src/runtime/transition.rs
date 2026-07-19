@@ -4,7 +4,10 @@
 //! submission, this module advances Machine state and returns only the control outcome the outer
 //! loop needs.
 
+mod accepted_submission;
 mod namespace_environment;
+
+pub(crate) use accepted_submission::{accepts_inband_submissions, advance_accepted_submission};
 
 #[cfg(test)]
 pub(super) use namespace_environment::NamespaceRequestRecord;
@@ -21,7 +24,7 @@ pub(crate) use namespace_environment::{
 
 use std::collections::VecDeque;
 
-use alan_agent_protocol::{Event, InputMode, Op, Submission};
+use alan_agent_protocol::{Event, Op, Submission};
 use anyhow::Result;
 use tokio_util::sync::CancellationToken;
 use tracing::warn;
@@ -49,9 +52,9 @@ use super::tool_execution::{
     ToolExecutionOutcome, ToolExecutionRequest, execute_allowed_tool_call,
 };
 use super::tool_resolution::{ToolResolutionOutcome, ToolResolutionRequest, resolve_tool_call};
-use super::turn_driver::{TurnInputBroker, drive_turn_submission_with_cancel};
 pub(super) use super::turn_executor::run_turn_with_cancel;
 use super::turn_executor::{TurnExecutionOutcome, TurnRunKind};
+use super::turn_input::TurnInputBroker;
 use super::turn_memory::{FinalizeTurnMemoryRequest, finalize_turn_memory_best_effort};
 #[allow(
     unused_imports,
@@ -77,6 +80,18 @@ pub(super) struct RuntimeLoopState {
     pub(super) core_config: Config,
     pub(super) runtime_config: RuntimeConfig,
     pub(super) prompt_cache: super::prompt_cache::PromptAssemblyCache,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TransitionCompletion {
+    Completed,
+    Paused,
+}
+
+pub(crate) struct AcceptedSubmissionOutcome {
+    pub(crate) result: Result<TransitionCompletion>,
+    pub(crate) requeue_inband_submissions: bool,
+    pub(crate) deferred_actions: VecDeque<DeferredRuntimeAction>,
 }
 
 impl RuntimeLoopState {
@@ -670,62 +685,6 @@ where
             Ok(RuntimeOpAction::NoTurn)
         }
         op => handle_non_compaction_runtime_op(submission_runtime(state), op, emit).await,
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum TransitionCompletion {
-    Completed,
-    Paused,
-}
-
-pub(crate) struct AcceptedSubmissionOutcome {
-    pub(crate) result: Result<TransitionCompletion>,
-    pub(crate) requeue_inband_submissions: bool,
-    pub(crate) deferred_actions: VecDeque<DeferredRuntimeAction>,
-}
-
-pub(crate) fn accepts_inband_submissions(op: &Op) -> bool {
-    matches!(
-        op,
-        Op::Turn { .. }
-            | Op::Input {
-                mode: InputMode::Steer | InputMode::FollowUp,
-                ..
-            }
-    )
-}
-
-pub(crate) async fn advance_accepted_submission(
-    state: &mut RuntimeLoopState,
-    submission: Submission,
-    broker: &TurnInputBroker,
-    cancel: &CancellationToken,
-) -> AcceptedSubmissionOutcome {
-    let requeue_inband_submissions = accepts_inband_submissions(&submission.op);
-    state.machine.accept_submission(submission.id.clone());
-    let mut emit = |_event: Event| async {};
-
-    let result = if requeue_inband_submissions {
-        drive_turn_submission_with_cancel(state, submission, broker, &mut emit, cancel).await
-    } else {
-        handle_submission_with_cancel(state, submission, &mut emit, cancel).await
-    }
-    .map(|()| {
-        if state.machine.has_pending_interaction() {
-            TransitionCompletion::Paused
-        } else {
-            TransitionCompletion::Completed
-        }
-    });
-
-    let deferred_actions = state.machine.drain_deferred_runtime_actions();
-    state.machine.finish_submission();
-
-    AcceptedSubmissionOutcome {
-        result,
-        requeue_inband_submissions,
-        deferred_actions,
     }
 }
 

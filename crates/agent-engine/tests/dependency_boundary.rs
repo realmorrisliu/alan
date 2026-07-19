@@ -2,6 +2,8 @@
 
 #[path = "dependency_boundary/submission_runtime.rs"]
 mod submission_runtime;
+#[path = "dependency_boundary/turn_input.rs"]
+mod turn_input;
 #[path = "dependency_boundary/turn_memory.rs"]
 mod turn_memory;
 
@@ -352,6 +354,7 @@ fn transition_leaf_workflows_do_not_receive_the_runtime_loop_aggregate() {
         "tool_batch.rs",
         "tool_resolution.rs",
         "tool_resolution/runtime_inputs.rs",
+        "turn_input.rs",
         "turn_memory.rs",
         "turn_memory/runtime_inputs.rs",
         "turn_support.rs",

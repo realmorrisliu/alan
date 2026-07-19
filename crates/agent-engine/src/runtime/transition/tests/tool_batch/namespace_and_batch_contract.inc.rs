@@ -1,6 +1,6 @@
 
     use alan_agent_protocol::{InputMode, Op};
-    use crate::runtime::turn_driver::MAX_BUFFERED_INBAND_USER_INPUTS;
+    use crate::runtime::turn_input::MAX_BUFFERED_INBAND_USER_INPUTS;
 
     #[tokio::test]
     async fn namespace_tool_call_spawns_bin_executable_and_records_action() {

@@ -11,7 +11,7 @@ use crate::llm::{GenerationRequest, GenerationResponse, LlmProvider, StreamChunk
 use crate::rollout::{RolloutItem, RolloutRecorder};
 use alan_agent_protocol::{
     CompactionOutcome, CompactionPressureLevel, CompactionReason, CompactionResult,
-    CompactionTrigger, MemoryFlushResult,
+    CompactionTrigger, InputMode, MemoryFlushResult,
 };
 use alan_ap::{Fid, FileServer, OpenMode};
 use alan_shell::Shell;
