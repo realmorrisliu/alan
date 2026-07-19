@@ -1,6 +1,8 @@
 use super::*;
 use crate::llm::{GenerationRequest, GenerationResponse, StreamChunk, TokenUsage};
 use crate::runtime::controller::RuntimeStartupMetadata;
+use crate::runtime::launch_config::AgentConfig;
+use crate::runtime::transition::RuntimeLoopState;
 use crate::runtime::{
     ApprovedMountGrant, ApprovedMountGrantAccess, MountGrantApplicator,
     MountGrantApplicatorFactory, NamespaceRuntimeEnvironment, RuntimeConfig,
@@ -18,6 +20,64 @@ use alan_llm::LlmProvider;
 use serde_json::json;
 use std::sync::{Arc, Mutex};
 use tempfile::TempDir;
+
+fn child_launch_runtime(parent: &RuntimeLoopState, spec: &SpawnSpec) -> ChildLaunchRuntime {
+    super::super::transition::child_launch_runtime(parent, spec)
+}
+
+async fn spawn_child_runtime(
+    parent: &RuntimeLoopState,
+    spec: SpawnSpec,
+) -> Result<DelegatedChildRunSupervisor> {
+    let runtime = child_launch_runtime(parent, &spec);
+    super::spawn_child_runtime(runtime, spec).await
+}
+
+async fn spawn_child_runtime_cancellable(
+    parent: &RuntimeLoopState,
+    spec: SpawnSpec,
+    cancel: &CancellationToken,
+) -> Result<DelegatedChildRunSupervisor> {
+    let runtime = child_launch_runtime(parent, &spec);
+    super::spawn_child_runtime_cancellable(runtime, spec, cancel).await
+}
+
+async fn spawn_child_runtime_with_client_factory<F>(
+    parent: &RuntimeLoopState,
+    spec: SpawnSpec,
+    llm_client_factory: F,
+) -> Result<DelegatedChildRunSupervisor>
+where
+    F: FnOnce(&crate::Config) -> Result<LlmClient> + Send,
+{
+    let runtime = child_launch_runtime(parent, &spec);
+    super::spawn_child_runtime_with_client_factory(runtime, spec, llm_client_factory).await
+}
+
+async fn build_child_namespace_assembly_plan(
+    parent: &RuntimeLoopState,
+    spec: &SpawnSpec,
+    child_core_config: &crate::Config,
+    launch_context: crate::ProcessLaunchContext,
+) -> Result<ChildNamespaceAssemblyPlan> {
+    let runtime = child_launch_runtime(parent, spec);
+    super::build_child_namespace_assembly_plan(&runtime, spec, child_core_config, launch_context)
+        .await
+}
+
+async fn evaluate_delegated_launch_capabilities(
+    parent: &RuntimeLoopState,
+    spec: &mut SpawnSpec,
+    plan: &ChildNamespaceAssemblyPlan,
+) -> Result<Option<alan_agent_protocol::DelegatedCapabilityDecision>> {
+    let runtime = child_launch_runtime(parent, spec);
+    super::evaluate_delegated_launch_capabilities(&runtime, spec, plan).await
+}
+
+fn build_child_agent_config(parent: &RuntimeLoopState, spec: &SpawnSpec) -> AgentConfig {
+    let runtime = child_launch_runtime(parent, spec);
+    super::build_child_agent_config(&runtime, spec)
+}
 
 fn test_startup_metadata(
     process_path: impl Into<String>,

@@ -379,7 +379,8 @@ async fn spawn_and_join_delegated_child(
         return Ok(ChildRuntimeResult::cancelled_before_launch());
     }
 
-    let controller = spawn_child_runtime_cancellable(state, spec, cancel).await?;
+    let runtime = super::transition::child_launch_runtime(state, &spec);
+    let controller = spawn_child_runtime_cancellable(runtime, spec, cancel).await?;
     controller.join_until_cancelled(cancel).await
 }
 

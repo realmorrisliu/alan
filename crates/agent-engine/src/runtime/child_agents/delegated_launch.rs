@@ -1,14 +1,14 @@
 use super::{ChildNamespaceAssemblyPlan, ROUTE_MOUNT_PATH};
+use crate::runtime::child_agents::ChildLaunchRuntime;
 use crate::runtime::delegation_capabilities::{
     DelegatedSpawnRejected, evaluate_delegated_namespace, namespace_summary_from_bindings,
 };
-use crate::runtime::transition::RuntimeLoopState;
 use alan_agent_protocol::{DelegatedCapabilityDecision, DelegatedCapabilityRecovery, SpawnSpec};
 use anyhow::Result;
 use std::path::PathBuf;
 
 pub(super) async fn evaluate_delegated_launch_capabilities(
-    parent: &RuntimeLoopState,
+    parent: &ChildLaunchRuntime,
     spec: &mut SpawnSpec,
     plan: &ChildNamespaceAssemblyPlan,
 ) -> Result<Option<DelegatedCapabilityDecision>> {
@@ -65,10 +65,9 @@ fn namespace_summary_from_child_plan(
 }
 
 async fn namespace_summary_from_parent(
-    parent: &RuntimeLoopState,
+    parent: &ChildLaunchRuntime,
 ) -> Result<alan_agent_protocol::DelegatedNamespaceSummary> {
-    let child_launch = parent.child_launch();
-    let launch_context = child_launch.launch_context();
+    let launch_context = parent.child_launch.launch_context();
     let mut described = launch_context
         .map(|context| context.namespace.describe())
         .unwrap_or_default();
@@ -87,7 +86,7 @@ async fn namespace_summary_from_parent(
             .map(|(path, _)| path.clone())
             .collect(),
         parent
-            .tool_execution()
+            .tool_execution
             .static_tool_names()
             .await?
             .into_iter()
@@ -96,6 +95,7 @@ async fn namespace_summary_from_parent(
         cwd,
         Some(
             parent
+                .base_agent_config
                 .core_config
                 .connection_profile
                 .clone()

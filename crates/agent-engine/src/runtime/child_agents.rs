@@ -1,5 +1,6 @@
 mod delegated_launch;
 mod launch_context;
+mod runtime_inputs;
 mod runtime_startup;
 mod task_context;
 #[cfg(test)]
@@ -13,7 +14,6 @@ use super::delegated_child_run::ChildRuntimeStatus;
 use super::delegated_child_run::{DelegatedChildRunSupervision, DelegatedChildRunSupervisor};
 use super::engine::{runtime_host_capabilities_for_tools, spawn_with_namespace_environment};
 use super::launch_config::{AgentProcessConfig, effective_core_config_for_runtime};
-use super::transition::RuntimeLoopState;
 #[cfg(test)]
 use crate::llm::LlmClient;
 use crate::tape::ContentPart;
@@ -46,6 +46,9 @@ use test_namespace::{
     spawn_child_namespace_runtime_environment,
 };
 use tokio_util::sync::CancellationToken;
+
+pub(crate) use runtime_inputs::{ChildLaunchRuntime, ChildTaskContext};
+pub(crate) use task_context::project_child_task_context;
 
 const ROUTE_MOUNT_PATH: &str = "/mnt/route";
 #[cfg(test)]
@@ -85,7 +88,7 @@ impl LlmProvider for ChildLlmProvider {
 
 #[cfg(test)]
 pub(crate) async fn spawn_child_runtime(
-    parent: &RuntimeLoopState,
+    parent: ChildLaunchRuntime,
     spec: SpawnSpec,
 ) -> Result<DelegatedChildRunSupervisor> {
     spawn_child_runtime_with_optional_cancel(parent, spec, None).await
@@ -96,7 +99,7 @@ pub(crate) async fn spawn_child_runtime(
     reason = "cancellable adapter remains available to focused child-runtime tests"
 )]
 pub(crate) async fn spawn_child_runtime_cancellable(
-    parent: &RuntimeLoopState,
+    parent: ChildLaunchRuntime,
     spec: SpawnSpec,
     cancel: &CancellationToken,
 ) -> Result<DelegatedChildRunSupervisor> {
@@ -104,7 +107,7 @@ pub(crate) async fn spawn_child_runtime_cancellable(
 }
 
 async fn spawn_child_runtime_with_optional_cancel(
-    parent: &RuntimeLoopState,
+    parent: ChildLaunchRuntime,
     spec: SpawnSpec,
     cancel: Option<&CancellationToken>,
 ) -> Result<DelegatedChildRunSupervisor> {
@@ -120,7 +123,7 @@ async fn spawn_child_runtime_with_optional_cancel(
 
 #[cfg(test)]
 async fn spawn_child_runtime_with_client_factory<F>(
-    parent: &RuntimeLoopState,
+    parent: ChildLaunchRuntime,
     spec: SpawnSpec,
     llm_client_factory: F,
 ) -> Result<DelegatedChildRunSupervisor>
@@ -135,7 +138,7 @@ type TestChildLlmClientFactory<'a> =
     Box<dyn FnOnce(&crate::Config) -> Result<LlmClient> + Send + 'a>;
 
 async fn spawn_child_runtime_inner(
-    parent: &RuntimeLoopState,
+    parent: ChildLaunchRuntime,
     mut spec: SpawnSpec,
     #[cfg(test)] llm_client_factory: Option<TestChildLlmClientFactory<'_>>,
     cancel: Option<&CancellationToken>,
@@ -145,10 +148,10 @@ async fn spawn_child_runtime_inner(
     }
 
     let child_cwd = validate_child_launch_contract(&spec)?;
-    let launch_root_dir = resolve_launch_root_dir(parent, &spec.target)?;
-    let child_agent_config = build_child_agent_config(parent, &spec);
+    let launch_root_dir = resolve_launch_root_dir(&parent, &spec.target)?;
+    let child_agent_config = build_child_agent_config(&parent, &spec);
     let parent_launch_context = parent
-        .child_launch()
+        .child_launch
         .launch_context()
         .cloned()
         .unwrap_or_else(crate::ProcessLaunchContext::root);
@@ -166,10 +169,20 @@ async fn spawn_child_runtime_inner(
         // parent's effective config as a terminal env override.
         core_config_source: crate::ConfigSourceKind::Default,
         launch_context,
-        store_bindings: parent.runtime_config.store_bindings.clone(),
+        store_bindings: parent
+            .base_agent_config
+            .runtime_config
+            .store_bindings
+            .clone(),
         memory_store_backing: spec
             .has_handle(SpawnHandle::Memory)
-            .then(|| parent.runtime_config.memory_store_backing.clone())
+            .then(|| {
+                parent
+                    .base_agent_config
+                    .runtime_config
+                    .memory_store_backing
+                    .clone()
+            })
             .flatten(),
         recovery_rollout_path: None,
     };
@@ -186,8 +199,12 @@ async fn spawn_child_runtime_inner(
         .apply_to_agent_config(&child_agent_config)
         .context("Failed to resolve effective child Agent Process config")?;
     if spec.has_handle(SpawnHandle::Memory) {
-        resolved_child_agent_config.core_config.memory.store_dir =
-            parent.core_config.memory.store_dir.clone();
+        resolved_child_agent_config.core_config.memory.store_dir = parent
+            .base_agent_config
+            .core_config
+            .memory
+            .store_dir
+            .clone();
     } else {
         resolved_child_agent_config.core_config.memory.store_dir = None;
     }
@@ -196,7 +213,7 @@ async fn spawn_child_runtime_inner(
     let effective_child_core_config = effective_core_config_for_runtime(&child_config)
         .context("Failed to resolve effective child Agent Process runtime config")?;
     let child_namespace_plan = build_child_namespace_assembly_plan(
-        parent,
+        &parent,
         &spec,
         &effective_child_core_config,
         child_config.launch_context.clone(),
@@ -204,9 +221,9 @@ async fn spawn_child_runtime_inner(
     .await
     .context("Failed to assemble child Agent Process namespace plan")?;
     let child_connection = child_namespace_plan.llm_connection_name()?;
-    ensure_child_connection_is_passed(parent, &child_connection)?;
+    ensure_child_connection_is_passed(&parent, &child_connection)?;
     let delegation_capability_decision =
-        evaluate_delegated_launch_capabilities(parent, &mut spec, &child_namespace_plan).await?;
+        evaluate_delegated_launch_capabilities(&parent, &mut spec, &child_namespace_plan).await?;
     #[cfg(test)]
     let test_llm = if let Some(factory) = llm_client_factory {
         let client = factory(&effective_child_core_config)
@@ -221,7 +238,7 @@ async fn spawn_child_runtime_inner(
         None
     };
     let assembler = parent
-        .child_launch()
+        .child_launch
         .assembler()
         .context("parent Agent Process has no Agent Runtime Service child assembly capability")?;
     let assembly = assembler
@@ -269,11 +286,11 @@ async fn spawn_child_runtime_inner(
             return Err(err);
         }
     };
-    let child_run_registry = parent.child_run_registry().clone();
+    let child_run_registry = parent.child_run_registry.clone();
     let child_run_id = uuid::Uuid::new_v4().to_string();
     let mut child_run_record = ChildRunRecord::new(
         child_run_id.clone(),
-        parent.process_path(),
+        parent.parent_process_path.clone(),
         startup_metadata.process_path.clone(),
         Some(startup_metadata.agent_path.clone()),
         Some(format!("{:?}", spec.target)),
@@ -284,7 +301,8 @@ async fn spawn_child_runtime_inner(
     child_run_registry.register(child_run_record);
     let submission = Submission::new(Op::Turn {
         parts: vec![ContentPart::text(task_context::build_child_task_text(
-            parent, &spec,
+            &parent.task_context,
+            &spec,
         ))],
         context: None,
     });
@@ -317,7 +335,7 @@ async fn spawn_child_runtime_inner(
 type ChildNamespaceAssemblyPlan = super::ChildAgentProcessAssemblyPlan;
 
 async fn build_child_namespace_assembly_plan(
-    parent: &RuntimeLoopState,
+    parent: &ChildLaunchRuntime,
     spec: &SpawnSpec,
     child_core_config: &crate::Config,
     launch_context: crate::ProcessLaunchContext,
@@ -343,7 +361,7 @@ async fn build_child_namespace_assembly_plan(
         launch_context,
     };
 
-    let packages = parent.tool_execution().discover_packages().await?;
+    let packages = parent.tool_execution.discover_packages().await?;
     plan.tool_packages = if let Some(profile) = spec.runtime_overrides.tool_profile.as_ref() {
         let available = packages
             .iter()

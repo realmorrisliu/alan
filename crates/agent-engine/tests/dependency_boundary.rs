@@ -374,6 +374,30 @@ fn transition_leaf_workflows_do_not_receive_the_runtime_loop_aggregate() {
     ] {
         assert!(!compaction_inputs.contains(forbidden));
     }
+
+    for path in [
+        "child_agents.rs",
+        "child_agents/delegated_launch.rs",
+        "child_agents/launch_context.rs",
+        "child_agents/runtime_inputs.rs",
+        "child_agents/task_context.rs",
+    ] {
+        let source = read_runtime_source(path);
+        for forbidden in ["RuntimeLoopState", "NamespaceRuntimeEnvironment"] {
+            assert!(
+                !source.contains(forbidden),
+                "{path} must receive only child-launch configuration, snapshots, and namespace handles"
+            );
+        }
+    }
+    let child_launch_inputs = read_runtime_source("child_agents/runtime_inputs.rs");
+    assert!(!child_launch_inputs.contains("RuntimeConfig"));
+    assert!(!child_launch_inputs.contains("Vec<Message>"));
+    assert!(child_launch_inputs.contains("ChildLaunchRuntime"));
+    assert!(child_launch_inputs.contains("ChildTaskContext"));
+    let child_task_context = read_runtime_source("child_agents/task_context.rs");
+    assert!(child_task_context.contains("spec.has_handle(SpawnHandle::ToolResults)"));
+
     for marker in [
         "fn compaction_submission_id",
         "async fn record_and_emit_compaction_attempt",
@@ -694,7 +718,8 @@ fn engine_has_no_host_connection_store_or_provider_factory_authority() {
         );
     }
     assert!(child.contains("ensure_child_connection_is_passed"));
-    assert!(child.contains(".child_launch()"));
+    assert!(child.contains("ChildLaunchRuntime"));
+    assert!(child.contains(".child_launch"));
     assert!(child.contains(".assembler()"));
     assert!(child.contains("Agent Runtime Service child assembly capability"));
 }
