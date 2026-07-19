@@ -240,6 +240,27 @@ fn turn_generation_uses_only_the_file_native_namespace_boundary() {
     let generation = read_runtime_source("turn_executor/namespace_generation.rs");
     assert!(generation.contains("generate_with_text_events_controlled"));
     assert!(generation.contains("neutralize_namespace_capabilities"));
+    for forbidden in ["RuntimeLoopState", "namespace_environment()"] {
+        assert!(
+            !generation.contains(forbidden),
+            "generation workflow must receive its narrow handle, not {forbidden}"
+        );
+    }
+
+    let namespace = read_runtime_source("transition/namespace_environment.rs");
+    let generation_handle = rust_item_body(&namespace, "pub(crate) struct NamespaceGeneration");
+    assert!(generation_handle.contains("root: InProcessTransport"));
+    assert!(generation_handle.contains("llm_connection: String"));
+    for forbidden_field in ["agent_path", "tool_process_context", "child_run_registry"] {
+        assert!(
+            !generation_handle.contains(forbidden_field),
+            "generation handle must not gain {forbidden_field}"
+        );
+    }
+
+    let file_operations = read_runtime_source("transition/namespace_environment/generation.rs");
+    assert!(file_operations.contains("impl NamespaceGeneration"));
+    assert!(!file_operations.contains("impl NamespaceRuntimeEnvironment"));
 
     let projection = read_crate_source("llm/input_projection.rs");
     for forbidden in [

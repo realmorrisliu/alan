@@ -6,6 +6,7 @@
 
 mod namespace_environment;
 
+pub(crate) use namespace_environment::NamespaceGeneration;
 #[cfg(test)]
 pub(super) use namespace_environment::NamespaceRequestRecord;
 pub use namespace_environment::{
@@ -83,6 +84,10 @@ impl RuntimeLoopState {
         &self.environment
     }
 
+    pub(crate) fn namespace_generation(&self) -> NamespaceGeneration {
+        self.environment.generation()
+    }
+
     pub(crate) async fn write_namespace_confirmation_request(
         &self,
         pending: &crate::approval::PendingConfirmation,
@@ -133,8 +138,8 @@ impl RuntimeLoopState {
         cancel: &CancellationToken,
         cancel_message: &'static str,
     ) -> Result<crate::llm::GenerationResponse> {
-        let namespace = self.namespace_environment().clone();
-        match namespace.generate_controlled(&request, 0, cancel).await {
+        let generation = self.namespace_generation();
+        match generation.generate_controlled(&request, 0, cancel).await {
             Err(_) if cancel.is_cancelled() => Err(anyhow::anyhow!(cancel_message)),
             result => result,
         }
@@ -154,9 +159,9 @@ impl RuntimeLoopState {
                 return Err(anyhow::anyhow!("LLM request cancelled"));
             }
 
-            let namespace = self.namespace_environment().clone();
+            let generation = self.namespace_generation();
             let attempt_request = request.clone();
-            let result = namespace
+            let result = generation
                 .generate_controlled(&attempt_request, timeout_secs, cancel)
                 .await;
 

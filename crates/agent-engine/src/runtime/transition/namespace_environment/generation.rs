@@ -10,8 +10,7 @@ use tokio_util::sync::CancellationToken;
 use super::agent_files::{write_agent_output, write_tape_records};
 use super::client::NamespaceClient;
 use super::{
-    NamespaceLlmCapabilities, NamespaceRuntimeEnvironment, NamespaceTurnOutput,
-    NamespaceTurnRuntime,
+    NamespaceGeneration, NamespaceLlmCapabilities, NamespaceTurnOutput, NamespaceTurnRuntime,
 };
 
 #[derive(Deserialize)]
@@ -22,10 +21,10 @@ struct LlmCapabilitiesDoc {
     capabilities: alan_llm::ProviderCapabilities,
 }
 
-impl NamespaceRuntimeEnvironment {
+impl NamespaceGeneration {
     pub async fn read_llm_connection_capabilities(&self) -> Result<NamespaceLlmCapabilities> {
         let path = format!("/mnt/llm/connections/{}/capabilities", self.llm_connection);
-        let client = self.client();
+        let client = NamespaceClient::new(self.root.clone());
         let raw = client
             .read_file(&path)
             .await
@@ -46,17 +45,6 @@ impl NamespaceRuntimeEnvironment {
             provider: doc.provider,
             capabilities: doc.capabilities,
         })
-    }
-
-    pub async fn generate(&self, request: &GenerationRequest) -> Result<GenerationResponse> {
-        let request_doc = LlmRequestDoc::from_generation_request(request)?;
-        let request_bytes = serde_json::to_vec(&request_doc).context("serialize llmfs request")?;
-        let client = NamespaceClient::new(self.root.clone());
-        let generation_id = start_generation(&client, &self.llm_connection, &request_bytes).await?;
-        let response = read_generation_response(&client, &self.llm_connection, &generation_id)
-            .await
-            .with_context(|| format!("read llmfs generation {generation_id}"))?;
-        Ok(response)
     }
 
     pub async fn generate_controlled(
@@ -84,30 +72,6 @@ impl NamespaceRuntimeEnvironment {
             &generation_id,
             timeout_secs,
             cancel,
-        )
-        .await
-        .with_context(|| format!("read llmfs generation {generation_id}"))?;
-        Ok(response)
-    }
-
-    pub async fn generate_with_text_events<E, F>(
-        &self,
-        request: &GenerationRequest,
-        emit: &mut E,
-    ) -> Result<(GenerationResponse, bool)>
-    where
-        E: FnMut(Event) -> F,
-        F: std::future::Future<Output = ()>,
-    {
-        let request_doc = LlmRequestDoc::from_generation_request(request)?;
-        let request_bytes = serde_json::to_vec(&request_doc).context("serialize llmfs request")?;
-        let client = NamespaceClient::new(self.root.clone());
-        let generation_id = start_generation(&client, &self.llm_connection, &request_bytes).await?;
-        let response = read_generation_response_with_text_events(
-            &client,
-            &self.llm_connection,
-            &generation_id,
-            emit,
         )
         .await
         .with_context(|| format!("read llmfs generation {generation_id}"))?;
@@ -160,6 +124,7 @@ impl NamespaceTurnRuntime {
     /// Run one turn from the next committed `io/input` message.
     pub async fn run_next_turn(&mut self) -> Result<NamespaceTurnOutput> {
         let client = NamespaceClient::new(self.environment.root.clone());
+        let generation = self.environment.generation();
         let message = self.environment.read_next_input().await?;
 
         let request = GenerationRequest::new().with_user_message(message.clone());
@@ -171,9 +136,9 @@ impl NamespaceTurnRuntime {
         let request_doc = LlmRequestDoc::from_generation_request(&request)?;
         let request_bytes = serde_json::to_vec(&request_doc).context("serialize llmfs request")?;
         let generation_id =
-            start_generation(&client, &self.config.llm_connection, &request_bytes).await?;
+            start_generation(&client, &generation.llm_connection, &request_bytes).await?;
         let generation_response =
-            read_generation_response(&client, &self.config.llm_connection, &generation_id).await?;
+            read_generation_response(&client, &generation.llm_connection, &generation_id).await?;
         let response = generation_response.content;
 
         write_agent_output(&client, &self.config.agent_path, &response).await?;
