@@ -127,7 +127,7 @@ fn runtime_state_and_handles_have_no_parallel_capability_or_event_authority() {
     }
     assert!(!transition_source.contains("pub enum RuntimeEnvironment"));
     assert!(!transition_source.contains("pub environment: RuntimeEnvironment"));
-    assert!(!read_runtime_source("tool_orchestrator.rs").contains("ToolExecutionTarget"));
+    assert!(!read_runtime_source("tool_batch.rs").contains("ToolExecutionTarget"));
 
     for forbidden in [
         "RuntimeEventEnvelope",
@@ -342,6 +342,7 @@ fn transition_leaf_workflows_do_not_receive_the_runtime_loop_aggregate() {
         "tool_authorization/runtime_inputs.rs",
         "tool_execution.rs",
         "tool_execution/runtime_inputs.rs",
+        "tool_batch.rs",
         "tool_resolution.rs",
         "tool_resolution/runtime_inputs.rs",
         "turn_support.rs",
@@ -364,7 +365,22 @@ fn transition_leaf_workflows_do_not_receive_the_runtime_loop_aggregate() {
     assert!(!tool_definitions.contains("RuntimeLoopState"));
     assert!(tool_definitions.contains("NamespaceToolExecution"));
 
-    let tool_orchestrator = read_runtime_source("tool_orchestrator.rs");
+    let tool_batch = read_runtime_source("tool_batch.rs");
+    let transition = read_runtime_source("transition.rs");
+    for transition_owned_workflow in [
+        "async fn orchestrate_tool_batch",
+        "async fn replay_approved_tool_call_with_cancel",
+        "async fn replay_approved_tool_batch_with_cancel",
+    ] {
+        assert!(
+            transition.contains(transition_owned_workflow),
+            "accepted-submission transition must own {transition_owned_workflow}"
+        );
+        assert!(
+            !tool_batch.contains(transition_owned_workflow),
+            "Tool batch contracts must not regain {transition_owned_workflow}"
+        );
+    }
     let tool_execution_source = read_runtime_source("tool_execution.rs");
     let tool_evidence = &tool_execution_source[tool_execution_source
         .find("async fn tool_payload_for_tape")
@@ -428,7 +444,6 @@ fn transition_leaf_workflows_do_not_receive_the_runtime_loop_aggregate() {
     assert!(delegated_runtime.contains("DelegatedSkillRuntime"));
     assert!(delegated_runtime.contains("DelegatedChildRuntimeInputs"));
     assert!(delegated_runtime.contains("ChildLaunchRuntime"));
-    let transition = read_runtime_source("transition.rs");
     assert!(transition.contains("fn delegated_skill_runtime("));
     assert!(transition.contains("async fn dispatch_virtual_tool_call"));
     assert!(
@@ -500,8 +515,8 @@ fn transition_leaf_workflows_do_not_receive_the_runtime_loop_aggregate() {
         "record_guardian_review(",
     ] {
         assert!(
-            !tool_orchestrator.contains(displaced_owner),
-            "Tool orchestrator must leave {displaced_owner} to the authorization owner"
+            !tool_batch.contains(displaced_owner),
+            "Tool batch contracts must leave {displaced_owner} to the authorization owner"
         );
     }
 
@@ -526,8 +541,8 @@ fn transition_leaf_workflows_do_not_receive_the_runtime_loop_aggregate() {
         ".tool_execution()",
     ] {
         assert!(
-            !tool_orchestrator.contains(displaced_operation),
-            "Tool orchestrator must leave {displaced_operation} to the resolution owner"
+            !tool_batch.contains(displaced_operation),
+            "Tool batch contracts must leave {displaced_operation} to the resolution owner"
         );
     }
 
@@ -545,7 +560,7 @@ fn transition_leaf_workflows_do_not_receive_the_runtime_loop_aggregate() {
     assert!(tool_execution_runtime.contains("ToolExecutionRuntime"));
     assert!(transition.contains("fn tool_execution_runtime("));
     assert!(read_runtime_source("tool_execution.rs").contains("execute_allowed_tool_call"));
-    assert!(!tool_orchestrator.contains("ToolEffectLifecycle"));
+    assert!(!tool_batch.contains("ToolEffectLifecycle"));
 
     for marker in [
         "fn compaction_submission_id",
@@ -707,7 +722,7 @@ fn tool_workflows_use_only_the_narrow_tool_execution_handle() {
     }
 
     for path in [
-        "tool_orchestrator.rs",
+        "tool_batch.rs",
         "turn_executor.rs",
         "response_guardrails.rs",
         "submission_handlers.rs",

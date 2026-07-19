@@ -361,7 +361,7 @@
     fn create_test_state() -> RuntimeLoopState {
         let config = Config::default();
         let machine = AgentMachine::new();
-        let runtime_config = super::super::RuntimeConfig::default();
+        let runtime_config = crate::runtime::RuntimeConfig::default();
         let mut namespace = Namespace::new();
         namespace.mount(
             "/agent/1",
@@ -418,7 +418,7 @@
                     capability: ToolCapability::Read,
                     capability_is_argument_dependent: false,
                     timeout_secs: 30,
-                    execution: super::super::tool_packages::ToolExecutionHints {
+                    execution: crate::runtime::tool_packages::ToolExecutionHints {
                         arguments: "json_first_arg".to_string(),
                         result: "stdout_json".to_string(),
                     },
@@ -460,7 +460,7 @@
             machine: AgentMachine::new(),
             environment: NamespaceRuntimeEnvironment::new(root, "/agent/1", "default"),
             core_config: Config::default(),
-            runtime_config: super::super::RuntimeConfig::default(),
+            runtime_config: crate::runtime::RuntimeConfig::default(),
             definition_persona_dirs: Vec::new(),
             prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
         };
@@ -648,7 +648,7 @@
                 .with_launch_context(launch_context)
                 .with_tool_process_context(alan_kernel::Pid(1), tool_runner),
             core_config: config,
-            runtime_config: super::super::RuntimeConfig::default(),
+            runtime_config: crate::runtime::RuntimeConfig::default(),
             definition_persona_dirs: Vec::new(),
             prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
         }
@@ -660,7 +660,7 @@
         tool_name: &str,
         arguments: Value,
     ) -> (ToolBatchOrchestratorOutcome, Vec<Event>) {
-        let mut orchestrator = ToolTurnOrchestrator::new(None, 4);
+        let mut loop_guard = ToolLoopGuard::new(None, 4);
         let cancel = CancellationToken::new();
         let tool_calls = vec![NormalizedToolCall {
             id: call_id.to_string(),
@@ -678,10 +678,15 @@
             async {}
         };
 
-        let outcome = orchestrator
-            .orchestrate_tool_batch(state, &tool_calls, inputs, &mut emit)
-            .await
-            .expect("tool orchestration should succeed");
+        let outcome = orchestrate_tool_batch(
+            &mut loop_guard,
+            state,
+            &tool_calls,
+            inputs,
+            &mut emit,
+        )
+        .await
+        .expect("tool orchestration should succeed");
         (outcome, events)
     }
 

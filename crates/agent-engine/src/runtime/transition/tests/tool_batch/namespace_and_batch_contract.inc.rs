@@ -349,17 +349,17 @@
     }
 
     #[tokio::test]
-    async fn test_tool_turn_orchestrator_new() {
-        let orchestrator = ToolTurnOrchestrator::new(Some(10), 4);
-        // Verify orchestrator was created with the correct settings
+    async fn test_tool_loop_guard_new() {
+        let loop_guard = ToolLoopGuard::new(Some(10), 4);
+        // Verify the guard was created with the correct settings.
         // Just test that it doesn't panic
-        let _ = orchestrator;
+        let _ = loop_guard;
     }
 
     #[tokio::test]
     async fn test_orchestrate_empty_tool_batch() {
         let mut state = create_test_state();
-        let mut orchestrator = ToolTurnOrchestrator::new(None, 4);
+        let mut loop_guard = ToolLoopGuard::new(None, 4);
         let cancel = CancellationToken::new();
 
         let mut events = vec![];
@@ -374,9 +374,14 @@
             steering_broker: None,
         };
 
-        let result = orchestrator
-            .orchestrate_tool_batch(&mut state, &tool_calls, inputs, &mut emit)
-            .await;
+        let result = orchestrate_tool_batch(
+            &mut loop_guard,
+            &mut state,
+            &tool_calls,
+            inputs,
+            &mut emit,
+        )
+        .await;
 
         assert!(result.is_ok());
         match result.unwrap() {
@@ -485,7 +490,7 @@
     #[tokio::test]
     async fn test_orchestrate_tool_batch_with_virtual_update_plan() {
         let mut state = create_test_state();
-        let mut orchestrator = ToolTurnOrchestrator::new(None, 4);
+        let mut loop_guard = ToolLoopGuard::new(None, 4);
         let cancel = CancellationToken::new();
 
         let mut events = vec![];
@@ -510,9 +515,14 @@
             steering_broker: None,
         };
 
-        let result = orchestrator
-            .orchestrate_tool_batch(&mut state, &tool_calls, inputs, &mut emit)
-            .await;
+        let result = orchestrate_tool_batch(
+            &mut loop_guard,
+            &mut state,
+            &tool_calls,
+            inputs,
+            &mut emit,
+        )
+        .await;
 
         assert!(result.is_ok());
         let has_update_plan_completion = events.iter().any(|event| {
@@ -541,7 +551,7 @@
     #[tokio::test]
     async fn test_orchestrate_tool_batch_with_virtual_confirmation() {
         let mut state = create_test_state();
-        let mut orchestrator = ToolTurnOrchestrator::new(None, 4);
+        let mut loop_guard = ToolLoopGuard::new(None, 4);
         let cancel = CancellationToken::new();
 
         let mut events = vec![];
@@ -566,9 +576,14 @@
             steering_broker: None,
         };
 
-        let result = orchestrator
-            .orchestrate_tool_batch(&mut state, &tool_calls, inputs, &mut emit)
-            .await;
+        let result = orchestrate_tool_batch(
+            &mut loop_guard,
+            &mut state,
+            &tool_calls,
+            inputs,
+            &mut emit,
+        )
+        .await;
 
         assert!(result.is_ok());
         match result.unwrap() {
@@ -594,7 +609,7 @@
     #[tokio::test]
     async fn test_orchestrate_tool_batch_with_virtual_user_input() {
         let mut state = create_test_state();
-        let mut orchestrator = ToolTurnOrchestrator::new(None, 4);
+        let mut loop_guard = ToolLoopGuard::new(None, 4);
         let cancel = CancellationToken::new();
 
         let mut events = vec![];
@@ -620,9 +635,14 @@
             steering_broker: None,
         };
 
-        let result = orchestrator
-            .orchestrate_tool_batch(&mut state, &tool_calls, inputs, &mut emit)
-            .await;
+        let result = orchestrate_tool_batch(
+            &mut loop_guard,
+            &mut state,
+            &tool_calls,
+            inputs,
+            &mut emit,
+        )
+        .await;
 
         assert!(result.is_ok());
         match result.unwrap() {
@@ -648,7 +668,7 @@
     #[tokio::test]
     async fn test_orchestrate_tool_batch_with_builtin_tool() {
         let mut state = create_test_state();
-        let mut orchestrator = ToolTurnOrchestrator::new(None, 4);
+        let mut loop_guard = ToolLoopGuard::new(None, 4);
         let cancel = CancellationToken::new();
 
         let mut events = vec![];
@@ -669,9 +689,14 @@
             steering_broker: None,
         };
 
-        let result = orchestrator
-            .orchestrate_tool_batch(&mut state, &tool_calls, inputs, &mut emit)
-            .await;
+        let result = orchestrate_tool_batch(
+            &mut loop_guard,
+            &mut state,
+            &tool_calls,
+            inputs,
+            &mut emit,
+        )
+        .await;
 
         // Tool execution may fail due to sandbox restrictions, but orchestration should complete
         assert!(result.is_ok());
