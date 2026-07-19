@@ -1,5 +1,7 @@
 //! Absence guards for the namespace-native Agent Execution Engine boundary.
 
+#[path = "dependency_boundary/submission_runtime.rs"]
+mod submission_runtime;
 #[path = "dependency_boundary/turn_memory.rs"]
 mod turn_memory;
 
@@ -341,6 +343,8 @@ fn transition_leaf_workflows_do_not_receive_the_runtime_loop_aggregate() {
         "mount_request_tool/runtime_inputs.rs",
         "response_guardrails.rs",
         "steering_queue.rs",
+        "submission_handlers.rs",
+        "submission_handlers/runtime_inputs.rs",
         "tool_authorization.rs",
         "tool_authorization/runtime_inputs.rs",
         "tool_execution.rs",
@@ -835,10 +839,6 @@ fn mount_changes_use_only_the_narrow_namespace_mount_control() {
             "complete namespace environment retained displaced mount operation {displaced}"
         );
     }
-
-    let submission_handlers = read_runtime_source("submission_handlers.rs");
-    assert!(submission_handlers.contains(".mount_control()"));
-    assert!(!submission_handlers.contains("state.environment"));
 
     let transition = read_runtime_source("transition.rs");
     let engine = read_runtime_source("engine.rs");

@@ -9,6 +9,7 @@
         tape::ContentPart,
         tools::ToolRegistry,
     };
+    use crate::runtime::transition::RuntimeLoopState;
     use alan_ap::InProcessTransport;
     use alan_kernel::{Access, MountFs, Namespace, ProcFs};
     use alan_shell::Shell;

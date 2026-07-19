@@ -22,7 +22,28 @@ use std::sync::{Arc, Mutex};
 use tempfile::TempDir;
 
 fn child_launch_runtime(parent: &RuntimeLoopState, spec: &SpawnSpec) -> ChildLaunchRuntime {
-    super::super::transition::child_launch_runtime(parent, spec)
+    let mut base_agent_config = AgentConfig::from(parent.core_config.clone());
+    base_agent_config.runtime_config = parent.runtime_config.clone();
+    let (plan_explanation, plan_items) = match parent.machine.plan_snapshot() {
+        Some(snapshot) => (snapshot.explanation.as_deref(), snapshot.items.as_slice()),
+        None => (None, &[][..]),
+    };
+    let task_context = super::project_child_task_context(
+        parent.machine.tape_summary(),
+        parent.machine.messages(),
+        plan_explanation,
+        plan_items,
+        spec,
+    );
+    ChildLaunchRuntime::new(
+        base_agent_config,
+        parent.child_launch(),
+        parent.tool_execution(),
+        parent.child_run_registry().clone(),
+        parent.process_path(),
+        parent.prompt_cache.capability_view().cloned(),
+        task_context,
+    )
 }
 
 async fn spawn_child_runtime(
