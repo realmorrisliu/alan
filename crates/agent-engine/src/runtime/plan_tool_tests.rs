@@ -160,7 +160,7 @@ async fn test_try_handle_virtual_tool_call_update_plan() {
             if explanation.as_deref() == Some("Test plan") && items == &expected_items
     )));
 
-    let prompt_view = state.machine.tape.prompt_view();
+    let prompt_view = state.machine.prompt_view();
     let tool_result = prompt_view
         .messages
         .iter()

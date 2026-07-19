@@ -488,7 +488,7 @@ fn make_parent_state_with_capability_view(
     let mut core_config = crate::Config::default();
     core_config.memory.store_dir = Some(memory_store.clone());
     core_config.openai_responses_model = "gpt-5.4".to_string();
-    let mut machine = crate::AgentMachine::new();
+    let mut machine = crate::agent_machine::AgentMachine::new();
     machine.add_user_message("Parent user asks for review");
     machine.add_assistant_message("Parent assistant explains the approach", None);
     machine.add_tool_message("tool_call_1", "alpha", json!({"summary": "tool output"}));

@@ -205,9 +205,7 @@ async fn test_compaction_generation_failure_uses_degraded_fallback_and_audits_it
     }
     assert!(
         state
-            .machine
-            .tape
-            .summary()
+            .machine.tape_summary()
             .is_some_and(|summary| summary.contains("Deterministic fallback summary"))
     );
     assert!(events.iter().any(|event| {
@@ -267,9 +265,7 @@ async fn test_degraded_compaction_rebases_active_turn_start() {
     };
 
     let retention_start = state
-        .machine
-        .tape
-        .compaction_retention_start(state.runtime_config.compaction_keep_last);
+        .machine.compaction_retention_start(state.runtime_config.compaction_keep_last);
     assert!(retention_start > 0);
     state.turn_state.begin_turn(retention_start);
 
@@ -327,7 +323,7 @@ async fn test_compaction_failure_without_fallback_escalates_warning_and_preserve
             .await
             .unwrap();
     for _ in 0..65 {
-        machine.tape.push(crate::tape::Message::assistant(""));
+        machine.push_tape_message(crate::tape::Message::assistant(""));
     }
 
     let original_messages = stateful_messages_snapshot(&machine);
@@ -368,7 +364,7 @@ async fn test_compaction_failure_without_fallback_escalates_warning_and_preserve
         stateful_messages_snapshot(&state.machine),
         original_messages
     );
-    assert!(state.machine.tape.summary().is_none());
+    assert!(state.machine.tape_summary().is_none());
 
     let warning_messages: Vec<&str> = events
         .iter()

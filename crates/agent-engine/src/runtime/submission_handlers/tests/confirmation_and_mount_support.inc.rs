@@ -183,9 +183,7 @@
 
     fn tool_result_text_for_call(state: &RuntimeLoopState, call_id: &str) -> String {
         state
-            .machine
-            .tape
-            .messages()
+            .machine.messages()
             .iter()
             .rev()
             .find_map(|message| match message {
@@ -266,9 +264,9 @@
                 let text = alan_agent_protocol::parts_to_text(&user_input.unwrap());
                 assert!(text.contains("test input"));
                 // Turn should preserve existing conversation history.
-                assert_eq!(state.machine.tape.messages().len(), 1);
+                assert_eq!(state.machine.messages().len(), 1);
                 assert_eq!(
-                    state.machine.tape.messages()[0].text_content(),
+                    state.machine.messages()[0].text_content(),
                     "existing message"
                 );
                 assert_eq!(
@@ -430,7 +428,7 @@
         assert!(result.is_ok());
 
         // Tool message should be recorded
-        let messages = state.machine.tape.messages();
+        let messages = state.machine.messages();
         assert!(!messages.is_empty());
         assert!(messages[0].text_content().contains("approve"));
     }
@@ -467,7 +465,7 @@
         assert!(result.is_ok());
 
         // Tool message should contain modifications
-        let messages = state.machine.tape.messages();
+        let messages = state.machine.messages();
         assert!(!messages.is_empty());
         assert!(messages[0].text_content().contains("modify"));
     }

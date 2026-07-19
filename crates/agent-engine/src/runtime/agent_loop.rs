@@ -282,7 +282,7 @@ where
                 },
             );
             if activate_task {
-                state.machine.has_active_task = true;
+                state.machine.activate_task();
             }
             Ok(())
         }

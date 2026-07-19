@@ -404,7 +404,7 @@ async fn test_outer_idle_reads_answered_namespace_request_response() {
         questions: Vec::new(),
     });
     let state = RuntimeLoopState {
-        machine: crate::AgentMachine::new(),
+        machine: crate::agent_machine::AgentMachine::new(),
         current_submission_id: None,
         environment: namespace_environment,
         core_config: crate::Config::default(),

@@ -165,16 +165,8 @@ impl AgentMachine {
         compacted
     }
 
-    /// Load a machine from a rollout file
-    pub async fn load_from_rollout(
-        path: &PathBuf,
-        process_path: &str,
-        model: &str,
-    ) -> anyhow::Result<Self> {
-        Self::load_from_rollout_impl(path, process_path, model, None, None, None).await
-    }
-
     /// Load a machine from a rollout file, writing future persistence to a specific rollouts dir.
+    #[cfg(test)]
     pub async fn load_from_rollout_in_dir(
         path: &PathBuf,
         process_path: &str,
@@ -288,8 +280,8 @@ impl AgentMachine {
             }
         }
 
-        if !machine.tape.is_empty() {
-            machine.has_active_task = true;
+        if !machine.tape_is_empty() {
+            machine.activate_task();
         }
 
         if !context_items.is_empty() {
@@ -319,7 +311,7 @@ impl AgentMachine {
             machine.user_turn_ordinal = machine.user_turn_ordinal.max(max_effect_turn);
         }
 
-        let recovered_messages = machine.tape.messages().to_vec();
+        let recovered_messages = machine.messages().to_vec();
         if (!recovered_messages.is_empty()
             || recovered_compaction.is_some()
             || !compaction_attempt_records.is_empty()

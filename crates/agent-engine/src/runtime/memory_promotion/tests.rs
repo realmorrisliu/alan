@@ -480,7 +480,7 @@ async fn generate_memory_promotion_candidates_only_uses_active_turn_user_message
     machine.add_user_message("My name is Bob.");
     machine.add_assistant_message("Noted.", None);
 
-    let active_turn_start = machine.tape.messages().len();
+    let active_turn_start = machine.messages().len();
 
     machine.add_user_message("Please continue with the previous task.");
     let provider = MockLlmProvider::new().with_response(mock_generation_response(
@@ -489,7 +489,7 @@ async fn generate_memory_promotion_candidates_only_uses_active_turn_user_message
     let mut llm_client = LlmClient::new(provider.clone());
 
     let active_turn_user_messages =
-        active_turn_user_messages(machine.tape.messages(), Some(active_turn_start));
+        active_turn_user_messages(machine.messages(), Some(active_turn_start));
     let cancel = CancellationToken::new();
     let drafts = generate_memory_promotion_candidates(
         &mut llm_client,

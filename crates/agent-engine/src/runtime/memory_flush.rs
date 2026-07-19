@@ -297,7 +297,7 @@ async fn generate_flush_content(
     cancel: &CancellationToken,
 ) -> Result<Option<MemoryFlushContent>> {
     let mut llm_messages = Vec::new();
-    if let Some(existing_summary) = state.machine.tape.summary() {
+    if let Some(existing_summary) = state.machine.tape_summary() {
         llm_messages.push(Message::context(format!(
             "[Current compaction summary]\n{existing_summary}"
         )));
@@ -637,7 +637,7 @@ mod tests {
         state
             .machine
             .add_user_message("remember this namespace fact");
-        let messages = state.machine.tape.messages().to_vec();
+        let messages = state.machine.messages().to_vec();
 
         let content = generate_flush_content(&mut state, &messages, &CancellationToken::new())
             .await

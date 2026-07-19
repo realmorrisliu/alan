@@ -44,15 +44,15 @@ pub struct ResponsesContinuationState {
 
 /// Transition state for one Agent Process.
 #[derive(Debug)]
-pub struct AgentMachine {
+pub(crate) struct AgentMachine {
     /// Conversation history and summary
-    pub tape: Tape,
+    tape: Tape,
     /// Optional recorder for persistence
-    pub recorder: Option<RolloutRecorder>,
+    recorder: Option<RolloutRecorder>,
     /// Per-Process durable-record discriminator used by generated Memory Store paths.
     memory_record_id: String,
     /// Whether a sourcing task has been started in this machine
-    pub has_active_task: bool,
+    has_active_task: bool,
     /// Latest effect record by idempotency key (used for side-effect dedupe).
     effect_index: HashMap<String, EffectRecord>,
     /// Last prompt snapshot fingerprint written to rollout (used to skip duplicates).
@@ -92,6 +92,102 @@ impl AgentMachine {
         }
     }
 
+    pub(crate) fn messages(&self) -> &[Message] {
+        self.tape.messages()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn messages_for_prompt(&self) -> Vec<Message> {
+        self.tape.messages_for_prompt()
+    }
+
+    pub(crate) fn prompt_view(&self) -> crate::tape::PromptContextView {
+        self.tape.prompt_view()
+    }
+
+    pub(crate) fn tape_summary(&self) -> Option<&str> {
+        self.tape.summary()
+    }
+
+    pub(crate) fn tape_len(&self) -> usize {
+        self.tape.len()
+    }
+
+    pub(crate) fn tape_is_empty(&self) -> bool {
+        self.tape.is_empty()
+    }
+
+    pub(crate) fn estimated_prompt_tokens(&self) -> usize {
+        self.tape.estimated_prompt_tokens()
+    }
+
+    pub(crate) fn context_items(&self) -> &[ContextItem] {
+        self.tape.context_items()
+    }
+
+    pub(crate) fn last_context_delta(&self) -> &ContextItemsDelta {
+        self.tape.last_context_delta()
+    }
+
+    pub(crate) fn context_revision(&self) -> u64 {
+        self.tape.context_revision()
+    }
+
+    pub(crate) fn compaction_count(&self) -> usize {
+        self.tape.compaction_count()
+    }
+
+    pub(crate) fn compaction_retention_start(&self, keep_last: usize) -> usize {
+        self.tape.compaction_retention_start(keep_last)
+    }
+
+    pub(crate) fn compact_tape(&mut self, summary: String, keep_last: usize) {
+        self.tape.compact(summary, keep_last);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn push_tape_message(&mut self, message: Message) {
+        self.tape.push(message);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_tape_summary(&mut self, summary: String) {
+        self.tape.set_summary(summary);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn apply_context_items_for_test(&mut self, items: Vec<ContextItem>) {
+        let _ = self.tape.apply_context_items(items);
+    }
+
+    pub(crate) fn activate_task(&mut self) {
+        self.has_active_task = true;
+    }
+
+    pub(crate) fn clear_active_task(&mut self) {
+        self.has_active_task = false;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn has_active_task(&self) -> bool {
+        self.has_active_task
+    }
+
+    pub(crate) fn rollout_id(&self) -> Option<&str> {
+        self.recorder.as_ref().map(RolloutRecorder::rollout_id)
+    }
+
+    pub(crate) fn is_durable(&self) -> bool {
+        self.recorder.is_some()
+    }
+
+    pub(crate) async fn flush_recorder(&self) -> anyhow::Result<()> {
+        match self.recorder.as_ref() {
+            Some(recorder) => recorder.flush().await,
+            None => Ok(()),
+        }
+    }
+
     pub(crate) async fn new_with_recorder_options(
         process_path: &str,
         model: &str,
@@ -128,6 +224,7 @@ impl AgentMachine {
     }
 
     /// Create a new machine with recorder under a specific rollouts directory.
+    #[cfg(test)]
     pub async fn new_with_recorder_in_dir(
         process_path: &str,
         model: &str,
@@ -137,6 +234,7 @@ impl AgentMachine {
     }
 
     /// Add a user message to the machine
+    #[cfg(test)]
     pub fn add_user_message(&mut self, content: &str) {
         self.add_user_message_parts(vec![crate::tape::ContentPart::text(content)]);
     }
@@ -171,6 +269,7 @@ impl AgentMachine {
     }
 
     /// Add an assistant message to the machine
+    #[cfg(test)]
     pub fn add_assistant_message(&mut self, content: &str, thinking: Option<&str>) {
         self.add_assistant_message_with_reasoning(content, thinking, None, &[]);
     }
@@ -213,22 +312,6 @@ impl AgentMachine {
         {
             error!(error = %err, "Failed to record assistant message");
         }
-    }
-
-    /// Add an assistant message with tool calls to the machine
-    pub fn add_assistant_message_with_tool_calls(
-        &mut self,
-        content: &str,
-        tool_calls: Vec<crate::tape::ToolRequest>,
-        thinking: Option<&str>,
-    ) {
-        self.add_assistant_message_with_tool_calls_and_reasoning(
-            content,
-            tool_calls,
-            thinking,
-            None,
-            &[],
-        );
     }
 
     /// Add an assistant message with tool calls and full reasoning metadata.
@@ -388,6 +471,7 @@ impl AgentMachine {
         self.responses_continuation.as_ref()
     }
 
+    #[cfg(test)]
     pub fn mark_responses_continuation(
         &mut self,
         provider: &str,
@@ -438,6 +522,7 @@ impl AgentMachine {
     }
 
     /// Clear the machine state (but keep the recorder)
+    #[cfg(test)]
     pub fn clear(&mut self) {
         self.tape.clear();
         self.has_active_task = false;
@@ -562,6 +647,7 @@ impl AgentMachine {
     }
 
     /// Count user turns currently present on the tape.
+    #[cfg(test)]
     pub fn user_turn_count(&self) -> usize {
         self.tape
             .messages()
@@ -576,6 +662,7 @@ impl AgentMachine {
     }
 
     /// Latest persisted compaction attempt, if any.
+    #[cfg(test)]
     pub fn latest_compaction_attempt(&self) -> Option<&CompactionAttemptSnapshot> {
         self.latest_compaction_attempt.as_ref()
     }
@@ -607,6 +694,7 @@ impl AgentMachine {
     }
 
     /// Record a checkpoint to persistence (enqueue only; background writer performs IO)
+    #[cfg(test)]
     pub fn record_checkpoint(
         &self,
         checkpoint_id: &str,
@@ -664,6 +752,7 @@ impl AgentMachine {
     }
 
     /// Record a compaction summary to persistence (enqueue only; background writer performs IO)
+    #[cfg(test)]
     pub fn record_summary(&self, summary: &str) {
         self.record_compaction(CompactedItem::new(summary));
     }
@@ -673,6 +762,7 @@ impl AgentMachine {
     /// This low-level API persists only the compacted summary item. For tape-mutating compaction
     /// results, prefer [`AgentMachine::persist_compaction_observation`] so related rollout items are
     /// flushed together.
+    #[cfg(test)]
     pub(crate) fn record_compaction(&self, compacted: CompactedItem) {
         if let Some(recorder) = self.recorder.as_ref()
             && let Err(err) = recorder.record_compacted_item_nowait(compacted)
@@ -721,6 +811,7 @@ impl AgentMachine {
         clippy::too_many_arguments,
         reason = "arguments map directly to the durable turn-context record fields"
     )]
+    #[cfg(test)]
     pub fn record_turn_context(
         &self,
         model: &str,

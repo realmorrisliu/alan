@@ -10,6 +10,32 @@ fn read_crate_source(path: &str) -> String {
         .unwrap_or_else(|error| panic!("read src/{path}: {error}"))
 }
 
+fn read_rust_sources_under(path: &str) -> Vec<(std::path::PathBuf, String)> {
+    fn visit(directory: &std::path::Path, sources: &mut Vec<(std::path::PathBuf, String)>) {
+        for entry in std::fs::read_dir(directory)
+            .unwrap_or_else(|error| panic!("read {}: {error}", directory.display()))
+        {
+            let path = entry.expect("read source entry").path();
+            if path.is_dir() {
+                visit(&path, sources);
+            } else if path.extension().and_then(std::ffi::OsStr::to_str) == Some("rs") {
+                let source = std::fs::read_to_string(&path)
+                    .unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
+                sources.push((path, source));
+            }
+        }
+    }
+
+    let mut sources = Vec::new();
+    visit(
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("src")
+            .join(path),
+        &mut sources,
+    );
+    sources
+}
+
 fn rust_item_body<'a>(source: &'a str, marker: &str) -> &'a str {
     let item = &source[source
         .find(marker)
@@ -272,5 +298,41 @@ fn engine_does_not_own_connection_profile_metadata_or_selection() {
             !public_api.contains(forbidden),
             "Agent Execution Engine still exports Connection authority through {forbidden}"
         );
+    }
+}
+
+#[test]
+fn agent_machine_state_is_not_a_public_or_runtime_field_surface() {
+    let public_api = read_crate_source("lib.rs");
+    assert!(
+        !public_api.contains("AgentMachine,"),
+        "AgentMachine must not be a cross-crate integration surface"
+    );
+
+    let machine = read_crate_source("agent_machine.rs");
+    let state = rust_item_body(&machine, "pub(crate) struct AgentMachine");
+    for private_field in ["tape", "recorder", "has_active_task"] {
+        assert!(state.contains(&format!("{private_field}:")));
+        assert!(
+            !state.contains(&format!("pub {private_field}:")),
+            "AgentMachine field {private_field} must remain private"
+        );
+    }
+
+    for (path, source) in read_rust_sources_under("runtime") {
+        for forbidden in [
+            "machine.tape.",
+            "machine.recorder.",
+            "machine.has_active_task =",
+            "state.machine.tape.",
+            "state.machine.recorder.",
+            "state.machine.has_active_task =",
+        ] {
+            assert!(
+                !source.contains(forbidden),
+                "{} reaches through AgentMachine via {forbidden}",
+                path.display()
+            );
+        }
     }
 }

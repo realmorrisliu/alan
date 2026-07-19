@@ -185,7 +185,6 @@ fn tool_result_text_for_call(
 ) -> String {
     state
         .machine
-        .tape
         .prompt_view()
         .messages
         .iter()

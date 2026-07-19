@@ -153,7 +153,7 @@ fn thinking_projection_preserves_or_drops_all_reasoning_metadata() {
         &["ciphertext".to_string()],
     );
 
-    let preserved = project_messages(machine.tape.messages(), true);
+    let preserved = project_messages(machine.messages(), true);
     assert_eq!(preserved[0].thinking.as_deref(), Some("my reasoning"));
     assert_eq!(preserved[0].thinking_signature.as_deref(), Some("sig_123"));
     assert_eq!(
@@ -161,7 +161,7 @@ fn thinking_projection_preserves_or_drops_all_reasoning_metadata() {
         Some(vec!["ciphertext".to_string()])
     );
 
-    let dropped = project_messages(machine.tape.messages(), false);
+    let dropped = project_messages(machine.messages(), false);
     assert_eq!(dropped[0].content, "hello");
     assert_eq!(dropped[0].thinking, None);
     assert_eq!(dropped[0].thinking_signature, None);

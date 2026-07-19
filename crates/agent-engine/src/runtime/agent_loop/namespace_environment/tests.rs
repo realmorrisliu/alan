@@ -426,7 +426,7 @@ async fn answered_request_response_resumes_engine_pending_yield_from_files() {
         questions: Vec::new(),
     });
     let mut state = super::super::RuntimeLoopState {
-        machine: crate::AgentMachine::new(),
+        machine: crate::agent_machine::AgentMachine::new(),
         current_submission_id: None,
         environment,
         core_config: crate::Config::default(),
@@ -460,7 +460,7 @@ async fn answered_request_response_resumes_engine_pending_yield_from_files() {
     );
     assert!(!state.turn_state.has_pending_interaction());
     assert!(events.is_empty());
-    let messages = state.machine.tape.messages();
+    let messages = state.machine.messages();
     assert_eq!(messages.len(), 1);
     assert_eq!(messages[0].tool_responses()[0].id, "r0");
     assert_eq!(

@@ -93,7 +93,7 @@ async fn test_try_handle_virtual_tool_call_invoke_delegated_skill() {
         requirements.contains(&alan_agent_protocol::DelegatedCapabilityRequirement::LlmConnection)
     );
 
-    let prompt_view = state.machine.tape.prompt_view();
+    let prompt_view = state.machine.prompt_view();
     let tool_result = prompt_view
         .messages
         .iter()
@@ -334,7 +334,7 @@ Use this skill when asked.
         }
     ));
 
-    let prompt_view = state.machine.tape.prompt_view();
+    let prompt_view = state.machine.prompt_view();
     let tool_result = prompt_view
         .messages
         .iter()
@@ -559,7 +559,7 @@ async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_bounds_preview
     assert!(preview.chars().count() <= 163);
     assert!(preview.ends_with("..."));
 
-    let prompt_view = state.machine.tape.prompt_view();
+    let prompt_view = state.machine.prompt_view();
     let tool_result = prompt_view
         .messages
         .iter()
@@ -648,7 +648,7 @@ async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_honors_interru
         Event::TurnCompleted { summary: Some(summary) } if summary == "Task cancelled by user"
     )));
 
-    let prompt_view = state.machine.tape.prompt_view();
+    let prompt_view = state.machine.prompt_view();
     assert!(!prompt_view.messages.iter().any(|message| matches!(
         message,
         crate::tape::Message::Tool { responses }
@@ -708,7 +708,7 @@ async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_honors_interru
         Event::TurnCompleted { summary: Some(summary) } if summary == "Task cancelled by user"
     )));
 
-    let prompt_view = state.machine.tape.prompt_view();
+    let prompt_view = state.machine.prompt_view();
     assert!(!prompt_view.messages.iter().any(|message| matches!(
         message,
         crate::tape::Message::Tool { responses }
@@ -814,7 +814,7 @@ async fn test_try_handle_virtual_tool_call_rejects_target_mismatch() {
         }
     ));
 
-    let prompt_view = state.machine.tape.prompt_view();
+    let prompt_view = state.machine.prompt_view();
     let tool_result = prompt_view
         .messages
         .iter()

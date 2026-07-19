@@ -146,7 +146,7 @@ fn current_turn_tool_failures(
     state: &RuntimeLoopState,
     tool_packages: &[super::ToolPackageManifest],
 ) -> RecentToolFailureContext {
-    let messages = state.machine.tape.messages();
+    let messages = state.machine.messages();
     let current_turn = active_turn_messages(messages, state.turn_state.active_turn_message_start());
     let tool_capabilities = current_turn_tool_capabilities(state, tool_packages, current_turn);
     let mut failures = RecentToolFailureContext::default();

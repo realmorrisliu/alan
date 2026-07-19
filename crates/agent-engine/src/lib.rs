@@ -32,7 +32,7 @@ pub mod tools;
 
 pub use agent_definition::ResolvedAgentDefinition;
 pub use agent_machine::{
-    AgentMachine, ROLLBACK_NON_DURABLE_WARNING, latest_compaction_attempt_from_rollout_items,
+    ROLLBACK_NON_DURABLE_WARNING, latest_compaction_attempt_from_rollout_items,
     latest_memory_flush_attempt_from_rollout_items,
 };
 pub use config::{

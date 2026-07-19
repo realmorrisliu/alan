@@ -496,7 +496,7 @@ mod tests {
         });
 
         let mut state = RuntimeLoopState {
-            machine: crate::AgentMachine::new(),
+            machine: crate::agent_machine::AgentMachine::new(),
             current_submission_id: None,
             environment,
             core_config: crate::Config::default(),

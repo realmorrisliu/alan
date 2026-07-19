@@ -386,7 +386,7 @@ mod tests {
 
         let mut machine = crate::agent_machine::AgentMachine::new();
         machine.add_assistant_message("hi", Some("openrouter thinking"));
-        let messages = machine.tape.messages();
+        let messages = machine.messages();
         let projected = client.project_messages(messages);
         assert_eq!(
             projected[0].thinking.as_deref(),
@@ -423,7 +423,7 @@ mod tests {
         // The Responses path preserves thinking metadata when available.
         let mut machine = crate::agent_machine::AgentMachine::new();
         machine.add_assistant_message("hi", Some("thinking..."));
-        let messages = machine.tape.messages();
+        let messages = machine.messages();
         let projected = client.project_messages(messages);
         assert_eq!(projected[0].thinking.as_deref(), Some("thinking..."));
     }

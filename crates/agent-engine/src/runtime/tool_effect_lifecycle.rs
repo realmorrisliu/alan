@@ -178,10 +178,7 @@ impl ToolEffectLifecycle {
         };
         machine.record_effect(record.clone());
 
-        let flush_result = match machine.recorder.as_ref() {
-            Some(recorder) => recorder.flush().await,
-            None => Ok(()),
-        };
+        let flush_result = machine.flush_recorder().await;
         if let Err(error) = flush_result {
             let message = format!("Failed to persist side-effect checkpoint: {error}");
             let payload = json!({
