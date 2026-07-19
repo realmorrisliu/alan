@@ -1,4 +1,4 @@
-// Tests for handle_submission
+// Tests for direct submission handling
 #[tokio::test]
 #[allow(
     clippy::field_reassign_with_default,
@@ -31,7 +31,8 @@ async fn test_handle_submission_cancel() {
 
     let submission = Submission::new(alan_agent_protocol::Op::Interrupt);
 
-    let result = handle_submission(&mut state, submission, &mut emit).await;
+    let cancel = CancellationToken::new();
+    let result = handle_submission_with_cancel(&mut state, submission, &mut emit, &cancel).await;
 
     assert!(result.is_ok(), "interrupt should succeed: {result:?}");
     assert_eq!(events.len(), 1);
@@ -112,7 +113,8 @@ async fn test_handle_submission_rollback() {
 
     let submission = Submission::new(alan_agent_protocol::Op::Rollback { turns: 1 });
 
-    let result = handle_submission(&mut state, submission, &mut emit).await;
+    let cancel = CancellationToken::new();
+    let result = handle_submission_with_cancel(&mut state, submission, &mut emit, &cancel).await;
 
     assert!(result.is_ok());
     assert_eq!(state.machine.messages().len(), 2);

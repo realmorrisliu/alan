@@ -35,7 +35,9 @@ use crate::{
 
 use super::loop_guard::ToolLoopGuard;
 use super::steering_queue::handle_queued_steering_inputs;
-use super::submission_handlers::{RuntimeOpAction, handle_runtime_op_with_cancel};
+use super::submission_handlers::{
+    RuntimeOpAction, SubmissionRuntime, handle_non_compaction_runtime_op,
+};
 use super::tool_authorization::{
     ToolAuthorizationOutcome, ToolAuthorizationRequest, authorize_tool_call,
 };
@@ -110,10 +112,6 @@ impl RuntimeLoopState {
         self.environment.child_launch()
     }
 
-    pub(crate) fn mount_control(&mut self) -> NamespaceMountControl<'_> {
-        self.environment.mount_control()
-    }
-
     pub(crate) fn tool_execution(&self) -> NamespaceToolExecution {
         self.environment.tool_execution()
     }
@@ -143,34 +141,6 @@ pub(super) fn compaction_runtime(
         agent_files,
         settings,
         memory,
-    )
-}
-
-#[cfg(test)]
-pub(super) fn child_launch_runtime(
-    state: &RuntimeLoopState,
-    spec: &alan_agent_protocol::SpawnSpec,
-) -> super::child_agents::ChildLaunchRuntime {
-    let base_agent_config = child_launch_base_agent_config(state);
-    let (plan_explanation, plan_items) = match state.machine.plan_snapshot() {
-        Some(snapshot) => (snapshot.explanation.as_deref(), snapshot.items.as_slice()),
-        None => (None, &[][..]),
-    };
-    let task_context = super::child_agents::project_child_task_context(
-        state.machine.tape_summary(),
-        state.machine.messages(),
-        plan_explanation,
-        plan_items,
-        spec,
-    );
-    super::child_agents::ChildLaunchRuntime::new(
-        base_agent_config,
-        state.child_launch(),
-        state.tool_execution(),
-        state.child_run_registry().clone(),
-        state.process_path(),
-        state.prompt_cache.capability_view().cloned(),
-        task_context,
     )
 }
 
@@ -656,6 +626,53 @@ fn child_launch_base_agent_config(state: &RuntimeLoopState) -> super::launch_con
     config
 }
 
+fn submission_runtime(state: &mut RuntimeLoopState) -> SubmissionRuntime<'_> {
+    let RuntimeLoopState {
+        machine,
+        environment,
+        runtime_config,
+        ..
+    } = state;
+    let agent_files = environment.agent_files();
+    let tool_execution = environment.tool_execution();
+    let runtime_scratch_dir = runtime_config
+        .store_bindings
+        .as_ref()
+        .map(|stores| stores.tmp.clone());
+    let mount_control = environment.mount_control();
+    SubmissionRuntime::new(
+        machine,
+        agent_files,
+        mount_control,
+        tool_execution,
+        runtime_scratch_dir,
+    )
+}
+
+pub(super) async fn handle_runtime_op<E, F>(
+    state: &mut RuntimeLoopState,
+    op: Op,
+    emit: &mut E,
+) -> Result<RuntimeOpAction>
+where
+    E: FnMut(Event) -> F,
+    F: std::future::Future<Output = ()>,
+{
+    match op {
+        Op::CompactWithOptions { focus } => {
+            let runtime = compaction_runtime(state);
+            super::compaction::maybe_compact_context_for_request(
+                runtime,
+                emit,
+                super::compaction::CompactionRequest::manual(focus),
+            )
+            .await?;
+            Ok(RuntimeOpAction::NoTurn)
+        }
+        op => handle_non_compaction_runtime_op(submission_runtime(state), op, emit).await,
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TransitionCompletion {
     Completed,
@@ -712,27 +729,6 @@ pub(crate) async fn advance_accepted_submission(
     }
 }
 
-/// Handle a single submission
-#[cfg_attr(
-    not(test),
-    allow(
-        dead_code,
-        reason = "submission entrypoint remains available to the adjacent white-box test seam"
-    )
-)]
-pub async fn handle_submission<E, F>(
-    state: &mut RuntimeLoopState,
-    submission: Submission,
-    emit: &mut E,
-) -> Result<()>
-where
-    E: FnMut(Event) -> F,
-    F: std::future::Future<Output = ()>,
-{
-    let cancel = CancellationToken::new();
-    handle_submission_with_cancel(state, submission, emit, &cancel).await
-}
-
 pub(crate) async fn handle_submission_with_cancel<E, F>(
     state: &mut RuntimeLoopState,
     submission: Submission,
@@ -759,7 +755,7 @@ where
 {
     let op = submission.op;
 
-    match handle_runtime_op_with_cancel(state, op, emit, cancel).await? {
+    match handle_runtime_op(state, op, emit).await? {
         RuntimeOpAction::NoTurn => Ok(()),
         RuntimeOpAction::RunTurn {
             turn_kind,

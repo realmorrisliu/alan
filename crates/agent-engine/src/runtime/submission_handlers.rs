@@ -1,7 +1,6 @@
 use alan_agent_protocol::{Event, InputMode, Op, Submission};
 use anyhow::Result;
 use serde_json::json;
-use tokio_util::sync::CancellationToken;
 
 use crate::ROLLBACK_NON_DURABLE_WARNING;
 use crate::approval::{
@@ -11,13 +10,16 @@ use crate::approval::{
 };
 use crate::tape::ContentPart;
 
-use super::compaction::{CompactionRequest, maybe_compact_context_for_request};
 use super::transition::{
-    ApprovedMountGrant, ApprovedMountGrantAccess, NamespaceMountApplication, RuntimeLoopState,
+    ApprovedMountGrant, ApprovedMountGrantAccess, NamespaceAgentFiles, NamespaceMountApplication,
 };
 use super::turn_executor::TurnRunKind;
 use super::turn_support::cancel_current_task;
-use crate::agent_machine::{NormalizedToolCall, PendingYield};
+use crate::agent_machine::{AgentMachine, NormalizedToolCall, PendingYield};
+
+mod runtime_inputs;
+
+pub(crate) use runtime_inputs::SubmissionRuntime;
 
 #[derive(Debug, Clone)]
 pub(super) enum RuntimeOpAction {
@@ -39,21 +41,18 @@ pub(super) enum RuntimeOpAction {
     },
 }
 
-pub(super) async fn handle_runtime_op_with_cancel<E, F>(
-    state: &mut RuntimeLoopState,
+pub(super) async fn handle_non_compaction_runtime_op<E, F>(
+    mut runtime: SubmissionRuntime<'_>,
     op: Op,
     emit: &mut E,
-    _cancel: &CancellationToken,
 ) -> Result<RuntimeOpAction>
 where
     E: FnMut(Event) -> F,
     F: std::future::Future<Output = ()>,
 {
     match op {
-        Op::CompactWithOptions { focus } => {
-            let runtime = super::transition::compaction_runtime(state);
-            maybe_compact_context_for_request(runtime, emit, CompactionRequest::manual(focus))
-                .await?;
+        Op::CompactWithOptions { .. } => {
+            anyhow::bail!("manual compaction must enter through the accepted-submission transition")
         }
         Op::Rollback { turns } => {
             if turns == 0 {
@@ -64,10 +63,10 @@ where
                 .await;
                 return Ok(RuntimeOpAction::NoTurn);
             }
-            let rollback = state.machine.rollback_last_turns(turns);
-            state.machine.clear_plan_snapshot();
-            super::ui_surfaces::plan_updated(&state.agent_files(), None, Vec::new()).await?;
-            super::ui_surfaces::rollback(&state.agent_files(), rollback.removed_turns).await?;
+            let rollback = runtime.machine.rollback_last_turns(turns);
+            runtime.machine.clear_plan_snapshot();
+            super::ui_surfaces::plan_updated(&runtime.agent_files, None, Vec::new()).await?;
+            super::ui_surfaces::rollback(&runtime.agent_files, rollback.removed_turns).await?;
             emit(Event::MachineRolledBack {
                 turns: rollback.removed_turns,
                 removed_messages: rollback.removed_messages,
@@ -89,15 +88,14 @@ where
                 is_final: true,
             })
             .await;
-            super::ui_surfaces::warning(&state.agent_files(), ROLLBACK_NON_DURABLE_WARNING).await?;
+            super::ui_surfaces::warning(&runtime.agent_files, ROLLBACK_NON_DURABLE_WARNING).await?;
             emit(Event::Warning {
                 message: ROLLBACK_NON_DURABLE_WARNING.to_string(),
             })
             .await;
         }
         Op::Interrupt => {
-            let agent_files = state.agent_files();
-            cancel_current_task(&mut state.machine, &agent_files, emit).await?;
+            cancel_current_task(runtime.machine, &runtime.agent_files, emit).await?;
         }
 
         // ====================================================================
@@ -106,7 +104,7 @@ where
         Op::Turn { parts, context } => {
             let reasoning_effort = context.as_ref().and_then(|c| c.reasoning_effort);
 
-            let queued_next_turn_inputs = state.machine.drain_next_turn_inputs();
+            let queued_next_turn_inputs = runtime.machine.drain_next_turn_inputs();
             let queued_next_turn_count = queued_next_turn_inputs.len();
             let mut merged_parts = Vec::new();
             for queued_parts in queued_next_turn_inputs {
@@ -114,8 +112,8 @@ where
             }
             merged_parts.extend(parts);
 
-            state.machine.reset_turn();
-            state.machine.set_active_turn_request_control_intent(
+            runtime.machine.reset_turn();
+            runtime.machine.set_active_turn_request_control_intent(
                 crate::RequestControlIntent::reasoning_effort(reasoning_effort),
             );
 
@@ -123,7 +121,7 @@ where
                 let message = format!(
                     "Applied {queued_next_turn_count} queued next_turn input(s) to this turn."
                 );
-                super::ui_surfaces::warning(&state.agent_files(), message.clone()).await?;
+                super::ui_surfaces::warning(&runtime.agent_files, message.clone()).await?;
                 emit(Event::Warning { message }).await;
             }
 
@@ -137,7 +135,8 @@ where
         Op::Input { parts, mode } => {
             match mode {
                 InputMode::Steer => {
-                    if !(state.machine.is_turn_active() || state.machine.has_pending_interaction())
+                    if !(runtime.machine.is_turn_active()
+                        || runtime.machine.has_pending_interaction())
                     {
                         emit(Event::Error {
                             message: "Input(mode=steer) requires an active or pending turn. Use Op::Turn to start a new turn.".to_string(),
@@ -154,10 +153,11 @@ where
                     });
                 }
                 InputMode::FollowUp => {
-                    if state.machine.is_turn_active() || state.machine.has_pending_interaction() {
+                    if runtime.machine.is_turn_active() || runtime.machine.has_pending_interaction()
+                    {
                         // In normal runtime flow this path should be handled by in-band queueing in
                         // turn_driver. Keep this as a safe fallback.
-                        state
+                        runtime
                             .machine
                             .push_buffered_inband_submission(Submission::new(Op::Input {
                                 parts,
@@ -165,12 +165,12 @@ where
                             }));
                         let message =
                             "Queued follow_up input for execution after current turn.".to_string();
-                        super::ui_surfaces::warning(&state.agent_files(), message.clone()).await?;
+                        super::ui_surfaces::warning(&runtime.agent_files, message.clone()).await?;
                         emit(Event::Warning { message }).await;
                         return Ok(RuntimeOpAction::NoTurn);
                     }
 
-                    state.machine.reset_turn();
+                    runtime.machine.reset_turn();
                     return Ok(RuntimeOpAction::RunTurn {
                         turn_kind: TurnRunKind::NewTurn,
                         user_input: Some(parts),
@@ -178,13 +178,13 @@ where
                     });
                 }
                 InputMode::NextTurn => {
-                    let queued_size = state.machine.queue_next_turn_input(parts);
+                    let queued_size = runtime.machine.queue_next_turn_input(parts);
                     match queued_size {
                         Some(size) => {
                             let message = format!(
                                 "Queued next_turn input (queue_size={size}); it will apply to the next explicit turn."
                             );
-                            super::ui_surfaces::warning(&state.agent_files(), message.clone())
+                            super::ui_surfaces::warning(&runtime.agent_files, message.clone())
                                 .await?;
                             emit(Event::Warning { message }).await;
                         }
@@ -207,7 +207,7 @@ where
             content,
         } => {
             let result = resume_content_to_value(&content);
-            match state.machine.take_pending(&request_id) {
+            match runtime.machine.take_pending(&request_id) {
                 Some(PendingYield::Confirmation(pending)) => {
                     let choice = result
                         .get("choice")
@@ -223,7 +223,7 @@ where
                         .map(String::from);
 
                     return handle_confirmation_resolution(
-                        state,
+                        &mut runtime,
                         pending,
                         choice_str,
                         modifications,
@@ -231,7 +231,7 @@ where
                     .await;
                 }
                 Some(PendingYield::StructuredInput(pending)) => {
-                    state.machine.add_tool_message(
+                    runtime.machine.add_tool_message(
                         &pending.request_id,
                         "request_user_input",
                         result,
@@ -315,11 +315,12 @@ fn checkpoint_choice_for_rollout(choice_str: &str) -> &str {
 }
 
 async fn persist_runtime_confirmation_checkpoint(
-    state: &RuntimeLoopState,
+    machine: &mut AgentMachine,
+    agent_files: &NamespaceAgentFiles,
     pending: &crate::approval::PendingConfirmation,
     choice_str: &str,
 ) {
-    let knowledge_root = match state.agent_files().current_tape_checkpoint().await {
+    let knowledge_root = match agent_files.current_tape_checkpoint().await {
         Ok(root) => {
             let trimmed = root.trim();
             if trimmed.is_empty() { None } else { Some(root) }
@@ -334,25 +335,25 @@ async fn persist_runtime_confirmation_checkpoint(
             None
         }
     };
-    state
-        .machine
-        .record_checkpoint_with_optional_knowledge_root(
-            &pending.checkpoint_id,
-            &pending.checkpoint_type,
-            &pending.summary,
-            Some(checkpoint_choice_for_rollout(choice_str)),
-            knowledge_root.as_deref(),
-        );
+    machine.record_checkpoint_with_optional_knowledge_root(
+        &pending.checkpoint_id,
+        &pending.checkpoint_type,
+        &pending.summary,
+        Some(checkpoint_choice_for_rollout(choice_str)),
+        knowledge_root.as_deref(),
+    );
 }
 
 async fn handle_confirmation_resolution(
-    state: &mut RuntimeLoopState,
+    runtime: &mut SubmissionRuntime<'_>,
     pending: crate::approval::PendingConfirmation,
     choice_str: &str,
     modifications: Option<String>,
 ) -> Result<RuntimeOpAction> {
     let replay_tool_batch = if replays_tool_calls(&pending.checkpoint_type) {
-        state.machine.take_tool_replay_batch(&pending.checkpoint_id)
+        runtime
+            .machine
+            .take_tool_replay_batch(&pending.checkpoint_id)
     } else {
         None
     };
@@ -369,7 +370,7 @@ async fn handle_confirmation_resolution(
 
     if pending.checkpoint_type == MOUNT_ESCALATION_CHECKPOINT_TYPE {
         return Ok(handle_mount_escalation_resolution(
-            state, pending, choice_str,
+            runtime, pending, choice_str,
         ));
     }
 
@@ -379,12 +380,18 @@ async fn handle_confirmation_resolution(
             "version": RUNTIME_CONFIRMATION_CONTROL_VERSION,
             "source": RUNTIME_CONFIRMATION_CONTROL_SOURCE
         });
-        state
+        runtime
             .machine
             .add_user_control_message_parts(vec![ContentPart::structured(payload)]);
-        persist_runtime_confirmation_checkpoint(state, &pending, choice_str).await;
+        persist_runtime_confirmation_checkpoint(
+            runtime.machine,
+            &runtime.agent_files,
+            &pending,
+            choice_str,
+        )
+        .await;
     } else {
-        state
+        runtime
             .machine
             .add_tool_message(&pending.checkpoint_id, "request_confirmation", payload);
     }
@@ -438,7 +445,7 @@ async fn handle_confirmation_resolution(
 }
 
 fn handle_mount_escalation_resolution(
-    state: &mut RuntimeLoopState,
+    runtime: &mut SubmissionRuntime<'_>,
     pending: crate::approval::PendingConfirmation,
     choice_str: &str,
 ) -> RuntimeOpAction {
@@ -447,12 +454,12 @@ fn handle_mount_escalation_resolution(
             "status": "invalid_mount_escalation_checkpoint",
             "approved": false,
             "live_applied": false,
-            "checkpoint_id": pending.checkpoint_id.clone(),
-            "checkpoint_type": pending.checkpoint_type.clone(),
+            "checkpoint_id": pending.checkpoint_id,
+            "checkpoint_type": pending.checkpoint_type,
             "choice": choice_str,
             "error": "Invalid mount escalation checkpoint.",
         });
-        state
+        runtime
             .machine
             .add_tool_message(&pending.checkpoint_id, "request_mount", result);
         return RuntimeOpAction::RunTurn {
@@ -467,8 +474,8 @@ fn handle_mount_escalation_resolution(
         grant
             .as_ref()
             .map(|grant| {
-                state
-                    .mount_control()
+                runtime
+                    .mount_control
                     .apply_approved_grant(&grant.approved_mount_grant())
             })
             .unwrap_or_else(|| {
@@ -492,28 +499,21 @@ fn handle_mount_escalation_resolution(
         .ok()
     });
     let namespace_applied = approved && namespace_application.namespace_applied;
-    let scratch_dir = state
-        .tool_execution()
+    let scratch_dir = runtime
+        .tool_execution
         .execution_binding()
         .map(|binding| binding.scratch_dir)
-        .or_else(|| {
-            state
-                .runtime_config
-                .store_bindings
-                .as_ref()
-                .map(|stores| stores.tmp.clone())
-        });
+        .or_else(|| runtime.runtime_scratch_dir.clone());
     let tool_sandbox_projection_changed = namespace_applied
         && native_grant.as_ref().is_some_and(|grant| {
-            let mut mount_control = state.mount_control();
-            mount_control.retain_host_mount(grant.clone());
+            runtime.mount_control.retain_host_mount(grant.clone());
             scratch_dir
                 .clone()
-                .is_some_and(|scratch| mount_control.sync_tool_binding(scratch))
+                .is_some_and(|scratch| runtime.mount_control.sync_tool_binding(scratch))
         });
     let tool_sandbox_applied = namespace_applied
         && grant.as_ref().is_some_and(|grant| {
-            let binding = state.tool_execution().execution_binding();
+            let binding = runtime.tool_execution.execution_binding();
             binding.is_some_and(|binding| {
                 binding.host_mounts.iter().any(|mounted| {
                     mounted.namespace_path == grant.namespace_path
@@ -531,19 +531,19 @@ fn handle_mount_escalation_resolution(
         "namespace_error": namespace_application.namespace_error,
         "tool_sandbox_applied": tool_sandbox_applied,
         "tool_sandbox_projection_changed": tool_sandbox_projection_changed,
-        "checkpoint_id": pending.checkpoint_id.clone(),
-        "checkpoint_type": pending.checkpoint_type.clone(),
+        "checkpoint_id": pending.checkpoint_id,
+        "checkpoint_type": pending.checkpoint_type,
         "choice": choice_str,
         "mount_request": mount_request,
     });
 
     if approved {
-        state.machine.record_event(
+        runtime.machine.record_event(
             "host_mount_grant",
             host_mount_grant_event_payload(&pending.details, &result),
         );
     }
-    state
+    runtime
         .machine
         .add_tool_message(&tool_call_id, "request_mount", result);
 

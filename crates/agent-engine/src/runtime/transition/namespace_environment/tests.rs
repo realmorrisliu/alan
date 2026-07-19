@@ -435,21 +435,15 @@ async fn answered_request_response_resumes_engine_pending_yield_from_files() {
         runtime_config: super::super::super::RuntimeConfig::default(),
         prompt_cache: super::super::super::prompt_cache::PromptAssemblyCache::new(Vec::new()),
     };
-    let cancel = tokio_util::sync::CancellationToken::new();
     let mut events = Vec::new();
     let mut emit = |event| {
         events.push(event);
         async {}
     };
 
-    let action = super::super::super::submission_handlers::handle_runtime_op_with_cancel(
-        &mut state,
-        submission.op,
-        &mut emit,
-        &cancel,
-    )
-    .await
-    .unwrap();
+    let action = super::super::handle_runtime_op(&mut state, submission.op, &mut emit)
+        .await
+        .unwrap();
 
     assert!(
         matches!(
