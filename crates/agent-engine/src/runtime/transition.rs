@@ -228,6 +228,22 @@ pub(super) fn agent_interaction_runtime(
     super::interaction_tools::AgentInteractionRuntime::new(&mut state.machine, agent_files)
 }
 
+pub(super) fn tool_authorization_runtime(
+    state: &mut RuntimeLoopState,
+) -> super::tool_authorization::ToolAuthorizationRuntime<'_> {
+    let generation = state.namespace_generation();
+    let agent_files = state.agent_files();
+    let llm_request_timeout_secs = state.runtime_config.llm_request_timeout_secs;
+    super::tool_authorization::ToolAuthorizationRuntime::new(
+        &mut state.machine,
+        &state.runtime_config.policy_engine,
+        &state.runtime_config.governance,
+        generation,
+        agent_files,
+        llm_request_timeout_secs,
+    )
+}
+
 pub(super) fn tool_execution_runtime(
     state: &mut RuntimeLoopState,
 ) -> super::tool_execution::ToolExecutionRuntime<'_> {

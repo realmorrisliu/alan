@@ -338,6 +338,8 @@ fn transition_leaf_workflows_do_not_receive_the_runtime_loop_aggregate() {
         "mount_request_tool/runtime_inputs.rs",
         "response_guardrails.rs",
         "steering_queue.rs",
+        "tool_authorization.rs",
+        "tool_authorization/runtime_inputs.rs",
         "tool_execution.rs",
         "tool_execution/runtime_inputs.rs",
         "turn_support.rs",
@@ -467,6 +469,33 @@ fn transition_leaf_workflows_do_not_receive_the_runtime_loop_aggregate() {
     }
     assert!(interaction_runtime.contains("AgentInteractionRuntime"));
     assert!(transition.contains("fn agent_interaction_runtime("));
+
+    let tool_authorization_runtime = read_runtime_source("tool_authorization/runtime_inputs.rs");
+    for forbidden in [
+        "RuntimeLoopState",
+        "RuntimeConfig",
+        "NamespaceRuntimeEnvironment",
+    ] {
+        assert!(
+            !tool_authorization_runtime.contains(forbidden),
+            "Tool authorization runtime must not regain {forbidden}"
+        );
+    }
+    assert!(tool_authorization_runtime.contains("ToolAuthorizationRuntime"));
+    assert!(transition.contains("fn tool_authorization_runtime("));
+    let tool_authorization = read_runtime_source("tool_authorization.rs");
+    assert!(tool_authorization.contains("authorize_tool_call"));
+    for displaced_owner in [
+        "evaluate_tool_policy(",
+        "ReviewOutcome::",
+        "write_confirmation_request(",
+        "record_guardian_review(",
+    ] {
+        assert!(
+            !tool_orchestrator.contains(displaced_owner),
+            "Tool orchestrator must leave {displaced_owner} to the authorization owner"
+        );
+    }
 
     let tool_execution_runtime = read_runtime_source("tool_execution/runtime_inputs.rs");
     for forbidden in [
