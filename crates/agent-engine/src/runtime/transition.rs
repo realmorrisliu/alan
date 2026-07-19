@@ -137,6 +137,34 @@ pub(super) fn compaction_runtime(
     )
 }
 
+pub(super) fn child_launch_runtime(
+    state: &RuntimeLoopState,
+    spec: &alan_agent_protocol::SpawnSpec,
+) -> super::child_agents::ChildLaunchRuntime {
+    let mut base_agent_config = super::launch_config::AgentConfig::from(state.core_config.clone());
+    base_agent_config.runtime_config = state.runtime_config.clone();
+    let (plan_explanation, plan_items) = match state.machine.plan_snapshot() {
+        Some(snapshot) => (snapshot.explanation.as_deref(), snapshot.items.as_slice()),
+        None => (None, &[][..]),
+    };
+    let task_context = super::child_agents::project_child_task_context(
+        state.machine.tape_summary(),
+        state.machine.messages(),
+        plan_explanation,
+        plan_items,
+        spec,
+    );
+    super::child_agents::ChildLaunchRuntime::new(
+        base_agent_config,
+        state.child_launch(),
+        state.tool_execution(),
+        state.child_run_registry().clone(),
+        state.process_path(),
+        state.prompt_cache.capability_view().cloned(),
+        task_context,
+    )
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TransitionCompletion {
     Completed,

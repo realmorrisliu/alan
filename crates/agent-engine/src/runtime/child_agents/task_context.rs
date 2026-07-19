@@ -1,6 +1,6 @@
-use crate::runtime::transition::RuntimeLoopState;
+use crate::runtime::child_agents::ChildTaskContext;
 use crate::tape::Message;
-use alan_agent_protocol::{SpawnHandle, SpawnSpec};
+use alan_agent_protocol::{PlanItem, SpawnHandle, SpawnSpec};
 
 const MAX_CHILD_CONVERSATION_MESSAGES: usize = 8;
 const MAX_CHILD_CONVERSATION_CHARS: usize = 4_000;
@@ -9,26 +9,40 @@ const MAX_CHILD_PLAN_ITEM_CHARS: usize = 240;
 const MAX_CHILD_TOOL_RESULTS: usize = 6;
 const MAX_CHILD_TOOL_RESULT_CHARS: usize = 1_200;
 
-pub(super) fn build_child_task_text(parent: &RuntimeLoopState, spec: &SpawnSpec) -> String {
+pub(crate) fn project_child_task_context(
+    tape_summary: Option<&str>,
+    messages: &[Message],
+    plan_explanation: Option<&str>,
+    plan_items: &[PlanItem],
+    spec: &SpawnSpec,
+) -> ChildTaskContext {
+    ChildTaskContext::new(
+        spec.has_handle(SpawnHandle::ConversationSnapshot)
+            .then(|| render_conversation_snapshot(tape_summary, messages))
+            .flatten(),
+        spec.has_handle(SpawnHandle::Plan)
+            .then(|| render_plan_snapshot(plan_explanation, plan_items))
+            .flatten(),
+        spec.has_handle(SpawnHandle::ToolResults)
+            .then(|| render_tool_results_snapshot(messages))
+            .flatten(),
+    )
+}
+
+pub(super) fn build_child_task_text(parent: &ChildTaskContext, spec: &SpawnSpec) -> String {
     let mut sections = vec![spec.launch.task.trim().to_string()];
 
     if let Some(metadata) = render_launch_metadata(spec) {
         sections.push(metadata);
     }
-    if spec.has_handle(SpawnHandle::ConversationSnapshot)
-        && let Some(snapshot) = render_conversation_snapshot(parent)
-    {
-        sections.push(snapshot);
+    if let Some(snapshot) = parent.conversation_snapshot.as_ref() {
+        sections.push(snapshot.clone());
     }
-    if spec.has_handle(SpawnHandle::Plan)
-        && let Some(snapshot) = render_plan_snapshot(parent)
-    {
-        sections.push(snapshot);
+    if let Some(snapshot) = parent.plan_snapshot.as_ref() {
+        sections.push(snapshot.clone());
     }
-    if spec.has_handle(SpawnHandle::ToolResults)
-        && let Some(snapshot) = render_tool_results_snapshot(parent)
-    {
-        sections.push(snapshot);
+    if let Some(snapshot) = parent.tool_results_snapshot.as_ref() {
+        sections.push(snapshot.clone());
     }
 
     sections
@@ -50,34 +64,33 @@ fn render_launch_metadata(spec: &SpawnSpec) -> Option<String> {
     (!lines.is_empty()).then(|| format!("Execution Context\n{}", lines.join("\n")))
 }
 
-fn render_conversation_snapshot(parent: &RuntimeLoopState) -> Option<String> {
+fn render_conversation_snapshot(
+    tape_summary: Option<&str>,
+    messages: &[Message],
+) -> Option<String> {
     let mut lines = Vec::new();
-    if let Some(summary) = parent.machine.tape_summary() {
+    if let Some(summary) = tape_summary {
         lines.push("Summary:".to_string());
         lines.push(truncate_chars(summary.trim(), MAX_CHILD_CONVERSATION_CHARS));
     }
 
-    let recent_messages = parent
-        .machine
-        .messages()
+    let recent_messages = messages
         .iter()
         .rev()
         .filter(|message| matches!(message, Message::User { .. } | Message::Assistant { .. }))
         .take(MAX_CHILD_CONVERSATION_MESSAGES)
-        .cloned()
         .collect::<Vec<_>>();
-
     if !recent_messages.is_empty() {
         lines.push("Recent Messages:".to_string());
         for message in recent_messages.into_iter().rev() {
-            let role = match &message {
+            let role = match message {
                 Message::User { .. } => "user",
                 Message::Assistant { .. } => "assistant",
                 Message::Tool { .. } => unreachable!("tool messages are filtered out above"),
                 Message::System { .. } => "system",
                 Message::Context { .. } => "context",
             };
-            let text = match &message {
+            let text = match message {
                 Message::Assistant { .. } => message.non_thinking_text_content(),
                 _ => message.text_content(),
             };
@@ -93,10 +106,9 @@ fn render_conversation_snapshot(parent: &RuntimeLoopState) -> Option<String> {
     (!lines.is_empty()).then(|| format!("Parent Conversation Snapshot\n{}", lines.join("\n")))
 }
 
-fn render_plan_snapshot(parent: &RuntimeLoopState) -> Option<String> {
-    let plan_snapshot = parent.machine.plan_snapshot()?;
+fn render_plan_snapshot(plan_explanation: Option<&str>, plan_items: &[PlanItem]) -> Option<String> {
     let mut lines = Vec::new();
-    if let Some(explanation) = plan_snapshot.explanation.as_deref()
+    if let Some(explanation) = plan_explanation
         && !explanation.trim().is_empty()
     {
         lines.push(format!(
@@ -104,7 +116,7 @@ fn render_plan_snapshot(parent: &RuntimeLoopState) -> Option<String> {
             truncate_chars(explanation.trim(), MAX_CHILD_PLAN_ITEM_CHARS)
         ));
     }
-    for item in plan_snapshot.items.iter().take(MAX_CHILD_PLAN_ITEMS) {
+    for item in plan_items.iter().take(MAX_CHILD_PLAN_ITEMS) {
         lines.push(format!(
             "- [{}] {}",
             match item.status {
@@ -119,11 +131,9 @@ fn render_plan_snapshot(parent: &RuntimeLoopState) -> Option<String> {
     (!lines.is_empty()).then(|| format!("Parent Plan Snapshot\n{}", lines.join("\n")))
 }
 
-fn render_tool_results_snapshot(parent: &RuntimeLoopState) -> Option<String> {
+fn render_tool_results_snapshot(messages: &[Message]) -> Option<String> {
     let mut lines = Vec::new();
-    for message in parent
-        .machine
-        .messages()
+    for message in messages
         .iter()
         .rev()
         .filter(|message| matches!(message, Message::Tool { .. }))
@@ -147,5 +157,58 @@ fn truncate_chars(text: &str, limit: usize) -> String {
         truncated
     } else {
         format!("{truncated}...")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alan_agent_protocol::{SpawnLaunchInputs, SpawnRuntimeOverrides, SpawnTarget};
+
+    fn spawn_spec(handles: Vec<SpawnHandle>) -> SpawnSpec {
+        SpawnSpec {
+            target: SpawnTarget::DefinitionDescriptor {
+                descriptor: "test-agent".to_string(),
+            },
+            launch: SpawnLaunchInputs {
+                task: "test child task".to_string(),
+                cwd: None,
+                timeout_secs: None,
+                output_dir: None,
+            },
+            handles,
+            runtime_overrides: SpawnRuntimeOverrides::default(),
+            delegated: None,
+        }
+    }
+
+    #[test]
+    fn tool_result_projection_is_handle_gated_and_bounded_before_storage() {
+        let messages = vec![Message::tool_text(
+            "large-tool-call",
+            "x".repeat(MAX_CHILD_TOOL_RESULT_CHARS * 4),
+        )];
+        let without_tool_results =
+            project_child_task_context(None, &messages, None, &[], &spawn_spec(Vec::new()));
+        assert!(without_tool_results.tool_results_snapshot.is_none());
+
+        let with_tool_results = project_child_task_context(
+            None,
+            &messages,
+            None,
+            &[],
+            &spawn_spec(vec![SpawnHandle::ToolResults]),
+        );
+        let snapshot = with_tool_results
+            .tool_results_snapshot
+            .expect("ToolResults handle should project bounded text");
+        assert!(snapshot.starts_with("Parent Tool Results\n- large-tool-call: "));
+        assert!(snapshot.ends_with("..."));
+        assert!(
+            snapshot.chars().count()
+                <= "Parent Tool Results\n- large-tool-call: ".chars().count()
+                    + MAX_CHILD_TOOL_RESULT_CHARS
+                    + 3
+        );
     }
 }

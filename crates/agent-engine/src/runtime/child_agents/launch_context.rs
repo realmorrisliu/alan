@@ -1,15 +1,14 @@
+use crate::runtime::child_agents::ChildLaunchRuntime;
 use crate::runtime::launch_config::AgentConfig;
-use crate::runtime::transition::RuntimeLoopState;
 use alan_agent_protocol::{GovernanceConfig, SpawnHandle, SpawnSpec, SpawnTarget};
 use anyhow::{Context, Result, bail};
 use std::path::PathBuf;
 
 pub(super) fn ensure_child_connection_is_passed(
-    parent: &RuntimeLoopState,
+    parent: &ChildLaunchRuntime,
     requested: &str,
 ) -> Result<()> {
-    let child_launch = parent.child_launch();
-    let passed = child_launch.connection_name();
+    let passed = parent.child_launch.connection_name();
     if requested != passed {
         bail!(
             "Connection '{requested}' was not passed to the child Agent Process by the parent Process; available Connection is '{passed}'."
@@ -157,13 +156,12 @@ pub(super) fn validate_child_launch_contract(spec: &SpawnSpec) -> Result<Option<
 }
 
 pub(super) fn resolve_launch_root_dir(
-    parent: &RuntimeLoopState,
+    parent: &ChildLaunchRuntime,
     target: &SpawnTarget,
 ) -> Result<Option<ResolvedLaunchRoot>> {
     match target {
         SpawnTarget::DefinitionDescriptor { descriptor } => {
-            let child_launch = parent.child_launch();
-            let launch_context = child_launch.launch_context();
+            let launch_context = parent.child_launch.launch_context();
             let descriptor = launch_context
                 .and_then(|context| context.descriptor(descriptor))
                 .with_context(|| format!("parent Process has no `{descriptor}` descriptor"))?;
@@ -186,8 +184,8 @@ pub(super) fn resolve_launch_root_dir(
         }
         SpawnTarget::PackageChildAgent { .. } => {
             let export = parent
-                .prompt_cache
-                .capability_view()
+                .capability_view
+                .as_ref()
                 .map(crate::skills::ResolvedCapabilityView::refresh)
                 .and_then(|view| view.resolve_child_agent_export(target).cloned())
                 .ok_or_else(|| {
@@ -206,16 +204,19 @@ pub(super) struct ResolvedLaunchRoot {
     pub(super) file_tree: Option<crate::ProcessFileTree>,
 }
 
-pub(super) fn build_child_agent_config(parent: &RuntimeLoopState, spec: &SpawnSpec) -> AgentConfig {
-    let mut child_agent_config = AgentConfig::from(parent.core_config.clone());
-    child_agent_config.runtime_config = parent.runtime_config.clone();
+pub(super) fn build_child_agent_config(
+    parent: &ChildLaunchRuntime,
+    spec: &SpawnSpec,
+) -> AgentConfig {
+    let mut child_agent_config = parent.base_agent_config.clone();
 
     if !spec.has_handle(SpawnHandle::Memory) {
         child_agent_config.core_config.memory.store_dir = None;
     }
 
     if spec.has_handle(SpawnHandle::ApprovalScope) {
-        child_agent_config.runtime_config.governance = parent.runtime_config.governance.clone();
+        child_agent_config.runtime_config.governance =
+            parent.base_agent_config.runtime_config.governance.clone();
     } else {
         child_agent_config.runtime_config.governance = GovernanceConfig::default();
     }
