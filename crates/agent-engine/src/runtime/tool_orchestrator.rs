@@ -1,8 +1,7 @@
 use alan_agent_protocol::Event;
 use anyhow::Result;
 #[cfg(test)]
-use serde_json::Value;
-use serde_json::json;
+use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
 use crate::approval::replays_tool_calls;
@@ -19,9 +18,9 @@ use super::tool_execution::{
 };
 #[cfg(test)]
 use super::tool_execution::{execute_tool_effect, tool_payload_for_tape};
+use super::tool_resolution::{ToolResolutionOutcome, ToolResolutionRequest, resolve_tool_call};
 use super::transition::{RuntimeLoopState, dispatch_virtual_tool_call};
 use super::turn_driver::TurnInputBroker;
-use super::turn_support::tool_result_preview;
 use super::virtual_tool::VirtualToolOutcome;
 use crate::agent_machine::NormalizedToolCall;
 
@@ -211,59 +210,26 @@ where
         VirtualToolOutcome::EndTurn => return Ok(ToolOrchestratorOutcome::EndTurn),
     }
 
-    let tool_package = state
-        .tool_execution()
-        .discover_packages()
-        .await?
-        .into_iter()
-        .find(|package| package.name == tool_call.name);
-    let Some(tool_package) = tool_package else {
-        let payload = json!({
-            "success": false,
-            "error": format!(
-                "Tool '{}' is unavailable because its executable and valid manifest are not both mounted",
-                tool_call.name
-            )
-        });
-        emit(Event::ToolCallStarted {
-            title: None,
-            id: tool_call.id.clone(),
-            name: tool_call.name.clone(),
-            audit: None,
-        })
-        .await;
-        emit(Event::ToolCallCompleted {
-            presentation: None,
-            id: tool_call.id.clone(),
-            name: Some(tool_call.name.clone()),
-            success: Some(false),
-            result_preview: tool_result_preview(&payload),
-            audit: None,
-        })
-        .await;
-        state.machine.record_tool_call(
-            &tool_call.name,
-            tool_arguments.clone(),
-            payload.clone(),
-            false,
-        );
-        state
-            .machine
-            .add_tool_message(&tool_call.id, &tool_call.name, payload);
-        return Ok(ToolOrchestratorOutcome::ContinueToolBatch {
-            refresh_context: false,
-        });
+    let resolution_runtime = super::transition::tool_resolution_runtime(state);
+    let resolution_request = ToolResolutionRequest {
+        tool_call,
+        tool_arguments: &tool_arguments,
     };
-    let tool_capability = state
-        .tool_execution()
-        .resolve_capability(&tool_package, &tool_arguments);
-    let current_tool_cwd = state.tool_execution().default_cwd();
+    let resolved_tool =
+        match resolve_tool_call(resolution_runtime, resolution_request, emit).await? {
+            ToolResolutionOutcome::Resolved(resolved) => resolved,
+            ToolResolutionOutcome::Unavailable => {
+                return Ok(ToolOrchestratorOutcome::ContinueToolBatch {
+                    refresh_context: false,
+                });
+            }
+        };
     let authorization_runtime = super::transition::tool_authorization_runtime(state);
     let authorization_request = ToolAuthorizationRequest {
         tool_call,
         tool_arguments: &tool_arguments,
-        tool_capability,
-        current_tool_cwd: current_tool_cwd.as_deref(),
+        tool_capability: resolved_tool.capability,
+        current_tool_cwd: resolved_tool.current_cwd.as_deref(),
         allow_approved_tool_escalation_execution,
         cancel: inputs.cancel,
     };
@@ -284,8 +250,8 @@ where
     let request = ToolExecutionRequest {
         tool_call,
         tool_arguments: &tool_arguments,
-        tool_timeout_secs: tool_package.timeout_secs,
-        tool_capability,
+        tool_timeout_secs: resolved_tool.timeout_secs,
+        tool_capability: resolved_tool.capability,
         tool_audit,
         allow_approved_unknown_effect_execution,
         cancel: inputs.cancel,

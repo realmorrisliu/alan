@@ -342,6 +342,8 @@ fn transition_leaf_workflows_do_not_receive_the_runtime_loop_aggregate() {
         "tool_authorization/runtime_inputs.rs",
         "tool_execution.rs",
         "tool_execution/runtime_inputs.rs",
+        "tool_resolution.rs",
+        "tool_resolution/runtime_inputs.rs",
         "turn_support.rs",
         "virtual_tools.rs",
     ] {
@@ -500,6 +502,32 @@ fn transition_leaf_workflows_do_not_receive_the_runtime_loop_aggregate() {
         assert!(
             !tool_orchestrator.contains(displaced_owner),
             "Tool orchestrator must leave {displaced_owner} to the authorization owner"
+        );
+    }
+
+    let tool_resolution_runtime = read_runtime_source("tool_resolution/runtime_inputs.rs");
+    for forbidden in [
+        "RuntimeLoopState",
+        "RuntimeConfig",
+        "NamespaceRuntimeEnvironment",
+    ] {
+        assert!(
+            !tool_resolution_runtime.contains(forbidden),
+            "Tool resolution runtime must not regain {forbidden}"
+        );
+    }
+    assert!(tool_resolution_runtime.contains("ToolResolutionRuntime"));
+    assert!(transition.contains("fn tool_resolution_runtime("));
+    assert!(read_runtime_source("tool_resolution.rs").contains("resolve_tool_call"));
+    for displaced_operation in [
+        "discover_packages(",
+        "resolve_capability(",
+        "default_cwd(",
+        ".tool_execution()",
+    ] {
+        assert!(
+            !tool_orchestrator.contains(displaced_operation),
+            "Tool orchestrator must leave {displaced_operation} to the resolution owner"
         );
     }
 

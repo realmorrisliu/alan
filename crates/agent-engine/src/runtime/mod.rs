@@ -33,6 +33,7 @@ mod tool_orchestrator;
 mod tool_packages;
 mod tool_policy;
 mod tool_presentation;
+mod tool_resolution;
 mod transition;
 mod turn_driver;
 mod turn_executor;
