@@ -8,11 +8,12 @@ use crate::approval::{
 };
 use crate::llm::ToolDefinition;
 
-use super::agent_loop::{NormalizedToolCall, RuntimeLoopState};
+use super::agent_loop::RuntimeLoopState;
 use super::child_runs::{ChildRunRegistryError, ChildRunTerminationMode};
 use super::tool_policy::{ToolPolicyDecision, evaluate_tool_policy};
 use super::turn_support::tool_result_preview;
 use super::virtual_tool::VirtualToolOutcome;
+use crate::agent_machine::NormalizedToolCall;
 
 pub(super) async fn handle_terminate_child_run<E, F>(
     state: &mut RuntimeLoopState,
@@ -210,7 +211,7 @@ where
                 "tool_name": tool_call.name,
                 "arguments": tool_arguments,
             });
-            details = append_skill_permission_hints(details, state.turn_state.active_skills());
+            details = append_skill_permission_hints(details, state.machine.active_skills());
             let pending = PendingConfirmation {
                 checkpoint_id: format!("{TOOL_ESCALATION_CHECKPOINT_PREFIX}{}", tool_call.id),
                 checkpoint_type: TOOL_ESCALATION_CHECKPOINT_TYPE.to_string(),
@@ -230,7 +231,7 @@ where
                 .await?
                 .unwrap_or_else(|| pending.checkpoint_id.clone());
             state
-                .turn_state
+                .machine
                 .set_confirmation_for_request(request_id.clone(), pending.clone());
             super::ui_surfaces::paused(state.namespace_environment()).await?;
             emit(Event::Yield {

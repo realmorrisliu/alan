@@ -2,7 +2,7 @@ use super::*;
 
 pub(super) async fn run_deferred_runtime_actions(state: &mut RuntimeLoopState) -> usize {
     let cancel = CancellationToken::new();
-    let actions = state.turn_state.drain_deferred_runtime_actions();
+    let actions = state.machine.drain_deferred_runtime_actions();
     let count = actions.len();
     for action in actions {
         assert_eq!(

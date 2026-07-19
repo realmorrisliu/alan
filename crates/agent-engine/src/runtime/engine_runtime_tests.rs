@@ -38,15 +38,15 @@ async fn test_requeue_active_turn_leftovers_inserts_before_existing_deferred_act
     let mut queues = RuntimeSubmissionQueues::default();
     queues.push_outer_deferred(make_deferred_action_for_test());
 
-    let mut turn_state = TurnState::default();
+    let mut machine = AgentMachine::new();
     let buffered_submission = Submission::new(Op::Input {
         parts: vec![alan_agent_protocol::ContentPart::text("follow up")],
         mode: alan_agent_protocol::InputMode::FollowUp,
     });
     let buffered_submission_id = buffered_submission.id.clone();
-    turn_state.push_buffered_inband_submission(buffered_submission);
+    machine.push_buffered_inband_submission(buffered_submission);
 
-    let requeued = queues.requeue_active_turn_leftovers(&mut turn_state).await;
+    let requeued = queues.requeue_active_turn_leftovers(&mut machine).await;
 
     assert_eq!(requeued, 1);
     assert_eq!(
@@ -396,22 +396,20 @@ async fn test_outer_idle_reads_answered_namespace_request_response() {
         ))
         .await
         .unwrap();
-    let mut turn_state = TurnState::default();
-    turn_state.set_structured_input(crate::approval::PendingStructuredInputRequest {
+    let mut machine = AgentMachine::new();
+    machine.set_structured_input(crate::approval::PendingStructuredInputRequest {
         request_id: request_id.clone(),
         title: "Missing value".to_string(),
         prompt: "Provide the missing value".to_string(),
         questions: Vec::new(),
     });
     let state = RuntimeLoopState {
-        machine: crate::agent_machine::AgentMachine::new(),
-        current_submission_id: None,
+        machine,
         environment: namespace_environment,
         core_config: crate::Config::default(),
         runtime_config: RuntimeConfig::default(),
         definition_persona_dirs: Vec::new(),
         prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
-        turn_state,
     };
 
     assert!(

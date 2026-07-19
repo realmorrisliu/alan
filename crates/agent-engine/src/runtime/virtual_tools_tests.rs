@@ -1,10 +1,10 @@
 use super::*;
 use crate::{
-    agent_machine::AgentMachine,
+    agent_machine::{AgentMachine, TurnActivityState},
     config::Config,
     rollout::{RolloutItem, RolloutRecorder},
     runtime::{
-        ChildRunRecord, ChildRunStatus, NamespaceRuntimeEnvironment, RuntimeConfig, TurnState,
+        ChildRunRecord, ChildRunStatus, NamespaceRuntimeEnvironment, RuntimeConfig,
         agent_loop::NamespaceActionRecord,
         delegated_child_run::{
             ChildRuntimeResult, ChildRuntimeStatus, MAX_DELEGATED_RESULT_OUTPUT_INLINE_CHARS,
@@ -18,7 +18,6 @@ use crate::{
         },
         delegation_capabilities::DelegatedSpawnRejected,
         mount_request_tool::MountRequestAccess,
-        turn_state::TurnActivityState,
     },
     skills::{
         ActiveSkillEnvelope, DelegatedSkillInvocationRecord, ResolvedCapabilityView,
@@ -90,14 +89,12 @@ fn create_test_agent_loop_state() -> super::super::agent_loop::RuntimeLoopState 
 
     super::super::agent_loop::RuntimeLoopState {
         machine,
-        current_submission_id: None,
         environment: namespace_environment_for_virtual_tool_test(&tools)
             .with_launch_context(launch_context),
         core_config: config,
         runtime_config,
         definition_persona_dirs: Vec::new(),
         prompt_cache,
-        turn_state: TurnState::default(),
     }
 }
 
@@ -153,7 +150,7 @@ fn activate_test_delegated_skill(
     target: &str,
 ) {
     state
-        .turn_state
+        .machine
         .set_active_skills(vec![ActiveSkillEnvelope::available(
             delegated_test_skill_metadata(skill_id, target),
             SkillActivationReason::ExplicitMention {

@@ -2,9 +2,10 @@ use alan_agent_protocol::{Event, InputMode, Op};
 use anyhow::Result;
 use serde_json::json;
 
-use super::agent_loop::{NormalizedToolCall, RuntimeLoopState};
+use super::agent_loop::RuntimeLoopState;
 use super::turn_driver::{MAX_BUFFERED_INBAND_USER_INPUTS, TurnInputBroker};
 use super::turn_support::tool_result_preview;
+use crate::agent_machine::NormalizedToolCall;
 
 pub(super) async fn handle_queued_steering_inputs<E, F>(
     state: &mut RuntimeLoopState,
@@ -38,8 +39,7 @@ where
                 mode: InputMode::FollowUp,
                 ..
             }
-        ) && state.turn_state.buffered_inband_user_input_count()
-            >= MAX_BUFFERED_INBAND_USER_INPUTS
+        ) && state.machine.buffered_inband_user_input_count() >= MAX_BUFFERED_INBAND_USER_INPUTS
         {
             emit(Event::Error {
                 message: format!(
@@ -51,14 +51,14 @@ where
             continue;
         }
 
-        state.turn_state.push_buffered_inband_submission(submission);
+        state.machine.push_buffered_inband_submission(submission);
     }
 
     if steering_inputs.is_empty() {
         return Ok(false);
     }
 
-    state.turn_state.note_resumed_user_input();
+    state.machine.note_resumed_user_input();
     for parts in steering_inputs {
         state.machine.add_user_message_parts(parts);
     }

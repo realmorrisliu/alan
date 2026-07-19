@@ -94,7 +94,7 @@ fn render_conversation_snapshot(parent: &RuntimeLoopState) -> Option<String> {
 }
 
 fn render_plan_snapshot(parent: &RuntimeLoopState) -> Option<String> {
-    let plan_snapshot = parent.turn_state.plan_snapshot()?;
+    let plan_snapshot = parent.machine.plan_snapshot()?;
     let mut lines = Vec::new();
     if let Some(explanation) = plan_snapshot.explanation.as_deref()
         && !explanation.trim().is_empty()

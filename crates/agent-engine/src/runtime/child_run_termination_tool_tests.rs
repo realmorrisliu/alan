@@ -205,7 +205,7 @@ async fn test_try_handle_virtual_tool_call_terminate_child_run_escalates_under_e
     let result = try_handle_virtual_tool_call_for_test(&mut state, &tool_call, &mut emit).await;
     assert!(result.is_ok());
     assert!(matches!(result.unwrap(), VirtualToolOutcome::PauseTurn));
-    assert!(state.turn_state.pending_confirmation().is_some());
+    assert!(state.machine.pending_confirmation().is_some());
     assert!(events.iter().any(|event| matches!(
         event,
         Event::Yield { kind: alan_agent_protocol::YieldKind::Confirmation, payload, .. }

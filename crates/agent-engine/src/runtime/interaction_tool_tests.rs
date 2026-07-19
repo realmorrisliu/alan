@@ -384,7 +384,7 @@ async fn test_try_handle_virtual_tool_call_request_confirmation() {
     assert!(matches!(result.unwrap(), VirtualToolOutcome::PauseTurn));
 
     // Verify confirmation was set
-    assert!(state.turn_state.pending_confirmation().is_some());
+    assert!(state.machine.pending_confirmation().is_some());
 }
 
 #[tokio::test]
@@ -412,16 +412,9 @@ async fn namespace_request_confirmation_writes_request_file_and_waits_on_file_id
         .await
         .unwrap();
     assert!(matches!(result, VirtualToolOutcome::PauseTurn));
+    assert_eq!(state.machine.pending_request_ids(), vec!["r0".to_string()]);
     assert_eq!(
-        state.turn_state.pending_request_ids(),
-        vec!["r0".to_string()]
-    );
-    assert_eq!(
-        state
-            .turn_state
-            .pending_confirmation()
-            .unwrap()
-            .checkpoint_id,
+        state.machine.pending_confirmation().unwrap().checkpoint_id,
         "call_1"
     );
     assert_eq!(
@@ -498,7 +491,7 @@ async fn test_try_handle_virtual_tool_call_request_user_input() {
     assert!(matches!(result.unwrap(), VirtualToolOutcome::PauseTurn));
 
     // Verify structured input was set
-    assert!(state.turn_state.has_pending_interaction());
+    assert!(state.machine.has_pending_interaction());
 }
 
 #[tokio::test]
@@ -525,10 +518,7 @@ async fn namespace_request_user_input_writes_request_file_and_waits_on_file_id()
         .await
         .unwrap();
     assert!(matches!(result, VirtualToolOutcome::PauseTurn));
-    assert_eq!(
-        state.turn_state.pending_request_ids(),
-        vec!["r0".to_string()]
-    );
+    assert_eq!(state.machine.pending_request_ids(), vec!["r0".to_string()]);
     assert_eq!(
         read_shell_utf8(&shell, "/agent/1/requests/r0/kind").await,
         "structured_input"

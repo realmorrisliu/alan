@@ -236,7 +236,7 @@ async fn test_run_turn_pre_turn_compaction_accounts_for_runtime_recall_budget() 
         .expect("expected runtime recall bundle prompt");
     assert!(request_prompt.contains("## Runtime Recall Bundle"));
     assert!(request_prompt.contains("ALAN_PRETURN_RECALL"));
-    assert_eq!(state.turn_state.drain_deferred_runtime_actions().len(), 1);
+    assert_eq!(state.machine.drain_deferred_runtime_actions().len(), 1);
 }
 
 #[tokio::test]
@@ -324,5 +324,5 @@ async fn test_maybe_compact_mid_turn_accounts_for_runtime_prompt_overhead() {
         state.machine.tape_summary(),
         Some("MID_TURN_COMPACTION_SUMMARY")
     );
-    assert_eq!(state.turn_state.compactions_this_turn(), 1);
+    assert_eq!(state.machine.compactions_this_turn(), 1);
 }

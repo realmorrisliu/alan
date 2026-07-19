@@ -418,22 +418,20 @@ async fn answered_request_response_resumes_engine_pending_yield_from_files() {
         other => panic!("expected Op::Resume, got {other:?}"),
     }
 
-    let mut turn_state = super::super::super::turn_state::TurnState::default();
-    turn_state.set_structured_input(crate::approval::PendingStructuredInputRequest {
+    let mut machine = crate::agent_machine::AgentMachine::new();
+    machine.set_structured_input(crate::approval::PendingStructuredInputRequest {
         request_id,
         title: "Missing detail".to_string(),
         prompt: "Provide the missing detail".to_string(),
         questions: Vec::new(),
     });
     let mut state = super::super::RuntimeLoopState {
-        machine: crate::agent_machine::AgentMachine::new(),
-        current_submission_id: None,
+        machine,
         environment,
         core_config: crate::Config::default(),
         runtime_config: super::super::super::RuntimeConfig::default(),
         definition_persona_dirs: Vec::new(),
         prompt_cache: super::super::super::prompt_cache::PromptAssemblyCache::new(Vec::new()),
-        turn_state,
     };
     let cancel = tokio_util::sync::CancellationToken::new();
     let mut events = Vec::new();
@@ -458,7 +456,7 @@ async fn answered_request_response_resumes_engine_pending_yield_from_files() {
         ),
         "resume should re-enter the turn path: {action:?}"
     );
-    assert!(!state.turn_state.has_pending_interaction());
+    assert!(!state.machine.has_pending_interaction());
     assert!(events.is_empty());
     let messages = state.machine.messages();
     assert_eq!(messages.len(), 1);

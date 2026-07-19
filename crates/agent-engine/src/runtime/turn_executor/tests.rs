@@ -1,10 +1,9 @@
 use super::*;
-use crate::runtime::turn_state::TurnActivityState;
 use crate::{
-    agent_machine::AgentMachine,
+    agent_machine::{AgentMachine, TurnActivityState},
     config::Config,
     rollout::{RolloutItem, RolloutRecorder},
-    runtime::{NamespaceRuntimeEnvironment, RuntimeConfig, TurnState},
+    runtime::{NamespaceRuntimeEnvironment, RuntimeConfig},
     skills::{ResolvedCapabilityView, ScopedPackageDir, SkillScope},
     tape::{ContentPart, Message, ToolRequest},
     tools::{Tool, ToolContext, ToolRegistry, ToolResult},
@@ -930,14 +929,12 @@ fn create_test_state_with_provider_and_tools_and_shell<P: LlmProvider + 'static>
 
     let state = RuntimeLoopState {
         machine,
-        current_submission_id: None,
         environment: NamespaceRuntimeEnvironment::new(root.clone(), "/agent/1", "default")
             .with_launch_context(launch_context),
         core_config: config,
         runtime_config,
         definition_persona_dirs: Vec::new(),
         prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
-        turn_state: TurnState::default(),
     };
     (state, alan_shell::Shell::new(root))
 }

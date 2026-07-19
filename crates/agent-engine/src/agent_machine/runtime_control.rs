@@ -5,6 +5,24 @@ use crate::approval::{
 };
 use crate::tape::{ContentPart, Message};
 
+/// Structured outcome for an in-memory rollback request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct RollbackOutcome {
+    /// Number of logical user turns actually removed.
+    pub(crate) removed_turns: u32,
+    /// Number of tape messages removed by the rollback.
+    pub(crate) removed_messages: usize,
+}
+
+/// Server-managed continuation state for Responses-compatible providers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ResponsesContinuationState {
+    pub(crate) provider: String,
+    pub(crate) last_response_id: String,
+    pub(crate) boundary_message_count: usize,
+    pub(crate) reference_context_revision: u64,
+}
+
 pub(super) const RESPONSES_CONTINUATION_EVENT_TYPE: &str = "responses_continuation";
 
 fn runtime_confirmation_control_checkpoint(payload: &serde_json::Value) -> Option<(&str, &str)> {

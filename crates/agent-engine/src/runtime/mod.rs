@@ -33,7 +33,6 @@ mod tool_policy;
 mod tool_presentation;
 mod turn_driver;
 mod turn_executor;
-mod turn_state;
 mod turn_support;
 mod ui_surfaces;
 mod virtual_tool;
@@ -64,8 +63,8 @@ pub use launch_config::{
 
 // Re-export agent loop types for internal use
 pub(crate) use agent_loop::RuntimeLoopState;
+pub(crate) use memory_promotion::TurnMemoryPromotionJob;
 pub use tool_packages::ToolPackageManifest;
-pub(crate) use turn_state::TurnState;
 
 /// Configuration for the agent runtime
 #[derive(Debug, Clone)]

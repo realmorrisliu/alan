@@ -12,14 +12,14 @@
 
 ## 2. Make Agent Machine The State Owner
 
-- [ ] 2.1 Move current submission, turn state, pending Yield, Tool replay,
+- [x] 2.1 Move current submission, turn state, pending Yield, Tool replay,
   active-task, and deferred action state behind Agent Machine semantic
   operations.
-- [ ] 2.2 Make Tape, recorder, flags, and transition state private; remove the
+- [x] 2.2 Make Tape, recorder, flags, and transition state private; remove the
   public Agent Machine re-export and replace direct field access.
 - [ ] 2.3 Keep or delete the private `RuntimeLoopState` according to whether it
   still groups cohesive Machine state; do not preserve it as a shared field bag.
-- [ ] 2.4 Add adjacent white-box tests for private Machine transitions and keep
+- [x] 2.4 Add adjacent white-box tests for private Machine transitions and keep
   supported external tests at file boundaries.
 
 ## 3. Extract The Concrete Transition Owner

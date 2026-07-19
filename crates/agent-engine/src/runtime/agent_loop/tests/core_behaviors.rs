@@ -140,12 +140,18 @@ fn test_split_text_for_typing_long_text_chunks_preserve_content() {
 #[tokio::test]
 async fn test_cancel_current_task() {
     let config = Config::default();
-    let machine = AgentMachine::new();
+    let mut machine = AgentMachine::new();
+    machine.set_confirmation(PendingConfirmation {
+        checkpoint_id: "cp_123".to_string(),
+        checkpoint_type: "test_checkpoint".to_string(),
+        summary: "Test".to_string(),
+        details: json!({}),
+        options: vec!["approve".to_string()],
+    });
     let runtime_config = super::RuntimeConfig::default();
 
     let mut state = RuntimeLoopState {
         machine,
-        current_submission_id: None,
         environment: namespace_environment_with_provider(DelayedMockProvider::new(
             tokio::time::Duration::from_millis(0),
             "",
@@ -154,17 +160,6 @@ async fn test_cancel_current_task() {
         runtime_config,
         definition_persona_dirs: Vec::new(),
         prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
-        turn_state: {
-            let mut turn_state = TurnState::default();
-            turn_state.set_confirmation(PendingConfirmation {
-                checkpoint_id: "cp_123".to_string(),
-                checkpoint_type: "test_checkpoint".to_string(),
-                summary: "Test".to_string(),
-                details: json!({}),
-                options: vec!["approve".to_string()],
-            });
-            turn_state
-        },
     };
     state.machine.add_user_message("existing history");
     state.machine.activate_task();
@@ -178,7 +173,7 @@ async fn test_cancel_current_task() {
     let result = cancel_current_task(&mut state, &mut emit).await;
 
     assert!(result.is_ok());
-    assert!(state.turn_state.pending_confirmation().is_none());
+    assert!(state.machine.pending_confirmation().is_none());
     assert!(!state.machine.has_active_task());
     assert_eq!(state.machine.messages().len(), 1);
     assert_eq!(
@@ -205,9 +200,8 @@ async fn test_handle_submission_promotes_direct_user_fact_when_replayed_tool_cal
     let mut machine = AgentMachine::new();
     machine.add_user_message("My name is Morris.");
 
-    let mut turn_state = TurnState::default();
-    turn_state.begin_turn(0);
-    turn_state.set_confirmation(PendingConfirmation {
+    machine.begin_turn(0);
+    machine.set_confirmation(PendingConfirmation {
         checkpoint_id: checkpoint_id.to_string(),
         checkpoint_type: TOOL_ESCALATION_CHECKPOINT_TYPE.to_string(),
         summary: "Replay tool call".to_string(),
@@ -221,7 +215,7 @@ async fn test_handle_submission_promotes_direct_user_fact_when_replayed_tool_cal
         options: vec!["approve".to_string(), "reject".to_string()],
     });
 
-    let mut state = create_replay_memory_test_state(memory_dir.clone(), turn_state, machine);
+    let mut state = create_replay_memory_test_state(memory_dir.clone(), machine);
     let cancel = CancellationToken::new();
     let mut emit = |_event: Event| async {};
 
@@ -239,7 +233,7 @@ async fn test_handle_submission_promotes_direct_user_fact_when_replayed_tool_cal
     .await;
 
     assert!(result.is_ok());
-    assert_eq!(state.turn_state.turn_activity(), TurnActivityState::Idle);
+    assert_eq!(state.machine.turn_activity(), TurnActivityState::Idle);
     assert_eq!(run_deferred_runtime_actions(&mut state).await, 1);
 
     let user_memory = std::fs::read_to_string(memory_dir.join("USER.md")).unwrap();
@@ -255,16 +249,15 @@ async fn test_handle_submission_promotes_direct_user_fact_when_replayed_tool_bat
     let mut machine = AgentMachine::new();
     machine.add_user_message("My name is Morris.");
 
-    let mut turn_state = TurnState::default();
-    turn_state.begin_turn(0);
-    turn_state.set_confirmation(PendingConfirmation {
+    machine.begin_turn(0);
+    machine.set_confirmation(PendingConfirmation {
         checkpoint_id: checkpoint_id.to_string(),
         checkpoint_type: TOOL_ESCALATION_CHECKPOINT_TYPE.to_string(),
         summary: "Replay tool batch".to_string(),
         details: json!({}),
         options: vec!["approve".to_string(), "reject".to_string()],
     });
-    turn_state.set_tool_replay_batch(
+    machine.set_tool_replay_batch(
         checkpoint_id,
         vec![NormalizedToolCall {
             id: "call-1".to_string(),
@@ -273,7 +266,7 @@ async fn test_handle_submission_promotes_direct_user_fact_when_replayed_tool_bat
         }],
     );
 
-    let mut state = create_replay_memory_test_state(memory_dir.clone(), turn_state, machine);
+    let mut state = create_replay_memory_test_state(memory_dir.clone(), machine);
     let cancel = CancellationToken::new();
     let mut emit = |_event: Event| async {};
 
@@ -291,7 +284,7 @@ async fn test_handle_submission_promotes_direct_user_fact_when_replayed_tool_bat
     .await;
 
     assert!(result.is_ok());
-    assert_eq!(state.turn_state.turn_activity(), TurnActivityState::Idle);
+    assert_eq!(state.machine.turn_activity(), TurnActivityState::Idle);
     assert_eq!(run_deferred_runtime_actions(&mut state).await, 1);
 
     let user_memory = std::fs::read_to_string(memory_dir.join("USER.md")).unwrap();
@@ -336,7 +329,6 @@ fn test_agent_loop_state_creation() {
 
     let state = RuntimeLoopState {
         machine,
-        current_submission_id: None,
         environment: namespace_environment_with_provider(DelayedMockProvider::new(
             tokio::time::Duration::from_millis(0),
             "",
@@ -345,10 +337,9 @@ fn test_agent_loop_state_creation() {
         runtime_config,
         definition_persona_dirs: Vec::new(),
         prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
-        turn_state: TurnState::default(),
     };
 
-    assert!(state.turn_state.pending_confirmation().is_none());
+    assert!(state.machine.pending_confirmation().is_none());
 }
 
 #[test]

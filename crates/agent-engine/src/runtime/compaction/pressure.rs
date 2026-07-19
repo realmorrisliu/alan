@@ -68,7 +68,7 @@ pub(super) fn evaluate_compaction_pressure(
     let over_soft_token_threshold =
         context_window_tokens > 0 && estimated_prompt_tokens >= soft_token_trigger_threshold;
     let emergency_mid_turn_compaction = matches!(request.mode(), CompactionMode::AutoMidTurn)
-        && super::super::turn_state::is_auto_mid_turn_compaction_emergency(
+        && crate::agent_machine::is_auto_mid_turn_compaction_emergency(
             estimated_prompt_tokens,
             context_window_tokens,
         );

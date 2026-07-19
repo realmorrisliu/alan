@@ -549,7 +549,7 @@ mod tests {
         agent_machine::AgentMachine,
         config::Config,
         runtime::{
-            NamespaceRuntimeEnvironment, RuntimeConfig, RuntimeLoopState, TurnState,
+            NamespaceRuntimeEnvironment, RuntimeConfig, RuntimeLoopState,
             prompt_cache::PromptAssemblyCache,
         },
     };
@@ -616,13 +616,11 @@ mod tests {
 
         RuntimeLoopState {
             machine: AgentMachine::new(),
-            current_submission_id: None,
             environment: NamespaceRuntimeEnvironment::new(root, "/agent/1", "default"),
             core_config: Config::default(),
             runtime_config: RuntimeConfig::default(),
             definition_persona_dirs: Vec::new(),
             prompt_cache: PromptAssemblyCache::new(Vec::new()),
-            turn_state: TurnState::default(),
         }
     }
 

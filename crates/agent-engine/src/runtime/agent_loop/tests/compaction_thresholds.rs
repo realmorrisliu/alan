@@ -6,7 +6,6 @@ async fn test_maybe_compact_context_no_compaction_needed() {
 
     let mut state = RuntimeLoopState {
         machine,
-        current_submission_id: None,
         environment: namespace_environment_with_provider(DelayedMockProvider::new(
             tokio::time::Duration::from_millis(0),
             "",
@@ -15,7 +14,6 @@ async fn test_maybe_compact_context_no_compaction_needed() {
         runtime_config,
         definition_persona_dirs: Vec::new(),
         prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
-        turn_state: TurnState::default(),
     };
 
     let mut events = vec![];
@@ -50,7 +48,6 @@ async fn test_maybe_compact_context_with_mock_llm() {
 
     let mut state = RuntimeLoopState {
         machine,
-        current_submission_id: None,
         environment: namespace_environment_with_provider(DelayedMockProvider::new(
             tokio::time::Duration::from_millis(0),
             "Summary",
@@ -59,7 +56,6 @@ async fn test_maybe_compact_context_with_mock_llm() {
         runtime_config,
         definition_persona_dirs: Vec::new(),
         prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
-        turn_state: TurnState::default(),
     };
 
     let mut events = vec![];
@@ -98,7 +94,6 @@ async fn test_maybe_compact_context_triggers_on_estimated_token_budget() {
 
     let mut state = RuntimeLoopState {
         machine,
-        current_submission_id: None,
         environment: namespace_environment_with_provider(DelayedMockProvider::new(
             tokio::time::Duration::from_millis(0),
             "Summary from token-triggered compaction",
@@ -107,7 +102,6 @@ async fn test_maybe_compact_context_triggers_on_estimated_token_budget() {
         runtime_config,
         definition_persona_dirs: Vec::new(),
         prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
-        turn_state: TurnState::default(),
     };
 
     let mut emit = |_event: Event| async {};
@@ -151,7 +145,6 @@ async fn test_maybe_compact_context_triggers_immediately_when_ratio_is_zero() {
 
     let mut state = RuntimeLoopState {
         machine,
-        current_submission_id: None,
         environment: namespace_environment_with_provider(DelayedMockProvider::new(
             tokio::time::Duration::from_millis(0),
             "Summary from zero-ratio compaction",
@@ -160,7 +153,6 @@ async fn test_maybe_compact_context_triggers_immediately_when_ratio_is_zero() {
         runtime_config,
         definition_persona_dirs: Vec::new(),
         prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
-        turn_state: TurnState::default(),
     };
 
     let mut emit = |_event: Event| async {};
@@ -204,7 +196,6 @@ async fn test_maybe_compact_context_skips_when_context_window_budget_has_room() 
 
     let mut state = RuntimeLoopState {
         machine,
-        current_submission_id: None,
         environment: namespace_environment_with_provider(DelayedMockProvider::new(
             tokio::time::Duration::from_millis(0),
             "Should not compact",
@@ -213,7 +204,6 @@ async fn test_maybe_compact_context_skips_when_context_window_budget_has_room() 
         runtime_config,
         definition_persona_dirs: Vec::new(),
         prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
-        turn_state: TurnState::default(),
     };
 
     let original_len = state.machine.tape_len();
@@ -261,7 +251,6 @@ async fn test_auto_pre_turn_soft_compaction_flushes_memory_before_compaction() {
 
     let mut state = RuntimeLoopState {
         machine,
-        current_submission_id: None,
         environment: namespace_environment_with_provider(SequencedMockProvider::new(vec![
             SequencedStep::Success(memory_flush_json_response()),
             SequencedStep::Success("Summary after soft-threshold compaction".to_string()),
@@ -270,7 +259,6 @@ async fn test_auto_pre_turn_soft_compaction_flushes_memory_before_compaction() {
         runtime_config,
         definition_persona_dirs: Vec::new(),
         prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
-        turn_state: TurnState::default(),
     };
 
     let mut events = vec![];
@@ -354,7 +342,6 @@ async fn test_auto_pre_turn_soft_compaction_continues_after_memory_flush_failure
 
     let mut state = RuntimeLoopState {
         machine,
-        current_submission_id: None,
         environment: namespace_environment_with_provider(SequencedMockProvider::new(vec![
             SequencedStep::Error("synthetic memory flush failure".to_string()),
             SequencedStep::Success("Summary after failed memory flush".to_string()),
@@ -363,7 +350,6 @@ async fn test_auto_pre_turn_soft_compaction_continues_after_memory_flush_failure
         runtime_config,
         definition_persona_dirs: Vec::new(),
         prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
-        turn_state: TurnState::default(),
     };
 
     let mut events = vec![];
@@ -450,7 +436,6 @@ async fn test_auto_pre_turn_soft_compaction_skips_memory_flush_when_nothing_is_d
 
     let mut state = RuntimeLoopState {
         machine,
-        current_submission_id: None,
         environment: namespace_environment_with_provider(SequencedMockProvider::new(vec![
             SequencedStep::Success(
                 "{\"why\":\"\",\"key_decisions\":[],\"constraints\":[],\"next_steps\":[],\"important_refs\":[]}"
@@ -462,7 +447,6 @@ async fn test_auto_pre_turn_soft_compaction_skips_memory_flush_when_nothing_is_d
         runtime_config,
         definition_persona_dirs: Vec::new(),
         prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
-        turn_state: TurnState::default(),
     };
 
     let mut events = vec![];
@@ -550,7 +534,6 @@ async fn test_auto_pre_turn_soft_compaction_records_already_flushed_cycle_skip()
 
     let mut state = RuntimeLoopState {
         machine,
-        current_submission_id: None,
         environment: namespace_environment_with_provider(SequencedMockProvider::new(vec![
             SequencedStep::Success("Summary after already-flushed-cycle skip".to_string()),
         ])),
@@ -558,7 +541,6 @@ async fn test_auto_pre_turn_soft_compaction_records_already_flushed_cycle_skip()
         runtime_config,
         definition_persona_dirs: Vec::new(),
         prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
-        turn_state: TurnState::default(),
     };
 
     let mut events = vec![];
@@ -643,7 +625,6 @@ async fn test_auto_pre_turn_hard_compaction_skips_memory_flush() {
 
     let mut state = RuntimeLoopState {
         machine,
-        current_submission_id: None,
         environment: namespace_environment_with_provider(SequencedMockProvider::new(vec![
             SequencedStep::Success("Summary at hard threshold".to_string()),
         ])),
@@ -651,7 +632,6 @@ async fn test_auto_pre_turn_hard_compaction_skips_memory_flush() {
         runtime_config,
         definition_persona_dirs: Vec::new(),
         prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
-        turn_state: TurnState::default(),
     };
 
     let mut events = vec![];
@@ -706,7 +686,6 @@ async fn test_manual_compaction_bypasses_automatic_thresholds_without_memory_flu
 
     let mut state = RuntimeLoopState {
         machine,
-        current_submission_id: None,
         environment: namespace_environment_with_provider(DelayedMockProvider::new(
             tokio::time::Duration::from_millis(0),
             "Manual compaction below threshold",
@@ -715,7 +694,6 @@ async fn test_manual_compaction_bypasses_automatic_thresholds_without_memory_flu
         runtime_config,
         definition_persona_dirs: Vec::new(),
         prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
-        turn_state: TurnState::default(),
     };
 
     let mut events = vec![];
@@ -761,7 +739,6 @@ async fn test_maybe_compact_context_allows_mid_turn_emergency_near_hard_limit() 
 
     let mut state = RuntimeLoopState {
         machine,
-        current_submission_id: None,
         environment: namespace_environment_with_provider(DelayedMockProvider::new(
             tokio::time::Duration::from_millis(0),
             "Summary from emergency mid-turn compaction",
@@ -770,7 +747,6 @@ async fn test_maybe_compact_context_allows_mid_turn_emergency_near_hard_limit() 
         runtime_config,
         definition_persona_dirs: Vec::new(),
         prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
-        turn_state: TurnState::default(),
     };
 
     let mut emit = |_event: Event| async {};

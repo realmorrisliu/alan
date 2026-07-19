@@ -10,7 +10,6 @@ use super::turn_driver::{
     NAMESPACE_PENDING_RESPONSE_POLL_INTERVAL, TurnInputBroker, drive_turn_submission_with_cancel,
     is_turn_inband_submission, namespace_pending_resume_submission, should_drive_turn_submission,
 };
-use super::turn_state::TurnState;
 use super::{NamespaceRuntimeEnvironment, RuntimeLoopState};
 use crate::agent_machine::AgentMachine;
 use alan_agent_protocol::{Event, InputMode, Submission};
@@ -28,11 +27,11 @@ use tracing::{debug, error, info, warn};
 /// Requeue leftover inband submissions from turn state and broker to the outer queue.
 async fn requeue_leftover_inband_submissions(
     broker: &TurnInputBroker,
-    turn_state: &mut TurnState,
+    machine: &mut AgentMachine,
     queued_submissions: &mut VecDeque<QueuedRuntimeItem>,
 ) -> usize {
     let broker_drained = broker.drain().await;
-    let turn_drained = turn_state.drain_buffered_inband_submissions();
+    let turn_drained = machine.drain_buffered_inband_submissions();
     let count = broker_drained.len() + turn_drained.len();
     for submission in turn_drained {
         push_submission_ahead_of_deferred(queued_submissions, submission);
@@ -47,7 +46,7 @@ async fn requeue_leftover_inband_submissions(
 /// 2. The `active_turn_broker` - channel for in-turn submissions during active turn execution.
 enum QueuedRuntimeItem {
     Submission(Submission),
-    Deferred(super::agent_loop::DeferredRuntimeAction),
+    Deferred(crate::agent_machine::DeferredRuntimeAction),
 }
 
 fn push_submission_ahead_of_deferred(
@@ -75,7 +74,7 @@ fn preserves_paused_terminal_state(result: &Result<()>, has_pending_interaction:
 async fn read_pending_namespace_resume_submission(
     state: &RuntimeLoopState,
 ) -> Option<Result<Submission>> {
-    if !state.turn_state.has_pending_interaction() {
+    if !state.machine.has_pending_interaction() {
         return None;
     }
 
@@ -121,15 +120,15 @@ impl RuntimeSubmissionQueues {
         push_submission_ahead_of_deferred(&mut self.outer_queue, submission);
     }
 
-    fn push_outer_deferred(&mut self, action: super::agent_loop::DeferredRuntimeAction) {
+    fn push_outer_deferred(&mut self, action: crate::agent_machine::DeferredRuntimeAction) {
         self.outer_queue
             .push_back(QueuedRuntimeItem::Deferred(action));
     }
 
-    async fn requeue_active_turn_leftovers(&mut self, turn_state: &mut TurnState) -> usize {
+    async fn requeue_active_turn_leftovers(&mut self, machine: &mut AgentMachine) -> usize {
         requeue_leftover_inband_submissions(
             &self.active_turn_broker,
-            turn_state,
+            machine,
             &mut self.outer_queue,
         )
         .await
@@ -431,13 +430,11 @@ fn spawn_with_prepared_runtime_environment(
         // Build agent loop state
         let mut state = RuntimeLoopState {
             machine,
-            current_submission_id: None,
             environment,
             core_config,
             runtime_config,
             definition_persona_dirs: prompt_cache_persona_dirs.clone(),
             prompt_cache,
-            turn_state: super::TurnState::default(),
         };
         match super::ui_surfaces::initialize(state.namespace_environment()).await {
             Ok(()) => {}
@@ -507,7 +504,7 @@ fn spawn_with_prepared_runtime_environment(
                 None
             } else {
                 let namespace_control = state.namespace_environment().clone();
-                let poll_pending_namespace_response = state.turn_state.has_pending_interaction();
+                let poll_pending_namespace_response = state.machine.has_pending_interaction();
                 tokio::select! {
                     submission = sub_rx.recv() => submission.map(QueuedRuntimeItem::Submission),
                     namespace_submission = namespace_input_rx.recv() => {
@@ -571,7 +568,7 @@ fn spawn_with_prepared_runtime_environment(
                 QueuedRuntimeItem::Submission(submission) => {
                     debug!(?submission.id, "Received submission");
                     let drive_as_turn_submission = should_drive_turn_submission(&submission.op);
-                    state.current_submission_id = Some(submission.id.clone());
+                    state.machine.accept_submission(submission.id.clone());
 
                     let cancel = CancellationToken::new();
                     let mut emit = |_event: Event| async {};
@@ -604,7 +601,7 @@ fn spawn_with_prepared_runtime_environment(
                                 let terminal_ui_result = match &result {
                                     Ok(()) if preserves_paused_terminal_state(
                                         &result,
-                                        state.turn_state.has_pending_interaction(),
+                                        state.machine.has_pending_interaction(),
                                     ) => Ok(()),
                                     Ok(()) => super::ui_surfaces::turn_completed(
                                         &namespace_heartbeat,
@@ -622,7 +619,7 @@ fn spawn_with_prepared_runtime_environment(
                                 }
                                 if drive_as_turn_submission {
                                     let _ = queues
-                                        .requeue_active_turn_leftovers(&mut state.turn_state)
+                                        .requeue_active_turn_leftovers(&mut state.machine)
                                         .await;
                                 }
                                 if let Err(e) = result {
@@ -631,12 +628,12 @@ fn spawn_with_prepared_runtime_environment(
                                 }
                                 queues.outer_queue.extend(
                                     state
-                                        .turn_state
+                                        .machine
                                         .drain_deferred_runtime_actions()
                                         .into_iter()
                                         .map(QueuedRuntimeItem::Deferred),
                                 );
-                                state.current_submission_id = None;
+                                state.machine.finish_submission();
                                 break;
                             }
                             incoming = sub_rx.recv(), if !submissions_closed => {

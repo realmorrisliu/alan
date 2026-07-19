@@ -15,7 +15,7 @@
             metadata: system_store.path().join("metadata"),
         });
         state
-            .turn_state
+            .machine
             .set_confirmation(mount_escalation_pending_confirmation_with(
                 approved_host.path().to_str().unwrap(),
                 "read_write",
@@ -93,7 +93,7 @@
             namespace_environment_with_mount_applicator_for_test(applicator.clone());
         bind_test_source_mount(&mut state, host_mount_root.path());
         state
-            .turn_state
+            .machine
             .set_confirmation(mount_escalation_pending_confirmation_with(
                 approved_host.path().to_str().unwrap(),
                 "read_only",
@@ -137,7 +137,7 @@
             namespace_environment_with_mount_applicator_for_test(applicator.clone());
         bind_test_source_mount(&mut state, host_mount_root.path());
         state
-            .turn_state
+            .machine
             .set_confirmation(mount_escalation_pending_confirmation_with(
                 approved_host.path().to_str().unwrap(),
                 "read_write",
@@ -184,7 +184,7 @@
 
         for _ in 0..2 {
             state
-                .turn_state
+                .machine
                 .set_confirmation(mount_escalation_pending_confirmation_with(
                     approved_host.path().to_str().unwrap(),
                     "read_write",
@@ -230,7 +230,7 @@
 
         for host in [first_host.path(), replacement_host.path()] {
             state
-                .turn_state
+                .machine
                 .set_confirmation(mount_escalation_pending_confirmation_with(
                     host.to_str().unwrap(),
                     "read_write",
@@ -278,7 +278,7 @@
         state.environment = namespace_environment_with_mount_applicator_for_test(applicator);
         bind_test_source_mount(&mut state, host_mount_root.path());
         state
-            .turn_state
+            .machine
             .set_confirmation(mount_escalation_pending_confirmation_with(
                 approved_host.path().to_str().unwrap(),
                 "read_only",
@@ -321,7 +321,7 @@
                 .unwrap();
         bind_test_source_mount(&mut state, host_mount_root.path());
         state
-            .turn_state
+            .machine
             .set_confirmation(mount_escalation_pending_confirmation_with(
                 approved_host.path().to_str().unwrap(),
                 "read_write",
@@ -379,7 +379,7 @@
         let host_path = std::fs::canonicalize(std::env::current_dir().unwrap()).unwrap();
         let host_path = host_path.display().to_string();
         state
-            .turn_state
+            .machine
             .set_confirmation(mount_escalation_pending_confirmation_with(
                 &host_path,
                 "read_write",
@@ -426,7 +426,7 @@
                 .await
                 .unwrap();
         state
-            .turn_state
+            .machine
             .set_confirmation(crate::approval::PendingConfirmation {
                 checkpoint_id: "forged_mount".to_string(),
                 checkpoint_type: crate::approval::MOUNT_ESCALATION_CHECKPOINT_TYPE.to_string(),
@@ -543,7 +543,7 @@
     async fn test_handle_structured_user_input_wrong_id() {
         let mut state = create_test_state();
         state
-            .turn_state
+            .machine
             .set_structured_input(crate::approval::PendingStructuredInputRequest {
                 request_id: "other_id".to_string(),
                 title: "Test".to_string(),
@@ -581,7 +581,7 @@
     async fn test_handle_structured_user_input_success() {
         let mut state = create_test_state();
         state
-            .turn_state
+            .machine
             .set_structured_input(crate::approval::PendingStructuredInputRequest {
                 request_id: "req_123".to_string(),
                 title: "Test".to_string(),

@@ -13,7 +13,7 @@ use tempfile::TempDir;
 use crate::{
     config::Config,
     runtime::{
-        NamespaceRuntimeEnvironment, RuntimeConfig, RuntimeLoopState, TurnState,
+        NamespaceRuntimeEnvironment, RuntimeConfig, RuntimeLoopState,
         prompt_cache::PromptAssemblyCache,
     },
 };
@@ -430,13 +430,11 @@ async fn deferred_memory_promotion_uses_namespace_llmfs() {
     let root = InProcessTransport::new(Arc::new(MountFs::new(namespace)));
     let mut state = RuntimeLoopState {
         machine: AgentMachine::new(),
-        current_submission_id: None,
         environment: NamespaceRuntimeEnvironment::new(root, "/agent/1", "default"),
         core_config: Config::default(),
         runtime_config: RuntimeConfig::default(),
         definition_persona_dirs: Vec::new(),
         prompt_cache: PromptAssemblyCache::new(Vec::new()),
-        turn_state: TurnState::default(),
     };
     let job = TurnMemoryPromotionJob {
         memory_dir: memory_dir.clone(),

@@ -659,7 +659,7 @@ async fn test_run_turn_performs_mid_turn_compaction_before_follow_up_generation(
         state.machine.tape_summary(),
         Some("Mid-turn compaction summary")
     );
-    assert_eq!(state.turn_state.compactions_this_turn(), 1);
+    assert_eq!(state.machine.compactions_this_turn(), 1);
     assert!(
         state
             .machine
@@ -736,8 +736,8 @@ async fn test_run_turn_resets_mid_turn_compaction_budget_for_new_turns() {
     state.runtime_config.compaction_keep_last = 1;
     state.runtime_config.context_window_tokens = 512;
     state.runtime_config.compaction_hard_trigger_ratio = 0.5;
-    state.turn_state.record_auto_mid_turn_compaction(256);
-    state.turn_state.record_auto_mid_turn_compaction(512);
+    state.machine.record_auto_mid_turn_compaction(256);
+    state.machine.record_auto_mid_turn_compaction(512);
 
     let cancel = CancellationToken::new();
     let mut emit = |_event: Event| async {};
@@ -758,7 +758,7 @@ async fn test_run_turn_resets_mid_turn_compaction_budget_for_new_turns() {
         state.machine.tape_summary(),
         Some("Mid-turn compaction summary")
     );
-    assert_eq!(state.turn_state.compactions_this_turn(), 1);
+    assert_eq!(state.machine.compactions_this_turn(), 1);
 }
 
 #[tokio::test]

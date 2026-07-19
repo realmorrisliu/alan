@@ -11,7 +11,7 @@ use tokio_util::sync::CancellationToken;
 use crate::llm::ToolDefinition;
 use crate::skills::{DelegatedSkillResult, DelegatedSkillResultStatus};
 
-use super::agent_loop::{NormalizedToolCall, RuntimeLoopState};
+use super::agent_loop::RuntimeLoopState;
 use super::child_agents::spawn_child_runtime_cancellable;
 use super::delegated_child_run::ChildRuntimeResult;
 use super::delegated_skill_evidence::{
@@ -22,6 +22,7 @@ use super::delegation_capabilities::{
 };
 use super::turn_support::{check_turn_cancelled, tool_result_preview};
 use super::virtual_tool::VirtualToolOutcome;
+use crate::agent_machine::NormalizedToolCall;
 
 pub(super) const MAX_DELEGATED_SKILL_ID_CHARS: usize = 120;
 pub(super) const MAX_DELEGATED_TARGET_CHARS: usize = 120;
@@ -383,7 +384,7 @@ fn resolve_delegated_skill_invocation(
     request: &DelegatedSkillInvocationRequest,
 ) -> DelegatedSkillSpawnResult<SpawnSpec> {
     let active_skill = state
-        .turn_state
+        .machine
         .active_skills()
         .iter()
         .find(|skill| skill.metadata.id == request.skill_id)

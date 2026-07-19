@@ -493,8 +493,7 @@ fn make_parent_state_with_capability_view(
     machine.add_assistant_message("Parent assistant explains the approach", None);
     machine.add_tool_message("tool_call_1", "alpha", json!({"summary": "tool output"}));
 
-    let mut turn_state = super::super::TurnState::default();
-    turn_state.set_plan_snapshot(
+    machine.set_plan_snapshot(
         Some("Finish the delegated check".to_string()),
         vec![alan_agent_protocol::PlanItem {
             id: "plan-1".to_string(),
@@ -511,7 +510,6 @@ fn make_parent_state_with_capability_view(
 
     RuntimeLoopState {
         machine,
-        current_submission_id: None,
         environment: namespace_environment_for_parent_test_with_services(
             Arc::new(alan_routefs::RouteFs::new()),
             llmfs,
@@ -529,7 +527,6 @@ fn make_parent_state_with_capability_view(
             Vec::new(),
             SkillHostCapabilities::with_tools(["alpha", "beta"]),
         ),
-        turn_state,
     }
 }
 

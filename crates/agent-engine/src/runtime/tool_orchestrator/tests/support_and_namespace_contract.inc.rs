@@ -2,7 +2,7 @@
     use crate::{
         agent_machine::AgentMachine,
         config::Config,
-        runtime::{NamespaceRuntimeEnvironment, TurnState},
+        runtime::NamespaceRuntimeEnvironment,
         tools::{Tool, ToolContext, ToolRegistry, ToolResult},
     };
     use alan_agent_protocol::ToolCapability;
@@ -372,13 +372,11 @@
 
         RuntimeLoopState {
             machine,
-            current_submission_id: None,
             environment: NamespaceRuntimeEnvironment::new(root, "/agent/1", "default"),
             core_config: config,
             runtime_config,
             definition_persona_dirs: Vec::new(),
             prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
-            turn_state: TurnState::default(),
         }
     }
 
@@ -460,13 +458,11 @@
         let shell = Shell::new(root.clone());
         let state = RuntimeLoopState {
             machine: AgentMachine::new(),
-            current_submission_id: None,
             environment: NamespaceRuntimeEnvironment::new(root, "/agent/1", "default"),
             core_config: Config::default(),
             runtime_config: super::super::RuntimeConfig::default(),
             definition_persona_dirs: Vec::new(),
             prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
-            turn_state: TurnState::default(),
         };
         (state, shell)
     }
@@ -648,7 +644,6 @@
         };
         RuntimeLoopState {
             machine,
-            current_submission_id: None,
             environment: NamespaceRuntimeEnvironment::new(root, agent_path, "default")
                 .with_launch_context(launch_context)
                 .with_tool_process_context(alan_kernel::Pid(1), tool_runner),
@@ -656,7 +651,6 @@
             runtime_config: super::super::RuntimeConfig::default(),
             definition_persona_dirs: Vec::new(),
             prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
-            turn_state: TurnState::default(),
         }
     }
 

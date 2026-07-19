@@ -10,10 +10,11 @@ use crate::approval::{
 };
 use crate::llm::ToolDefinition;
 
-use super::agent_loop::{NormalizedToolCall, RuntimeLoopState};
+use super::agent_loop::RuntimeLoopState;
 use super::tool_policy::{ToolPolicyDecision, evaluate_tool_policy};
 use super::turn_support::tool_result_preview;
 use super::virtual_tool::VirtualToolOutcome;
+use crate::agent_machine::NormalizedToolCall;
 
 const RESERVED_MOUNT_NAMESPACE_ROOTS: &[&str] = &["llm", "mem", "route"];
 
@@ -233,7 +234,7 @@ where
         },
         "live_applied": false,
     });
-    details = append_skill_permission_hints(details, state.turn_state.active_skills());
+    details = append_skill_permission_hints(details, state.machine.active_skills());
 
     let pending = PendingConfirmation {
         checkpoint_id: format!("{MOUNT_ESCALATION_CHECKPOINT_PREFIX}{}", tool_call.id),
@@ -274,7 +275,7 @@ where
         Some(escalation_audit),
     );
     state
-        .turn_state
+        .machine
         .set_confirmation_for_request(request_id.clone(), pending.clone());
     super::ui_surfaces::paused(state.namespace_environment()).await?;
     emit(Event::Yield {

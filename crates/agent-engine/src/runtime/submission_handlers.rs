@@ -12,13 +12,12 @@ use crate::approval::{
 use crate::tape::ContentPart;
 
 use super::agent_loop::{
-    ApprovedMountGrant, ApprovedMountGrantAccess, NamespaceMountApplication, NormalizedToolCall,
-    RuntimeLoopState,
+    ApprovedMountGrant, ApprovedMountGrantAccess, NamespaceMountApplication, RuntimeLoopState,
 };
 use super::compaction::{CompactionRequest, maybe_compact_context_for_request};
 use super::turn_executor::TurnRunKind;
-use super::turn_state::PendingYield;
 use super::turn_support::cancel_current_task;
+use crate::agent_machine::{NormalizedToolCall, PendingYield};
 
 #[derive(Debug, Clone)]
 pub(super) enum RuntimeOpAction {
@@ -65,7 +64,7 @@ where
                 return Ok(RuntimeOpAction::NoTurn);
             }
             let rollback = state.machine.rollback_last_turns(turns);
-            state.turn_state.clear_plan_snapshot();
+            state.machine.clear_plan_snapshot();
             super::ui_surfaces::plan_updated(state.namespace_environment(), None, Vec::new())
                 .await?;
             super::ui_surfaces::rollback(state.namespace_environment(), rollback.removed_turns)
@@ -111,7 +110,7 @@ where
         Op::Turn { parts, context } => {
             let reasoning_effort = context.as_ref().and_then(|c| c.reasoning_effort);
 
-            let queued_next_turn_inputs = state.turn_state.drain_next_turn_inputs();
+            let queued_next_turn_inputs = state.machine.drain_next_turn_inputs();
             let queued_next_turn_count = queued_next_turn_inputs.len();
             let mut merged_parts = Vec::new();
             for queued_parts in queued_next_turn_inputs {
@@ -119,8 +118,8 @@ where
             }
             merged_parts.extend(parts);
 
-            state.turn_state.clear();
-            state.turn_state.set_active_turn_request_control_intent(
+            state.machine.reset_turn();
+            state.machine.set_active_turn_request_control_intent(
                 crate::RequestControlIntent::reasoning_effort(reasoning_effort),
             );
 
@@ -142,8 +141,7 @@ where
         Op::Input { parts, mode } => {
             match mode {
                 InputMode::Steer => {
-                    if !(state.turn_state.is_turn_active()
-                        || state.turn_state.has_pending_interaction())
+                    if !(state.machine.is_turn_active() || state.machine.has_pending_interaction())
                     {
                         emit(Event::Error {
                             message: "Input(mode=steer) requires an active or pending turn. Use Op::Turn to start a new turn.".to_string(),
@@ -160,13 +158,11 @@ where
                     });
                 }
                 InputMode::FollowUp => {
-                    if state.turn_state.is_turn_active()
-                        || state.turn_state.has_pending_interaction()
-                    {
+                    if state.machine.is_turn_active() || state.machine.has_pending_interaction() {
                         // In normal runtime flow this path should be handled by in-band queueing in
                         // turn_driver. Keep this as a safe fallback.
                         state
-                            .turn_state
+                            .machine
                             .push_buffered_inband_submission(Submission::new(Op::Input {
                                 parts,
                                 mode: InputMode::FollowUp,
@@ -179,7 +175,7 @@ where
                         return Ok(RuntimeOpAction::NoTurn);
                     }
 
-                    state.turn_state.clear();
+                    state.machine.reset_turn();
                     return Ok(RuntimeOpAction::RunTurn {
                         turn_kind: TurnRunKind::NewTurn,
                         user_input: Some(parts),
@@ -187,7 +183,7 @@ where
                     });
                 }
                 InputMode::NextTurn => {
-                    let queued_size = state.turn_state.queue_next_turn_input(parts);
+                    let queued_size = state.machine.queue_next_turn_input(parts);
                     match queued_size {
                         Some(size) => {
                             let message = format!(
@@ -219,7 +215,7 @@ where
             content,
         } => {
             let result = resume_content_to_value(&content);
-            match state.turn_state.take_pending(&request_id) {
+            match state.machine.take_pending(&request_id) {
                 Some(PendingYield::Confirmation(pending)) => {
                     let choice = result
                         .get("choice")
@@ -368,9 +364,7 @@ async fn handle_confirmation_resolution(
     modifications: Option<String>,
 ) -> Result<RuntimeOpAction> {
     let replay_tool_batch = if replays_tool_calls(&pending.checkpoint_type) {
-        state
-            .turn_state
-            .take_tool_replay_batch(&pending.checkpoint_id)
+        state.machine.take_tool_replay_batch(&pending.checkpoint_id)
     } else {
         None
     };

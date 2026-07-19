@@ -10,7 +10,7 @@ use crate::approval::MOUNT_ESCALATION_CHECKPOINT_TYPE;
 use crate::approval::{PendingConfirmation, append_skill_permission_hints};
 use crate::llm::ToolDefinition;
 
-use super::agent_loop::{NormalizedToolCall, RuntimeLoopState};
+use super::agent_loop::RuntimeLoopState;
 use super::child_run_termination_tool::{
     handle_terminate_child_run, terminate_child_run_tool_definition,
 };
@@ -21,6 +21,7 @@ pub(super) use super::mount_request_tool::parse_mount_request;
 use super::mount_request_tool::{handle_request_mount, request_mount_tool_definition};
 use super::turn_support::{check_turn_cancelled, tool_result_preview};
 pub(super) use super::virtual_tool::VirtualToolOutcome;
+use crate::agent_machine::NormalizedToolCall;
 
 pub(super) fn virtual_tool_definitions(include_delegated_skill: bool) -> Vec<ToolDefinition> {
     let mut defs = vec![
@@ -63,10 +64,8 @@ where
             .await;
 
             if let Some(mut pending) = parse_confirmation_request(&tool_call.id, tool_arguments) {
-                pending.details = append_skill_permission_hints(
-                    pending.details,
-                    state.turn_state.active_skills(),
-                );
+                pending.details =
+                    append_skill_permission_hints(pending.details, state.machine.active_skills());
                 let request_id = state
                     .write_namespace_confirmation_request(&pending)
                     .await?
@@ -91,7 +90,7 @@ where
                     true,
                 );
                 state
-                    .turn_state
+                    .machine
                     .set_confirmation_for_request(request_id.clone(), pending.clone());
                 super::ui_surfaces::paused(state.namespace_environment()).await?;
                 emit(Event::Yield {
@@ -177,7 +176,7 @@ where
                     true,
                 );
                 state
-                    .turn_state
+                    .machine
                     .set_structured_input_for_request(request_id.clone(), request.clone());
                 super::ui_surfaces::paused(state.namespace_environment()).await?;
                 emit(Event::Yield {
@@ -230,7 +229,7 @@ where
             .await;
             match parse_plan_update(tool_arguments) {
                 Some((explanation, items)) => {
-                    state.turn_state.set_plan_snapshot_at_message_count(
+                    state.machine.set_plan_snapshot_at_message_count(
                         explanation.clone(),
                         items.clone(),
                         state.machine.messages().len(),

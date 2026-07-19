@@ -60,8 +60,8 @@ fn rust_item_body<'a>(source: &'a str, marker: &str) -> &'a str {
 #[test]
 fn runtime_state_and_handles_have_no_parallel_capability_or_event_authority() {
     let loop_source = read_runtime_source("agent_loop.rs");
-    let state = rust_item_body(&loop_source, "pub struct RuntimeLoopState");
-    assert!(state.contains("pub environment: NamespaceRuntimeEnvironment"));
+    let state = rust_item_body(&loop_source, "pub(crate) struct RuntimeLoopState");
+    assert!(state.contains("pub(crate) environment: NamespaceRuntimeEnvironment"));
 
     let engine_source = read_runtime_source("engine.rs");
     let controller_source = read_runtime_source("controller.rs");
@@ -311,7 +311,7 @@ fn agent_machine_state_is_not_a_public_or_runtime_field_surface() {
 
     let machine = read_crate_source("agent_machine.rs");
     let state = rust_item_body(&machine, "pub(crate) struct AgentMachine");
-    for private_field in ["tape", "recorder", "has_active_task"] {
+    for private_field in ["tape", "recorder", "has_active_task", "transition_state"] {
         assert!(state.contains(&format!("{private_field}:")));
         assert!(
             !state.contains(&format!("pub {private_field}:")),
@@ -319,7 +319,37 @@ fn agent_machine_state_is_not_a_public_or_runtime_field_surface() {
         );
     }
 
+    let transition_state = read_crate_source("agent_machine/transition_state.rs");
+    let transition_fields = rust_item_body(
+        &transition_state,
+        "pub(super) struct MachineTransitionState",
+    );
+    assert!(transition_fields.contains("current_submission_id:"));
+    assert!(!transition_fields.contains("pub current_submission_id:"));
+    assert!(
+        !std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("src/runtime/turn_state.rs")
+            .exists(),
+        "turn-local state must not retain a second runtime owner"
+    );
+
+    let loop_source = read_runtime_source("agent_loop.rs");
+    let runtime_state = rust_item_body(&loop_source, "pub(crate) struct RuntimeLoopState");
+    for displaced_field in ["current_submission_id", "turn_state"] {
+        assert!(
+            !runtime_state.contains(&format!("{displaced_field}:")),
+            "RuntimeLoopState must not retain Machine field {displaced_field}"
+        );
+    }
+
     for (path, source) in read_rust_sources_under("runtime") {
+        for displaced_surface in ["TurnState", ".turn_state"] {
+            assert!(
+                !source.contains(displaced_surface),
+                "{} retains displaced Machine state surface {displaced_surface}",
+                path.display()
+            );
+        }
         for forbidden in [
             "machine.tape.",
             "machine.recorder.",
