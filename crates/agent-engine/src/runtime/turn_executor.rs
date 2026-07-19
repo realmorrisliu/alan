@@ -7,13 +7,12 @@ use tracing::{debug, error, info, warn};
 use crate::llm::build_generation_request;
 
 use super::compaction::{CompactionRequest, maybe_compact_context_with_cancel};
+use super::loop_guard::ToolLoopGuard;
 use super::response_guardrails::{
     AssistantDraft, GuardrailDecision, ResponseGuardrailContext, ResponseGuardrails,
 };
-use super::tool_orchestrator::{
-    ToolBatchOrchestratorOutcome, ToolOrchestratorInputs, ToolTurnOrchestrator,
-};
-use super::transition::RuntimeLoopState;
+use super::tool_batch::{ToolBatchOrchestratorOutcome, ToolOrchestratorInputs};
+use super::transition::{RuntimeLoopState, orchestrate_tool_batch};
 use super::turn_driver::TurnInputBroker;
 use super::turn_support::{
     check_turn_cancelled, emit_streaming_chunks, emit_task_completed_success, emit_thinking_chunks,
@@ -380,8 +379,8 @@ where
     } else {
         Some(state.runtime_config.max_tool_loops)
     };
-    let mut tool_orchestrator =
-        ToolTurnOrchestrator::new(max_tool_loops, state.runtime_config.tool_repeat_limit);
+    let mut tool_loop_guard =
+        ToolLoopGuard::new(max_tool_loops, state.runtime_config.tool_repeat_limit);
     let mut response_guardrails = ResponseGuardrails::default();
     let mut pending_guardrail_instruction: Option<String> = None;
     loop {
@@ -614,17 +613,17 @@ where
         }
 
         if !tool_calls.is_empty() {
-            match tool_orchestrator
-                .orchestrate_tool_batch(
-                    state,
-                    &tool_calls,
-                    ToolOrchestratorInputs {
-                        cancel,
-                        steering_broker,
-                    },
-                    emit,
-                )
-                .await?
+            match orchestrate_tool_batch(
+                &mut tool_loop_guard,
+                state,
+                &tool_calls,
+                ToolOrchestratorInputs {
+                    cancel,
+                    steering_broker,
+                },
+                emit,
+            )
+            .await?
             {
                 ToolBatchOrchestratorOutcome::ContinueTurnLoop { .. } => {
                     maybe_compact_mid_turn_if_needed(

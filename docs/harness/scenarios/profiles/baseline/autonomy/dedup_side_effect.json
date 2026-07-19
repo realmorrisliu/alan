@@ -3,7 +3,7 @@
   "category": "autonomy",
   "description": "Validate side-effect idempotency dedupe for process effects and skip duplicate execution.",
   "blocking": true,
-  "command": "cargo test -p alan-agent-engine runtime::tool_orchestrator::tests::test_side_effect_dedupe_for_process_effects -- --exact",
+  "command": "cargo test -p alan-agent-engine runtime::transition::tests::tool_batch::test_side_effect_dedupe_for_process_effects -- --exact",
   "assertions": [
     "same process side effect does not execute twice",
     "dedupe replay returns prior tool payload",

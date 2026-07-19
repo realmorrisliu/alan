@@ -44,7 +44,7 @@
         state
             .machine
             .set_turn_activity(crate::agent_machine::TurnActivityState::Running);
-        let mut orchestrator = ToolTurnOrchestrator::new(None, 4);
+        let mut loop_guard = ToolLoopGuard::new(None, 4);
         let cancel = CancellationToken::new();
 
         // Cancel immediately
@@ -67,9 +67,14 @@
             steering_broker: None,
         };
 
-        let result = orchestrator
-            .orchestrate_tool_batch(&mut state, &tool_calls, inputs, &mut emit)
-            .await;
+        let result = orchestrate_tool_batch(
+            &mut loop_guard,
+            &mut state,
+            &tool_calls,
+            inputs,
+            &mut emit,
+        )
+        .await;
 
         // Should complete without panic even when cancelled
         assert!(result.is_ok());
@@ -78,7 +83,7 @@
     #[tokio::test]
     async fn test_invalid_virtual_tool_ends_turn() {
         let mut state = create_test_state();
-        let mut orchestrator = ToolTurnOrchestrator::new(None, 4);
+        let mut loop_guard = ToolLoopGuard::new(None, 4);
         let cancel = CancellationToken::new();
 
         let mut events = vec![];
@@ -101,9 +106,14 @@
             steering_broker: None,
         };
 
-        let result = orchestrator
-            .orchestrate_tool_batch(&mut state, &tool_calls, inputs, &mut emit)
-            .await;
+        let result = orchestrate_tool_batch(
+            &mut loop_guard,
+            &mut state,
+            &tool_calls,
+            inputs,
+            &mut emit,
+        )
+        .await;
 
         assert!(result.is_ok());
         // Invalid virtual tool should end turn
@@ -120,7 +130,7 @@
     #[tokio::test]
     async fn test_multiple_tools_in_batch() {
         let mut state = create_test_state();
-        let mut orchestrator = ToolTurnOrchestrator::new(None, 4);
+        let mut loop_guard = ToolLoopGuard::new(None, 4);
         let cancel = CancellationToken::new();
 
         let mut events = vec![];
@@ -153,9 +163,14 @@
             steering_broker: None,
         };
 
-        let result = orchestrator
-            .orchestrate_tool_batch(&mut state, &tool_calls, inputs, &mut emit)
-            .await;
+        let result = orchestrate_tool_batch(
+            &mut loop_guard,
+            &mut state,
+            &tool_calls,
+            inputs,
+            &mut emit,
+        )
+        .await;
 
         assert!(result.is_ok());
         // Should have two update_plan completion events.
@@ -752,7 +767,7 @@
     async fn test_tool_loop_guard_triggers() {
         let mut state = create_test_state();
         // Set max loops to a small number
-        let mut orchestrator = ToolTurnOrchestrator::new(Some(2), 4);
+        let mut loop_guard = ToolLoopGuard::new(Some(2), 4);
         let cancel = CancellationToken::new();
 
         let mut events = vec![];
@@ -779,9 +794,14 @@
             steering_broker: None,
         };
 
-        let result = orchestrator
-            .orchestrate_tool_batch(&mut state, &tool_calls, inputs, &mut emit)
-            .await;
+        let result = orchestrate_tool_batch(
+            &mut loop_guard,
+            &mut state,
+            &tool_calls,
+            inputs,
+            &mut emit,
+        )
+        .await;
 
         assert!(result.is_ok());
         // After max loops, should end turn
