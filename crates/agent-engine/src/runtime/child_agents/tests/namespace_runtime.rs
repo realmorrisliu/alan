@@ -553,6 +553,7 @@ async fn child_namespace_launch_and_supervisor_reattachment_use_proc_pid_files()
     assert_eq!(
         nested
             .environment
+            .process_files()
             .read_process_exit_code(&nested.pid)
             .await
             .unwrap(),
@@ -602,7 +603,7 @@ async fn child_namespace_launch_and_supervisor_reattachment_use_proc_pid_files()
         "child-spawned processes inherit mounted tools: {tool_namespace:?}"
     );
 
-    let process_reader = launch.environment.clone();
+    let process_reader = launch.environment.process_files();
     let process_pid = launch.pid.clone();
     let agent_files = launch.environment.agent_files();
     agent_files
@@ -620,7 +621,7 @@ async fn child_namespace_launch_and_supervisor_reattachment_use_proc_pid_files()
         timeout: None,
         process_lifecycle: launch.lifecycle,
         agent_files,
-        process_environment: launch.environment,
+        process_files: launch.environment.process_files(),
         process_pid: process_pid.clone(),
     });
 
@@ -688,7 +689,7 @@ async fn external_proc_ctl_stops_child_runtime_controller() {
     .await
     .unwrap();
     let process_pid = launch.pid.clone();
-    let process_environment = launch.environment.clone();
+    let process_files = launch.environment.process_files();
     let agent_files = launch.environment.agent_files();
     let controller = DelegatedChildRunSupervisor::new(DelegatedChildRunSupervision {
         runtime: None,
@@ -698,12 +699,12 @@ async fn external_proc_ctl_stops_child_runtime_controller() {
         timeout: None,
         process_lifecycle: launch.lifecycle,
         agent_files: agent_files.clone(),
-        process_environment: launch.environment,
+        process_files: launch.environment.process_files(),
         process_pid: process_pid.clone(),
     });
 
     assert_eq!(agent_files.ui_events_offset().await.unwrap(), 0);
-    process_environment
+    process_files
         .write_process_control_for_pid(&process_pid, "cancel")
         .await
         .unwrap();
@@ -720,7 +721,7 @@ async fn external_proc_ctl_stops_child_runtime_controller() {
             .is_some_and(|message| message.contains("/proc/<pid>/ctl"))
     );
     assert_eq!(
-        process_environment
+        process_files
             .read_process_exit_code(&process_pid)
             .await
             .unwrap(),

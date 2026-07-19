@@ -382,7 +382,7 @@ fn spawn_with_prepared_runtime_environment(
 
     // Spawn the main runtime task
     let task_handle = tokio::spawn(async move {
-        let process_path = match environment.process_path() {
+        let process_path = match environment.process_files().process_path() {
             Ok(path) => path,
             Err(err) => {
                 let _ = ready_tx.send(Err(format!("{:#}", err)));

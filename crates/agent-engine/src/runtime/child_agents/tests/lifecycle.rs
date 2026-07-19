@@ -17,7 +17,7 @@ async fn child_runtime_join_keeps_running_while_activity_file_is_fresh() {
     .await
     .unwrap();
     child.set_timeout_for_test(Duration::from_millis(200));
-    let agent_files = child.process_environment_for_test().agent_files();
+    let agent_files = child.agent_files_for_test();
     tokio::spawn(async move {
         for _ in 0..5 {
             crate::runtime::ui_surfaces::heartbeat(&agent_files)
@@ -89,7 +89,7 @@ async fn child_runtime_join_returns_promptly_after_timeout() {
     })
     .await
     .unwrap();
-    let process_environment = child.process_environment_for_test().clone();
+    let process_files = child.process_files_for_test();
     let process_pid = child.process_pid_for_test().to_string();
 
     let started_at = std::time::Instant::now();
@@ -97,7 +97,7 @@ async fn child_runtime_join_returns_promptly_after_timeout() {
 
     assert_eq!(result.status, ChildRuntimeStatus::TimedOut);
     assert_eq!(
-        process_environment
+        process_files
             .read_process_exit_code(&process_pid)
             .await
             .unwrap(),
