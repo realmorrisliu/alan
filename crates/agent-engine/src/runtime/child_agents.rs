@@ -308,7 +308,7 @@ async fn spawn_child_runtime_inner(
             timeout: spec.launch.timeout_secs.map(Duration::from_secs),
             process_lifecycle,
             agent_files: child_process_environment.agent_files(),
-            process_environment: child_process_environment,
+            process_files: child_process_environment.process_files(),
             process_pid: child_process_pid,
         },
     ))

@@ -322,6 +322,49 @@ fn agent_file_workflows_use_only_the_narrow_agent_files_handle() {
 }
 
 #[test]
+fn process_file_workflows_use_only_the_narrow_process_files_handle() {
+    let namespace = read_runtime_source("transition/namespace_environment.rs");
+    let process_files_handle =
+        rust_item_body(&namespace, "pub(crate) struct NamespaceProcessFiles");
+    for required_field in ["root: InProcessTransport", "agent_path: String"] {
+        assert!(
+            process_files_handle.contains(required_field),
+            "process files handle must retain {required_field}"
+        );
+    }
+    for forbidden_field in [
+        "llm_connection",
+        "tool_process_context",
+        "child_run_registry",
+        "input_offset",
+        "control_offset",
+    ] {
+        assert!(
+            !process_files_handle.contains(forbidden_field),
+            "process files handle must not gain {forbidden_field}"
+        );
+    }
+
+    let file_operations = read_runtime_source("transition/namespace_environment/process_files.rs");
+    assert!(file_operations.contains("impl NamespaceProcessFiles"));
+    assert!(!file_operations.contains("impl NamespaceRuntimeEnvironment"));
+
+    let supervisor = read_runtime_source("delegated_child_run/supervisor.rs");
+    assert!(supervisor.contains("process_files: NamespaceProcessFiles"));
+    assert!(!supervisor.contains("NamespaceRuntimeEnvironment"));
+    for operation in [
+        "read_process_exit_code",
+        "read_process_io_offsets",
+        "write_process_control_for_pid",
+    ] {
+        assert!(
+            supervisor.contains(&format!(".{operation}")),
+            "delegated supervisor must access {operation} through NamespaceProcessFiles"
+        );
+    }
+}
+
+#[test]
 fn engine_does_not_assemble_alan_os() {
     let source = read_runtime_source("engine.rs");
     let production = source.split("\n#[cfg(test)]\nmod tests").next().unwrap();

@@ -14,7 +14,9 @@ pub use namespace_environment::{
     NamespaceRuntimeEnvironment, NamespaceToolActionOutput, NamespaceTurnOutput,
     NamespaceTurnRuntime, NamespaceTurnRuntimeConfig,
 };
-pub(crate) use namespace_environment::{NamespaceAgentFiles, NamespaceGeneration};
+pub(crate) use namespace_environment::{
+    NamespaceAgentFiles, NamespaceGeneration, NamespaceProcessFiles,
+};
 
 use std::collections::VecDeque;
 
@@ -66,7 +68,7 @@ pub(crate) struct RuntimeLoopState {
 impl RuntimeLoopState {
     /// Authoritative AgentFS path for the Process that owns this runtime state.
     pub(crate) fn process_path(&self) -> String {
-        self.namespace_environment()
+        self.process_files()
             .process_path()
             .expect("runtime namespace was created with a valid /agent/<pid> path")
     }
@@ -90,6 +92,10 @@ impl RuntimeLoopState {
 
     pub(crate) fn agent_files(&self) -> NamespaceAgentFiles {
         self.environment.agent_files()
+    }
+
+    pub(crate) fn process_files(&self) -> NamespaceProcessFiles {
+        self.environment.process_files()
     }
 
     pub(crate) async fn write_namespace_confirmation_request(

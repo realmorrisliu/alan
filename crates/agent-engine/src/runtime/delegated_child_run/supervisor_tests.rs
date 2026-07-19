@@ -1,4 +1,5 @@
 use super::*;
+use crate::runtime::NamespaceRuntimeEnvironment;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[derive(Debug)]
@@ -36,7 +37,7 @@ fn test_supervisor(finish_count: Arc<AtomicUsize>) -> DelegatedChildRunSuperviso
         timeout: None,
         process_lifecycle: Arc::new(RecordingProcessLifecycle { finish_count }),
         agent_files: process_environment.agent_files(),
-        process_environment,
+        process_files: process_environment.process_files(),
         process_pid: "42".to_string(),
     })
 }

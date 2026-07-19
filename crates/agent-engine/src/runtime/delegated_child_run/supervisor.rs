@@ -8,10 +8,10 @@ use tokio_util::sync::CancellationToken;
 
 use super::{ChildRuntimePause, ChildRuntimeResult, ChildRuntimeStatus};
 use crate::runtime::child_runs::ChildRunRegistry;
-use crate::runtime::transition::NamespaceAgentFiles;
+use crate::runtime::transition::{NamespaceAgentFiles, NamespaceProcessFiles};
 use crate::runtime::{
     AgentProcessLifecycle, ChildRunStatus, ChildRunTerminationMode, ChildRunTerminationRequest,
-    NamespaceRuntimeEnvironment, RuntimeController, RuntimeStartupMetadata,
+    RuntimeController, RuntimeStartupMetadata,
 };
 
 const MAX_OBSERVED_CHILD_WARNINGS: usize = 32;
@@ -26,8 +26,8 @@ pub(crate) struct DelegatedChildRunSupervision {
     pub(crate) child_run_registry: ChildRunRegistry,
     pub(crate) timeout: Option<Duration>,
     pub(crate) process_lifecycle: Arc<dyn AgentProcessLifecycle>,
-    pub(crate) process_environment: NamespaceRuntimeEnvironment,
     pub(crate) agent_files: NamespaceAgentFiles,
+    pub(crate) process_files: NamespaceProcessFiles,
     pub(crate) process_pid: String,
 }
 
@@ -73,8 +73,8 @@ pub(crate) struct DelegatedChildRunSupervisor {
     child_run_registry: ChildRunRegistry,
     timeout: Option<Duration>,
     process_lifecycle: Arc<dyn AgentProcessLifecycle>,
-    process_environment: NamespaceRuntimeEnvironment,
     agent_files: NamespaceAgentFiles,
+    process_files: NamespaceProcessFiles,
     process_pid: String,
 }
 
@@ -87,20 +87,20 @@ impl DelegatedChildRunSupervisor {
             child_run_registry: input.child_run_registry,
             timeout: input.timeout,
             process_lifecycle: input.process_lifecycle,
-            process_environment: input.process_environment,
             agent_files: input.agent_files,
+            process_files: input.process_files,
             process_pid: input.process_pid,
         }
     }
 
     async fn observe_files(&self) -> Result<ChildFileObservation> {
-        let process_environment = &self.process_environment;
+        let process_files = &self.process_files;
         let agent_files = &self.agent_files;
         let pid = self.process_pid.as_str();
         let timeout = Duration::from_secs(1);
-        let process_exit_code = process_environment.read_process_exit_code(pid).await?;
+        let process_exit_code = process_files.read_process_exit_code(pid).await?;
         let (process_output_offset, process_io_events_offset) =
-            process_environment.read_process_io_offsets(pid).await?;
+            process_files.read_process_io_offsets(pid).await?;
         let activity = tokio::time::timeout(timeout, agent_files.read_ui_activity_snapshot())
             .await
             .context("observe child activity timed out")??;
@@ -466,34 +466,34 @@ impl DelegatedChildRunSupervisor {
     }
 
     async fn terminate_process_and_reconcile(&self) {
-        let environment = &self.process_environment;
+        let process_files = &self.process_files;
         let pid = self.process_pid.as_str();
-        if let Ok(Some(exit_code)) = environment.read_process_exit_code(pid).await {
+        if let Ok(Some(exit_code)) = process_files.read_process_exit_code(pid).await {
             self.process_lifecycle.finish(exit_code).await;
             self.child_run_registry
                 .reconcile_process_exit(&self.child_run_id, exit_code);
             return;
         }
-        let _ = environment
+        let _ = process_files
             .write_process_control_for_pid(pid, "cancel")
             .await;
-        let exit_code = environment
+        let exit_code = process_files
             .read_process_exit_code(pid)
             .await
             .ok()
             .flatten()
             .unwrap_or(130);
         self.process_lifecycle.finish(exit_code).await;
-        if let Ok(Some(exit_code)) = environment.read_process_exit_code(pid).await {
+        if let Ok(Some(exit_code)) = process_files.read_process_exit_code(pid).await {
             self.child_run_registry
                 .reconcile_process_exit(&self.child_run_id, exit_code);
         }
     }
 
     async fn reconcile_exited_process(&self) {
-        let environment = &self.process_environment;
+        let process_files = &self.process_files;
         let pid = self.process_pid.as_str();
-        if let Ok(Some(exit_code)) = environment.read_process_exit_code(pid).await {
+        if let Ok(Some(exit_code)) = process_files.read_process_exit_code(pid).await {
             self.child_run_registry
                 .reconcile_process_exit(&self.child_run_id, exit_code);
         }
@@ -524,8 +524,13 @@ impl DelegatedChildRunSupervisor {
     }
 
     #[cfg(test)]
-    pub(crate) fn process_environment_for_test(&self) -> &NamespaceRuntimeEnvironment {
-        &self.process_environment
+    pub(crate) fn agent_files_for_test(&self) -> NamespaceAgentFiles {
+        self.agent_files.clone()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn process_files_for_test(&self) -> NamespaceProcessFiles {
+        self.process_files.clone()
     }
 
     #[cfg(test)]

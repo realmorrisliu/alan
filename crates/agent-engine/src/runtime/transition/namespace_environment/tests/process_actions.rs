@@ -33,6 +33,7 @@ async fn engine_spawns_process_with_spawner_assembled_namespace() {
     let environment = NamespaceRuntimeEnvironment::new(root, "/agent/root", "default");
 
     let pid = environment
+        .process_files()
         .spawn_process("/bin/agent", Vec::<String>::new())
         .await
         .unwrap();
@@ -104,7 +105,11 @@ async fn engine_runs_tool_as_process_and_projects_action_files() {
     assert_eq!(action.output, "hello from-process\n");
     assert_eq!(action.exit_code, 0);
     assert_eq!(
-        environment.read_process_exit_code("1").await.unwrap(),
+        environment
+            .process_files()
+            .read_process_exit_code("1")
+            .await
+            .unwrap(),
         Some(0)
     );
     assert_eq!(
