@@ -262,6 +262,7 @@ where
         });
     }
 
+    let agent_files = state.agent_files();
     let (persisted_request, result, child_run) =
         match resolve_delegated_skill_invocation(state, &request) {
             Ok(spec) => {
@@ -273,7 +274,8 @@ where
                     Ok(mut child_result) => {
                         if cancel.is_cancelled()
                             && child_result.is_cancelled()
-                            && check_turn_cancelled(state, emit, cancel).await?
+                            && check_turn_cancelled(&mut state.machine, &agent_files, emit, cancel)
+                                .await?
                         {
                             return Ok(VirtualToolOutcome::EndTurn);
                         }
@@ -297,7 +299,8 @@ where
                     }
                     Err(err) => {
                         if cancel.is_cancelled()
-                            && check_turn_cancelled(state, emit, cancel).await?
+                            && check_turn_cancelled(&mut state.machine, &agent_files, emit, cancel)
+                                .await?
                         {
                             return Ok(VirtualToolOutcome::EndTurn);
                         }

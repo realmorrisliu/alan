@@ -49,7 +49,10 @@ where
     E: FnMut(Event) -> F,
     F: std::future::Future<Output = ()>,
 {
-    if cancel.is_cancelled() && check_turn_cancelled(state, emit, cancel).await? {
+    let agent_files = state.agent_files();
+    if cancel.is_cancelled()
+        && check_turn_cancelled(&mut state.machine, &agent_files, emit, cancel).await?
+    {
         return Ok(VirtualToolOutcome::EndTurn);
     }
 

@@ -784,7 +784,10 @@ where
         tool_timeout_secs,
     )
     .await;
-    if inputs.cancel.is_cancelled() && check_turn_cancelled(state, emit, inputs.cancel).await? {
+    let agent_files = state.agent_files();
+    if inputs.cancel.is_cancelled()
+        && check_turn_cancelled(&mut state.machine, &agent_files, emit, inputs.cancel).await?
+    {
         return Ok(ToolOrchestratorOutcome::EndTurn);
     }
 

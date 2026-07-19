@@ -323,7 +323,11 @@ fn turn_generation_uses_only_the_file_native_namespace_boundary() {
 
 #[test]
 fn transition_leaf_workflows_do_not_receive_the_runtime_loop_aggregate() {
-    for path in ["response_guardrails.rs", "steering_queue.rs"] {
+    for path in [
+        "response_guardrails.rs",
+        "steering_queue.rs",
+        "turn_support.rs",
+    ] {
         let source = read_runtime_source(path);
         assert!(
             !source.contains("RuntimeLoopState"),

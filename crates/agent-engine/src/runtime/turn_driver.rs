@@ -171,7 +171,8 @@ where
                         // Report and clear buffered in-turn submissions before cancel_current_task
                         // resets Machine turn state, otherwise the drop count under-reports.
                         emit_dropped_in_turn_submissions(emit, &mut state.machine, broker).await;
-                        cancel_current_task(state, emit).await?;
+                        let agent_files = state.agent_files();
+                        cancel_current_task(&mut state.machine, &agent_files, emit).await?;
                         return Ok(None);
                     }
                     emit_dropped_in_turn_submissions(emit, &mut state.machine, broker).await;
