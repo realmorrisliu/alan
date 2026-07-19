@@ -93,6 +93,56 @@
     }
 
     #[tokio::test]
+    async fn new_turn_retains_host_mount_when_approval_wins_cancellation_race() {
+        let (mut state, host_mount, request_id) = pending_host_mount_state().await;
+        state.environment = state
+            .environment
+            .clone()
+            .with_launch_context(crate::ProcessLaunchContext::root());
+        host_mount
+            .settle(&request_id, "approved", Some("grant-race-winner"), None)
+            .await;
+        let cancel = CancellationToken::new();
+        let mut emit = |_event: Event| async {};
+
+        let action = handle_runtime_op_with_cancel(
+            &mut state,
+            Op::Turn {
+                parts: vec![ContentPart::text("Start over")],
+                context: None,
+            },
+            &mut emit,
+            &cancel,
+        )
+        .await
+        .unwrap();
+
+        assert!(matches!(
+            action,
+            RuntimeOpAction::RunTurn {
+                turn_kind: TurnRunKind::NewTurn,
+                ..
+            }
+        ));
+        assert!(state.machine.pending_host_mount(&request_id).is_none());
+        assert_eq!(host_mount.status(&request_id).await.as_deref(), Some("approved"));
+        let launch_context = state
+            .environment
+            .child_launch()
+            .launch_context()
+            .unwrap()
+            .clone();
+        assert_eq!(
+            launch_context.projected_host_mounts(),
+            vec![("/mnt/project".to_string(), alan_kernel::Access::ReadWrite)]
+        );
+        assert_eq!(
+            launch_context.projected_host_mount_references(),
+            vec!["grant-race-winner".to_string()]
+        );
+    }
+
+    #[tokio::test]
     async fn approved_service_request_resumes_with_opaque_grant_only() {
         let (mut state, host_mount, request_id) = pending_host_mount_state().await;
         state.environment = state

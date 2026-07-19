@@ -1,23 +1,55 @@
 use alan_agent_protocol::Event;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use tokio_util::sync::CancellationToken;
 use tracing::warn;
 use uuid::Uuid;
 
-use super::transition::{NamespaceAgentFiles, NamespaceHostMountRequests};
-use crate::agent_machine::{AgentMachine, NormalizedToolCall};
+use super::transition::{
+    HostMountTerminalResult, HostMountTerminalStatus, NamespaceAgentFiles,
+    NamespaceHostMountRequests, NamespaceMountControl,
+};
+use crate::agent_machine::{AgentMachine, NormalizedToolCall, PendingHostMountRequest};
+
+pub(super) fn preserve_approved_host_mount(
+    mount_control: Option<&mut NamespaceMountControl<'_>>,
+    pending: &PendingHostMountRequest,
+    terminal: &HostMountTerminalResult,
+) -> Result<()> {
+    if terminal.status != HostMountTerminalStatus::Approved {
+        return Ok(());
+    }
+    let grant_reference = terminal
+        .grant_reference
+        .clone()
+        .context("approved Host Mount request has no grant reference")?;
+    let mount_control = mount_control.context(
+        "approved Host Mount request cannot be cleared without retaining its projection",
+    )?;
+    let access = match pending.access.as_str() {
+        "read_write" => alan_kernel::Access::ReadWrite,
+        _ => alan_kernel::Access::ReadOnly,
+    };
+    mount_control.record_projected_host_mount(
+        grant_reference,
+        pending.namespace_path.clone(),
+        access,
+    );
+    Ok(())
+}
 
 pub(super) async fn reset_turn_after_cancelling_host_mounts(
     machine: &mut AgentMachine,
     host_mount_requests: &NamespaceHostMountRequests,
+    mut mount_control: Option<&mut NamespaceMountControl<'_>>,
 ) -> Result<()> {
     let pending_host_mounts = machine
         .pending_request_ids()
         .into_iter()
-        .filter(|request_id| machine.pending_host_mount(request_id).is_some())
+        .filter_map(|request_id| machine.pending_host_mount(&request_id))
         .collect::<Vec<_>>();
-    for request_id in pending_host_mounts {
-        host_mount_requests.cancel(&request_id).await?;
+    for pending in pending_host_mounts {
+        let terminal = host_mount_requests.cancel(&pending.request_id).await?;
+        preserve_approved_host_mount(mount_control.as_deref_mut(), &pending, &terminal)?;
     }
     machine.reset_turn();
     Ok(())
@@ -27,6 +59,7 @@ pub(super) async fn cancel_current_task<E, F>(
     machine: &mut AgentMachine,
     agent_files: &NamespaceAgentFiles,
     host_mount_requests: &NamespaceHostMountRequests,
+    mount_control: Option<&mut NamespaceMountControl<'_>>,
     emit: &mut E,
 ) -> Result<()>
 where
@@ -36,7 +69,7 @@ where
     warn!("Cancelling current task");
     // Clear turn-scoped pending state, but preserve machine history so the user can
     // continue the same conversation after an interrupt/cancel.
-    reset_turn_after_cancelling_host_mounts(machine, host_mount_requests).await?;
+    reset_turn_after_cancelling_host_mounts(machine, host_mount_requests, mount_control).await?;
     machine.clear_plan_snapshot();
     machine.clear_active_task();
     super::ui_surfaces::turn_completed(agent_files, true).await?;
@@ -212,6 +245,6 @@ where
         .await;
         return Ok(false);
     }
-    cancel_current_task(machine, agent_files, host_mount_requests, emit).await?;
+    cancel_current_task(machine, agent_files, host_mount_requests, None, emit).await?;
     Ok(true)
 }

@@ -20,8 +20,8 @@ pub use namespace_environment::{
     NamespaceTurnOutput, NamespaceTurnRuntime, NamespaceTurnRuntimeConfig,
 };
 pub(crate) use namespace_environment::{
-    HostMountTerminalResult, NamespaceAgentFiles, NamespaceChildLaunch, NamespaceGeneration,
-    NamespaceHostMountRequests, NamespaceProcessFiles, NamespaceToolExecution,
+    HostMountTerminalResult, HostMountTerminalStatus, NamespaceAgentFiles, NamespaceChildLaunch,
+    NamespaceGeneration, NamespaceHostMountRequests, NamespaceProcessFiles, NamespaceToolExecution,
 };
 
 use std::collections::VecDeque;

@@ -7,7 +7,7 @@ use anyhow::Result;
 use tokio::sync::{Mutex, Notify};
 use tokio_util::sync::CancellationToken;
 
-use super::transition::{NamespaceAgentFiles, NamespaceHostMountRequests};
+use super::transition::{NamespaceAgentFiles, NamespaceHostMountRequests, NamespaceMountControl};
 use super::turn_support::cancel_current_task;
 use crate::agent_machine::AgentMachine;
 
@@ -106,6 +106,7 @@ pub(super) async fn next_pending_interaction_submission<E, F>(
     machine: &mut AgentMachine,
     agent_files: &NamespaceAgentFiles,
     host_mount_requests: &NamespaceHostMountRequests,
+    mount_control: &mut NamespaceMountControl<'_>,
     broker: &TurnInputBroker,
     emit: &mut E,
     cancel: &CancellationToken,
@@ -128,7 +129,14 @@ where
                         // Report and clear buffered in-turn submissions before cancel_current_task
                         // resets Machine turn state, otherwise the drop count under-reports.
                         emit_dropped_in_turn_submissions(emit, machine, broker).await;
-                        cancel_current_task(machine, agent_files, host_mount_requests, emit).await?;
+                        cancel_current_task(
+                            machine,
+                            agent_files,
+                            host_mount_requests,
+                            Some(mount_control),
+                            emit,
+                        )
+                        .await?;
                         return Ok(None);
                     }
                     emit_dropped_in_turn_submissions(emit, machine, broker).await;
@@ -414,7 +422,7 @@ mod tests {
         );
         let root = InProcessTransport::new(Arc::new(MountFs::new(ns)));
         let shell = Shell::new(root.clone());
-        let environment =
+        let mut environment =
             super::super::transition::NamespaceRuntimeEnvironment::new(root, "/agent/1", "default");
 
         let agent_files = environment.agent_files();
@@ -443,10 +451,12 @@ mod tests {
         };
 
         let response_path = format!("/agent/1/requests/{request_id}/response");
+        let mut mount_control = environment.mount_control();
         let waiter = next_pending_interaction_submission(
             &mut machine,
             &agent_files,
             &host_mount_requests,
+            &mut mount_control,
             &broker,
             &mut emit,
             &cancel,
@@ -506,7 +516,7 @@ mod tests {
             Access::ReadWrite,
         );
         let root = InProcessTransport::new(Arc::new(MountFs::new(ns)));
-        let environment =
+        let mut environment =
             super::super::transition::NamespaceRuntimeEnvironment::new(root, "/agent/1", "default");
         let agent_files = environment.agent_files();
         let host_mount_requests = environment.host_mount_requests();
@@ -534,10 +544,12 @@ mod tests {
         let broker = TurnInputBroker::default();
         let cancel = CancellationToken::new();
         let mut emit = |_event| async {};
+        let mut mount_control = environment.mount_control();
         let waiter = next_pending_interaction_submission(
             &mut machine,
             &agent_files,
             &host_mount_requests,
+            &mut mount_control,
             &broker,
             &mut emit,
             &cancel,

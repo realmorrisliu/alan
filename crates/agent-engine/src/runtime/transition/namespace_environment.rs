@@ -278,7 +278,7 @@ pub(crate) struct NamespaceHostMountRequests {
     root: InProcessTransport,
 }
 
-pub(crate) use host_mount_requests::HostMountTerminalResult;
+pub(crate) use host_mount_requests::{HostMountTerminalResult, HostMountTerminalStatus};
 
 /// Narrow handle for child Agent Process launch capabilities.
 #[derive(Clone)]

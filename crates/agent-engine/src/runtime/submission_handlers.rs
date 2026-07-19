@@ -10,7 +10,6 @@ use crate::approval::{
 use crate::tape::ContentPart;
 
 use super::transition::{HostMountTerminalResult, NamespaceAgentFiles, TurnRunKind};
-use super::turn_support::{cancel_current_task, reset_turn_after_cancelling_host_mounts};
 use crate::agent_machine::{
     AgentMachine, HOST_MOUNT_REQUEST_TERMINAL_EVENT_TYPE, NormalizedToolCall,
     PendingHostMountRequest, PendingYield,
@@ -94,13 +93,7 @@ where
             .await;
         }
         Op::Interrupt => {
-            cancel_current_task(
-                runtime.machine,
-                &runtime.agent_files,
-                &runtime.host_mount_requests,
-                emit,
-            )
-            .await?;
+            runtime.cancel_current_task(emit).await?;
         }
 
         // ====================================================================
@@ -117,8 +110,7 @@ where
             }
             merged_parts.extend(parts);
 
-            reset_turn_after_cancelling_host_mounts(runtime.machine, &runtime.host_mount_requests)
-                .await?;
+            runtime.reset_turn_after_cancelling_host_mounts().await?;
             runtime.machine.set_active_turn_request_control_intent(
                 crate::RequestControlIntent::reasoning_effort(reasoning_effort),
             );
@@ -176,11 +168,7 @@ where
                         return Ok(RuntimeOpAction::NoTurn);
                     }
 
-                    reset_turn_after_cancelling_host_mounts(
-                        runtime.machine,
-                        &runtime.host_mount_requests,
-                    )
-                    .await?;
+                    runtime.reset_turn_after_cancelling_host_mounts().await?;
                     return Ok(RuntimeOpAction::RunTurn {
                         turn_kind: TurnRunKind::NewTurn,
                         user_input: Some(parts),
@@ -233,6 +221,7 @@ where
                 };
                 let taken = runtime.machine.take_pending(&request_id);
                 debug_assert!(matches!(taken, Some(PendingYield::HostMount(_))));
+                runtime.preserve_approved_host_mount(&pending, &terminal)?;
                 return Ok(handle_host_mount_terminal(&mut runtime, pending, terminal));
             }
             let result = resume_content_to_value(&content);
@@ -473,17 +462,6 @@ fn handle_host_mount_terminal(
 ) -> RuntimeOpAction {
     let status = terminal.status.as_str();
     let approved = status == "approved";
-    if approved && let Some(grant_reference) = terminal.grant_reference.clone() {
-        let access = match pending.access.as_str() {
-            "read_write" => alan_kernel::Access::ReadWrite,
-            _ => alan_kernel::Access::ReadOnly,
-        };
-        runtime.record_projected_host_mount(
-            grant_reference,
-            pending.namespace_path.clone(),
-            access,
-        );
-    }
     let result = json!({
         "status": status,
         "approved": approved,
