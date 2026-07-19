@@ -19,6 +19,19 @@ impl NamespaceToolExecution {
         context.tool_runner.process_binding(context.pid)
     }
 
+    pub(crate) fn default_cwd(&self) -> Option<std::path::PathBuf> {
+        self.execution_binding().map(|binding| binding.cwd)
+    }
+
+    pub(crate) async fn static_tool_names(&self) -> Result<Vec<String>> {
+        Ok(self
+            .discover_packages()
+            .await?
+            .into_iter()
+            .map(|manifest| manifest.name)
+            .collect())
+    }
+
     pub(crate) fn resolve_capability(
         &self,
         package: &ToolPackageManifest,

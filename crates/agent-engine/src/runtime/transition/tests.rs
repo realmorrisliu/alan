@@ -506,13 +506,14 @@ impl LlmProvider for SequencedMockProvider {
 
 #[tokio::test]
 async fn namespace_generation_retries_transient_llmfs_errors() {
-    let mut state = runtime_state_with_provider(SequencedMockProvider::new(vec![
+    let state = runtime_state_with_provider(SequencedMockProvider::new(vec![
         SequencedStep::Error("503 unavailable".to_string()),
         SequencedStep::Success("recovered".to_string()),
     ]));
     let cancel = CancellationToken::new();
 
     let response = state
+        .namespace_generation()
         .generate_response_with_retry(
             GenerationRequest::new().with_user_message("hello"),
             0,
@@ -530,12 +531,13 @@ async fn namespace_generation_aborts_timed_out_generation_before_retry() {
     let (root, _procfs) =
         namespace_root_with_provider(TimeoutThenSucceedStreamProvider::new(Arc::clone(&attempts)));
     let shell = Shell::new(root.clone());
-    let mut state = runtime_state_with_environment(NamespaceRuntimeEnvironment::new(
+    let state = runtime_state_with_environment(NamespaceRuntimeEnvironment::new(
         root, "/agent/1", "default",
     ));
     let cancel = CancellationToken::new();
 
     let response = state
+        .namespace_generation()
         .generate_response_with_retry(
             GenerationRequest::new().with_user_message("hello"),
             1,

@@ -307,6 +307,7 @@ pub(crate) async fn run_turn_memory_promotion_job_for_runtime_with_cancel(
 ) -> Result<()> {
     let request = build_memory_promotion_request(job.active_turn_user_messages.clone());
     let response = state
+        .namespace_generation()
         .generate_response_with_retry(request, job.llm_request_timeout_secs, cancel)
         .await
         .context("generate turn-end memory promotion plan")?;

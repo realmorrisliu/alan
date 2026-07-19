@@ -87,6 +87,7 @@ async fn namespace_summary_from_parent(
             .map(|(path, _)| path.clone())
             .collect(),
         parent
+            .tool_execution()
             .static_tool_names()
             .await?
             .into_iter()

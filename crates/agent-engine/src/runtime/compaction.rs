@@ -659,6 +659,7 @@ where
         );
 
         match state
+            .namespace_generation()
             .generate_once_with_cancel(generation_request, cancel, "Compaction cancelled")
             .await
         {
