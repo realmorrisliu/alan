@@ -557,6 +557,76 @@ fn child_launch_context_passes_parent_host_mounts_only_with_explicit_handle() {
 }
 
 #[test]
+fn child_launch_context_tracks_live_service_mounts_and_revocation() {
+    let temp = TempDir::new().unwrap();
+    let definition = temp.path().join("child-definition");
+    let mut parent = crate::ProcessLaunchContext::new(
+        alan_kernel::Namespace::new(),
+        alan_kernel::Credentials::user("parent"),
+        "/mnt/docs",
+    )
+    .unwrap();
+    let live = alan_kernel::LiveNamespace::new(parent.namespace.child());
+    live.mount(
+        "/mnt/docs",
+        alan_ap::InProcessTransport::new(std::sync::Arc::new(alan_ap::reference::MemFs::new())),
+        alan_kernel::Access::ReadOnly,
+    );
+    parent.record_projected_host_mount("/mnt/docs".to_string(), alan_kernel::Access::ReadOnly);
+    parent = parent.rebound_live(live.clone(), parent.credentials.clone());
+
+    let definition = host_launch_root(definition);
+    let child = build_child_launch_context(
+        &parent,
+        &launch_spec(temp.path().join("child-definition")),
+        None,
+        Some(&definition),
+    )
+    .unwrap();
+    assert!(child.namespace.resolve("/mnt/docs").is_ok());
+    assert_eq!(
+        child.projected_host_mounts(),
+        vec![("/mnt/docs".to_string(), alan_kernel::Access::ReadOnly)]
+    );
+
+    live.unmount("/mnt/docs");
+    let revoked_child = build_child_launch_context(
+        &parent,
+        &launch_spec(temp.path().join("child-definition")),
+        None,
+        Some(&definition),
+    )
+    .unwrap();
+    assert!(revoked_child.namespace.resolve("/mnt/docs").is_err());
+}
+
+#[test]
+fn child_launch_context_removes_unpassed_live_service_mount() {
+    let temp = TempDir::new().unwrap();
+    let mut parent = crate::ProcessLaunchContext::new(
+        alan_kernel::Namespace::new(),
+        alan_kernel::Credentials::user("parent"),
+        "/",
+    )
+    .unwrap();
+    let live = alan_kernel::LiveNamespace::new(parent.namespace.child());
+    live.mount(
+        "/mnt/docs",
+        alan_ap::InProcessTransport::new(std::sync::Arc::new(alan_ap::reference::MemFs::new())),
+        alan_kernel::Access::ReadOnly,
+    );
+    parent.record_projected_host_mount("/mnt/docs".to_string(), alan_kernel::Access::ReadOnly);
+    parent = parent.rebound_live(live, parent.credentials.clone());
+    let mut spec = launch_spec(temp.path().join("child-definition"));
+    spec.handles.clear();
+
+    let definition = host_launch_root(temp.path().join("child-definition"));
+    let child = build_child_launch_context(&parent, &spec, None, Some(&definition)).unwrap();
+    assert!(child.namespace.resolve("/mnt/docs").is_err());
+    assert!(child.projected_host_mounts().is_empty());
+}
+
+#[test]
 fn child_launch_rejects_cwd_inside_an_unpassed_host_mount() {
     let temp = TempDir::new().unwrap();
     let parent = make_parent_state(

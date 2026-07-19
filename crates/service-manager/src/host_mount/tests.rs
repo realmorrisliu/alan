@@ -283,10 +283,14 @@ fn explicitly_passed_child_projection_is_revoked_with_its_parent() {
     let child = LiveNamespace::new(parent.snapshot());
     let factory = HostMountApplicatorFactory::new(service.clone());
     factory.create(Pid(2), child.clone(), &["/mnt/data".to_string()]);
-    let mut cached =
-        ToolExecutionBinding::new(host.path().to_path_buf(), host.path().join("scratch"));
-    export.apply_tool_authority(&mut cached).unwrap();
-    assert!(service.reconcile(Pid(2), cached.clone()).is_ok());
+    let cached = ToolExecutionBinding::awaiting_host_projection(
+        PathBuf::from("/mnt/data"),
+        host.path().join("scratch"),
+    );
+    let reconciled = service.reconcile(Pid(2), cached.clone()).unwrap();
+    assert_eq!(reconciled.namespace_cwd, PathBuf::from("/mnt/data"));
+    assert_eq!(reconciled.cwd, host.path());
+    assert_eq!(reconciled.host_mounts.len(), 1);
 
     service.revoke(&id, "tester").unwrap();
     assert!(parent.snapshot().resolve("/mnt/data").is_err());

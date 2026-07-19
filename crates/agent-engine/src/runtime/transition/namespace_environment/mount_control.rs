@@ -3,6 +3,17 @@
 use super::{ApprovedMountGrant, NamespaceMountApplication, NamespaceMountControl};
 
 impl NamespaceMountControl<'_> {
+    /// Retain logical projection metadata after Host Mount Service commits the live mount.
+    pub fn record_projected_host_mount(
+        &mut self,
+        namespace_path: String,
+        access: alan_kernel::Access,
+    ) {
+        if let Some(context) = self.launch_context.as_mut() {
+            context.record_projected_host_mount(namespace_path, access);
+        }
+    }
+
     /// Apply an approved grant to the live Namespace and retain its new snapshot.
     pub fn apply_approved_grant(
         &mut self,

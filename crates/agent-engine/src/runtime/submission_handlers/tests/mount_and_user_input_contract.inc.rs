@@ -66,6 +66,10 @@
     #[tokio::test]
     async fn approved_service_request_resumes_with_opaque_grant_only() {
         let (mut state, host_mount, request_id) = pending_host_mount_state().await;
+        state.environment = state
+            .environment
+            .clone()
+            .with_launch_context(crate::ProcessLaunchContext::root());
         host_mount
             .settle(&request_id, "approved", Some("grant-opaque-1"), None)
             .await;
@@ -101,6 +105,15 @@
         assert!(!result.to_string().contains("host_path"));
         assert!(result.get("namespace_applied").is_none());
         assert!(result.get("tool_sandbox_applied").is_none());
+        assert_eq!(
+            state
+                .environment
+                .child_launch()
+                .launch_context()
+                .unwrap()
+                .projected_host_mounts(),
+            vec![("/mnt/project".to_string(), alan_kernel::Access::ReadWrite)]
+        );
     }
 
     #[tokio::test]

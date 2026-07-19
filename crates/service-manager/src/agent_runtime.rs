@@ -17,7 +17,7 @@ use alan_agent_engine::{
         MountGrantApplicatorFactory,
     },
     spawn_with_namespace_environment,
-    tools::ToolProcessRunner,
+    tools::{ToolExecutionAuthority, ToolProcessRunner},
 };
 use alan_ap::{Fid, FileServer, InProcessTransport, OpenMode};
 use alan_kernel::{
@@ -225,7 +225,7 @@ impl AgentRuntimeService {
             let root = InProcessTransport::new(Arc::new(
                 alan_kernel::MountFs::from_live_namespace(namespace.clone()),
             ));
-            let launch_context = launch_context.rebound(namespace.snapshot(), credentials);
+            let launch_context = launch_context.rebound_live(namespace.clone(), credentials);
             let mount_applicator =
                 self.mount_applicator(pid, namespace.clone(), &launch_context, &tool_runner);
             let environment = alan_agent_engine::runtime::NamespaceRuntimeEnvironment::new(
@@ -300,11 +300,7 @@ impl AgentRuntimeService {
         tool_runner: &ToolProcessRunner,
     ) -> Arc<dyn MountGrantApplicator> {
         let factory = HostMountApplicatorFactory::new(self.host_mount.clone());
-        let inherited_mount_paths = launch_context
-            .host_mounts
-            .iter()
-            .map(|grant| grant.namespace_path.clone())
-            .collect::<Vec<_>>();
+        let inherited_mount_paths = launch_context.host_mount_namespace_paths();
         let applicator = factory.create(pid, namespace, &inherited_mount_paths);
         if let Some(authority) = factory.tool_execution_authority() {
             tool_runner.register_process_authority(pid, authority);
@@ -330,7 +326,7 @@ impl AgentRuntimeService {
         request: ChildAgentProcessAssemblyRequest,
     ) -> Result<AssembledChildAgentProcess> {
         let ChildAgentProcessAssemblyRequest {
-            plan,
+            mut plan,
             scratch_dir,
             executable,
         } = request;
@@ -369,6 +365,19 @@ impl AgentRuntimeService {
             pid: child_pid,
         });
 
+        let child_credentials = Credentials::user("child-agent");
+        let live_namespace =
+            LiveNamespace::new(child_namespace(&plan, agent_root_tree.clone(), &handles));
+        let mount_applicator = self.mount_applicator(
+            child_pid,
+            live_namespace.clone(),
+            &plan.launch_context,
+            &self.tool_runner,
+        );
+        plan.launch_context = plan
+            .launch_context
+            .rebound_live(live_namespace.clone(), child_credentials.clone());
+
         let launch = async {
             let exec = child_exec_spec(&plan, &pid, executable);
             let exec_bytes = serde_json::to_vec(&exec).context("serialize child exec spec")?;
@@ -388,14 +397,22 @@ impl AgentRuntimeService {
                     .select(child_pid.0, &plan.llm_connection_name)?;
             }
 
-            if !plan.launch_context.host_mounts.is_empty() {
+            if plan.launch_context.has_host_mounts() {
                 let scratch = scratch_dir.context(
                     "child Agent Process with Host Mounts requires Agent Runtime Service store bindings",
                 )?;
-                let binding = alan_agent_engine::tools::ToolExecutionBinding::from_launch_context(
-                    &plan.launch_context,
-                    scratch,
-                )?;
+                let binding = if plan.launch_context.host_mounts.is_empty() {
+                    alan_agent_engine::tools::ToolExecutionBinding::awaiting_host_projection(
+                        Path::new(&plan.launch_context.cwd).to_path_buf(),
+                        scratch,
+                    )
+                } else {
+                    alan_agent_engine::tools::ToolExecutionBinding::from_launch_context(
+                        &plan.launch_context,
+                        scratch,
+                    )?
+                };
+                let binding = self.host_mount.reconcile(child_pid, binding)?;
                 self.tool_runner
                     .register_process_binding(child_pid, binding);
             }
@@ -404,29 +421,18 @@ impl AgentRuntimeService {
                 .procfs
                 .clone()
                 .with_runner(Arc::new(self.tool_runner.clone()));
-            let live_namespace = LiveNamespace::new(child_namespace(
-                &plan,
-                agent_root_tree,
-                &handles,
-            ));
             runtime_procfs
                 .bind_live_namespace(child_pid, live_namespace.clone())
                 .await;
             let child_procfs = runtime_procfs.for_live_spawner(
                 Some(child_pid),
                 live_namespace.clone(),
-                Credentials::user("child-agent"),
+                child_credentials,
             );
             live_namespace.mount(
                 "/proc",
                 InProcessTransport::new(Arc::new(child_procfs)),
                 Access::ReadWrite,
-            );
-            let mount_applicator = self.mount_applicator(
-                child_pid,
-                live_namespace.clone(),
-                &plan.launch_context,
-                &self.tool_runner,
             );
             live_namespace.replace_mount(
                 "/mnt/host-mount",
@@ -436,7 +442,7 @@ impl AgentRuntimeService {
                 Access::ReadWrite,
             );
             let root = InProcessTransport::new(Arc::new(
-                alan_kernel::MountFs::from_live_namespace(live_namespace),
+                alan_kernel::MountFs::from_live_namespace(live_namespace.clone()),
             ));
             let mut environment =
                 alan_agent_engine::runtime::NamespaceRuntimeEnvironment::new(
@@ -596,6 +602,12 @@ fn child_namespace_manifest(
     mounts.extend(plan.launch_context.host_mounts.iter().map(|grant| {
         ExecNamespaceMount::new(grant.namespace_path.clone(), exec_access(grant.access))
     }));
+    mounts.extend(
+        plan.launch_context
+            .projected_host_mounts()
+            .into_iter()
+            .map(|(path, access)| ExecNamespaceMount::new(path, exec_access(access))),
+    );
     mounts.extend(
         plan.launch_context
             .package_references

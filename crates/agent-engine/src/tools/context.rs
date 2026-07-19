@@ -46,6 +46,17 @@ impl ToolExecutionBinding {
         }
     }
 
+    /// Create a binding whose native Host projection will be supplied by the Host adapter.
+    pub fn awaiting_host_projection(namespace_cwd: PathBuf, scratch_dir: PathBuf) -> Self {
+        Self {
+            cwd: scratch_dir.clone(),
+            namespace_cwd,
+            host_mounts: Vec::new(),
+            scratch_dir,
+            sandbox_spec: None,
+        }
+    }
+
     /// Create a native adapter binding from the same Process Launch Context
     /// that owns namespace reachability and sandbox authority.
     pub fn from_launch_context(
