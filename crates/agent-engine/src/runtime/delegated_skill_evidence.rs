@@ -14,7 +14,7 @@ use super::delegated_skill_tool::{
     DelegatedSkillInvocationRequest, MAX_DELEGATED_PATH_CHARS, MAX_DELEGATED_SKILL_ID_CHARS,
     MAX_DELEGATED_TARGET_CHARS, MAX_DELEGATED_TASK_CHARS,
 };
-use super::transition::{NamespaceActionRecord, RuntimeLoopState};
+use super::transition::{NamespaceActionRecord, NamespaceAgentFiles};
 
 pub(super) const MAX_DELEGATED_STRUCTURED_OUTPUT_CHARS: usize = 4_000;
 pub(super) const MAX_DELEGATED_CHILD_RUN_METADATA_CHARS: usize = 2_000;
@@ -30,7 +30,7 @@ pub(super) struct DelegatedSkillRolloutRecord {
 }
 
 pub(super) async fn persist_delegated_child_evidence(
-    state: &RuntimeLoopState,
+    agent_files: &NamespaceAgentFiles,
     request: &DelegatedSkillInvocationRequest,
     result: &ChildRuntimeResult,
 ) -> Option<DelegatedSkillOutputRef> {
@@ -55,8 +55,7 @@ pub(super) async fn persist_delegated_child_evidence(
     {
         result_doc["child_agent_path"] = json!(agent_path);
     }
-    let action_id = state
-        .agent_files()
+    let action_id = agent_files
         .write_action(
             NamespaceActionRecord::new(
                 format!("delegate:{}", request.skill_id),
@@ -68,9 +67,7 @@ pub(super) async fn persist_delegated_child_evidence(
         )
         .await
         .ok()?;
-    let path = format!("{}/actions/{action_id}/output", state.agent_path());
-    let agent_files = state.agent_files();
-    let reference = agent_files.evidence_reference(path).await?;
+    let reference = agent_files.action_output_reference(&action_id).await?;
     agent_files
         .resolve_evidence_reference(&reference, None, result.child_run_value())
         .await

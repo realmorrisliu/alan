@@ -281,7 +281,8 @@ where
                         }
 
                         let output_reference =
-                            persist_delegated_child_evidence(state, &request, &child_result).await;
+                            persist_delegated_child_evidence(&agent_files, &request, &child_result)
+                                .await;
                         if let (Some(child_run_id), Some(reference)) = (
                             child_result.child_run_id.as_deref(),
                             output_reference.as_ref(),

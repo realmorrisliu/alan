@@ -89,8 +89,20 @@ async fn finalize_turn_memory_best_effort(
     promotion_context: &'static str,
 ) {
     if !surfaces_refreshed {
-        super::memory_surfaces::refresh_turn_memory_surfaces_best_effort(state, surfaces_context)
-            .await;
+        let memory_dir = state
+            .core_config
+            .memory
+            .enabled
+            .then_some(state.core_config.memory.store_dir.as_deref())
+            .flatten();
+        let process_path = state.process_path();
+        super::memory_surfaces::refresh_turn_memory_surfaces_best_effort(
+            &state.machine,
+            memory_dir,
+            &process_path,
+            surfaces_context,
+        )
+        .await;
     }
 
     if let Some(job) =

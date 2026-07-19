@@ -8,8 +8,6 @@ use tracing::warn;
 use crate::agent_machine::AgentMachine;
 use crate::tape::Message;
 
-use super::transition::RuntimeLoopState;
-
 const MAX_INLINE_TEXT_CHARS: usize = 280;
 const MAX_RECENT_MESSAGE_ITEMS: usize = 6;
 const MAX_PLAN_ITEMS_PER_SECTION: usize = 6;
@@ -27,12 +25,12 @@ struct RenderedMemorySurfaces {
     daily_entry: String,
 }
 
-pub(crate) async fn refresh_turn_memory_surfaces(state: &RuntimeLoopState) -> Result<()> {
-    if !state.core_config.memory.enabled {
-        return Ok(());
-    }
-
-    let Some(memory_dir) = state.core_config.memory.store_dir.as_deref() else {
+pub(crate) async fn refresh_turn_memory_surfaces(
+    machine: &AgentMachine,
+    memory_dir: Option<&Path>,
+    process_path: &str,
+) -> Result<()> {
+    let Some(memory_dir) = memory_dir else {
         return Ok(());
     };
 
@@ -40,9 +38,8 @@ pub(crate) async fn refresh_turn_memory_surfaces(state: &RuntimeLoopState) -> Re
         .with_context(|| format!("failed to ensure memory layout at {}", memory_dir.display()))?;
 
     let now = Utc::now();
-    let process_path = state.process_path();
-    let memory_record_id = state.machine.memory_record_id();
-    let rendered = render_memory_surfaces(&state.machine, &process_path, memory_record_id, now);
+    let memory_record_id = machine.memory_record_id();
+    let rendered = render_memory_surfaces(machine, process_path, memory_record_id, now);
 
     write_text_file(
         &working_memory_path(memory_dir, memory_record_id),
@@ -61,23 +58,27 @@ pub(crate) async fn refresh_turn_memory_surfaces(state: &RuntimeLoopState) -> Re
 }
 
 pub(crate) async fn refresh_turn_memory_surfaces_best_effort(
-    state: &RuntimeLoopState,
+    machine: &AgentMachine,
+    memory_dir: Option<&Path>,
+    process_path: &str,
     context: &'static str,
 ) {
-    if let Err(err) = refresh_turn_memory_surfaces(state).await {
+    if let Err(err) = refresh_turn_memory_surfaces(machine, memory_dir, process_path).await {
         warn!(error = %err, context, "Failed to refresh memory surfaces");
     }
 }
 
 pub(crate) async fn refresh_active_turn_memory_surfaces_best_effort(
-    state: &RuntimeLoopState,
+    machine: &AgentMachine,
+    memory_dir: Option<&Path>,
+    process_path: &str,
     context: &'static str,
 ) {
-    if state.machine.active_turn_message_start().is_none() {
+    if machine.active_turn_message_start().is_none() {
         return;
     }
 
-    refresh_turn_memory_surfaces_best_effort(state, context).await;
+    refresh_turn_memory_surfaces_best_effort(machine, memory_dir, process_path, context).await;
 }
 
 fn render_memory_surfaces(

@@ -290,6 +290,17 @@ impl NamespaceAgentFiles {
 
     /// Build a bounded reference only when the path currently resolves in this
     /// Agent Process namespace.
+    pub(crate) async fn action_output_reference(
+        &self,
+        action_id: &str,
+    ) -> Option<NamespaceEvidenceReference> {
+        validate_agent_file_id(action_id, "action id").ok()?;
+        self.evidence_reference(format!("{}/actions/{action_id}/output", self.agent_path))
+            .await
+    }
+
+    /// Build a bounded reference only when the path currently resolves in this
+    /// Agent Process namespace.
     pub(crate) async fn evidence_reference(
         &self,
         path: impl Into<String>,

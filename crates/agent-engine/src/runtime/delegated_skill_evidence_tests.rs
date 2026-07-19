@@ -25,7 +25,8 @@ async fn redaction_expansion_preserves_delegated_output_reference_and_child_path
     };
 
     assert!(result.output_text.chars().count() <= MAX_DELEGATED_RESULT_OUTPUT_INLINE_CHARS);
-    let output_ref = persist_delegated_child_evidence(&state, &request, &result)
+    let agent_files = state.agent_files();
+    let output_ref = persist_delegated_child_evidence(&agent_files, &request, &result)
         .await
         .expect("redaction-expanded child output should retain a reference");
     let delegated = result.delegated_result(Some(output_ref.clone()));
@@ -152,7 +153,8 @@ async fn failed_delegated_evidence_uses_namespace_refs_with_debug_rollout_paths(
             child_run: Some(test_child_run_record(&child_run_id, "parent-machine")),
         };
 
-        let output_ref = persist_delegated_child_evidence(&state, &request, &result)
+        let agent_files = state.agent_files();
+        let output_ref = persist_delegated_child_evidence(&agent_files, &request, &result)
             .await
             .expect("failed child output reference");
         assert!(output_ref.path.starts_with("/agent/1/actions/"));

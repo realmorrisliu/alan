@@ -1,5 +1,6 @@
 use super::*;
 use crate::agent_machine::AgentMachine;
+use crate::runtime::transition::RuntimeLoopState;
 use std::sync::Arc;
 
 fn namespace_environment_for_test() -> crate::runtime::NamespaceRuntimeEnvironment {
@@ -373,7 +374,10 @@ async fn refresh_turn_memory_surfaces_writes_expected_files() {
         prompt_cache: super::super::prompt_cache::PromptAssemblyCache::new(Vec::new()),
     };
 
-    refresh_turn_memory_surfaces(&state).await.unwrap();
+    let process_path = state.process_path();
+    refresh_turn_memory_surfaces(&state.machine, Some(&memory_dir), &process_path)
+        .await
+        .unwrap();
 
     assert!(working_memory_path(&memory_dir, state.machine.memory_record_id()).exists());
     assert!(latest_handoff_path(&memory_dir).exists());
@@ -411,7 +415,10 @@ async fn refresh_memory_surfaces_needs_no_model_request_or_llm_mount() {
         prompt_cache: super::super::prompt_cache::PromptAssemblyCache::new(Vec::new()),
     };
 
-    refresh_turn_memory_surfaces(&state).await.unwrap();
+    let process_path = state.process_path();
+    refresh_turn_memory_surfaces(&state.machine, Some(&memory_dir), &process_path)
+        .await
+        .unwrap();
 
     assert_eq!(state.machine.messages().len(), message_count);
     let working = tokio::fs::read_to_string(working_memory_path(

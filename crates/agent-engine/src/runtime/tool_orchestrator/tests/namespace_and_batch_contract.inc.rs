@@ -164,7 +164,7 @@
             "content": "x".repeat(crate::evidence::MAX_INLINE_EVIDENCE_BYTES + 1)
         });
 
-        let projected = tool_payload_for_tape(&state, &payload).await;
+        let projected = tool_payload_for_tape(&state.agent_files(), &payload).await;
 
         assert!(projected.get("reference").is_none());
         assert_eq!(
