@@ -39,8 +39,22 @@ impl HostMountExport for NativeHostMountExport {
         self.tree.clone()
     }
 
-    fn apply_tool_authority(&self, binding: &mut ToolExecutionBinding) -> Result<()> {
-        binding.apply_host_mount(self.grant.clone())
+    fn apply_tool_authority(
+        &self,
+        effective_access: HostMountAccess,
+        binding: &mut ToolExecutionBinding,
+    ) -> Result<()> {
+        let effective_access = match effective_access {
+            HostMountAccess::ReadOnly => Access::ReadOnly,
+            HostMountAccess::ReadWrite => Access::ReadWrite,
+        };
+        anyhow::ensure!(
+            self.grant.access == Access::ReadWrite || effective_access == Access::ReadOnly,
+            "Host Mount Tool authority cannot amplify export access"
+        );
+        let mut grant = self.grant.clone();
+        grant.access = effective_access;
+        binding.apply_host_mount(grant)
     }
 }
 
@@ -423,6 +437,43 @@ mod tests {
             SandboxSpec::default_sensitive_read_denylist()
         );
         assert_eq!(spec.network, NetworkPosture::Deny);
+    }
+
+    #[test]
+    fn writable_export_can_be_narrowed_for_tool_authority() {
+        let host = tempfile::tempdir().unwrap();
+        let export =
+            native_export("/mnt/project", host.path(), HostMountAccess::ReadWrite).unwrap();
+        let mut binding = ToolExecutionBinding::awaiting_host_projection(
+            PathBuf::from("/mnt/project"),
+            host.path().join("scratch"),
+        );
+
+        export
+            .apply_tool_authority(HostMountAccess::ReadOnly, &mut binding)
+            .unwrap();
+
+        assert_eq!(binding.host_mounts.len(), 1);
+        assert_eq!(binding.host_mounts[0].access, Access::ReadOnly);
+        assert!(binding.sandbox_spec.unwrap().writable_roots.is_empty());
+    }
+
+    #[test]
+    fn read_only_export_rejects_writable_tool_authority() {
+        let host = tempfile::tempdir().unwrap();
+        let export = native_export("/mnt/project", host.path(), HostMountAccess::ReadOnly).unwrap();
+        let mut binding = ToolExecutionBinding::awaiting_host_projection(
+            PathBuf::from("/mnt/project"),
+            host.path().join("scratch"),
+        );
+
+        let error = export
+            .apply_tool_authority(HostMountAccess::ReadWrite, &mut binding)
+            .unwrap_err();
+
+        assert!(error.to_string().contains("cannot amplify"));
+        assert!(binding.host_mounts.is_empty());
+        assert!(binding.sandbox_spec.is_none());
     }
 
     async fn assert_file_bytes(

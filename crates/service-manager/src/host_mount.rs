@@ -50,7 +50,12 @@ impl HostMountAccess {
 /// native Tool authority, but it never receives or stores the raw Host path.
 pub trait HostMountExport: std::fmt::Debug + Send + Sync {
     fn file_tree(&self) -> InProcessTransport;
-    fn apply_tool_authority(&self, binding: &mut ToolExecutionBinding) -> Result<()>;
+    /// Add native Tool authority at the Process projection's effective access.
+    fn apply_tool_authority(
+        &self,
+        effective_access: HostMountAccess,
+        binding: &mut ToolExecutionBinding,
+    ) -> Result<()>;
 }
 
 /// Transitional platform boundary for pre-authorized launch declarations.
@@ -140,6 +145,7 @@ struct AuditRecord {
 struct Projection {
     pid: Pid,
     namespace: LiveNamespace,
+    access: HostMountAccess,
 }
 
 struct Grant {
@@ -252,9 +258,14 @@ impl HostMountService {
                     .iter()
                     .any(|projection| projection.pid == pid)
             {
+                let access = match visible_access.expect("validated exact mount access") {
+                    Access::ReadOnly => HostMountAccess::ReadOnly,
+                    Access::ReadWrite => grant.public.access,
+                };
                 grant.projections.push(Projection {
                     pid,
                     namespace: namespace.clone(),
+                    access,
                 });
                 inherited.push(id.clone());
             }
@@ -486,7 +497,11 @@ impl HostMountService {
         {
             return Ok(());
         }
-        grant.projections.push(Projection { pid, namespace });
+        grant.projections.push(Projection {
+            pid,
+            namespace,
+            access,
+        });
         audit(
             &mut state,
             "project",
@@ -774,20 +789,22 @@ impl ToolExecutionAuthority for HostMountService {
         let exports = state
             .grants
             .values()
-            .filter(|grant| {
-                grant.public.active
-                    && grant
-                        .projections
-                        .iter()
-                        .any(|projection| projection.pid == pid)
+            .filter_map(|grant| {
+                if !grant.public.active {
+                    return None;
+                }
+                grant
+                    .projections
+                    .iter()
+                    .find(|projection| projection.pid == pid)
+                    .map(|projection| (grant.export.clone(), projection.access))
             })
-            .map(|grant| grant.export.clone())
             .collect::<Vec<_>>();
         drop(state);
 
         binding.remove_host_mount_paths(&managed_paths)?;
-        for export in exports {
-            export.apply_tool_authority(&mut binding)?;
+        for (export, effective_access) in exports {
+            export.apply_tool_authority(effective_access, &mut binding)?;
         }
         // An empty seed is a valid zero-authority binding for mount-free Tools. Fail closed only
         // when reconciliation removed Host Mount authority that the cached binding carried.

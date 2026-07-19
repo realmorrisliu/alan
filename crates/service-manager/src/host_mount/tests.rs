@@ -19,8 +19,14 @@ impl HostMountExport for TestExport {
         self.tree.clone()
     }
 
-    fn apply_tool_authority(&self, binding: &mut ToolExecutionBinding) -> Result<()> {
-        binding.apply_host_mount(self.grant.clone())
+    fn apply_tool_authority(
+        &self,
+        effective_access: HostMountAccess,
+        binding: &mut ToolExecutionBinding,
+    ) -> Result<()> {
+        let mut grant = self.grant.clone();
+        grant.access = effective_access.kernel();
+        binding.apply_host_mount(grant)
     }
 }
 
@@ -94,7 +100,9 @@ fn grants_project_explicitly_hide_paths_and_revoke() {
     );
     let mut cached =
         ToolExecutionBinding::new(host.path().to_path_buf(), host.path().join("scratch"));
-    export.apply_tool_authority(&mut cached).unwrap();
+    export
+        .apply_tool_authority(HostMountAccess::ReadWrite, &mut cached)
+        .unwrap();
     let reconciled = service.reconcile(Pid(7), cached.clone()).unwrap();
     assert_eq!(reconciled.host_mounts.len(), 1);
     assert_eq!(reconciled.sandbox_spec.unwrap().writable_roots.len(), 1);
@@ -423,6 +431,63 @@ fn child_inheritance_uses_the_exact_grant_held_by_its_parent() {
     assert_eq!(reconciled.host_mounts.len(), 1);
     assert_eq!(reconciled.cwd, first_host.path());
     assert_ne!(reconciled.cwd, other_host.path());
+}
+
+#[test]
+fn inherited_read_only_projection_does_not_recover_write_authority() {
+    let host = tempfile::tempdir().unwrap();
+    let service = service();
+    let parent = LiveNamespace::new(Namespace::new());
+    service.register_process(Pid(1), parent.clone());
+    let id = service
+        .enqueue(HostMountRequest {
+            id: "grant-writable-parent".to_string(),
+            label: "project".to_string(),
+            namespace_path: "/mnt/project".to_string(),
+            access: HostMountAccess::ReadWrite,
+            reason: "test narrowed delegation".to_string(),
+            requesting_pid: 1,
+        })
+        .unwrap();
+    service
+        .approve_export(
+            &id,
+            test_export(
+                "/mnt/project",
+                host.path().to_path_buf(),
+                HostMountAccess::ReadWrite,
+            ),
+            "user",
+            "tester",
+        )
+        .unwrap();
+
+    let child_namespace = parent
+        .snapshot()
+        .project_mounts([("/mnt/project", "/mnt/project", Access::ReadOnly)])
+        .unwrap();
+    let child = LiveNamespace::new(child_namespace);
+    HostMountApplicatorFactory::inheriting_from(service.clone(), Pid(1)).create(
+        Pid(2),
+        child,
+        std::slice::from_ref(&id),
+    );
+    let binding = ToolExecutionBinding::awaiting_host_projection(
+        PathBuf::from("/mnt/project"),
+        host.path().join("scratch"),
+    );
+
+    let reconciled = service.reconcile(Pid(2), binding).unwrap();
+
+    assert_eq!(reconciled.host_mounts.len(), 1);
+    assert_eq!(reconciled.host_mounts[0].access, Access::ReadOnly);
+    assert!(
+        reconciled
+            .sandbox_spec
+            .expect("read-only Host Mount still has a sandbox spec")
+            .writable_roots
+            .is_empty()
+    );
 }
 
 #[tokio::test]

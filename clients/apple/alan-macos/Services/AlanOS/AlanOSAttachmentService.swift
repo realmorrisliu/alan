@@ -770,9 +770,23 @@ final class AlanOSNativeCapabilityAdapter {
     }
 
     private func pollHostMounts(session: AlanOSAttachmentSession) async {
-        guard let data = try? await session.cat("/mnt/host-mount/request"),
-              let requests = try? JSONDecoder().decode([AlanHostMountNativeRequest].self, from: data)
-        else { return }
+        guard let entries = try? await session.list("/mnt/host-mount/requests") else { return }
+        var requests: [AlanHostMountNativeRequest] = []
+        for requestID in entries where requestID != "clone" && requestID != "events" {
+            let base = "/mnt/host-mount/requests/\(requestID)"
+            guard let statusData = try? await session.cat("\(base)/status"),
+                  String(decoding: statusData, as: UTF8.self)
+                    .trimmingCharacters(in: .whitespacesAndNewlines) == "pending",
+                  let requestData = try? await session.cat("\(base)/request"),
+                  let request = try? JSONDecoder().decode(
+                    AlanHostMountNativeRequest.self,
+                    from: requestData
+                  ),
+                  request.id == requestID
+            else { continue }
+            requests.append(request)
+        }
+        requests.sort { alanAgentFileIDPrecedes($0.id, $1.id) }
         let pendingIDs = Set(requests.map(\.id))
         dismissedMountRequests.formIntersection(pendingIDs)
         guard let request = requests.first(where: {
