@@ -173,7 +173,7 @@ where
             &tool_call.name,
             tool_arguments,
             alan_agent_protocol::ToolCapability::Write,
-            state.default_tool_cwd().as_deref(),
+            state.tool_execution().default_cwd().as_deref(),
             super::tool_policy::SandboxConfinement::detect(),
         ),
         allow_approved_tool_escalation_execution,
@@ -227,9 +227,9 @@ where
                 Some(audit),
             );
             let request_id = state
-                .write_namespace_confirmation_request(&pending)
-                .await?
-                .unwrap_or_else(|| pending.checkpoint_id.clone());
+                .agent_files()
+                .write_confirmation_request(&pending)
+                .await?;
             state
                 .machine
                 .set_confirmation_for_request(request_id.clone(), pending.clone());

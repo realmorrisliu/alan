@@ -402,7 +402,7 @@ where
     let tool_capability = state
         .tool_execution()
         .resolve_capability(&tool_package, &tool_arguments);
-    let current_tool_cwd = state.default_tool_cwd();
+    let current_tool_cwd = state.tool_execution().default_cwd();
     let policy_decision = maybe_allow_approved_tool_escalation_replay(
         evaluate_tool_policy(
             &state.runtime_config.policy_engine,
@@ -468,6 +468,7 @@ where
                     let llm_request_timeout_secs = state.runtime_config.llm_request_timeout_secs;
                     let request = super::guardian::build_review_request(&review_ctx);
                     let result = state
+                        .namespace_generation()
                         .generate_response_with_retry(
                             request,
                             llm_request_timeout_secs,
@@ -546,9 +547,9 @@ where
                     options: vec!["approve".to_string(), "reject".to_string()],
                 };
                 let request_id = state
-                    .write_namespace_confirmation_request(&pending)
-                    .await?
-                    .unwrap_or_else(|| pending.checkpoint_id.clone());
+                    .agent_files()
+                    .write_confirmation_request(&pending)
+                    .await?;
                 state.machine.record_tool_call_with_audit(
                     &tool_call.name,
                     tool_arguments.clone(),
@@ -658,9 +659,9 @@ where
             options: vec!["approve".to_string(), "reject".to_string()],
         };
         let request_id = state
-            .write_namespace_confirmation_request(&pending)
-            .await?
-            .unwrap_or_else(|| pending.checkpoint_id.clone());
+            .agent_files()
+            .write_confirmation_request(&pending)
+            .await?;
         state.machine.record_tool_call_with_audit(
             &tool_call.name,
             tool_arguments.clone(),

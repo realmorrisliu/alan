@@ -77,6 +77,56 @@ impl NamespaceGeneration {
         Ok(response)
     }
 
+    pub(crate) async fn generate_once_with_cancel(
+        &self,
+        request: GenerationRequest,
+        cancel: &CancellationToken,
+        cancel_message: &'static str,
+    ) -> Result<GenerationResponse> {
+        match self.generate_controlled(&request, 0, cancel).await {
+            Err(_) if cancel.is_cancelled() => Err(anyhow::anyhow!(cancel_message)),
+            result => result,
+        }
+    }
+
+    pub(crate) async fn generate_response_with_retry(
+        &self,
+        request: GenerationRequest,
+        timeout_secs: u64,
+        cancel: &CancellationToken,
+    ) -> Result<GenerationResponse> {
+        let max_retries = crate::retry::DEFAULT_MAX_RETRIES;
+        let mut last_error = None;
+
+        for attempt in 0..=max_retries {
+            if cancel.is_cancelled() {
+                return Err(anyhow::anyhow!("LLM request cancelled"));
+            }
+
+            let result = self
+                .generate_controlled(&request, timeout_secs, cancel)
+                .await;
+            match result {
+                Ok(response) => return Ok(response),
+                Err(error) => {
+                    if !crate::retry::is_retryable(&error) || attempt >= max_retries {
+                        return Err(error);
+                    }
+                    last_error = Some(error);
+                    let delay = crate::retry::backoff_delay(attempt + 1);
+                    tokio::select! {
+                        _ = cancel.cancelled() => {
+                            return Err(anyhow::anyhow!("LLM request cancelled"));
+                        }
+                        _ = tokio::time::sleep(delay) => {}
+                    }
+                }
+            }
+        }
+
+        Err(last_error.unwrap_or_else(|| anyhow::anyhow!("Max retries exceeded")))
+    }
+
     pub async fn generate_with_text_events_controlled<E, F>(
         &self,
         request: &GenerationRequest,

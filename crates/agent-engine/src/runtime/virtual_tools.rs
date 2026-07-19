@@ -67,9 +67,9 @@ where
                 pending.details =
                     append_skill_permission_hints(pending.details, state.machine.active_skills());
                 let request_id = state
-                    .write_namespace_confirmation_request(&pending)
-                    .await?
-                    .unwrap_or_else(|| pending.checkpoint_id.clone());
+                    .agent_files()
+                    .write_confirmation_request(&pending)
+                    .await?;
                 let pending_payload = json!({
                     "status": "pending_confirmation",
                     "request_id": request_id.clone()
@@ -155,9 +155,9 @@ where
                 parse_structured_user_input_request(&tool_call.id, tool_arguments)
             {
                 let request_id = state
-                    .write_namespace_structured_input_request(&request)
-                    .await?
-                    .unwrap_or_else(|| request.request_id.clone());
+                    .agent_files()
+                    .write_structured_input_request(&request)
+                    .await?;
                 let pending_payload =
                     json!({"status": "pending_structured_input", "request_id": request_id.clone()});
                 emit(Event::ToolCallCompleted {

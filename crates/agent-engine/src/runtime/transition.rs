@@ -31,7 +31,6 @@ use crate::agent_machine::NormalizedToolCall;
 use crate::{
     agent_machine::{AgentMachine, DeferredRuntimeAction, TurnActivityState},
     config::Config,
-    retry,
     runtime::RuntimeConfig,
 };
 
@@ -108,118 +107,6 @@ impl RuntimeLoopState {
 
     pub(crate) fn tool_execution(&self) -> NamespaceToolExecution {
         self.environment.tool_execution()
-    }
-
-    pub(crate) async fn write_namespace_confirmation_request(
-        &self,
-        pending: &crate::approval::PendingConfirmation,
-    ) -> Result<Option<String>> {
-        let kind = crate::approval::runtime_confirmation_control_kind(&pending.checkpoint_type)
-            .unwrap_or("confirmation");
-        let options = serde_json::to_string(&serde_json::json!({
-            "checkpoint_id": pending.checkpoint_id.clone(),
-            "checkpoint_type": pending.checkpoint_type.clone(),
-            "details": pending.details.clone(),
-            "options": pending.options.clone(),
-        }))?;
-        let request_id = self
-            .agent_files()
-            .write_request(
-                namespace_environment::NamespaceRequestRecord::new(kind, pending.summary.clone())
-                    .with_options(options),
-            )
-            .await?;
-        Ok(Some(request_id))
-    }
-
-    pub(crate) async fn write_namespace_structured_input_request(
-        &self,
-        pending: &crate::approval::PendingStructuredInputRequest,
-    ) -> Result<Option<String>> {
-        let options = serde_json::to_string(&serde_json::json!({
-            "request_id": pending.request_id.clone(),
-            "title": pending.title.clone(),
-            "questions": pending.questions.clone(),
-        }))?;
-        let request_id = self
-            .agent_files()
-            .write_request(
-                namespace_environment::NamespaceRequestRecord::new(
-                    "structured_input",
-                    pending.prompt.clone(),
-                )
-                .with_options(options),
-            )
-            .await?;
-        Ok(Some(request_id))
-    }
-
-    pub(crate) async fn generate_once_with_cancel(
-        &mut self,
-        request: crate::llm::GenerationRequest,
-        cancel: &CancellationToken,
-        cancel_message: &'static str,
-    ) -> Result<crate::llm::GenerationResponse> {
-        let generation = self.namespace_generation();
-        match generation.generate_controlled(&request, 0, cancel).await {
-            Err(_) if cancel.is_cancelled() => Err(anyhow::anyhow!(cancel_message)),
-            result => result,
-        }
-    }
-
-    pub(crate) async fn generate_response_with_retry(
-        &mut self,
-        request: crate::llm::GenerationRequest,
-        timeout_secs: u64,
-        cancel: &CancellationToken,
-    ) -> Result<crate::llm::GenerationResponse> {
-        let max_retries = retry::DEFAULT_MAX_RETRIES;
-        let mut last_error = None;
-
-        for attempt in 0..=max_retries {
-            if cancel.is_cancelled() {
-                return Err(anyhow::anyhow!("LLM request cancelled"));
-            }
-
-            let generation = self.namespace_generation();
-            let attempt_request = request.clone();
-            let result = generation
-                .generate_controlled(&attempt_request, timeout_secs, cancel)
-                .await;
-
-            match result {
-                Ok(response) => return Ok(response),
-                Err(error) => {
-                    if !retry::is_retryable(&error) || attempt >= max_retries {
-                        return Err(error);
-                    }
-                    last_error = Some(error);
-                    let delay = retry::backoff_delay(attempt + 1);
-                    tokio::select! {
-                        _ = cancel.cancelled() => return Err(anyhow::anyhow!("LLM request cancelled")),
-                        _ = tokio::time::sleep(delay) => {}
-                    }
-                }
-            }
-        }
-
-        Err(last_error.unwrap_or_else(|| anyhow::anyhow!("Max retries exceeded")))
-    }
-
-    pub(crate) async fn static_tool_names(&self) -> Result<Vec<String>> {
-        Ok(self
-            .tool_execution()
-            .discover_packages()
-            .await?
-            .into_iter()
-            .map(|manifest| manifest.name)
-            .collect())
-    }
-
-    pub(crate) fn default_tool_cwd(&self) -> Option<std::path::PathBuf> {
-        self.tool_execution()
-            .execution_binding()
-            .map(|binding| binding.cwd)
     }
 }
 

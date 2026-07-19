@@ -117,7 +117,7 @@ where
         &tool_call.name,
         &mount_payload,
         mount_request.access.policy_capability(),
-        state.default_tool_cwd().as_deref(),
+        state.tool_execution().default_cwd().as_deref(),
         sandbox_confinement,
     );
     if mount_request.access == MountRequestAccess::ReadWrite {
@@ -127,7 +127,7 @@ where
             &tool_call.name,
             &mount_payload,
             alan_agent_protocol::ToolCapability::Read,
-            state.default_tool_cwd().as_deref(),
+            state.tool_execution().default_cwd().as_deref(),
             sandbox_confinement,
         );
         decision = merge_mount_policy_decision(decision, read_decision);
@@ -249,9 +249,9 @@ where
     };
 
     let request_id = state
-        .write_namespace_confirmation_request(&pending)
-        .await?
-        .unwrap_or_else(|| pending.checkpoint_id.clone());
+        .agent_files()
+        .write_confirmation_request(&pending)
+        .await?;
     let payload = json!({
         "status": "pending_mount_approval",
         "request_id": request_id.clone(),

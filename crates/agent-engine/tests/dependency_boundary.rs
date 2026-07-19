@@ -201,7 +201,12 @@ fn namespace_environment_reaches_capabilities_only_through_files() {
     ] {
         assert!(production.contains(required), "missing {required:?}");
     }
-    for required in ["write_agent_output", "{agent_path}/machine/tape"] {
+    for required in [
+        "write_agent_output",
+        "{agent_path}/machine/tape",
+        "write_confirmation_request",
+        "write_structured_input_request",
+    ] {
         assert!(
             agent_files.contains(required),
             "AgentFS file owner missing {required:?}"
@@ -215,6 +220,12 @@ fn namespace_environment_reaches_capabilities_only_through_files() {
         generation.contains("/mnt/llm/connections/{llm_connection}/clone"),
         "llmfs generation owner must clone through its file surface"
     );
+    for operation in ["generate_once_with_cancel", "generate_response_with_retry"] {
+        assert!(
+            generation.contains(operation),
+            "llmfs generation handle missing {operation}"
+        );
+    }
     assert!(
         !production.contains("/mnt/llm/connections/{llm_connection}/clone"),
         "namespace environment coordinator must leave llmfs protocol details to generation owner"
@@ -329,6 +340,24 @@ fn transition_leaf_workflows_do_not_receive_the_runtime_loop_aggregate() {
         .expect("find end of turn_tool_definitions")];
     assert!(!tool_definitions.contains("RuntimeLoopState"));
     assert!(tool_definitions.contains("NamespaceToolExecution"));
+}
+
+#[test]
+fn runtime_loop_does_not_forward_narrow_handle_operations() {
+    let transition = read_runtime_source("transition.rs");
+    for operation in [
+        "write_namespace_confirmation_request",
+        "write_namespace_structured_input_request",
+        "generate_once_with_cancel",
+        "generate_response_with_retry",
+        "static_tool_names",
+        "default_tool_cwd",
+    ] {
+        assert!(
+            !transition.contains(operation),
+            "RuntimeLoopState retained forwarding operation {operation}"
+        );
+    }
 }
 
 #[test]
@@ -450,6 +479,12 @@ fn tool_workflows_use_only_the_narrow_tool_execution_handle() {
     let tool_operations = read_runtime_source("transition/namespace_environment/tool_execution.rs");
     assert!(tool_operations.contains("impl NamespaceToolExecution"));
     assert!(!tool_operations.contains("impl NamespaceRuntimeEnvironment"));
+    for operation in ["default_cwd", "static_tool_names"] {
+        assert!(
+            tool_operations.contains(operation),
+            "Tool execution handle missing {operation}"
+        );
+    }
 
     for path in [
         "tool_orchestrator.rs",

@@ -313,6 +313,7 @@ async fn generate_flush_content(
     );
 
     let response = state
+        .namespace_generation()
         .generate_once_with_cancel(request, cancel, "memory flush cancelled")
         .await?;
 

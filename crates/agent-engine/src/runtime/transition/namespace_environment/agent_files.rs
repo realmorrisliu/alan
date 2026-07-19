@@ -163,6 +163,40 @@ impl NamespaceAgentFiles {
         write_request_record(&client, &self.agent_path, record).await
     }
 
+    pub(crate) async fn write_confirmation_request(
+        &self,
+        pending: &crate::approval::PendingConfirmation,
+    ) -> Result<String> {
+        let kind = crate::approval::runtime_confirmation_control_kind(&pending.checkpoint_type)
+            .unwrap_or("confirmation");
+        let options = serde_json::to_string(&serde_json::json!({
+            "checkpoint_id": pending.checkpoint_id.clone(),
+            "checkpoint_type": pending.checkpoint_type.clone(),
+            "details": pending.details.clone(),
+            "options": pending.options.clone(),
+        }))?;
+        self.write_request(
+            NamespaceRequestRecord::new(kind, pending.summary.clone()).with_options(options),
+        )
+        .await
+    }
+
+    pub(crate) async fn write_structured_input_request(
+        &self,
+        pending: &crate::approval::PendingStructuredInputRequest,
+    ) -> Result<String> {
+        let options = serde_json::to_string(&serde_json::json!({
+            "request_id": pending.request_id.clone(),
+            "title": pending.title.clone(),
+            "questions": pending.questions.clone(),
+        }))?;
+        self.write_request(
+            NamespaceRequestRecord::new("structured_input", pending.prompt.clone())
+                .with_options(options),
+        )
+        .await
+    }
+
     pub async fn write_action(&self, record: NamespaceActionRecord) -> Result<String> {
         let client = NamespaceClient::new(self.root.clone());
         write_action_record(&client, &self.agent_path, record).await
