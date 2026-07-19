@@ -402,9 +402,8 @@ fn tool_workflows_use_only_the_narrow_tool_execution_handle() {
         "submission_handlers.rs",
     ] {
         let source = read_runtime_source(path);
-        let production = source.split("\n#[cfg(test)]").next().unwrap();
         assert!(
-            !production.contains("namespace_environment()"),
+            !source.contains("namespace_environment()"),
             "{path} must not reach complete namespace environment for Tool work"
         );
     }
