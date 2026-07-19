@@ -5,13 +5,13 @@ use serde_json::Value;
 use serde_json::json;
 use tokio_util::sync::CancellationToken;
 
-use crate::approval::{
-    PendingConfirmation, TOOL_ESCALATION_CHECKPOINT_PREFIX, TOOL_ESCALATION_CHECKPOINT_TYPE,
-    append_skill_permission_hints, replays_tool_calls, runtime_confirmation_yield_payload,
-};
+use crate::approval::replays_tool_calls;
 
 use super::loop_guard::ToolLoopGuard;
 use super::steering_queue::handle_queued_steering_inputs;
+use super::tool_authorization::{
+    ToolAuthorizationOutcome, ToolAuthorizationRequest, authorize_tool_call,
+};
 #[cfg(test)]
 use super::tool_effect_lifecycle::{EffectCategory, build_effect_identity};
 use super::tool_execution::{
@@ -19,7 +19,6 @@ use super::tool_execution::{
 };
 #[cfg(test)]
 use super::tool_execution::{execute_tool_effect, tool_payload_for_tape};
-use super::tool_policy::{ToolPolicyDecision, evaluate_tool_policy};
 use super::transition::RuntimeLoopState;
 use super::turn_driver::TurnInputBroker;
 use super::turn_support::tool_result_preview;
@@ -165,24 +164,6 @@ pub(super) struct ToolOrchestratorInputs<'a> {
     pub steering_broker: Option<&'a TurnInputBroker>,
 }
 
-fn maybe_allow_approved_tool_escalation_replay(
-    policy_decision: ToolPolicyDecision,
-    allow_approved_tool_escalation_execution: bool,
-) -> ToolPolicyDecision {
-    match policy_decision {
-        ToolPolicyDecision::Escalate { audit, .. } if allow_approved_tool_escalation_execution => {
-            ToolPolicyDecision::Allow {
-                audit: alan_agent_protocol::ToolDecisionAudit {
-                    action: "allow".to_string(),
-                    reason: Some("approved tool escalation replay".to_string()),
-                    ..audit
-                },
-            }
-        }
-        other => other,
-    }
-}
-
 async fn orchestrate_tool_call_with_guard<E, F>(
     state: &mut RuntimeLoopState,
     loop_guard: &mut ToolLoopGuard,
@@ -277,214 +258,27 @@ where
         .tool_execution()
         .resolve_capability(&tool_package, &tool_arguments);
     let current_tool_cwd = state.tool_execution().default_cwd();
-    let policy_decision = maybe_allow_approved_tool_escalation_replay(
-        evaluate_tool_policy(
-            &state.runtime_config.policy_engine,
-            &state.runtime_config.governance,
-            &tool_call.name,
-            &tool_arguments,
-            tool_capability,
-            current_tool_cwd.as_deref(),
-            super::tool_policy::SandboxConfinement::detect(),
-        ),
+    let authorization_runtime = super::transition::tool_authorization_runtime(state);
+    let authorization_request = ToolAuthorizationRequest {
+        tool_call,
+        tool_arguments: &tool_arguments,
+        tool_capability,
+        current_tool_cwd: current_tool_cwd.as_deref(),
         allow_approved_tool_escalation_execution,
-    );
-    let policy_audit = match &policy_decision {
-        ToolPolicyDecision::Allow { audit }
-        | ToolPolicyDecision::Escalate { audit, .. }
-        | ToolPolicyDecision::Forbidden { audit, .. } => audit.clone(),
+        cancel: inputs.cancel,
     };
-    state.machine.record_event(
-        "tool_policy_decision",
-        json!({
-            "tool_call_id": tool_call.id,
-            "tool_name": tool_call.name,
-            "policy_source": policy_audit.policy_source,
-            "rule_id": policy_audit.rule_id,
-            "action": policy_audit.action,
-            "reason": policy_audit.reason,
-            "capability": policy_audit.capability,
-            "sandbox_backend": policy_audit.sandbox_backend,
-            "path_mode": policy_audit.path_mode,
-        }),
-    );
-
-    let tool_audit = match policy_decision {
-        ToolPolicyDecision::Allow { audit } => Some(audit),
-        ToolPolicyDecision::Escalate {
-            summary,
-            mut details,
-            audit,
-            route,
-        } => {
-            details["escalation_route"] = json!(match route {
-                super::tool_policy::EscalationRoute::Reviewer => "reviewer",
-                super::tool_policy::EscalationRoute::AlwaysHuman => "always_human",
-            });
-            details["replay_tool_call"] = json!({
-                "call_id": tool_call.id,
-                "tool_name": tool_call.name,
-                "arguments": tool_arguments,
-            });
-            details = append_skill_permission_hints(details, state.machine.active_skills());
-
-            // Reviewer-routed escalations consult the guardian before pausing for
-            // a human. The sandbox + the deterministic red line remain the
-            // boundary; the reviewer only decides whether to bother the human.
-            let go_human = if matches!(route, super::tool_policy::EscalationRoute::Reviewer) {
-                let transcript = super::guardian::build_transcript(state.machine.messages());
-                let outcome = {
-                    let review_ctx = super::guardian::ReviewContext {
-                        policy: super::guardian::DEFAULT_REVIEWER_POLICY,
-                        transcript: &transcript,
-                        approval_request: &details,
-                    };
-                    let llm_request_timeout_secs = state.runtime_config.llm_request_timeout_secs;
-                    let request = super::guardian::build_review_request(&review_ctx);
-                    let result = state
-                        .namespace_generation()
-                        .generate_response_with_retry(
-                            request,
-                            llm_request_timeout_secs,
-                            inputs.cancel,
-                        )
-                        .await;
-                    super::guardian::review_generation_result(result)
-                };
-                match outcome {
-                    super::guardian::ReviewOutcome::Allow => {
-                        state.machine.record_guardian_review(false);
-                        false
-                    }
-                    super::guardian::ReviewOutcome::Deny { rationale } => {
-                        let tripped = state.machine.record_guardian_review(true);
-                        let message = format!("auto-review denied: {rationale}");
-                        super::ui_surfaces::warning(&state.agent_files(), message.clone()).await?;
-                        emit(Event::Warning { message }).await;
-                        if tripped {
-                            let message =
-                                "auto-review circuit breaker tripped; pausing for you".to_string();
-                            super::ui_surfaces::warning(&state.agent_files(), message.clone())
-                                .await?;
-                            emit(Event::Warning { message }).await;
-                            true
-                        } else {
-                            // Self-correction: feed the denial back to the agent.
-                            let denied_payload = json!({
-                                "status": "denied_by_reviewer",
-                                "reason": rationale,
-                                "instruction": "Do not work around this denial. Pursue a \
-                                 materially safer alternative, or stop and ask the user."
-                            });
-                            emit(Event::ToolCallCompleted {
-                                presentation: None,
-                                id: tool_call.id.clone(),
-                                name: Some(tool_call.name.clone()),
-                                success: Some(false),
-                                result_preview: tool_result_preview(&denied_payload),
-                                audit: Some(audit.clone()),
-                            })
-                            .await;
-                            state.machine.record_tool_call_with_audit(
-                                &tool_call.name,
-                                tool_arguments.clone(),
-                                denied_payload.clone(),
-                                false,
-                                Some(audit),
-                            );
-                            state.machine.add_tool_message(
-                                &tool_call.id,
-                                &tool_call.name,
-                                denied_payload,
-                            );
-                            return Ok(ToolOrchestratorOutcome::ContinueToolBatch {
-                                refresh_context: false,
-                            });
-                        }
-                    }
-                    super::guardian::ReviewOutcome::Unavailable { reason } => {
-                        tracing::warn!(%reason, "auto-review unavailable; pausing for human");
-                        true
-                    }
-                }
-            } else {
-                // Always-human red line.
-                true
-            };
-
-            if go_human {
-                let pending = PendingConfirmation {
-                    checkpoint_id: format!("{TOOL_ESCALATION_CHECKPOINT_PREFIX}{}", tool_call.id),
-                    checkpoint_type: TOOL_ESCALATION_CHECKPOINT_TYPE.to_string(),
-                    summary,
-                    details,
-                    options: vec!["approve".to_string(), "reject".to_string()],
-                };
-                let request_id = state
-                    .agent_files()
-                    .write_confirmation_request(&pending)
-                    .await?;
-                state.machine.record_tool_call_with_audit(
-                    &tool_call.name,
-                    tool_arguments.clone(),
-                    json!({"status":"escalation_required","request_id": request_id.clone()}),
-                    true,
-                    Some(audit),
-                );
-                state
-                    .machine
-                    .set_confirmation_for_request(request_id.clone(), pending.clone());
-                super::ui_surfaces::paused(&state.agent_files()).await?;
-                emit(Event::Yield {
-                    request_id,
-                    kind: alan_agent_protocol::YieldKind::Confirmation,
-                    payload: serde_json::to_value(runtime_confirmation_yield_payload(&pending))
-                        .unwrap_or_else(|_| json!({})),
-                })
-                .await;
+    let tool_audit =
+        match authorize_tool_call(authorization_runtime, authorization_request, emit).await? {
+            ToolAuthorizationOutcome::Authorized { audit } => Some(audit),
+            ToolAuthorizationOutcome::Completed => {
+                return Ok(ToolOrchestratorOutcome::ContinueToolBatch {
+                    refresh_context: false,
+                });
+            }
+            ToolAuthorizationOutcome::PauseTurn => {
                 return Ok(ToolOrchestratorOutcome::PauseTurn);
             }
-
-            // Reviewer approved — proceed to execute (still sandboxed).
-            Some(audit)
-        }
-        ToolPolicyDecision::Forbidden { reason, audit } => {
-            let blocked_payload = json!({
-                "error": reason,
-                "status": "blocked_by_policy"
-            });
-            emit(Event::Error {
-                message: blocked_payload["error"]
-                    .as_str()
-                    .unwrap_or("Tool blocked by policy")
-                    .to_string(),
-                recoverable: true,
-            })
-            .await;
-            emit(Event::ToolCallCompleted {
-                presentation: None,
-                id: tool_call.id.clone(),
-                name: Some(tool_call.name.clone()),
-                success: Some(false),
-                result_preview: tool_result_preview(&blocked_payload),
-                audit: Some(audit.clone()),
-            })
-            .await;
-            state.machine.record_tool_call_with_audit(
-                &tool_call.name,
-                tool_arguments.clone(),
-                blocked_payload.clone(),
-                false,
-                Some(audit),
-            );
-            state
-                .machine
-                .add_tool_message(&tool_call.id, &tool_call.name, blocked_payload);
-            return Ok(ToolOrchestratorOutcome::ContinueToolBatch {
-                refresh_context: false,
-            });
-        }
-    };
+        };
 
     let runtime = super::transition::tool_execution_runtime(state);
     let request = ToolExecutionRequest {
