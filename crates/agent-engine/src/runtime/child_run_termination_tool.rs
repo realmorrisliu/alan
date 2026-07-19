@@ -1,3 +1,5 @@
+mod runtime_inputs;
+
 use alan_agent_protocol::{AdaptivePresentationHint, ConfirmationYieldPayload, Event, YieldKind};
 use anyhow::Result;
 use serde_json::json;
@@ -10,13 +12,14 @@ use crate::llm::ToolDefinition;
 
 use super::child_runs::{ChildRunRegistryError, ChildRunTerminationMode};
 use super::tool_policy::{ToolPolicyDecision, evaluate_tool_policy};
-use super::transition::RuntimeLoopState;
 use super::turn_support::tool_result_preview;
 use super::virtual_tool::VirtualToolOutcome;
 use crate::agent_machine::NormalizedToolCall;
 
+pub(crate) use runtime_inputs::ChildRunTerminationRuntime;
+
 pub(super) async fn handle_terminate_child_run<E, F>(
-    state: &mut RuntimeLoopState,
+    mut runtime: ChildRunTerminationRuntime<'_>,
     tool_call: &NormalizedToolCall,
     tool_arguments: &serde_json::Value,
     allow_approved_tool_escalation_execution: bool,
@@ -42,14 +45,14 @@ where
             audit: Some(audit.clone()),
         })
         .await;
-        state.machine.record_tool_call_with_audit(
+        runtime.machine.record_tool_call_with_audit(
             &tool_call.name,
             tool_arguments.clone(),
             payload.clone(),
             false,
             Some(audit),
         );
-        state
+        runtime
             .machine
             .add_tool_message(&tool_call.id, &tool_call.name, payload);
         return Ok(VirtualToolOutcome::Continue {
@@ -58,7 +61,7 @@ where
     };
 
     let audit = match evaluate_terminate_child_run_policy(
-        state,
+        &mut runtime,
         tool_call,
         tool_arguments,
         allow_approved_tool_escalation_execution,
@@ -81,8 +84,8 @@ where
     })
     .await;
 
-    let result = state.child_run_registry().request_termination(
-        &state.process_path(),
+    let result = runtime.child_run_registry.request_termination(
+        &runtime.parent_process_path,
         &child_run_id,
         "parent_runtime",
         mode,
@@ -122,14 +125,14 @@ where
         audit: Some(audit.clone()),
     })
     .await;
-    state.machine.record_tool_call_with_audit(
+    runtime.machine.record_tool_call_with_audit(
         &tool_call.name,
         tool_arguments.clone(),
         payload.clone(),
         success,
         Some(audit),
     );
-    state
+    runtime
         .machine
         .add_tool_message(&tool_call.id, &tool_call.name, payload);
     Ok(VirtualToolOutcome::Continue {
@@ -156,7 +159,7 @@ enum TerminateChildRunPolicyOutcome {
 }
 
 async fn evaluate_terminate_child_run_policy<E, F>(
-    state: &mut RuntimeLoopState,
+    runtime: &mut ChildRunTerminationRuntime<'_>,
     tool_call: &NormalizedToolCall,
     tool_arguments: &serde_json::Value,
     allow_approved_tool_escalation_execution: bool,
@@ -168,12 +171,12 @@ where
 {
     let policy_decision = maybe_allow_approved_virtual_tool_escalation_replay(
         evaluate_tool_policy(
-            &state.runtime_config.policy_engine,
-            &state.runtime_config.governance,
+            runtime.policy_engine,
+            runtime.governance,
             &tool_call.name,
             tool_arguments,
             alan_agent_protocol::ToolCapability::Write,
-            state.tool_execution().default_cwd().as_deref(),
+            runtime.tool_execution.default_cwd().as_deref(),
             super::tool_policy::SandboxConfinement::detect(),
         ),
         allow_approved_tool_escalation_execution,
@@ -183,7 +186,7 @@ where
         | ToolPolicyDecision::Escalate { audit, .. }
         | ToolPolicyDecision::Forbidden { audit, .. } => audit.clone(),
     };
-    state.machine.record_event(
+    runtime.machine.record_event(
         "tool_policy_decision",
         json!({
             "tool_call_id": tool_call.id,
@@ -211,7 +214,7 @@ where
                 "tool_name": tool_call.name,
                 "arguments": tool_arguments,
             });
-            details = append_skill_permission_hints(details, state.machine.active_skills());
+            details = append_skill_permission_hints(details, runtime.machine.active_skills());
             let pending = PendingConfirmation {
                 checkpoint_id: format!("{TOOL_ESCALATION_CHECKPOINT_PREFIX}{}", tool_call.id),
                 checkpoint_type: TOOL_ESCALATION_CHECKPOINT_TYPE.to_string(),
@@ -219,21 +222,21 @@ where
                 details,
                 options: vec!["approve".to_string(), "reject".to_string()],
             };
-            state.machine.record_tool_call_with_audit(
+            runtime.machine.record_tool_call_with_audit(
                 &tool_call.name,
                 tool_arguments.clone(),
                 json!({"status":"escalation_required"}),
                 true,
                 Some(audit),
             );
-            let request_id = state
-                .agent_files()
+            let request_id = runtime
+                .agent_files
                 .write_confirmation_request(&pending)
                 .await?;
-            state
+            runtime
                 .machine
                 .set_confirmation_for_request(request_id.clone(), pending.clone());
-            super::ui_surfaces::paused(&state.agent_files()).await?;
+            super::ui_surfaces::paused(&runtime.agent_files).await?;
             emit(Event::Yield {
                 request_id,
                 kind: YieldKind::Confirmation,
@@ -272,14 +275,14 @@ where
                 audit: Some(audit.clone()),
             })
             .await;
-            state.machine.record_tool_call_with_audit(
+            runtime.machine.record_tool_call_with_audit(
                 &tool_call.name,
                 tool_arguments.clone(),
                 blocked_payload.clone(),
                 false,
                 Some(audit),
             );
-            state
+            runtime
                 .machine
                 .add_tool_message(&tool_call.id, &tool_call.name, blocked_payload);
             Ok(TerminateChildRunPolicyOutcome::Continue {

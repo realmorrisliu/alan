@@ -324,6 +324,8 @@ fn turn_generation_uses_only_the_file_native_namespace_boundary() {
 #[test]
 fn transition_leaf_workflows_do_not_receive_the_runtime_loop_aggregate() {
     for path in [
+        "child_run_termination_tool.rs",
+        "child_run_termination_tool/runtime_inputs.rs",
         "delegated_skill_tool.rs",
         "delegated_skill_tool/runtime_inputs.rs",
         "delegated_skill_evidence.rs",
@@ -416,6 +418,20 @@ fn transition_leaf_workflows_do_not_receive_the_runtime_loop_aggregate() {
     assert!(delegated_runtime.contains("ChildLaunchRuntime"));
     let transition = read_runtime_source("transition.rs");
     assert!(transition.contains("fn delegated_skill_runtime("));
+
+    let termination_runtime = read_runtime_source("child_run_termination_tool/runtime_inputs.rs");
+    for forbidden in [
+        "RuntimeLoopState",
+        "RuntimeConfig",
+        "NamespaceRuntimeEnvironment",
+    ] {
+        assert!(
+            !termination_runtime.contains(forbidden),
+            "child-run termination runtime must not regain {forbidden}"
+        );
+    }
+    assert!(termination_runtime.contains("ChildRunTerminationRuntime"));
+    assert!(transition.contains("fn child_run_termination_runtime("));
 
     for marker in [
         "fn compaction_submission_id",

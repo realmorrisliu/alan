@@ -189,6 +189,24 @@ pub(super) fn delegated_skill_runtime(
     )
 }
 
+pub(super) fn child_run_termination_runtime(
+    state: &mut RuntimeLoopState,
+) -> super::child_run_termination_tool::ChildRunTerminationRuntime<'_> {
+    let agent_files = state.agent_files();
+    let tool_execution = state.tool_execution();
+    let child_run_registry = state.child_run_registry().clone();
+    let parent_process_path = state.process_path();
+    super::child_run_termination_tool::ChildRunTerminationRuntime::new(
+        &mut state.machine,
+        &state.runtime_config.policy_engine,
+        &state.runtime_config.governance,
+        agent_files,
+        tool_execution,
+        child_run_registry,
+        parent_process_path,
+    )
+}
+
 fn child_launch_base_agent_config(state: &RuntimeLoopState) -> super::launch_config::AgentConfig {
     let mut config = super::launch_config::AgentConfig::from(state.core_config.clone());
     config.runtime_config = state.runtime_config.clone();
