@@ -137,12 +137,12 @@ pub(super) fn compaction_runtime(
     )
 }
 
+#[cfg(test)]
 pub(super) fn child_launch_runtime(
     state: &RuntimeLoopState,
     spec: &alan_agent_protocol::SpawnSpec,
 ) -> super::child_agents::ChildLaunchRuntime {
-    let mut base_agent_config = super::launch_config::AgentConfig::from(state.core_config.clone());
-    base_agent_config.runtime_config = state.runtime_config.clone();
+    let base_agent_config = child_launch_base_agent_config(state);
     let (plan_explanation, plan_items) = match state.machine.plan_snapshot() {
         Some(snapshot) => (snapshot.explanation.as_deref(), snapshot.items.as_slice()),
         None => (None, &[][..]),
@@ -163,6 +163,36 @@ pub(super) fn child_launch_runtime(
         state.prompt_cache.capability_view().cloned(),
         task_context,
     )
+}
+
+pub(super) fn delegated_skill_runtime(
+    state: &mut RuntimeLoopState,
+) -> super::delegated_skill_tool::DelegatedSkillRuntime<'_> {
+    let agent_files = state.agent_files();
+    let child_run_registry = state.child_run_registry().clone();
+    let child_launch = state.child_launch();
+    let base_agent_config = child_launch_base_agent_config(state);
+    let tool_execution = state.tool_execution();
+    let parent_process_path = state.process_path();
+    let child_runtime_inputs = super::delegated_skill_tool::DelegatedChildRuntimeInputs::new(
+        base_agent_config,
+        child_launch,
+        tool_execution,
+        child_run_registry,
+        parent_process_path,
+    );
+    super::delegated_skill_tool::DelegatedSkillRuntime::new(
+        &mut state.machine,
+        &mut state.prompt_cache,
+        agent_files,
+        child_runtime_inputs,
+    )
+}
+
+fn child_launch_base_agent_config(state: &RuntimeLoopState) -> super::launch_config::AgentConfig {
+    let mut config = super::launch_config::AgentConfig::from(state.core_config.clone());
+    config.runtime_config = state.runtime_config.clone();
+    config
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -13,7 +13,7 @@ use crate::{
         delegated_skill_tool::{
             DEFAULT_DELEGATED_TIMEOUT_SECS, DelegatedSkillInvocationRequest,
             MAX_DELEGATED_SKILL_ID_CHARS, MAX_DELEGATED_TARGET_CHARS, MAX_DELEGATED_TASK_CHARS,
-            handle_invoke_delegated_skill_with_spawn,
+            handle_invoke_delegated_skill_with_spawn as handle_invoke_delegated_skill_with_runtime,
         },
         delegation_capabilities::DelegatedSpawnRejected,
         mount_request_tool::MountRequestAccess,
@@ -26,7 +26,7 @@ use crate::{
     },
     tools::ToolRegistry,
 };
-use alan_agent_protocol::SpawnHandle;
+use alan_agent_protocol::{SpawnHandle, SpawnSpec};
 use alan_agentfs::AgentFs;
 use alan_ap::InProcessTransport;
 use alan_kernel::{Access, MountFs, Namespace};
@@ -206,6 +206,37 @@ where
 {
     let cancel = CancellationToken::new();
     try_handle_virtual_tool_call(state, tool_call, &tool_call.arguments, &cancel, false, emit).await
+}
+
+async fn handle_invoke_delegated_skill_with_spawn<E, F, S>(
+    state: &mut super::super::transition::RuntimeLoopState,
+    tool_call: &NormalizedToolCall,
+    tool_arguments: &serde_json::Value,
+    cancel: &CancellationToken,
+    emit: &mut E,
+    spawn_child: S,
+) -> Result<VirtualToolOutcome>
+where
+    E: FnMut(Event) -> F,
+    F: std::future::Future<Output = ()>,
+    S: for<'a> FnOnce(
+        super::super::child_agents::ChildLaunchRuntime,
+        SpawnSpec,
+        &'a CancellationToken,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<ChildRuntimeResult>> + Send + 'a>,
+    >,
+{
+    let runtime = super::super::transition::delegated_skill_runtime(state);
+    handle_invoke_delegated_skill_with_runtime(
+        runtime,
+        tool_call,
+        tool_arguments,
+        cancel,
+        emit,
+        spawn_child,
+    )
+    .await
 }
 
 #[path = "child_run_termination_tool_tests.rs"]

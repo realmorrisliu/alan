@@ -324,6 +324,8 @@ fn turn_generation_uses_only_the_file_native_namespace_boundary() {
 #[test]
 fn transition_leaf_workflows_do_not_receive_the_runtime_loop_aggregate() {
     for path in [
+        "delegated_skill_tool.rs",
+        "delegated_skill_tool/runtime_inputs.rs",
         "delegated_skill_evidence.rs",
         "memory_flush.rs",
         "memory_promotion.rs",
@@ -397,6 +399,23 @@ fn transition_leaf_workflows_do_not_receive_the_runtime_loop_aggregate() {
     assert!(child_launch_inputs.contains("ChildTaskContext"));
     let child_task_context = read_runtime_source("child_agents/task_context.rs");
     assert!(child_task_context.contains("spec.has_handle(SpawnHandle::ToolResults)"));
+
+    let delegated_runtime = read_runtime_source("delegated_skill_tool/runtime_inputs.rs");
+    for forbidden in [
+        "RuntimeLoopState",
+        "RuntimeConfig",
+        "NamespaceRuntimeEnvironment",
+    ] {
+        assert!(
+            !delegated_runtime.contains(forbidden),
+            "delegated skill runtime must not regain {forbidden}"
+        );
+    }
+    assert!(delegated_runtime.contains("DelegatedSkillRuntime"));
+    assert!(delegated_runtime.contains("DelegatedChildRuntimeInputs"));
+    assert!(delegated_runtime.contains("ChildLaunchRuntime"));
+    let transition = read_runtime_source("transition.rs");
+    assert!(transition.contains("fn delegated_skill_runtime("));
 
     for marker in [
         "fn compaction_submission_id",

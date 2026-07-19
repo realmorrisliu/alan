@@ -308,7 +308,8 @@ where
             }
         }
         "invoke_delegated_skill" => {
-            handle_invoke_delegated_skill(state, tool_call, tool_arguments, cancel, emit).await
+            let runtime = super::transition::delegated_skill_runtime(state);
+            handle_invoke_delegated_skill(runtime, tool_call, tool_arguments, cancel, emit).await
         }
         "terminate_child_run" => {
             handle_terminate_child_run(
