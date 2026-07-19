@@ -53,5 +53,5 @@
   canonical `agent-namespace-runtime` and run strict OpenSpec validation.
 - [x] 5.2 Confirm the merged code and canonical spec contain no retired public
   Machine surface or dual transition owner.
-- [ ] 5.3 Archive the change only after implementation, review, verification,
+- [x] 5.3 Archive the change only after implementation, review, verification,
   and canonical spec sync are complete.
