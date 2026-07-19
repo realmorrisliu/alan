@@ -21,7 +21,7 @@ use crate::prompts::{
 };
 use crate::tape::Message;
 
-use super::agent_loop::RuntimeLoopState;
+use super::transition::RuntimeLoopState;
 
 const DEFAULT_PROMOTED_FACTS_HEADER: &str = "## Promoted Facts";
 const DEFAULT_TOPIC_SUMMARY: &str = "Promoted from inbox entries.";

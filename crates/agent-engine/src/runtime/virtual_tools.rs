@@ -10,7 +10,6 @@ use crate::approval::MOUNT_ESCALATION_CHECKPOINT_TYPE;
 use crate::approval::{PendingConfirmation, append_skill_permission_hints};
 use crate::llm::ToolDefinition;
 
-use super::agent_loop::RuntimeLoopState;
 use super::child_run_termination_tool::{
     handle_terminate_child_run, terminate_child_run_tool_definition,
 };
@@ -19,6 +18,7 @@ use super::delegated_skill_tool::{
 };
 pub(super) use super::mount_request_tool::parse_mount_request;
 use super::mount_request_tool::{handle_request_mount, request_mount_tool_definition};
+use super::transition::RuntimeLoopState;
 use super::turn_support::{check_turn_cancelled, tool_result_preview};
 pub(super) use super::virtual_tool::VirtualToolOutcome;
 use crate::agent_machine::NormalizedToolCall;

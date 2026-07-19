@@ -158,16 +158,6 @@ fn test_should_requeue_deferred_action_only_after_cancelled_exit() {
     ));
 }
 
-#[test]
-fn paused_submission_keeps_its_terminal_ui_state() {
-    assert!(preserves_paused_terminal_state(&Ok(()), true));
-    assert!(!preserves_paused_terminal_state(&Ok(()), false));
-    assert!(!preserves_paused_terminal_state(
-        &Err(anyhow!("failed")),
-        true
-    ));
-}
-
 fn mock_generation_response(content: impl Into<String>) -> GenerationResponse {
     GenerationResponse {
         content: content.into(),
@@ -386,46 +376,6 @@ impl LlmProvider for ShutdownDrainMemoryPromotionProvider {
     fn provider_name(&self) -> &'static str {
         "shutdown_drain_memory_promotion"
     }
-}
-
-#[test]
-fn test_should_drive_turn_submission() {
-    // steer/follow_up should be driven as turn
-    assert!(should_drive_turn_submission(&Op::Input {
-        parts: vec![alan_agent_protocol::ContentPart::text("test")],
-        mode: alan_agent_protocol::InputMode::Steer,
-    }));
-    assert!(should_drive_turn_submission(&Op::Input {
-        parts: vec![alan_agent_protocol::ContentPart::text("test")],
-        mode: alan_agent_protocol::InputMode::FollowUp,
-    }));
-    // next_turn should be queue-only, not immediate execution.
-    assert!(!should_drive_turn_submission(&Op::Input {
-        parts: vec![alan_agent_protocol::ContentPart::text("test")],
-        mode: alan_agent_protocol::InputMode::NextTurn,
-    }));
-
-    // Turn should be driven as turn
-    assert!(should_drive_turn_submission(&Op::Turn {
-        parts: vec![alan_agent_protocol::ContentPart::text("test")],
-        context: None,
-    }));
-
-    // Other ops should not be driven as turn
-    assert!(!should_drive_turn_submission(&Op::CompactWithOptions {
-        focus: None,
-    }));
-    assert!(!should_drive_turn_submission(&Op::CompactWithOptions {
-        focus: Some("preserve todos".to_string()),
-    }));
-    assert!(!should_drive_turn_submission(&Op::Rollback { turns: 1 }));
-    assert!(!should_drive_turn_submission(&Op::Interrupt));
-    assert!(!should_drive_turn_submission(&Op::Resume {
-        request_id: "req-123".to_string(),
-        content: vec![alan_agent_protocol::ContentPart::structured(
-            serde_json::json!({})
-        )],
-    }));
 }
 
 #[path = "engine_runtime_tests.rs"]

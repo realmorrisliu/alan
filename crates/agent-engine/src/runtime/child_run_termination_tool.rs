@@ -8,9 +8,9 @@ use crate::approval::{
 };
 use crate::llm::ToolDefinition;
 
-use super::agent_loop::RuntimeLoopState;
 use super::child_runs::{ChildRunRegistryError, ChildRunTerminationMode};
 use super::tool_policy::{ToolPolicyDecision, evaluate_tool_policy};
+use super::transition::RuntimeLoopState;
 use super::turn_support::tool_result_preview;
 use super::virtual_tool::VirtualToolOutcome;
 use crate::agent_machine::NormalizedToolCall;

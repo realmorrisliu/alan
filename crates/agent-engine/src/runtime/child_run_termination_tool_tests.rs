@@ -22,7 +22,7 @@ fn test_terminate_child_run_tool_definition() {
 }
 #[tokio::test]
 async fn test_try_handle_virtual_tool_call_terminate_child_run_success() {
-    let mut state = create_test_agent_loop_state();
+    let mut state = create_test_transition_state();
     let child_run_id = format!("child-run-{}", uuid::Uuid::new_v4());
     state
         .child_run_registry()
@@ -82,7 +82,7 @@ async fn test_try_handle_virtual_tool_call_terminate_child_run_success() {
 
 #[tokio::test]
 async fn test_try_handle_virtual_tool_call_terminate_child_run_unknown_child() {
-    let mut state = create_test_agent_loop_state();
+    let mut state = create_test_transition_state();
     let child_run_id = format!("missing-child-run-{}", uuid::Uuid::new_v4());
 
     let tool_call = NormalizedToolCall {
@@ -122,7 +122,7 @@ async fn test_try_handle_virtual_tool_call_terminate_child_run_unknown_child() {
 
 #[tokio::test]
 async fn test_try_handle_virtual_tool_call_terminate_child_run_already_terminal() {
-    let mut state = create_test_agent_loop_state();
+    let mut state = create_test_transition_state();
     let child_run_id = format!("child-run-{}", uuid::Uuid::new_v4());
     state
         .child_run_registry()
@@ -175,7 +175,7 @@ async fn test_try_handle_virtual_tool_call_terminate_child_run_already_terminal(
 
 #[tokio::test]
 async fn test_try_handle_virtual_tool_call_terminate_child_run_escalates_under_escalating_policy() {
-    let mut state = create_test_agent_loop_state();
+    let mut state = create_test_transition_state();
     state.runtime_config.governance = alan_agent_protocol::GovernanceConfig {
         profile: alan_agent_protocol::GovernanceProfile::Autonomous,
         policy_path: None,
@@ -222,7 +222,7 @@ async fn test_try_handle_virtual_tool_call_terminate_child_run_escalates_under_e
 
 #[tokio::test]
 async fn test_try_handle_virtual_tool_call_terminate_child_run_denied_by_policy() {
-    let mut state = create_test_agent_loop_state();
+    let mut state = create_test_transition_state();
     let temp = TempDir::new().unwrap();
     std::fs::write(
         temp.path().join("policy.yaml"),

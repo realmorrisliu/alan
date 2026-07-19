@@ -1,18 +1,18 @@
 //! Agent Runtime - Core execution engine.
 
-use super::agent_loop::{
-    DeferredRuntimeActionExit, handle_submission_with_cancel,
-    run_deferred_runtime_action_with_cancel,
-};
 use super::controller::{AgentMachineDurabilityState, RuntimeController, RuntimeStartupMetadata};
 use super::launch_config::AgentProcessConfig;
+use super::transition::{
+    DeferredRuntimeActionExit, TransitionCompletion, accepts_inband_submissions,
+    advance_accepted_submission, run_deferred_runtime_action_with_cancel,
+};
 use super::turn_driver::{
-    NAMESPACE_PENDING_RESPONSE_POLL_INTERVAL, TurnInputBroker, drive_turn_submission_with_cancel,
-    is_turn_inband_submission, namespace_pending_resume_submission, should_drive_turn_submission,
+    NAMESPACE_PENDING_RESPONSE_POLL_INTERVAL, TurnInputBroker, is_turn_inband_submission,
+    namespace_pending_resume_submission,
 };
 use super::{NamespaceRuntimeEnvironment, RuntimeLoopState};
 use crate::agent_machine::AgentMachine;
-use alan_agent_protocol::{Event, InputMode, Submission};
+use alan_agent_protocol::{InputMode, Submission};
 use anyhow::Result;
 use std::collections::VecDeque;
 use std::time::Duration;
@@ -65,10 +65,6 @@ fn should_requeue_deferred_action(
     exit: DeferredRuntimeActionExit,
 ) -> bool {
     requeue_requested && matches!(exit, DeferredRuntimeActionExit::Cancelled)
-}
-
-fn preserves_paused_terminal_state(result: &Result<()>, has_pending_interaction: bool) -> bool {
-    result.is_ok() && has_pending_interaction
 }
 
 async fn read_pending_namespace_resume_submission(
@@ -427,7 +423,7 @@ fn spawn_with_prepared_runtime_environment(
         };
         let machine = startup.machine;
 
-        // Build agent loop state
+        // Build the transition context owned by this Process loop.
         let mut state = RuntimeLoopState {
             machine,
             environment,
@@ -567,43 +563,29 @@ fn spawn_with_prepared_runtime_environment(
             match queued_item {
                 QueuedRuntimeItem::Submission(submission) => {
                     debug!(?submission.id, "Received submission");
-                    let drive_as_turn_submission = should_drive_turn_submission(&submission.op);
-                    state.machine.accept_submission(submission.id.clone());
+                    let accepts_inband = accepts_inband_submissions(&submission.op);
 
                     let cancel = CancellationToken::new();
-                    let mut emit = |_event: Event| async {};
 
                     let broker_for_submission = queues.active_turn_broker.clone();
                     let namespace_control = state.namespace_environment().clone();
                     let namespace_heartbeat = state.namespace_environment().clone();
-                    let mut submission_fut: std::pin::Pin<
-                        Box<dyn std::future::Future<Output = Result<()>> + Send + '_>,
-                    > = if drive_as_turn_submission {
-                        Box::pin(drive_turn_submission_with_cancel(
-                            &mut state,
-                            submission,
-                            &broker_for_submission,
-                            &mut emit,
-                            &cancel,
-                        ))
-                    } else {
-                        Box::pin(handle_submission_with_cancel(
-                            &mut state, submission, &mut emit, &cancel,
-                        ))
-                    };
+                    let mut submission_fut = Box::pin(advance_accepted_submission(
+                        &mut state,
+                        submission,
+                        &broker_for_submission,
+                        &cancel,
+                    ));
                     let mut heartbeat_interval = tokio::time::interval(Duration::from_secs(5));
                     heartbeat_interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
                     loop {
                         tokio::select! {
-                            result = &mut submission_fut => {
+                            outcome = &mut submission_fut => {
                                 drop(submission_fut);
-                                let terminal_ui_result = match &result {
-                                    Ok(()) if preserves_paused_terminal_state(
-                                        &result,
-                                        state.machine.has_pending_interaction(),
-                                    ) => Ok(()),
-                                    Ok(()) => super::ui_surfaces::turn_completed(
+                                let terminal_ui_result = match &outcome.result {
+                                    Ok(TransitionCompletion::Paused) => Ok(()),
+                                    Ok(TransitionCompletion::Completed) => super::ui_surfaces::turn_completed(
                                         &namespace_heartbeat,
                                         false,
                                     )
@@ -617,23 +599,21 @@ fn spawn_with_prepared_runtime_environment(
                                 if let Err(err) = terminal_ui_result {
                                     warn!(error = %err, "Failed to write terminal runtime state");
                                 }
-                                if drive_as_turn_submission {
+                                if outcome.requeue_inband_submissions {
                                     let _ = queues
                                         .requeue_active_turn_leftovers(&mut state.machine)
                                         .await;
                                 }
-                                if let Err(e) = result {
+                                if let Err(e) = &outcome.result {
                                     let error_msg = format!("Error handling submission: {}", e);
                                     error!(error = %error_msg);
                                 }
                                 queues.outer_queue.extend(
-                                    state
-                                        .machine
-                                        .drain_deferred_runtime_actions()
+                                    outcome
+                                        .deferred_actions
                                         .into_iter()
                                         .map(QueuedRuntimeItem::Deferred),
                                 );
-                                state.machine.finish_submission();
                                 break;
                             }
                             incoming = sub_rx.recv(), if !submissions_closed => {
@@ -641,7 +621,7 @@ fn spawn_with_prepared_runtime_environment(
                                     Some(incoming) => {
                                         if matches!(incoming.op, alan_agent_protocol::Op::Interrupt) {
                                             cancel.cancel();
-                                        } else if drive_as_turn_submission
+                                        } else if accepts_inband
                                             && is_turn_inband_submission(&incoming.op)
                                         {
                                             if !queues.active_turn_broker.push(incoming.clone()).await {
@@ -660,7 +640,7 @@ fn spawn_with_prepared_runtime_environment(
                             namespace_submission = namespace_input_rx.recv() => {
                                 match namespace_submission {
                                     Some(Ok(incoming)) => {
-                                        if drive_as_turn_submission && is_turn_inband_submission(&incoming.op) {
+                                        if accepts_inband && is_turn_inband_submission(&incoming.op) {
                                             if !queues.active_turn_broker.push(incoming.clone()).await {
                                                 queues.push_outer_submission(incoming);
                                             }
@@ -687,7 +667,7 @@ fn spawn_with_prepared_runtime_environment(
                                         // an Op::Interrupt arriving on sub_rx.
                                         if matches!(incoming.op, alan_agent_protocol::Op::Interrupt) {
                                             cancel.cancel();
-                                        } else if drive_as_turn_submission && is_turn_inband_submission(&incoming.op) {
+                                        } else if accepts_inband && is_turn_inband_submission(&incoming.op) {
                                             if !queues.active_turn_broker.push(incoming.clone()).await {
                                                 queues.push_outer_submission(incoming);
                                             }

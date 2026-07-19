@@ -2,7 +2,7 @@ use super::*;
 
 #[tokio::test]
 async fn test_try_handle_virtual_tool_call_invoke_delegated_skill() {
-    let mut state = create_test_agent_loop_state();
+    let mut state = create_test_transition_state();
     activate_test_delegated_skill(&mut state, "repo-review", "reviewer");
 
     let tool_call = NormalizedToolCall {
@@ -114,7 +114,7 @@ async fn test_try_handle_virtual_tool_call_invoke_delegated_skill() {
 
 #[tokio::test]
 async fn test_delegated_capability_rejection_is_recorded_on_parent_tape() {
-    let mut state = create_test_agent_loop_state();
+    let mut state = create_test_transition_state();
     activate_test_delegated_skill(&mut state, "repo-review", "reviewer");
     let tool_call = NormalizedToolCall {
         id: "call_capability_mismatch".to_string(),
@@ -183,7 +183,7 @@ Use this skill when asked.
     )
     .unwrap();
 
-    let mut state = create_test_agent_loop_state();
+    let mut state = create_test_transition_state();
     state.prompt_cache =
         crate::runtime::prompt_cache::PromptAssemblyCache::with_fixed_capability_view(
             capability_view_for_package_store(&package_store),
@@ -275,7 +275,7 @@ Use this skill when asked.
     )
     .unwrap();
 
-    let mut state = create_test_agent_loop_state();
+    let mut state = create_test_transition_state();
     state.prompt_cache =
         crate::runtime::prompt_cache::PromptAssemblyCache::with_fixed_capability_view(
             capability_view_for_package_store(&package_store),
@@ -352,7 +352,7 @@ Use this skill when asked.
 #[tokio::test]
 async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_records_successful_tool_call() {
     let temp = TempDir::new().unwrap();
-    let mut state = create_test_agent_loop_state();
+    let mut state = create_test_transition_state();
     state.machine = AgentMachine::new_with_recorder_in_dir("/proc/test", "gpt-5-mini", temp.path())
         .await
         .unwrap();
@@ -419,7 +419,7 @@ async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_records_succes
 #[tokio::test]
 async fn test_try_handle_virtual_tool_call_records_normalized_namespace_cwd() {
     let temp = TempDir::new().unwrap();
-    let mut state = create_test_agent_loop_state();
+    let mut state = create_test_transition_state();
     state.machine = AgentMachine::new_with_recorder_in_dir("/proc/test", "gpt-5-mini", temp.path())
         .await
         .unwrap();
@@ -489,7 +489,7 @@ async fn test_try_handle_virtual_tool_call_records_normalized_namespace_cwd() {
 
 #[tokio::test]
 async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_bounds_preview_and_payload() {
-    let mut state = create_test_agent_loop_state();
+    let mut state = create_test_transition_state();
     let long_skill_id = format!("repo-review-{}", "x".repeat(150));
     let long_target = format!("reviewer-{}", "y".repeat(150));
     let long_task = "Review the current diff and summarize risks. ".repeat(80);
@@ -587,7 +587,7 @@ async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_bounds_preview
 
 #[tokio::test]
 async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_honors_interrupt() {
-    let mut state = create_test_agent_loop_state();
+    let mut state = create_test_transition_state();
     activate_test_delegated_skill(&mut state, "repo-review", "reviewer");
     state.machine.set_turn_activity(TurnActivityState::Running);
 
@@ -657,7 +657,7 @@ async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_honors_interru
 #[tokio::test]
 async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_honors_interrupt_during_startup()
 {
-    let mut state = create_test_agent_loop_state();
+    let mut state = create_test_transition_state();
     activate_test_delegated_skill(&mut state, "repo-review", "reviewer");
     state.machine.set_turn_activity(TurnActivityState::Running);
 
@@ -714,7 +714,7 @@ async fn test_try_handle_virtual_tool_call_invoke_delegated_skill_honors_interru
 
 #[tokio::test]
 async fn test_try_handle_virtual_tool_call_invalid_delegated_skill_request() {
-    let mut state = create_test_agent_loop_state();
+    let mut state = create_test_transition_state();
 
     let tool_call = NormalizedToolCall {
         id: "call_1".to_string(),
@@ -752,7 +752,7 @@ async fn test_try_handle_virtual_tool_call_invalid_delegated_skill_request() {
 
 #[tokio::test]
 async fn test_try_handle_virtual_tool_call_rejects_target_mismatch() {
-    let mut state = create_test_agent_loop_state();
+    let mut state = create_test_transition_state();
     activate_test_delegated_skill(&mut state, "repo-review", "reviewer");
 
     let tool_call = NormalizedToolCall {

@@ -13,7 +13,7 @@ use tracing::{error, info, warn};
 
 use crate::{llm::build_generation_request, prompts, rollout::CompactedItem};
 
-use super::{agent_loop::RuntimeLoopState, memory_flush};
+use super::{memory_flush, transition::RuntimeLoopState};
 
 #[cfg(test)]
 pub(crate) use self::context::{

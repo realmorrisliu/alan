@@ -11,10 +11,10 @@ use crate::approval::{
 };
 use crate::tape::ContentPart;
 
-use super::agent_loop::{
+use super::compaction::{CompactionRequest, maybe_compact_context_for_request};
+use super::transition::{
     ApprovedMountGrant, ApprovedMountGrantAccess, NamespaceMountApplication, RuntimeLoopState,
 };
-use super::compaction::{CompactionRequest, maybe_compact_context_for_request};
 use super::turn_executor::TurnRunKind;
 use super::turn_support::cancel_current_task;
 use crate::agent_machine::{NormalizedToolCall, PendingYield};

@@ -51,6 +51,35 @@ async fn test_handle_submission_cancel() {
 }
 
 #[tokio::test]
+async fn accepted_transition_returns_compact_outcome_and_clears_submission_identity() {
+    let mut state = runtime_state_with_environment(
+        namespace_environment_with_live_process(DelayedMockProvider::new(
+            tokio::time::Duration::from_millis(0),
+            "",
+        ))
+        .await,
+    );
+    let broker = TurnInputBroker::default();
+    let cancel = CancellationToken::new();
+
+    let outcome = advance_accepted_submission(
+        &mut state,
+        Submission::new(alan_agent_protocol::Op::Interrupt),
+        &broker,
+        &cancel,
+    )
+    .await;
+
+    assert_eq!(
+        outcome.result.expect("interrupt transition should succeed"),
+        TransitionCompletion::Completed
+    );
+    assert!(!outcome.requeue_inband_submissions);
+    assert!(outcome.deferred_actions.is_empty());
+    assert_eq!(state.machine.current_submission_id(), None);
+}
+
+#[tokio::test]
 #[allow(
     clippy::field_reassign_with_default,
     reason = "the test highlights only the submission fields that define this scenario"

@@ -4,7 +4,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::warn;
 use uuid::Uuid;
 
-use super::agent_loop::RuntimeLoopState;
+use super::transition::RuntimeLoopState;
 use crate::agent_machine::NormalizedToolCall;
 
 pub(super) async fn cancel_current_task<E, F>(

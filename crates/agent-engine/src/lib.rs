@@ -3,7 +3,7 @@
 //! This crate implements a generic agent runtime modeled as a Turing machine:
 //! - **Tape**: `tape::Tape` — manages conversation context
 //! - **State**: `AgentMachine` — holds tape, tools, skills, and runtime config
-//! - **Transition**: The agent loop drives LLM generation and tool execution
+//! - **Transition**: Accepted submissions drive LLM generation and Tool execution
 //! - **Persistence**: `RolloutRecorder` — checkpoints every state transition
 //!
 //! The core is intentionally agnostic of hosting concerns and domain-specific

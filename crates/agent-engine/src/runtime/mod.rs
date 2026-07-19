@@ -2,7 +2,6 @@
 //!
 //! Drives the agent loop: receive input → LLM generation → tool execution → state transition.
 
-mod agent_loop;
 mod agent_process;
 mod child_agents;
 mod child_run_termination_tool;
@@ -31,6 +30,7 @@ mod tool_orchestrator;
 mod tool_packages;
 mod tool_policy;
 mod tool_presentation;
+mod transition;
 mod turn_driver;
 mod turn_executor;
 mod turn_support;
@@ -38,12 +38,6 @@ mod ui_surfaces;
 mod virtual_tool;
 mod virtual_tools;
 
-pub use agent_loop::{
-    ApprovedMountGrant, ApprovedMountGrantAccess, MountGrantApplicator,
-    MountGrantApplicatorFactory, NamespaceMountApplication, NamespaceRuntimeEnvironment,
-    NamespaceToolActionOutput, NamespaceTurnOutput, NamespaceTurnRuntime,
-    NamespaceTurnRuntimeConfig,
-};
 pub use agent_process::{
     AgentProcessLifecycle, AssembledChildAgentProcess, ChildAgentProcessAssembler,
     ChildAgentProcessAssemblyPlan, ChildAgentProcessAssemblyRequest,
@@ -60,11 +54,17 @@ pub use launch_config::{
     AgentConfig, AgentProcessConfig, configure_runtime_tool_execution_binding,
     effective_core_config_for_runtime,
 };
+pub use transition::{
+    ApprovedMountGrant, ApprovedMountGrantAccess, MountGrantApplicator,
+    MountGrantApplicatorFactory, NamespaceMountApplication, NamespaceRuntimeEnvironment,
+    NamespaceToolActionOutput, NamespaceTurnOutput, NamespaceTurnRuntime,
+    NamespaceTurnRuntimeConfig,
+};
 
-// Re-export agent loop types for internal use
-pub(crate) use agent_loop::RuntimeLoopState;
+// Re-export the transition context for internal runtime modules.
 pub(crate) use memory_promotion::TurnMemoryPromotionJob;
 pub use tool_packages::ToolPackageManifest;
+pub(crate) use transition::RuntimeLoopState;
 
 /// Configuration for the agent runtime
 #[derive(Debug, Clone)]

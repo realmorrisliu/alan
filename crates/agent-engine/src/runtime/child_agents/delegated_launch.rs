@@ -1,8 +1,8 @@
 use super::{ChildNamespaceAssemblyPlan, ROUTE_MOUNT_PATH};
-use crate::runtime::agent_loop::RuntimeLoopState;
 use crate::runtime::delegation_capabilities::{
     DelegatedSpawnRejected, evaluate_delegated_namespace, namespace_summary_from_bindings,
 };
+use crate::runtime::transition::RuntimeLoopState;
 use alan_agent_protocol::{DelegatedCapabilityDecision, DelegatedCapabilityRecovery, SpawnSpec};
 use anyhow::Result;
 use std::path::PathBuf;

@@ -1,4 +1,4 @@
-//! Namespace-native environment owned by the agent loop.
+//! Namespace-native environment available at the accepted-submission transition boundary.
 //!
 //! This module contains the file-operation environment used by the engine when
 //! a turn is driven by a single aP namespace handle: input is read from

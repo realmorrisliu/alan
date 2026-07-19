@@ -24,9 +24,9 @@
 
 ## 3. Extract The Concrete Transition Owner
 
-- [ ] 3.1 Move execution after `Submission` acceptance into one concrete
+- [x] 3.1 Move execution after `Submission` acceptance into one concrete
   transition module with a compact outcome for the outer loop.
-- [ ] 3.2 Keep input polling, channel closure, shutdown, cancellation, and
+- [x] 3.2 Keep input polling, channel closure, shutdown, cancellation, and
   heartbeat in `engine.rs` and verify they do not become Machine state.
 - [ ] 3.3 Restrict complete namespace-environment access to the transition
   boundary and pass narrow concrete inputs to generation, Tool, policy, memory,

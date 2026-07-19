@@ -6,7 +6,6 @@ use tracing::{debug, error, info, warn};
 
 use crate::llm::build_generation_request;
 
-use super::agent_loop::RuntimeLoopState;
 use super::compaction::{CompactionRequest, maybe_compact_context_with_cancel};
 use super::response_guardrails::{
     AssistantDraft, GuardrailDecision, ResponseGuardrailContext, ResponseGuardrails,
@@ -14,6 +13,7 @@ use super::response_guardrails::{
 use super::tool_orchestrator::{
     ToolBatchOrchestratorOutcome, ToolOrchestratorInputs, ToolTurnOrchestrator,
 };
+use super::transition::RuntimeLoopState;
 use super::turn_driver::TurnInputBroker;
 use super::turn_support::{
     check_turn_cancelled, emit_streaming_chunks, emit_task_completed_success, emit_thinking_chunks,

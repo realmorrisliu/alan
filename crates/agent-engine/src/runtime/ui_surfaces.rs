@@ -6,7 +6,7 @@ use alan_agent_protocol::{
 };
 use anyhow::Result;
 
-use super::agent_loop::NamespaceRuntimeEnvironment;
+use super::transition::NamespaceRuntimeEnvironment;
 
 fn now_unix_ms() -> u64 {
     SystemTime::now()

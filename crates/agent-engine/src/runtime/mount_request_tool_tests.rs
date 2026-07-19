@@ -199,7 +199,7 @@ fn test_parse_mount_request_rejects_invalid_fields() {
 }
 #[tokio::test]
 async fn test_try_handle_virtual_tool_call_request_mount_escalates_even_when_allowed() {
-    let mut state = create_test_agent_loop_state();
+    let mut state = create_test_transition_state();
     state.runtime_config.policy_engine = crate::policy::PolicyEngine::allow_all();
     let temp = TempDir::new().unwrap();
     let host_path = std::fs::canonicalize(temp.path()).unwrap();
@@ -274,7 +274,7 @@ async fn test_try_handle_virtual_tool_call_request_mount_escalates_even_when_all
 
 #[tokio::test]
 async fn test_try_handle_virtual_tool_call_request_mount_does_not_probe_host_existence() {
-    let mut state = create_test_agent_loop_state();
+    let mut state = create_test_transition_state();
     state.runtime_config.policy_engine = crate::policy::PolicyEngine::allow_all();
     let missing_host_path = TempDir::new()
         .unwrap()
@@ -321,7 +321,7 @@ async fn test_try_handle_virtual_tool_call_request_mount_does_not_probe_host_exi
 
 #[tokio::test]
 async fn test_try_handle_virtual_tool_call_request_mount_denied_by_policy() {
-    let mut state = create_test_agent_loop_state();
+    let mut state = create_test_transition_state();
     state.runtime_config.policy_engine = crate::policy::PolicyEngine::deny_all();
     let temp = TempDir::new().unwrap();
     let host_path = std::fs::canonicalize(temp.path()).unwrap();
@@ -372,7 +372,7 @@ async fn test_try_handle_virtual_tool_call_request_mount_denied_by_policy() {
 
 #[tokio::test]
 async fn test_try_handle_virtual_tool_call_request_mount_read_only_uses_read_policy() {
-    let mut state = create_test_agent_loop_state();
+    let mut state = create_test_transition_state();
     let temp = TempDir::new().unwrap();
     let host_dir = temp.path().join("ssh");
     let host_path = host_dir.display().to_string();
@@ -437,7 +437,7 @@ default_action: allow
 
 #[tokio::test]
 async fn test_try_handle_virtual_tool_call_request_mount_read_write_honors_read_denies() {
-    let mut state = create_test_agent_loop_state();
+    let mut state = create_test_transition_state();
     let temp = TempDir::new().unwrap();
     let host_dir = temp.path().join("ssh");
     let host_path = host_dir.display().to_string();
@@ -502,7 +502,7 @@ default_action: allow
 
 #[tokio::test]
 async fn test_try_handle_virtual_tool_call_request_mount_rejects_invalid_request() {
-    let mut state = create_test_agent_loop_state();
+    let mut state = create_test_transition_state();
 
     let tool_call = NormalizedToolCall {
         id: "call_mount".to_string(),

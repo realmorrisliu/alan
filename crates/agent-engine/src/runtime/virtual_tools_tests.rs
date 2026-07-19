@@ -5,7 +5,6 @@ use crate::{
     rollout::{RolloutItem, RolloutRecorder},
     runtime::{
         ChildRunRecord, ChildRunStatus, NamespaceRuntimeEnvironment, RuntimeConfig,
-        agent_loop::NamespaceActionRecord,
         delegated_child_run::{
             ChildRuntimeResult, ChildRuntimeStatus, MAX_DELEGATED_RESULT_OUTPUT_INLINE_CHARS,
             MAX_DELEGATED_RESULT_SUMMARY_CHARS,
@@ -18,6 +17,7 @@ use crate::{
         },
         delegation_capabilities::DelegatedSpawnRejected,
         mount_request_tool::MountRequestAccess,
+        transition::NamespaceActionRecord,
     },
     skills::{
         ActiveSkillEnvelope, DelegatedSkillInvocationRecord, ResolvedCapabilityView,
@@ -52,7 +52,7 @@ fn namespace_environment_for_virtual_tool_test(
         .with_tool_process_context(alan_kernel::Pid(1), runner)
 }
 
-fn create_test_agent_loop_state() -> super::super::agent_loop::RuntimeLoopState {
+fn create_test_transition_state() -> super::super::transition::RuntimeLoopState {
     let config = Config::default();
     let machine = AgentMachine::new();
     let host_source = PathBuf::from("/tmp/alan-delegated-parent");
@@ -87,7 +87,7 @@ fn create_test_agent_loop_state() -> super::super::agent_loop::RuntimeLoopState 
             .with_delegated_skill_invocation(),
     );
 
-    super::super::agent_loop::RuntimeLoopState {
+    super::super::transition::RuntimeLoopState {
         machine,
         environment: namespace_environment_for_virtual_tool_test(&tools)
             .with_launch_context(launch_context),
@@ -98,8 +98,8 @@ fn create_test_agent_loop_state() -> super::super::agent_loop::RuntimeLoopState 
     }
 }
 
-fn create_namespace_agent_loop_state_and_shell()
--> (super::super::agent_loop::RuntimeLoopState, Shell) {
+fn create_namespace_transition_state_and_shell()
+-> (super::super::transition::RuntimeLoopState, Shell) {
     let agentfs = Arc::new(AgentFs::new());
     let mut namespace = Namespace::new();
     namespace.mount(
@@ -109,7 +109,7 @@ fn create_namespace_agent_loop_state_and_shell()
     );
     let root = InProcessTransport::new(Arc::new(MountFs::new(namespace)));
     let shell = Shell::new(root.clone());
-    let mut state = create_test_agent_loop_state();
+    let mut state = create_test_transition_state();
     state.environment = NamespaceRuntimeEnvironment::new(root, "/agent/1", "default");
     (state, shell)
 }
@@ -145,7 +145,7 @@ fn delegated_test_skill_metadata(skill_id: &str, target: &str) -> SkillMetadata 
 }
 
 fn activate_test_delegated_skill(
-    state: &mut super::super::agent_loop::RuntimeLoopState,
+    state: &mut super::super::transition::RuntimeLoopState,
     skill_id: &str,
     target: &str,
 ) {
@@ -177,7 +177,7 @@ fn test_child_run_record(child_run_id: &str, parent_process_path: &str) -> Child
 }
 
 fn tool_result_text_for_call(
-    state: &super::super::agent_loop::RuntimeLoopState,
+    state: &super::super::transition::RuntimeLoopState,
     call_id: &str,
 ) -> String {
     state
@@ -196,7 +196,7 @@ fn tool_result_text_for_call(
 }
 
 async fn try_handle_virtual_tool_call_for_test<E, F>(
-    state: &mut super::super::agent_loop::RuntimeLoopState,
+    state: &mut super::super::transition::RuntimeLoopState,
     tool_call: &NormalizedToolCall,
     emit: &mut E,
 ) -> Result<VirtualToolOutcome>
@@ -223,7 +223,7 @@ mod plan_tool;
 
 #[tokio::test]
 async fn test_try_handle_non_virtual_tool() {
-    let mut state = create_test_agent_loop_state();
+    let mut state = create_test_transition_state();
 
     let tool_call = NormalizedToolCall {
         id: "call_1".to_string(),
@@ -244,7 +244,7 @@ async fn test_try_handle_non_virtual_tool() {
 
 #[tokio::test]
 async fn test_try_handle_unknown_tool() {
-    let mut state = create_test_agent_loop_state();
+    let mut state = create_test_transition_state();
 
     let tool_call = NormalizedToolCall {
         id: "call_1".to_string(),

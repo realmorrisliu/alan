@@ -11,7 +11,6 @@ use tokio_util::sync::CancellationToken;
 use crate::llm::ToolDefinition;
 use crate::skills::{DelegatedSkillResult, DelegatedSkillResultStatus};
 
-use super::agent_loop::RuntimeLoopState;
 use super::child_agents::spawn_child_runtime_cancellable;
 use super::delegated_child_run::ChildRuntimeResult;
 use super::delegated_skill_evidence::{
@@ -20,6 +19,7 @@ use super::delegated_skill_evidence::{
 use super::delegation_capabilities::{
     DelegatedSpawnRejected, classify_delegated_task_requirements,
 };
+use super::transition::RuntimeLoopState;
 use super::turn_support::{check_turn_cancelled, tool_result_preview};
 use super::virtual_tool::VirtualToolOutcome;
 use crate::agent_machine::NormalizedToolCall;
