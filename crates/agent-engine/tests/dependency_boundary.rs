@@ -324,6 +324,8 @@ fn turn_generation_uses_only_the_file_native_namespace_boundary() {
 #[test]
 fn transition_leaf_workflows_do_not_receive_the_runtime_loop_aggregate() {
     for path in [
+        "delegated_skill_evidence.rs",
+        "memory_surfaces.rs",
         "response_guardrails.rs",
         "steering_queue.rs",
         "turn_support.rs",
@@ -344,6 +346,16 @@ fn transition_leaf_workflows_do_not_receive_the_runtime_loop_aggregate() {
         .expect("find end of turn_tool_definitions")];
     assert!(!tool_definitions.contains("RuntimeLoopState"));
     assert!(tool_definitions.contains("NamespaceToolExecution"));
+
+    let tool_orchestrator = read_runtime_source("tool_orchestrator.rs");
+    let tool_evidence = &tool_orchestrator[tool_orchestrator
+        .find("async fn tool_payload_for_tape")
+        .expect("find tool_payload_for_tape")..];
+    let tool_evidence = &tool_evidence[..tool_evidence
+        .find("async fn execute_tool_effect")
+        .expect("find end of tool_payload_for_tape")];
+    assert!(!tool_evidence.contains("RuntimeLoopState"));
+    assert!(tool_evidence.contains("NamespaceAgentFiles"));
 }
 
 #[test]
@@ -389,6 +401,7 @@ fn agent_file_workflows_use_only_the_narrow_agent_files_handle() {
     let file_operations = read_runtime_source("transition/namespace_environment/agent_files.rs");
     assert!(file_operations.contains("impl NamespaceAgentFiles"));
     assert!(!file_operations.contains("impl NamespaceRuntimeEnvironment"));
+    assert!(file_operations.contains("action_output_reference"));
 
     let ui = read_runtime_source("ui_surfaces.rs");
     let ui_production = ui.split("\n#[cfg(test)]\nmod tests").next().unwrap();

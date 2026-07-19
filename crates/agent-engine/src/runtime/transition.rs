@@ -393,8 +393,17 @@ async fn finalize_replayed_tool_end_turn_best_effort(
 ) {
     if !cancel.is_cancelled() {
         if !surfaces_refreshed {
+            let memory_dir = state
+                .core_config
+                .memory
+                .enabled
+                .then_some(state.core_config.memory.store_dir.as_deref())
+                .flatten();
+            let process_path = state.process_path();
             super::memory_surfaces::refresh_turn_memory_surfaces_best_effort(
-                state,
+                &state.machine,
+                memory_dir,
+                &process_path,
                 surfaces_context,
             )
             .await;

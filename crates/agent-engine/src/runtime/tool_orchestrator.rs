@@ -21,7 +21,7 @@ use super::steering_queue::handle_queued_steering_inputs;
 use super::tool_effect_lifecycle::{EffectCategory, build_effect_identity};
 use super::tool_effect_lifecycle::{ToolEffectLifecycle, ToolEffectPlan};
 use super::tool_policy::{ToolPolicyDecision, evaluate_tool_policy};
-use super::transition::RuntimeLoopState;
+use super::transition::{NamespaceAgentFiles, RuntimeLoopState};
 use super::turn_driver::TurnInputBroker;
 use super::turn_support::{check_turn_cancelled, tool_result_preview};
 use super::virtual_tools::{VirtualToolOutcome, try_handle_virtual_tool_call};
@@ -245,7 +245,7 @@ fn namespace_tool_payload(
     Ok(payload)
 }
 
-async fn tool_payload_for_tape(state: &RuntimeLoopState, payload: &Value) -> Value {
+async fn tool_payload_for_tape(agent_files: &NamespaceAgentFiles, payload: &Value) -> Value {
     let redacted_payload = redact_evidence_payload(payload);
     if !payload_needs_projection(&redacted_payload) {
         return redacted_payload;
@@ -267,9 +267,7 @@ async fn tool_payload_for_tape(state: &RuntimeLoopState, payload: &Value) -> Val
             Some("reference_unresolvable".to_string()),
         );
     }
-    let path = format!("{}/actions/{action_id}/output", state.agent_path());
-    let agent_files = state.agent_files();
-    let reference = agent_files.evidence_reference(path).await;
+    let reference = agent_files.action_output_reference(action_id).await;
     let redactions = if let Some(reference) = reference.as_ref() {
         agent_files
             .resolve_evidence_reference(reference, None, None)
@@ -813,7 +811,7 @@ where
                     reason,
                 );
             }
-            let tape_value = tool_payload_for_tape(state, &value).await;
+            let tape_value = tool_payload_for_tape(&agent_files, &value).await;
             emit(Event::ToolCallCompleted {
                 presentation: super::tool_presentation::tool_presentation(
                     &tool_call.name,
@@ -971,8 +969,17 @@ where
             is_final: true,
         })
         .await;
+        let memory_dir = state
+            .core_config
+            .memory
+            .enabled
+            .then_some(state.core_config.memory.store_dir.as_deref())
+            .flatten();
+        let process_path = state.process_path();
         super::memory_surfaces::refresh_active_turn_memory_surfaces_best_effort(
-            state,
+            &state.machine,
+            memory_dir,
+            &process_path,
             "tool-loop-guard-ended-turn",
         )
         .await;
