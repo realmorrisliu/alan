@@ -1,3 +1,5 @@
+mod runtime_inputs;
+
 use alan_agent_protocol::{AdaptivePresentationHint, ConfirmationYieldPayload, Event, YieldKind};
 use anyhow::Result;
 use serde::Serialize;
@@ -11,10 +13,11 @@ use crate::approval::{
 use crate::llm::ToolDefinition;
 
 use super::tool_policy::{ToolPolicyDecision, evaluate_tool_policy};
-use super::transition::RuntimeLoopState;
 use super::turn_support::tool_result_preview;
 use super::virtual_tool::VirtualToolOutcome;
 use crate::agent_machine::NormalizedToolCall;
+
+pub(crate) use runtime_inputs::MountRequestRuntime;
 
 const RESERVED_MOUNT_NAMESPACE_ROOTS: &[&str] = &["llm", "mem", "route"];
 
@@ -61,7 +64,7 @@ impl MountRequest {
 }
 
 pub(super) async fn handle_request_mount<E, F>(
-    state: &mut RuntimeLoopState,
+    runtime: MountRequestRuntime<'_>,
     tool_call: &NormalizedToolCall,
     tool_arguments: &serde_json::Value,
     emit: &mut E,
@@ -94,13 +97,13 @@ where
                 audit: None,
             })
             .await;
-            state.machine.record_tool_call(
+            runtime.machine.record_tool_call(
                 &tool_call.name,
                 tool_arguments.clone(),
                 payload.clone(),
                 false,
             );
-            state
+            runtime
                 .machine
                 .add_tool_message(&tool_call.id, &tool_call.name, payload);
             return Ok(VirtualToolOutcome::Continue {
@@ -112,22 +115,22 @@ where
     let sandbox_confinement = super::tool_policy::SandboxConfinement::detect();
 
     let mut decision = evaluate_tool_policy(
-        &state.runtime_config.policy_engine,
-        &state.runtime_config.governance,
+        runtime.policy_engine,
+        runtime.governance,
         &tool_call.name,
         &mount_payload,
         mount_request.access.policy_capability(),
-        state.tool_execution().default_cwd().as_deref(),
+        runtime.tool_execution.default_cwd().as_deref(),
         sandbox_confinement,
     );
     if mount_request.access == MountRequestAccess::ReadWrite {
         let read_decision = evaluate_tool_policy(
-            &state.runtime_config.policy_engine,
-            &state.runtime_config.governance,
+            runtime.policy_engine,
+            runtime.governance,
             &tool_call.name,
             &mount_payload,
             alan_agent_protocol::ToolCapability::Read,
-            state.tool_execution().default_cwd().as_deref(),
+            runtime.tool_execution.default_cwd().as_deref(),
             sandbox_confinement,
         );
         decision = merge_mount_policy_decision(decision, read_decision);
@@ -144,7 +147,7 @@ where
             "error": reason,
             "mount_request": mount_payload,
         });
-        state.machine.record_event(
+        runtime.machine.record_event(
             "tool_policy_decision",
             json!({
                 "tool_call_id": tool_call.id,
@@ -175,14 +178,14 @@ where
             audit: Some(audit.clone()),
         })
         .await;
-        state.machine.record_tool_call_with_audit(
+        runtime.machine.record_tool_call_with_audit(
             &tool_call.name,
             tool_arguments.clone(),
             payload.clone(),
             false,
             Some(audit),
         );
-        state
+        runtime
             .machine
             .add_tool_message(&tool_call.id, &tool_call.name, payload);
         return Ok(VirtualToolOutcome::Continue {
@@ -202,7 +205,7 @@ where
         sandbox_backend: decision_audit.sandbox_backend.clone(),
         path_mode: decision_audit.path_mode.clone(),
     };
-    state.machine.record_event(
+    runtime.machine.record_event(
         "tool_policy_decision",
         json!({
             "tool_call_id": tool_call.id,
@@ -234,7 +237,7 @@ where
         },
         "live_applied": false,
     });
-    details = append_skill_permission_hints(details, state.machine.active_skills());
+    details = append_skill_permission_hints(details, runtime.machine.active_skills());
 
     let pending = PendingConfirmation {
         checkpoint_id: format!("{MOUNT_ESCALATION_CHECKPOINT_PREFIX}{}", tool_call.id),
@@ -248,8 +251,8 @@ where
         options: vec!["approve".to_string(), "reject".to_string()],
     };
 
-    let request_id = state
-        .agent_files()
+    let request_id = runtime
+        .agent_files
         .write_confirmation_request(&pending)
         .await?;
     let payload = json!({
@@ -267,17 +270,17 @@ where
         audit: Some(escalation_audit.clone()),
     })
     .await;
-    state.machine.record_tool_call_with_audit(
+    runtime.machine.record_tool_call_with_audit(
         &tool_call.name,
         tool_arguments.clone(),
         payload.clone(),
         true,
         Some(escalation_audit),
     );
-    state
+    runtime
         .machine
         .set_confirmation_for_request(request_id.clone(), pending.clone());
-    super::ui_surfaces::paused(&state.agent_files()).await?;
+    super::ui_surfaces::paused(&runtime.agent_files).await?;
     emit(Event::Yield {
         request_id,
         kind: YieldKind::Confirmation,

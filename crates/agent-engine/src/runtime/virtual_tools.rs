@@ -144,7 +144,10 @@ where
             }
             Ok(VirtualToolOutcome::PauseTurn)
         }
-        "request_mount" => handle_request_mount(state, tool_call, tool_arguments, emit).await,
+        "request_mount" => {
+            let runtime = super::transition::mount_request_runtime(state);
+            handle_request_mount(runtime, tool_call, tool_arguments, emit).await
+        }
         "request_user_input" => {
             emit(Event::ToolCallStarted {
                 title: None,
