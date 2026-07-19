@@ -360,6 +360,20 @@ fn transition_leaf_workflows_do_not_receive_the_runtime_loop_aggregate() {
     assert!(tool_evidence.contains("NamespaceAgentFiles"));
 
     let compaction = read_runtime_source("compaction.rs");
+    let compaction_production = compaction
+        .split("\n#[cfg(test)]\nmod tests")
+        .next()
+        .expect("compaction production source");
+    assert!(!compaction_production.contains("RuntimeLoopState"));
+    assert!(compaction_production.contains("CompactionRuntime"));
+    let compaction_inputs = read_runtime_source("compaction/runtime_inputs.rs");
+    for forbidden in [
+        "RuntimeLoopState",
+        "RuntimeConfig",
+        "NamespaceRuntimeEnvironment",
+    ] {
+        assert!(!compaction_inputs.contains(forbidden));
+    }
     for marker in [
         "fn compaction_submission_id",
         "async fn record_and_emit_compaction_attempt",

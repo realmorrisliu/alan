@@ -1,7 +1,7 @@
 use super::super::compaction::{
     COMPACTION_TOOL_OUTPUT_CHAR_LIMIT, CompactionRequest, DEGRADED_COMPACTION_PRIOR_SUMMARY_CHARS,
     DEGRADED_COMPACTION_SUMMARY_MAX_CHARS, build_degraded_compaction_summary,
-    maybe_compact_context_for_request, sanitize_tool_text_for_compaction,
+    maybe_compact_context_for_request as run_compaction, sanitize_tool_text_for_compaction,
 };
 use super::*;
 
@@ -22,6 +22,18 @@ use std::{
 };
 use tempfile::TempDir;
 use tokio_util::sync::CancellationToken;
+
+async fn maybe_compact_context_for_request<E, F>(
+    state: &mut RuntimeLoopState,
+    emit: &mut E,
+    request: CompactionRequest,
+) -> anyhow::Result<CompactionOutcome>
+where
+    E: FnMut(Event) -> F,
+    F: std::future::Future<Output = ()>,
+{
+    run_compaction(super::compaction_runtime(state), emit, request).await
+}
 
 #[test]
 fn accepted_transition_classifies_only_turn_and_brokered_input_as_inband() {
