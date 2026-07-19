@@ -6,6 +6,8 @@ mod submission_runtime;
 mod turn_input;
 #[path = "dependency_boundary/turn_memory.rs"]
 mod turn_memory;
+#[path = "dependency_boundary/turn_transition.rs"]
+mod turn_transition;
 
 fn read_runtime_source(path: &str) -> String {
     std::fs::read_to_string(format!("{}/src/runtime/{path}", env!("CARGO_MANIFEST_DIR")))
@@ -276,7 +278,7 @@ fn child_supervision_has_no_runtime_receiver_fallback() {
 
 #[test]
 fn turn_generation_uses_only_the_file_native_namespace_boundary() {
-    let executor = read_runtime_source("turn_executor.rs");
+    let executor = read_runtime_source("transition/turn_execution.rs");
     let production = executor.split("\n#[cfg(test)]\nmod tests").next().unwrap();
     for forbidden in [
         "generate_response_with_retry",
@@ -290,7 +292,7 @@ fn turn_generation_uses_only_the_file_native_namespace_boundary() {
         );
     }
 
-    let generation = read_runtime_source("turn_executor/namespace_generation.rs");
+    let generation = read_runtime_source("transition/turn_execution/namespace_generation.rs");
     assert!(generation.contains("generate_with_text_events_controlled"));
     assert!(generation.contains("neutralize_namespace_capabilities"));
     for forbidden in ["RuntimeLoopState", "namespace_environment()"] {
@@ -367,7 +369,7 @@ fn transition_leaf_workflows_do_not_receive_the_runtime_loop_aggregate() {
         );
     }
 
-    let executor = read_runtime_source("turn_executor.rs");
+    let executor = read_runtime_source("transition/turn_execution.rs");
     let prompt_build = &executor[executor
         .find("fn build_domain_prompt_with_skills")
         .expect("find prompt build")..];
@@ -744,7 +746,7 @@ fn tool_workflows_use_only_the_narrow_tool_execution_handle() {
 
     for path in [
         "tool_batch.rs",
-        "turn_executor.rs",
+        "transition/turn_execution.rs",
         "response_guardrails.rs",
         "submission_handlers.rs",
     ] {

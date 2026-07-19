@@ -12,8 +12,8 @@ use crate::tape::ContentPart;
 
 use super::transition::{
     ApprovedMountGrant, ApprovedMountGrantAccess, NamespaceAgentFiles, NamespaceMountApplication,
+    TurnRunKind,
 };
-use super::turn_executor::TurnRunKind;
 use super::turn_support::cancel_current_task;
 use crate::agent_machine::{AgentMachine, NormalizedToolCall, PendingYield};
 

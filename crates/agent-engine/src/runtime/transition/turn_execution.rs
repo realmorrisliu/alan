@@ -1,3 +1,5 @@
+//! Generation and Tool-loop execution owned by the accepted-submission transition.
+
 use alan_agent_protocol::{CompactionOutcome, Event};
 use anyhow::{Context, Result};
 use std::time::Instant;
@@ -5,37 +7,28 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
 use crate::llm::build_generation_request;
-
-use super::compaction::{CompactionRequest, maybe_compact_context_with_cancel};
-use super::loop_guard::ToolLoopGuard;
-use super::response_guardrails::{
+use crate::runtime::compaction::{CompactionRequest, maybe_compact_context_with_cancel};
+use crate::runtime::loop_guard::ToolLoopGuard;
+use crate::runtime::response_guardrails::{
     AssistantDraft, GuardrailDecision, ResponseGuardrailContext, ResponseGuardrails,
 };
-use super::tool_batch::{ToolBatchOrchestratorOutcome, ToolOrchestratorInputs};
-use super::transition::{RuntimeLoopState, orchestrate_tool_batch};
-use super::turn_input::TurnInputBroker;
-use super::turn_memory::{FinalizeTurnMemoryRequest, finalize_turn_memory_best_effort};
-use super::turn_support::{
+use crate::runtime::tool_batch::{ToolBatchOrchestratorOutcome, ToolOrchestratorInputs};
+use crate::runtime::turn_input::TurnInputBroker;
+use crate::runtime::turn_memory::{FinalizeTurnMemoryRequest, finalize_turn_memory_best_effort};
+use crate::runtime::turn_support::{
     check_turn_cancelled, emit_streaming_chunks, emit_task_completed_success, emit_thinking_chunks,
     normalize_tool_calls,
 };
-use super::virtual_tools::virtual_tool_definitions;
+use crate::runtime::virtual_tools::virtual_tool_definitions;
+
+use super::{
+    NamespaceToolExecution, RuntimeLoopState, TurnExecutionOutcome, TurnRunKind,
+    compaction_runtime, orchestrate_tool_batch, turn_memory_runtime,
+};
 
 mod namespace_generation;
 
 use namespace_generation::NamespaceTurnGeneration;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum TurnRunKind {
-    NewTurn,
-    ResumeTurn,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum TurnExecutionOutcome {
-    Finished,
-    Paused,
-}
 
 const COMPACTION_TIMEOUT_SECS: u64 = 30;
 
@@ -83,9 +76,9 @@ fn estimate_pending_turn_prompt_tokens(
 
 async fn turn_tool_definitions(
     include_runtime_delegated_tool: bool,
-    tool_execution: &super::transition::NamespaceToolExecution,
+    tool_execution: &NamespaceToolExecution,
 ) -> anyhow::Result<(
-    Vec<super::ToolPackageManifest>,
+    Vec<crate::runtime::ToolPackageManifest>,
     Vec<crate::llm::ToolDefinition>,
 )> {
     let tool_packages = tool_execution.discover_packages().await?;
@@ -127,7 +120,7 @@ where
     let compaction_cancel = CancellationToken::new();
     let timeout = tokio::time::sleep(timeout);
     tokio::pin!(timeout);
-    let runtime = super::transition::compaction_runtime(state);
+    let runtime = compaction_runtime(state);
     let compaction = maybe_compact_context_with_cancel(runtime, emit, request, &compaction_cancel);
     tokio::pin!(compaction);
 
@@ -154,10 +147,10 @@ where
 }
 
 fn build_domain_prompt_with_skills(
-    prompt_cache: &mut super::prompt_cache::PromptAssemblyCache,
+    prompt_cache: &mut crate::runtime::prompt_cache::PromptAssemblyCache,
     user_input: Option<&[crate::tape::ContentPart]>,
     active_skills: Option<&[crate::skills::ActiveSkillEnvelope]>,
-) -> super::prompt_cache::PromptAssemblyResult {
+) -> crate::runtime::prompt_cache::PromptAssemblyResult {
     match active_skills {
         Some(active_skills) => prompt_cache.build_with_active_skills(active_skills, user_input),
         None => prompt_cache.build(user_input),
@@ -179,12 +172,12 @@ where
 {
     if matches!(turn_kind, TurnRunKind::NewTurn) {
         state.machine.reset_auto_mid_turn_compaction_state();
-        super::ui_surfaces::turn_started(&state.agent_files())
+        crate::runtime::ui_surfaces::turn_started(&state.agent_files())
             .await
             .context("write turn-start UI state")?;
         emit(Event::TurnStarted {}).await;
     } else {
-        super::ui_surfaces::resumed(&state.agent_files())
+        crate::runtime::ui_surfaces::resumed(&state.agent_files())
             .await
             .context("write resumed turn UI state")?;
     }
@@ -204,7 +197,7 @@ where
         .map(crate::tape::parts_to_text)
         .filter(|input| !input.trim().is_empty());
     let turn_recall_bundle = if state.core_config.memory.enabled {
-        super::memory_recall::build_turn_recall_bundle(
+        crate::runtime::memory_recall::build_turn_recall_bundle(
             state.core_config.memory.store_dir.as_deref(),
             user_input_for_skills.as_deref(),
         )
@@ -428,7 +421,7 @@ where
         }
 
         for warning in &response.warnings {
-            super::ui_surfaces::warning(&state.agent_files(), warning.clone())
+            crate::runtime::ui_surfaces::warning(&state.agent_files(), warning.clone())
                 .await
                 .context("write provider warning UI state")?;
             emit(Event::Warning {
@@ -459,7 +452,7 @@ where
                 );
                 let message =
                     format!("Guardrail recovered ({rule_id}): {reason}. Retrying before output.");
-                super::ui_surfaces::warning(&state.agent_files(), message.clone())
+                crate::runtime::ui_surfaces::warning(&state.agent_files(), message.clone())
                     .await
                     .context("write guardrail warning UI state")?;
                 emit(Event::Warning { message }).await;
@@ -484,7 +477,7 @@ where
         if let Some(ref thinking) = response.thinking
             && !thinking.is_empty()
         {
-            super::ui_surfaces::thinking(&state.agent_files(), thinking)
+            crate::runtime::ui_surfaces::thinking(&state.agent_files(), thinking)
                 .await
                 .context("write thinking UI state")?;
             emit_thinking_chunks(emit, thinking).await;
@@ -583,7 +576,7 @@ where
                 ToolBatchOrchestratorOutcome::PauseTurn => return Ok(TurnExecutionOutcome::Paused),
                 ToolBatchOrchestratorOutcome::EndTurn { surfaces_refreshed } => {
                     if !cancel.is_cancelled() {
-                        let memory_runtime = super::transition::turn_memory_runtime(state);
+                        let memory_runtime = turn_memory_runtime(state);
                         finalize_turn_memory_best_effort(
                             memory_runtime,
                             FinalizeTurnMemoryRequest {
@@ -619,7 +612,7 @@ where
                 .write_turn_tape_state(namespace_input_text.as_deref(), fallback_text)
                 .await
                 .context("write namespace fallback turn tape state")?;
-            let memory_runtime = super::transition::turn_memory_runtime(state);
+            let memory_runtime = turn_memory_runtime(state);
             finalize_turn_memory_best_effort(
                 memory_runtime,
                 FinalizeTurnMemoryRequest {
@@ -638,13 +631,13 @@ where
                 summary: Some("Turn completed with empty response fallback".to_string()),
             })
             .await;
-            super::ui_surfaces::turn_completed(&state.agent_files(), false)
+            crate::runtime::ui_surfaces::turn_completed(&state.agent_files(), false)
                 .await
                 .context("write fallback turn completion UI state")?;
             return Ok(TurnExecutionOutcome::Finished);
         }
 
-        let memory_runtime = super::transition::turn_memory_runtime(state);
+        let memory_runtime = turn_memory_runtime(state);
         finalize_turn_memory_best_effort(
             memory_runtime,
             FinalizeTurnMemoryRequest {
