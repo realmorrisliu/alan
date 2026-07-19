@@ -284,9 +284,7 @@ where
     }
 
     if matches!(turn_kind, TurnRunKind::NewTurn) {
-        state
-            .turn_state
-            .begin_turn(state.machine.tape.messages().len());
+        state.turn_state.begin_turn(state.machine.messages().len());
     } else if user_input.is_some() {
         state.turn_state.note_resumed_user_input();
     }
@@ -339,8 +337,8 @@ where
     )?;
     let model = state.core_config.effective_model().to_string();
     let memory_enabled = state.core_config.memory.enabled;
-    let context_items = state.machine.tape.context_items().to_vec();
-    let context_delta = state.machine.tape.last_context_delta().clone();
+    let context_items = state.machine.context_items().to_vec();
+    let context_delta = state.machine.last_context_delta().clone();
     state.machine.record_turn_context_if_changed(
         &model,
         turn_request_controls.reasoning_effort(),
@@ -376,7 +374,7 @@ where
                 .clear_responses_continuation("provider_capability_unavailable");
         }
 
-        let prompt_view = state.machine.tape.prompt_view();
+        let prompt_view = state.machine.prompt_view();
         let estimated_prompt_tokens =
             prompt_view
                 .estimated_tokens
@@ -695,7 +693,6 @@ where
 
     let estimated_prompt_tokens = state
         .machine
-        .tape
         .estimated_prompt_tokens()
         .saturating_add(additional_prompt_tokens);
     let context_window_tokens = state.runtime_config.context_window_tokens as usize;

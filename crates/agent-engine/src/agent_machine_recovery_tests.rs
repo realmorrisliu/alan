@@ -52,8 +52,8 @@ fn test_load_from_rollout_prefers_rich_message_payload_when_available() {
         .await
         .unwrap();
 
-        assert_eq!(machine.tape.messages().len(), 1);
-        let message = &machine.tape.messages()[0];
+        assert_eq!(machine.messages().len(), 1);
+        let message = &machine.messages()[0];
         assert_eq!(
             message.thinking_content().as_deref(),
             Some("internal reasoning")
@@ -106,7 +106,7 @@ fn test_load_from_rollout_recovers_complete_records_before_torn_tail() {
         .await
         .unwrap();
 
-        assert_eq!(machine.tape.messages(), &[Message::user("survives crash")]);
+        assert_eq!(machine.messages(), &[Message::user("survives crash")]);
     });
 }
 

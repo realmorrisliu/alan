@@ -8,7 +8,7 @@ async fn test_handle_submission_cancel() {
     let config = Config::default();
     let mut machine = AgentMachine::new();
     machine.add_user_message("existing history");
-    machine.has_active_task = true;
+    machine.activate_task();
     let runtime_config = super::RuntimeConfig::default();
 
     let mut state = RuntimeLoopState {
@@ -38,12 +38,12 @@ async fn test_handle_submission_cancel() {
 
     assert!(result.is_ok(), "interrupt should succeed: {result:?}");
     assert_eq!(events.len(), 1);
-    assert_eq!(state.machine.tape.messages().len(), 1);
+    assert_eq!(state.machine.messages().len(), 1);
     assert_eq!(
-        state.machine.tape.messages()[0].text_content(),
+        state.machine.messages()[0].text_content(),
         "existing history"
     );
-    assert!(!state.machine.has_active_task);
+    assert!(!state.machine.has_active_task());
     match &events[0] {
         Event::TurnCompleted { summary } => {
             assert_eq!(summary.as_deref(), Some("Task cancelled by user"));
@@ -64,7 +64,7 @@ async fn test_handle_submission_rollback() {
     machine.add_assistant_message("a1", None);
     machine.add_user_message("u2");
     machine.add_assistant_message("a2", None);
-    machine.has_active_task = true;
+    machine.activate_task();
     let runtime_config = super::RuntimeConfig::default();
 
     let mut state = RuntimeLoopState {
@@ -92,7 +92,7 @@ async fn test_handle_submission_rollback() {
     let result = handle_submission(&mut state, submission, &mut emit).await;
 
     assert!(result.is_ok());
-    assert_eq!(state.machine.tape.messages().len(), 2);
+    assert_eq!(state.machine.messages().len(), 2);
     assert_eq!(events.len(), 3);
     assert!(events.iter().any(|event| matches!(
         event,

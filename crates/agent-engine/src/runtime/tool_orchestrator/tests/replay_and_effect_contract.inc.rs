@@ -215,10 +215,8 @@
         tokio::time::sleep(std::time::Duration::from_millis(80)).await;
         let rollout_path = state
             .machine
-            .recorder
-            .as_ref()
+            .rollout_path()
             .expect("recorder should exist")
-            .path()
             .clone();
 
         let recovered_machine =

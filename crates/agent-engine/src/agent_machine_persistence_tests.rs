@@ -5,7 +5,7 @@ fn test_empty_message_content() {
     let mut machine = AgentMachine::new();
     machine.add_user_message("");
 
-    let messages = machine.tape.messages();
+    let messages = machine.messages();
     assert_eq!(messages[0].text_content(), "");
 }
 
@@ -14,7 +14,7 @@ fn test_unicode_message_content() {
     let mut machine = AgentMachine::new();
     machine.add_user_message("你好，世界！🌍");
 
-    let messages = machine.tape.messages();
+    let messages = machine.messages();
     assert_eq!(messages[0].text_content(), "你好，世界！🌍");
 }
 
@@ -78,7 +78,7 @@ async fn test_flush() {
 fn test_add_user_message_with_tool_name() {
     let mut machine = AgentMachine::new();
     machine.add_user_message("Hello");
-    let messages = machine.tape.messages();
+    let messages = machine.messages();
     assert!(messages[0].is_user());
 }
 

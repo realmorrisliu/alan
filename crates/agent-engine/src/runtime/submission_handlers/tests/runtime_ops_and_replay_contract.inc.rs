@@ -71,7 +71,7 @@
         let mut state = create_test_state();
         let (environment, _shell) = namespace_environment_with_live_process_for_test().await;
         state.environment = environment;
-        state.machine.has_active_task = true;
+        state.machine.activate_task();
         let cancel = CancellationToken::new();
 
         let mut events = vec![];
@@ -88,7 +88,7 @@
         match result.unwrap() {
             RuntimeOpAction::NoTurn => {
                 // Task should be cancelled
-                assert!(!state.machine.has_active_task);
+                assert!(!state.machine.has_active_task());
             }
             _ => panic!("Expected NoTurn"),
         }
@@ -371,7 +371,7 @@
         state
             .turn_state
             .set_turn_activity(crate::runtime::turn_state::TurnActivityState::Running);
-        state.machine.has_active_task = true;
+        state.machine.activate_task();
         let cancel = CancellationToken::new();
         let mut events = vec![];
         let mut emit = |event: Event| {
@@ -409,7 +409,7 @@
         let mut state = create_test_state();
         let (environment, _shell) = namespace_environment_with_live_process_for_test().await;
         state.environment = environment;
-        state.machine.has_active_task = true;
+        state.machine.activate_task();
         state
             .turn_state
             .set_turn_activity(crate::runtime::turn_state::TurnActivityState::Running);
@@ -424,7 +424,7 @@
 
         let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
         assert!(result.is_ok());
-        assert!(!state.machine.has_active_task);
+        assert!(!state.machine.has_active_task());
     }
 
     #[tokio::test]
@@ -432,7 +432,7 @@
         let (environment, shell) = namespace_environment_with_live_process_for_test().await;
         let mut state = create_test_state();
         state.environment = environment;
-        state.machine.has_active_task = true;
+        state.machine.activate_task();
         let cancel = CancellationToken::new();
         let mut events = vec![];
         let mut emit = |event: Event| {
@@ -444,7 +444,7 @@
             handle_runtime_op_with_cancel(&mut state, Op::Interrupt, &mut emit, &cancel).await;
 
         assert!(result.is_ok());
-        assert!(!state.machine.has_active_task);
+        assert!(!state.machine.has_active_task());
         assert_eq!(
             String::from_utf8(shell.cat("/proc/1/status").await.unwrap()).unwrap(),
             "running\n"
@@ -550,7 +550,7 @@
             }
         ));
 
-        let messages = state.machine.tape.messages();
+        let messages = state.machine.messages();
         assert_eq!(messages.len(), 1);
         assert!(messages[0].is_user());
         match messages[0].parts().first() {
@@ -596,7 +596,7 @@
             }
         ));
 
-        let messages = state.machine.tape.messages();
+        let messages = state.machine.messages();
         assert_eq!(messages.len(), 1);
         assert!(messages[0].is_user());
         match messages[0].parts().first() {
@@ -642,7 +642,7 @@
             }
         ));
 
-        let messages = state.machine.tape.messages();
+        let messages = state.machine.messages();
         assert_eq!(messages.len(), 1);
         assert!(messages[0].is_tool());
         assert_eq!(messages[0].tool_responses()[0].id, "cp-1");

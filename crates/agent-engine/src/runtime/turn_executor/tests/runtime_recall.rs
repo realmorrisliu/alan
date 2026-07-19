@@ -209,7 +209,7 @@ async fn test_run_turn_pre_turn_compaction_accounts_for_runtime_recall_budget() 
         estimate_pending_turn_prompt_tokens(Some(&user_input), turn_recall_bundle.as_deref());
     assert!(pending_prompt_tokens > 0);
 
-    let base_prompt_tokens = state.machine.tape.estimated_prompt_tokens();
+    let base_prompt_tokens = state.machine.estimated_prompt_tokens();
     state.runtime_config.context_window_tokens =
         (base_prompt_tokens + pending_prompt_tokens - 1) as u32;
 
@@ -226,7 +226,7 @@ async fn test_run_turn_pre_turn_compaction_accounts_for_runtime_recall_budget() 
     .await;
 
     assert!(result.is_ok());
-    assert_eq!(state.machine.tape.summary(), Some("COMPACTED_FOR_RECALL"));
+    assert_eq!(state.machine.tape_summary(), Some("COMPACTED_FOR_RECALL"));
 
     let system_prompts = seen_system_prompts.lock().unwrap();
     assert_eq!(system_prompts.len(), 2);
@@ -309,7 +309,7 @@ async fn test_maybe_compact_mid_turn_accounts_for_runtime_prompt_overhead() {
         estimate_request_prompt_overhead_tokens(None, Some(pending_guardrail_instruction.as_str()));
     assert!(additional_prompt_tokens > 0);
 
-    let base_prompt_tokens = state.machine.tape.estimated_prompt_tokens();
+    let base_prompt_tokens = state.machine.estimated_prompt_tokens();
     state.runtime_config.context_window_tokens =
         (base_prompt_tokens + additional_prompt_tokens - 1) as u32;
 
@@ -321,7 +321,7 @@ async fn test_maybe_compact_mid_turn_accounts_for_runtime_prompt_overhead() {
 
     assert!(result.is_ok());
     assert_eq!(
-        state.machine.tape.summary(),
+        state.machine.tape_summary(),
         Some("MID_TURN_COMPACTION_SUMMARY")
     );
     assert_eq!(state.turn_state.compactions_this_turn(), 1);

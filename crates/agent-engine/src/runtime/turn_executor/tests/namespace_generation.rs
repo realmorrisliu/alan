@@ -438,8 +438,8 @@ async fn test_namespace_turn_omits_provider_local_responses_continuation_fields(
     state.runtime_config.compaction_soft_trigger_ratio = 0.5;
     state.machine.add_user_message("Earlier input");
     state.machine.add_assistant_message("Earlier output", None);
-    let boundary_message_count = state.machine.tape.messages().len();
-    let reference_context_revision = state.machine.tape.context_revision();
+    let boundary_message_count = state.machine.messages().len();
+    let reference_context_revision = state.machine.context_revision();
     state.machine.mark_responses_continuation(
         "openai_responses",
         "resp_prev",
@@ -711,8 +711,8 @@ async fn test_namespace_turn_sends_reference_context_as_neutral_messages() {
     let mut state = create_test_state_with_provider(provider);
     state.machine.add_user_message("Earlier input");
     state.machine.add_assistant_message("Earlier output", None);
-    let boundary_message_count = state.machine.tape.messages().len();
-    let reference_context_revision = state.machine.tape.context_revision();
+    let boundary_message_count = state.machine.messages().len();
+    let reference_context_revision = state.machine.context_revision();
     state.machine.mark_responses_continuation(
         "openai_responses",
         "resp_prev",
@@ -721,8 +721,7 @@ async fn test_namespace_turn_sends_reference_context_as_neutral_messages() {
     );
     state
         .machine
-        .tape
-        .apply_context_items(vec![crate::tape::ContextItem::new(
+        .apply_context_items_for_test(vec![crate::tape::ContextItem::new(
             "ctx_1",
             "domain_note",
             "Domain note",
@@ -789,8 +788,8 @@ async fn test_namespace_turn_does_not_use_provider_managed_compaction() {
     state.runtime_config.compaction_hard_trigger_ratio = 0.0;
     state.machine.add_user_message("Earlier input");
     state.machine.add_assistant_message("Earlier output", None);
-    let boundary_message_count = state.machine.tape.messages().len();
-    let reference_context_revision = state.machine.tape.context_revision();
+    let boundary_message_count = state.machine.messages().len();
+    let reference_context_revision = state.machine.context_revision();
     state.machine.mark_responses_continuation(
         "openai_responses",
         "resp_prev",
@@ -893,8 +892,8 @@ async fn test_namespace_chatgpt_request_omits_provider_local_projection_fields()
     state.runtime_config.compaction_soft_trigger_ratio = 0.5;
     state.machine.add_user_message("Earlier input");
     state.machine.add_assistant_message("Earlier output", None);
-    let boundary_message_count = state.machine.tape.messages().len();
-    let reference_context_revision = state.machine.tape.context_revision();
+    let boundary_message_count = state.machine.messages().len();
+    let reference_context_revision = state.machine.context_revision();
     state.machine.mark_responses_continuation(
         "chatgpt",
         "resp_prev",

@@ -233,7 +233,7 @@ where
                     state.turn_state.set_plan_snapshot_at_message_count(
                         explanation.clone(),
                         items.clone(),
-                        state.machine.tape.messages().len(),
+                        state.machine.messages().len(),
                     );
                     super::ui_surfaces::plan_updated(
                         state.namespace_environment(),

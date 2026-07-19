@@ -546,7 +546,6 @@ fn memory_flush_json_response() -> String {
 
 fn stateful_messages_snapshot(machine: &AgentMachine) -> Vec<String> {
     machine
-        .tape
         .messages()
         .iter()
         .map(crate::tape::Message::text_content)

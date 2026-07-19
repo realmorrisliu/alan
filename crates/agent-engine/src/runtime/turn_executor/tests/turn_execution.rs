@@ -107,9 +107,8 @@ async fn test_run_turn_keeps_truthful_network_failure_explanation() {
     let mut state = create_test_state_with_provider_and_tools(provider, tools);
     state
         .machine
-        .tape
-        .push(Message::user("how's the weather today?"));
-    state.machine.tape.push(Message::Assistant {
+        .push_tape_message(Message::user("how's the weather today?"));
+    state.machine.push_tape_message(Message::Assistant {
         parts: Vec::new(),
         tool_requests: vec![ToolRequest {
             id: "call_network".to_string(),
@@ -171,7 +170,6 @@ async fn test_run_turn_keeps_truthful_network_failure_explanation() {
 
     let assistant_messages: Vec<_> = state
         .machine
-        .tape
         .messages()
         .iter()
         .filter(|message| matches!(message, Message::Assistant { .. }))
@@ -223,9 +221,8 @@ async fn test_run_turn_recovers_network_claim_after_non_network_timeout() {
     let mut state = create_test_state_with_provider_and_tools(provider, tools);
     state
         .machine
-        .tape
-        .push(Message::user("how's the weather today?"));
-    state.machine.tape.push(Message::Assistant {
+        .push_tape_message(Message::user("how's the weather today?"));
+    state.machine.push_tape_message(Message::Assistant {
         parts: Vec::new(),
         tool_requests: vec![ToolRequest {
             id: "call_local".to_string(),
@@ -311,16 +308,16 @@ async fn test_run_turn_resume_turn_with_steer_keeps_truthful_network_failure_exp
     let mut tools = ToolRegistry::new();
     tools.register(NetworkCapabilityTool);
     let mut state = create_test_state_with_provider_and_tools(provider, tools);
-    state.machine.tape.push(Message::user("earlier turn"));
     state
         .machine
-        .tape
-        .push(Message::assistant("earlier turn completed"));
+        .push_tape_message(Message::user("earlier turn"));
     state
         .machine
-        .tape
-        .push(Message::user("how's the weather today?"));
-    state.machine.tape.push(Message::Assistant {
+        .push_tape_message(Message::assistant("earlier turn completed"));
+    state
+        .machine
+        .push_tape_message(Message::user("how's the weather today?"));
+    state.machine.push_tape_message(Message::Assistant {
         parts: Vec::new(),
         tool_requests: vec![ToolRequest {
             id: "call_network".to_string(),
@@ -418,8 +415,10 @@ async fn test_run_turn_new_turn_ignores_prior_failures_without_completed_assista
     let mut tools = ToolRegistry::new();
     tools.register(NetworkCapabilityTool);
     let mut state = create_test_state_with_provider_and_tools(provider, tools);
-    state.machine.tape.push(Message::user("earlier turn"));
-    state.machine.tape.push(Message::Assistant {
+    state
+        .machine
+        .push_tape_message(Message::user("earlier turn"));
+    state.machine.push_tape_message(Message::Assistant {
         parts: Vec::new(),
         tool_requests: vec![ToolRequest {
             id: "call_network".to_string(),
@@ -514,7 +513,6 @@ async fn test_run_turn_empty_response_fallback() {
 
     let assistant_messages: Vec<_> = state
         .machine
-        .tape
         .messages()
         .iter()
         .filter(|m| matches!(m, crate::agent_machine::Message::Assistant { .. }))
@@ -558,7 +556,6 @@ async fn test_run_turn_empty_content_with_thinking_persists_reasoning() {
 
     let assistant_messages: Vec<_> = state
         .machine
-        .tape
         .messages()
         .iter()
         .filter(|m| matches!(m, crate::agent_machine::Message::Assistant { .. }))
@@ -659,14 +656,13 @@ async fn test_run_turn_performs_mid_turn_compaction_before_follow_up_generation(
     assert!(matches!(result.unwrap(), TurnExecutionOutcome::Finished));
     assert_eq!(generate_calls.load(Ordering::SeqCst), 3);
     assert_eq!(
-        state.machine.tape.summary(),
+        state.machine.tape_summary(),
         Some("Mid-turn compaction summary")
     );
     assert_eq!(state.turn_state.compactions_this_turn(), 1);
     assert!(
         state
             .machine
-            .tape
             .messages()
             .iter()
             .any(|message| message.text_content().contains("Finished after compaction"))
@@ -759,7 +755,7 @@ async fn test_run_turn_resets_mid_turn_compaction_budget_for_new_turns() {
     assert!(matches!(result.unwrap(), TurnExecutionOutcome::Finished));
     assert_eq!(generate_calls.load(Ordering::SeqCst), 3);
     assert_eq!(
-        state.machine.tape.summary(),
+        state.machine.tape_summary(),
         Some("Mid-turn compaction summary")
     );
     assert_eq!(state.turn_state.compactions_this_turn(), 1);

@@ -460,7 +460,7 @@ where
             // a human. The sandbox + the deterministic red line remain the
             // boundary; the reviewer only decides whether to bother the human.
             let go_human = if matches!(route, super::tool_policy::EscalationRoute::Reviewer) {
-                let transcript = super::guardian::build_transcript(state.machine.tape.messages());
+                let transcript = super::guardian::build_transcript(state.machine.messages());
                 let outcome = {
                     let review_ctx = super::guardian::ReviewContext {
                         policy: super::guardian::DEFAULT_REVIEWER_POLICY,

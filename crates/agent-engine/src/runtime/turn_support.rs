@@ -19,7 +19,7 @@ where
     // continue the same conversation after an interrupt/cancel.
     state.turn_state.clear();
     state.turn_state.clear_plan_snapshot();
-    state.machine.has_active_task = false;
+    state.machine.clear_active_task();
     super::ui_surfaces::turn_completed(state.namespace_environment(), true).await?;
     emit(Event::TurnCompleted {
         summary: Some("Task cancelled by user".to_string()),

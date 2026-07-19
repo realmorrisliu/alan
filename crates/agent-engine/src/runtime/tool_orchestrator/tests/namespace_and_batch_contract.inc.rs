@@ -436,12 +436,12 @@
         let mut state = create_test_state();
         state
             .turn_state
-            .begin_turn(state.machine.tape.messages().len());
+            .begin_turn(state.machine.messages().len());
         state.machine.add_user_message("Initial task");
         state.turn_state.set_plan_snapshot_at_message_count(
             Some("Initial plan".to_string()),
             Vec::new(),
-            state.machine.tape.messages().len(),
+            state.machine.messages().len(),
         );
         assert!(state.turn_state.plan_snapshot_is_from_active_turn());
 
@@ -465,7 +465,7 @@
         assert!(handled);
         assert!(!state.turn_state.plan_snapshot_is_from_active_turn());
         assert_eq!(
-            state.machine.tape.messages().last().unwrap().text_content(),
+            state.machine.messages().last().unwrap().text_content(),
             "Steer to the new task"
         );
     }

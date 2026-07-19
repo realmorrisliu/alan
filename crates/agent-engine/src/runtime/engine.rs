@@ -291,13 +291,10 @@ async fn initialize_agent_machine(
         metadata: RuntimeStartupMetadata::ready(
             launch.process_path.to_string(),
             launch.agent_path.to_string(),
-            machine
-                .recorder
-                .as_ref()
-                .map(|recorder| recorder.rollout_id().to_string()),
+            machine.rollout_id().map(str::to_string),
             machine.rollout_path().cloned(),
             AgentMachineDurabilityState {
-                durable: machine.recorder.is_some(),
+                durable: machine.is_durable(),
                 required: durability_required,
             },
             request_controls,

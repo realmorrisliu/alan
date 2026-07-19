@@ -3,14 +3,14 @@ use super::*;
 #[test]
 fn test_agent_machine_new() {
     let machine = AgentMachine::new();
-    assert!(machine.tape.messages().is_empty());
-    assert!(machine.recorder.is_none());
+    assert!(machine.messages().is_empty());
+    assert!(!machine.is_durable());
 }
 
 #[test]
 fn test_agent_machine_default() {
     let machine = AgentMachine::default();
-    assert!(machine.tape.messages().is_empty());
+    assert!(machine.messages().is_empty());
 }
 
 #[test]
@@ -18,7 +18,7 @@ fn test_add_user_message() {
     let mut machine = AgentMachine::new();
     machine.add_user_message("Hello, agent!");
 
-    let messages = machine.tape.messages();
+    let messages = machine.messages();
     assert_eq!(messages.len(), 1);
     assert_eq!(messages[0].role(), MessageRole::User);
     assert_eq!(messages[0].text_content(), "Hello, agent!");
@@ -62,7 +62,7 @@ fn test_add_assistant_message() {
     let mut machine = AgentMachine::new();
     machine.add_assistant_message("I can help you!", None);
 
-    let messages = machine.tape.messages();
+    let messages = machine.messages();
     assert_eq!(messages.len(), 1);
     assert_eq!(messages[0].role(), MessageRole::Assistant);
     assert_eq!(messages[0].text_content(), "I can help you!");
@@ -74,7 +74,7 @@ fn test_add_tool_message() {
     let payload = serde_json::json!({"result": "success"});
     machine.add_tool_message("call_123", "search_tool", payload);
 
-    let messages = machine.tape.messages();
+    let messages = machine.messages();
     assert_eq!(messages.len(), 1);
     assert_eq!(messages[0].role(), MessageRole::Tool);
     let responses = messages[0].tool_responses();
@@ -93,7 +93,7 @@ fn test_add_tool_message_accepts_content_parts_payload() {
     });
     machine.add_tool_message("call_123", "capture", payload);
 
-    let messages = machine.tape.messages();
+    let messages = machine.messages();
     assert_eq!(messages.len(), 1);
     let responses = messages[0].tool_responses();
     assert_eq!(responses.len(), 1);
@@ -118,7 +118,7 @@ fn test_add_tool_message_accepts_content_parts_array_payload() {
     ]);
     machine.add_tool_message("call_124", "custom", payload);
 
-    let messages = machine.tape.messages();
+    let messages = machine.messages();
     assert_eq!(messages.len(), 1);
     let responses = messages[0].tool_responses();
     assert_eq!(responses.len(), 1);
@@ -155,7 +155,7 @@ fn test_multiple_messages() {
     machine.add_assistant_message("Second", None);
     machine.add_user_message("Third");
 
-    let messages = machine.tape.messages();
+    let messages = machine.messages();
     assert_eq!(messages.len(), 3);
     assert_eq!(messages[0].role(), MessageRole::User);
     assert_eq!(messages[1].role(), MessageRole::Assistant);
@@ -169,7 +169,7 @@ fn test_clear_machine() {
 
     machine.clear();
 
-    assert!(machine.tape.messages().is_empty());
+    assert!(machine.messages().is_empty());
 }
 
 #[test]
@@ -231,15 +231,15 @@ fn test_machine_rollout_path_without_recorder() {
 #[test]
 fn test_machine_has_active_task_defaults_false() {
     let machine = AgentMachine::new();
-    assert!(!machine.has_active_task);
+    assert!(!machine.has_active_task());
 }
 
 #[test]
 fn test_machine_clear_resets_active_task() {
     let mut machine = AgentMachine::new();
-    machine.has_active_task = true;
+    machine.activate_task();
     machine.clear();
-    assert!(!machine.has_active_task);
+    assert!(!machine.has_active_task());
 }
 
 #[test]
@@ -311,7 +311,7 @@ fn test_add_tool_message_preserves_large_payload_on_tape() {
 
     machine.add_tool_message("call_456", "test_tool", payload);
 
-    let messages = machine.tape.messages();
+    let messages = machine.messages();
     assert_eq!(messages.len(), 1);
     let responses = messages[0].tool_responses();
     assert_eq!(responses.len(), 1);
@@ -452,7 +452,7 @@ fn test_rollback_last_turns_removes_latest_turn_messages() {
 
     assert_eq!(removed.removed_turns, 1);
     assert_eq!(removed.removed_messages, 2);
-    let messages = machine.tape.messages();
+    let messages = machine.messages();
     assert_eq!(messages.len(), 3);
     assert_eq!(messages[0].text_content(), "u1");
     assert_eq!(messages[1].text_content(), "a1");
@@ -464,14 +464,14 @@ fn test_rollback_last_turns_clears_all_when_request_exceeds_history() {
     let mut machine = AgentMachine::new();
     machine.add_user_message("u1");
     machine.add_assistant_message("a1", None);
-    machine.has_active_task = true;
+    machine.activate_task();
 
     let removed = machine.rollback_last_turns(10);
 
     assert_eq!(removed.removed_turns, 1);
     assert_eq!(removed.removed_messages, 2);
-    assert!(machine.tape.messages().is_empty());
-    assert!(!machine.has_active_task);
+    assert!(machine.messages().is_empty());
+    assert!(!machine.has_active_task());
 }
 
 #[test]
@@ -498,7 +498,7 @@ fn test_rollback_last_turns_ignores_control_user_messages_for_turn_boundaries() 
         "rollback should anchor on the real user turn, not synthetic control messages"
     );
     assert_eq!(removed.removed_turns, 1);
-    assert!(machine.tape.messages().is_empty());
+    assert!(machine.messages().is_empty());
 }
 
 #[test]
@@ -525,5 +525,5 @@ fn test_rollback_last_turns_ignores_effect_replay_control_messages_for_turn_boun
         "rollback should ignore effect replay control messages the same way as policy controls"
     );
     assert_eq!(removed.removed_turns, 1);
-    assert!(machine.tape.messages().is_empty());
+    assert!(machine.messages().is_empty());
 }

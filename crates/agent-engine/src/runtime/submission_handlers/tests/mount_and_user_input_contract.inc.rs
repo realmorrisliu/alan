@@ -620,7 +620,7 @@
         }
 
         // Verify tool message was recorded
-        assert!(!state.machine.tape.messages().is_empty());
+        assert!(!state.machine.messages().is_empty());
     }
 
     #[tokio::test]

@@ -119,15 +119,15 @@ async fn test_maybe_compact_context_triggers_on_estimated_token_budget() {
     .await;
 
     assert!(result.is_ok());
-    assert_eq!(state.machine.tape.len(), 1);
-    let prompt_messages = state.machine.tape.messages_for_prompt();
+    assert_eq!(state.machine.tape_len(), 1);
+    let prompt_messages = state.machine.messages_for_prompt();
     assert!(prompt_messages.iter().any(|m| {
         m.is_context()
             && m.text_content()
                 .contains("Summary from token-triggered compaction")
     }));
     assert_eq!(
-        state.machine.tape.messages()[0].text_content(),
+        state.machine.messages()[0].text_content(),
         "y".repeat(1200)
     );
 }
@@ -172,15 +172,15 @@ async fn test_maybe_compact_context_triggers_immediately_when_ratio_is_zero() {
     .await;
 
     assert!(result.is_ok());
-    assert_eq!(state.machine.tape.len(), 1);
-    let prompt_messages = state.machine.tape.messages_for_prompt();
+    assert_eq!(state.machine.tape_len(), 1);
+    let prompt_messages = state.machine.messages_for_prompt();
     assert!(prompt_messages.iter().any(|m| {
         m.is_context()
             && m.text_content()
                 .contains("Summary from zero-ratio compaction")
     }));
     assert_eq!(
-        state.machine.tape.messages()[0].text_content(),
+        state.machine.messages()[0].text_content(),
         "y".repeat(1200)
     );
 }
@@ -216,7 +216,7 @@ async fn test_maybe_compact_context_skips_when_context_window_budget_has_room() 
         turn_state: TurnState::default(),
     };
 
-    let original_len = state.machine.tape.len();
+    let original_len = state.machine.tape_len();
     let mut emit = |_event: Event| async {};
     let result = maybe_compact_context_for_request(
         &mut state,
@@ -226,8 +226,8 @@ async fn test_maybe_compact_context_skips_when_context_window_budget_has_room() 
     .await;
 
     assert!(result.is_ok());
-    assert_eq!(state.machine.tape.len(), original_len);
-    assert!(state.machine.tape.summary().is_none());
+    assert_eq!(state.machine.tape_len(), original_len);
+    assert!(state.machine.tape_summary().is_none());
 }
 
 #[tokio::test]
@@ -249,7 +249,7 @@ async fn test_auto_pre_turn_soft_compaction_flushes_memory_before_compaction() {
         );
     }
 
-    let estimated_prompt_tokens = machine.tape.estimated_prompt_tokens();
+    let estimated_prompt_tokens = machine.estimated_prompt_tokens();
     let runtime_config = super::RuntimeConfig {
         compaction_trigger_messages: 100,
         compaction_keep_last: 1,
@@ -342,7 +342,7 @@ async fn test_auto_pre_turn_soft_compaction_continues_after_memory_flush_failure
         );
     }
 
-    let estimated_prompt_tokens = machine.tape.estimated_prompt_tokens();
+    let estimated_prompt_tokens = machine.estimated_prompt_tokens();
     let runtime_config = super::RuntimeConfig {
         compaction_trigger_messages: 100,
         compaction_keep_last: 1,
@@ -438,7 +438,7 @@ async fn test_auto_pre_turn_soft_compaction_skips_memory_flush_when_nothing_is_d
         );
     }
 
-    let estimated_prompt_tokens = machine.tape.estimated_prompt_tokens();
+    let estimated_prompt_tokens = machine.estimated_prompt_tokens();
     let runtime_config = super::RuntimeConfig {
         compaction_trigger_messages: 100,
         compaction_keep_last: 1,
@@ -538,7 +538,7 @@ async fn test_auto_pre_turn_soft_compaction_records_already_flushed_cycle_skip()
     }
     machine.note_auto_memory_flush_attempt();
 
-    let estimated_prompt_tokens = machine.tape.estimated_prompt_tokens();
+    let estimated_prompt_tokens = machine.estimated_prompt_tokens();
     let runtime_config = super::RuntimeConfig {
         compaction_trigger_messages: 100,
         compaction_keep_last: 1,
@@ -631,7 +631,7 @@ async fn test_auto_pre_turn_hard_compaction_skips_memory_flush() {
         );
     }
 
-    let estimated_prompt_tokens = machine.tape.estimated_prompt_tokens();
+    let estimated_prompt_tokens = machine.estimated_prompt_tokens();
     let runtime_config = super::RuntimeConfig {
         compaction_trigger_messages: 100,
         compaction_keep_last: 1,
@@ -736,7 +736,7 @@ async fn test_manual_compaction_bypasses_automatic_thresholds_without_memory_flu
             .any(|event| matches!(event, Event::MemoryFlushObserved { .. }))
     );
     assert_eq!(
-        state.machine.tape.summary(),
+        state.machine.tape_summary(),
         Some("Manual compaction below threshold")
     );
 }
@@ -751,7 +751,7 @@ async fn test_maybe_compact_context_allows_mid_turn_emergency_near_hard_limit() 
     let mut machine = AgentMachine::new();
     machine.add_user_message(&"x".repeat(1200));
     machine.add_assistant_message(&"y".repeat(1200), None);
-    let estimated_prompt_tokens = machine.tape.estimated_prompt_tokens();
+    let estimated_prompt_tokens = machine.estimated_prompt_tokens();
 
     let mut runtime_config = super::RuntimeConfig::default();
     runtime_config.compaction_trigger_messages = 100;
@@ -783,7 +783,7 @@ async fn test_maybe_compact_context_allows_mid_turn_emergency_near_hard_limit() 
 
     assert!(matches!(result, Ok(CompactionOutcome::Applied(_))));
     assert_eq!(
-        state.machine.tape.summary(),
+        state.machine.tape_summary(),
         Some("Summary from emergency mid-turn compaction")
     );
 }

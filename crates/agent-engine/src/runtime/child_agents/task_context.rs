@@ -52,14 +52,13 @@ fn render_launch_metadata(spec: &SpawnSpec) -> Option<String> {
 
 fn render_conversation_snapshot(parent: &RuntimeLoopState) -> Option<String> {
     let mut lines = Vec::new();
-    if let Some(summary) = parent.machine.tape.summary() {
+    if let Some(summary) = parent.machine.tape_summary() {
         lines.push("Summary:".to_string());
         lines.push(truncate_chars(summary.trim(), MAX_CHILD_CONVERSATION_CHARS));
     }
 
     let recent_messages = parent
         .machine
-        .tape
         .messages()
         .iter()
         .rev()
@@ -124,7 +123,6 @@ fn render_tool_results_snapshot(parent: &RuntimeLoopState) -> Option<String> {
     let mut lines = Vec::new();
     for message in parent
         .machine
-        .tape
         .messages()
         .iter()
         .rev()

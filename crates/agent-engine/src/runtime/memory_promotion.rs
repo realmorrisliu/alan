@@ -267,7 +267,7 @@ pub(crate) fn build_turn_memory_promotion_job(
 
     let memory_dir = state.core_config.memory.store_dir.clone()?;
     let active_turn_user_messages = active_turn_user_messages(
-        state.machine.tape.messages(),
+        state.machine.messages(),
         state.turn_state.active_turn_message_start(),
     );
     if active_turn_user_messages.is_empty() {
@@ -380,7 +380,7 @@ async fn capture_confirmed_turn_memory_for_test(
     };
 
     let active_turn_user_messages =
-        active_turn_user_messages(machine.tape.messages(), active_turn_start);
+        active_turn_user_messages(machine.messages(), active_turn_start);
     if active_turn_user_messages.is_empty() {
         return Ok(());
     }

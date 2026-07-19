@@ -167,7 +167,7 @@ async fn test_cancel_current_task() {
         },
     };
     state.machine.add_user_message("existing history");
-    state.machine.has_active_task = true;
+    state.machine.activate_task();
 
     let mut events = vec![];
     let mut emit = |event: Event| {
@@ -179,10 +179,10 @@ async fn test_cancel_current_task() {
 
     assert!(result.is_ok());
     assert!(state.turn_state.pending_confirmation().is_none());
-    assert!(!state.machine.has_active_task);
-    assert_eq!(state.machine.tape.messages().len(), 1);
+    assert!(!state.machine.has_active_task());
+    assert_eq!(state.machine.messages().len(), 1);
     assert_eq!(
-        state.machine.tape.messages()[0].text_content(),
+        state.machine.messages()[0].text_content(),
         "existing history"
     );
 

@@ -86,7 +86,7 @@ fn render_memory_surfaces_scopes_latest_assistant_state_to_active_turn() {
     machine.add_assistant_message("Earlier assistant response.", None);
 
     let mut turn_state = TurnState::default();
-    turn_state.begin_turn(machine.tape.messages().len());
+    turn_state.begin_turn(machine.messages().len());
     machine.add_user_message("Current tool-only turn");
 
     let now = DateTime::parse_from_rfc3339("2026-04-15T15:30:00Z")
@@ -154,7 +154,7 @@ fn new_substantive_turn_request_replaces_stale_plan_goal() {
     machine.add_user_message("Finish the old memory task.");
     let mut turn_state = TurnState::default();
     turn_state.set_plan_snapshot(Some("Finish the old memory task.".to_string()), Vec::new());
-    turn_state.begin_turn(machine.tape.messages().len());
+    turn_state.begin_turn(machine.messages().len());
     machine.add_user_message("Rewrite the provider connection documentation.");
 
     assert_eq!(
@@ -167,7 +167,7 @@ fn new_substantive_turn_request_replaces_stale_plan_goal() {
 fn in_turn_plan_update_refines_the_initial_user_goal() {
     let mut machine = AgentMachine::new();
     let mut turn_state = TurnState::default();
-    turn_state.begin_turn(machine.tape.messages().len());
+    turn_state.begin_turn(machine.messages().len());
     machine.add_user_message("Implement the memory contract changes.");
     turn_state.set_plan_snapshot(
         Some("Validate salience and compaction fallback behavior.".to_string()),
@@ -184,7 +184,7 @@ fn in_turn_plan_update_refines_the_initial_user_goal() {
 fn substantive_resume_input_overrides_earlier_active_plan() {
     let mut machine = AgentMachine::new();
     let mut turn_state = TurnState::default();
-    turn_state.begin_turn(machine.tape.messages().len());
+    turn_state.begin_turn(machine.messages().len());
     machine.add_user_message("Implement the old memory contract.");
     turn_state.set_plan_snapshot(
         Some("Finish the old memory contract.".to_string()),
@@ -205,7 +205,7 @@ fn terse_imperative_passes_salience_filter() {
     machine.add_user_message("Prepare the release.");
     let mut turn_state = TurnState::default();
     turn_state.set_plan_snapshot(Some("Prepare the release.".to_string()), Vec::new());
-    turn_state.begin_turn(machine.tape.messages().len());
+    turn_state.begin_turn(machine.messages().len());
     machine.add_user_message("deploy it");
 
     assert_eq!(derive_current_goal(&machine, &turn_state), "deploy it");
@@ -219,9 +219,9 @@ fn active_plan_goal_wins_when_latest_message_is_acknowledgement() {
     turn_state.set_plan_snapshot_at_message_count(
         Some("Validate the namespace-native migration.".to_string()),
         Vec::new(),
-        machine.tape.messages().len(),
+        machine.messages().len(),
     );
-    turn_state.begin_turn(machine.tape.messages().len());
+    turn_state.begin_turn(machine.messages().len());
     machine.add_user_message("ok");
 
     assert_eq!(
@@ -238,7 +238,7 @@ fn later_substantive_goal_wins_before_stale_plan_on_acknowledgement() {
     turn_state.set_plan_snapshot_at_message_count(
         Some("Complete task A plan.".to_string()),
         Vec::new(),
-        machine.tape.messages().len(),
+        machine.messages().len(),
     );
     machine.add_assistant_message("Task A paused.", None);
     machine.add_user_message("Switch to substantive task B.");
@@ -254,7 +254,7 @@ fn later_substantive_goal_wins_before_stale_plan_on_acknowledgement() {
 #[test]
 fn compaction_summary_wins_before_acknowledgement_fallback() {
     let mut machine = AgentMachine::new();
-    machine.tape.set_summary(
+    machine.set_tape_summary(
         "Complete the namespace-native lifecycle migration and verify parent visibility."
             .to_string(),
     );
@@ -421,7 +421,7 @@ async fn refresh_memory_surfaces_needs_no_model_request_or_llm_mount() {
     let memory_dir = temp.path().join(".alan/memory");
     let mut machine = AgentMachine::new();
     machine.add_user_message("Refresh local memory surfaces mechanically.");
-    let message_count = machine.tape.messages().len();
+    let message_count = machine.messages().len();
     let state = RuntimeLoopState {
         machine,
         current_submission_id: None,
@@ -439,7 +439,7 @@ async fn refresh_memory_surfaces_needs_no_model_request_or_llm_mount() {
 
     refresh_turn_memory_surfaces(&state).await.unwrap();
 
-    assert_eq!(state.machine.tape.messages().len(), message_count);
+    assert_eq!(state.machine.messages().len(), message_count);
     let working = tokio::fs::read_to_string(working_memory_path(
         &memory_dir,
         state.machine.memory_record_id(),
@@ -466,12 +466,6 @@ async fn reused_process_path_gets_distinct_durable_memory_paths() {
         working_memory_path(&memory_dir, first.memory_record_id()),
         working_memory_path(&memory_dir, second.memory_record_id())
     );
-    assert_eq!(
-        first.memory_record_id(),
-        first.recorder.as_ref().unwrap().rollout_id()
-    );
-    assert_eq!(
-        second.memory_record_id(),
-        second.recorder.as_ref().unwrap().rollout_id()
-    );
+    assert_eq!(first.memory_record_id(), first.rollout_id().unwrap());
+    assert_eq!(second.memory_record_id(), second.rollout_id().unwrap());
 }

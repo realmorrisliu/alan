@@ -130,7 +130,6 @@ fn render_memory_surfaces(
 fn derive_current_goal(machine: &AgentMachine, turn_state: &TurnState) -> String {
     let source_ref = memory_source_ref(machine);
     let user_messages = machine
-        .tape
         .messages()
         .iter()
         .enumerate()
@@ -182,8 +181,7 @@ fn derive_current_goal(machine: &AgentMachine, turn_state: &TurnState) -> String
     }
 
     if let Some(summary) = machine
-        .tape
-        .summary()
+        .tape_summary()
         .map(str::trim)
         .filter(|summary| !summary.is_empty())
     {
@@ -284,8 +282,8 @@ fn derive_latest_assistant_state(machine: &AgentMachine, turn_state: &TurnState)
     let source_ref = memory_source_ref(machine);
     let messages = turn_state
         .active_turn_message_start()
-        .and_then(|start| machine.tape.messages().get(start..))
-        .unwrap_or_else(|| machine.tape.messages());
+        .and_then(|start| machine.messages().get(start..))
+        .unwrap_or_else(|| machine.messages());
 
     messages
         .iter()
@@ -347,7 +345,6 @@ fn format_plan_status(status: &alan_agent_protocol::PlanItemStatus) -> &'static 
 fn render_recent_messages(machine: &AgentMachine) -> String {
     let source_ref = memory_source_ref(machine);
     let items: Vec<String> = machine
-        .tape
         .messages()
         .iter()
         .filter_map(|message| match message {
@@ -383,8 +380,7 @@ fn render_recent_messages(machine: &AgentMachine) -> String {
 fn render_compaction_summary(machine: &AgentMachine) -> String {
     let source_ref = memory_source_ref(machine);
     machine
-        .tape
-        .summary()
+        .tape_summary()
         .map(str::trim)
         .filter(|summary| !summary.is_empty())
         .map(|summary| truncate_memory_text(summary, MAX_COMPACTION_SUMMARY_CHARS, &source_ref))
