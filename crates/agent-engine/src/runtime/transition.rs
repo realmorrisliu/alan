@@ -308,6 +308,13 @@ where
     }
 }
 
+pub(super) fn tool_resolution_runtime(
+    state: &mut RuntimeLoopState,
+) -> super::tool_resolution::ToolResolutionRuntime<'_> {
+    let tool_execution = state.tool_execution();
+    super::tool_resolution::ToolResolutionRuntime::new(&mut state.machine, tool_execution)
+}
+
 pub(super) fn tool_authorization_runtime(
     state: &mut RuntimeLoopState,
 ) -> super::tool_authorization::ToolAuthorizationRuntime<'_> {
