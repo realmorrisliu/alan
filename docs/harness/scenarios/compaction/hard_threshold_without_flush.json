@@ -3,7 +3,7 @@
   "category": "compaction",
   "description": "Validate hard-threshold automatic compaction bypasses pre-compaction memory flush and leaves latest_memory_flush_attempt empty.",
   "blocking": true,
-  "command": "cargo test -p alan-agent-engine --lib runtime::agent_loop::tests::test_auto_pre_turn_hard_compaction_skips_memory_flush -- --exact",
+  "command": "cargo test -p alan-agent-engine --lib runtime::transition::tests::compaction_thresholds::test_auto_pre_turn_hard_compaction_skips_memory_flush -- --exact",
   "assertions": [
     "hard-threshold automatic compaction emits no memory_flush_observed event",
     "latest_memory_flush_attempt stays empty in Agent Machine and rollout evidence",

@@ -3,7 +3,7 @@
   "category": "compaction",
   "description": "Validate degraded fallback compaction remains visible as degraded and keeps the resulting attempt consistent across all external surfaces.",
   "blocking": true,
-  "command": "cargo test -p alan-agent-engine --lib runtime::agent_loop::tests::test_compaction_generation_failure_uses_degraded_fallback_and_audits_it -- --exact",
+  "command": "cargo test -p alan-agent-engine --lib runtime::transition::tests::compaction_recovery::test_compaction_generation_failure_uses_degraded_fallback_and_audits_it -- --exact",
   "assertions": [
     "degraded fallback emits CompactionResult::Degraded",
     "degraded strategy is visible in Agent Machine and rollout evidence",
