@@ -10,12 +10,13 @@ use tokio::io::AsyncWriteExt;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
+    agent_machine::AgentMachine,
     llm::{Message, build_generation_request},
     prompts::{self, MEMORY_STORE_FILENAME},
 };
 
 use super::memory_promotion::{InboxEntryDraft, stage_inbox_entry};
-use super::transition::RuntimeLoopState;
+use super::transition::NamespaceGeneration;
 use crate::prompts::MEMORY_DAILY_DIRNAME;
 
 const MEMORY_FLUSH_MAX_SECTION_ITEMS: usize = 6;
@@ -46,8 +47,34 @@ struct MemoryFlushContent {
     important_refs: Vec<String>,
 }
 
+pub(crate) struct MemoryFlushInputs<'a> {
+    machine: &'a AgentMachine,
+    generation: &'a NamespaceGeneration,
+    memory_enabled: bool,
+    memory_dir: Option<&'a Path>,
+    process_path: &'a str,
+}
+
+impl<'a> MemoryFlushInputs<'a> {
+    pub(crate) fn new(
+        machine: &'a AgentMachine,
+        generation: &'a NamespaceGeneration,
+        memory_enabled: bool,
+        memory_dir: Option<&'a Path>,
+        process_path: &'a str,
+    ) -> Self {
+        Self {
+            machine,
+            generation,
+            memory_enabled,
+            memory_dir,
+            process_path,
+        }
+    }
+}
+
 pub(crate) async fn perform_memory_flush_attempt(
-    state: &mut RuntimeLoopState,
+    inputs: MemoryFlushInputs<'_>,
     compaction_mode: CompactionMode,
     pressure_level: CompactionPressureLevel,
     sanitized_messages: &[crate::tape::Message],
@@ -59,7 +86,7 @@ pub(crate) async fn perform_memory_flush_attempt(
     let note_date = now.format("%F").to_string();
     let source_messages = Some(sanitized_messages.len());
 
-    if !state.core_config.memory.enabled {
+    if !inputs.memory_enabled {
         return skipped_attempt(
             attempt_id,
             compaction_mode,
@@ -70,7 +97,7 @@ pub(crate) async fn perform_memory_flush_attempt(
         );
     }
 
-    let Some(memory_dir) = state.core_config.memory.store_dir.clone() else {
+    let Some(memory_dir) = inputs.memory_dir else {
         return skipped_attempt(
             attempt_id,
             compaction_mode,
@@ -125,7 +152,14 @@ pub(crate) async fn perform_memory_flush_attempt(
         }
     }
 
-    let flush_content = match generate_flush_content(state, sanitized_messages, cancel).await {
+    let flush_content = match generate_flush_content(
+        inputs.machine,
+        inputs.generation,
+        sanitized_messages,
+        cancel,
+    )
+    .await
+    {
         Ok(Some(content)) => content,
         Ok(None) => {
             return skipped_attempt(
@@ -173,9 +207,8 @@ pub(crate) async fn perform_memory_flush_attempt(
     let note_path = memory_dir
         .join(MEMORY_DAILY_DIRNAME)
         .join(format!("{note_date}.md"));
-    let process_path = state.process_path().to_string();
     let entry = render_memory_flush_entry(
-        &process_path,
+        inputs.process_path,
         &attempt_id,
         compaction_mode,
         pressure_level,
@@ -186,8 +219,8 @@ pub(crate) async fn perform_memory_flush_attempt(
     match append_memory_entry(&note_path, &entry).await {
         Ok(()) => {
             if let Some(inbox_draft) =
-                build_memory_flush_inbox_draft(&process_path, &attempt_id, &flush_content)
-                && let Err(err) = stage_inbox_entry(&memory_dir, inbox_draft, now).await
+                build_memory_flush_inbox_draft(inputs.process_path, &attempt_id, &flush_content)
+                && let Err(err) = stage_inbox_entry(memory_dir, inbox_draft, now).await
             {
                 tracing::warn!(
                     error = %err,
@@ -203,7 +236,7 @@ pub(crate) async fn perform_memory_flush_attempt(
                 result: MemoryFlushResult::Success,
                 skip_reason: None,
                 source_messages,
-                output_path: Some(snapshot_output_path(&memory_dir, &note_path)),
+                output_path: Some(snapshot_output_path(memory_dir, &note_path)),
                 warning_message: None,
                 error_message: None,
                 timestamp,
@@ -292,12 +325,13 @@ fn failure_attempt(
 }
 
 async fn generate_flush_content(
-    state: &mut RuntimeLoopState,
+    machine: &AgentMachine,
+    generation: &NamespaceGeneration,
     sanitized_messages: &[crate::tape::Message],
     cancel: &CancellationToken,
 ) -> Result<Option<MemoryFlushContent>> {
     let mut llm_messages = Vec::new();
-    if let Some(existing_summary) = state.machine.tape_summary() {
+    if let Some(existing_summary) = machine.tape_summary() {
         llm_messages.push(Message::context(format!(
             "[Current compaction summary]\n{existing_summary}"
         )));
@@ -312,8 +346,7 @@ async fn generate_flush_content(
         Some(MEMORY_FLUSH_MAX_TOKENS),
     );
 
-    let response = state
-        .namespace_generation()
+    let response = generation
         .generate_once_with_cancel(request, cancel, "memory flush cancelled")
         .await?;
 
@@ -546,14 +579,7 @@ mod tests {
     use alan_llmfs::LlmFs;
     use tokio::sync::mpsc;
 
-    use crate::{
-        agent_machine::AgentMachine,
-        config::Config,
-        runtime::{
-            NamespaceRuntimeEnvironment, RuntimeConfig, prompt_cache::PromptAssemblyCache,
-            transition::RuntimeLoopState,
-        },
-    };
+    use crate::{agent_machine::AgentMachine, runtime::NamespaceRuntimeEnvironment};
     use std::path::PathBuf;
 
     struct RecordingProvider {
@@ -603,7 +629,9 @@ mod tests {
         }
     }
 
-    fn namespace_state_with_provider(provider: impl LlmProvider + 'static) -> RuntimeLoopState {
+    fn namespace_generation_with_provider(
+        provider: impl LlmProvider + 'static,
+    ) -> NamespaceGeneration {
         let llmfs = Arc::new(LlmFs::new());
         llmfs.register_connection("default", Box::new(provider));
 
@@ -615,33 +643,26 @@ mod tests {
         );
         let root = InProcessTransport::new(Arc::new(MountFs::new(namespace)));
 
-        RuntimeLoopState {
-            machine: AgentMachine::new(),
-            environment: NamespaceRuntimeEnvironment::new(root, "/agent/1", "default"),
-            core_config: Config::default(),
-            runtime_config: RuntimeConfig::default(),
-            definition_persona_dirs: Vec::new(),
-            prompt_cache: PromptAssemblyCache::new(Vec::new()),
-        }
+        NamespaceRuntimeEnvironment::new(root, "/agent/1", "default").generation()
     }
 
     #[tokio::test]
     async fn memory_flush_generation_uses_namespace_llmfs() {
         let requests = Arc::new(Mutex::new(Vec::new()));
-        let mut state = namespace_state_with_provider(RecordingProvider {
+        let generation = namespace_generation_with_provider(RecordingProvider {
             requests: Arc::clone(&requests),
             response: r#"{"why":"namespace flush","key_decisions":["via llmfs"],"constraints":[],"next_steps":[],"important_refs":["/mnt/llm"]}"#
                 .to_string(),
         });
-        state
-            .machine
-            .add_user_message("remember this namespace fact");
-        let messages = state.machine.messages().to_vec();
+        let mut machine = AgentMachine::new();
+        machine.add_user_message("remember this namespace fact");
+        let messages = machine.messages().to_vec();
 
-        let content = generate_flush_content(&mut state, &messages, &CancellationToken::new())
-            .await
-            .unwrap()
-            .expect("flush content");
+        let content =
+            generate_flush_content(&machine, &generation, &messages, &CancellationToken::new())
+                .await
+                .unwrap()
+                .expect("flush content");
 
         assert_eq!(content.why, "namespace flush");
         assert_eq!(content.key_decisions, vec!["via llmfs"]);

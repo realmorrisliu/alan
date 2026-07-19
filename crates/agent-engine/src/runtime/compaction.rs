@@ -350,8 +350,16 @@ where
         return record_and_emit_memory_flush_attempt(state, emit, attempt).await;
     }
 
+    let generation = state.namespace_generation();
+    let process_path = state.process_path();
     let attempt = memory_flush::perform_memory_flush_attempt(
-        state,
+        memory_flush::MemoryFlushInputs::new(
+            &state.machine,
+            &generation,
+            state.core_config.memory.enabled,
+            state.core_config.memory.store_dir.as_deref(),
+            &process_path,
+        ),
         request.mode(),
         pressure.level,
         sanitized_to_summarize,
