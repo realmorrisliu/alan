@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, ensure};
 
 use crate::{
-    AGENT_DEFINITION_DESCRIPTOR, ConfigSourceKind, ProcessLaunchContext, ProcessPackageKind,
+    ConfigSourceKind, ProcessDescriptor, ProcessPackageKind, ProcessPackageReference,
     skills::{ResolvedCapabilityView, ScopedPackageDir, SkillOverride, SkillScope},
 };
 
@@ -42,13 +42,15 @@ impl ResolvedAgentDefinition {
         Ok(base.clone())
     }
 
-    pub fn from_launch_context(
-        launch_context: &ProcessLaunchContext,
+    pub fn from_process_inputs(
+        descriptor: Option<&ProcessDescriptor>,
+        package_references: &[ProcessPackageReference],
         base_skill_overrides: &[SkillOverride],
         base_source: ConfigSourceKind,
     ) -> Result<Self> {
-        let (package_capabilities, package_errors) = resolve_package_references(launch_context)?;
-        let Some(descriptor) = launch_context.descriptor(AGENT_DEFINITION_DESCRIPTOR) else {
+        let (package_capabilities, package_errors) =
+            resolve_package_references(package_references)?;
+        let Some(descriptor) = descriptor else {
             return Self::empty(base_skill_overrides, package_capabilities, package_errors);
         };
         let file_tree = descriptor.file_tree.as_ref().with_context(|| {
@@ -166,7 +168,7 @@ impl ResolvedAgentDefinition {
 }
 
 fn resolve_package_references(
-    launch_context: &ProcessLaunchContext,
+    package_references: &[ProcessPackageReference],
 ) -> Result<(
     Vec<crate::skills::CapabilityPackage>,
     Vec<crate::skills::SkillError>,
@@ -174,17 +176,11 @@ fn resolve_package_references(
     let mut packages = Vec::new();
     let mut errors = Vec::new();
     let mut selected_packages = std::collections::BTreeSet::new();
-    for reference in &launch_context.package_references {
+    for reference in package_references {
         ensure!(
             selected_packages.insert(reference.package_id.clone()),
             "duplicate package reference `{}`",
             reference.package_id
-        );
-        let exact_mounts = launch_context.namespace.union_at(&reference.namespace_path);
-        ensure!(
-            exact_mounts.len() == 1 && exact_mounts[0].access == alan_kernel::Access::ReadOnly,
-            "package reference {} requires one exact read-only Process namespace mount",
-            reference.namespace_path
         );
         let scope = match reference.kind {
             ProcessPackageKind::Preinstalled => SkillScope::Builtin,

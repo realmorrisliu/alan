@@ -58,11 +58,7 @@ impl std::fmt::Debug for ToolExecutionBinding {
 /// to reconcile the cached path projection against the current service-owned
 /// grant set, so revocation cannot leave authority in a future Tool Process.
 pub trait ToolExecutionAuthority: std::fmt::Debug + Send + Sync {
-    fn reconcile(
-        &self,
-        pid: alan_kernel::Pid,
-        binding: ToolExecutionBinding,
-    ) -> Result<ToolExecutionBinding>;
+    fn reconcile(&self, pid: u64, binding: ToolExecutionBinding) -> Result<ToolExecutionBinding>;
 }
 
 impl ToolExecutionBinding {

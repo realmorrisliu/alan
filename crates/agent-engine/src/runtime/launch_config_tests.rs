@@ -9,8 +9,8 @@ fn write_agent_overlay(path: &Path, body: &str) {
 #[test]
 fn test_agent_runtime_config_default() {
     let config = AgentProcessConfig::default();
-    assert_eq!(config.launch_context.cwd, "/");
-    assert!(config.launch_context.descriptors.is_empty());
+    assert_eq!(config.namespace_cwd, Path::new("/"));
+    assert!(!config.memory_store_bound);
     assert!(config.store_bindings.is_none());
     assert!(config.memory_store_backing.is_none());
 }
@@ -20,7 +20,7 @@ fn test_agent_runtime_config_from_core_config() {
     let core_config = crate::config::Config::default();
     let runtime_config = AgentProcessConfig::from(core_config);
 
-    assert_eq!(runtime_config.launch_context.cwd, "/");
+    assert_eq!(runtime_config.namespace_cwd, Path::new("/"));
     assert!(runtime_config.store_bindings.is_none());
 }
 
@@ -28,7 +28,7 @@ fn test_agent_runtime_config_from_core_config() {
 fn test_agent_runtime_config_clone() {
     let config = AgentProcessConfig::default();
     let cloned = config.clone();
-    assert_eq!(config.launch_context.cwd, cloned.launch_context.cwd);
+    assert_eq!(config.namespace_cwd, cloned.namespace_cwd);
 }
 
 #[test]
@@ -36,7 +36,7 @@ fn test_agent_runtime_config_debug() {
     let config = AgentProcessConfig::default();
     let debug_str = format!("{:?}", config);
     assert!(debug_str.contains("AgentProcessConfig"));
-    assert!(debug_str.contains("launch_context"));
+    assert!(debug_str.contains("namespace_cwd"));
     assert!(!debug_str.contains("workspace_id"));
 }
 

@@ -10,6 +10,7 @@ mod event;
 mod host_auth;
 mod memory;
 mod op;
+mod process;
 mod reasoning;
 mod spawn;
 mod ui_surface;
@@ -35,12 +36,17 @@ pub use op::{
     GovernanceConfig, GovernanceProfile, InputMode, Op, PlanItem, PlanItemStatus, Submission,
     ToolCapability, TurnContext,
 };
+pub use process::{
+    AGENT_DEFINITION_DESCRIPTOR, AGENT_EXECUTABLE_RESULT_VERSION, AgentExecutablePause,
+    AgentExecutableRequest, AgentExecutableResult, AgentExecutableStatus, MEMORY_STORE_DESCRIPTOR,
+    ProcessExecSpec, ProcessNamespaceAccess, ProcessNamespaceManifest, ProcessNamespaceMount,
+};
 pub use reasoning::{ReasoningControls, ReasoningEffort};
 pub use spawn::{
-    DelegatedCapabilityDecision, DelegatedCapabilityRecovery, DelegatedCapabilityRequirement,
-    DelegatedNamespaceSummary, DelegatedSpawnContext, SpawnHandle, SpawnHostMount,
-    SpawnLaunchInputs, SpawnMountAccess, SpawnRuntimeOverrides, SpawnSpec, SpawnTarget,
-    SpawnToolProfileOverride,
+    AGENT_DEFINITION_DESCRIPTOR_NAME, DelegatedCapabilityDecision, DelegatedCapabilityRecovery,
+    DelegatedCapabilityRequirement, DelegatedNamespaceSummary, DelegatedSpawnContext, SpawnHandle,
+    SpawnHostMount, SpawnLaunchInputs, SpawnMountAccess, SpawnRuntimeOverrides, SpawnSpec,
+    SpawnSpecValidationError, SpawnTarget, SpawnToolProfileOverride,
 };
 pub use ui_surface::{
     UI_SURFACE_VERSION, UiActivitySnapshot, UiActivityState, UiEvent, UiNoticeKind,

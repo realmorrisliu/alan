@@ -1,5 +1,11 @@
 //! Process lifecycle and stream files exposed through `/proc`.
 
+use std::collections::BTreeMap;
+
+use alan_agent_protocol::{
+    AgentExecutableRequest, AgentExecutableResult, ProcessExecSpec, ProcessNamespaceAccess,
+    ProcessNamespaceManifest, ProcessNamespaceMount,
+};
 use anyhow::{Context, Result, bail};
 
 use super::{NamespaceProcessFiles, client::NamespaceClient};
@@ -12,6 +18,54 @@ impl NamespaceProcessFiles {
     /// Authoritative `/proc/<pid>` path corresponding to this AgentFS view.
     pub fn process_path(&self) -> Result<String> {
         Ok(format!("/proc/{}", agent_pid_from_path(&self.agent_path)?))
+    }
+
+    pub(crate) fn current_pid(&self) -> Result<&str> {
+        agent_pid_from_path(&self.agent_path)
+    }
+
+    pub(crate) async fn read_process_namespace(
+        &self,
+        pid: &str,
+    ) -> Result<Vec<ProcessNamespaceMount>> {
+        let path = format!("/proc/{pid}/namespace");
+        let document = String::from_utf8(
+            self.client()
+                .read_file(&path)
+                .await
+                .with_context(|| format!("read Process namespace from {path}"))?,
+        )
+        .context("Process namespace is utf8")?;
+        document
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| {
+                let (path, access) = line
+                    .rsplit_once(' ')
+                    .with_context(|| format!("invalid Process namespace entry `{line}`"))?;
+                let access = match access {
+                    "ro" => ProcessNamespaceAccess::ReadOnly,
+                    "rw" => ProcessNamespaceAccess::ReadWrite,
+                    other => bail!("invalid Process namespace access `{other}`"),
+                };
+                Ok(ProcessNamespaceMount::new(path, access))
+            })
+            .collect()
+    }
+
+    pub(crate) async fn read_process_descriptors(
+        &self,
+        pid: &str,
+    ) -> Result<BTreeMap<u32, String>> {
+        let path = format!("/proc/{pid}/descriptors");
+        serde_json::from_slice(
+            &self
+                .client()
+                .read_file(&path)
+                .await
+                .with_context(|| format!("read Process descriptors from {path}"))?,
+        )
+        .with_context(|| format!("parse Process descriptors from {path}"))
     }
 
     pub async fn write_process_control_for_pid(&self, pid: &str, command: &str) -> Result<()> {
@@ -68,21 +122,60 @@ impl NamespaceProcessFiles {
         Ok((output, events))
     }
 
+    pub(crate) async fn read_agent_process_result(
+        &self,
+        pid: &str,
+    ) -> Result<AgentExecutableResult> {
+        AgentExecutableResult::from_process_output(&self.read_process_output(pid).await?)
+            .with_context(|| format!("parse Agent Executable result from /proc/{pid}/io/output"))
+    }
+
+    pub(crate) async fn read_process_output(&self, pid: &str) -> Result<Vec<u8>> {
+        let output_path = format!("/proc/{pid}/io/output");
+        self.client()
+            .read_file(&output_path)
+            .await
+            .with_context(|| format!("read Process output from {output_path}"))
+    }
+
     pub async fn spawn_process<I, S>(&self, executable: &str, args: I) -> Result<String>
     where
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
         let args: Vec<String> = args.into_iter().map(Into::into).collect();
-        let exec_spec = serde_json::json!({
-            "executable": executable,
-            "args": args,
-        });
-        let exec_spec = serde_json::to_vec(&exec_spec).context("serialize exec spec")?;
+        let exec_spec = serde_json::to_vec(&ProcessExecSpec {
+            executable: executable.to_string(),
+            args,
+            namespace: None,
+            descriptors: BTreeMap::new(),
+        })
+        .context("serialize exec spec")?;
         self.client()
             .clone_with_document("/proc/clone", &exec_spec)
             .await
             .with_context(|| format!("spawn {executable} through /proc/clone"))
+    }
+
+    pub(crate) async fn spawn_agent_process(
+        &self,
+        request: &AgentExecutableRequest,
+        mounts: Vec<ProcessNamespaceMount>,
+        descriptors: BTreeMap<u32, String>,
+    ) -> Result<String> {
+        let request =
+            serde_json::to_string(request).context("serialize /bin/alan-agent launch request")?;
+        let exec_spec = serde_json::to_vec(&ProcessExecSpec {
+            executable: "/bin/alan-agent".to_string(),
+            args: vec![request],
+            namespace: Some(ProcessNamespaceManifest { mounts }),
+            descriptors,
+        })
+        .context("serialize /bin/alan-agent exec spec")?;
+        self.client()
+            .clone_with_document("/proc/clone", &exec_spec)
+            .await
+            .context("spawn /bin/alan-agent through /proc/clone")
     }
 
     pub(super) async fn read_process_result(

@@ -433,7 +433,6 @@ fn transition_leaf_workflows_do_not_receive_the_runtime_loop_aggregate() {
     for path in [
         "child_agents.rs",
         "child_agents/delegated_launch.rs",
-        "child_agents/launch_context.rs",
         "child_agents/runtime_inputs.rs",
         "child_agents/task_context.rs",
     ] {
@@ -737,7 +736,7 @@ fn tool_workflows_use_only_the_narrow_tool_execution_handle() {
     let tool_operations = read_runtime_source("transition/namespace_environment/tool_execution.rs");
     assert!(tool_operations.contains("impl NamespaceToolExecution"));
     assert!(!tool_operations.contains("impl NamespaceRuntimeEnvironment"));
-    for operation in ["default_cwd", "static_tool_names"] {
+    for operation in ["default_cwd", "discover_packages"] {
         assert!(
             tool_operations.contains(operation),
             "Tool execution handle missing {operation}"
@@ -764,8 +763,8 @@ fn child_launch_workflows_use_only_the_narrow_child_launch_handle() {
     let child_launch = rust_item_body(&namespace, "pub(crate) struct NamespaceChildLaunch");
     for required_field in [
         "llm_connection: String",
-        "launch_context: Option<crate::ProcessLaunchContext>",
-        "child_process_assembler: Option<Arc<dyn super::super::ChildAgentProcessAssembler>>",
+        "namespace_cwd: PathBuf",
+        "process_files: NamespaceProcessFiles",
     ] {
         assert!(
             child_launch.contains(required_field),
@@ -778,6 +777,8 @@ fn child_launch_workflows_use_only_the_narrow_child_launch_handle() {
         "tool_process_context",
         "mount_grant_applicator",
         "child_run_registry",
+        "launch_context",
+        "child_process_assembler",
     ] {
         assert!(
             !child_launch.contains(forbidden_field),
@@ -788,10 +789,16 @@ fn child_launch_workflows_use_only_the_narrow_child_launch_handle() {
     let operations = read_runtime_source("transition/namespace_environment/child_launch.rs");
     assert!(operations.contains("impl NamespaceChildLaunch"));
     assert!(!operations.contains("impl NamespaceRuntimeEnvironment"));
+    assert!(operations.contains("observation_handles"));
+
+    let process_files = read_runtime_source("transition/namespace_environment/process_files.rs");
+    let spawn_agent = rust_item_body(&process_files, "async fn spawn_agent_process");
+    assert!(spawn_agent.contains("/proc/clone"));
+    assert!(spawn_agent.contains("/bin/alan-agent"));
+    assert!(spawn_agent.contains("ProcessNamespaceManifest"));
 
     for path in [
         "child_agents.rs",
-        "child_agents/launch_context.rs",
         "child_agents/delegated_launch.rs",
         "delegated_skill_tool.rs",
     ] {
@@ -844,7 +851,7 @@ fn engine_does_not_assemble_alan_os() {
     let manifest =
         std::fs::read_to_string(format!("{}/Cargo.toml", env!("CARGO_MANIFEST_DIR"))).unwrap();
     let normal_dependencies = manifest.split("[dev-dependencies]").next().unwrap();
-    for displaced in ["alan-agentfs", "alan-llmfs", "alan-routefs"] {
+    for displaced in ["alan-agentfs", "alan-kernel", "alan-llmfs", "alan-routefs"] {
         assert!(
             !normal_dependencies.contains(displaced),
             "Agent Execution Engine retained assembly dependency {displaced}"
@@ -871,11 +878,23 @@ fn engine_has_no_host_connection_store_or_provider_factory_authority() {
             "Agent Execution Engine retained Host Connection authority through {forbidden}"
         );
     }
-    assert!(child.contains("ensure_child_connection_is_passed"));
     assert!(child.contains("ChildLaunchRuntime"));
     assert!(child.contains(".child_launch"));
-    assert!(child.contains(".assembler()"));
-    assert!(child.contains("Agent Runtime Service child assembly capability"));
+    assert!(child.contains("connection_name()"));
+    assert!(child.contains(".spawn_agent_process("));
+    assert!(child.contains("/proc/clone"));
+    for retired in [
+        "ProcessLaunchContext",
+        "ChildAgentProcessAssembler",
+        "AgentProcessLifecycle",
+        "ChildAgentProcessAssembly",
+        ".assembler()",
+    ] {
+        assert!(
+            !source.contains(retired),
+            "Agent Execution Engine retained retired launch authority through {retired}"
+        );
+    }
 }
 
 #[test]

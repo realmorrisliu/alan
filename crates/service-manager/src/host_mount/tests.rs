@@ -245,7 +245,7 @@ fn approval_projects_an_opaque_handle_and_revocation_fails_closed() {
         Access::ReadWrite
     );
 
-    let reconciled = service.reconcile(Pid(7), binding("/mnt/project")).unwrap();
+    let reconciled = service.reconcile(7, binding("/mnt/project")).unwrap();
     assert!(reconciled.has_adapter());
     let adapter = reconciled.adapter().unwrap();
     assert_eq!(adapter.cwd().unwrap(), host.path());
@@ -255,7 +255,7 @@ fn approval_projects_an_opaque_handle_and_revocation_fails_closed() {
 
     assert!(namespace.snapshot().resolve("/mnt/project").is_err());
     assert!(!service.grant_record("grant-a").unwrap().active);
-    assert!(service.reconcile(Pid(7), reconciled).is_err());
+    assert!(service.reconcile(7, reconciled).is_err());
 }
 
 #[test]
@@ -279,12 +279,30 @@ fn child_receives_no_host_authority_by_default() {
 
     assert!(child.snapshot().resolve("/mnt/source").is_err());
     assert!(!service.grant_is_visible_to("grant-parent", Some(2)));
-    assert!(
-        !service
-            .reconcile(Pid(2), binding("/"))
-            .unwrap()
-            .has_adapter()
+    assert!(!service.reconcile(2, binding("/")).unwrap().has_adapter());
+}
+
+#[test]
+fn child_cannot_smuggle_an_ambient_parent_projection() {
+    let host = tempfile::tempdir().unwrap();
+    let service = service();
+    let parent = register(&service, 1);
+    approve(
+        &service,
+        1,
+        "grant-parent",
+        "/mnt/source",
+        HostMountAccess::ReadOnly,
+        host.path().to_path_buf(),
     );
+    let forged = LiveNamespace::new(parent.snapshot());
+
+    let error = service
+        .register_child_process(Pid(1), Pid(2), forged, &[])
+        .unwrap_err();
+
+    assert!(error.to_string().contains("ambient parent Host Mount"));
+    assert!(!service.grant_is_visible_to("grant-parent", Some(2)));
 }
 
 #[test]
@@ -353,7 +371,7 @@ fn explicit_child_handle_can_remap_and_narrow_authority() {
     );
     assert!(service.grant_is_visible_to("grant-source", Some(2)));
     let adapter = service
-        .reconcile(Pid(2), binding("/mnt/review"))
+        .reconcile(2, binding("/mnt/review"))
         .unwrap()
         .adapter()
         .unwrap();
@@ -422,13 +440,13 @@ fn revocation_reaches_every_explicit_child_projection() {
             )],
         )
         .unwrap();
-    let child_binding = service.reconcile(Pid(2), binding("/mnt/child")).unwrap();
+    let child_binding = service.reconcile(2, binding("/mnt/child")).unwrap();
 
     service.revoke("grant-shared", "test").unwrap();
 
     assert!(parent.snapshot().resolve("/mnt/source").is_err());
     assert!(child.snapshot().resolve("/mnt/child").is_err());
-    assert!(service.reconcile(Pid(2), child_binding).is_err());
+    assert!(service.reconcile(2, child_binding).is_err());
 }
 
 #[test]
@@ -462,7 +480,7 @@ fn owner_projection_is_idempotent_and_fresh_bindings_recover_the_handle() {
     assert_eq!(projection_count, 1);
     assert!(
         service
-            .reconcile(Pid(1), binding("/mnt/source"))
+            .reconcile(1, binding("/mnt/source"))
             .unwrap()
             .has_adapter()
     );
@@ -496,7 +514,7 @@ fn exact_path_replacement_retires_the_old_projection_identity() {
     assert!(namespace.snapshot().resolve("/mnt/project").is_ok());
     assert_eq!(
         service
-            .reconcile(Pid(7), binding("/mnt/project"))
+            .reconcile(7, binding("/mnt/project"))
             .unwrap()
             .adapter()
             .unwrap()
@@ -547,7 +565,7 @@ fn exact_path_replacement_uses_the_effective_child_projection_path() {
     assert!(child.snapshot().resolve("/mnt/review").is_ok());
     assert_eq!(
         service
-            .reconcile(Pid(2), binding("/mnt/review"))
+            .reconcile(2, binding("/mnt/review"))
             .unwrap()
             .adapter()
             .unwrap()

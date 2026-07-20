@@ -2,6 +2,9 @@ use crate::ReasoningEffort;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+/// Canonical named descriptor used by the Agent Executable launch contract.
+pub const AGENT_DEFINITION_DESCRIPTOR_NAME: &str = "agent-definition";
+
 /// Material capability required by a delegated task, expressed in the same
 /// mount-and-binding vocabulary used to assemble the child namespace.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -211,7 +214,75 @@ impl SpawnSpec {
     pub fn has_handle(&self, handle: SpawnHandle) -> bool {
         self.handles.contains(&handle)
     }
+
+    /// Validate the launch subset currently implemented by `/bin/alan-agent`.
+    pub fn validate_agent_process_launch(&self) -> Result<(), SpawnSpecValidationError> {
+        if matches!(
+            &self.target,
+            SpawnTarget::DefinitionDescriptor { descriptor }
+                if descriptor != AGENT_DEFINITION_DESCRIPTOR_NAME
+        ) {
+            return Err(SpawnSpecValidationError::UnsupportedDefinitionDescriptor);
+        }
+        if self.has_handle(SpawnHandle::Artifacts) || self.launch.output_dir.is_some() {
+            return Err(SpawnSpecValidationError::ArtifactRoutingUnsupported);
+        }
+        let Some(cwd) = self.launch.cwd.as_deref() else {
+            return Ok(());
+        };
+        let cwd = cwd.to_str().ok_or(SpawnSpecValidationError::CwdNotUtf8)?;
+        if !cwd.starts_with('/') {
+            return Err(SpawnSpecValidationError::CwdNotAbsolute);
+        }
+        let components = cwd
+            .split('/')
+            .filter(|component| !component.is_empty())
+            .collect::<Vec<_>>();
+        if components
+            .iter()
+            .any(|component| matches!(*component, "." | ".."))
+        {
+            return Err(SpawnSpecValidationError::CwdNotNormalized);
+        }
+        let normalized = if components.is_empty() {
+            "/".to_string()
+        } else {
+            format!("/{}", components.join("/"))
+        };
+        if normalized != cwd {
+            return Err(SpawnSpecValidationError::CwdNotNormalized);
+        }
+        Ok(())
+    }
 }
+
+/// Invalid or not-yet-supported `/bin/alan-agent` launch input.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpawnSpecValidationError {
+    UnsupportedDefinitionDescriptor,
+    ArtifactRoutingUnsupported,
+    CwdNotUtf8,
+    CwdNotAbsolute,
+    CwdNotNormalized,
+}
+
+impl std::fmt::Display for SpawnSpecValidationError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::UnsupportedDefinitionDescriptor => {
+                "Child Agent Process launch uses an unsupported Agent Definition descriptor"
+            }
+            Self::ArtifactRoutingUnsupported => {
+                "Child Agent Process launches do not support artifact routing yet"
+            }
+            Self::CwdNotUtf8 => "Child Agent Process launch cwd is not utf8",
+            Self::CwdNotAbsolute => "Child Agent Process launch cwd must be absolute",
+            Self::CwdNotNormalized => "Child Agent Process launch cwd must be normalized",
+        })
+    }
+}
+
+impl std::error::Error for SpawnSpecValidationError {}
 
 #[cfg(test)]
 mod tests {
@@ -312,5 +383,46 @@ mod tests {
 
         let err = serde_json::from_value::<SpawnLaunchInputs>(payload).unwrap_err();
         assert!(err.to_string().contains("budget_tokens"));
+    }
+
+    #[test]
+    fn agent_process_launch_validation_rejects_unsupported_descriptor_and_invalid_paths() {
+        for cwd in ["docs", "/mnt/source/../private", "/mnt//source"] {
+            let mut spec = SpawnSpec {
+                target: SpawnTarget::DefinitionDescriptor {
+                    descriptor: "agent-definition".to_string(),
+                },
+                launch: SpawnLaunchInputs::default(),
+                handles: Vec::new(),
+                host_mounts: Vec::new(),
+                runtime_overrides: SpawnRuntimeOverrides::default(),
+                delegated: None,
+            };
+            spec.launch.cwd = Some(PathBuf::from(cwd));
+
+            assert!(
+                spec.validate_agent_process_launch().is_err(),
+                "accepted {cwd}"
+            );
+        }
+
+        let mut spec = SpawnSpec {
+            target: SpawnTarget::DefinitionDescriptor {
+                descriptor: "other-definition".to_string(),
+            },
+            launch: SpawnLaunchInputs::default(),
+            handles: Vec::new(),
+            host_mounts: Vec::new(),
+            runtime_overrides: SpawnRuntimeOverrides::default(),
+            delegated: None,
+        };
+        assert_eq!(
+            spec.validate_agent_process_launch(),
+            Err(SpawnSpecValidationError::UnsupportedDefinitionDescriptor)
+        );
+        spec.target = SpawnTarget::DefinitionDescriptor {
+            descriptor: AGENT_DEFINITION_DESCRIPTOR_NAME.to_string(),
+        };
+        assert!(spec.validate_agent_process_launch().is_ok());
     }
 }

@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use alan_agent_engine::{SpawnHostMount, SpawnMountAccess};
-use alan_kernel::Pid;
+use alan_kernel::{Namespace, Pid};
 use anyhow::{Context, Result, ensure};
 
 use super::{
@@ -15,6 +15,33 @@ pub(super) struct DelegatedProjection {
     pub(super) target: String,
     pub(super) access: HostMountAccess,
     pub(super) export: Arc<dyn HostMountExport>,
+}
+
+pub(super) fn ensure_no_ambient_child_projections(
+    state: &State,
+    parent_pid: Pid,
+    namespace: &Namespace,
+) -> Result<()> {
+    let inherited_mounts = namespace
+        .describe()
+        .into_iter()
+        .map(|(path, _)| path)
+        .collect::<BTreeSet<_>>();
+    let ambient = state
+        .grants
+        .values()
+        .flat_map(|grant| &grant.projections)
+        .filter(|projection| {
+            projection.pid == parent_pid && inherited_mounts.contains(&projection.namespace_path)
+        })
+        .map(|projection| projection.namespace_path.as_str())
+        .collect::<Vec<_>>();
+    ensure!(
+        ambient.is_empty(),
+        "child Process namespace contains ambient parent Host Mount projections: {}",
+        ambient.join(", ")
+    );
+    Ok(())
 }
 
 pub(super) fn resolve_child_delegations(

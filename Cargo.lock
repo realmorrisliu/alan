@@ -309,6 +309,7 @@ name = "alan-service-manager"
 version = "0.1.0"
 dependencies = [
  "alan-agent-engine",
+ "alan-agent-protocol",
  "alan-agentfs",
  "alan-ap",
  "alan-hostfs",

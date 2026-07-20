@@ -1,12 +1,43 @@
 use super::*;
 use alan_agent_engine::LlmProvider as ConnectionProvider;
 use alan_kernel::Status;
-use alan_llm::MockLlmProvider;
+use alan_llm::{LlmProvider, MockLlmProvider};
 
-use crate::{ConnectionCredential, ConnectionProfile, CredentialKind};
+use crate::{BootUnit, ConnectionCredential, ConnectionProfile, CredentialKind};
 
 #[derive(Debug)]
 struct MissingSecretFactory;
+
+#[derive(Debug, Default)]
+struct SlowMockLlmProvider(MockLlmProvider);
+
+#[async_trait::async_trait]
+impl LlmProvider for SlowMockLlmProvider {
+    async fn generate(
+        &mut self,
+        request: alan_llm::GenerationRequest,
+    ) -> Result<alan_llm::GenerationResponse> {
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        self.0.generate(request).await
+    }
+
+    async fn chat(&mut self, system: Option<&str>, user: &str) -> Result<String> {
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        self.0.chat(system, user).await
+    }
+
+    async fn generate_stream(
+        &mut self,
+        request: alan_llm::GenerationRequest,
+    ) -> Result<tokio::sync::mpsc::Receiver<alan_llm::StreamChunk>> {
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        self.0.generate_stream(request).await
+    }
+
+    fn provider_name(&self) -> &'static str {
+        "mock"
+    }
+}
 
 impl LlmClientFactory for MissingSecretFactory {
     fn create(
@@ -44,10 +75,11 @@ async fn boot_rejects_ambient_package_namespace_mounts() {
     let mut config = ServiceManagerConfig::ephemeral(
         "test",
         AgentProcessConfig::default(),
+        ProcessLaunchContext::root(),
         LlmClient::new(MockLlmProvider::new()),
         ToolRegistry::new(),
     );
-    config.process.launch_context.namespace.mount(
+    config.launch_context.namespace.mount(
         "/lib/pkg/ambient",
         InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::empty())),
         Access::ReadOnly,
@@ -67,10 +99,11 @@ async fn boot_rejects_root_namespace_mount_covering_package_namespace() {
     let mut config = ServiceManagerConfig::ephemeral(
         "test",
         AgentProcessConfig::default(),
+        ProcessLaunchContext::root(),
         LlmClient::new(MockLlmProvider::new()),
         ToolRegistry::new(),
     );
-    config.process.launch_context.namespace.mount(
+    config.launch_context.namespace.mount(
         "/",
         InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::empty())),
         Access::ReadOnly,
@@ -167,8 +200,9 @@ async fn installed_distribution_is_visible_only_after_explicit_process_reference
         Err(alan_ap::ErrorCode::NoAccess)
     );
 
-    let definition = alan_agent_engine::ResolvedAgentDefinition::from_launch_context(
-        &launch_context,
+    let definition = alan_agent_engine::ResolvedAgentDefinition::from_process_inputs(
+        launch_context.descriptor(alan_agent_engine::AGENT_DEFINITION_DESCRIPTOR),
+        &launch_context.package_references,
         &[],
         alan_agent_engine::ConfigSourceKind::Default,
     )
@@ -246,6 +280,7 @@ async fn unavailable_default_connection_does_not_prevent_system_boot() {
     let mut config = ServiceManagerConfig::ephemeral(
         "test",
         AgentProcessConfig::default(),
+        ProcessLaunchContext::root(),
         LlmClient::new(MockLlmProvider::new()),
         ToolRegistry::new(),
     );
@@ -308,15 +343,15 @@ async fn file_tree_agent_definition_selects_connection_before_boot() {
         format!("connection_profile = \"{profile_id}\"\n").into_bytes(),
     )]))
     .unwrap();
-    let mut process = AgentProcessConfig::default();
-    process.launch_context = process.launch_context.with_descriptor(
+    let launch_context = ProcessLaunchContext::root().with_descriptor(
         alan_agent_engine::AGENT_DEFINITION_DESCRIPTOR,
         alan_agent_engine::ProcessDescriptor::with_file_tree("/agent-definition", definition)
             .unwrap(),
     );
     let mut config = ServiceManagerConfig::ephemeral(
         "test",
-        process,
+        AgentProcessConfig::default(),
+        launch_context,
         LlmClient::new(MockLlmProvider::new()),
         ToolRegistry::new(),
     );
@@ -338,6 +373,7 @@ async fn root_agent_is_replaced_without_pid_continuity() {
     let manager = ServiceManager::boot(ServiceManagerConfig::ephemeral(
         "test",
         AgentProcessConfig::default(),
+        ProcessLaunchContext::root(),
         LlmClient::new(MockLlmProvider::new()),
         ToolRegistry::new(),
     ))
@@ -492,6 +528,266 @@ async fn root_agent_is_replaced_without_pid_continuity() {
 }
 
 #[tokio::test]
+async fn child_agent_executes_through_proc_clone_and_cleans_up_agentfs() {
+    let definition = alan_agent_engine::ProcessFileTree::new(BTreeMap::new()).unwrap();
+    let launch_context = ProcessLaunchContext::root()
+        .with_descriptor(
+            alan_agent_engine::AGENT_DEFINITION_DESCRIPTOR,
+            alan_agent_engine::ProcessDescriptor::with_file_tree("/lib/agents/root", definition)
+                .unwrap(),
+        )
+        .with_descriptor(
+            alan_agent_engine::MEMORY_STORE_DESCRIPTOR,
+            alan_agent_engine::ProcessDescriptor::new("/memory").unwrap(),
+        );
+    let manager = ServiceManager::boot(ServiceManagerConfig::ephemeral(
+        "test",
+        AgentProcessConfig::default(),
+        launch_context,
+        LlmClient::new(SlowMockLlmProvider::default()),
+        ToolRegistry::new(),
+    ))
+    .await
+    .unwrap();
+    let root_pid = manager.root_pid();
+    let shell = alan_shell::Shell::new(manager.root_namespace.clone());
+    let namespace = String::from_utf8(
+        shell
+            .cat(&format!("/proc/{}/namespace", root_pid.0))
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    let mounts = namespace
+        .lines()
+        .map(|line| {
+            let (path, access) = line.rsplit_once(' ').unwrap();
+            let access = match access {
+                "ro" => alan_agent_protocol::ProcessNamespaceAccess::ReadOnly,
+                "rw" => alan_agent_protocol::ProcessNamespaceAccess::ReadWrite,
+                other => panic!("unexpected namespace access {other}"),
+            };
+            alan_agent_protocol::ProcessNamespaceMount::new(path, access)
+        })
+        .filter(|mount| mount.path != "/memory")
+        .collect();
+    let request = alan_agent_protocol::AgentExecutableRequest {
+        spawn: alan_agent_protocol::SpawnSpec {
+            target: alan_agent_protocol::SpawnTarget::DefinitionDescriptor {
+                descriptor: alan_agent_engine::AGENT_DEFINITION_DESCRIPTOR.to_string(),
+            },
+            launch: alan_agent_protocol::SpawnLaunchInputs {
+                task: "respond once".to_string(),
+                ..alan_agent_protocol::SpawnLaunchInputs::default()
+            },
+            handles: Vec::new(),
+            host_mounts: Vec::new(),
+            runtime_overrides: alan_agent_protocol::SpawnRuntimeOverrides::default(),
+            delegated: None,
+        },
+        initial_task: "respond once".to_string(),
+    };
+    let exec = alan_agent_protocol::ProcessExecSpec {
+        executable: "/bin/alan-agent".to_string(),
+        args: vec![serde_json::to_string(&request).unwrap()],
+        namespace: Some(alan_agent_protocol::ProcessNamespaceManifest { mounts }),
+        descriptors: BTreeMap::from([(
+            alan_agent_protocol::AGENT_DEFINITION_DESCRIPTOR,
+            "/lib/agents/root".to_string(),
+        )]),
+    };
+    let child_pid = shell
+        .spawn(&serde_json::to_string(&exec).unwrap())
+        .await
+        .unwrap()
+        .trim()
+        .to_string();
+
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if shell
+                .ls("/agent/root/children")
+                .await
+                .unwrap()
+                .contains(&child_pid)
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("child AgentFS projection did not become visible");
+    assert_eq!(
+        String::from_utf8(
+            shell
+                .cat(&format!("/proc/{child_pid}/parent"))
+                .await
+                .unwrap()
+        )
+        .unwrap(),
+        root_pid.0.to_string()
+    );
+    assert_eq!(
+        serde_json::from_slice::<BTreeMap<u32, String>>(
+            &shell
+                .cat(&format!("/proc/{child_pid}/descriptors"))
+                .await
+                .unwrap()
+        )
+        .unwrap(),
+        BTreeMap::from([(
+            alan_agent_protocol::AGENT_DEFINITION_DESCRIPTOR,
+            "/lib/agents/root".to_string(),
+        )])
+    );
+
+    tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            if shell
+                .cat(&format!("/proc/{child_pid}/status"))
+                .await
+                .unwrap()
+                == b"exited\n"
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("child Agent Process did not exit");
+    let exit =
+        String::from_utf8(shell.cat(&format!("/proc/{child_pid}/exit")).await.unwrap()).unwrap();
+    let output = String::from_utf8(
+        shell
+            .cat(&format!("/proc/{child_pid}/io/output"))
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(exit, "0", "child Process output: {output}");
+    let result = alan_agent_protocol::AgentExecutableResult::from_process_output(output.as_bytes())
+        .unwrap_or_else(|error| panic!("invalid Agent Executable result `{output}`: {error}"));
+    assert_eq!(
+        result.status,
+        alan_agent_protocol::AgentExecutableStatus::Completed
+    );
+    assert!(!result.output_text.is_empty());
+    assert!(
+        !shell
+            .ls("/agent/root/children")
+            .await
+            .unwrap()
+            .contains(&child_pid)
+    );
+    assert!(shell.stat(&format!("/agent/{child_pid}")).await.is_err());
+
+    let cancelled_pid = shell
+        .spawn(&serde_json::to_string(&exec).unwrap())
+        .await
+        .unwrap()
+        .trim()
+        .to_string();
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if shell
+                .ls("/agent/root/children")
+                .await
+                .unwrap()
+                .contains(&cancelled_pid)
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("cancelled child AgentFS projection did not become visible");
+    shell
+        .write(&format!("/proc/{cancelled_pid}/ctl"), b"cancel")
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if shell
+                .stat(&format!("/agent/{cancelled_pid}"))
+                .await
+                .is_err()
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("cancelled child AgentFS binding was not cleaned up");
+    assert_eq!(
+        String::from_utf8(
+            shell
+                .cat(&format!("/proc/{cancelled_pid}/exit"))
+                .await
+                .unwrap()
+        )
+        .unwrap(),
+        "130"
+    );
+
+    let mut forged_request = request.clone();
+    forged_request
+        .spawn
+        .handles
+        .push(alan_agent_protocol::SpawnHandle::Memory);
+    let mut forged_exec = exec.clone();
+    forged_exec.args = vec![serde_json::to_string(&forged_request).unwrap()];
+    forged_exec.descriptors.insert(
+        alan_agent_protocol::MEMORY_STORE_DESCRIPTOR,
+        "/man".to_string(),
+    );
+    let forged_pid = shell
+        .spawn(&serde_json::to_string(&forged_exec).unwrap())
+        .await
+        .unwrap()
+        .trim()
+        .to_string();
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if shell
+                .cat(&format!("/proc/{forged_pid}/status"))
+                .await
+                .unwrap()
+                == b"exited\n"
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("forged child Agent Process did not exit");
+    let forged_output = String::from_utf8(
+        shell
+            .cat(&format!("/proc/{forged_pid}/io/output"))
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(
+        forged_output.contains("Memory Store descriptor does not match"),
+        "unexpected forged child output: {forged_output}"
+    );
+    assert_eq!(
+        alan_agent_protocol::AgentExecutableResult::from_process_output(forged_output.as_bytes())
+            .unwrap()
+            .status,
+        alan_agent_protocol::AgentExecutableStatus::Failed
+    );
+    assert!(shell.stat(&format!("/agent/{forged_pid}")).await.is_err());
+
+    manager.shutdown().await.unwrap();
+}
+
+#[tokio::test]
 async fn readiness_times_out_until_all_declared_handles_are_published() {
     let procfs = alan_kernel::ProcFs::new();
     let mut namespace = Namespace::new();
@@ -541,6 +837,7 @@ async fn exited_file_service_is_restarted_and_republishes_handles() {
     let manager = ServiceManager::boot(ServiceManagerConfig::ephemeral(
         "test",
         AgentProcessConfig::default(),
+        ProcessLaunchContext::root(),
         LlmClient::new(MockLlmProvider::new()),
         ToolRegistry::new(),
     ))
@@ -589,6 +886,7 @@ async fn package_service_process_restart_republishes_its_catalog_handle() {
     let manager = ServiceManager::boot(ServiceManagerConfig::ephemeral(
         "test",
         AgentProcessConfig::default(),
+        ProcessLaunchContext::root(),
         LlmClient::new(MockLlmProvider::new()),
         ToolRegistry::new(),
     ))

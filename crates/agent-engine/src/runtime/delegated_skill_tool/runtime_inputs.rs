@@ -3,7 +3,6 @@ use crate::{
     runtime::{
         child_agents::{ChildLaunchRuntime, project_child_task_context},
         child_runs::ChildRunRegistry,
-        launch_config::AgentConfig,
         prompt_cache::PromptAssemblyCache,
         transition::{
             NamespaceAgentFiles, NamespaceChildLaunch, NamespaceHostMountRequests,
@@ -24,7 +23,6 @@ pub(crate) struct DelegatedSkillRuntime<'a> {
 
 /// Owned inputs that can produce one real child-launch handle after the spawn spec is resolved.
 pub(crate) struct DelegatedChildRuntimeInputs {
-    base_agent_config: AgentConfig,
     child_launch: NamespaceChildLaunch,
     tool_execution: NamespaceToolExecution,
     child_run_registry: ChildRunRegistry,
@@ -48,8 +46,8 @@ impl<'a> DelegatedSkillRuntime<'a> {
         }
     }
 
-    pub(super) fn child_launch_context(&self) -> Option<&crate::ProcessLaunchContext> {
-        self.child_runtime_inputs.child_launch.launch_context()
+    pub(super) fn child_namespace_cwd(&self) -> &std::path::Path {
+        self.child_runtime_inputs.child_launch.namespace_cwd()
     }
 
     pub(super) fn child_run_registry(&self) -> &ChildRunRegistry {
@@ -69,7 +67,6 @@ impl<'a> DelegatedSkillRuntime<'a> {
             spec,
         );
         ChildLaunchRuntime::new(
-            self.child_runtime_inputs.base_agent_config.clone(),
             self.child_runtime_inputs.child_launch.clone(),
             self.child_runtime_inputs.tool_execution.clone(),
             self.child_runtime_inputs.child_run_registry.clone(),
@@ -82,14 +79,12 @@ impl<'a> DelegatedSkillRuntime<'a> {
 
 impl DelegatedChildRuntimeInputs {
     pub(crate) fn new(
-        base_agent_config: AgentConfig,
         child_launch: NamespaceChildLaunch,
         tool_execution: NamespaceToolExecution,
         child_run_registry: ChildRunRegistry,
         parent_process_path: String,
     ) -> Self {
         Self {
-            base_agent_config,
             child_launch,
             tool_execution,
             child_run_registry,

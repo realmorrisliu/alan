@@ -12,6 +12,9 @@ use alan_shell::{BoundedListError, Shell};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 
+#[cfg(test)]
+use crate::process_runner::SystemProcessRunner;
+
 use crate::{
     PackageCatalog, PackageCommand, PackageCommandResult, PackageSnapshot, PackageSnapshotEntry,
 };
@@ -48,41 +51,6 @@ impl ProcessRunner for QuartermasterProcessRunner {
             Err(QError::Operation(message)) => {
                 ProcessOutcome::exited(1, format!("q: {message}\n").into_bytes())
             }
-        }
-    }
-}
-
-#[derive(Clone)]
-pub(crate) struct SystemProcessRunner {
-    quartermaster: QuartermasterProcessRunner,
-    fallback: Option<Arc<dyn ProcessRunner>>,
-}
-
-impl SystemProcessRunner {
-    pub(crate) fn new(fallback: Option<Arc<dyn ProcessRunner>>) -> Self {
-        Self {
-            quartermaster: QuartermasterProcessRunner,
-            fallback,
-        }
-    }
-}
-
-#[async_trait]
-impl ProcessRunner for SystemProcessRunner {
-    async fn run(&self, invocation: ProcessInvocation) -> ProcessOutcome {
-        if invocation.exec.executable == QUARTERMASTER_EXECUTABLE {
-            if invocation
-                .namespace
-                .resolve(&invocation.exec.executable)
-                .is_err()
-            {
-                return ProcessOutcome::exited(127, b"executable is not mounted\n");
-            }
-            return self.quartermaster.run(invocation).await;
-        }
-        match &self.fallback {
-            Some(runner) => runner.run(invocation).await,
-            None => ProcessOutcome::exited(127, b"executable has no Process image\n"),
         }
     }
 }
@@ -593,7 +561,7 @@ mod tests {
         package_access: Access,
     ) -> Shell {
         let procfs =
-            alan_kernel::ProcFs::new().with_runner(Arc::new(SystemProcessRunner::new(None)));
+            alan_kernel::ProcFs::new().with_runner(Arc::new(SystemProcessRunner::new(None, None)));
         let mut namespace = Namespace::new();
         namespace.mount(
             QUARTERMASTER_EXECUTABLE,
@@ -647,7 +615,7 @@ mod tests {
 
     #[tokio::test]
     async fn system_runner_rejects_q_without_an_executable_mount() {
-        let outcome = SystemProcessRunner::new(None)
+        let outcome = SystemProcessRunner::new(None, None)
             .run(invocation(Namespace::new(), &["list"]))
             .await;
 

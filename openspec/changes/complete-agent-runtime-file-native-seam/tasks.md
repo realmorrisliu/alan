@@ -42,23 +42,23 @@
 
 ## 4. Make Agent Runtime Service The Agent Executable
 
-- [ ] 4.1 Route root and child Agent Process launch through `/proc/clone` with
+- [x] 4.1 Route root and child Agent Process launch through `/proc/clone` with
   `/bin/alan-agent`, explicit `SpawnSpec`, namespace capabilities, and
   descriptors.
-- [ ] 4.2 Make Agent Runtime Service bind AgentFS, select the mounted connection,
+- [x] 4.2 Make Agent Runtime Service bind AgentFS, select the mounted connection,
   start Agent Machine, and clean up runtime backing from `/proc` lifecycle.
-- [ ] 4.3 Preserve parent/child observation through `/proc/<pid>`,
+- [x] 4.3 Preserve parent/child observation through `/proc/<pid>`,
   `/agent/<pid>`, and the existing AgentFS child projection without adding a
   second child-spawn protocol.
-- [ ] 4.4 Delete `ChildAgentProcessAssembler`, `AgentProcessLifecycle`,
+- [x] 4.4 Delete `ChildAgentProcessAssembler`, `AgentProcessLifecycle`,
   engine-owned `ProcessLaunchContext`, Kernel-shaped Tool Process DTOs, and all
   displaced assembly callbacks.
-- [ ] 4.5 Remove the normal `alan-agent-engine` dependency on `alan-kernel` and
+- [x] 4.5 Remove the normal `alan-agent-engine` dependency on `alan-kernel` and
   tighten the dependency ledger and retired-symbol checks in the same PR.
 
 ## 5. Verify And Deliver The Stack
 
-- [ ] 5.1 Run focused Agent Execution Engine, AgentFS, Kernel, Service Manager,
+- [x] 5.1 Run focused Agent Execution Engine, AgentFS, Kernel, Service Manager,
   Host Mount, Tool, and sandbox contract tests plus `just check`, `just test`,
   and strict OpenSpec validation.
 - [ ] 5.2 Deliver the logical-request, handle/projection, and Agent Executable
@@ -67,7 +67,7 @@
 - [ ] 5.3 For every PR, resolve all actionable Codex Review comments, rerun CI on
   the current HEAD, wait through a follow-up review window, and merge only when
   no unresolved or new issue remains.
-- [ ] 5.4 Verify the final dependency graph has no normal engine-to-Kernel edge,
+- [x] 5.4 Verify the final dependency graph has no normal engine-to-Kernel edge,
   retired symbols and `host_path` contracts are absent, and ID-only or unpassed
   Host Mounts confer no authority.
 

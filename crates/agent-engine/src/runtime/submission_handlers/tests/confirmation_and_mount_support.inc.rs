@@ -43,7 +43,7 @@
         environment: NamespaceRuntimeEnvironment,
     ) -> NamespaceRuntimeEnvironment {
         let runner = crate::tools::ToolProcessRunner::from_registry(&ToolRegistry::new());
-        environment.with_tool_process_context(alan_kernel::Pid(1), runner)
+        environment.with_tool_process_context(1, runner)
     }
 
     async fn namespace_environment_with_live_process_for_test()

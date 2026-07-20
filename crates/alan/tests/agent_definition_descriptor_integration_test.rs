@@ -1,34 +1,14 @@
 use std::collections::BTreeMap;
-use std::sync::Arc;
 
 use alan_agent_engine::{
-    AGENT_DEFINITION_DESCRIPTOR, AgentProcessConfig, ConfigSourceKind, ProcessDescriptor,
-    ProcessFileTree, ProcessLaunchContext, ResolvedAgentDefinition,
-    runtime::effective_core_config_for_runtime, skills::SkillScope,
+    AgentProcessConfig, ConfigSourceKind, ProcessDescriptor, ProcessFileTree,
+    ResolvedAgentDefinition, runtime::effective_core_config_for_runtime, skills::SkillScope,
 };
-use alan_ap::InProcessTransport;
-use alan_kernel::{Access, Credentials, Namespace};
-
-fn namespace_with_mount(path: &str, access: Access) -> Namespace {
-    let mut namespace = Namespace::new();
-    namespace.mount(
-        path,
-        InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::new())),
-        access,
-    );
-    namespace
-}
 
 #[test]
 fn mounted_file_trees_are_not_agent_definitions_without_a_descriptor() {
-    let context = ProcessLaunchContext::new(
-        namespace_with_mount("/mnt/source", Access::ReadWrite),
-        Credentials::user("integration-agent"),
-        "/mnt/source",
-    )
-    .unwrap();
     let resolved =
-        ResolvedAgentDefinition::from_launch_context(&context, &[], ConfigSourceKind::Default)
+        ResolvedAgentDefinition::from_process_inputs(None, &[], &[], ConfigSourceKind::Default)
             .unwrap();
 
     assert!(resolved.namespace_root.is_none());
@@ -42,7 +22,8 @@ fn mounted_file_trees_are_not_agent_definitions_without_a_descriptor() {
     );
 
     let config = AgentProcessConfig {
-        launch_context: context,
+        agent_definition: resolved,
+        namespace_cwd: "/mnt/source".into(),
         ..AgentProcessConfig::default()
     };
     let effective = effective_core_config_for_runtime(&config).unwrap();
@@ -70,20 +51,14 @@ fn explicit_descriptor_resolves_one_immutable_definition_tree() {
         ),
     ]))
     .unwrap();
-    let context = ProcessLaunchContext::new(
-        namespace_with_mount("/agent-definition", Access::ReadOnly),
-        Credentials::user("integration-agent"),
-        "/",
+    let descriptor = ProcessDescriptor::with_file_tree("/agent-definition", definition).unwrap();
+    let resolved = ResolvedAgentDefinition::from_process_inputs(
+        Some(&descriptor),
+        &[],
+        &[],
+        ConfigSourceKind::Default,
     )
-    .unwrap()
-    .with_descriptor(
-        AGENT_DEFINITION_DESCRIPTOR,
-        ProcessDescriptor::with_file_tree("/agent-definition", definition).unwrap(),
-    );
-
-    let resolved =
-        ResolvedAgentDefinition::from_launch_context(&context, &[], ConfigSourceKind::Default)
-            .unwrap();
+    .unwrap();
     assert!(resolved.root_dir.is_none());
     assert_eq!(
         resolved.namespace_root.as_deref(),
@@ -108,7 +83,7 @@ fn explicit_descriptor_resolves_one_immutable_definition_tree() {
     );
 
     let config = AgentProcessConfig {
-        launch_context: context,
+        agent_definition: resolved,
         ..AgentProcessConfig::default()
     };
     let effective = effective_core_config_for_runtime(&config).unwrap();

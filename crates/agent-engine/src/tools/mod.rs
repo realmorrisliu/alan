@@ -15,7 +15,9 @@ pub(crate) use context::test_execution_binding;
 pub use context::{
     ToolContext, ToolExecutionAdapter, ToolExecutionAuthority, ToolExecutionBinding,
 };
-pub use registry::{Tool, ToolProcessRunner, ToolRegistry, ToolResult};
+pub use registry::{
+    Tool, ToolProcessInvocation, ToolProcessOutcome, ToolProcessRunner, ToolRegistry, ToolResult,
+};
 pub use reified_namespace::{
     DEFAULT_PRIMARY_MOUNT_NAMESPACE_PATH, DEFAULT_SCRATCH_TMP_NAMESPACE_PATH,
     LinuxReifiedNamespaceRunner, ReifiedExecutionSubstrateMount, ReifiedHostMount,

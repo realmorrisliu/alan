@@ -1,6 +1,6 @@
 # Exact normal Alan-crate dependencies. Keep packages and dependencies sorted.
 alan|alan-agent-engine alan-agent-protocol alan-ap alan-auth alan-kernel alan-os-host alan-service-manager alan-shell alan-swebench-tooling alan-tools
-alan-agent-engine|alan-agent-protocol alan-ap alan-kernel alan-llm
+alan-agent-engine|alan-agent-protocol alan-ap alan-llm
 alan-agent-protocol|
 alan-agentfs|alan-ap alan-knowledge
 alan-ap|

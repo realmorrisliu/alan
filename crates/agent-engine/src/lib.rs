@@ -35,7 +35,14 @@ pub use agent_machine::{
     ROLLBACK_NON_DURABLE_WARNING, latest_compaction_attempt_from_rollout_items,
     latest_memory_flush_attempt_from_rollout_items,
 };
-pub use alan_agent_protocol::{SpawnHostMount, SpawnMountAccess};
+pub use alan_agent_protocol::{
+    AGENT_DEFINITION_DESCRIPTOR as AGENT_DEFINITION_FD,
+    AGENT_DEFINITION_DESCRIPTOR_NAME as AGENT_DEFINITION_DESCRIPTOR, AgentExecutablePause,
+    AgentExecutableRequest, AgentExecutableResult, AgentExecutableStatus, ContentPart,
+    MEMORY_STORE_DESCRIPTOR as MEMORY_STORE_FD, Op, SpawnHandle, SpawnHostMount, SpawnMountAccess,
+    SpawnTarget, Submission, UiActivitySnapshot, UiActivityState, UiNoticeKind, UiNoticeSnapshot,
+    YieldKind,
+};
 pub use config::{
     Config, ConfigSourceKind, LlmProvider, LoadedConfig, PartialStreamRecoveryMode, StreamingMode,
 };
@@ -48,9 +55,8 @@ pub use llm::{
 pub use models::{ModelCatalog, ModelInfo};
 pub use policy::{PolicyAction, PolicyDecision, PolicyEngine, PolicyRule};
 pub use process_launch::{
-    AGENT_DEFINITION_DESCRIPTOR, AgentRuntimeStoreBindings, MEMORY_STORE_DESCRIPTOR,
-    ProcessDescriptor, ProcessLaunchContext, ProcessPackageKind, ProcessPackageReference,
-    ProcessPackageSkillReference,
+    AgentRuntimeStoreBindings, MEMORY_STORE_DESCRIPTOR, ProcessDescriptor, ProcessPackageKind,
+    ProcessPackageReference, ProcessPackageSkillReference,
 };
 pub use prompts::PromptLoader;
 pub use request_controls::{
