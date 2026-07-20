@@ -5,61 +5,74 @@ Defines how Agent Processes request host-directory mounts through validated,
 non-auto-allow approval flows that produce auditable mount grants.
 ## Requirements
 ### Requirement: Agent-requested host mounts require approval
-Agent Processes SHALL be able to request host directory mounts through a
-runtime-provided `request_mount` tool. The tool SHALL validate the requested
-namespace path, host path, access mode, and reason before creating an approval
-request. A valid mount request SHALL pause the turn with a confirmation Yield and
-SHALL NOT grant access before approval.
+Agent Processes SHALL request Host Mounts through the runtime-provided
+`request_mount` control operation. The operation SHALL validate a normalized
+absolute `/mnt/<name>` namespace path, supported access, non-empty reason, and
+optional label, then commit that logical request to Host Mount Service. It MUST
+NOT accept or derive a raw Host OS path. A valid request SHALL pause the turn
+with an authorization-wait Yield while service status is `pending` and SHALL
+NOT grant access before Host-adapter authorization.
 
-#### Scenario: Valid mount request pauses for approval
-- **WHEN** an Agent Process calls `request_mount` with an absolute `/mnt/<name>` namespace path, an absolute host path, a supported access mode, and a non-empty reason
-- **THEN** the runtime emits a confirmation Yield for that request
-- **AND** the turn pauses without changing the mounted namespace
+#### Scenario: Valid logical mount request pauses for approval
+- **WHEN** an Agent Process calls `request_mount` with a valid namespace path,
+  supported access, non-empty reason, and optional label
+- **THEN** the runtime commits one Host Mount Service request and emits a Yield
+  containing its opaque request reference
+- **AND** the turn pauses without changing the Process namespace
 
 #### Scenario: Invalid mount request is rejected before approval
-- **WHEN** an Agent Process calls `request_mount` with a reserved namespace path, relative path component, relative host path, unsupported access mode, or blank reason
-- **THEN** the runtime completes the tool call with an invalid-request result
-- **AND** no approval Yield or mount grant is created
+- **WHEN** an Agent Process calls `request_mount` with a reserved or non-normal
+  namespace path, unsupported access, blank reason, or a raw Host path field
+- **THEN** the runtime completes the control call with an invalid-request result
+- **AND** no Host Mount Service request, Yield, or grant is created
 
 ### Requirement: Mount authorization cannot be auto-allowed
-The runtime SHALL treat every valid mount request as an authorization boundary.
-Policy evaluation MAY deny the request, but an allow decision SHALL be upgraded
-to escalation so the request is approved outside the agent's control.
+Every valid mount request SHALL cross Host Mount Service and a Host-adapter
+native authorization boundary. Agent policy evaluation MAY deny the request,
+but an allow decision MUST only permit creation of the pending service request
+and MUST NOT create or approve a grant. AgentFS and Agent Machine decision files
+MUST NOT bypass native authorization.
 
-#### Scenario: Policy allow is upgraded to escalation
+#### Scenario: Policy allow creates only a pending request
 - **WHEN** policy evaluation allows a valid `request_mount` call
-- **THEN** the runtime still emits an approval Yield
-- **AND** the audit reason states that host mount grants require approval
+- **THEN** the runtime creates a pending Host Mount Service request and Yields
+- **AND** only the Host adapter and Host Mount Service can produce approval
 
 #### Scenario: Policy deny blocks a mount request
 - **WHEN** policy evaluation denies a valid `request_mount` call
 - **THEN** the runtime returns a blocked-by-policy result
-- **AND** no approval Yield or mount grant is created
+- **AND** no service request or grant is created
+
+#### Scenario: Agent writes an approval decision
+- **WHEN** an Agent Process writes an approval value to its own AgentFS request
+- **THEN** Host Mount Service status remains unchanged
+- **AND** no namespace or native sandbox authority is granted
 
 ### Requirement: Approved mount requests produce auditable grants
-When a mount request is approved, the runtime SHALL return a structured
-`request_mount` tool result and record a normalized `host_mount_grant` audit
-event. The result and event SHALL preserve the approved grant record and SHALL
-report live namespace application state independently through
-`namespace_applied` and, when application is unavailable or fails, a concise
-`namespace_error` or equivalent reason. The result SHALL NOT imply Linux
-reification or native subprocess visibility at the requested `/mnt/<name>` path.
+When Host Mount Service reaches a terminal request status, Agent Machine SHALL
+resume from the opaque request reference and return a structured
+`request_mount` result containing request identity, logical namespace path,
+access, status, and approved grant reference or concise error. Agent-visible
+results, AgentFS, Machine state, rollout/checkpoint evidence, and Alan OS audit
+records MUST NOT contain the raw Host OS path. Projection and revocation truth
+SHALL remain in Host Mount Service rather than an engine-owned audit event.
 
-#### Scenario: Approved request records successful namespace application
-- **WHEN** a pending mount request is resumed with an approve choice and the namespace applicator applies the grant successfully
-- **THEN** the runtime records a `host_mount_grant` event with namespace path, host path, access, reason, checkpoint id, and approved status
-- **AND** the agent receives a `request_mount` tool result that states the grant is approved
-- **AND** the tool result and audit event report `namespace_applied = true`
+#### Scenario: Approved request resumes execution
+- **WHEN** Host Mount Service reports `approved` and exposes the service-owned
+  grant
+- **THEN** Agent Machine resumes the control call with an approved result and
+  opaque grant reference
+- **AND** future namespace and Tool Process access derive from the mounted grant
+  handle
+- **AND** neither result nor durable evidence contains a Host path
 
-#### Scenario: Approved request reports unavailable or failed namespace application
-- **WHEN** a pending mount request is resumed with an approve choice but no namespace applicator is available or namespace application fails
-- **THEN** the runtime records a `host_mount_grant` event with namespace path, host path, access, reason, checkpoint id, and approved status
-- **AND** the agent receives a `request_mount` tool result that states the grant is approved
-- **AND** the tool result and audit event report `namespace_applied = false`
-- **AND** the result includes a concise `namespace_error` or equivalent reason
-- **AND** the result does not claim Linux reification or native subprocess visibility at `/mnt/<name>`
+#### Scenario: Rejected request resumes execution
+- **WHEN** Host Mount Service reports `rejected`
+- **THEN** Agent Machine returns a rejected result with the logical request
+  identity and concise reason
+- **AND** no grant or namespace access is created
 
-#### Scenario: Rejected request returns a rejection result
-- **WHEN** a pending mount request is resumed with a reject choice
-- **THEN** the runtime returns a `request_mount` tool result with rejected status
-- **AND** no approved `host_mount_grant` event is recorded
+#### Scenario: Failed or cancelled request resumes execution
+- **WHEN** Host Mount Service reports `failed` or `cancelled`
+- **THEN** Agent Machine returns the matching terminal result without claiming
+  namespace or Tool sandbox projection

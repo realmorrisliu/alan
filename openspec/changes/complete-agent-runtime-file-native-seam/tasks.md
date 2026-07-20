@@ -61,10 +61,10 @@
 - [x] 5.1 Run focused Agent Execution Engine, AgentFS, Kernel, Service Manager,
   Host Mount, Tool, and sandbox contract tests plus `just check`, `just test`,
   and strict OpenSpec validation.
-- [ ] 5.2 Deliver the logical-request, handle/projection, and Agent Executable
+- [x] 5.2 Deliver the logical-request, handle/projection, and Agent Executable
   ownership slices as stacked PRs; every PR must delete its displaced path and
   leave no scaffolding-only or dual-protocol state.
-- [ ] 5.3 For every PR, resolve all actionable Codex Review comments, rerun CI on
+- [x] 5.3 For every PR, resolve all actionable Codex Review comments, rerun CI on
   the current HEAD, wait through a follow-up review window, and merge only when
   no unresolved or new issue remains.
 - [x] 5.4 Verify the final dependency graph has no normal engine-to-Kernel edge,
@@ -73,9 +73,9 @@
 
 ## 6. Sync And Archive
 
-- [ ] 6.1 After every implementation PR is merged, sync all six delta specs into
+- [x] 6.1 After every implementation PR is merged, sync all six delta specs into
   their canonical capabilities and run strict OpenSpec validation.
-- [ ] 6.2 Confirm canonical specs and merged code expose only the logical request
+- [x] 6.2 Confirm canonical specs and merged code expose only the logical request
   protocol, service-issued grant handles, and `/bin/alan-agent` launch path.
 - [ ] 6.3 Archive the change only after implementation, review, verification,
   and canonical spec sync are complete.
