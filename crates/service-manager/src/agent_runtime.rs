@@ -274,13 +274,10 @@ impl AgentRuntimeService {
         if invocation.exec.executable != AGENT_EXECUTABLE {
             return ProcessOutcome::exited(127, b"alan-agent: executable mismatch\n");
         }
-        let mut cleanup = ProcessCleanup::new(Arc::downgrade(self), invocation.pid);
+        let _cleanup = ProcessCleanup::new(Arc::downgrade(self), invocation.pid);
         let mut launch = match self.prepare_launch(&invocation) {
             Ok(launch) => launch,
-            Err(error) => {
-                cleanup.finish().await;
-                return process_error(error);
-            }
+            Err(error) => return process_error(error),
         };
         let result = self.run_prepared_agent(&invocation, &mut launch).await;
         if let Err(error) = &result
@@ -288,7 +285,6 @@ impl AgentRuntimeService {
         {
             let _ = ready.send(Err(format!("{error:#}")));
         }
-        cleanup.finish().await;
         match result {
             Ok(outcome) => outcome,
             Err(error) => process_error(error),
@@ -832,39 +828,27 @@ fn process_error(error: anyhow::Error) -> ProcessOutcome {
 struct ProcessCleanup {
     service: Weak<AgentRuntimeService>,
     pid: Pid,
-    armed: bool,
 }
 
 impl ProcessCleanup {
     fn new(service: Weak<AgentRuntimeService>, pid: Pid) -> Self {
-        Self {
-            service,
-            pid,
-            armed: true,
-        }
-    }
-
-    async fn finish(&mut self) {
-        if !self.armed {
-            return;
-        }
-        self.armed = false;
-        if let Some(service) = self.service.upgrade() {
-            service.release_process(self.pid).await;
-        }
+        Self { service, pid }
     }
 }
 
 impl Drop for ProcessCleanup {
     fn drop(&mut self) {
-        if !self.armed {
-            return;
-        }
         let service = self.service.clone();
         let pid = self.pid;
         if let Ok(runtime) = tokio::runtime::Handle::try_current() {
             runtime.spawn(async move {
                 if let Some(service) = service.upgrade() {
+                    if let Err(error) =
+                        wait_for_process_exit(&service.procfs, pid, Duration::from_secs(12)).await
+                    {
+                        tracing::warn!(pid = pid.0, %error, "Agent Process cleanup deferred");
+                        return;
+                    }
                     service.release_process(pid).await;
                 }
             });

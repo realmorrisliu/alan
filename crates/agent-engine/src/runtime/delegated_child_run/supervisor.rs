@@ -100,70 +100,59 @@ impl DelegatedChildRunSupervisor {
             return self.observe_exited_process(exit_code).await;
         }
 
-        let live_observation: Result<ChildFileObservation> = async {
-            let (process_output_offset, process_io_events_offset) =
-                process_files.read_process_io_offsets(pid).await?;
-            let activity = tokio::time::timeout(timeout, agent_files.read_ui_activity_snapshot())
+        let (process_output_offset, process_io_events_offset) =
+            process_files.read_process_io_offsets(pid).await?;
+        let activity = tokio::time::timeout(timeout, agent_files.read_ui_activity_snapshot())
+            .await
+            .context("observe child activity timed out")??;
+        let output_text = tokio::time::timeout(timeout, agent_files.read_assistant_output())
+            .await
+            .context("observe child output timed out")??;
+        let ui_events_offset = tokio::time::timeout(timeout, agent_files.ui_events_offset())
+            .await
+            .context("observe child UI events offset timed out")??;
+        let notice = tokio::time::timeout(timeout, agent_files.read_ui_notice_snapshot())
+            .await
+            .context("observe child notice timed out")??;
+        let request_ids = tokio::time::timeout(timeout, agent_files.request_ids())
+            .await
+            .context("observe child requests timed out")??;
+        let pending_request_id =
+            tokio::time::timeout(timeout, agent_files.pending_request_id(&request_ids))
                 .await
-                .context("observe child activity timed out")??;
-            let output_text = tokio::time::timeout(timeout, agent_files.read_assistant_output())
+                .context("observe child pending request timed out")??;
+        let request_events_offset =
+            tokio::time::timeout(timeout, agent_files.request_events_offset())
                 .await
-                .context("observe child output timed out")??;
-            let ui_events_offset = tokio::time::timeout(timeout, agent_files.ui_events_offset())
+                .context("observe child request stream offset timed out")??;
+        let action_ids = tokio::time::timeout(timeout, agent_files.action_ids())
+            .await
+            .context("observe child actions timed out")??;
+        let action_events_offset =
+            tokio::time::timeout(timeout, agent_files.action_events_offset())
                 .await
-                .context("observe child UI events offset timed out")??;
-            let notice = tokio::time::timeout(timeout, agent_files.read_ui_notice_snapshot())
-                .await
-                .context("observe child notice timed out")??;
-            let request_ids = tokio::time::timeout(timeout, agent_files.request_ids())
-                .await
-                .context("observe child requests timed out")??;
-            let pending_request_id =
-                tokio::time::timeout(timeout, agent_files.pending_request_id(&request_ids))
-                    .await
-                    .context("observe child pending request timed out")??;
-            let request_events_offset =
-                tokio::time::timeout(timeout, agent_files.request_events_offset())
-                    .await
-                    .context("observe child request stream offset timed out")??;
-            let action_ids = tokio::time::timeout(timeout, agent_files.action_ids())
-                .await
-                .context("observe child actions timed out")??;
-            let action_events_offset =
-                tokio::time::timeout(timeout, agent_files.action_events_offset())
-                    .await
-                    .context("observe child action stream offset timed out")??;
-            Ok(ChildFileObservation {
-                process_exited: false,
-                process_exit_code: None,
-                output_text,
-                process_output_offset,
-                process_io_events_offset,
-                request_ids,
-                pending_request_id,
-                request_events_offset,
-                action_ids,
-                action_events_offset,
-                ui_events_offset,
-                terminal_error: if notice.kind == alan_agent_protocol::UiNoticeKind::Error {
-                    Some(notice.message.clone())
-                } else {
-                    None
-                },
-                process_result: None,
-                activity,
-                notice,
-            })
-        }
-        .await;
-
-        match live_observation {
-            Ok(observation) => Ok(observation),
-            Err(error) => match process_files.read_process_exit_code(pid).await? {
-                Some(exit_code) => self.observe_exited_process(exit_code).await,
-                None => Err(error),
+                .context("observe child action stream offset timed out")??;
+        Ok(ChildFileObservation {
+            process_exited: false,
+            process_exit_code: None,
+            output_text,
+            process_output_offset,
+            process_io_events_offset,
+            request_ids,
+            pending_request_id,
+            request_events_offset,
+            action_ids,
+            action_events_offset,
+            ui_events_offset,
+            terminal_error: if notice.kind == alan_agent_protocol::UiNoticeKind::Error {
+                Some(notice.message.clone())
+            } else {
+                None
             },
-        }
+            process_result: None,
+            activity,
+            notice,
+        })
     }
 
     async fn observe_exited_process(&self, exit_code: i32) -> Result<ChildFileObservation> {
