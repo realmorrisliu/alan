@@ -624,6 +624,10 @@ fn child_template(
         .descriptor(alan_agent_engine::MEMORY_STORE_DESCRIPTOR)
         .is_some();
     let effective = alan_agent_engine::runtime::effective_core_config_for_runtime(&process)?;
+    let llm_connection = resolve_child_connection(
+        &parent.llm_connection,
+        effective.connection_profile.as_deref(),
+    )?;
     let tools = invocation
         .namespace
         .describe()
@@ -636,8 +640,17 @@ fn child_template(
         launch_context,
         host_capabilities: alan_agent_engine::skills::build_skill_host_capabilities(tools, true),
         generation_capabilities: alan_agent_engine::provider_capabilities_for_config(&effective),
-        llm_connection: parent.llm_connection.clone(),
+        llm_connection,
     })
+}
+
+fn resolve_child_connection(passed: &str, requested: Option<&str>) -> Result<String> {
+    let requested = requested.unwrap_or(passed);
+    ensure!(
+        requested == passed,
+        "Connection '{requested}' was not passed to the child Agent Process by the parent Process; available Connection is '{passed}'."
+    );
+    Ok(requested.to_string())
 }
 
 fn project_boot_unit_namespace(
@@ -863,7 +876,7 @@ mod tests {
     use alan_ap::InProcessTransport;
     use alan_kernel::{Access, LiveNamespace, Namespace};
 
-    use super::validate_process_cwd;
+    use super::{resolve_child_connection, validate_process_cwd};
 
     #[test]
     fn process_cwd_must_be_reachable_after_service_projection() {
@@ -877,5 +890,20 @@ mod tests {
             Access::ReadOnly,
         );
         assert!(validate_process_cwd(&namespace, "/mnt/review/src").is_ok());
+    }
+
+    #[test]
+    fn child_connection_must_be_passed_by_the_parent() {
+        assert_eq!(
+            resolve_child_connection("parent-profile", None).unwrap(),
+            "parent-profile"
+        );
+        assert_eq!(
+            resolve_child_connection("parent-profile", Some("parent-profile")).unwrap(),
+            "parent-profile"
+        );
+        let error = resolve_child_connection("parent-profile", Some("other-profile")).unwrap_err();
+        assert!(error.to_string().contains("other-profile"));
+        assert!(error.to_string().contains("parent-profile"));
     }
 }
