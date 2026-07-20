@@ -569,6 +569,7 @@ async fn child_agent_executes_through_proc_clone_and_cleans_up_agentfs() {
             };
             alan_agent_protocol::ProcessNamespaceMount::new(path, access)
         })
+        .filter(|mount| mount.path != "/memory")
         .collect();
     let request = alan_agent_protocol::AgentExecutableRequest {
         spawn: alan_agent_protocol::SpawnSpec {

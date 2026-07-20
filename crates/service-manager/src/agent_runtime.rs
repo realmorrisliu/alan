@@ -582,12 +582,18 @@ fn child_template(
         definition,
     );
     let memory_path = invocation.exec.descriptors.get(&MEMORY_STORE_FD);
+    let parent_memory = parent
+        .launch_context
+        .descriptor(alan_agent_engine::MEMORY_STORE_DESCRIPTOR);
+    validate_child_memory_mount(
+        &invocation.namespace,
+        spec.has_handle(SpawnHandle::Memory),
+        parent_memory.map(|memory| memory.path.as_str()),
+    )?;
     if spec.has_handle(SpawnHandle::Memory) {
         let memory_path =
             memory_path.context("child Agent Process has no Memory Store descriptor")?;
-        let memory = parent
-            .launch_context
-            .descriptor(alan_agent_engine::MEMORY_STORE_DESCRIPTOR)
+        let memory = parent_memory
             .cloned()
             .context("parent Process has no Memory Store descriptor")?;
         ensure!(
@@ -651,6 +657,20 @@ fn resolve_child_connection(passed: &str, requested: Option<&str>) -> Result<Str
         "Connection '{requested}' was not passed to the child Agent Process by the parent Process; available Connection is '{passed}'."
     );
     Ok(requested.to_string())
+}
+
+fn validate_child_memory_mount(
+    namespace: &alan_kernel::Namespace,
+    delegated: bool,
+    memory_path: Option<&str>,
+) -> Result<()> {
+    if !delegated && let Some(memory_path) = memory_path {
+        ensure!(
+            namespace.union_at(memory_path).is_empty(),
+            "child Agent Process retained a Memory Store mount without the Memory handle"
+        );
+    }
+    Ok(())
 }
 
 fn project_boot_unit_namespace(
@@ -876,7 +896,7 @@ mod tests {
     use alan_ap::InProcessTransport;
     use alan_kernel::{Access, LiveNamespace, Namespace};
 
-    use super::{resolve_child_connection, validate_process_cwd};
+    use super::{resolve_child_connection, validate_child_memory_mount, validate_process_cwd};
 
     #[test]
     fn process_cwd_must_be_reachable_after_service_projection() {
@@ -905,5 +925,19 @@ mod tests {
         let error = resolve_child_connection("parent-profile", Some("other-profile")).unwrap_err();
         assert!(error.to_string().contains("other-profile"));
         assert!(error.to_string().contains("parent-profile"));
+    }
+
+    #[test]
+    fn child_memory_mount_requires_the_memory_handle() {
+        let mut namespace = Namespace::new();
+        namespace.mount(
+            "/memory",
+            InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::empty())),
+            Access::ReadWrite,
+        );
+
+        assert!(validate_child_memory_mount(&namespace, true, Some("/memory")).is_ok());
+        let error = validate_child_memory_mount(&namespace, false, Some("/memory")).unwrap_err();
+        assert!(error.to_string().contains("without the Memory handle"));
     }
 }
