@@ -666,7 +666,7 @@ fn validate_child_memory_mount(
 ) -> Result<()> {
     if !delegated && let Some(memory_path) = memory_path {
         ensure!(
-            namespace.union_at(memory_path).is_empty(),
+            namespace.resolve(memory_path).is_err(),
             "child Agent Process retained a Memory Store mount without the Memory handle"
         );
     }
@@ -936,8 +936,9 @@ mod tests {
             Access::ReadWrite,
         );
 
-        assert!(validate_child_memory_mount(&namespace, true, Some("/memory")).is_ok());
-        let error = validate_child_memory_mount(&namespace, false, Some("/memory")).unwrap_err();
+        assert!(validate_child_memory_mount(&namespace, true, Some("/memory/root")).is_ok());
+        let error =
+            validate_child_memory_mount(&namespace, false, Some("/memory/root")).unwrap_err();
         assert!(error.to_string().contains("without the Memory handle"));
     }
 }
