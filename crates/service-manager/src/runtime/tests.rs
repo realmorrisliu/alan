@@ -590,7 +590,7 @@ async fn child_agent_executes_through_proc_clone_and_cleans_up_agentfs() {
     let exec = alan_agent_protocol::ProcessExecSpec {
         executable: "/bin/alan-agent".to_string(),
         args: vec![serde_json::to_string(&request).unwrap()],
-        namespace: Some(alan_agent_protocol::ProcessNamespaceManifest { mounts }),
+        namespace: alan_agent_protocol::ProcessNamespaceManifest { mounts },
         descriptors: BTreeMap::from([(
             alan_agent_protocol::AGENT_DEFINITION_DESCRIPTOR,
             "/lib/agents/root".to_string(),

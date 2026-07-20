@@ -1,7 +1,7 @@
 use super::*;
 
 #[tokio::test]
-async fn engine_spawns_process_with_spawner_assembled_namespace() {
+async fn engine_spawns_process_with_explicit_namespace_manifest() {
     let procfs = ProcFs::new();
     let agentfs = Arc::new(AgentFs::new());
     let llmfs = Arc::new(LlmFs::new());
@@ -34,7 +34,14 @@ async fn engine_spawns_process_with_spawner_assembled_namespace() {
 
     let pid = environment
         .process_files()
-        .spawn_process("/bin/agent", Vec::<String>::new())
+        .spawn_process(
+            "/bin/agent",
+            Vec::<String>::new(),
+            vec![ProcessNamespaceMount::new(
+                "/bin",
+                ProcessNamespaceAccess::ReadOnly,
+            )],
+        )
         .await
         .unwrap();
 
@@ -55,41 +62,12 @@ async fn engine_spawns_process_with_spawner_assembled_namespace() {
     );
     let namespace =
         String::from_utf8(shell.cat(&format!("/proc/{pid}/namespace")).await.unwrap()).unwrap();
-    assert!(namespace.lines().any(|line| line == "/agent/1 rw"));
-    assert!(namespace.lines().any(|line| line == "/mnt/llm rw"));
-    assert!(namespace.lines().any(|line| line == "/bin ro"));
+    assert_eq!(namespace, "/bin ro");
 }
 
 #[tokio::test]
 async fn engine_runs_tool_as_process_and_projects_action_files() {
-    let procfs = ProcFs::new().with_runner(Arc::new(EchoRunner));
-    let agentfs = Arc::new(AgentFs::new());
-    let binfs = Arc::new(alan_ap::reference::MemFs::new());
-
-    let mut child_namespace = Namespace::new();
-    child_namespace.mount(
-        "/agent/1",
-        InProcessTransport::new(agentfs.clone()),
-        Access::ReadWrite,
-    );
-    child_namespace.mount("/bin", InProcessTransport::new(binfs), Access::ReadOnly);
-
-    let spawner_procfs =
-        Arc::new(procfs.for_spawner(None, child_namespace, Credentials::user("root-agent")));
-    let mut root_namespace = Namespace::new();
-    root_namespace.mount(
-        "/proc",
-        InProcessTransport::new(spawner_procfs),
-        Access::ReadWrite,
-    );
-    root_namespace.mount(
-        "/agent/1",
-        InProcessTransport::new(agentfs),
-        Access::ReadWrite,
-    );
-    let root = InProcessTransport::new(Arc::new(MountFs::new(root_namespace)));
-    let shell = Shell::new(root.clone());
-    let environment = NamespaceRuntimeEnvironment::new(root, "/agent/1", "default");
+    let (environment, shell) = tool_test_environment(Arc::new(EchoRunner)).await;
 
     let action = environment
         .tool_execution()
@@ -101,24 +79,24 @@ async fn engine_runs_tool_as_process_and_projects_action_files() {
         .await
         .unwrap();
 
-    assert_eq!(action.pid, "1");
+    assert_eq!(action.pid, "2");
     assert_eq!(action.action_id, "a0");
     assert_eq!(action.output, "hello from-process\n");
     assert_eq!(action.exit_code, 0);
     assert_eq!(
         environment
             .process_files()
-            .read_process_exit_code("1")
+            .read_process_exit_code("2")
             .await
             .unwrap(),
         Some(0)
     );
     assert_eq!(
-        String::from_utf8(shell.cat("/proc/1/status").await.unwrap()).unwrap(),
+        String::from_utf8(shell.cat("/proc/2/status").await.unwrap()).unwrap(),
         "exited\n"
     );
     assert_eq!(
-        String::from_utf8(shell.cat("/proc/1/io/output").await.unwrap()).unwrap(),
+        String::from_utf8(shell.cat("/proc/2/io/output").await.unwrap()).unwrap(),
         "hello from-process\n"
     );
     assert_eq!(
@@ -139,13 +117,13 @@ async fn engine_runs_tool_as_process_and_projects_action_files() {
     );
     assert_eq!(
         String::from_utf8(shell.cat("/agent/1/actions/a0/process").await.unwrap()).unwrap(),
-        "/proc/1"
+        "/proc/2"
     );
 }
 
 #[tokio::test]
 async fn run_tool_action_projects_logical_payload_failure_as_failed_action() {
-    let (environment, shell) = tool_test_environment(Arc::new(LogicalFailureRunner));
+    let (environment, shell) = tool_test_environment(Arc::new(LogicalFailureRunner)).await;
 
     let action = environment
         .tool_execution()
@@ -153,11 +131,11 @@ async fn run_tool_action_projects_logical_payload_failure_as_failed_action() {
         .await
         .unwrap();
 
-    assert_eq!(action.pid, "1");
+    assert_eq!(action.pid, "2");
     assert_eq!(action.action_id, "a0");
     assert_eq!(action.exit_code, 2);
     assert_eq!(
-        String::from_utf8(shell.cat("/proc/1/exit").await.unwrap()).unwrap(),
+        String::from_utf8(shell.cat("/proc/2/exit").await.unwrap()).unwrap(),
         "0"
     );
     assert_eq!(
@@ -177,7 +155,8 @@ async fn run_tool_action_cancels_spawned_process_on_cancel() {
     let (environment, shell) = tool_test_environment(Arc::new(AbortObservedRunner {
         started: Arc::clone(&started),
         dropped: Arc::clone(&dropped),
-    }));
+    }))
+    .await;
     let cancel = CancellationToken::new();
     let task = tokio::spawn({
         let environment = environment.clone();
@@ -200,11 +179,11 @@ async fn run_tool_action_cancels_spawned_process_on_cancel() {
         .await
         .expect("tool runner future should be aborted");
     assert_eq!(
-        String::from_utf8(shell.cat("/proc/1/status").await.unwrap()).unwrap(),
+        String::from_utf8(shell.cat("/proc/2/status").await.unwrap()).unwrap(),
         "exited\n"
     );
     assert_eq!(
-        String::from_utf8(shell.cat("/proc/1/exit").await.unwrap()).unwrap(),
+        String::from_utf8(shell.cat("/proc/2/exit").await.unwrap()).unwrap(),
         "130"
     );
 }
@@ -216,7 +195,8 @@ async fn run_tool_action_cancels_spawned_process_on_wait_timeout() {
     let (environment, shell) = tool_test_environment(Arc::new(AbortObservedRunner {
         started: Arc::clone(&started),
         dropped: Arc::clone(&dropped),
-    }));
+    }))
+    .await;
     let cancel = CancellationToken::new();
     let task = tokio::spawn({
         let environment = environment.clone();
@@ -249,18 +229,18 @@ async fn run_tool_action_cancels_spawned_process_on_wait_timeout() {
         .await
         .expect("tool runner future should be aborted on wait timeout");
     assert_eq!(
-        String::from_utf8(shell.cat("/proc/1/status").await.unwrap()).unwrap(),
+        String::from_utf8(shell.cat("/proc/2/status").await.unwrap()).unwrap(),
         "exited\n"
     );
     assert_eq!(
-        String::from_utf8(shell.cat("/proc/1/exit").await.unwrap()).unwrap(),
+        String::from_utf8(shell.cat("/proc/2/exit").await.unwrap()).unwrap(),
         "130"
     );
 }
 
 #[tokio::test]
 async fn run_tool_action_reads_output_larger_than_initial_read() {
-    let (environment, _shell) = tool_test_environment(Arc::new(LargeOutputRunner));
+    let (environment, _shell) = tool_test_environment(Arc::new(LargeOutputRunner)).await;
 
     let action = environment
         .tool_execution()
@@ -275,7 +255,7 @@ async fn run_tool_action_reads_output_larger_than_initial_read() {
 
 #[tokio::test]
 async fn run_tool_action_reads_exact_chunk_output_without_waiting_for_more() {
-    let (environment, _shell) = tool_test_environment(Arc::new(ExactChunkOutputRunner));
+    let (environment, _shell) = tool_test_environment(Arc::new(ExactChunkOutputRunner)).await;
 
     let action = tokio::time::timeout(
         std::time::Duration::from_secs(1),

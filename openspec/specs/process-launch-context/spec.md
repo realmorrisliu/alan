@@ -31,6 +31,9 @@ delegate and SHALL gain additional authority only through explicitly passed
 mounts or descriptors. A Process launch MUST NOT contain an aggregate
 all-Host-Mounts handle, and Host Mount inheritance SHALL default to none unless
 each selected grant handle and target namespace path is listed explicitly.
+Every `/proc/clone` exec document MUST contain an explicit namespace manifest;
+Alan Kernel SHALL reject a missing manifest instead of inheriting the pending
+namespace implicitly.
 
 #### Scenario: Child lacks an unpassed mount
 - **WHEN** a parent launches a child without listing a parent Host Mount
@@ -42,6 +45,24 @@ each selected grant handle and target namespace path is listed explicitly.
   itself delegate
 - **THEN** Process creation rejects the launch
 - **AND** the child never receives the amplified mount
+
+#### Scenario: Tool Process receives an explicit namespace snapshot
+- **WHEN** an Agent Process starts a Tool Process through `/proc/clone`
+- **THEN** the exec document lists the namespace mounts delegated at that launch
+- **AND** a mount added to the parent's live namespace after the snapshot is not
+  inherited by the Tool Process
+
+#### Scenario: Alan Shell launches an ordinary Process
+- **WHEN** Alan Shell launches a command through `/proc/clone`
+- **THEN** it reads `/proc/self/namespace` and writes those delegated mounts into
+  the exec document
+- **AND** an unavailable or malformed current-namespace file fails the launch
+  without falling back to ambient inheritance
+
+#### Scenario: Exec document omits its namespace manifest
+- **WHEN** a spawner commits an exec document without a namespace manifest
+- **THEN** Alan Kernel rejects the commit and discards the pending Process slot
+- **AND** no child inherits the spawner's namespace implicitly
 
 ### Requirement: Agent Definitions are descriptor-passed
 An Agent Process SHALL receive its Agent Definition explicitly at Process

@@ -34,7 +34,7 @@ async fn test_run_turn_recovers_unavailability_claim_when_network_tool_exists() 
     );
     let mut tools = ToolRegistry::new();
     tools.register(NetworkCapabilityTool);
-    let mut state = create_test_state_with_provider_and_tools(provider, tools);
+    let mut state = create_test_state_with_provider_and_tools(provider, tools).await;
     let cancel = CancellationToken::new();
 
     let mut events = vec![];
@@ -104,7 +104,7 @@ async fn test_run_turn_keeps_truthful_network_failure_explanation() {
     );
     let mut tools = ToolRegistry::new();
     tools.register(NetworkCapabilityTool);
-    let mut state = create_test_state_with_provider_and_tools(provider, tools);
+    let mut state = create_test_state_with_provider_and_tools(provider, tools).await;
     state
         .machine
         .push_tape_message(Message::user("how's the weather today?"));
@@ -218,7 +218,7 @@ async fn test_run_turn_recovers_network_claim_after_non_network_timeout() {
     let mut tools = ToolRegistry::new();
     tools.register(NetworkCapabilityTool);
     tools.register(ReadCapabilityTool);
-    let mut state = create_test_state_with_provider_and_tools(provider, tools);
+    let mut state = create_test_state_with_provider_and_tools(provider, tools).await;
     state
         .machine
         .push_tape_message(Message::user("how's the weather today?"));
@@ -307,7 +307,7 @@ async fn test_run_turn_resume_turn_with_steer_keeps_truthful_network_failure_exp
     );
     let mut tools = ToolRegistry::new();
     tools.register(NetworkCapabilityTool);
-    let mut state = create_test_state_with_provider_and_tools(provider, tools);
+    let mut state = create_test_state_with_provider_and_tools(provider, tools).await;
     state
         .machine
         .push_tape_message(Message::user("earlier turn"));
@@ -414,7 +414,7 @@ async fn test_run_turn_new_turn_ignores_prior_failures_without_completed_assista
     );
     let mut tools = ToolRegistry::new();
     tools.register(NetworkCapabilityTool);
-    let mut state = create_test_state_with_provider_and_tools(provider, tools);
+    let mut state = create_test_state_with_provider_and_tools(provider, tools).await;
     state
         .machine
         .push_tape_message(Message::user("earlier turn"));
@@ -629,7 +629,7 @@ async fn test_run_turn_performs_mid_turn_compaction_before_follow_up_generation(
     );
     let mut tools = ToolRegistry::new();
     tools.register(LargeOutputTool::new("very long tool output\n".repeat(600)));
-    let mut state = create_test_state_with_provider_and_tools(provider, tools);
+    let mut state = create_test_state_with_provider_and_tools(provider, tools).await;
     state.runtime_config.compaction_trigger_messages = 1_000;
     state.runtime_config.compaction_keep_last = 1;
     state.runtime_config.context_window_tokens = 512;
@@ -731,7 +731,7 @@ async fn test_run_turn_resets_mid_turn_compaction_budget_for_new_turns() {
     );
     let mut tools = ToolRegistry::new();
     tools.register(LargeOutputTool::new("very long tool output\n".repeat(600)));
-    let mut state = create_test_state_with_provider_and_tools(provider, tools);
+    let mut state = create_test_state_with_provider_and_tools(provider, tools).await;
     state.runtime_config.compaction_trigger_messages = 1_000;
     state.runtime_config.compaction_keep_last = 1;
     state.runtime_config.context_window_tokens = 512;

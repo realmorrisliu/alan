@@ -9,7 +9,7 @@ use alan_ap::{
     Response, Stat, Stream,
 };
 use alan_kernel::{
-    Access, Credentials, MountFs, Namespace, ProcFs, ProcessInvocation, ProcessOutcome,
+    Access, Credentials, MountFs, Namespace, Pid, ProcFs, ProcessInvocation, ProcessOutcome,
     ProcessRunner,
 };
 use alan_llm::{GenerationResponse, MockLlmProvider};
@@ -390,15 +390,47 @@ impl ProcessRunner for ArgvRunner {
     }
 }
 
-fn command_shell() -> Shell {
-    let procfs = ProcFs::new().with_runner(Arc::new(ArgvRunner));
+async fn command_shell() -> Shell {
+    let procfs = ProcFs::new();
     let mut namespace = Namespace::new();
     namespace.mount(
         "/bin/argv",
         InProcessTransport::new(Arc::new(MemFs::empty())),
         Access::ReadOnly,
     );
-    let spawner = procfs.for_spawner(None, namespace.clone(), Credentials::user("shell-test"));
+    let bootstrap = procfs.for_spawner(
+        None,
+        namespace.clone(),
+        Credentials::user("shell-test"),
+    );
+    bootstrap
+        .walk(Fid::ROOT, Fid(499_000), &["clone".to_string()])
+        .await
+        .unwrap();
+    bootstrap
+        .open(Fid(499_000), OpenMode::ReadWrite)
+        .await
+        .unwrap();
+    let parent_pid = String::from_utf8(bootstrap.read(Fid(499_000), 0, 64).await.unwrap())
+        .unwrap()
+        .parse::<u64>()
+        .unwrap();
+    bootstrap
+        .write(
+            Fid(499_000),
+            0,
+            br#"{"executable":"/bin/argv","args":[],"namespace":{"mounts":[{"path":"/bin/argv","access":"ro"}]}}"#,
+        )
+        .await
+        .unwrap();
+    bootstrap.clunk(Fid(499_000)).await.unwrap();
+
+    let procfs = procfs.with_runner(Arc::new(ArgvRunner));
+    let spawner = procfs.for_spawner(
+        Some(Pid(parent_pid)),
+        namespace.clone(),
+        Credentials::user("shell-test"),
+    );
     namespace.mount(
         "/proc",
         InProcessTransport::new(Arc::new(spawner)),
@@ -409,13 +441,20 @@ fn command_shell() -> Shell {
 
 #[tokio::test]
 async fn generic_command_execution_collects_proc_output_and_exit() {
-    let shell = command_shell();
+    let shell = command_shell().await;
     let result = shell
         .run("/bin/argv", &["first".to_string(), "two words".to_string()])
         .await
         .unwrap();
     assert_eq!(result.exit_code, 0);
     assert_eq!(result.output, b"first|two words\n");
+    assert_eq!(
+        shell
+            .cat(&format!("/proc/{}/namespace", result.pid))
+            .await
+            .unwrap(),
+        b"/bin/argv ro"
+    );
     assert_eq!(
         shell
             .cat(&format!("/proc/{}/status", result.pid))
@@ -428,7 +467,7 @@ async fn generic_command_execution_collects_proc_output_and_exit() {
 #[tokio::test]
 async fn stdio_driver_parses_quoted_argv_for_generic_bin_commands() {
     let output = run_stdio_script(
-        command_shell(),
+        command_shell().await,
         b"argv first 'two words' \"three words\"\nexit\n",
     )
     .await;

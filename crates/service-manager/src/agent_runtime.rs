@@ -229,9 +229,7 @@ impl AgentRuntimeService {
         let exec = ExecSpec {
             executable: AGENT_EXECUTABLE.to_string(),
             args: Vec::new(),
-            namespace: Some(ExecNamespaceManifest::from_namespace(
-                &live_namespace.snapshot(),
-            )),
+            namespace: ExecNamespaceManifest::from_namespace(&live_namespace.snapshot()),
             descriptors,
         };
         if let Err(error) = commit_clone(&spawner, fid, &exec).await {

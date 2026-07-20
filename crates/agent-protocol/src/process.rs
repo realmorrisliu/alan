@@ -17,8 +17,7 @@ pub struct ProcessExecSpec {
     pub executable: String,
     #[serde(default)]
     pub args: Vec<String>,
-    #[serde(default)]
-    pub namespace: Option<ProcessNamespaceManifest>,
+    pub namespace: ProcessNamespaceManifest,
     #[serde(default)]
     pub descriptors: BTreeMap<u32, String>,
 }
@@ -213,12 +212,12 @@ mod tests {
         let spec = ProcessExecSpec {
             executable: "/bin/alan-agent".to_string(),
             args: Vec::new(),
-            namespace: Some(ProcessNamespaceManifest {
+            namespace: ProcessNamespaceManifest {
                 mounts: vec![ProcessNamespaceMount::new(
                     "/agent",
                     ProcessNamespaceAccess::ReadWrite,
                 )],
-            }),
+            },
             descriptors: BTreeMap::from([(
                 AGENT_DEFINITION_DESCRIPTOR,
                 "/lib/agents/root".to_string(),
@@ -228,6 +227,14 @@ mod tests {
         let value = serde_json::to_value(spec).unwrap();
         assert_eq!(value["namespace"]["mounts"][0]["access"], "rw");
         assert_eq!(value["descriptors"]["3"], "/lib/agents/root");
+        assert!(
+            serde_json::from_value::<ProcessExecSpec>(serde_json::json!({
+                "executable": "/bin/alan-agent",
+                "args": []
+            }))
+            .is_err(),
+            "an exec document cannot represent ambient namespace inheritance"
+        );
     }
 
     #[test]

@@ -38,7 +38,7 @@ fn namespace_with_agent_root() -> (InProcessTransport, Shell, Arc<AgentRootFs>) 
 async fn conformance_checker_accepts_agent_overlay_process_layout() {
     let (root, shell, agent_root) = namespace_with_agent_root();
     let pid = shell
-        .spawn(r#"{"executable":"/bin/alan-agent","args":[]}"#)
+        .spawn(r#"{"executable":"/bin/alan-agent","args":[],"namespace":{"mounts":[]}}"#)
         .await
         .unwrap();
     agent_root
@@ -57,7 +57,7 @@ async fn conformance_checker_accepts_agent_overlay_process_layout() {
 async fn conformance_checker_accepts_procfs_generic_process_layout() {
     let (root, shell, _) = namespace_with_agent_root();
     let pid = shell
-        .spawn(r#"{"executable":"/bin/alan-agent","args":[]}"#)
+        .spawn(r#"{"executable":"/bin/alan-agent","args":[],"namespace":{"mounts":[]}}"#)
         .await
         .unwrap();
 
@@ -118,7 +118,7 @@ async fn conformance_checker_requires_current_checkpoint_file() {
 async fn conformance_checker_verifies_dynamic_container_event_streams() {
     let (root, shell, agent_root) = namespace_with_agent_root();
     let pid = shell
-        .spawn(r#"{"executable":"/bin/alan-agent","args":[]}"#)
+        .spawn(r#"{"executable":"/bin/alan-agent","args":[],"namespace":{"mounts":[]}}"#)
         .await
         .unwrap();
     agent_root
@@ -136,7 +136,7 @@ async fn conformance_checker_verifies_dynamic_container_event_streams() {
 async fn conformance_checker_verifies_root_alias_matches_current_pid() {
     let (root, shell, agent_root) = namespace_with_agent_root();
     let pid = shell
-        .spawn(r#"{"executable":"/bin/alan-agent","args":[]}"#)
+        .spawn(r#"{"executable":"/bin/alan-agent","args":[],"namespace":{"mounts":[]}}"#)
         .await
         .unwrap();
     agent_root

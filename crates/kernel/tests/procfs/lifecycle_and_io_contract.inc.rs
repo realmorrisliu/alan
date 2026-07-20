@@ -19,10 +19,38 @@ fn proc() -> ProcFs {
 
 /// Spawn a process via clone-via-open using a distinct fid base; returns its pid.
 async fn spawn(fs: &ProcFs, clone_fid: Fid) -> String {
-    spawn_exec(fs, clone_fid, "/bin/agent", Vec::<String>::new()).await
+    spawn_exec(
+        fs,
+        clone_fid,
+        "/bin/agent",
+        Vec::<String>::new(),
+        serde_json::json!([]),
+    )
+    .await
 }
 
-async fn spawn_exec(fs: &ProcFs, clone_fid: Fid, executable: &str, args: Vec<String>) -> String {
+async fn spawn_with_mounts(
+    fs: &ProcFs,
+    clone_fid: Fid,
+    mounts: serde_json::Value,
+) -> String {
+    spawn_exec(
+        fs,
+        clone_fid,
+        "/bin/agent",
+        Vec::<String>::new(),
+        mounts,
+    )
+    .await
+}
+
+async fn spawn_exec(
+    fs: &ProcFs,
+    clone_fid: Fid,
+    executable: &str,
+    args: Vec<String>,
+    mounts: serde_json::Value,
+) -> String {
     fs.walk(Fid::ROOT, clone_fid, &["clone".to_string()])
         .await
         .unwrap();
@@ -31,6 +59,7 @@ async fn spawn_exec(fs: &ProcFs, clone_fid: Fid, executable: &str, args: Vec<Str
     let exec = serde_json::json!({
         "executable": executable,
         "args": args,
+        "namespace": {"mounts": mounts},
     })
     .to_string();
     fs.write(clone_fid, 0, exec.as_bytes()).await.unwrap();
@@ -333,7 +362,11 @@ async fn spawn_via_clone_open_write_clunk_makes_a_public_process() {
     );
 
     // Write the exec spec (commit-on-clunk) and clunk to start.
-    fs.write(Fid(10), 0, br#"{"executable":"/bin/agent","args":[]}"#)
+    fs.write(
+        Fid(10),
+        0,
+        br#"{"executable":"/bin/agent","args":[],"namespace":{"mounts":[]}}"#,
+    )
         .await
         .unwrap();
     assert_eq!(fs.clunk(Fid(10)).await, Ok(()));
@@ -423,7 +456,12 @@ async fn child_namespace_rebinds_proc_clone_to_the_child_spawn_context() {
         Access::ReadWrite,
     );
     let spawner = fs.for_spawner(Some(parent_pid), namespace, Credentials::user("alan"));
-    let child = spawn(&spawner, Fid(20)).await;
+    let child = spawn_with_mounts(
+        &spawner,
+        Fid(20),
+        serde_json::json!([{"path": "/proc", "access": "rw"}]),
+    )
+    .await;
     let child_pid = Pid(child.parse::<u64>().unwrap());
     let child_invocation = runner.wait_for(child_pid).await;
     let proc_clone = child_invocation
@@ -462,7 +500,7 @@ async fn child_namespace_rebinds_proc_clone_to_the_child_spawn_context() {
         .call(Request::Write {
             fid: Fid(30),
             offset: 0,
-            data: br#"{"executable":"/bin/grandchild","args":[]}"#.to_vec(),
+            data: br#"{"executable":"/bin/grandchild","args":[],"namespace":{"mounts":[{"path":"/proc","access":"rw"}]}}"#.to_vec(),
         })
         .await
         .unwrap();
@@ -664,7 +702,12 @@ async fn delegated_proc_clone_mount_rebinds_to_the_child_spawn_context() {
         Access::ReadWrite,
     );
     let spawner = fs.for_spawner(Some(parent_pid), namespace, Credentials::user("alan"));
-    let child = spawn(&spawner, Fid(20)).await;
+    let child = spawn_with_mounts(
+        &spawner,
+        Fid(20),
+        serde_json::json!([{"path": "/proc/clone", "access": "rw"}]),
+    )
+    .await;
     let child_pid = Pid(child.parse::<u64>().unwrap());
     let child_invocation = runner.wait_for(child_pid).await;
     assert!(
@@ -707,7 +750,7 @@ async fn delegated_proc_clone_mount_rebinds_to_the_child_spawn_context() {
         .call(Request::Write {
             fid: Fid(40),
             offset: 0,
-            data: br#"{"executable":"/bin/grandchild","args":[]}"#.to_vec(),
+            data: br#"{"executable":"/bin/grandchild","args":[],"namespace":{"mounts":[{"path":"/proc/clone","access":"rw"}]}}"#.to_vec(),
         })
         .await
         .unwrap();
@@ -745,7 +788,11 @@ async fn delegated_proc_clone_root_open_allocates_a_pending_pid() {
         .unwrap();
     let child = String::from_utf8(proc_clone.read(Fid::ROOT, 0, 64).await.unwrap()).unwrap();
     proc_clone
-        .write(Fid::ROOT, 0, br#"{"executable":"/bin/child","args":[]}"#)
+        .write(
+            Fid::ROOT,
+            0,
+            br#"{"executable":"/bin/child","args":[],"namespace":{"mounts":[]}}"#,
+        )
         .await
         .unwrap();
     proc_clone.clunk(Fid::ROOT).await.unwrap();

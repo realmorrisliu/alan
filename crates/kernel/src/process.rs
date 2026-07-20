@@ -54,8 +54,7 @@ pub struct ExecSpec {
     pub executable: String,
     #[serde(default)]
     pub args: Vec<String>,
-    #[serde(default)]
-    pub namespace: Option<ExecNamespaceManifest>,
+    pub namespace: ExecNamespaceManifest,
     /// Numeric Process descriptors bound to paths in the committed namespace.
     #[serde(default)]
     pub descriptors: BTreeMap<u32, String>,
@@ -66,7 +65,7 @@ pub struct ExecSpec {
 /// The kernel still receives the actual namespace from the spawner context; this
 /// manifest is a commit-time check that the exec document and inherited pending
 /// namespace describe the same or a narrower capability set.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 pub struct ExecNamespaceManifest {
     #[serde(default)]
     pub mounts: Vec<ExecNamespaceMount>,

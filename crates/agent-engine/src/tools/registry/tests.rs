@@ -416,7 +416,7 @@ async fn process_server_rejects_unmounted_tool() {
         exec: alan_kernel::ExecSpec {
             executable: "/bin/test_tool".to_string(),
             args: vec!["{}".to_string()],
-            namespace: None,
+            namespace: alan_kernel::ExecNamespaceManifest::default(),
             descriptors: Default::default(),
         },
     };
@@ -464,7 +464,7 @@ async fn process_server_reconciles_late_bound_authority_before_tool_execution() 
         exec: alan_kernel::ExecSpec {
             executable: "/bin/test_tool".to_string(),
             args: vec![r#"{"input":"hello"}"#.to_string()],
-            namespace: None,
+            namespace: alan_kernel::ExecNamespaceManifest::default(),
             descriptors: Default::default(),
         },
     };
@@ -505,7 +505,7 @@ async fn process_server_uses_spawning_agent_execution_binding() {
         exec: alan_kernel::ExecSpec {
             executable: "/bin/cwd_echo".to_string(),
             args: vec!["{}".to_string()],
-            namespace: None,
+            namespace: alan_kernel::ExecNamespaceManifest::default(),
             descriptors: Default::default(),
         },
     };

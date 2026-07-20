@@ -48,21 +48,6 @@ a host path, and an access level. Applying the declaration SHALL mount a
 - **AND** write, create, and remove operations through that mount are rejected
   by namespace access enforcement
 
-### Requirement: Host mount declarations project into SandboxSpec
-Alan OS SHALL derive native subprocess sandbox roots from the exact Host Mount
-grants present in the Process launch context. Writable grants SHALL contribute
-writable Host roots; read-only grants SHALL contribute no write authority; and
-virtual mounts SHALL NOT grant Host access. There is no ambient Host-directory seed.
-
-#### Scenario: Writable Host Mount becomes sandbox writable root
-- **WHEN** a Process receives one writable Host Mount at `/mnt/source`
-- **THEN** the derived sandbox includes only that grant's Host backing as a
-  writable root
-
-#### Scenario: No Host Mount is present
-- **WHEN** a Process has only virtual Alan OS mounts
-- **THEN** no ambient Host cwd, home, or other implicit Host writable root is added
-
 ### Requirement: Host files are invisible by default
 A Host directory SHALL enter a Process namespace only after explicit Host
 authorization creates a Host Mount. Kernel and Agent runtime files MUST use its

@@ -223,7 +223,11 @@ async fn spawn_test_process(procfs: &alan_kernel::ProcFs) -> String {
     )
     .expect("pending pid is utf8");
     procfs
-        .write(clone_fid, 0, br#"{"executable":"/bin/agent","args":[]}"#)
+        .write(
+            clone_fid,
+            0,
+            br#"{"executable":"/bin/agent","args":[],"namespace":{"mounts":[]}}"#,
+        )
         .await
         .expect("write exec spec");
     procfs.clunk(clone_fid).await.expect("commit process");

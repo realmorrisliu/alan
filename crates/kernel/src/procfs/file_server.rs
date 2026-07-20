@@ -35,13 +35,14 @@ impl State {
     /// generations: the public listing for the root, a per-process generation for
     /// per-pid files, and a stable 0 for the clone file and the output stream
     /// (a stream's freshness is its read offset, not the qid version).
-    fn qid(&self, node: &Node) -> Qid {
+    fn qid(&self, node: &Node, view_id: u64, namespace_source: &super::NamespaceSource) -> Qid {
         let (kind, path) = node_identity(node);
         let version = match node {
             Node::Root => self.table.listing_generation(),
             Node::Clone | Node::Output(_) => 0,
             Node::Input(_) | Node::IoEvents(_) => 0,
-            Node::Proc(p)
+            Node::SelfProc(p)
+            | Node::Proc(p)
             | Node::IoDir(p)
             | Node::Status(p)
             | Node::Parent(p)
@@ -53,7 +54,13 @@ impl State {
                     .get(p)
                     .map_or(0, LiveNamespace::generation),
             ),
+            Node::SelfNamespace => namespace_source.generation(),
             Node::Descriptors(p) => self.table.generation(*p),
+        };
+        let path = match node {
+            Node::SelfProc(_) => tagged_identity(13, view_id),
+            Node::SelfNamespace => tagged_identity(14, view_id),
+            _ => path,
         };
         Qid {
             kind,
@@ -63,11 +70,16 @@ impl State {
     }
 
     /// Resolve one path component from a node to its child node.
-    fn child(&self, node: &Node, name: &str) -> Result<Node, ErrorCode> {
+    fn child(&self, node: &Node, name: &str, current_pid: Option<Pid>) -> Result<Node, ErrorCode> {
         match node {
             Node::Root => {
                 if name == "clone" {
                     Ok(Node::Clone)
+                } else if name == "self" {
+                    current_pid
+                        .filter(|pid| self.table.get(*pid).is_some())
+                        .map(Node::SelfProc)
+                        .ok_or(ErrorCode::NotFound)
                 } else if let Some(pid) = parse_pid(name).filter(|p| self.table.get(*p).is_some()) {
                     Ok(Node::Proc(pid))
                 } else {
@@ -85,6 +97,17 @@ impl State {
                 "descriptors" => Ok(Node::Descriptors(*pid)),
                 _ => Err(ErrorCode::NotFound),
             },
+            Node::SelfProc(pid) => match name {
+                "status" => Ok(Node::Status(*pid)),
+                "parent" => Ok(Node::Parent(*pid)),
+                "credentials" => Ok(Node::Credentials(*pid)),
+                "exit" => Ok(Node::Exit(*pid)),
+                "ctl" => Ok(Node::Ctl(*pid)),
+                "io" => Ok(Node::IoDir(*pid)),
+                "namespace" => Ok(Node::SelfNamespace),
+                "descriptors" => Ok(Node::Descriptors(*pid)),
+                _ => Err(ErrorCode::NotFound),
+            },
             Node::IoDir(pid) => match name {
                 "input" => Ok(Node::Input(*pid)),
                 "output" => Ok(Node::Output(*pid)),
@@ -96,16 +119,26 @@ impl State {
     }
 
     /// The readable bytes of a non-directory node.
-    fn file_bytes(&self, node: &Node) -> Result<Vec<u8>, ErrorCode> {
+    fn file_bytes(
+        &self,
+        node: &Node,
+        current_pid: Option<Pid>,
+        namespace_source: &super::NamespaceSource,
+    ) -> Result<Vec<u8>, ErrorCode> {
         let bytes = match node {
             Node::Root => {
                 let mut names = vec!["clone".to_string()];
+                if current_pid.is_some_and(|pid| self.table.get(pid).is_some()) {
+                    names.push("self".to_string());
+                }
                 names.extend(self.table.list().iter().map(|p| p.0.to_string()));
                 names.join("\n").into_bytes()
             }
-            Node::Proc(_) => "status\nparent\ncredentials\nexit\nctl\nio\nnamespace\ndescriptors"
-                .to_string()
-                .into_bytes(),
+            Node::SelfProc(_) | Node::Proc(_) => {
+                "status\nparent\ncredentials\nexit\nctl\nio\nnamespace\ndescriptors"
+                    .to_string()
+                    .into_bytes()
+            }
             Node::IoDir(_) => b"input\noutput\nevents".to_vec(),
             Node::Status(pid) => match self.table.get(*pid).map(|p| p.status) {
                 Some(Status::Running) => b"running\n".to_vec(),
@@ -148,6 +181,7 @@ impl State {
                     .join("\n")
                     .into_bytes()
             }
+            Node::SelfNamespace => namespace_bytes(&namespace_source.snapshot()),
             Node::Descriptors(pid) => {
                 let process = self.table.get(*pid).ok_or(ErrorCode::NotFound)?;
                 serde_json::to_vec(&process.exec.descriptors).map_err(|_| ErrorCode::Io)?
@@ -187,9 +221,9 @@ impl FileServer for ProcFs {
         }
         let mut node = state.node_of(fid_key, &self.root_node)?;
         for name in names {
-            node = state.child(&node, name)?;
+            node = state.child(&node, name, self.spawn_context.parent)?;
         }
-        let qid = state.qid(&node);
+        let qid = state.qid(&node, self.view_id, &self.spawn_context.namespace);
         state.fids.insert(newfid_key, ProcFid::at(node));
         Ok(qid)
     }
@@ -201,7 +235,7 @@ impl FileServer for ProcFs {
         let fid_key = self.fid_key(fid);
         let node = state.node_of(fid_key, &self.root_node)?;
         if fid == Fid::ROOT && !matches!(node, Node::Clone) {
-            return Ok(state.qid(&node));
+            return Ok(state.qid(&node, self.view_id, &self.spawn_context.namespace));
         }
         // Reopening a live fid before clunk is rejected, so a retried open cannot
         // overwrite a pending clone slot (leaking it) or downgrade write intent.
@@ -230,11 +264,11 @@ impl FileServer for ProcFs {
                 .or_insert_with(|| ProcFid::at(Node::Clone));
             f.clone_pid = Some(slot);
             f.mode = Some(mode);
-            return Ok(state.qid(&node));
+            return Ok(state.qid(&node, self.view_id, &self.spawn_context.namespace));
         }
         let f = state.fids.get_mut(&fid_key).ok_or(ErrorCode::NotFound)?;
         f.mode = Some(mode);
-        Ok(state.qid(&node))
+        Ok(state.qid(&node, self.view_id, &self.spawn_context.namespace))
     }
 
     async fn read(&self, fid: Fid, offset: Offset, count: u32) -> Result<Vec<u8>, ErrorCode> {
@@ -263,7 +297,17 @@ impl FileServer for ProcFs {
                     .get(&pid)
                     .cloned()
                     .ok_or(ErrorCode::NotFound)?,
-                other => return Ok(slice(state.file_bytes(&other)?, offset, count)),
+                other => {
+                    return Ok(slice(
+                        state.file_bytes(
+                            &other,
+                            self.spawn_context.parent,
+                            &self.spawn_context.namespace,
+                        )?,
+                        offset,
+                        count,
+                    ));
+                }
             }
         };
         Ok(stream.read(offset, count).await)
@@ -384,11 +428,18 @@ impl FileServer for ProcFs {
                 None => 0,
             },
             Node::Clone | Node::Ctl(_) => 0,
-            other => state.file_bytes(other).map(|b| b.len() as u64).unwrap_or(0),
+            other => state
+                .file_bytes(
+                    other,
+                    self.spawn_context.parent,
+                    &self.spawn_context.namespace,
+                )
+                .map(|b| b.len() as u64)
+                .unwrap_or(0),
         };
         Ok(Stat {
             name: String::new(),
-            qid: state.qid(&node),
+            qid: state.qid(&node, self.view_id, &self.spawn_context.namespace),
             length,
             executable: false,
             writable: is_writable(&node),
@@ -429,27 +480,24 @@ impl FileServer for ProcFs {
             if let Some(pid) = f.clone_pid {
                 match serde_json::from_slice::<ExecSpec>(&f.write_buf) {
                     Ok(exec) => {
-                        if let Some(namespace_manifest) = exec.namespace.as_ref() {
-                            let Some(mut narrowed_namespace) = ({
-                                let Some(pending_namespace) = state.table.pending_namespace(pid)
-                                else {
-                                    state.table.discard(pid);
-                                    return Err(ErrorCode::BadRequest);
-                                };
-                                namespace_manifest.namespace_subset_from(pending_namespace)
-                            }) else {
+                        let Some(mut narrowed_namespace) = ({
+                            let Some(pending_namespace) = state.table.pending_namespace(pid) else {
                                 state.table.discard(pid);
                                 return Err(ErrorCode::BadRequest);
                             };
-                            self.rebind_proc_spawners(&mut narrowed_namespace, pid);
-                            if state
-                                .table
-                                .replace_pending_namespace(pid, narrowed_namespace)
-                                .is_none()
-                            {
-                                state.table.discard(pid);
-                                return Err(ErrorCode::BadRequest);
-                            }
+                            exec.namespace.namespace_subset_from(pending_namespace)
+                        }) else {
+                            state.table.discard(pid);
+                            return Err(ErrorCode::BadRequest);
+                        };
+                        self.rebind_proc_spawners(&mut narrowed_namespace, pid);
+                        if state
+                            .table
+                            .replace_pending_namespace(pid, narrowed_namespace)
+                            .is_none()
+                        {
+                            state.table.discard(pid);
+                            return Err(ErrorCode::BadRequest);
                         }
                         let descriptors_valid = {
                             let Some(pending_namespace) = state.table.pending_namespace(pid) else {
@@ -573,25 +621,44 @@ fn node_identity(node: &Node) -> (FileKind, u64) {
     // Give each per-process file kind its own 2^48 path space keyed by a tag, so
     // qids stay server-unique even after millions of pids (the old 0x1000 stride
     // collided once pids passed 4096).
-    fn tagged(tag: u64, pid: Pid) -> u64 {
-        (tag << 48) | pid.0
-    }
     match node {
         Node::Root => (FileKind::Dir, 0),
         Node::Clone => (FileKind::Clone, 1),
-        Node::Proc(p) => (FileKind::Dir, tagged(1, *p)),
-        Node::IoDir(p) => (FileKind::Dir, tagged(2, *p)),
-        Node::Output(p) => (FileKind::Stream, tagged(3, *p)),
-        Node::Status(p) => (FileKind::File, tagged(4, *p)),
-        Node::Parent(p) => (FileKind::File, tagged(5, *p)),
-        Node::Credentials(p) => (FileKind::File, tagged(6, *p)),
-        Node::Exit(p) => (FileKind::File, tagged(7, *p)),
-        Node::Ctl(p) => (FileKind::File, tagged(8, *p)),
-        Node::NamespaceInfo(p) => (FileKind::File, tagged(9, *p)),
-        Node::Input(p) => (FileKind::Stream, tagged(10, *p)),
-        Node::IoEvents(p) => (FileKind::Stream, tagged(11, *p)),
-        Node::Descriptors(p) => (FileKind::File, tagged(12, *p)),
+        Node::SelfProc(_) => (FileKind::Dir, 0),
+        Node::SelfNamespace => (FileKind::File, 0),
+        Node::Proc(p) => (FileKind::Dir, tagged_identity(1, p.0)),
+        Node::IoDir(p) => (FileKind::Dir, tagged_identity(2, p.0)),
+        Node::Output(p) => (FileKind::Stream, tagged_identity(3, p.0)),
+        Node::Status(p) => (FileKind::File, tagged_identity(4, p.0)),
+        Node::Parent(p) => (FileKind::File, tagged_identity(5, p.0)),
+        Node::Credentials(p) => (FileKind::File, tagged_identity(6, p.0)),
+        Node::Exit(p) => (FileKind::File, tagged_identity(7, p.0)),
+        Node::Ctl(p) => (FileKind::File, tagged_identity(8, p.0)),
+        Node::NamespaceInfo(p) => (FileKind::File, tagged_identity(9, p.0)),
+        Node::Input(p) => (FileKind::Stream, tagged_identity(10, p.0)),
+        Node::IoEvents(p) => (FileKind::Stream, tagged_identity(11, p.0)),
+        Node::Descriptors(p) => (FileKind::File, tagged_identity(12, p.0)),
     }
+}
+
+fn tagged_identity(tag: u64, id: u64) -> u64 {
+    (tag << 48) | id
+}
+
+fn namespace_bytes(namespace: &crate::Namespace) -> Vec<u8> {
+    namespace
+        .describe()
+        .iter()
+        .map(|(path, access)| {
+            let rights = match access {
+                crate::Access::ReadOnly => "ro",
+                crate::Access::ReadWrite => "rw",
+            };
+            format!("{path} {rights}")
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+        .into_bytes()
 }
 
 fn is_writable(node: &Node) -> bool {

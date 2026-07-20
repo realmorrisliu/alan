@@ -7,6 +7,7 @@
 //! ```text
 //! /proc
 //!   clone                 # open → pending pid; write exec spec; clunk → start
+//!   self/                 # current Process view; namespace is the live spawn authority
 //!   <pid>/
 //!     status              # "running" | "exited"
 //!     parent              # parent pid, or "" for none
@@ -86,6 +87,8 @@ pub trait ProcessRunner: Send + Sync + 'static {
 enum Node {
     Root,
     Clone,
+    SelfProc(Pid),
+    SelfNamespace,
     Proc(Pid),
     Status(Pid),
     Parent(Pid),
@@ -238,6 +241,13 @@ impl NamespaceSource {
         match self {
             Self::Snapshot(namespace) => namespace.clone(),
             Self::Live(namespace) => namespace.snapshot(),
+        }
+    }
+
+    fn generation(&self) -> u32 {
+        match self {
+            Self::Snapshot(_) => 0,
+            Self::Live(namespace) => namespace.generation(),
         }
     }
 

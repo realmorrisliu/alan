@@ -832,20 +832,68 @@ impl Tool for LargeOutputTool {
 }
 
 fn create_test_state_with_provider<P: LlmProvider + 'static>(provider: P) -> RuntimeLoopState {
-    create_test_state_with_provider_and_tools(provider, ToolRegistry::new())
+    let (config, machine, _tools, mut namespace, procfs) =
+        turn_test_fixture_parts(provider, ToolRegistry::new());
+    let spawn_namespace = namespace.clone();
+    namespace.mount(
+        "/proc",
+        alan_ap::InProcessTransport::new(std::sync::Arc::new(procfs.for_spawner(
+            None,
+            spawn_namespace,
+            alan_kernel::Credentials::user("root-agent"),
+        ))),
+        alan_kernel::Access::ReadWrite,
+    );
+    finish_turn_test_fixture(config, machine, namespace).0
 }
 
-fn create_test_state_with_provider_and_tools<P: LlmProvider + 'static>(
+async fn create_test_state_with_provider_and_tools<P: LlmProvider + 'static>(
     provider: P,
     tools: ToolRegistry,
 ) -> RuntimeLoopState {
-    create_test_state_with_provider_and_tools_and_shell(provider, tools).0
+    create_test_state_with_provider_and_tools_and_shell(provider, tools)
+        .await
+        .0
 }
 
-fn create_test_state_with_provider_and_tools_and_shell<P: LlmProvider + 'static>(
+async fn create_test_state_with_provider_and_tools_and_shell<P: LlmProvider + 'static>(
+    provider: P,
+    tools: ToolRegistry,
+) -> (RuntimeLoopState, alan_shell::Shell) {
+    let (config, machine, tools, mut process_namespace, procfs) =
+        turn_test_fixture_parts(provider, tools);
+    process_namespace.mount(
+        "/proc",
+        alan_ap::InProcessTransport::new(std::sync::Arc::new(procfs.clone())),
+        alan_kernel::Access::ReadWrite,
+    );
+    spawn_turn_test_parent(&procfs, &process_namespace).await;
+
+    let procfs = procfs.with_runner(std::sync::Arc::new(TestToolProcessRunner::new(tools)));
+    let spawn_namespace = process_namespace.clone();
+    process_namespace.unmount("/proc");
+    process_namespace.mount(
+        "/proc",
+        alan_ap::InProcessTransport::new(std::sync::Arc::new(procfs.for_spawner(
+            Some(alan_kernel::Pid(1)),
+            spawn_namespace,
+            alan_kernel::Credentials::user("root-agent"),
+        ))),
+        alan_kernel::Access::ReadWrite,
+    );
+    finish_turn_test_fixture(config, machine, process_namespace)
+}
+
+fn turn_test_fixture_parts<P: LlmProvider + 'static>(
     provider: P,
     mut tools: ToolRegistry,
-) -> (RuntimeLoopState, alan_shell::Shell) {
+) -> (
+    Config,
+    AgentMachine,
+    ToolRegistry,
+    alan_kernel::Namespace,
+    alan_kernel::ProcFs,
+) {
     let config = Config {
         openai_responses_model: "mock-model".to_string(),
         ..Default::default()
@@ -893,19 +941,20 @@ fn create_test_state_with_provider_and_tools_and_shell<P: LlmProvider + 'static>
         std::path::PathBuf::from("/tmp"),
         std::path::PathBuf::from("/tmp/alan-turn-executor-test-scratch"),
     ));
-    let procfs = alan_kernel::ProcFs::new().with_runner(std::sync::Arc::new(
-        TestToolProcessRunner::new(tools.clone()),
-    ));
-    let process_procfs = procfs.for_spawner(
-        None,
-        process_namespace.clone(),
-        alan_kernel::Credentials::user("root-agent"),
-    );
-    process_namespace.mount(
-        "/proc",
-        alan_ap::InProcessTransport::new(std::sync::Arc::new(process_procfs)),
-        alan_kernel::Access::ReadWrite,
-    );
+    (
+        config,
+        machine,
+        tools,
+        process_namespace,
+        alan_kernel::ProcFs::new(),
+    )
+}
+
+fn finish_turn_test_fixture(
+    config: Config,
+    machine: AgentMachine,
+    process_namespace: alan_kernel::Namespace,
+) -> (RuntimeLoopState, alan_shell::Shell) {
     let root = alan_ap::InProcessTransport::new(std::sync::Arc::new(alan_kernel::MountFs::new(
         process_namespace,
     )));
@@ -929,6 +978,9 @@ fn create_test_state_with_provider_and_tools_and_shell<P: LlmProvider + 'static>
 
 mod support;
 use support::*;
+
+mod process_fixture;
+use process_fixture::spawn_turn_test_parent;
 
 mod namespace_generation;
 

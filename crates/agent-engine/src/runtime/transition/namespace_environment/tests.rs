@@ -3,14 +3,16 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering as AtomicOrdering},
 };
 
-use alan_agent_protocol::{ContentPart, InputMode, Op};
+use alan_agent_protocol::{
+    ContentPart, InputMode, Op, ProcessNamespaceAccess, ProcessNamespaceMount,
+};
 use alan_agentfs::{AgentConformanceChecker, AgentFs, AgentRootFs};
 use alan_ap::{
     ErrorCode, Fid, FileKind, FileServer, InProcessTransport, OpenMode, Qid, Request, Stat,
 };
 use alan_kernel::{
-    Access, Credentials, MountFs, Namespace, ProcFs, ProcessInvocation, ProcessOutcome,
-    ProcessRunner,
+    Access, Credentials, ExecNamespaceManifest, ExecSpec, MountFs, Namespace, Pid, ProcFs,
+    ProcessInvocation, ProcessOutcome, ProcessRunner,
 };
 use alan_llm::{GenerationRequest, GenerationResponse, LlmProvider, MockLlmProvider, StreamChunk};
 use alan_llmfs::LlmFs;
@@ -139,8 +141,10 @@ impl LlmProvider for BlockingStreamProvider {
     }
 }
 
-fn tool_test_environment(runner: Arc<dyn ProcessRunner>) -> (NamespaceRuntimeEnvironment, Shell) {
-    let procfs = ProcFs::new().with_runner(runner);
+async fn tool_test_environment(
+    runner: Arc<dyn ProcessRunner>,
+) -> (NamespaceRuntimeEnvironment, Shell) {
+    let procfs = ProcFs::new();
     let agentfs = Arc::new(AgentFs::new());
     let binfs = Arc::new(alan_ap::reference::MemFs::new());
 
@@ -157,8 +161,28 @@ fn tool_test_environment(runner: Arc<dyn ProcessRunner>) -> (NamespaceRuntimeEnv
     );
     child_namespace.mount("/bin", InProcessTransport::new(binfs), Access::ReadOnly);
 
-    let spawner_procfs =
-        Arc::new(procfs.for_spawner(None, child_namespace, Credentials::user("root-agent")));
+    let credentials = Credentials::user("root-agent");
+    let bootstrap = procfs.for_spawner(None, child_namespace.clone(), credentials.clone());
+    let fid = Fid(9_999);
+    bootstrap
+        .walk(Fid::ROOT, fid, &["clone".to_string()])
+        .await
+        .unwrap();
+    bootstrap.open(fid, OpenMode::ReadWrite).await.unwrap();
+    let exec = ExecSpec {
+        executable: "/bin/agent".to_string(),
+        args: Vec::new(),
+        namespace: ExecNamespaceManifest::from_namespace(&child_namespace),
+        descriptors: Default::default(),
+    };
+    bootstrap
+        .write(fid, 0, &serde_json::to_vec(&exec).unwrap())
+        .await
+        .unwrap();
+    bootstrap.clunk(fid).await.unwrap();
+
+    let procfs = procfs.with_runner(runner);
+    let spawner_procfs = Arc::new(procfs.for_spawner(Some(Pid(1)), child_namespace, credentials));
     let mut root_namespace = Namespace::new();
     root_namespace.mount(
         "/proc",

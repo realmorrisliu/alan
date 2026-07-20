@@ -49,6 +49,14 @@ None.
   sandbox authority
   from Host Mount Service grants inside Host adapters rather than engine-owned
   raw writable roots.
+- `host-directory-mounts`: Remove the displaced Alan OS-owned SandboxSpec
+  projection requirement.
+- `namespace-sandbox-projection`: Retire the composition-root declaration-list
+  projection capability.
+- `os-sandbox-enforcement`: Make Host adapters the sole producer of native
+  per-Tool-Process confinement input.
+- `plan9-kernel-substrate`: Expose the current Process namespace through
+  `/proc/self/namespace` for file-native explicit delegation.
 
 ## Impact
 

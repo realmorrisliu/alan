@@ -138,7 +138,12 @@ impl NamespaceProcessFiles {
             .with_context(|| format!("read Process output from {output_path}"))
     }
 
-    pub async fn spawn_process<I, S>(&self, executable: &str, args: I) -> Result<String>
+    pub async fn spawn_process<I, S>(
+        &self,
+        executable: &str,
+        args: I,
+        mounts: Vec<ProcessNamespaceMount>,
+    ) -> Result<String>
     where
         I: IntoIterator<Item = S>,
         S: Into<String>,
@@ -147,7 +152,7 @@ impl NamespaceProcessFiles {
         let exec_spec = serde_json::to_vec(&ProcessExecSpec {
             executable: executable.to_string(),
             args,
-            namespace: None,
+            namespace: ProcessNamespaceManifest { mounts },
             descriptors: BTreeMap::new(),
         })
         .context("serialize exec spec")?;
@@ -168,7 +173,7 @@ impl NamespaceProcessFiles {
         let exec_spec = serde_json::to_vec(&ProcessExecSpec {
             executable: "/bin/alan-agent".to_string(),
             args: vec![request],
-            namespace: Some(ProcessNamespaceManifest { mounts }),
+            namespace: ProcessNamespaceManifest { mounts },
             descriptors,
         })
         .context("serialize /bin/alan-agent exec spec")?;

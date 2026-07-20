@@ -65,7 +65,9 @@
         let root = InProcessTransport::new(Arc::new(MountFs::new(namespace)));
         let shell = Shell::new(root.clone());
         let pid = shell
-            .spawn(r#"{"executable":"/bin/alan-agent","args":[]}"#)
+            .spawn(
+                r#"{"executable":"/bin/alan-agent","args":[],"namespace":{"mounts":[]}}"#,
+            )
             .await
             .unwrap();
         assert_eq!(pid, "1");

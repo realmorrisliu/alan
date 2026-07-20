@@ -365,14 +365,52 @@ impl Shell {
         Ok(pid)
     }
 
-    /// Run an executable from the Process namespace and collect its terminal output and exit.
-    pub async fn run(&self, executable: &str, args: &[String]) -> Result<CommandOutput, ErrorCode> {
+    /// Spawn an ordinary Process with an explicit snapshot of this Process's
+    /// current namespace. The snapshot is read through `/proc/self/namespace`,
+    /// so the shell remains an aP-only client and never relies on ambient Kernel
+    /// inheritance or a Host-side Process identity channel.
+    pub async fn spawn_process(
+        &self,
+        executable: &str,
+        args: &[String],
+    ) -> Result<String, ErrorCode> {
+        let namespace = self.current_namespace_manifest().await?;
         let exec_spec = serde_json::to_string(&serde_json::json!({
             "executable": executable,
             "args": args,
+            "namespace": namespace,
         }))
         .map_err(|_| ErrorCode::Io)?;
-        let pid = self.spawn(&exec_spec).await?.trim().to_string();
+        self.spawn(&exec_spec).await
+    }
+
+    async fn current_namespace_manifest(&self) -> Result<serde_json::Value, ErrorCode> {
+        let bytes = self.cat("/proc/self/namespace").await?;
+        let text = std::str::from_utf8(&bytes).map_err(|_| ErrorCode::Io)?;
+        let mounts = text
+            .lines()
+            .filter(|line| !line.is_empty())
+            .map(|line| {
+                let (path, access) = line.rsplit_once(' ').ok_or(ErrorCode::Io)?;
+                if !path.starts_with('/') || !matches!(access, "ro" | "rw") {
+                    return Err(ErrorCode::Io);
+                }
+                Ok(serde_json::json!({
+                    "path": path,
+                    "access": access,
+                }))
+            })
+            .collect::<Result<Vec<_>, ErrorCode>>()?;
+        Ok(serde_json::json!({ "mounts": mounts }))
+    }
+
+    /// Run an executable from the Process namespace and collect its terminal output and exit.
+    pub async fn run(&self, executable: &str, args: &[String]) -> Result<CommandOutput, ErrorCode> {
+        let pid = self
+            .spawn_process(executable, args)
+            .await?
+            .trim()
+            .to_string();
         if pid.is_empty() || !pid.bytes().all(|byte| byte.is_ascii_digit()) {
             return Err(ErrorCode::Io);
         }

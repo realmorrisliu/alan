@@ -39,7 +39,7 @@ async fn m2_shell_talks_to_agent_through_files() {
     let shell = Shell::new(root.clone());
 
     let pid = shell
-        .spawn(r#"{"executable":"/bin/agent","args":[]}"#)
+        .spawn(r#"{"executable":"/bin/agent","args":[],"namespace":{"mounts":[]}}"#)
         .await
         .unwrap();
     assert_eq!(pid, "1");
@@ -105,7 +105,7 @@ async fn engine_writes_requests_and_actions_as_agent_files() {
     let root = InProcessTransport::new(Arc::new(MountFs::new(ns)));
     let shell = Shell::new(root.clone());
     let pid = shell
-        .spawn(r#"{"executable":"/bin/agent","args":[]}"#)
+        .spawn(r#"{"executable":"/bin/agent","args":[],"namespace":{"mounts":[]}}"#)
         .await
         .unwrap();
     assert_eq!(pid, "1");

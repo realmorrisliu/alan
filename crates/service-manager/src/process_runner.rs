@@ -96,7 +96,7 @@ mod tests {
             exec: ExecSpec {
                 executable: "/bin/alan-agent".to_string(),
                 args: Vec::new(),
-                namespace: None,
+                namespace: alan_kernel::ExecNamespaceManifest::default(),
                 descriptors: BTreeMap::new(),
             },
         }

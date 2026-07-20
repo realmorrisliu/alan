@@ -115,9 +115,7 @@ async fn spawn_process_with_descriptors(
     let exec = alan_kernel::ExecSpec {
         executable: executable.to_string(),
         args: Vec::new(),
-        namespace: Some(alan_kernel::ExecNamespaceManifest::from_namespace(
-            &namespace.snapshot(),
-        )),
+        namespace: alan_kernel::ExecNamespaceManifest::from_namespace(&namespace.snapshot()),
         descriptors,
     };
     spawner

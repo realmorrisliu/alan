@@ -73,8 +73,8 @@
 
 ## 6. Sync And Archive
 
-- [x] 6.1 After every implementation PR is merged, sync all six delta specs into
-  their canonical capabilities and run strict OpenSpec validation.
+- [x] 6.1 After every implementation PR is merged, sync all affected delta specs
+  into their canonical capabilities and run strict OpenSpec validation.
 - [x] 6.2 Confirm canonical specs and merged code expose only the logical request
   protocol, service-issued grant handles, and `/bin/alan-agent` launch path.
 - [ ] 6.3 Archive the change only after implementation, review, verification,
