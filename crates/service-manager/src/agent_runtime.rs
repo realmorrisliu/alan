@@ -665,8 +665,12 @@ fn validate_child_memory_mount(
     memory_path: Option<&str>,
 ) -> Result<()> {
     if !delegated && let Some(memory_path) = memory_path {
+        let memory_path = Path::new(memory_path);
         ensure!(
-            namespace.resolve(memory_path).is_err(),
+            namespace.describe().into_iter().all(|(mount, _)| {
+                let mount = Path::new(&mount);
+                !mount.starts_with(memory_path) && !memory_path.starts_with(mount)
+            }),
             "child Agent Process retained a Memory Store mount without the Memory handle"
         );
     }
@@ -929,16 +933,18 @@ mod tests {
 
     #[test]
     fn child_memory_mount_requires_the_memory_handle() {
-        let mut namespace = Namespace::new();
-        namespace.mount(
-            "/memory",
-            InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::empty())),
-            Access::ReadWrite,
-        );
+        for mount in ["/memory", "/memory/root", "/memory/root/session"] {
+            let mut namespace = Namespace::new();
+            namespace.mount(
+                mount,
+                InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::empty())),
+                Access::ReadWrite,
+            );
 
-        assert!(validate_child_memory_mount(&namespace, true, Some("/memory/root")).is_ok());
-        let error =
-            validate_child_memory_mount(&namespace, false, Some("/memory/root")).unwrap_err();
-        assert!(error.to_string().contains("without the Memory handle"));
+            assert!(validate_child_memory_mount(&namespace, true, Some("/memory/root")).is_ok());
+            let error =
+                validate_child_memory_mount(&namespace, false, Some("/memory/root")).unwrap_err();
+            assert!(error.to_string().contains("without the Memory handle"));
+        }
     }
 }
