@@ -1,10 +1,6 @@
-# mount-grant-tool-sandbox-projection Specification
+## MODIFIED Requirements
 
-## Purpose
-Defines how approved read-write mount grants extend the active Tool sandbox's
-writable roots without widening read-only grants or duplicating existing roots.
-## Requirements
-### Requirement: Approved read-write mount grants update the runtime tool sandbox
+### Requirement: Explicit read-write Host Mounts derive per-Tool-Process authority
 The Host adapter SHALL derive native writable authority from the same
 service-owned grant when Alan OS starts a native Tool Process with an explicitly
 delegated read-write Host Mount. Agent Execution Engine
@@ -23,7 +19,7 @@ list, or apply sandbox authority from a grant ID alone.
   Tool Process launch
 - **THEN** the Host adapter emits one effective native sandbox authorization
 
-### Requirement: Non-writable mount grants do not expand writable roots
+### Requirement: Read-only Host Mounts do not grant native write authority
 The Host adapter SHALL NOT derive native writable authority from a read-only
 Host Mount grant. The approved grant MAY remain readable through its mounted
 file-server handle according to the Tool Process namespace and Host sandbox
@@ -35,7 +31,7 @@ policy.
 - **THEN** the Host adapter does not add its native backing as a writable root
 - **AND** no engine-owned sandbox state is mutated
 
-### Requirement: Tool sandbox path checks honor all writable roots
+### Requirement: Host adapters enforce delegated Tool Process sandbox authority
 Host adapter containment checks and OS sandbox profile generation SHALL include
 the native backing of every explicitly delegated read-write Host Mount grant
 and SHALL reject paths outside the Tool Process's delegated writable authority.

@@ -45,7 +45,8 @@ None.
   the Agent-visible mount request contract and evidence.
 - `live-mount-grant-namespace-projection`: Move live projection from an engine
   applicator callback to Host Mount Service handle projection.
-- `mount-grant-tool-sandbox-projection`: Derive native Tool sandbox authority
+- `host-mount-tool-process-sandbox-projection`: Derive per-Tool-Process native
+  sandbox authority
   from Host Mount Service grants inside Host adapters rather than engine-owned
   raw writable roots.
 

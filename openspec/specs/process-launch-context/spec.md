@@ -1,15 +1,16 @@
 # process-launch-context Specification
 
 ## Purpose
-Defines Process-creation authority: parent namespace snapshot, explicit mounts
-and descriptors, credentials, normalized namespace cwd, and no ambient Host
-root identity.
+Defines Process-creation authority: a spawner-authorized namespace manifest,
+explicit mounts and descriptors, credentials, normalized namespace cwd, and no
+ambient Host root identity.
 ## Requirements
 ### Requirement: Process launch has no workspace identity
-Alan OS SHALL create every Process from its parent namespace snapshot, explicit
-mounts and descriptors, credentials, and normalized initial namespace cwd. It
-MUST NOT assign a workspace ID or Host root identity, carry raw Host Mount
-backing records, or use a grant ID as launch authority.
+Alan OS SHALL create every Process from a spawner-authorized namespace manifest
+that selects only the mounts and descriptors permitted for that launch, plus
+credentials and a normalized initial namespace cwd. It MUST NOT begin from the
+full parent live namespace, assign a workspace ID or Host root identity, carry
+raw Host Mount backing records, or use a grant ID as launch authority.
 
 #### Scenario: Agent starts with a Host Mount
 - **WHEN** a Shell Process spawns an Agent Executable with a Host Mount handle
@@ -24,7 +25,7 @@ backing records, or use a grant ID as launch authority.
 - **THEN** the Process launch is rejected before storing the cwd
 - **AND** Tool Process binding cannot fall back to a different Host Mount
 
-### Requirement: Child context follows namespace inheritance
+### Requirement: Child context follows explicit namespace delegation
 A child Process SHALL start from the namespace capabilities its spawner can
 delegate and SHALL gain additional authority only through explicitly passed
 mounts or descriptors. A Process launch MUST NOT contain an aggregate
