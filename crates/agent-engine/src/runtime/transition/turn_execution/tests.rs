@@ -888,12 +888,6 @@ fn create_test_state_with_provider_and_tools_and_shell<P: LlmProvider + 'static>
             alan_kernel::Access::ReadOnly,
         );
     }
-    let launch_context = crate::ProcessLaunchContext::new(
-        process_namespace.clone(),
-        alan_kernel::Credentials::user("test-agent"),
-        "/mnt/source",
-    )
-    .unwrap();
     tools.set_default_execution_binding(crate::tools::test_execution_binding(
         "/mnt/source",
         std::path::PathBuf::from("/tmp"),
@@ -925,7 +919,7 @@ fn create_test_state_with_provider_and_tools_and_shell<P: LlmProvider + 'static>
     let state = RuntimeLoopState {
         machine,
         environment: NamespaceRuntimeEnvironment::new(root.clone(), "/agent/1", "default")
-            .with_launch_context(launch_context),
+            .with_namespace_cwd("/mnt/source"),
         core_config: config,
         runtime_config,
         prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),

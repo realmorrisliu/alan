@@ -6,11 +6,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use alan_agent_engine::{
-    AgentProcessConfig, LlmClient, ProcessLaunchContext, ProcessPackageKind,
-    ProcessPackageReference, ProcessPackageSkillReference, ToolRegistry,
-    provider_capabilities_for_config,
+    AgentProcessConfig, LlmClient, ProcessPackageKind, ProcessPackageReference,
+    ProcessPackageSkillReference, ToolRegistry, provider_capabilities_for_config,
 };
-use alan_ap::{Fid, FileServer, InProcessTransport, OpenMode};
+use alan_ap::InProcessTransport;
 use alan_kernel::{Access, Credentials, LiveNamespace, Namespace, Pid};
 use anyhow::{Context, Result, ensure};
 use uuid::Uuid;
@@ -23,10 +22,11 @@ use supervisor::{
 };
 
 use crate::{
-    BootManifest, BootUnit, ConnectionService, ConnectionStoreBindings, ConnectionsFile,
+    BootManifest, ConnectionService, ConnectionStoreBindings, ConnectionsFile,
     HostMountExportAdapter, HostMountService, LocalEntryService, ManagerState, PackageService,
-    RestartDecision, ServiceManagerFs, UnavailableHostMountExportAdapter,
+    ProcessLaunchContext, RestartDecision, ServiceManagerFs, UnavailableHostMountExportAdapter,
     agent_runtime::{AgentRuntimeFileServers, AgentRuntimeService, RootAgentTemplate},
+    process_spawn::{spawn_process, spawn_unit_process},
     quartermaster::QUARTERMASTER_EXECUTABLE,
 };
 
@@ -35,12 +35,12 @@ pub const BOOT_STATE_PATH: &str = "/proc/host/state";
 
 const LLM_CONNECTION: &str = "default";
 const SERVICE_MANAGER_EXECUTABLE: &str = "/bin/service-manager";
-static NEXT_BOOT_FID: AtomicU64 = AtomicU64::new(800_000);
 
 /// Explicit inputs supplied by the platform Host to Service Manager.
 pub struct ServiceManagerConfig {
     pub channel_id: String,
     pub process: AgentProcessConfig,
+    pub launch_context: ProcessLaunchContext,
     pub connection_store: Option<ConnectionStoreBindings>,
     pub package_store: Option<std::path::PathBuf>,
     pub llm_factory: Arc<dyn LlmClientFactory>,
@@ -79,24 +79,24 @@ impl ServiceManagerConfig {
     /// Explicit ephemeral/test inputs. Product callers never select this implicitly.
     pub fn ephemeral(
         channel_id: impl Into<String>,
-        mut process: AgentProcessConfig,
+        process: AgentProcessConfig,
+        mut launch_context: ProcessLaunchContext,
         llm_client: LlmClient,
         tools: ToolRegistry,
     ) -> Self {
-        if process
-            .launch_context
+        if launch_context
             .namespace
             .resolve("/lib/agents/root")
             .is_err()
         {
-            process.launch_context.namespace.mount(
+            launch_context.namespace.mount(
                 "/lib/agents/root",
                 InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::empty())),
                 Access::ReadOnly,
             );
         }
-        if process.launch_context.namespace.resolve("/memory").is_err() {
-            process.launch_context.namespace.mount(
+        if launch_context.namespace.resolve("/memory").is_err() {
+            launch_context.namespace.mount(
                 "/memory",
                 InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::empty())),
                 Access::ReadWrite,
@@ -104,6 +104,7 @@ impl ServiceManagerConfig {
         }
         Self {
             channel_id: channel_id.into(),
+            launch_context,
             connection_store: None,
             package_store: None,
             process,
@@ -111,26 +112,6 @@ impl ServiceManagerConfig {
                 llm_client,
             )))),
             host_mount_adapter: Arc::new(UnavailableHostMountExportAdapter),
-            tools,
-        }
-    }
-
-    pub fn with_factory(
-        channel_id: impl Into<String>,
-        process: AgentProcessConfig,
-        connection_store: Option<ConnectionStoreBindings>,
-        package_store: Option<std::path::PathBuf>,
-        llm_factory: Arc<dyn LlmClientFactory>,
-        host_mount_adapter: Arc<dyn HostMountExportAdapter>,
-        tools: ToolRegistry,
-    ) -> Self {
-        Self {
-            channel_id: channel_id.into(),
-            process,
-            connection_store,
-            package_store,
-            llm_factory,
-            host_mount_adapter,
             tools,
         }
     }
@@ -148,6 +129,8 @@ pub struct ServiceManager {
     connection: Arc<ConnectionService>,
     package: Arc<PackageService>,
     package_handle: Arc<SwitchableFileServer>,
+    #[cfg(test)]
+    root_namespace: InProcessTransport,
     supervisor_shutdown: tokio::sync::oneshot::Sender<()>,
     supervisor_task: tokio::task::JoinHandle<Result<()>>,
 }
@@ -160,12 +143,11 @@ impl ServiceManager {
             config.channel_id
         );
         ensure!(
-            config.process.launch_context.package_references.is_empty(),
+            config.launch_context.package_references.is_empty(),
             "initial package references must be resolved by Package Service"
         );
         ensure!(
             config
-                .process
                 .launch_context
                 .namespace
                 .describe()
@@ -180,8 +162,12 @@ impl ServiceManager {
             None => PackageService::ephemeral(&config.channel_id)?,
         };
         seed_preinstalled_packages(&package_service)?;
-        let resolved_definition = alan_agent_engine::ResolvedAgentDefinition::from_launch_context(
-            &config.process.launch_context,
+        validate_package_reference_mounts(&config.launch_context)?;
+        let resolved_definition = alan_agent_engine::ResolvedAgentDefinition::from_process_inputs(
+            config
+                .launch_context
+                .descriptor(alan_agent_engine::AGENT_DEFINITION_DESCRIPTOR),
+            &config.launch_context.package_references,
             &config
                 .process
                 .agent_config
@@ -191,6 +177,12 @@ impl ServiceManager {
         )?;
         config.process.agent_config =
             resolved_definition.apply_to_agent_config(&config.process.agent_config)?;
+        config.process.agent_definition = resolved_definition;
+        config.process.namespace_cwd = std::path::PathBuf::from(&config.launch_context.cwd);
+        config.process.memory_store_bound = config
+            .launch_context
+            .descriptor(alan_agent_engine::MEMORY_STORE_DESCRIPTOR)
+            .is_some();
         let preferred_connection = config
             .process
             .agent_config
@@ -253,6 +245,7 @@ impl ServiceManager {
             connection_base_config,
             host_mount_adapter: config.host_mount_adapter.clone(),
             process: config.process,
+            launch_context: config.launch_context,
             tools: config.tools,
             host_capabilities,
             generation_capabilities,
@@ -285,6 +278,8 @@ impl ServiceManager {
             connection,
             package,
             package_handle,
+            #[cfg(test)]
+            root_namespace: root,
             supervisor_shutdown,
             supervisor_task,
         })
@@ -367,6 +362,7 @@ struct AssembleInputs {
     connection_base_config: alan_agent_engine::Config,
     host_mount_adapter: Arc<dyn HostMountExportAdapter>,
     process: AgentProcessConfig,
+    launch_context: ProcessLaunchContext,
     tools: ToolRegistry,
     host_capabilities: alan_agent_engine::skills::SkillHostCapabilities,
     generation_capabilities: alan_llm::ProviderCapabilities,
@@ -384,6 +380,7 @@ async fn assemble_environment(inputs: AssembleInputs) -> Result<SupervisorEnviro
         connection_base_config,
         host_mount_adapter,
         mut process,
+        mut launch_context,
         tools,
         host_capabilities,
         generation_capabilities,
@@ -414,13 +411,13 @@ async fn assemble_environment(inputs: AssembleInputs) -> Result<SupervisorEnviro
     let package_handle = SwitchableFileServer::new();
     let agent_runtime = AgentRuntimeService::new(
         procfs.clone(),
-        AgentRuntimeFileServers::from_refs(&agent_root, &llmfs, &srvfs, &routefs),
+        AgentRuntimeFileServers::from_refs(&agent_root, &llmfs),
         host_mount_service.clone(),
         connection_service.clone(),
         tools.process_runner(),
     );
 
-    let mut namespace = process.launch_context.namespace.child();
+    let mut namespace = launch_context.namespace.child();
     mount_standard_namespace_roots(&mut namespace);
     mount_boot_units(&mut namespace);
     mount_system_executables(&mut namespace, &manifest);
@@ -600,20 +597,28 @@ async fn assemble_environment(inputs: AssembleInputs) -> Result<SupervisorEnviro
     let root_unit = manifest
         .get("root-agent")
         .context("Root Agent Boot Unit is missing")?;
-    let mut root_template_context = process.launch_context.rebound(
+    let root_template_context = launch_context.rebound(
         system_namespace.snapshot(),
-        process.launch_context.credentials.clone(),
+        launch_context.credentials.clone(),
     );
+    launch_context = root_template_context;
     for source in alan_agent_engine::skills::preinstalled_skill_package_sources() {
-        project_package_reference(
-            &package_service,
-            &mut root_template_context,
-            &source.package_id,
-        )?;
+        project_package_reference(&package_service, &mut launch_context, &source.package_id)?;
     }
-    process.launch_context = root_template_context;
+    validate_package_reference_mounts(&launch_context)?;
+    process.agent_definition = alan_agent_engine::ResolvedAgentDefinition::from_process_inputs(
+        launch_context.descriptor(alan_agent_engine::AGENT_DEFINITION_DESCRIPTOR),
+        &launch_context.package_references,
+        &process.agent_config.core_config.resolved_skill_overrides(),
+        process.core_config_source,
+    )?;
+    process.namespace_cwd = std::path::PathBuf::from(&launch_context.cwd);
+    process.memory_store_bound = launch_context
+        .descriptor(alan_agent_engine::MEMORY_STORE_DESCRIPTOR)
+        .is_some();
     let root_template = RootAgentTemplate::new(
         process,
+        launch_context,
         host_capabilities,
         generation_capabilities,
         llm_connection,
@@ -799,122 +804,18 @@ fn project_package_reference(
     Ok(())
 }
 
-pub(crate) async fn spawn_process(
-    procfs: &alan_kernel::ProcFs,
-    parent: Option<Pid>,
-    namespace: LiveNamespace,
-    credentials: Credentials,
-    executable: &str,
-) -> Result<Pid> {
-    spawn_process_with_descriptors(
-        procfs,
-        parent,
-        namespace,
-        credentials,
-        executable,
-        BTreeMap::new(),
-    )
-    .await
-}
-
-pub(crate) async fn spawn_unit_process(
-    procfs: &alan_kernel::ProcFs,
-    parent: Pid,
-    system_namespace: &LiveNamespace,
-    credentials: Credentials,
-    unit: &BootUnit,
-    extra_mounts: &[(String, Access)],
-) -> Result<(Pid, LiveNamespace)> {
-    let base = system_namespace.snapshot();
-    let declarations = unit
-        .mounts
-        .iter()
-        .map(|mount| {
-            (
-                mount.path.as_str(),
-                mount.source.as_str(),
-                match mount.access {
-                    crate::MountAccess::Read => Access::ReadOnly,
-                    crate::MountAccess::Write => Access::ReadWrite,
-                },
-            )
-        })
-        .chain(
-            extra_mounts
-                .iter()
-                .map(|(path, access)| (path.as_str(), path.as_str(), *access)),
-        );
-    let namespace = base.project_mounts(declarations).map_err(|_| {
-        anyhow::anyhow!(
-            "Boot Unit `{}` requests an unavailable mount projection",
-            unit.name
-        )
-    })?;
-    for descriptor in &unit.descriptors {
+pub(crate) fn validate_package_reference_mounts(
+    launch_context: &ProcessLaunchContext,
+) -> Result<()> {
+    for reference in &launch_context.package_references {
+        let exact_mounts = launch_context.namespace.union_at(&reference.namespace_path);
         ensure!(
-            namespace.resolve(&descriptor.path).is_ok(),
-            "Boot Unit `{}` descriptor {} is outside its namespace",
-            unit.name,
-            descriptor.number
+            exact_mounts.len() == 1 && exact_mounts[0].access == Access::ReadOnly,
+            "package reference {} requires one exact read-only Process namespace mount",
+            reference.namespace_path
         );
     }
-    let descriptors = unit
-        .descriptors
-        .iter()
-        .map(|descriptor| (descriptor.number, descriptor.path.clone()))
-        .collect();
-    let live_namespace = LiveNamespace::new(namespace);
-    let pid = spawn_process_with_descriptors(
-        procfs,
-        Some(parent),
-        live_namespace.clone(),
-        credentials,
-        &unit.executable,
-        descriptors,
-    )
-    .await?;
-    Ok((pid, live_namespace))
-}
-
-async fn spawn_process_with_descriptors(
-    procfs: &alan_kernel::ProcFs,
-    parent: Option<Pid>,
-    namespace: LiveNamespace,
-    credentials: Credentials,
-    executable: &str,
-    descriptors: BTreeMap<u32, String>,
-) -> Result<Pid> {
-    let spawner = procfs.for_live_spawner(parent, namespace.clone(), credentials);
-    let fid = Fid(NEXT_BOOT_FID.fetch_add(1, Ordering::Relaxed));
-    spawner
-        .walk(Fid::ROOT, fid, &["clone".to_string()])
-        .await
-        .with_context(|| format!("walk {executable} /proc/clone"))?;
-    spawner
-        .open(fid, OpenMode::ReadWrite)
-        .await
-        .with_context(|| format!("open {executable} /proc/clone"))?;
-    let pid = String::from_utf8(spawner.read(fid, 0, 64).await?)
-        .with_context(|| format!("{executable} PID is not UTF-8"))?
-        .parse::<u64>()
-        .with_context(|| format!("{executable} PID is invalid"))?;
-    let exec = alan_kernel::ExecSpec {
-        executable: executable.to_string(),
-        args: Vec::new(),
-        namespace: Some(alan_kernel::ExecNamespaceManifest::from_namespace(
-            &namespace.snapshot(),
-        )),
-        descriptors,
-    };
-    spawner
-        .write(fid, 0, &serde_json::to_vec(&exec)?)
-        .await
-        .with_context(|| format!("write {executable} exec spec"))?;
-    spawner
-        .clunk(fid)
-        .await
-        .with_context(|| format!("commit {executable} Process"))?;
-    Ok(Pid(pid))
+    Ok(())
 }
 
 async fn verify_readiness(

@@ -96,10 +96,7 @@ async fn test_runtime_shutdown_drains_deferred_memory_promotion_actions() {
 
     let config = AgentProcessConfig {
         agent_config,
-        launch_context: crate::ProcessLaunchContext::root().with_descriptor(
-            crate::MEMORY_STORE_DESCRIPTOR,
-            crate::ProcessDescriptor::new("/memory").unwrap(),
-        ),
+        memory_store_bound: true,
         store_bindings: Some(store_bindings),
         memory_store_backing: Some(memory_dir.clone()),
         ..AgentProcessConfig::default()

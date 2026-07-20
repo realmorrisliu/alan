@@ -12,7 +12,9 @@ use super::child_runs::ChildRunRecord;
 
 mod supervisor;
 
-pub(crate) use supervisor::{DelegatedChildRunSupervision, DelegatedChildRunSupervisor};
+pub(crate) use supervisor::{
+    ChildProcessStartup, DelegatedChildRunSupervision, DelegatedChildRunSupervisor,
+};
 
 pub(super) const MAX_DELEGATED_RESULT_SUMMARY_CHARS: usize = 320;
 pub(super) const MAX_DELEGATED_RESULT_OUTPUT_INLINE_CHARS: usize = 4_000;

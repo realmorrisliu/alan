@@ -434,7 +434,7 @@ async fn process_server_reconciles_late_bound_authority_before_tool_execution() 
     impl crate::tools::ToolExecutionAuthority for Revoked {
         fn reconcile(
             &self,
-            _pid: alan_kernel::Pid,
+            _pid: u64,
             _binding: ToolExecutionBinding,
         ) -> Result<ToolExecutionBinding> {
             anyhow::bail!("grant was revoked")
@@ -449,7 +449,7 @@ async fn process_server_reconciles_late_bound_authority_before_tool_execution() 
         PathBuf::from("/tmp/scratch"),
     ));
     let runner = ToolProcessRunner::from_registry(&registry);
-    runner.register_process_authority(alan_kernel::Pid(7), Arc::new(Revoked));
+    runner.register_process_authority(7, Arc::new(Revoked));
     let mut namespace = alan_kernel::Namespace::new();
     namespace.mount(
         "/bin/test_tool",
@@ -484,7 +484,7 @@ async fn process_server_uses_spawning_agent_execution_binding() {
     registry.register(CwdEchoTool);
     let runner = ToolProcessRunner::from_registry(&registry);
     runner.register_process_binding(
-        alan_kernel::Pid(7),
+        7,
         test_binding(
             "/mnt/child",
             PathBuf::from("/tmp/child-cwd"),

@@ -24,15 +24,6 @@ impl NamespaceToolExecution {
             .map(|binding| binding.namespace_cwd)
     }
 
-    pub(crate) async fn static_tool_names(&self) -> Result<Vec<String>> {
-        Ok(self
-            .discover_packages()
-            .await?
-            .into_iter()
-            .map(|manifest| manifest.name)
-            .collect())
-    }
-
     pub(crate) fn resolve_capability(
         &self,
         package: &ToolPackageManifest,

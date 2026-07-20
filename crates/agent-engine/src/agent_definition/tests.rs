@@ -1,7 +1,18 @@
 use super::*;
 use crate::skills::SkillTypedDependency;
 use crate::{ProcessDescriptor, ProcessPackageReference, ProcessPackageSkillReference};
-use alan_kernel::Access;
+
+fn resolve(
+    descriptor: Option<&ProcessDescriptor>,
+    packages: &[ProcessPackageReference],
+) -> anyhow::Result<ResolvedAgentDefinition> {
+    ResolvedAgentDefinition::from_process_inputs(
+        descriptor,
+        packages,
+        &[],
+        ConfigSourceKind::Default,
+    )
+}
 
 fn package_descriptor(id: &str) -> crate::ProcessFileTree {
     crate::ProcessFileTree::new(std::collections::BTreeMap::from([(
@@ -50,14 +61,9 @@ fn file_tree_definition_resolves_without_host_backing() {
         ),
     ]))
     .unwrap();
-    let context = ProcessLaunchContext::root().with_descriptor(
-        AGENT_DEFINITION_DESCRIPTOR,
-        ProcessDescriptor::with_file_tree("/lib/pkg/review/agents/root", tree).unwrap(),
-    );
-
-    let resolved =
-        ResolvedAgentDefinition::from_launch_context(&context, &[], ConfigSourceKind::Default)
-            .unwrap();
+    let descriptor =
+        ProcessDescriptor::with_file_tree("/lib/pkg/review/agents/root", tree).unwrap();
+    let resolved = resolve(Some(&descriptor), &[]).unwrap();
 
     assert!(resolved.root_dir.is_none());
     assert_eq!(
@@ -108,14 +114,9 @@ fn file_tree_definitions_canonicalize_local_skill_ids() {
         b"---\nname: Repo Review\ndescription: Review changes.\n---\n".to_vec(),
     )]))
     .unwrap();
-    let tree_context = ProcessLaunchContext::root().with_descriptor(
-        AGENT_DEFINITION_DESCRIPTOR,
-        ProcessDescriptor::with_file_tree("/lib/pkg/review/agents/root", tree).unwrap(),
-    );
-
-    let tree_resolved =
-        ResolvedAgentDefinition::from_launch_context(&tree_context, &[], ConfigSourceKind::Default)
-            .unwrap();
+    let descriptor =
+        ProcessDescriptor::with_file_tree("/lib/pkg/review/agents/root", tree).unwrap();
+    let tree_resolved = resolve(Some(&descriptor), &[]).unwrap();
 
     assert_eq!(
         tree_resolved.capability_view.packages[0].id,
@@ -131,11 +132,7 @@ fn file_tree_definitions_canonicalize_local_skill_ids() {
 
 #[test]
 fn process_without_definition_descriptor_has_no_definition() {
-    let context = ProcessLaunchContext::root();
-
-    let resolved =
-        ResolvedAgentDefinition::from_launch_context(&context, &[], ConfigSourceKind::Default)
-            .unwrap();
+    let resolved = resolve(None, &[]).unwrap();
 
     assert!(resolved.root_dir.is_none());
     assert!(resolved.persona_dirs.is_empty());
@@ -175,17 +172,10 @@ fn typed_package_reference_selects_only_manifest_skill_roots() {
             )
             .unwrap(),
         ],
-        handle.clone(),
+        handle,
     )
     .unwrap();
-    let mut context = ProcessLaunchContext::root().with_package_reference(reference);
-    context
-        .namespace
-        .mount("/lib/pkg/review-pack", handle, Access::ReadOnly);
-
-    let resolved =
-        ResolvedAgentDefinition::from_launch_context(&context, &[], ConfigSourceKind::Default)
-            .unwrap();
+    let resolved = resolve(None, &[reference]).unwrap();
     assert_eq!(resolved.capability_view.packages.len(), 1);
     let package = &resolved.capability_view.packages[0];
     assert_eq!(package.id, "installed:review-pack:reviewer");
@@ -224,53 +214,6 @@ fn typed_package_reference_selects_only_manifest_skill_roots() {
 }
 
 #[test]
-fn package_reference_requires_its_exact_read_only_namespace_mount() {
-    let handle = package_handle();
-    let reference = ProcessPackageReference::new(
-        "review-pack",
-        "e".repeat(64),
-        ProcessPackageKind::Installed,
-        "/lib/pkg/review-pack",
-        vec![
-            ProcessPackageSkillReference::new(
-                "reviewer",
-                "skills/reviewer",
-                Vec::new(),
-                package_descriptor("reviewer"),
-            )
-            .unwrap(),
-        ],
-        handle.clone(),
-    )
-    .unwrap();
-    let mut context = ProcessLaunchContext::root().with_package_reference(reference);
-
-    let error =
-        ResolvedAgentDefinition::from_launch_context(&context, &[], ConfigSourceKind::Default)
-            .unwrap_err();
-
-    assert!(
-        error
-            .to_string()
-            .contains("requires one exact read-only Process namespace mount")
-    );
-
-    context.namespace.mount(
-        "/lib/pkg/review-pack",
-        handle,
-        alan_kernel::Access::ReadWrite,
-    );
-    let error =
-        ResolvedAgentDefinition::from_launch_context(&context, &[], ConfigSourceKind::Default)
-            .unwrap_err();
-    assert!(
-        error
-            .to_string()
-            .contains("requires one exact read-only Process namespace mount")
-    );
-}
-
-#[test]
 fn malformed_package_descriptor_sidecars_are_non_fatal_registry_errors() {
     let handle = package_handle();
     let reference = ProcessPackageReference::new(
@@ -287,17 +230,10 @@ fn malformed_package_descriptor_sidecars_are_non_fatal_registry_errors() {
             )
             .unwrap(),
         ],
-        handle.clone(),
+        handle,
     )
     .unwrap();
-    let mut context = ProcessLaunchContext::root().with_package_reference(reference);
-    context
-        .namespace
-        .mount("/lib/pkg/review-pack", handle, Access::ReadOnly);
-
-    let resolved =
-        ResolvedAgentDefinition::from_launch_context(&context, &[], ConfigSourceKind::Default)
-            .unwrap();
+    let resolved = resolve(None, &[reference]).unwrap();
     let registry = crate::skills::SkillsRegistry::load_capability_view(
         &resolved.capability_view,
         &resolved.skill_overrides,
@@ -342,30 +278,19 @@ fn launch_rejects_skill_id_collision_across_package_and_definition_descriptors()
             )
             .unwrap(),
         ],
-        handle.clone(),
+        handle,
     )
     .unwrap();
-    let mut context = ProcessLaunchContext::root()
-        .with_package_reference(reference)
-        .with_descriptor(
-            AGENT_DEFINITION_DESCRIPTOR,
-            ProcessDescriptor::with_file_tree(
-                "/agent-definition",
-                crate::ProcessFileTree::new(std::collections::BTreeMap::from([(
-                    "skills/reviewer/SKILL.md".to_string(),
-                    b"---\nname: reviewer\ndescription: Test Skill.\n---\n".to_vec(),
-                )]))
-                .unwrap(),
-            )
-            .unwrap(),
-        );
-    context
-        .namespace
-        .mount("/lib/pkg/review-pack", handle, Access::ReadOnly);
-
-    let error =
-        ResolvedAgentDefinition::from_launch_context(&context, &[], ConfigSourceKind::Default)
-            .unwrap_err();
+    let descriptor = ProcessDescriptor::with_file_tree(
+        "/agent-definition",
+        crate::ProcessFileTree::new(std::collections::BTreeMap::from([(
+            "skills/reviewer/SKILL.md".to_string(),
+            b"---\nname: reviewer\ndescription: Test Skill.\n---\n".to_vec(),
+        )]))
+        .unwrap(),
+    )
+    .unwrap();
+    let error = resolve(Some(&descriptor), &[reference]).unwrap_err();
     let message = format!("{error:#}");
     assert!(message.contains("Duplicate runtime Skill id"), "{message}");
 }

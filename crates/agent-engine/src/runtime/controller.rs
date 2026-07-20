@@ -178,8 +178,6 @@ impl RuntimeController {
             warn!("Shutdown channel closed - runtime may already be stopped");
         }
 
-        drop(self.handle.submission_tx);
-
         let timeout = tokio::time::Duration::from_secs(10);
         if let Some(ref mut handle) = self.task_handle {
             match tokio::time::timeout(timeout, &mut *handle).await {
@@ -219,6 +217,15 @@ impl RuntimeController {
         if let Some(handle) = self.task_handle.take() {
             handle.abort();
             let _ = tokio::time::timeout(Duration::from_secs(5), handle).await;
+        }
+    }
+}
+
+impl Drop for RuntimeController {
+    fn drop(&mut self) {
+        self.ready_rx.take();
+        if let Some(handle) = self.task_handle.take() {
+            handle.abort();
         }
     }
 }

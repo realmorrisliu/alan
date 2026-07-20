@@ -1,18 +1,14 @@
 use std::path::Path;
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use alan_agent_protocol::YieldKind;
+use alan_agent_protocol::{AgentExecutableResult, AgentExecutableStatus, YieldKind};
 use anyhow::{Context, Result};
 use tokio_util::sync::CancellationToken;
 
 use super::{ChildRuntimePause, ChildRuntimeResult, ChildRuntimeStatus};
 use crate::runtime::child_runs::ChildRunRegistry;
 use crate::runtime::transition::{NamespaceAgentFiles, NamespaceProcessFiles};
-use crate::runtime::{
-    AgentProcessLifecycle, ChildRunStatus, ChildRunTerminationMode, ChildRunTerminationRequest,
-    RuntimeController, RuntimeStartupMetadata,
-};
+use crate::runtime::{ChildRunStatus, ChildRunTerminationMode, ChildRunTerminationRequest};
 
 const MAX_OBSERVED_CHILD_WARNINGS: usize = 32;
 const MAX_OBSERVED_CHILD_WARNING_CHARS: usize = 512;
@@ -20,15 +16,20 @@ const MAX_CHILD_FILE_OBSERVATION_POLL_INTERVAL: Duration = Duration::from_millis
 
 /// Inputs retained after a delegated Child Run has been launched and registered.
 pub(crate) struct DelegatedChildRunSupervision {
-    pub(crate) runtime: Option<RuntimeController>,
-    pub(crate) startup_metadata: RuntimeStartupMetadata,
+    pub(crate) startup: ChildProcessStartup,
     pub(crate) child_run_id: String,
     pub(crate) child_run_registry: ChildRunRegistry,
     pub(crate) timeout: Option<Duration>,
-    pub(crate) process_lifecycle: Arc<dyn AgentProcessLifecycle>,
     pub(crate) agent_files: NamespaceAgentFiles,
     pub(crate) process_files: NamespaceProcessFiles,
     pub(crate) process_pid: String,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ChildProcessStartup {
+    pub(crate) process_path: String,
+    pub(crate) rollout_path: Option<std::path::PathBuf>,
+    pub(crate) warnings: Vec<String>,
 }
 
 #[derive(Debug)]
@@ -61,18 +62,17 @@ struct ChildFileObservation {
     action_events_offset: u64,
     ui_events_offset: u64,
     terminal_error: Option<String>,
+    process_result: Option<AgentExecutableResult>,
     activity: alan_agent_protocol::UiActivitySnapshot,
     notice: alan_agent_protocol::UiNoticeSnapshot,
 }
 
 /// Supervises one delegated Child Run from authoritative Process and AgentFS files.
 pub(crate) struct DelegatedChildRunSupervisor {
-    runtime: Option<RuntimeController>,
-    startup_metadata: RuntimeStartupMetadata,
+    startup: ChildProcessStartup,
     child_run_id: String,
     child_run_registry: ChildRunRegistry,
     timeout: Option<Duration>,
-    process_lifecycle: Arc<dyn AgentProcessLifecycle>,
     agent_files: NamespaceAgentFiles,
     process_files: NamespaceProcessFiles,
     process_pid: String,
@@ -81,12 +81,10 @@ pub(crate) struct DelegatedChildRunSupervisor {
 impl DelegatedChildRunSupervisor {
     pub(crate) fn new(input: DelegatedChildRunSupervision) -> Self {
         Self {
-            runtime: input.runtime,
-            startup_metadata: input.startup_metadata,
+            startup: input.startup,
             child_run_id: input.child_run_id,
             child_run_registry: input.child_run_registry,
             timeout: input.timeout,
-            process_lifecycle: input.process_lifecycle,
             agent_files: input.agent_files,
             process_files: input.process_files,
             process_pid: input.process_pid,
@@ -98,69 +96,130 @@ impl DelegatedChildRunSupervisor {
         let agent_files = &self.agent_files;
         let pid = self.process_pid.as_str();
         let timeout = Duration::from_secs(1);
-        let process_exit_code = process_files.read_process_exit_code(pid).await?;
+        if let Some(exit_code) = process_files.read_process_exit_code(pid).await? {
+            return self.observe_exited_process(exit_code).await;
+        }
+
+        let live_observation: Result<ChildFileObservation> = async {
+            let (process_output_offset, process_io_events_offset) =
+                process_files.read_process_io_offsets(pid).await?;
+            let activity = tokio::time::timeout(timeout, agent_files.read_ui_activity_snapshot())
+                .await
+                .context("observe child activity timed out")??;
+            let output_text = tokio::time::timeout(timeout, agent_files.read_assistant_output())
+                .await
+                .context("observe child output timed out")??;
+            let ui_events_offset = tokio::time::timeout(timeout, agent_files.ui_events_offset())
+                .await
+                .context("observe child UI events offset timed out")??;
+            let notice = tokio::time::timeout(timeout, agent_files.read_ui_notice_snapshot())
+                .await
+                .context("observe child notice timed out")??;
+            let request_ids = tokio::time::timeout(timeout, agent_files.request_ids())
+                .await
+                .context("observe child requests timed out")??;
+            let pending_request_id =
+                tokio::time::timeout(timeout, agent_files.pending_request_id(&request_ids))
+                    .await
+                    .context("observe child pending request timed out")??;
+            let request_events_offset =
+                tokio::time::timeout(timeout, agent_files.request_events_offset())
+                    .await
+                    .context("observe child request stream offset timed out")??;
+            let action_ids = tokio::time::timeout(timeout, agent_files.action_ids())
+                .await
+                .context("observe child actions timed out")??;
+            let action_events_offset =
+                tokio::time::timeout(timeout, agent_files.action_events_offset())
+                    .await
+                    .context("observe child action stream offset timed out")??;
+            Ok(ChildFileObservation {
+                process_exited: false,
+                process_exit_code: None,
+                output_text,
+                process_output_offset,
+                process_io_events_offset,
+                request_ids,
+                pending_request_id,
+                request_events_offset,
+                action_ids,
+                action_events_offset,
+                ui_events_offset,
+                terminal_error: if notice.kind == alan_agent_protocol::UiNoticeKind::Error {
+                    Some(notice.message.clone())
+                } else {
+                    None
+                },
+                process_result: None,
+                activity,
+                notice,
+            })
+        }
+        .await;
+
+        match live_observation {
+            Ok(observation) => Ok(observation),
+            Err(error) => match process_files.read_process_exit_code(pid).await? {
+                Some(exit_code) => self.observe_exited_process(exit_code).await,
+                None => Err(error),
+            },
+        }
+    }
+
+    async fn observe_exited_process(&self, exit_code: i32) -> Result<ChildFileObservation> {
+        let process_files = &self.process_files;
+        let pid = self.process_pid.as_str();
         let (process_output_offset, process_io_events_offset) =
             process_files.read_process_io_offsets(pid).await?;
-        let activity = tokio::time::timeout(timeout, agent_files.read_ui_activity_snapshot())
-            .await
-            .context("observe child activity timed out")??;
-        let output_text = tokio::time::timeout(timeout, agent_files.read_assistant_output())
-            .await
-            .context("observe child output timed out")??;
-        let ui_events_offset = tokio::time::timeout(timeout, agent_files.ui_events_offset())
-            .await
-            .context("observe child UI events offset timed out")??;
-        let notice = tokio::time::timeout(timeout, agent_files.read_ui_notice_snapshot())
-            .await
-            .context("observe child notice timed out")??;
-        let request_ids = tokio::time::timeout(timeout, agent_files.request_ids())
-            .await
-            .context("observe child requests timed out")??;
-        let pending_request_id =
-            tokio::time::timeout(timeout, agent_files.pending_request_id(&request_ids))
-                .await
-                .context("observe child pending request timed out")??;
-        let request_events_offset =
-            tokio::time::timeout(timeout, agent_files.request_events_offset())
-                .await
-                .context("observe child request stream offset timed out")??;
-        let action_ids = tokio::time::timeout(timeout, agent_files.action_ids())
-            .await
-            .context("observe child actions timed out")??;
-        let action_events_offset =
-            tokio::time::timeout(timeout, agent_files.action_events_offset())
-                .await
-                .context("observe child action stream offset timed out")??;
+        let process_output = process_files.read_process_output(pid).await?;
+        let process_result = AgentExecutableResult::from_process_output(&process_output)
+            .ok()
+            .filter(|result| agent_result_matches_exit_code(Some(exit_code), result));
+        let activity = match process_result.as_ref().map(|result| result.status) {
+            Some(AgentExecutableStatus::Paused) => {
+                alan_agent_protocol::UiActivitySnapshot::paused(None)
+            }
+            _ => alan_agent_protocol::UiActivitySnapshot::idle(),
+        };
+        let notice = process_result
+            .as_ref()
+            .and_then(|result| result.error_message.as_ref())
+            .map(|message| {
+                alan_agent_protocol::UiNoticeSnapshot::new(
+                    alan_agent_protocol::UiNoticeKind::Error,
+                    message.clone(),
+                )
+            })
+            .unwrap_or_default();
+        let output_text = process_result
+            .as_ref()
+            .map(|result| result.output_text.clone())
+            .unwrap_or_else(|| String::from_utf8_lossy(&process_output).into_owned());
+        let pending_request_id = process_result
+            .as_ref()
+            .and_then(|result| result.pause.as_ref())
+            .map(|pause| pause.request_id.clone());
+        let request_ids = pending_request_id.iter().cloned().collect();
+        let terminal_error = process_result
+            .as_ref()
+            .and_then(|result| result.error_message.clone());
         Ok(ChildFileObservation {
-            process_exited: process_exit_code.is_some(),
-            process_exit_code,
+            process_exited: true,
+            process_exit_code: Some(exit_code),
             output_text,
             process_output_offset,
             process_io_events_offset,
             request_ids,
             pending_request_id,
-            request_events_offset,
-            action_ids,
-            action_events_offset,
-            ui_events_offset,
-            terminal_error: if notice.kind == alan_agent_protocol::UiNoticeKind::Error {
-                Some(notice.message.clone())
-            } else {
-                None
-            },
+            request_events_offset: 0,
+            action_ids: Vec::new(),
+            action_events_offset: 0,
+            ui_events_offset: 0,
+            terminal_error,
+            process_result,
             activity,
             notice,
         })
-    }
-
-    #[cfg(test)]
-    pub(crate) async fn join(mut self) -> Result<ChildRuntimeResult> {
-        let observed = match self.wait_for_terminal_event(None).await? {
-            ChildRuntimeWaitOutcome::Observed(observed) => observed,
-            ChildRuntimeWaitOutcome::Cancelled => return Ok(self.cancelled_result()),
-        };
-
-        self.finish_after_observed_terminal_event(observed).await
     }
 
     pub(crate) async fn join_until_cancelled(
@@ -181,7 +240,7 @@ impl DelegatedChildRunSupervisor {
     ) -> Result<ChildRuntimeResult> {
         let mut warnings = Vec::new();
         for warning in self
-            .startup_metadata
+            .startup
             .warnings
             .iter()
             .cloned()
@@ -189,11 +248,10 @@ impl DelegatedChildRunSupervisor {
         {
             push_bounded_child_warning(&mut warnings, warning);
         }
-        self.finish_runtime_and_process(&observed.status).await;
+        self.await_process_terminal().await;
         let output_text = observed.output_text;
         let rollout_fallback_text = if output_text.trim().is_empty() {
-            read_latest_assistant_text_from_rollout(self.startup_metadata.rollout_path.as_deref())
-                .await
+            read_latest_assistant_text_from_rollout(self.startup.rollout_path.as_deref()).await
         } else {
             None
         };
@@ -214,9 +272,9 @@ impl DelegatedChildRunSupervisor {
 
         Ok(ChildRuntimeResult {
             status: observed.status,
-            process_path: self.startup_metadata.process_path.clone(),
+            process_path: self.startup.process_path.clone(),
             child_run_id: Some(self.child_run_id.clone()),
-            rollout_path: self.startup_metadata.rollout_path.clone(),
+            rollout_path: self.startup.rollout_path.clone(),
             output_text,
             turn_summary: observed.turn_summary,
             structured_output,
@@ -231,14 +289,14 @@ impl DelegatedChildRunSupervisor {
         self.child_run_registry
             .mark_terminal(&self.child_run_id, ChildRunStatus::Cancelled, None);
         let mut warnings = Vec::new();
-        for warning in self.startup_metadata.warnings.iter().cloned() {
+        for warning in self.startup.warnings.iter().cloned() {
             push_bounded_child_warning(&mut warnings, warning);
         }
         ChildRuntimeResult {
             status: ChildRuntimeStatus::Cancelled,
-            process_path: self.startup_metadata.process_path.clone(),
+            process_path: self.startup.process_path.clone(),
             child_run_id: Some(self.child_run_id.clone()),
-            rollout_path: self.startup_metadata.rollout_path.clone(),
+            rollout_path: self.startup.rollout_path.clone(),
             output_text: String::new(),
             turn_summary: None,
             structured_output: None,
@@ -304,6 +362,39 @@ impl DelegatedChildRunSupervisor {
                 }
             }
             output_text.clone_from(&observation.output_text);
+            if let Some(result) = observation.process_result.as_ref() {
+                for warning in &result.warnings {
+                    push_bounded_child_warning(&mut warnings, warning.clone());
+                }
+                let (status, error_message, pause) = match result.status {
+                    AgentExecutableStatus::Completed => (ChildRuntimeStatus::Completed, None, None),
+                    AgentExecutableStatus::Paused => (
+                        ChildRuntimeStatus::Paused,
+                        None,
+                        result.pause.as_ref().map(|pause| ChildRuntimePause {
+                            request_id: pause.request_id.clone(),
+                            kind: pause.kind.clone(),
+                        }),
+                    ),
+                    AgentExecutableStatus::Failed => (
+                        ChildRuntimeStatus::Failed,
+                        result
+                            .error_message
+                            .clone()
+                            .or_else(|| Some("Child Agent Process reported failure".to_string())),
+                        None,
+                    ),
+                };
+                return Ok(ChildRuntimeWaitOutcome::Observed(
+                    file_terminal_observation(
+                        result.output_text.clone(),
+                        warnings,
+                        status,
+                        error_message,
+                        pause,
+                    ),
+                ));
+            }
             if observation.process_exited {
                 let exit_code = observation.process_exit_code.unwrap_or(1);
                 if exit_code == 130 {
@@ -312,18 +403,7 @@ impl DelegatedChildRunSupervisor {
                     ));
                 }
                 return Ok(ChildRuntimeWaitOutcome::Observed(
-                    file_terminal_observation(
-                        observation.output_text,
-                        warnings,
-                        if exit_code == 0 {
-                            ChildRuntimeStatus::Completed
-                        } else {
-                            ChildRuntimeStatus::Failed
-                        },
-                        (exit_code != 0)
-                            .then(|| format!("Child Agent Process exited with code {exit_code}")),
-                        None,
-                    ),
+                    invalid_agent_result_observation(exit_code, observation.output_text, warnings),
                 ));
             }
             if observation.activity.state == alan_agent_protocol::UiActivityState::Paused
@@ -373,8 +453,9 @@ impl DelegatedChildRunSupervisor {
                 .termination_request(&self.child_run_id)
             {
                 match request.mode {
-                    ChildRunTerminationMode::Graceful => self.shutdown_runtime_task().await,
-                    ChildRunTerminationMode::Forceful => self.abort_runtime_task().await,
+                    ChildRunTerminationMode::Graceful | ChildRunTerminationMode::Forceful => {
+                        self.terminate_process_and_reconcile().await
+                    }
                 }
                 return Ok(ChildRuntimeWaitOutcome::Observed(terminated_observation(
                     request,
@@ -386,7 +467,7 @@ impl DelegatedChildRunSupervisor {
             if let Some(cap) = wall_clock_cap
                 && started_at.elapsed() >= cap
             {
-                self.abort_runtime_task().await;
+                self.terminate_process_and_reconcile().await;
                 return Ok(ChildRuntimeWaitOutcome::Observed(timed_out_observation(
                     "Delegated Child Run wall-clock cap exceeded",
                     &output_text,
@@ -404,7 +485,7 @@ impl DelegatedChildRunSupervisor {
                             return Ok(ChildRuntimeWaitOutcome::Cancelled);
                         }
                         _ = tokio::time::sleep(idle_remaining) => {
-                            self.abort_runtime_task().await;
+                            self.terminate_process_and_reconcile().await;
                             return Ok(ChildRuntimeWaitOutcome::Observed(timed_out_observation(
                                 "Delegated Child Run idle timed out",
                                 &output_text,
@@ -416,7 +497,7 @@ impl DelegatedChildRunSupervisor {
                 } else {
                     tokio::select! {
                         _ = tokio::time::sleep(idle_remaining) => {
-                            self.abort_runtime_task().await;
+                            self.terminate_process_and_reconcile().await;
                             return Ok(ChildRuntimeWaitOutcome::Observed(timed_out_observation(
                                 "Delegated Child Run idle timed out",
                                 &output_text,
@@ -441,35 +522,13 @@ impl DelegatedChildRunSupervisor {
     }
 
     async fn terminate_runtime(&mut self) {
-        self.shutdown_runtime_task().await;
         self.terminate_process_and_reconcile().await;
-    }
-
-    async fn finish_runtime_and_process(&mut self, status: &ChildRuntimeStatus) {
-        self.shutdown_runtime_task().await;
-        self.process_lifecycle
-            .finish(child_runtime_process_exit_code(status))
-            .await;
-        self.reconcile_exited_process().await;
-    }
-
-    async fn shutdown_runtime_task(&mut self) {
-        if let Some(runtime) = self.runtime.take() {
-            let _ = runtime.shutdown().await;
-        }
-    }
-
-    async fn abort_runtime_task(&mut self) {
-        if let Some(runtime) = self.runtime.take() {
-            runtime.abort().await;
-        }
     }
 
     async fn terminate_process_and_reconcile(&self) {
         let process_files = &self.process_files;
         let pid = self.process_pid.as_str();
         if let Ok(Some(exit_code)) = process_files.read_process_exit_code(pid).await {
-            self.process_lifecycle.finish(exit_code).await;
             self.child_run_registry
                 .reconcile_process_exit(&self.child_run_id, exit_code);
             return;
@@ -477,16 +536,27 @@ impl DelegatedChildRunSupervisor {
         let _ = process_files
             .write_process_control_for_pid(pid, "cancel")
             .await;
-        let exit_code = process_files
-            .read_process_exit_code(pid)
-            .await
-            .ok()
-            .flatten()
-            .unwrap_or(130);
-        self.process_lifecycle.finish(exit_code).await;
         if let Ok(Some(exit_code)) = process_files.read_process_exit_code(pid).await {
             self.child_run_registry
                 .reconcile_process_exit(&self.child_run_id, exit_code);
+        }
+    }
+
+    async fn await_process_terminal(&self) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < deadline {
+            if self
+                .process_files
+                .read_process_exit_code(&self.process_pid)
+                .await
+                .ok()
+                .flatten()
+                .is_some()
+            {
+                self.reconcile_exited_process().await;
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
         }
     }
 
@@ -517,26 +587,17 @@ impl DelegatedChildRunSupervisor {
             status: ChildRuntimeStatus::Terminated,
         }
     }
+}
 
-    #[cfg(test)]
-    pub(crate) fn set_timeout_for_test(&mut self, timeout: Duration) {
-        self.timeout = Some(timeout);
-    }
-
-    #[cfg(test)]
-    pub(crate) fn agent_files_for_test(&self) -> NamespaceAgentFiles {
-        self.agent_files.clone()
-    }
-
-    #[cfg(test)]
-    pub(crate) fn process_files_for_test(&self) -> NamespaceProcessFiles {
-        self.process_files.clone()
-    }
-
-    #[cfg(test)]
-    pub(crate) fn process_pid_for_test(&self) -> &str {
-        &self.process_pid
-    }
+fn agent_result_matches_exit_code(exit_code: Option<i32>, result: &AgentExecutableResult) -> bool {
+    matches!(
+        (exit_code, result.status),
+        (Some(0), AgentExecutableStatus::Completed)
+            | (
+                Some(1),
+                AgentExecutableStatus::Paused | AgentExecutableStatus::Failed
+            )
+    )
 }
 
 fn push_bounded_child_warning(warnings: &mut Vec<String>, warning: String) {
@@ -597,6 +658,22 @@ fn file_terminal_observation(
     }
 }
 
+fn invalid_agent_result_observation(
+    exit_code: i32,
+    output_text: String,
+    warnings: Vec<String>,
+) -> ObservedChildTerminalEvent {
+    file_terminal_observation(
+        output_text,
+        warnings,
+        ChildRuntimeStatus::Failed,
+        Some(format!(
+            "Child Agent Process exited with code {exit_code} without a valid terminal result"
+        )),
+        None,
+    )
+}
+
 fn timed_out_observation(
     message: &str,
     output_text: &str,
@@ -640,15 +717,6 @@ fn child_run_status_for_runtime_status(status: ChildRuntimeStatus) -> ChildRunSt
         ChildRuntimeStatus::TimedOut => ChildRunStatus::TimedOut,
         ChildRuntimeStatus::Terminated => ChildRunStatus::Terminated,
         ChildRuntimeStatus::Failed => ChildRunStatus::Failed,
-    }
-}
-
-fn child_runtime_process_exit_code(status: &ChildRuntimeStatus) -> i32 {
-    match status {
-        ChildRuntimeStatus::Completed => 0,
-        ChildRuntimeStatus::TimedOut => 124,
-        ChildRuntimeStatus::Cancelled | ChildRuntimeStatus::Terminated => 130,
-        ChildRuntimeStatus::Paused | ChildRuntimeStatus::Failed => 1,
     }
 }
 
@@ -748,5 +816,27 @@ fn parse_last_json_fenced_block(text: &str) -> Option<serde_json::Value> {
 }
 
 #[cfg(test)]
-#[path = "supervisor_tests.rs"]
-mod tests;
+mod tests {
+    use super::*;
+
+    #[test]
+    fn process_exit_requires_a_matching_agent_executable_result() {
+        let completed = AgentExecutableResult::completed("done", Vec::new());
+        assert!(agent_result_matches_exit_code(Some(0), &completed));
+        assert!(!agent_result_matches_exit_code(Some(1), &completed));
+
+        let failed = AgentExecutableResult::failed("failed");
+        assert!(agent_result_matches_exit_code(Some(1), &failed));
+        assert!(!agent_result_matches_exit_code(Some(0), &failed));
+
+        let invalid = invalid_agent_result_observation(0, "raw".to_string(), Vec::new());
+        assert_eq!(invalid.status, ChildRuntimeStatus::Failed);
+        assert_eq!(invalid.output_text, "raw");
+        assert!(
+            invalid
+                .error_message
+                .unwrap()
+                .contains("without a valid terminal result")
+        );
+    }
+}

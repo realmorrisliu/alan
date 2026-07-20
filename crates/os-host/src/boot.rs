@@ -4,12 +4,14 @@ use std::{collections::BTreeMap, path::Path, sync::Arc};
 
 use alan_agent_engine::{
     AgentProcessConfig, Config, InstallChannel, LlmClient, ProcessDescriptor, ProcessFileTree,
-    ProcessLaunchContext, ToolRegistry,
+    ToolRegistry,
 };
 use alan_ap::InProcessTransport;
 use alan_kernel::{Access, Credentials, Namespace};
 use alan_llm::{GenerationRequest, GenerationResponse, LlmProvider, StreamChunk};
-use alan_service_manager::{ConnectionsFile, LlmClientFactory, ServiceManagerConfig};
+use alan_service_manager::{
+    ConnectionsFile, LlmClientFactory, ProcessLaunchContext, ServiceManagerConfig,
+};
 use anyhow::{Context, Result, bail};
 
 use crate::paths::{HostStorePaths, SystemStorePaths};
@@ -172,7 +174,7 @@ impl HostBootConfig {
         );
 
         let mut process = AgentProcessConfig::from(Config::load_with_metadata()?);
-        process.launch_context = ProcessLaunchContext::new(namespace, Credentials::system(), "/")?
+        let launch_context = ProcessLaunchContext::new(namespace, Credentials::system(), "/")?
             .with_descriptor(
                 alan_agent_engine::AGENT_DEFINITION_DESCRIPTOR,
                 ProcessDescriptor::with_file_tree("/lib/agents/root", root_definition_tree)?,
@@ -200,15 +202,16 @@ impl HostBootConfig {
             managed_auth: Some(host_store.managed_auth),
         });
 
-        Ok(Self(ServiceManagerConfig::with_factory(
-            channel_id,
+        Ok(Self(ServiceManagerConfig {
+            channel_id: channel_id.into(),
             process,
-            Some(connection_store),
-            Some(system_store.packages()?),
+            launch_context,
+            connection_store: Some(connection_store),
+            package_store: Some(system_store.packages()?),
             llm_factory,
-            Arc::new(crate::host_mounts::NativeHostMountExportAdapter),
+            host_mount_adapter: Arc::new(crate::host_mounts::NativeHostMountExportAdapter),
             tools,
-        )))
+        }))
     }
 
     /// Explicit test-only inputs. Product callers never select this implicitly.
@@ -218,7 +221,13 @@ impl HostBootConfig {
         llm_client: LlmClient,
         tools: ToolRegistry,
     ) -> Self {
-        let mut config = ServiceManagerConfig::ephemeral(channel_id, process, llm_client, tools);
+        let mut config = ServiceManagerConfig::ephemeral(
+            channel_id,
+            process,
+            ProcessLaunchContext::root(),
+            llm_client,
+            tools,
+        );
         config.host_mount_adapter = Arc::new(crate::host_mounts::NativeHostMountExportAdapter);
         Self(config)
     }

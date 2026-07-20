@@ -13,7 +13,10 @@ mod host_mount_requests;
 mod process_files;
 mod tool_execution;
 
-use std::sync::{Arc, atomic::AtomicU64};
+use std::{
+    path::PathBuf,
+    sync::{Arc, atomic::AtomicU64},
+};
 
 use alan_ap::InProcessTransport;
 use anyhow::Result;
@@ -136,12 +139,11 @@ pub struct NamespaceRuntimeEnvironment {
     root: InProcessTransport,
     agent_path: String,
     llm_connection: String,
+    namespace_cwd: PathBuf,
     tool_process_context: Option<NamespaceToolProcessContext>,
     input_offset: Arc<AtomicU64>,
     control_offset: Arc<AtomicU64>,
     child_run_registry: super::super::child_runs::ChildRunRegistry,
-    child_process_assembler: Option<Arc<dyn super::super::ChildAgentProcessAssembler>>,
-    launch_context: Option<crate::ProcessLaunchContext>,
 }
 
 /// Narrow file-native handle for one mounted LLM Connection.
@@ -179,8 +181,8 @@ pub(crate) use host_mount_requests::{HostMountTerminalResult, HostMountTerminalS
 #[derive(Clone)]
 pub(crate) struct NamespaceChildLaunch {
     llm_connection: String,
-    launch_context: Option<crate::ProcessLaunchContext>,
-    child_process_assembler: Option<Arc<dyn super::super::ChildAgentProcessAssembler>>,
+    namespace_cwd: PathBuf,
+    process_files: NamespaceProcessFiles,
 }
 
 /// Narrow handle for Tool package discovery, policy capability, and execution.
@@ -194,7 +196,7 @@ pub(crate) struct NamespaceToolExecution {
 
 #[derive(Clone)]
 struct NamespaceToolProcessContext {
-    pub(crate) pid: alan_kernel::Pid,
+    pub(crate) pid: u64,
     pub(crate) tool_runner: crate::tools::ToolProcessRunner,
 }
 
@@ -217,18 +219,17 @@ impl NamespaceRuntimeEnvironment {
             root,
             agent_path: agent_path.into(),
             llm_connection: llm_connection.into(),
+            namespace_cwd: PathBuf::from("/"),
             tool_process_context: None,
             input_offset: Arc::new(AtomicU64::new(0)),
             control_offset: Arc::new(AtomicU64::new(0)),
             child_run_registry: super::super::child_runs::ChildRunRegistry::default(),
-            child_process_assembler: None,
-            launch_context: None,
         }
     }
 
-    /// Bind the explicit Process Launch Context used for child execution.
-    pub fn with_launch_context(mut self, launch_context: crate::ProcessLaunchContext) -> Self {
-        self.launch_context = Some(launch_context);
+    /// Bind the Alan OS working directory selected by Agent Runtime Service.
+    pub fn with_namespace_cwd(mut self, namespace_cwd: impl Into<PathBuf>) -> Self {
+        self.namespace_cwd = namespace_cwd.into();
         self
     }
 
@@ -264,8 +265,8 @@ impl NamespaceRuntimeEnvironment {
     pub(crate) fn child_launch(&self) -> NamespaceChildLaunch {
         NamespaceChildLaunch {
             llm_connection: self.llm_connection.clone(),
-            launch_context: self.launch_context.clone(),
-            child_process_assembler: self.child_process_assembler.clone(),
+            namespace_cwd: self.namespace_cwd.clone(),
+            process_files: self.process_files(),
         }
     }
 
@@ -281,7 +282,7 @@ impl NamespaceRuntimeEnvironment {
     /// Bind transition-local Tool execution to its already-created Process.
     pub fn with_tool_process_context(
         mut self,
-        pid: alan_kernel::Pid,
+        pid: u64,
         tool_runner: crate::tools::ToolProcessRunner,
     ) -> Self {
         self.tool_process_context = Some(NamespaceToolProcessContext { pid, tool_runner });
@@ -295,15 +296,6 @@ impl NamespaceRuntimeEnvironment {
     /// Process-local projection registry for delegated child Agent Processes.
     pub(crate) fn child_run_registry(&self) -> &super::super::child_runs::ChildRunRegistry {
         &self.child_run_registry
-    }
-
-    /// Bind the Process-scoped Agent Runtime Service capability used for child assembly.
-    pub fn with_child_process_assembler(
-        mut self,
-        assembler: Arc<dyn super::super::ChildAgentProcessAssembler>,
-    ) -> Self {
-        self.child_process_assembler = Some(assembler);
-        self
     }
 
     pub fn root_transport(&self) -> InProcessTransport {

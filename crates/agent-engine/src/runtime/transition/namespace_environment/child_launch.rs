@@ -1,7 +1,5 @@
 //! Child Agent Process launch capabilities passed through the namespace boundary.
 
-use std::sync::Arc;
-
 use super::NamespaceChildLaunch;
 
 impl NamespaceChildLaunch {
@@ -9,11 +7,30 @@ impl NamespaceChildLaunch {
         &self.llm_connection
     }
 
-    pub(crate) fn launch_context(&self) -> Option<&crate::ProcessLaunchContext> {
-        self.launch_context.as_ref()
+    pub(crate) fn namespace_cwd(&self) -> &std::path::Path {
+        &self.namespace_cwd
     }
 
-    pub(crate) fn assembler(&self) -> Option<Arc<dyn crate::runtime::ChildAgentProcessAssembler>> {
-        self.child_process_assembler.clone()
+    pub(crate) fn process_files(&self) -> &super::NamespaceProcessFiles {
+        &self.process_files
+    }
+
+    pub(crate) fn observation_handles(
+        &self,
+        pid: &str,
+    ) -> (super::NamespaceAgentFiles, super::NamespaceProcessFiles) {
+        let agent_path = format!("/agent/{pid}");
+        (
+            super::NamespaceAgentFiles {
+                root: self.process_files.root.clone(),
+                agent_path: agent_path.clone(),
+                input_offset: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+                control_offset: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            },
+            super::NamespaceProcessFiles {
+                root: self.process_files.root.clone(),
+                agent_path,
+            },
+        )
     }
 }

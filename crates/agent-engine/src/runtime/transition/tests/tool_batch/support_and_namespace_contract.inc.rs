@@ -606,12 +606,6 @@
             );
         }
 
-        let launch_context = crate::ProcessLaunchContext::new(
-            process_namespace.clone(),
-            Credentials::user("test-agent"),
-            "/mnt/source",
-        )
-        .unwrap();
         let binding = crate::tools::test_execution_binding(
             "/mnt/source",
             PathBuf::from("/tmp"),
@@ -621,7 +615,7 @@
 
         let procfs = ProcFs::new().with_runner(Arc::new(RegistryToolRunner::new(tools.clone())));
         let tool_runner = crate::tools::ToolProcessRunner::from_registry(&tools);
-        tool_runner.register_process_binding(alan_kernel::Pid(1), binding);
+        tool_runner.register_process_binding(1, binding);
         let spawner_procfs = Arc::new(procfs.for_spawner(
             None,
             process_namespace.clone(),
@@ -640,8 +634,8 @@
         RuntimeLoopState {
             machine,
             environment: NamespaceRuntimeEnvironment::new(root, agent_path, "default")
-                .with_launch_context(launch_context)
-                .with_tool_process_context(alan_kernel::Pid(1), tool_runner),
+                .with_namespace_cwd("/mnt/source")
+                .with_tool_process_context(1, tool_runner),
             core_config: config,
             runtime_config: crate::runtime::RuntimeConfig::default(),
             prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),

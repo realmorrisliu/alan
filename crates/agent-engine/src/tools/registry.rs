@@ -453,8 +453,33 @@ struct ToolProcessRunnerInner {
     tools: HashMap<String, Arc<dyn Tool>>,
     config: Arc<Config>,
     default_binding: Arc<Mutex<Option<ToolExecutionBinding>>>,
-    process_bindings: Mutex<HashMap<alan_kernel::Pid, ToolExecutionBinding>>,
-    process_authorities: Mutex<HashMap<alan_kernel::Pid, Arc<dyn super::ToolExecutionAuthority>>>,
+    process_bindings: Mutex<HashMap<u64, ToolExecutionBinding>>,
+    process_authorities: Mutex<HashMap<u64, Arc<dyn super::ToolExecutionAuthority>>>,
+}
+
+/// Kernel-neutral inputs for one Tool executable invocation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToolProcessInvocation {
+    pub pid: u64,
+    pub parent: Option<u64>,
+    pub executable: String,
+    pub args: Vec<String>,
+}
+
+/// Kernel-neutral terminal result produced by one Tool executable.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToolProcessOutcome {
+    pub output: Vec<u8>,
+    pub exit_code: i32,
+}
+
+impl ToolProcessOutcome {
+    pub fn exited(exit_code: i32, output: impl Into<Vec<u8>>) -> Self {
+        Self {
+            output: output.into(),
+            exit_code,
+        }
+    }
 }
 
 impl ToolProcessRunner {
@@ -471,7 +496,7 @@ impl ToolProcessRunner {
     }
 
     /// Bind host-resolved Tool execution authority to one assembled Process.
-    pub fn register_process_binding(&self, pid: alan_kernel::Pid, binding: ToolExecutionBinding) {
+    pub fn register_process_binding(&self, pid: u64, binding: ToolExecutionBinding) {
         self.inner
             .process_bindings
             .lock()
@@ -479,7 +504,7 @@ impl ToolProcessRunner {
             .insert(pid, binding);
     }
 
-    pub(crate) fn process_binding(&self, pid: alan_kernel::Pid) -> Option<ToolExecutionBinding> {
+    pub(crate) fn process_binding(&self, pid: u64) -> Option<ToolExecutionBinding> {
         self.inner
             .process_bindings
             .lock()
@@ -498,7 +523,7 @@ impl ToolProcessRunner {
     /// Install a late-bound authority resolver for one Agent Process.
     pub fn register_process_authority(
         &self,
-        pid: alan_kernel::Pid,
+        pid: u64,
         authority: Arc<dyn super::ToolExecutionAuthority>,
     ) {
         self.inner
@@ -509,7 +534,7 @@ impl ToolProcessRunner {
     }
 
     /// Remove all Tool execution state when its owning Process exits.
-    pub fn unregister_process(&self, pid: alan_kernel::Pid) {
+    pub fn unregister_process(&self, pid: u64) {
         let inner = &self.inner;
         inner
             .process_bindings
@@ -535,27 +560,18 @@ impl ToolProcessRunner {
     }
 }
 
-#[async_trait::async_trait]
-impl alan_kernel::ProcessRunner for ToolProcessRunner {
-    async fn run(&self, invocation: alan_kernel::ProcessInvocation) -> alan_kernel::ProcessOutcome {
-        if invocation
-            .namespace
-            .resolve(&invocation.exec.executable)
-            .is_err()
-        {
-            return alan_kernel::ProcessOutcome::exited(127, b"executable is not mounted\n");
-        }
+impl ToolProcessRunner {
+    /// Execute one Tool image after the Alan OS adapter has validated its namespace binding.
+    pub async fn run(&self, invocation: ToolProcessInvocation) -> ToolProcessOutcome {
         let name = invocation
-            .exec
             .executable
             .rsplit('/')
             .next()
-            .unwrap_or(invocation.exec.executable.as_str());
+            .unwrap_or(invocation.executable.as_str());
         let Some(tool) = self.inner.tools.get(name) else {
-            return alan_kernel::ProcessOutcome::exited(127, b"Tool executable has no host\n");
+            return ToolProcessOutcome::exited(127, b"Tool executable has no host\n");
         };
         let arguments = invocation
-            .exec
             .args
             .first()
             .and_then(|raw| serde_json::from_str::<Value>(raw).ok())
@@ -660,12 +676,35 @@ impl alan_kernel::ProcessRunner for ToolProcessRunner {
     }
 }
 
-fn process_json_outcome(exit_code: i32, value: Value) -> alan_kernel::ProcessOutcome {
+fn process_json_outcome(exit_code: i32, value: Value) -> ToolProcessOutcome {
     let mut bytes = serde_json::to_vec(&value).unwrap_or_else(|_| {
         serde_json::to_vec(&serde_json::json!({"success": exit_code == 0})).unwrap()
     });
     bytes.push(b'\n');
-    alan_kernel::ProcessOutcome::exited(exit_code, bytes)
+    ToolProcessOutcome::exited(exit_code, bytes)
+}
+
+#[cfg(test)]
+#[async_trait::async_trait]
+impl alan_kernel::ProcessRunner for ToolProcessRunner {
+    async fn run(&self, invocation: alan_kernel::ProcessInvocation) -> alan_kernel::ProcessOutcome {
+        if invocation
+            .namespace
+            .resolve(&invocation.exec.executable)
+            .is_err()
+        {
+            return alan_kernel::ProcessOutcome::exited(127, b"executable is not mounted\n");
+        }
+        let outcome = self
+            .run(ToolProcessInvocation {
+                pid: invocation.pid.0,
+                parent: invocation.parent.map(|pid| pid.0),
+                executable: invocation.exec.executable,
+                args: invocation.exec.args,
+            })
+            .await;
+        alan_kernel::ProcessOutcome::exited(outcome.exit_code, outcome.output)
+    }
 }
 
 #[cfg(test)]

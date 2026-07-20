@@ -1,7 +1,7 @@
 //! Agent Process launch configuration and resolution.
 
 use super::RuntimeConfig;
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::path::{Path, PathBuf};
 
 /// Agent configuration before Process-specific launch inputs are applied.
@@ -231,8 +231,12 @@ pub struct AgentProcessConfig {
     pub agent_config: AgentConfig,
     /// Source used before applying the explicit Agent Definition descriptor.
     pub core_config_source: crate::ConfigSourceKind,
-    /// Process namespace, descriptors, credentials, Host Mounts, and Alan OS cwd.
-    pub launch_context: crate::ProcessLaunchContext,
+    /// Agent Definition and immutable package capabilities resolved by Agent Runtime Service.
+    pub agent_definition: crate::ResolvedAgentDefinition,
+    /// Alan OS working directory selected by Agent Runtime Service.
+    pub namespace_cwd: PathBuf,
+    /// Whether Agent Runtime Service passed the Memory Store descriptor.
+    pub memory_store_bound: bool,
     /// Durable service backing selected by the Host; never exposed as Process identity.
     pub store_bindings: Option<crate::AgentRuntimeStoreBindings>,
     /// Memory Service backing paired with the explicit Memory Store descriptor.
@@ -246,7 +250,15 @@ impl Default for AgentProcessConfig {
         Self {
             agent_config: AgentConfig::default(),
             core_config_source: crate::ConfigSourceKind::Default,
-            launch_context: crate::ProcessLaunchContext::root(),
+            agent_definition: crate::ResolvedAgentDefinition::from_process_inputs(
+                None,
+                &[],
+                &[],
+                crate::ConfigSourceKind::Default,
+            )
+            .expect("empty Agent Definition is valid"),
+            namespace_cwd: PathBuf::from("/"),
+            memory_store_bound: false,
             store_bindings: None,
             memory_store_backing: None,
             recovery_rollout_path: None,
@@ -259,7 +271,15 @@ impl From<crate::config::Config> for AgentProcessConfig {
         Self {
             agent_config: AgentConfig::from(config),
             core_config_source: crate::ConfigSourceKind::Default,
-            launch_context: crate::ProcessLaunchContext::root(),
+            agent_definition: crate::ResolvedAgentDefinition::from_process_inputs(
+                None,
+                &[],
+                &[],
+                crate::ConfigSourceKind::Default,
+            )
+            .expect("empty Agent Definition is valid"),
+            namespace_cwd: PathBuf::from("/"),
+            memory_store_bound: false,
             store_bindings: None,
             memory_store_backing: None,
             recovery_rollout_path: None,
@@ -272,7 +292,15 @@ impl From<crate::LoadedConfig> for AgentProcessConfig {
         Self {
             agent_config: AgentConfig::from(loaded.config),
             core_config_source: loaded.source,
-            launch_context: crate::ProcessLaunchContext::root(),
+            agent_definition: crate::ResolvedAgentDefinition::from_process_inputs(
+                None,
+                &[],
+                &[],
+                crate::ConfigSourceKind::Default,
+            )
+            .expect("empty Agent Definition is valid"),
+            namespace_cwd: PathBuf::from("/"),
+            memory_store_bound: false,
             store_bindings: None,
             memory_store_backing: None,
             recovery_rollout_path: None,
@@ -287,24 +315,51 @@ pub(super) struct ResolvedRuntimeLaunchConfig {
 }
 
 impl AgentProcessConfig {
+    /// Derive execution configuration for a child launch. Agent Runtime Service
+    /// remains responsible for descriptors, namespace, connection, and the
+    /// resolved Agent Definition.
+    pub fn child_for_spawn(&self, spec: &alan_agent_protocol::SpawnSpec) -> Self {
+        let mut child = self.clone();
+        if !spec.has_handle(alan_agent_protocol::SpawnHandle::Memory) {
+            child.agent_config.core_config.memory.store_dir = None;
+            child.memory_store_backing = None;
+            child.memory_store_bound = false;
+        }
+        if spec.has_handle(alan_agent_protocol::SpawnHandle::ApprovalScope) {
+            child.agent_config.runtime_config.governance =
+                self.agent_config.runtime_config.governance.clone();
+        } else {
+            child.agent_config.runtime_config.governance =
+                alan_agent_protocol::GovernanceConfig::default();
+        }
+        if let Some(model) = spec.runtime_overrides.model.as_deref() {
+            child.agent_config.set_model_override(model);
+        }
+        if let Some(effort) = spec.runtime_overrides.model_reasoning_effort {
+            child
+                .agent_config
+                .set_model_reasoning_effort_override(Some(effort));
+        }
+        if let Some(policy_path) = spec.runtime_overrides.policy_path.clone() {
+            child.agent_config.runtime_config.governance.policy_path = Some(policy_path);
+        }
+        child.namespace_cwd = spec
+            .launch
+            .cwd
+            .clone()
+            .unwrap_or_else(|| PathBuf::from("/"));
+        child.recovery_rollout_path = None;
+        child
+    }
+
     pub(super) fn resolve_runtime_launch(&self) -> Result<ResolvedRuntimeLaunchConfig> {
-        let agent_definition = crate::ResolvedAgentDefinition::from_launch_context(
-            &self.launch_context,
-            &self.agent_config.core_config.resolved_skill_overrides(),
-            self.core_config_source,
-        )?;
+        let agent_definition = self.agent_definition.clone();
         let agent_config = agent_definition.apply_to_agent_config(&self.agent_config)?;
         let mut core_config = agent_config.core_config;
         if let Some(memory_store) = self.memory_store_backing.as_ref() {
-            let memory_descriptor = self
-                .launch_context
-                .descriptor(crate::MEMORY_STORE_DESCRIPTOR)
-                .context(
-                    "Agent Runtime Service memory backing requires a Memory Store descriptor",
-                )?;
             anyhow::ensure!(
-                memory_descriptor.path == "/memory",
-                "Memory Store descriptor must reference /memory"
+                self.memory_store_bound,
+                "Agent Runtime Service memory backing requires a Memory Store descriptor"
             );
             core_config.memory.store_dir = Some(memory_store.clone());
         } else {

@@ -1,7 +1,6 @@
 use crate::{
     runtime::{
         child_runs::ChildRunRegistry,
-        launch_config::AgentConfig,
         transition::{NamespaceChildLaunch, NamespaceToolExecution},
     },
     skills::ResolvedCapabilityView,
@@ -28,7 +27,6 @@ impl ChildTaskContext {
 }
 
 pub(crate) struct ChildLaunchRuntime {
-    pub(super) base_agent_config: AgentConfig,
     pub(super) child_launch: NamespaceChildLaunch,
     pub(super) tool_execution: NamespaceToolExecution,
     pub(super) child_run_registry: ChildRunRegistry,
@@ -39,7 +37,6 @@ pub(crate) struct ChildLaunchRuntime {
 
 impl ChildLaunchRuntime {
     pub(crate) fn new(
-        base_agent_config: AgentConfig,
         child_launch: NamespaceChildLaunch,
         tool_execution: NamespaceToolExecution,
         child_run_registry: ChildRunRegistry,
@@ -48,7 +45,6 @@ impl ChildLaunchRuntime {
         task_context: ChildTaskContext,
     ) -> Self {
         Self {
-            base_agent_config,
             child_launch,
             tool_execution,
             child_run_registry,

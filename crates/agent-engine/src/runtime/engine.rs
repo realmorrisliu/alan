@@ -153,6 +153,7 @@ pub(crate) fn runtime_host_capabilities(
     runtime_host_capabilities_for_tools(tools.list_tools().into_iter().map(str::to_string))
 }
 
+#[cfg(test)]
 pub(crate) fn runtime_host_capabilities_for_tools(
     tools: impl IntoIterator<Item = String>,
 ) -> crate::skills::SkillHostCapabilities {
@@ -364,7 +365,7 @@ fn spawn_with_prepared_runtime_environment(
         .store_bindings
         .as_ref()
         .map(|stores| stores.rollouts.clone());
-    let rollout_cwd = std::path::PathBuf::from(&config.launch_context.cwd);
+    let rollout_cwd = config.namespace_cwd.clone();
     let recovery_rollout_path = config.recovery_rollout_path;
     let generation_capabilities = crate::provider_capabilities_for_config(&core_config);
     let mut prompt_cache =

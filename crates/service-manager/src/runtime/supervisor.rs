@@ -16,9 +16,8 @@ use crate::{
     BootManifest, BootUnit, ConnectionService, HostMountService, LocalEntryService, ManagerState,
     PackageService, RestartDecision,
     agent_runtime::{AgentRuntimeService, RootAgentProcess, RootAgentTemplate},
+    process_spawn::spawn_unit_process,
 };
-
-use super::spawn_unit_process;
 
 /// A stable namespace mount whose backing File-Server exists only while its
 /// owning service Process is running. Rebinding installs a fresh server so

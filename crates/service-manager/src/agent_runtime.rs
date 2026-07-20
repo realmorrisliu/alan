@@ -1,40 +1,45 @@
-//! Agent Runtime Service ownership of Agent Process assembly and lifecycle.
+//! Agent Runtime Service implementation of the `/bin/alan-agent` Process image.
 
 use std::{
-    collections::BTreeSet,
+    collections::HashMap,
     path::{Path, PathBuf},
     sync::{
-        Arc,
+        Arc, Mutex, Weak,
         atomic::{AtomicU64, Ordering},
     },
+    time::Duration,
 };
 
 use alan_agent_engine::{
-    AgentProcessConfig, RuntimeController, SpawnMountAccess,
-    runtime::{
-        AgentProcessLifecycle, AssembledChildAgentProcess, ChildAgentProcessAssembler,
-        ChildAgentProcessAssemblyPlan, ChildAgentProcessAssemblyRequest,
-    },
+    AGENT_DEFINITION_FD, AgentExecutablePause, AgentExecutableRequest, AgentExecutableResult,
+    AgentExecutableStatus, AgentProcessConfig, ContentPart, MEMORY_STORE_FD, Op, RuntimeController,
+    SpawnHandle, SpawnTarget, Submission, UiActivitySnapshot, UiActivityState, UiNoticeKind,
+    UiNoticeSnapshot, YieldKind,
+    skills::SkillHostCapabilities,
     spawn_with_namespace_environment,
     tools::{ToolExecutionAuthority, ToolProcessRunner},
 };
 use alan_ap::{Fid, FileServer, InProcessTransport, OpenMode};
 use alan_kernel::{
-    Access, Credentials, ExecNamespaceAccess, ExecNamespaceManifest, ExecNamespaceMount, ExecSpec,
-    LiveNamespace, Pid,
+    Access, ExecNamespaceManifest, ExecSpec, LiveNamespace, Pid, ProcessInvocation, ProcessOutcome,
 };
 use alan_llm::ProviderCapabilities;
 use anyhow::{Context, Result, ensure};
 
 use crate::{
-    BootUnit, ConnectionService, HostMountService,
-    quartermaster::SystemProcessRunner,
-    runtime::{namespace_with_package_references, spawn_unit_process},
+    BootUnit, ConnectionService, HostMountService, ProcessLaunchContext,
+    process_runner::SystemProcessRunner,
+    runtime::{namespace_with_package_references, validate_package_reference_mounts},
 };
 
+const AGENT_EXECUTABLE: &str = "/bin/alan-agent";
+static NEXT_AGENT_FID: AtomicU64 = AtomicU64::new(90_000);
+
+#[derive(Clone)]
 pub(crate) struct RootAgentTemplate {
     process: AgentProcessConfig,
-    host_capabilities: alan_agent_engine::skills::SkillHostCapabilities,
+    launch_context: ProcessLaunchContext,
+    host_capabilities: SkillHostCapabilities,
     generation_capabilities: ProviderCapabilities,
     llm_connection: String,
 }
@@ -42,12 +47,14 @@ pub(crate) struct RootAgentTemplate {
 impl RootAgentTemplate {
     pub(crate) fn new(
         process: AgentProcessConfig,
-        host_capabilities: alan_agent_engine::skills::SkillHostCapabilities,
+        launch_context: ProcessLaunchContext,
+        host_capabilities: SkillHostCapabilities,
         generation_capabilities: ProviderCapabilities,
         llm_connection: String,
     ) -> Self {
         Self {
             process,
+            launch_context,
             host_capabilities,
             generation_capabilities,
             llm_connection,
@@ -58,7 +65,9 @@ impl RootAgentTemplate {
 pub(crate) struct RootAgentProcess {
     pid: Pid,
     namespace: InProcessTransport,
-    controller: RuntimeController,
+    procfs: alan_kernel::ProcFs,
+    ready: Option<tokio::sync::oneshot::Receiver<std::result::Result<(), String>>>,
+    stop: Option<tokio::sync::oneshot::Sender<()>>,
 }
 
 impl RootAgentProcess {
@@ -71,11 +80,22 @@ impl RootAgentProcess {
     }
 
     pub(crate) fn is_finished(&self) -> bool {
-        self.controller.is_finished()
+        self.procfs
+            .try_observe_process_lifecycle(self.pid)
+            .is_none_or(|(status, _)| status == alan_kernel::Status::Exited)
     }
 
     pub(crate) async fn wait_until_ready(&mut self) -> Result<()> {
-        self.controller.wait_until_ready().await.map(|_| ())
+        let Some(ready) = self.ready.take() else {
+            return Ok(());
+        };
+        match ready.await {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(message)) => Err(anyhow::anyhow!(message)),
+            Err(_) => Err(anyhow::anyhow!(
+                "Agent Runtime Service stopped before Root Agent readiness"
+            )),
+        }
     }
 }
 
@@ -83,48 +103,48 @@ pub(crate) struct AgentRuntimeService {
     procfs: alan_kernel::ProcFs,
     agent_root: Arc<alan_agentfs::AgentRootFs>,
     llmfs: Arc<alan_llmfs::LlmFs>,
-    srvfs: Arc<alan_kernel::SrvFs>,
-    routefs: Arc<alan_routefs::RouteFs>,
     host_mount: Arc<HostMountService>,
     connection: Arc<ConnectionService>,
     tool_runner: ToolProcessRunner,
+    pending_roots: Mutex<HashMap<u64, PendingRootLaunch>>,
+    process_templates: Mutex<HashMap<u64, RootAgentTemplate>>,
 }
 
 pub(crate) struct AgentRuntimeFileServers {
     agent_root: Arc<alan_agentfs::AgentRootFs>,
     llmfs: Arc<alan_llmfs::LlmFs>,
-    srvfs: Arc<alan_kernel::SrvFs>,
-    routefs: Arc<alan_routefs::RouteFs>,
 }
 
 impl AgentRuntimeFileServers {
     pub(crate) fn new(
         agent_root: Arc<alan_agentfs::AgentRootFs>,
         llmfs: Arc<alan_llmfs::LlmFs>,
-        srvfs: Arc<alan_kernel::SrvFs>,
-        routefs: Arc<alan_routefs::RouteFs>,
     ) -> Self {
-        Self {
-            agent_root,
-            llmfs,
-            srvfs,
-            routefs,
-        }
+        Self { agent_root, llmfs }
     }
 
     pub(crate) fn from_refs(
         agent_root: &Arc<alan_agentfs::AgentRootFs>,
         llmfs: &Arc<alan_llmfs::LlmFs>,
-        srvfs: &Arc<alan_kernel::SrvFs>,
-        routefs: &Arc<alan_routefs::RouteFs>,
     ) -> Self {
-        Self::new(
-            agent_root.clone(),
-            llmfs.clone(),
-            srvfs.clone(),
-            routefs.clone(),
-        )
+        Self::new(agent_root.clone(), llmfs.clone())
     }
+}
+
+struct PendingRootLaunch {
+    template: RootAgentTemplate,
+    namespace: LiveNamespace,
+    ready: tokio::sync::oneshot::Sender<std::result::Result<(), String>>,
+    stop: tokio::sync::oneshot::Receiver<()>,
+}
+
+struct AgentLaunch {
+    template: RootAgentTemplate,
+    namespace: LiveNamespace,
+    request: Option<AgentExecutableRequest>,
+    ready: Option<tokio::sync::oneshot::Sender<std::result::Result<(), String>>>,
+    stop: Option<tokio::sync::oneshot::Receiver<()>>,
+    root: bool,
 }
 
 impl AgentRuntimeService {
@@ -135,22 +155,23 @@ impl AgentRuntimeService {
         connection: Arc<ConnectionService>,
         tool_runner: ToolProcessRunner,
     ) -> Arc<Self> {
-        let AgentRuntimeFileServers {
-            agent_root,
-            llmfs,
-            srvfs,
-            routefs,
-        } = file_servers;
         Arc::new(Self {
             procfs,
-            agent_root,
-            llmfs,
-            srvfs,
-            routefs,
+            agent_root: file_servers.agent_root,
+            llmfs: file_servers.llmfs,
             host_mount,
             connection,
             tool_runner,
+            pending_roots: Mutex::new(HashMap::new()),
+            process_templates: Mutex::new(HashMap::new()),
         })
+    }
+
+    fn process_runner(self: &Arc<Self>) -> Arc<SystemProcessRunner> {
+        Arc::new(SystemProcessRunner::new(
+            Some(Arc::downgrade(self)),
+            Some(self.tool_runner.clone()),
+        ))
     }
 
     pub(crate) async fn launch_root(
@@ -160,149 +181,330 @@ impl AgentRuntimeService {
         unit: &BootUnit,
         template: &RootAgentTemplate,
     ) -> Result<RootAgentProcess> {
-        let launch_context = &template.process.launch_context;
-        let credentials = launch_context.credentials.clone();
-        let source_namespace =
-            namespace_with_package_references(system_namespace.snapshot(), launch_context)?;
-        let (pid, namespace) = spawn_unit_process(
-            &self.procfs,
-            parent_pid,
-            &source_namespace,
-            credentials.clone(),
-            unit,
-            &[],
-        )
-        .await?;
-
-        let launch: Result<(InProcessTransport, RuntimeController)> = async {
-            let llm = Arc::new(self.llmfs.connection_view(&template.llm_connection));
-            namespace.replace_mount(
-                "/mnt/llm",
-                InProcessTransport::new(llm.clone()),
-                Access::ReadWrite,
+        ensure!(
+            unit.executable == AGENT_EXECUTABLE,
+            "Root Agent Boot Unit must execute {AGENT_EXECUTABLE}"
+        );
+        let source = namespace_with_package_references(
+            system_namespace.snapshot(),
+            &template.launch_context,
+        )?;
+        let namespace = project_boot_unit_namespace(&source.snapshot(), unit)?;
+        let live_namespace = LiveNamespace::new(namespace);
+        let procfs = self.procfs.clone().with_runner(self.process_runner());
+        let spawner = procfs.for_live_spawner(
+            Some(parent_pid),
+            live_namespace.clone(),
+            template.launch_context.credentials.clone(),
+        );
+        let fid = next_agent_fid();
+        spawner
+            .walk(Fid::ROOT, fid, &["clone".to_string()])
+            .await
+            .context("walk Root Agent /proc/clone")?;
+        spawner
+            .open(fid, OpenMode::ReadWrite)
+            .await
+            .context("open Root Agent /proc/clone")?;
+        let pid = read_clone_pid(&spawner, fid).await?;
+        let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
+        let (stop_tx, stop_rx) = tokio::sync::oneshot::channel();
+        self.pending_roots
+            .lock()
+            .expect("pending roots mutex poisoned")
+            .insert(
+                pid.0,
+                PendingRootLaunch {
+                    template: template.clone(),
+                    namespace: live_namespace.clone(),
+                    ready: ready_tx,
+                    stop: stop_rx,
+                },
             );
-            self.host_mount.register_process(pid, namespace.clone());
-            self.tool_runner
-                .register_process_authority(pid, self.host_mount.clone());
-            namespace.replace_mount(
-                "/mnt/host-mount",
-                InProcessTransport::new(self.host_mount.file_server_for_process(pid.0)),
-                Access::ReadWrite,
-            );
-            if self.connection.has_profile(&template.llm_connection) {
-                self.connection.select(pid.0, &template.llm_connection)?;
-            }
-
-            self.agent_root
-                .bind_process(pid.0.to_string(), Arc::new(alan_agentfs::AgentFs::new()))
-                .await;
-            self.agent_root.set_root_process(pid.0.to_string()).await;
-
-            let tool_runner = self.tool_runner.clone();
-            let procfs_with_runner =
-                self.procfs
-                    .clone()
-                    .with_runner(Arc::new(SystemProcessRunner::new(Some(Arc::new(
-                        tool_runner.clone(),
-                    )))));
-            self.procfs
-                .bind_live_namespace(pid, namespace.clone())
-                .await;
-            namespace.replace_mount(
-                "/proc",
-                InProcessTransport::new(Arc::new(procfs_with_runner.for_live_spawner(
-                    Some(pid),
-                    namespace.clone(),
-                    credentials.clone(),
-                ))),
-                Access::ReadWrite,
-            );
-
-            let root = InProcessTransport::new(Arc::new(
-                alan_kernel::MountFs::from_live_namespace(namespace.clone()),
-            ));
-            let launch_context = launch_context.rebound_live(namespace.clone(), credentials);
-            self.register_tool_execution_binding(
-                pid,
-                &launch_context,
-                template
-                    .process
-                    .store_bindings
-                    .as_ref()
-                    .map(|stores| stores.tmp.clone()),
-            )?;
-            let environment = alan_agent_engine::runtime::NamespaceRuntimeEnvironment::new(
-                root.clone(),
-                format!("/agent/{}", pid.0),
-                template.llm_connection.clone(),
-            )
-            .with_launch_context(launch_context.clone())
-            .with_tool_process_context(pid, tool_runner)
-            .with_child_process_assembler(self.child_process_assembler(pid));
-            let mut process = template.process.clone();
-            process.launch_context = launch_context;
-            let controller = spawn_with_namespace_environment(
-                process,
-                environment,
-                template.host_capabilities.clone(),
-                template.generation_capabilities,
-            )?;
-            Ok((root, controller))
-        }
-        .await;
-        let (namespace, controller) = match launch {
-            Ok(launched) => launched,
-            Err(error) => {
-                self.procfs.record_exit(pid, 1).await;
-                self.release_process(pid).await;
-                return Err(error);
-            }
+        let descriptors = unit
+            .descriptors
+            .iter()
+            .map(|descriptor| (descriptor.number, descriptor.path.clone()))
+            .collect();
+        let exec = ExecSpec {
+            executable: AGENT_EXECUTABLE.to_string(),
+            args: Vec::new(),
+            namespace: Some(ExecNamespaceManifest::from_namespace(
+                &live_namespace.snapshot(),
+            )),
+            descriptors,
         };
-
+        if let Err(error) = commit_clone(&spawner, fid, &exec).await {
+            self.pending_roots
+                .lock()
+                .expect("pending roots mutex poisoned")
+                .remove(&pid.0);
+            return Err(error);
+        }
+        let root = InProcessTransport::new(Arc::new(alan_kernel::MountFs::from_live_namespace(
+            live_namespace,
+        )));
         Ok(RootAgentProcess {
             pid,
-            namespace,
-            controller,
+            namespace: root,
+            procfs: self.procfs.clone(),
+            ready: Some(ready_rx),
+            stop: Some(stop_tx),
         })
     }
 
-    pub(crate) async fn detach_root(&self, root: RootAgentProcess, exit_code: i32) {
-        let RootAgentProcess {
-            pid, controller, ..
-        } = root;
-        if !controller.is_finished() {
-            controller.abort().await;
-        }
-        self.procfs.record_exit(pid, exit_code).await;
-        self.release_process(pid).await;
+    pub(crate) async fn detach_root(&self, mut root: RootAgentProcess, exit_code: i32) {
+        root.stop.take();
+        self.procfs.record_exit(root.pid, exit_code).await;
+        self.release_process(root.pid).await;
     }
 
-    pub(crate) async fn shutdown_root(&self, root: RootAgentProcess) -> Result<()> {
-        let RootAgentProcess {
-            pid, controller, ..
-        } = root;
-        let result = controller.shutdown().await;
-        self.procfs.record_exit(pid, 0).await;
-        self.release_process(pid).await;
-        result
+    pub(crate) async fn shutdown_root(&self, mut root: RootAgentProcess) -> Result<()> {
+        if let Some(stop) = root.stop.take() {
+            let _ = stop.send(());
+        }
+        wait_for_process_exit(&self.procfs, root.pid, Duration::from_secs(12)).await?;
+        Ok(())
+    }
+
+    pub(crate) async fn run_agent_process(
+        self: &Arc<Self>,
+        invocation: ProcessInvocation,
+    ) -> ProcessOutcome {
+        if invocation.exec.executable != AGENT_EXECUTABLE {
+            return ProcessOutcome::exited(127, b"alan-agent: executable mismatch\n");
+        }
+        let mut cleanup = ProcessCleanup::new(Arc::downgrade(self), invocation.pid);
+        let mut launch = match self.prepare_launch(&invocation) {
+            Ok(launch) => launch,
+            Err(error) => {
+                cleanup.finish().await;
+                return process_error(error);
+            }
+        };
+        let result = self.run_prepared_agent(&invocation, &mut launch).await;
+        if let Err(error) = &result
+            && let Some(ready) = launch.ready.take()
+        {
+            let _ = ready.send(Err(format!("{error:#}")));
+        }
+        cleanup.finish().await;
+        match result {
+            Ok(outcome) => outcome,
+            Err(error) => process_error(error),
+        }
+    }
+
+    fn prepare_launch(&self, invocation: &ProcessInvocation) -> Result<AgentLaunch> {
+        if invocation.exec.args.is_empty() {
+            let pending = self
+                .pending_roots
+                .lock()
+                .expect("pending roots mutex poisoned")
+                .remove(&invocation.pid.0)
+                .context("Root Agent Process has no pending launch template")?;
+            return Ok(AgentLaunch {
+                template: pending.template,
+                namespace: pending.namespace,
+                request: None,
+                ready: Some(pending.ready),
+                stop: Some(pending.stop),
+                root: true,
+            });
+        }
+        ensure!(
+            invocation.exec.args.len() == 1,
+            "alan-agent accepts one serialized SpawnSpec request"
+        );
+        let request: AgentExecutableRequest = serde_json::from_str(&invocation.exec.args[0])
+            .context("parse /bin/alan-agent SpawnSpec request")?;
+        let parent_pid = invocation
+            .parent
+            .context("child Agent Process has no parent Process")?;
+        let parent = self
+            .process_templates
+            .lock()
+            .expect("process templates mutex poisoned")
+            .get(&parent_pid.0)
+            .cloned()
+            .context("parent Agent Process has no runtime template")?;
+        let template = child_template(&parent, invocation, &request)?;
+        Ok(AgentLaunch {
+            template,
+            namespace: LiveNamespace::new(invocation.namespace.clone()),
+            request: Some(request),
+            ready: None,
+            stop: None,
+            root: false,
+        })
+    }
+
+    async fn run_prepared_agent(
+        self: &Arc<Self>,
+        invocation: &ProcessInvocation,
+        launch: &mut AgentLaunch,
+    ) -> Result<ProcessOutcome> {
+        let pid = invocation.pid;
+        let credentials = invocation.credentials.clone();
+        launch.namespace.replace_mount(
+            "/mnt/llm",
+            InProcessTransport::new(Arc::new(
+                self.llmfs.connection_view(&launch.template.llm_connection),
+            )),
+            Access::ReadWrite,
+        );
+        if launch.root {
+            self.host_mount
+                .register_process(pid, launch.namespace.clone());
+        } else {
+            let parent = invocation
+                .parent
+                .context("child Agent Process has no parent")?;
+            self.host_mount.register_child_process(
+                parent,
+                pid,
+                launch.namespace.clone(),
+                &launch
+                    .request
+                    .as_ref()
+                    .expect("child request exists")
+                    .spawn
+                    .host_mounts,
+            )?;
+        }
+        validate_process_cwd(&launch.namespace, &launch.template.launch_context.cwd)?;
+        self.tool_runner
+            .register_process_authority(pid.0, self.host_mount.clone());
+        launch.namespace.replace_mount(
+            "/mnt/host-mount",
+            InProcessTransport::new(self.host_mount.file_server_for_process(pid.0)),
+            Access::ReadWrite,
+        );
+        if self.connection.has_profile(&launch.template.llm_connection) {
+            self.connection
+                .select(pid.0, &launch.template.llm_connection)?;
+        }
+
+        let agent = Arc::new(alan_agentfs::AgentFs::new());
+        self.agent_root.bind_process(pid.0.to_string(), agent).await;
+        if launch.root {
+            self.agent_root.set_root_process(pid.0.to_string()).await;
+        }
+
+        let runtime_procfs = self.procfs.clone().with_runner(self.process_runner());
+        runtime_procfs
+            .bind_live_namespace(pid, launch.namespace.clone())
+            .await;
+        launch.namespace.replace_mount(
+            "/proc",
+            InProcessTransport::new(Arc::new(runtime_procfs.for_live_spawner(
+                Some(pid),
+                launch.namespace.clone(),
+                credentials.clone(),
+            ))),
+            Access::ReadWrite,
+        );
+        let root = InProcessTransport::new(Arc::new(alan_kernel::MountFs::from_live_namespace(
+            launch.namespace.clone(),
+        )));
+        launch.template.launch_context = launch
+            .template
+            .launch_context
+            .rebound_live(launch.namespace.clone(), credentials);
+        launch.template.process.namespace_cwd = PathBuf::from(&launch.template.launch_context.cwd);
+        self.register_tool_execution_binding(
+            pid,
+            &launch.template.launch_context,
+            launch
+                .template
+                .process
+                .store_bindings
+                .as_ref()
+                .map(|stores| stores.tmp.clone()),
+        )?;
+        let environment = alan_agent_engine::runtime::NamespaceRuntimeEnvironment::new(
+            root.clone(),
+            format!("/agent/{}", pid.0),
+            launch.template.llm_connection.clone(),
+        )
+        .with_namespace_cwd(&launch.template.launch_context.cwd)
+        .with_tool_process_context(pid.0, self.tool_runner.clone());
+        let mut controller = spawn_with_namespace_environment(
+            launch.template.process.clone(),
+            environment,
+            launch.template.host_capabilities.clone(),
+            launch.template.generation_capabilities,
+        )?;
+        controller
+            .wait_until_ready()
+            .await
+            .context("Agent Machine failed to start")?;
+        self.process_templates
+            .lock()
+            .expect("process templates mutex poisoned")
+            .insert(pid.0, launch.template.clone());
+        if let Some(ready) = launch.ready.take() {
+            let _ = ready.send(Ok(()));
+        }
+
+        let outcome = if let Some(request) = launch.request.as_ref() {
+            controller
+                .handle
+                .submission_tx
+                .send(Submission::new(Op::Turn {
+                    parts: vec![ContentPart::text(request.initial_task.clone())],
+                    context: None,
+                }))
+                .await
+                .context("submit initial child Agent Process turn")?;
+            let result = wait_for_child_terminal(&root, pid, &controller).await?;
+            let exit_code = match result.status {
+                AgentExecutableStatus::Completed => 0,
+                AgentExecutableStatus::Paused | AgentExecutableStatus::Failed => 1,
+            };
+            ProcessOutcome::exited(
+                exit_code,
+                result
+                    .to_process_output_record()
+                    .context("serialize Agent Executable result")?,
+            )
+        } else {
+            let exit_code = wait_for_root_stop(
+                launch
+                    .stop
+                    .take()
+                    .context("Root Agent stop channel is absent")?,
+                &controller,
+            )
+            .await;
+            ProcessOutcome::exited(exit_code, Vec::new())
+        };
+        let shutdown = controller.shutdown().await;
+        if outcome.exit_code == 0 {
+            shutdown?;
+        }
+        Ok(outcome)
     }
 
     pub(crate) async fn release_process(&self, pid: Pid) {
+        self.process_templates
+            .lock()
+            .expect("process templates mutex poisoned")
+            .remove(&pid.0);
+        self.pending_roots
+            .lock()
+            .expect("pending roots mutex poisoned")
+            .remove(&pid.0);
         self.agent_root.unbind_process(&pid.0.to_string()).await;
         self.host_mount.unregister_process(pid);
         self.connection.release_process(pid.0);
-        self.tool_runner.unregister_process(pid);
+        self.tool_runner.unregister_process(pid.0);
     }
 
-    /// Seed one Process with an explicit Tool binding.
-    ///
-    /// Host Mount Service reconciles this binding immediately before each Tool Process starts.
-    /// Keeping an authority-free seed for a mount-free Process means the first logical Host Mount
-    /// can supply native authority without recreating a binding in the Agent Execution Engine.
     fn register_tool_execution_binding(
         &self,
         pid: Pid,
-        launch_context: &alan_agent_engine::ProcessLaunchContext,
+        launch_context: &ProcessLaunchContext,
         scratch_dir: Option<PathBuf>,
     ) -> Result<()> {
         let Some(scratch_dir) = scratch_dir else {
@@ -312,533 +514,384 @@ impl AgentRuntimeService {
             Path::new(&launch_context.cwd).to_path_buf(),
             scratch_dir,
         );
-        let binding = self.host_mount.reconcile(pid, binding)?;
-        self.tool_runner.register_process_binding(pid, binding);
+        let binding = self.host_mount.reconcile(pid.0, binding)?;
+        self.tool_runner.register_process_binding(pid.0, binding);
         Ok(())
     }
 }
 
-impl AgentRuntimeService {
-    fn child_process_assembler(
-        self: &Arc<Self>,
-        parent_pid: Pid,
-    ) -> Arc<dyn ChildAgentProcessAssembler> {
-        Arc::new(ServiceChildProcessAssembler {
-            service: self.clone(),
-            parent_pid,
-        })
-    }
-
-    async fn assemble_child(
-        self: &Arc<Self>,
-        parent_pid: Pid,
-        request: ChildAgentProcessAssemblyRequest,
-    ) -> Result<AssembledChildAgentProcess> {
-        let ChildAgentProcessAssemblyRequest {
-            mut plan,
-            scratch_dir,
-            executable,
-        } = request;
-        self.host_mount
-            .strip_process_projections(parent_pid, &mut plan.launch_context.namespace);
-        let handles = ChildNamespaceHandles::new(self, &plan)?;
-        validate_tool_mounts(&plan, &handles)?;
-        let agent_root_tree = InProcessTransport::new(self.agent_root.clone());
-        let mut spawner_namespace = child_namespace(&plan, agent_root_tree.clone(), &handles);
-        self.host_mount.project_child_namespace(
-            parent_pid,
-            &mut spawner_namespace,
-            &plan.host_mounts,
-        )?;
-        let spawner = self.procfs.for_spawner(
-            Some(parent_pid),
-            spawner_namespace,
-            Credentials::user("root-agent"),
-        );
-        let clone_fid = next_child_fid();
-        spawner
-            .walk(Fid::ROOT, clone_fid, &["clone".to_string()])
-            .await
-            .context("walk child /proc/clone")?;
-        spawner
-            .open(clone_fid, OpenMode::ReadWrite)
-            .await
-            .context("open child /proc/clone")?;
-        let pid = String::from_utf8(
-            spawner
-                .read(clone_fid, 0, 64)
-                .await
-                .context("read child /proc/clone pid")?,
-        )
-        .context("child /proc/clone pid is utf8")?
-        .trim()
-        .to_string();
-        let child_pid = Pid(pid
-            .parse::<u64>()
-            .with_context(|| format!("parse child pid '{pid}'"))?);
-        let lifecycle = Arc::new(ServiceAgentProcessLifecycle {
-            service: self.clone(),
-            pid: child_pid,
-        });
-
-        let child_credentials = Credentials::user("child-agent");
-        let live_namespace =
-            LiveNamespace::new(child_namespace(&plan, agent_root_tree.clone(), &handles));
-        if let Err(error) = self.host_mount.register_child_process(
-            parent_pid,
-            child_pid,
-            live_namespace.clone(),
-            &plan.host_mounts,
-        ) {
-            let _ = spawner.clunk(clone_fid).await;
-            return Err(error);
-        }
-        self.tool_runner
-            .register_process_authority(child_pid, self.host_mount.clone());
-        plan.launch_context = plan
-            .launch_context
-            .rebound_live(live_namespace.clone(), child_credentials.clone());
-
-        let launch = async {
-            let exec = child_exec_spec(&plan, &pid, executable);
-            let exec_bytes = serde_json::to_vec(&exec).context("serialize child exec spec")?;
-            spawner
-                .write(clone_fid, 0, &exec_bytes)
-                .await
-                .context("write child exec spec to /proc/clone")?;
-            spawner
-                .clunk(clone_fid)
-                .await
-                .context("commit child /proc/clone")?;
-            self.agent_root
-                .bind_process(pid.clone(), handles.agent_tree.clone())
-                .await;
-            if self.connection.has_profile(&plan.llm_connection_name) {
-                self.connection
-                    .select(child_pid.0, &plan.llm_connection_name)?;
-            }
-
-            self.register_tool_execution_binding(child_pid, &plan.launch_context, scratch_dir)?;
-
-            let runtime_procfs = self
-                .procfs
-                .clone()
-                .with_runner(Arc::new(self.tool_runner.clone()));
-            runtime_procfs
-                .bind_live_namespace(child_pid, live_namespace.clone())
-                .await;
-            let child_procfs = runtime_procfs.for_live_spawner(
-                Some(child_pid),
-                live_namespace.clone(),
-                child_credentials,
-            );
-            live_namespace.mount(
-                "/proc",
-                InProcessTransport::new(Arc::new(child_procfs)),
-                Access::ReadWrite,
-            );
-            live_namespace.replace_mount(
-                "/mnt/host-mount",
-                InProcessTransport::new(self.host_mount.file_server_for_process(child_pid.0)),
-                Access::ReadWrite,
-            );
-            let root = InProcessTransport::new(Arc::new(
-                alan_kernel::MountFs::from_live_namespace(live_namespace.clone()),
-            ));
-            let environment = alan_agent_engine::runtime::NamespaceRuntimeEnvironment::new(
-                root,
-                format!("/agent/{pid}"),
-                plan.llm_connection_name()?,
-            )
-            .with_launch_context(plan.launch_context.clone())
-            .with_tool_process_context(child_pid, self.tool_runner.clone())
-            .with_child_process_assembler(self.child_process_assembler(child_pid));
-            let observation_environment =
-                child_observation_environment(&self.procfs, &self.agent_root, &pid, &plan).await?;
-            Ok((environment, observation_environment))
-        }
-        .await;
-
-        match launch {
-            Ok((environment, observation_environment)) => Ok(AssembledChildAgentProcess {
-                pid,
-                environment,
-                observation_environment,
-                lifecycle,
-            }),
-            Err(error) => {
-                let _ = spawner.clunk(clone_fid).await;
-                lifecycle.finish(1).await;
-                Err(error)
-            }
-        }
-    }
-}
-
-#[derive(Clone)]
-struct ChildNamespaceHandles {
-    agent_tree: Arc<alan_agentfs::AgentFs>,
-    llm_connection: InProcessTransport,
-    srv: InProcessTransport,
-    route: InProcessTransport,
-    bin_tools: Vec<(String, InProcessTransport)>,
-    tool_manifests: Vec<(String, InProcessTransport)>,
-}
-
-impl ChildNamespaceHandles {
-    fn new(service: &AgentRuntimeService, plan: &ChildAgentProcessAssemblyPlan) -> Result<Self> {
-        let mut handles = Self {
-            agent_tree: Arc::new(alan_agentfs::AgentFs::new()),
-            llm_connection: InProcessTransport::new(Arc::new(
-                service.llmfs.connection_view(&plan.llm_connection_name()?),
-            )),
-            srv: InProcessTransport::new(service.srvfs.clone()),
-            route: InProcessTransport::new(service.routefs.clone()),
-            bin_tools: Vec::new(),
-            tool_manifests: Vec::new(),
-        };
-        for manifest in &plan.tool_packages {
-            manifest.validate_for_name(&manifest.name)?;
-            let name = &manifest.name;
-            handles.bin_tools.push((
-                format!("/bin/{name}"),
-                InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::new())),
-            ));
-            handles.tool_manifests.push((
-                format!("/lib/exec/{name}"),
-                InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::with_read_only_file(
-                    "manifest",
-                    serde_json::to_vec(manifest)?,
-                ))),
-            ));
-        }
-        Ok(handles)
-    }
-}
-
-fn validate_tool_mounts(
-    plan: &ChildAgentProcessAssemblyPlan,
-    handles: &ChildNamespaceHandles,
-) -> Result<()> {
-    let expected = plan
-        .bin_tool_mounts
-        .iter()
-        .map(String::as_str)
-        .collect::<BTreeSet<_>>();
-    let actual = handles
-        .bin_tools
-        .iter()
-        .map(|(path, _)| path.as_str())
-        .collect::<BTreeSet<_>>();
+fn child_template(
+    parent: &RootAgentTemplate,
+    invocation: &ProcessInvocation,
+    request: &AgentExecutableRequest,
+) -> Result<RootAgentTemplate> {
+    let spec = &request.spawn;
+    spec.validate_agent_process_launch()?;
     ensure!(
-        expected == actual,
-        "child namespace Tool mounts do not match the selected package set"
+        invocation
+            .exec
+            .descriptors
+            .keys()
+            .all(|descriptor| matches!(*descriptor, AGENT_DEFINITION_FD | MEMORY_STORE_FD)),
+        "child Agent Process contains an unsupported descriptor"
+    );
+    let definition_path = invocation
+        .exec
+        .descriptors
+        .get(&AGENT_DEFINITION_FD)
+        .context("child Agent Process has no Agent Definition descriptor")?;
+    let definition = match &spec.target {
+        SpawnTarget::DefinitionDescriptor { descriptor } => parent
+            .launch_context
+            .descriptor(descriptor)
+            .cloned()
+            .with_context(|| format!("parent Process has no `{descriptor}` descriptor"))?,
+        target @ SpawnTarget::PackageChildAgent { .. } => {
+            let export = parent
+                .process
+                .agent_definition
+                .capability_view
+                .refresh()
+                .resolve_child_agent_export(target)
+                .cloned()
+                .with_context(|| {
+                    format!("Unknown package child Agent Executable target: {target:?}")
+                })?;
+            let file_tree = export
+                .file_tree
+                .context("package child Agent Executable has no immutable descriptor")?;
+            alan_agent_engine::ProcessDescriptor::with_file_tree(
+                export.root_dir.to_string_lossy(),
+                file_tree,
+            )?
+        }
+    };
+    ensure!(
+        definition.path == *definition_path,
+        "child Agent Definition descriptor does not match SpawnSpec target"
+    );
+
+    let mut launch_context = parent.launch_context.child();
+    launch_context.namespace = invocation.namespace.clone();
+    launch_context.credentials = invocation.credentials.clone();
+    launch_context.cwd = spec
+        .launch
+        .cwd
+        .as_ref()
+        .map(|path| path.to_string_lossy().to_string())
+        .unwrap_or_else(|| "/".to_string());
+    launch_context.descriptors.clear();
+    launch_context.descriptors.insert(
+        alan_agent_engine::AGENT_DEFINITION_DESCRIPTOR.to_string(),
+        definition,
+    );
+    let memory_path = invocation.exec.descriptors.get(&MEMORY_STORE_FD);
+    if spec.has_handle(SpawnHandle::Memory) {
+        let memory_path =
+            memory_path.context("child Agent Process has no Memory Store descriptor")?;
+        let memory = parent
+            .launch_context
+            .descriptor(alan_agent_engine::MEMORY_STORE_DESCRIPTOR)
+            .cloned()
+            .context("parent Process has no Memory Store descriptor")?;
+        ensure!(
+            memory.path == *memory_path,
+            "child Memory Store descriptor does not match the parent descriptor"
+        );
+        launch_context.descriptors.insert(
+            alan_agent_engine::MEMORY_STORE_DESCRIPTOR.to_string(),
+            memory,
+        );
+    } else {
+        ensure!(
+            memory_path.is_none(),
+            "child Agent Process passed a Memory Store descriptor without the Memory handle"
+        );
+    }
+    launch_context.package_references.retain(|reference| {
+        !invocation
+            .namespace
+            .union_at(&reference.namespace_path)
+            .is_empty()
+    });
+    validate_package_reference_mounts(&launch_context)?;
+
+    let mut process = parent.process.child_for_spawn(spec);
+    process.agent_definition = alan_agent_engine::ResolvedAgentDefinition::from_process_inputs(
+        launch_context.descriptor(alan_agent_engine::AGENT_DEFINITION_DESCRIPTOR),
+        &launch_context.package_references,
+        &process.agent_config.core_config.resolved_skill_overrides(),
+        alan_agent_engine::ConfigSourceKind::Default,
+    )?;
+    process.namespace_cwd = PathBuf::from(&launch_context.cwd);
+    process.memory_store_bound = launch_context
+        .descriptor(alan_agent_engine::MEMORY_STORE_DESCRIPTOR)
+        .is_some();
+    let effective = alan_agent_engine::runtime::effective_core_config_for_runtime(&process)?;
+    let tools = invocation
+        .namespace
+        .describe()
+        .into_iter()
+        .filter_map(|(path, _)| path.strip_prefix("/bin/").map(str::to_string))
+        .filter(|name| name != "alan-agent" && name != "q")
+        .collect::<Vec<_>>();
+    Ok(RootAgentTemplate {
+        process,
+        launch_context,
+        host_capabilities: alan_agent_engine::skills::build_skill_host_capabilities(tools, true),
+        generation_capabilities: alan_agent_engine::provider_capabilities_for_config(&effective),
+        llm_connection: parent.llm_connection.clone(),
+    })
+}
+
+fn project_boot_unit_namespace(
+    base: &alan_kernel::Namespace,
+    unit: &BootUnit,
+) -> Result<alan_kernel::Namespace> {
+    let namespace = base
+        .project_mounts(unit.mounts.iter().map(|mount| {
+            (
+                mount.path.as_str(),
+                mount.source.as_str(),
+                match mount.access {
+                    crate::MountAccess::Read => Access::ReadOnly,
+                    crate::MountAccess::Write => Access::ReadWrite,
+                },
+            )
+        }))
+        .map_err(|_| {
+            anyhow::anyhow!(
+                "Boot Unit `{}` requests an unavailable mount projection",
+                unit.name
+            )
+        })?;
+    for descriptor in &unit.descriptors {
+        ensure!(
+            namespace.resolve(&descriptor.path).is_ok(),
+            "Boot Unit `{}` descriptor {} is outside its namespace",
+            unit.name,
+            descriptor.number
+        );
+    }
+    Ok(namespace)
+}
+
+fn validate_process_cwd(namespace: &LiveNamespace, cwd: &str) -> Result<()> {
+    ensure!(
+        cwd == "/" || namespace.snapshot().resolve(cwd).is_ok(),
+        "Agent Process cwd '{cwd}' is outside its namespace"
     );
     Ok(())
 }
 
-fn child_namespace(
-    plan: &ChildAgentProcessAssemblyPlan,
-    agent_root: InProcessTransport,
-    handles: &ChildNamespaceHandles,
-) -> alan_kernel::Namespace {
-    let mut namespace = plan.launch_context.namespace.child();
-    namespace.mount(&plan.agent_mount, agent_root, Access::ReadWrite);
-    namespace.mount(
-        &plan.llm_mount,
-        handles.llm_connection.clone(),
-        Access::ReadWrite,
-    );
-    namespace.mount(&plan.srv_mount, handles.srv.clone(), Access::ReadOnly);
-    namespace.mount(&plan.route_mount, handles.route.clone(), Access::ReadWrite);
-    for (path, tree) in &handles.bin_tools {
-        namespace.mount(path, tree.clone(), Access::ReadOnly);
-    }
-    for (path, tree) in &handles.tool_manifests {
-        namespace.mount(path, tree.clone(), Access::ReadOnly);
-    }
-    namespace
+async fn read_clone_pid(server: &impl FileServer, fid: Fid) -> Result<Pid> {
+    let pid = String::from_utf8(server.read(fid, 0, 64).await?)?
+        .parse::<u64>()
+        .context("Agent Process clone PID is invalid")?;
+    Ok(Pid(pid))
 }
 
-fn child_exec_spec(
-    plan: &ChildAgentProcessAssemblyPlan,
-    pid: &str,
-    executable: String,
-) -> ExecSpec {
-    ExecSpec {
-        executable,
-        args: Vec::new(),
-        namespace: Some(child_namespace_manifest(plan, pid)),
-        descriptors: plan
-            .launch_context
-            .descriptors
-            .iter()
-            .zip(3_u32..)
-            .map(|((_, descriptor), number)| (number, descriptor.path.clone()))
-            .collect(),
-    }
-}
-
-fn child_namespace_manifest(
-    plan: &ChildAgentProcessAssemblyPlan,
-    _pid: &str,
-) -> ExecNamespaceManifest {
-    let namespace = plan.launch_context.namespace_snapshot();
-    let mut mounts = vec![
-        ExecNamespaceMount::new(plan.agent_mount.clone(), ExecNamespaceAccess::ReadWrite),
-        ExecNamespaceMount::new(plan.llm_mount.clone(), ExecNamespaceAccess::ReadWrite),
-        ExecNamespaceMount::new(plan.route_mount.clone(), ExecNamespaceAccess::ReadWrite),
-        ExecNamespaceMount::new(plan.srv_mount.clone(), ExecNamespaceAccess::ReadOnly),
-    ];
-    mounts.extend(
-        plan.bin_tool_mounts
-            .iter()
-            .cloned()
-            .map(|path| ExecNamespaceMount::new(path, ExecNamespaceAccess::ReadOnly)),
-    );
-    mounts.extend(plan.bin_tool_names().map(|name| {
-        ExecNamespaceMount::new(format!("/lib/exec/{name}"), ExecNamespaceAccess::ReadOnly)
-    }));
-    mounts.extend(plan.host_mounts.iter().map(|mount| {
-        ExecNamespaceMount::new(
-            mount.target.to_string_lossy().to_string(),
-            match mount.access {
-                SpawnMountAccess::ReadOnly => ExecNamespaceAccess::ReadOnly,
-                SpawnMountAccess::ReadWrite => ExecNamespaceAccess::ReadWrite,
-            },
-        )
-    }));
-    mounts.extend(
-        plan.launch_context
-            .package_references
-            .iter()
-            .filter_map(|reference| {
-                namespace
-                    .resolve(&reference.namespace_path)
-                    .ok()
-                    .map(|resolved| {
-                        ExecNamespaceMount::new(
-                            reference.namespace_path.clone(),
-                            exec_access(resolved.access),
-                        )
-                    })
-            }),
-    );
-    mounts.extend(
-        plan.launch_context
-            .descriptors
-            .values()
-            .filter(|descriptor| {
-                !plan
-                    .launch_context
-                    .package_references
-                    .iter()
-                    .any(|reference| {
-                        Path::new(&descriptor.path).starts_with(&reference.namespace_path)
-                    })
-            })
-            .filter_map(|descriptor| {
-                namespace.resolve(&descriptor.path).ok().map(|resolved| {
-                    ExecNamespaceMount::new(descriptor.path.clone(), exec_access(resolved.access))
-                })
-            }),
-    );
-    mounts.sort_by(|left, right| {
-        left.path
-            .cmp(&right.path)
-            .then_with(|| left.access.cmp(&right.access))
-    });
-    mounts.dedup();
-    ExecNamespaceManifest { mounts }
-}
-
-fn exec_access(access: Access) -> ExecNamespaceAccess {
-    match access {
-        Access::ReadOnly => ExecNamespaceAccess::ReadOnly,
-        Access::ReadWrite => ExecNamespaceAccess::ReadWrite,
-    }
-}
-
-async fn child_observation_environment(
-    procfs: &alan_kernel::ProcFs,
-    agent_root: &alan_agentfs::AgentRootFs,
-    pid: &str,
-    plan: &ChildAgentProcessAssemblyPlan,
-) -> Result<alan_agent_engine::runtime::NamespaceRuntimeEnvironment> {
-    let agent_path = format!("/agent/{pid}");
-    let agent_tree = agent_root
-        .process_tree(pid)
+async fn commit_clone(server: &impl FileServer, fid: Fid, exec: &ExecSpec) -> Result<()> {
+    server
+        .write(fid, 0, &serde_json::to_vec(exec)?)
         .await
-        .with_context(|| format!("attach observer to child AgentFS {agent_path}"))?;
-    let mut namespace = alan_kernel::Namespace::new();
-    namespace.mount(
-        &agent_path,
-        InProcessTransport::new(agent_tree),
-        Access::ReadWrite,
-    );
-    namespace.mount(
-        "/proc",
-        InProcessTransport::new(Arc::new(procfs.clone())),
-        Access::ReadWrite,
-    );
-    Ok(
-        alan_agent_engine::runtime::NamespaceRuntimeEnvironment::new(
-            InProcessTransport::new(Arc::new(alan_kernel::MountFs::new(namespace))),
-            agent_path,
-            plan.llm_connection_name.clone(),
-        )
-        .with_launch_context(plan.launch_context.clone()),
+        .context("write Agent Process exec spec")?;
+    server
+        .clunk(fid)
+        .await
+        .context("commit Agent Process through /proc/clone")
+}
+
+fn next_agent_fid() -> Fid {
+    Fid(NEXT_AGENT_FID.fetch_add(1, Ordering::Relaxed))
+}
+
+async fn wait_for_root_stop(
+    mut stop: tokio::sync::oneshot::Receiver<()>,
+    controller: &RuntimeController,
+) -> i32 {
+    loop {
+        tokio::select! {
+            _ = &mut stop => return 0,
+            _ = tokio::time::sleep(Duration::from_millis(25)) => {
+                if controller.is_finished() {
+                    return 1;
+                }
+            }
+        }
+    }
+}
+
+async fn wait_for_child_terminal(
+    root: &InProcessTransport,
+    pid: Pid,
+    controller: &RuntimeController,
+) -> Result<AgentExecutableResult> {
+    let shell = alan_shell::Shell::new(root.clone());
+    let activity_path = format!("/agent/{}/machine/ui/activity", pid.0);
+    let events_path = format!("/agent/{}/machine/ui/events", pid.0);
+    let notice_path = format!("/agent/{}/machine/ui/notice", pid.0);
+    loop {
+        if controller.is_finished() {
+            anyhow::bail!("child Agent Machine stopped before publishing a terminal result");
+        }
+        let events_started = shell.stat(&events_path).await.map(|stat| stat.length > 0)?;
+        if events_started {
+            let activity: UiActivitySnapshot =
+                serde_json::from_slice(&shell.cat(&activity_path).await?)?;
+            if matches!(
+                activity.state,
+                UiActivityState::Idle | UiActivityState::Paused
+            ) {
+                let notice: UiNoticeSnapshot =
+                    serde_json::from_slice(&shell.cat(&notice_path).await?)?;
+                let output_text =
+                    String::from_utf8(shell.cat(&format!("/agent/{}/io/output", pid.0)).await?)
+                        .context("child Agent output is utf8")?;
+                let warnings = (notice.kind == UiNoticeKind::Warning)
+                    .then(|| notice.message.clone())
+                    .into_iter()
+                    .collect();
+                if notice.kind == UiNoticeKind::Error {
+                    return Ok(AgentExecutableResult::failed_with_output(
+                        output_text,
+                        warnings,
+                        notice.message,
+                    ));
+                }
+                if activity.state == UiActivityState::Paused {
+                    let Some(pause) = read_child_pause(&shell, pid).await? else {
+                        tokio::time::sleep(Duration::from_millis(10)).await;
+                        continue;
+                    };
+                    return Ok(AgentExecutableResult::paused(output_text, warnings, pause));
+                }
+                return Ok(AgentExecutableResult::completed(output_text, warnings));
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
+
+async fn read_child_pause(
+    shell: &alan_shell::Shell,
+    pid: Pid,
+) -> Result<Option<AgentExecutablePause>> {
+    let requests_path = format!("/agent/{}/requests", pid.0);
+    for request_id in shell.ls(&requests_path).await? {
+        if matches!(request_id.as_str(), "clone" | "events") {
+            continue;
+        }
+        let request_path = format!("{requests_path}/{request_id}");
+        if shell.cat(&format!("{request_path}/status")).await? != b"pending" {
+            continue;
+        }
+        let kind = String::from_utf8(shell.cat(&format!("{request_path}/kind")).await?)
+            .context("child Agent request kind is utf8")?;
+        let kind = match kind.as_str() {
+            "confirmation" => YieldKind::Confirmation,
+            "structured_input" => YieldKind::StructuredInput,
+            other => YieldKind::Custom(other.to_string()),
+        };
+        return Ok(Some(AgentExecutablePause { request_id, kind }));
+    }
+    Ok(None)
+}
+
+async fn wait_for_process_exit(
+    procfs: &alan_kernel::ProcFs,
+    pid: Pid,
+    timeout: Duration,
+) -> Result<()> {
+    tokio::time::timeout(timeout, async {
+        loop {
+            if procfs
+                .try_observe_process_lifecycle(pid)
+                .is_none_or(|(status, _)| status == alan_kernel::Status::Exited)
+            {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .context("timed out waiting for Agent Process exit")?;
+    Ok(())
+}
+
+fn process_error(error: anyhow::Error) -> ProcessOutcome {
+    let result = AgentExecutableResult::failed(format!("alan-agent: {error:#}"));
+    ProcessOutcome::exited(
+        1,
+        result
+            .to_process_output_record()
+            .unwrap_or_else(|_| format!("alan-agent: {error:#}\n").into_bytes()),
     )
 }
 
-#[derive(Clone)]
-struct ServiceChildProcessAssembler {
-    service: Arc<AgentRuntimeService>,
-    parent_pid: Pid,
-}
-
-impl std::fmt::Debug for ServiceChildProcessAssembler {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter
-            .debug_struct("ServiceChildProcessAssembler")
-            .field("parent_pid", &self.parent_pid)
-            .finish_non_exhaustive()
-    }
-}
-
-#[async_trait::async_trait]
-impl ChildAgentProcessAssembler for ServiceChildProcessAssembler {
-    async fn assemble(
-        &self,
-        request: ChildAgentProcessAssemblyRequest,
-    ) -> Result<AssembledChildAgentProcess> {
-        self.service.assemble_child(self.parent_pid, request).await
-    }
-}
-
-struct ServiceAgentProcessLifecycle {
-    service: Arc<AgentRuntimeService>,
+struct ProcessCleanup {
+    service: Weak<AgentRuntimeService>,
     pid: Pid,
+    armed: bool,
 }
 
-impl std::fmt::Debug for ServiceAgentProcessLifecycle {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter
-            .debug_struct("ServiceAgentProcessLifecycle")
-            .field("pid", &self.pid)
-            .finish_non_exhaustive()
+impl ProcessCleanup {
+    fn new(service: Weak<AgentRuntimeService>, pid: Pid) -> Self {
+        Self {
+            service,
+            pid,
+            armed: true,
+        }
+    }
+
+    async fn finish(&mut self) {
+        if !self.armed {
+            return;
+        }
+        self.armed = false;
+        if let Some(service) = self.service.upgrade() {
+            service.release_process(self.pid).await;
+        }
     }
 }
 
-#[async_trait::async_trait]
-impl AgentProcessLifecycle for ServiceAgentProcessLifecycle {
-    async fn finish(&self, exit_code: i32) {
-        self.service.procfs.record_exit(self.pid, exit_code).await;
-        self.service.release_process(self.pid).await;
+impl Drop for ProcessCleanup {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        let service = self.service.clone();
+        let pid = self.pid;
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            runtime.spawn(async move {
+                if let Some(service) = service.upgrade() {
+                    service.release_process(pid).await;
+                }
+            });
+        }
     }
-}
-
-static NEXT_CHILD_FID: AtomicU64 = AtomicU64::new(90_000);
-
-fn next_child_fid() -> Fid {
-    Fid(NEXT_CHILD_FID.fetch_add(1, Ordering::Relaxed))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::sync::Arc;
 
-    #[tokio::test]
-    async fn service_assembles_and_releases_child_agent_process() {
-        let procfs = alan_kernel::ProcFs::new();
-        let mut base = alan_kernel::Namespace::new();
-        for executable in ["/bin/parent", "/bin/alan-agent"] {
-            base.mount(
-                executable,
-                InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::new())),
-                Access::ReadOnly,
-            );
-        }
-        let live = LiveNamespace::new(base);
-        let parent_pid = crate::runtime::spawn_process(
-            &procfs,
-            None,
-            live.clone(),
-            Credentials::system(),
-            "/bin/parent",
-        )
-        .await
-        .unwrap();
-        let agent_root = Arc::new(alan_agentfs::AgentRootFs::new(Arc::new(procfs.clone())));
-        let tools = alan_agent_engine::ToolRegistry::new();
-        let service = AgentRuntimeService::new(
-            procfs.clone(),
-            AgentRuntimeFileServers::new(
-                agent_root.clone(),
-                Arc::new(alan_llmfs::LlmFs::new()),
-                Arc::new(alan_kernel::SrvFs::new()),
-                Arc::new(alan_routefs::RouteFs::new()),
-            ),
-            HostMountService::unavailable(),
-            ConnectionService::ephemeral("test"),
-            tools.process_runner(),
-        );
-        let launch_context = alan_agent_engine::ProcessLaunchContext::new(
-            live.snapshot(),
-            Credentials::user("parent-agent"),
-            "/",
-        )
-        .unwrap();
-        let assembly = service
-            .child_process_assembler(parent_pid)
-            .assemble(ChildAgentProcessAssemblyRequest {
-                plan: ChildAgentProcessAssemblyPlan {
-                    agent_mount: "/agent".to_string(),
-                    llm_mount: "/mnt/llm".to_string(),
-                    llm_connection_name: "default".to_string(),
-                    srv_mount: "/srv".to_string(),
-                    route_mount: "/mnt/route".to_string(),
-                    bin_tool_mounts: Vec::new(),
-                    tool_packages: Vec::new(),
-                    host_mounts: Vec::new(),
-                    cwd: Some("/".into()),
-                    launch_context,
-                },
-                scratch_dir: None,
-                executable: "/bin/alan-agent".to_string(),
-            })
-            .await
-            .unwrap();
+    use alan_ap::InProcessTransport;
+    use alan_kernel::{Access, LiveNamespace, Namespace};
 
-        assert!(agent_root.process_tree(&assembly.pid).await.is_some());
-        let shell = alan_shell::Shell::new(assembly.environment.root_transport());
-        let root_entries = shell.ls("/").await.unwrap();
-        for required in ["agent", "mnt", "proc", "srv"] {
-            assert!(root_entries.iter().any(|entry| entry == required));
-        }
-        let proc_shell = alan_shell::Shell::new(InProcessTransport::new(Arc::new(procfs.clone())));
-        assert_eq!(
-            String::from_utf8(
-                proc_shell
-                    .cat(&format!("/{}/parent", assembly.pid))
-                    .await
-                    .unwrap()
-            )
-            .unwrap(),
-            parent_pid.0.to_string()
-        );
+    use super::validate_process_cwd;
 
-        assembly.lifecycle.finish(0).await;
-        assert!(agent_root.process_tree(&assembly.pid).await.is_none());
-        assert_eq!(
-            String::from_utf8(
-                proc_shell
-                    .cat(&format!("/{}/exit", assembly.pid))
-                    .await
-                    .unwrap()
-            )
-            .unwrap(),
-            "0"
+    #[test]
+    fn process_cwd_must_be_reachable_after_service_projection() {
+        let namespace = LiveNamespace::new(Namespace::new());
+        assert!(validate_process_cwd(&namespace, "/").is_ok());
+        assert!(validate_process_cwd(&namespace, "/mnt/review").is_err());
+
+        namespace.mount(
+            "/mnt/review",
+            InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::empty())),
+            Access::ReadOnly,
         );
+        assert!(validate_process_cwd(&namespace, "/mnt/review/src").is_ok());
     }
 }

@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 mod delegation;
 mod file_server;
 
-use delegation::resolve_child_delegations;
+use delegation::{ensure_no_ambient_child_projections, resolve_child_delegations};
 use file_server::{HostMountEventStreams, HostMountFs};
 
 const RESERVED_MOUNT_NAMESPACE_ROOTS: &[&str] = &[
@@ -253,44 +253,6 @@ impl HostMountService {
         self.state.lock().unwrap().processes.insert(pid, namespace);
     }
 
-    /// Remove every Host Mount held by `pid` from an inherited namespace snapshot.
-    pub fn strip_process_projections(&self, pid: Pid, namespace: &mut alan_kernel::Namespace) {
-        let paths = self
-            .state
-            .lock()
-            .unwrap()
-            .grants
-            .values()
-            .flat_map(|grant| &grant.projections)
-            .filter(|projection| projection.pid == pid)
-            .map(|projection| projection.namespace_path.clone())
-            .collect::<Vec<_>>();
-        for path in paths {
-            namespace.unmount(&path);
-        }
-    }
-
-    /// Project delegated handles into the temporary namespace used by `/proc/clone`.
-    pub fn project_child_namespace(
-        &self,
-        parent_pid: Pid,
-        namespace: &mut alan_kernel::Namespace,
-        requested: &[SpawnHostMount],
-    ) -> Result<()> {
-        let delegated = {
-            let state = self.state.lock().unwrap();
-            resolve_child_delegations(&state, parent_pid, requested)?
-        };
-        for projection in delegated {
-            namespace.mount(
-                &projection.target,
-                projection.export.file_tree(),
-                projection.access.kernel(),
-            );
-        }
-        Ok(())
-    }
-
     /// Register a child Process and project only handles explicitly delegated by its parent.
     pub fn register_child_process(
         &self,
@@ -304,6 +266,7 @@ impl HostMountService {
             !state.processes.contains_key(&pid),
             "Process {pid:?} is already registered with Host Mount Service"
         );
+        ensure_no_ambient_child_projections(&state, parent_pid, &namespace.snapshot())?;
         let delegated = resolve_child_delegations(&state, parent_pid, requested)?;
 
         state.processes.insert(pid, namespace.clone());
@@ -830,9 +793,10 @@ impl HostMountService {
 impl ToolExecutionAuthority for HostMountService {
     fn reconcile(
         &self,
-        pid: Pid,
+        pid: u64,
         mut binding: ToolExecutionBinding,
     ) -> Result<ToolExecutionBinding> {
+        let pid = Pid(pid);
         let carried_host_mount_authority = binding.has_adapter();
         let requested_namespace_cwd = binding.namespace_cwd.clone();
         let state = self.state.lock().unwrap();

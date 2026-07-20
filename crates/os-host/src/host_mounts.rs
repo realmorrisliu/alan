@@ -424,7 +424,7 @@ mod tests {
         let root = InProcessTransport::new(Arc::new(MountFs::new(namespace.snapshot())));
         assert_file_bytes(&root, Fid(10), &["mnt", "project", "notes.txt"], b"hello").await;
 
-        let execution = service.reconcile(Pid(7), binding("/mnt/project")).unwrap();
+        let execution = service.reconcile(7, binding("/mnt/project")).unwrap();
         let adapter = execution.adapter().unwrap();
         assert_eq!(
             adapter.cwd().unwrap(),
@@ -491,7 +491,7 @@ mod tests {
             Err(ErrorCode::NoAccess)
         );
         let adapter = service
-            .reconcile(Pid(7), binding("/mnt/docs"))
+            .reconcile(7, binding("/mnt/docs"))
             .unwrap()
             .adapter()
             .unwrap();
@@ -523,7 +523,7 @@ mod tests {
         )
         .await;
 
-        let execution = service.reconcile(Pid(7), binding("/mnt/z/work")).unwrap();
+        let execution = service.reconcile(7, binding("/mnt/z/work")).unwrap();
 
         assert_eq!(execution.namespace_cwd, PathBuf::from("/mnt/z/work"));
         assert_eq!(
@@ -549,9 +549,7 @@ mod tests {
         .await;
         approve(&service, 7, "/mnt/docs", HostMountAccess::ReadOnly, &nested).await;
 
-        let error = service
-            .reconcile(Pid(7), binding("/mnt/project"))
-            .unwrap_err();
+        let error = service.reconcile(7, binding("/mnt/project")).unwrap_err();
 
         assert!(error.to_string().contains("overlap native backing"));
     }
@@ -570,7 +568,7 @@ mod tests {
         )
         .await;
         let adapter = service
-            .reconcile(Pid(7), binding("/mnt/project"))
+            .reconcile(7, binding("/mnt/project"))
             .unwrap()
             .adapter()
             .unwrap();

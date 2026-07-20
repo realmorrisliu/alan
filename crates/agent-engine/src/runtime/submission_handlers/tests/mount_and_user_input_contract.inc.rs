@@ -98,7 +98,7 @@
         state.environment = state
             .environment
             .clone()
-            .with_launch_context(crate::ProcessLaunchContext::root());
+            .with_namespace_cwd("/");
         host_mount
             .settle(&request_id, "approved", Some("grant-race-winner"), None)
             .await;
@@ -134,7 +134,7 @@
         state.environment = state
             .environment
             .clone()
-            .with_launch_context(crate::ProcessLaunchContext::root());
+            .with_namespace_cwd("/");
         host_mount.begin_decision(&request_id).await;
         let cancel = CancellationToken::new();
         let mut emit = |_event: Event| async {};
@@ -174,7 +174,7 @@
         state.environment = state
             .environment
             .clone()
-            .with_launch_context(crate::ProcessLaunchContext::root());
+            .with_namespace_cwd("/");
         host_mount
             .settle(&request_id, "approved", Some("grant-opaque-1"), None)
             .await;

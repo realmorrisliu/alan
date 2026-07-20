@@ -1,399 +1,583 @@
 mod delegated_launch;
-mod launch_context;
 mod runtime_inputs;
-mod runtime_startup;
 mod task_context;
-#[cfg(test)]
-mod test_namespace;
 
-use super::child_runs::ChildRunRecord;
-#[cfg(test)]
-use super::child_runs::ChildRunRegistry;
-#[cfg(test)]
-use super::delegated_child_run::ChildRuntimeStatus;
-use super::delegated_child_run::{DelegatedChildRunSupervision, DelegatedChildRunSupervisor};
-use super::engine::{runtime_host_capabilities_for_tools, spawn_with_namespace_environment};
-use super::launch_config::{AgentProcessConfig, effective_core_config_for_runtime};
-#[cfg(test)]
-use crate::llm::LlmClient;
-use crate::tape::ContentPart;
-use alan_agent_protocol::{Op, SpawnHandle, SpawnSpec, Submission};
-#[cfg(test)]
-use alan_ap::InProcessTransport;
-#[cfg(test)]
-use alan_llm::{GenerationRequest, GenerationResponse, LlmProvider, StreamChunk};
-use anyhow::{Context, Result, bail};
-use delegated_launch::evaluate_delegated_launch_capabilities;
-#[cfg(test)]
-use launch_context::ResolvedLaunchRoot;
-use launch_context::{
-    build_child_agent_config, build_child_launch_context, ensure_child_connection_is_passed,
-    resolve_launch_root_dir, validate_child_launch_contract,
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::{Path, PathBuf},
+    time::Duration,
 };
-use runtime_startup::{
-    CHILD_AGENT_LAUNCH_CANCELLED_MESSAGE, child_run_status_for_launch_error,
-    record_child_launch_failure_process, send_initial_child_submission,
-    wait_for_child_runtime_startup,
+
+use alan_agent_protocol::{
+    AGENT_DEFINITION_DESCRIPTOR as AGENT_DEFINITION_FD, AgentExecutableRequest,
+    ProcessNamespaceAccess, ProcessNamespaceMount, SpawnHandle, SpawnMountAccess, SpawnSpec,
+    SpawnTarget,
 };
-use std::collections::BTreeSet;
-use std::path::PathBuf;
-#[cfg(test)]
-use std::sync::Arc;
-use std::time::Duration;
-#[cfg(test)]
-use test_namespace::{
-    ChildNamespaceLaunchHandles, TestParentProcessContext, child_observation_environment,
-    spawn_child_namespace_runtime_environment,
-};
+use anyhow::{Context, Result, bail, ensure};
 use tokio_util::sync::CancellationToken;
+
+use super::{
+    child_runs::ChildRunRecord,
+    delegated_child_run::{
+        ChildProcessStartup, DelegatedChildRunSupervision, DelegatedChildRunSupervisor,
+    },
+};
+use delegated_launch::evaluate_delegated_launch_capabilities;
 
 pub(crate) use runtime_inputs::{ChildLaunchRuntime, ChildTaskContext};
 pub(crate) use task_context::project_child_task_context;
 
-const ROUTE_MOUNT_PATH: &str = "/mnt/route";
-#[cfg(test)]
-struct ChildLlmProvider {
-    client: LlmClient,
+const CHILD_AGENT_LAUNCH_CANCELLED_MESSAGE: &str = "Child Agent Process launch cancelled";
+const AGENT_EXECUTABLE: &str = "/bin/alan-agent";
+
+#[derive(Debug, Clone)]
+struct ChildNamespacePlan {
+    process_mounts: Vec<ProcessNamespaceMount>,
+    effective_mounts: Vec<ProcessNamespaceMount>,
+    bin_tool_mounts: Vec<String>,
+    llm_connection_name: String,
+    cwd: PathBuf,
 }
 
-#[cfg(test)]
-impl ChildLlmProvider {
-    fn new(client: LlmClient) -> Self {
-        Self { client }
-    }
-}
-
-#[cfg(test)]
-#[async_trait::async_trait]
-impl LlmProvider for ChildLlmProvider {
-    async fn generate(&mut self, request: GenerationRequest) -> Result<GenerationResponse> {
-        self.client.generate(request).await
-    }
-
-    async fn chat(&mut self, system: Option<&str>, user: &str) -> Result<String> {
-        self.client.chat(system, user).await
-    }
-
-    async fn generate_stream(
-        &mut self,
-        request: GenerationRequest,
-    ) -> Result<tokio::sync::mpsc::Receiver<StreamChunk>> {
-        self.client.generate_stream(request).await
-    }
-
-    fn provider_name(&self) -> &'static str {
-        self.client.provider_name()
+impl ChildNamespacePlan {
+    fn namespace_summary(&self) -> alan_agent_protocol::DelegatedNamespaceSummary {
+        alan_agent_protocol::DelegatedNamespaceSummary {
+            mounts: self
+                .effective_mounts
+                .iter()
+                .map(|mount| mount.path.clone())
+                .collect(),
+            writable_mounts: self
+                .effective_mounts
+                .iter()
+                .filter(|mount| mount.access == ProcessNamespaceAccess::ReadWrite)
+                .map(|mount| mount.path.clone())
+                .collect(),
+            bin_bindings: self.bin_tool_mounts.clone(),
+            cwd: Some(self.cwd.clone()),
+            llm_connection: Some(self.llm_connection_name.clone()),
+        }
     }
 }
 
-#[cfg(test)]
-pub(crate) async fn spawn_child_runtime(
-    parent: ChildLaunchRuntime,
-    spec: SpawnSpec,
-) -> Result<DelegatedChildRunSupervisor> {
-    spawn_child_runtime_with_optional_cancel(parent, spec, None).await
-}
-
-#[allow(
-    dead_code,
-    reason = "cancellable adapter remains available to focused child-runtime tests"
-)]
 pub(crate) async fn spawn_child_runtime_cancellable(
     parent: ChildLaunchRuntime,
     spec: SpawnSpec,
     cancel: &CancellationToken,
 ) -> Result<DelegatedChildRunSupervisor> {
-    spawn_child_runtime_with_optional_cancel(parent, spec, Some(cancel)).await
+    spawn_child_runtime_inner(parent, spec, Some(cancel)).await
 }
-
-async fn spawn_child_runtime_with_optional_cancel(
-    parent: ChildLaunchRuntime,
-    spec: SpawnSpec,
-    cancel: Option<&CancellationToken>,
-) -> Result<DelegatedChildRunSupervisor> {
-    #[cfg(test)]
-    {
-        return spawn_child_runtime_inner(parent, spec, None, cancel).await;
-    }
-    #[cfg(not(test))]
-    {
-        spawn_child_runtime_inner(parent, spec, cancel).await
-    }
-}
-
-#[cfg(test)]
-async fn spawn_child_runtime_with_client_factory<F>(
-    parent: ChildLaunchRuntime,
-    spec: SpawnSpec,
-    llm_client_factory: F,
-) -> Result<DelegatedChildRunSupervisor>
-where
-    F: FnOnce(&crate::Config) -> Result<LlmClient> + Send,
-{
-    spawn_child_runtime_inner(parent, spec, Some(Box::new(llm_client_factory)), None).await
-}
-
-#[cfg(test)]
-type TestChildLlmClientFactory<'a> =
-    Box<dyn FnOnce(&crate::Config) -> Result<LlmClient> + Send + 'a>;
 
 async fn spawn_child_runtime_inner(
     parent: ChildLaunchRuntime,
     mut spec: SpawnSpec,
-    #[cfg(test)] llm_client_factory: Option<TestChildLlmClientFactory<'_>>,
     cancel: Option<&CancellationToken>,
 ) -> Result<DelegatedChildRunSupervisor> {
-    if cancel.is_some_and(CancellationToken::is_cancelled) {
-        bail!(CHILD_AGENT_LAUNCH_CANCELLED_MESSAGE);
-    }
+    ensure_not_cancelled(cancel)?;
+    validate_child_launch_contract(&spec)?;
 
-    let child_cwd = validate_child_launch_contract(&spec)?;
-    let launch_root_dir = resolve_launch_root_dir(&parent, &spec.target)?;
-    let child_agent_config = build_child_agent_config(&parent, &spec);
-    let parent_launch_context = parent
-        .child_launch
-        .launch_context()
-        .cloned()
-        .unwrap_or_else(crate::ProcessLaunchContext::root);
-    let launch_context = build_child_launch_context(
-        &parent_launch_context,
+    let process_files = parent.child_launch.process_files();
+    let parent_pid = process_files.current_pid()?.to_string();
+    let parent_mounts = process_files.read_process_namespace(&parent_pid).await?;
+    let parent_descriptors = process_files.read_process_descriptors(&parent_pid).await?;
+    let target_path = resolve_target_path(&parent, &spec.target, &parent_descriptors)?;
+    let tool_names = select_tool_names(&parent, &spec).await?;
+    let plan = build_child_namespace_plan(
         &spec,
-        child_cwd,
-        launch_root_dir.as_ref(),
+        &parent_mounts,
+        &target_path,
+        &parent_descriptors,
+        &tool_names,
+        parent.child_launch.connection_name(),
+    )?;
+    let delegation_capability_decision = evaluate_delegated_launch_capabilities(
+        &mut spec,
+        &plan,
+        &parent_mounts,
+        parent.child_launch.namespace_cwd(),
     )?;
 
-    let mut child_config = AgentProcessConfig {
-        agent_config: child_agent_config.clone(),
-        // Child launches should still resolve their target/root overlays. Using the
-        // default source keeps launch-root agent.toml in play instead of treating the
-        // parent's effective config as a terminal env override.
-        core_config_source: crate::ConfigSourceKind::Default,
-        launch_context,
-        store_bindings: parent
-            .base_agent_config
-            .runtime_config
-            .store_bindings
-            .clone(),
-        memory_store_backing: spec
-            .has_handle(SpawnHandle::Memory)
-            .then(|| {
-                parent
-                    .base_agent_config
-                    .runtime_config
-                    .memory_store_backing
-                    .clone()
-            })
-            .flatten(),
-        recovery_rollout_path: None,
-    };
-    let resolved_child_definition = crate::ResolvedAgentDefinition::from_launch_context(
-        &child_config.launch_context,
-        &child_config
-            .agent_config
-            .core_config
-            .resolved_skill_overrides(),
-        child_config.core_config_source,
-    )
-    .context("Failed to resolve child Agent Process definition")?;
-    let mut resolved_child_agent_config = resolved_child_definition
-        .apply_to_agent_config(&child_agent_config)
-        .context("Failed to resolve effective child Agent Process config")?;
-    if spec.has_handle(SpawnHandle::Memory) {
-        resolved_child_agent_config.core_config.memory.store_dir = parent
-            .base_agent_config
-            .core_config
-            .memory
-            .store_dir
-            .clone();
-    } else {
-        resolved_child_agent_config.core_config.memory.store_dir = None;
-    }
-    child_config.agent_config = resolved_child_agent_config;
-    child_config.core_config_source = crate::ConfigSourceKind::EnvOverride;
-    let effective_child_core_config = effective_core_config_for_runtime(&child_config)
-        .context("Failed to resolve effective child Agent Process runtime config")?;
-    let child_namespace_plan = build_child_namespace_assembly_plan(
-        &parent,
-        &spec,
-        &effective_child_core_config,
-        child_config.launch_context.clone(),
-    )
-    .await
-    .context("Failed to assemble child Agent Process namespace plan")?;
-    let child_connection = child_namespace_plan.llm_connection_name()?;
-    ensure_child_connection_is_passed(&parent, &child_connection)?;
-    let delegation_capability_decision =
-        evaluate_delegated_launch_capabilities(&parent, &mut spec, &child_namespace_plan).await?;
-    #[cfg(test)]
-    let test_llm = if let Some(factory) = llm_client_factory {
-        let client = factory(&effective_child_core_config)
-            .context("Failed to create test child Agent Process LLM client")?;
-        let llmfs = Arc::new(alan_llmfs::LlmFs::new());
-        llmfs.register_connection(
-            &child_namespace_plan.llm_connection_name()?,
-            Box::new(ChildLlmProvider::new(client)),
-        );
-        Some(InProcessTransport::new(llmfs))
-    } else {
-        None
-    };
-    let assembler = parent
-        .child_launch
-        .assembler()
-        .context("parent Agent Process has no Agent Runtime Service child assembly capability")?;
-    let assembly = assembler
-        .assemble(super::ChildAgentProcessAssemblyRequest {
-            plan: child_namespace_plan.clone(),
-            scratch_dir: child_config
-                .store_bindings
-                .as_ref()
-                .map(|stores| stores.tmp.clone()),
-            executable: "/bin/alan-agent".to_string(),
-            #[cfg(test)]
-            llm_override: test_llm,
-        })
-        .await
-        .context("Failed to spawn child Agent Process namespace")?;
-    let child_process_pid = assembly.pid.clone();
-    let child_process_environment = assembly.observation_environment;
-    let process_lifecycle = assembly.lifecycle;
-    let generation_capabilities =
-        crate::provider_capabilities_for_config(&effective_child_core_config);
-    let host_capabilities = runtime_host_capabilities_for_tools(
-        child_namespace_plan
-            .tool_packages
-            .iter()
-            .map(|manifest| manifest.name.clone()),
-    );
-    let runtime = match spawn_with_namespace_environment(
-        child_config,
-        assembly.environment,
-        host_capabilities,
-        generation_capabilities,
-    )
-    .context("Failed to spawn child Agent Process runtime")
+    let mut descriptors = BTreeMap::from([(AGENT_DEFINITION_FD, target_path)]);
+    if spec.has_handle(SpawnHandle::Memory)
+        && let Some(path) = parent_descriptors.get(&alan_agent_protocol::MEMORY_STORE_DESCRIPTOR)
     {
-        Ok(runtime) => runtime,
-        Err(err) => {
-            record_child_launch_failure_process(&process_lifecycle, &err).await;
-            return Err(err);
-        }
+        descriptors.insert(alan_agent_protocol::MEMORY_STORE_DESCRIPTOR, path.clone());
+    }
+    let request = AgentExecutableRequest {
+        initial_task: task_context::build_child_task_text(&parent.task_context, &spec),
+        spawn: spec.clone(),
     };
-    let (runtime, startup_metadata) = match wait_for_child_runtime_startup(runtime, cancel).await {
-        Ok(ready) => ready,
-        Err(err) => {
-            record_child_launch_failure_process(&process_lifecycle, &err).await;
-            return Err(err);
-        }
-    };
-    let child_run_registry = parent.child_run_registry.clone();
+    ensure_not_cancelled(cancel)?;
+    let child_pid = process_files
+        .spawn_agent_process(&request, plan.process_mounts.clone(), descriptors)
+        .await
+        .context("Failed to spawn child Agent Process through /proc/clone")?;
+    let (agent_files, child_process_files) = parent.child_launch.observation_handles(&child_pid);
+    wait_for_child_process_startup(&agent_files, &child_process_files, &child_pid, cancel).await?;
+
     let child_run_id = uuid::Uuid::new_v4().to_string();
+    let process_path = format!("/proc/{child_pid}");
+    let agent_path = format!("/agent/{child_pid}");
     let mut child_run_record = ChildRunRecord::new(
         child_run_id.clone(),
-        parent.parent_process_path.clone(),
-        startup_metadata.process_path.clone(),
-        Some(startup_metadata.agent_path.clone()),
+        parent.parent_process_path,
+        process_path.clone(),
+        Some(agent_path),
         Some(format!("{:?}", spec.target)),
     );
     if let Some(decision) = delegation_capability_decision {
         child_run_record = child_run_record.with_delegation_capability_decision(decision);
     }
-    child_run_registry.register(child_run_record);
-    let submission = Submission::new(Op::Turn {
-        parts: vec![ContentPart::text(task_context::build_child_task_text(
-            &parent.task_context,
-            &spec,
-        ))],
-        context: None,
-    });
-    let runtime = match send_initial_child_submission(runtime, submission.clone(), cancel).await {
-        Ok(runtime) => runtime,
-        Err(err) => {
-            let status = child_run_status_for_launch_error(&err);
-            record_child_launch_failure_process(&process_lifecycle, &err).await;
-            child_run_registry.mark_terminal(&child_run_id, status, Some(format!("{err:#}")));
-            return Err(err);
-        }
-    };
-    child_run_registry.mark_running(&child_run_id);
+    parent.child_run_registry.register(child_run_record);
+    parent.child_run_registry.mark_running(&child_run_id);
 
     Ok(DelegatedChildRunSupervisor::new(
         DelegatedChildRunSupervision {
-            runtime: Some(runtime),
-            startup_metadata,
+            startup: ChildProcessStartup {
+                process_path,
+                rollout_path: None,
+                warnings: Vec::new(),
+            },
             child_run_id,
-            child_run_registry,
+            child_run_registry: parent.child_run_registry,
             timeout: spec.launch.timeout_secs.map(Duration::from_secs),
-            process_lifecycle,
-            agent_files: child_process_environment.agent_files(),
-            process_files: child_process_environment.process_files(),
-            process_pid: child_process_pid,
+            agent_files,
+            process_files: child_process_files,
+            process_pid: child_pid,
         },
     ))
 }
 
-type ChildNamespaceAssemblyPlan = super::ChildAgentProcessAssemblyPlan;
+fn ensure_not_cancelled(cancel: Option<&CancellationToken>) -> Result<()> {
+    if cancel.is_some_and(CancellationToken::is_cancelled) {
+        bail!(CHILD_AGENT_LAUNCH_CANCELLED_MESSAGE);
+    }
+    Ok(())
+}
 
-async fn build_child_namespace_assembly_plan(
-    parent: &ChildLaunchRuntime,
-    spec: &SpawnSpec,
-    child_core_config: &crate::Config,
-    launch_context: crate::ProcessLaunchContext,
-) -> Result<ChildNamespaceAssemblyPlan> {
-    let cwd = spec
-        .launch
-        .cwd
-        .clone()
-        .or_else(|| Some(PathBuf::from(&launch_context.cwd)));
-    let llm_connection = child_core_config
-        .connection_profile
-        .as_deref()
-        .unwrap_or("default");
-    let mut plan = ChildNamespaceAssemblyPlan {
-        agent_mount: "/agent".to_string(),
-        llm_mount: "/mnt/llm".to_string(),
-        llm_connection_name: llm_connection.to_string(),
-        srv_mount: "/srv".to_string(),
-        route_mount: ROUTE_MOUNT_PATH.to_string(),
-        bin_tool_mounts: Vec::new(),
-        tool_packages: Vec::new(),
-        host_mounts: spec.host_mounts.clone(),
-        cwd,
-        launch_context,
+async fn wait_for_child_process_startup(
+    agent_files: &super::transition::NamespaceAgentFiles,
+    process_files: &super::transition::NamespaceProcessFiles,
+    pid: &str,
+    cancel: Option<&CancellationToken>,
+) -> Result<()> {
+    let wait = async {
+        loop {
+            if let Some(exit_code) = process_files.read_process_exit_code(pid).await? {
+                let result = process_files.read_agent_process_result(pid).await.ok();
+                if result
+                    .as_ref()
+                    .is_some_and(|result| child_reached_observable_terminal(exit_code, result))
+                {
+                    return Ok(());
+                }
+                let detail = result
+                    .and_then(|result| result.error_message)
+                    .map(|message| format!(": {message}"))
+                    .unwrap_or_default();
+                bail!("Child Agent Process exited during startup with code {exit_code}{detail}");
+            }
+            if agent_files.read_ui_activity_snapshot().await.is_ok() {
+                return Ok(());
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
     };
+    if let Some(cancel) = cancel {
+        tokio::select! {
+            result = wait => result,
+            _ = cancel.cancelled() => {
+                let _ = process_files.write_process_control_for_pid(pid, "cancel").await;
+                bail!(CHILD_AGENT_LAUNCH_CANCELLED_MESSAGE)
+            }
+        }
+    } else {
+        wait.await
+    }
+}
 
+fn child_reached_observable_terminal(
+    exit_code: i32,
+    result: &alan_agent_protocol::AgentExecutableResult,
+) -> bool {
+    matches!(
+        (exit_code, result.status),
+        (0, alan_agent_protocol::AgentExecutableStatus::Completed)
+            | (1, alan_agent_protocol::AgentExecutableStatus::Paused)
+    )
+}
+
+async fn select_tool_names(parent: &ChildLaunchRuntime, spec: &SpawnSpec) -> Result<Vec<String>> {
     let packages = parent.tool_execution.discover_packages().await?;
-    plan.tool_packages = if let Some(profile) = spec.runtime_overrides.tool_profile.as_ref() {
-        let available = packages
-            .iter()
-            .map(|package| package.name.as_str())
-            .collect::<BTreeSet<_>>();
+    let available = packages
+        .iter()
+        .map(|package| package.name.as_str())
+        .collect::<BTreeSet<_>>();
+    let names = if let Some(profile) = spec.runtime_overrides.tool_profile.as_ref() {
         let missing = profile
             .allowed_tools
             .iter()
             .filter(|name| !available.contains(name.as_str()))
             .cloned()
             .collect::<Vec<_>>();
-        if !missing.is_empty() {
-            bail!(
-                "Child Agent Process launch requested unavailable tools: {}",
-                missing.join(", ")
-            );
-        }
-        packages
+        ensure!(
+            missing.is_empty(),
+            "Child Agent Process launch requested unavailable tools: {}",
+            missing.join(", ")
+        );
+        profile
+            .allowed_tools
+            .iter()
+            .cloned()
+            .collect::<BTreeSet<_>>()
             .into_iter()
-            .filter(|package| profile.allowed_tools.contains(&package.name))
             .collect()
     } else {
-        packages
+        available.into_iter().map(str::to_string).collect()
     };
-    plan.bin_tool_mounts = plan
-        .tool_packages
+    Ok(names)
+}
+
+fn resolve_target_path(
+    parent: &ChildLaunchRuntime,
+    target: &SpawnTarget,
+    descriptors: &BTreeMap<u32, String>,
+) -> Result<String> {
+    match target {
+        SpawnTarget::DefinitionDescriptor { descriptor } => {
+            ensure!(
+                descriptor == crate::AGENT_DEFINITION_DESCRIPTOR,
+                "parent Process has no `{descriptor}` descriptor"
+            );
+            descriptors
+                .get(&AGENT_DEFINITION_FD)
+                .cloned()
+                .context("parent Process has no Agent Definition descriptor")
+        }
+        SpawnTarget::PackageChildAgent { .. } => parent
+            .capability_view
+            .as_ref()
+            .map(crate::skills::ResolvedCapabilityView::refresh)
+            .and_then(|view| view.resolve_child_agent_export(target).cloned())
+            .with_context(|| format!("Unknown package child Agent Executable target: {target:?}"))?
+            .root_dir
+            .to_str()
+            .map(str::to_string)
+            .context("package child Agent Executable path is not utf8"),
+    }
+}
+
+fn build_child_namespace_plan(
+    spec: &SpawnSpec,
+    parent_mounts: &[ProcessNamespaceMount],
+    target_path: &str,
+    parent_descriptors: &BTreeMap<u32, String>,
+    tool_names: &[String],
+    llm_connection_name: &str,
+) -> Result<ChildNamespacePlan> {
+    let mut selected = BTreeMap::<String, ProcessNamespaceAccess>::new();
+    for path in [
+        "/proc",
+        "/agent",
+        "/srv",
+        AGENT_EXECUTABLE,
+        "/mnt/llm",
+        "/mnt/route",
+        "/mnt/host-mount",
+        "/man",
+    ] {
+        retain_exact_mount(parent_mounts, &mut selected, path)?;
+    }
+    retain_resolving_mount(parent_mounts, &mut selected, target_path)?;
+    for mount in parent_mounts
         .iter()
-        .map(|package| format!("/bin/{}", package.name))
-        .collect();
-    Ok(plan)
+        .filter(|mount| mount.path.starts_with("/lib/pkg/"))
+    {
+        selected.insert(mount.path.clone(), mount.access);
+    }
+    let bin_tool_mounts = tool_names
+        .iter()
+        .map(|name| format!("/bin/{name}"))
+        .collect::<Vec<_>>();
+    for name in tool_names {
+        retain_exact_mount(parent_mounts, &mut selected, &format!("/bin/{name}"))?;
+        retain_exact_mount(parent_mounts, &mut selected, &format!("/lib/exec/{name}"))?;
+    }
+    if spec.has_handle(SpawnHandle::Memory) {
+        let memory = parent_descriptors
+            .get(&alan_agent_protocol::MEMORY_STORE_DESCRIPTOR)
+            .context("parent Process has no Memory Store descriptor")?;
+        retain_resolving_mount(parent_mounts, &mut selected, memory)?;
+    }
+    let mut effective = selected.clone();
+    for host_mount in &spec.host_mounts {
+        let target = host_mount
+            .target
+            .to_str()
+            .context("Host Mount target is not utf8")?;
+        effective.insert(
+            target.to_string(),
+            match host_mount.access {
+                SpawnMountAccess::ReadOnly => ProcessNamespaceAccess::ReadOnly,
+                SpawnMountAccess::ReadWrite => ProcessNamespaceAccess::ReadWrite,
+            },
+        );
+    }
+
+    let cwd = spec
+        .launch
+        .cwd
+        .clone()
+        .unwrap_or_else(|| PathBuf::from("/"));
+    ensure!(
+        cwd.is_absolute(),
+        "Child Agent Process cwd must be absolute"
+    );
+    if cwd != Path::new("/") {
+        ensure!(
+            effective
+                .keys()
+                .any(|path| cwd.starts_with(Path::new(path))),
+            "Child Agent Process cwd '{}' is outside its delegated namespace",
+            cwd.display()
+        );
+    }
+
+    Ok(ChildNamespacePlan {
+        process_mounts: selected
+            .into_iter()
+            .map(|(path, access)| ProcessNamespaceMount::new(path, access))
+            .collect(),
+        effective_mounts: effective
+            .into_iter()
+            .map(|(path, access)| ProcessNamespaceMount::new(path, access))
+            .collect(),
+        bin_tool_mounts,
+        llm_connection_name: llm_connection_name.to_string(),
+        cwd,
+    })
+}
+
+fn retain_exact_mount(
+    parent_mounts: &[ProcessNamespaceMount],
+    selected: &mut BTreeMap<String, ProcessNamespaceAccess>,
+    path: &str,
+) -> Result<()> {
+    let mount = parent_mounts
+        .iter()
+        .find(|mount| mount.path == path)
+        .with_context(|| format!("parent Process namespace has no `{path}` mount"))?;
+    selected.insert(mount.path.clone(), mount.access);
+    Ok(())
+}
+
+fn retain_resolving_mount(
+    parent_mounts: &[ProcessNamespaceMount],
+    selected: &mut BTreeMap<String, ProcessNamespaceAccess>,
+    path: &str,
+) -> Result<()> {
+    let path = Path::new(path);
+    let mount = parent_mounts
+        .iter()
+        .filter(|mount| path.starts_with(Path::new(&mount.path)))
+        .max_by_key(|mount| mount.path.len())
+        .with_context(|| {
+            format!(
+                "parent Process namespace cannot resolve `{}`",
+                path.display()
+            )
+        })?;
+    selected.insert(mount.path.clone(), mount.access);
+    Ok(())
+}
+
+fn validate_child_launch_contract(spec: &SpawnSpec) -> Result<()> {
+    spec.validate_agent_process_launch()?;
+    Ok(())
 }
 
 #[cfg(test)]
-mod tests;
+mod tests {
+    use super::*;
+    use alan_agent_protocol::{SpawnHostMount, SpawnLaunchInputs, SpawnRuntimeOverrides};
+
+    fn mount(path: &str, access: ProcessNamespaceAccess) -> ProcessNamespaceMount {
+        ProcessNamespaceMount::new(path, access)
+    }
+
+    fn parent_mounts() -> Vec<ProcessNamespaceMount> {
+        use ProcessNamespaceAccess::{ReadOnly, ReadWrite};
+        vec![
+            mount("/proc", ReadWrite),
+            mount("/agent", ReadWrite),
+            mount("/srv", ReadOnly),
+            mount("/bin/alan-agent", ReadOnly),
+            mount("/mnt/llm", ReadWrite),
+            mount("/mnt/route", ReadWrite),
+            mount("/mnt/host-mount", ReadWrite),
+            mount("/man", ReadOnly),
+            mount("/lib/agents/root", ReadOnly),
+            mount("/lib/pkg/example", ReadOnly),
+            mount("/memory", ReadWrite),
+            mount("/mnt/source", ReadWrite),
+        ]
+    }
+
+    fn descriptors() -> BTreeMap<u32, String> {
+        BTreeMap::from([
+            (
+                alan_agent_protocol::AGENT_DEFINITION_DESCRIPTOR,
+                "/lib/agents/root".to_string(),
+            ),
+            (
+                alan_agent_protocol::MEMORY_STORE_DESCRIPTOR,
+                "/memory".to_string(),
+            ),
+        ])
+    }
+
+    fn spec() -> SpawnSpec {
+        SpawnSpec {
+            target: SpawnTarget::DefinitionDescriptor {
+                descriptor: crate::AGENT_DEFINITION_DESCRIPTOR.to_string(),
+            },
+            launch: SpawnLaunchInputs {
+                task: "inspect".to_string(),
+                ..SpawnLaunchInputs::default()
+            },
+            handles: Vec::new(),
+            host_mounts: Vec::new(),
+            runtime_overrides: SpawnRuntimeOverrides::default(),
+            delegated: None,
+        }
+    }
+
+    fn plan(spec: &SpawnSpec) -> Result<ChildNamespacePlan> {
+        build_child_namespace_plan(
+            spec,
+            &parent_mounts(),
+            "/lib/agents/root",
+            &descriptors(),
+            &[],
+            "default",
+        )
+    }
+
+    #[test]
+    fn child_namespace_defaults_to_root_without_ambient_host_mounts() {
+        let plan = plan(&spec()).unwrap();
+
+        assert_eq!(plan.cwd, Path::new("/"));
+        assert!(
+            plan.process_mounts
+                .iter()
+                .any(|mount| mount.path == "/bin/alan-agent")
+        );
+        assert!(
+            plan.process_mounts
+                .iter()
+                .any(|mount| mount.path == "/lib/pkg/example")
+        );
+        for ambient in ["/bin", "/lib", "/memory", "/mnt/source"] {
+            assert!(
+                !plan
+                    .process_mounts
+                    .iter()
+                    .any(|mount| mount.path == ambient),
+                "child unexpectedly inherited {ambient}"
+            );
+        }
+    }
+
+    #[test]
+    fn child_namespace_projects_only_explicit_host_mount_with_narrower_access() {
+        let mut spec = spec();
+        spec.launch.cwd = Some(PathBuf::from("/mnt/review"));
+        spec.host_mounts.push(SpawnHostMount {
+            grant: "grant-source".to_string(),
+            target: PathBuf::from("/mnt/review"),
+            access: SpawnMountAccess::ReadOnly,
+        });
+
+        let plan = plan(&spec).unwrap();
+
+        assert_eq!(plan.cwd, Path::new("/mnt/review"));
+        assert!(plan.effective_mounts.iter().any(|mount| {
+            mount.path == "/mnt/review" && mount.access == ProcessNamespaceAccess::ReadOnly
+        }));
+        assert!(
+            !plan
+                .process_mounts
+                .iter()
+                .any(|mount| mount.path == "/mnt/source" || mount.path == "/mnt/review")
+        );
+    }
+
+    #[test]
+    fn child_namespace_rejects_cwd_outside_explicit_capabilities() {
+        let mut spec = spec();
+        spec.launch.cwd = Some(PathBuf::from("/mnt/source"));
+
+        let error = plan(&spec).unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("outside its delegated namespace")
+        );
+    }
+
+    #[test]
+    fn child_namespace_passes_memory_only_by_descriptor_handle() {
+        let mut spec = spec();
+        assert!(
+            !plan(&spec)
+                .unwrap()
+                .effective_mounts
+                .iter()
+                .any(|mount| mount.path == "/memory")
+        );
+
+        spec.handles.push(SpawnHandle::Memory);
+        assert!(
+            plan(&spec)
+                .unwrap()
+                .effective_mounts
+                .iter()
+                .any(|mount| mount.path == "/memory")
+        );
+    }
+
+    #[test]
+    fn child_launch_requires_absolute_normalized_cwd() {
+        for cwd in ["docs", "/mnt/source/../secret", "/mnt//source"] {
+            let mut spec = spec();
+            spec.launch.cwd = Some(PathBuf::from(cwd));
+
+            assert!(
+                validate_child_launch_contract(&spec).is_err(),
+                "accepted invalid cwd {cwd}"
+            );
+        }
+    }
+
+    #[test]
+    fn completed_or_paused_child_can_finish_before_live_agentfs_is_observed() {
+        let completed = alan_agent_protocol::AgentExecutableResult::completed("done", Vec::new());
+        assert!(child_reached_observable_terminal(0, &completed));
+        assert!(!child_reached_observable_terminal(1, &completed));
+
+        let paused = alan_agent_protocol::AgentExecutableResult::paused(
+            "partial",
+            Vec::new(),
+            alan_agent_protocol::AgentExecutablePause {
+                request_id: "request-1".to_string(),
+                kind: alan_agent_protocol::YieldKind::Confirmation,
+            },
+        );
+        assert!(child_reached_observable_terminal(1, &paused));
+
+        let failed = alan_agent_protocol::AgentExecutableResult::failed("failed");
+        assert!(!child_reached_observable_terminal(1, &failed));
+    }
+}

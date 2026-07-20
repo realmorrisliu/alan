@@ -176,11 +176,9 @@ pub(super) fn delegated_skill_runtime(
     let host_mount_requests = state.environment.host_mount_requests();
     let child_run_registry = state.child_run_registry().clone();
     let child_launch = state.child_launch();
-    let base_agent_config = child_launch_base_agent_config(state);
     let tool_execution = state.tool_execution();
     let parent_process_path = state.process_path();
     let child_runtime_inputs = super::delegated_skill_tool::DelegatedChildRuntimeInputs::new(
-        base_agent_config,
         child_launch,
         tool_execution,
         child_run_registry,
@@ -656,12 +654,6 @@ where
     }
 
     Ok(ToolBatchOrchestratorOutcome::ContinueTurnLoop { refresh_context })
-}
-
-fn child_launch_base_agent_config(state: &RuntimeLoopState) -> super::launch_config::AgentConfig {
-    let mut config = super::launch_config::AgentConfig::from(state.core_config.clone());
-    config.runtime_config = state.runtime_config.clone();
-    config
 }
 
 fn submission_runtime(state: &mut RuntimeLoopState) -> SubmissionRuntime<'_> {

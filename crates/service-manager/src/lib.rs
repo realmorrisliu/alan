@@ -14,6 +14,9 @@ mod flat_fs;
 mod host_mount;
 mod local_entry;
 mod package;
+mod process_launch;
+mod process_runner;
+mod process_spawn;
 mod quartermaster;
 mod runtime;
 
@@ -42,6 +45,7 @@ pub use package::{
     PackageRecord, PackageReferenceLease, PackageService, PackageSnapshot, PackageSnapshotEntry,
     PackageState,
 };
+pub use process_launch::ProcessLaunchContext;
 pub use runtime::{
     BOOT_ID_PATH, BOOT_STATE_PATH, LlmClientFactory, ServiceManager, ServiceManagerConfig,
 };
