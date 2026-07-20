@@ -49,9 +49,11 @@ MUST NOT bypass native authorization.
 - **AND** no namespace or native sandbox authority is granted
 
 ### Requirement: Approved mount requests produce auditable grants
-When Host Mount Service reaches a terminal request status, Agent Machine SHALL
-resume from the opaque request reference and return a structured
-`request_mount` result containing request identity, logical namespace path,
+Agent Machine SHALL resume a pending `request_mount` control call only while it
+still owns the corresponding wait and Host Mount Service has reached a terminal
+status. It SHALL resume from the opaque request reference and return a
+structured `request_mount` result containing request identity, logical
+namespace path,
 access, status, and approved grant reference or concise error. Agent-visible
 results, AgentFS, Machine state, rollout/checkpoint evidence, and Alan OS audit
 records MUST NOT contain the raw Host OS path. Projection and revocation truth
@@ -72,7 +74,16 @@ SHALL remain in Host Mount Service rather than an engine-owned audit event.
   identity and concise reason
 - **AND** no grant or namespace access is created
 
-#### Scenario: Failed or cancelled request resumes execution
-- **WHEN** Host Mount Service reports `failed` or `cancelled`
+#### Scenario: Observed failed or cancelled request resumes execution
+- **WHEN** Host Mount Service reports `failed` or `cancelled` while Agent Machine
+  is still resuming the corresponding wait
 - **THEN** Agent Machine returns the matching terminal result without claiming
   namespace or Tool sandbox projection
+
+#### Scenario: Runtime-abandoned request does not resume execution
+- **WHEN** Agent Runtime cancels a pending service request before clearing an
+  abandoned Agent Machine wait
+- **THEN** it clears the wait only after Host Mount Service reaches terminal
+  status
+- **AND** it does not emit or persist a stale `request_mount` result for the
+  abandoned control call

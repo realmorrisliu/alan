@@ -95,9 +95,9 @@ immutable, `grant` SHALL identify an approved service grant, `error` SHALL carry
 concise terminal failure or rejection detail, and clients SHALL be able to
 resume waiting by request reference and event offset after a Yield or runtime
 restart. The requesting Process MAY cancel only its own pending request through
-the Process-scoped request tree; it MUST NOT write an approval or any other
-terminal decision. Agent Runtime SHALL settle or cancel a pending service
-request before clearing the corresponding Agent Machine wait.
+the Process-scoped request tree by writing `cancelled`; it MUST NOT write
+`approved`, `rejected`, or `failed`. Agent Runtime SHALL settle or cancel a
+pending service request before clearing the corresponding Agent Machine wait.
 
 #### Scenario: Pending request is approved
 - **WHEN** the Host adapter authorizes a directory and Host Mount Service creates
