@@ -24,52 +24,9 @@ pub(super) fn build_child_launch_context(
     launch_root_dir: Option<&ResolvedLaunchRoot>,
 ) -> Result<crate::ProcessLaunchContext> {
     let memory_descriptor = parent.descriptor(crate::MEMORY_STORE_DESCRIPTOR).cloned();
-    let parent_definition_path = parent
-        .descriptor(crate::AGENT_DEFINITION_DESCRIPTOR)
-        .map(|descriptor| descriptor.path.clone());
     let mut launch_context = parent.child();
     launch_context.descriptors.clear();
-
-    if !spec.has_handle(SpawnHandle::HostMounts) {
-        let inherited_mounts = std::mem::take(&mut launch_context.host_mounts);
-        let projected_mount_paths = launch_context.take_projected_host_mount_paths();
-        if let Some(cwd) = child_cwd.as_deref()
-            && (inherited_mounts
-                .iter()
-                .any(|grant| grant.resolve_host_path(cwd).is_some())
-                || projected_mount_paths
-                    .iter()
-                    .any(|path| namespace_path_is_within(cwd, path)))
-        {
-            bail!(
-                "Child Agent Process launch cwd '{cwd}' requires the explicit host_mounts handle."
-            );
-        }
-        if child_cwd.is_none()
-            && (inherited_mounts
-                .iter()
-                .any(|grant| grant.resolve_host_path(&launch_context.cwd).is_some())
-                || projected_mount_paths
-                    .iter()
-                    .any(|path| namespace_path_is_within(&launch_context.cwd, path)))
-        {
-            launch_context.cwd = "/".to_string();
-        }
-        for grant in inherited_mounts {
-            if parent_definition_path.as_deref() == Some(&grant.namespace_path) {
-                launch_context.host_mounts.push(grant);
-                continue;
-            }
-            launch_context.namespace.unmount(&grant.namespace_path);
-        }
-        for path in projected_mount_paths {
-            launch_context.namespace.unmount(&path);
-        }
-    }
-
-    if let Some(cwd) = child_cwd {
-        launch_context.cwd = cwd;
-    }
+    launch_context.cwd = child_cwd.unwrap_or_else(|| "/".to_string());
     if spec.has_handle(SpawnHandle::Memory) {
         if let Some(descriptor) = memory_descriptor {
             launch_context
@@ -88,53 +45,17 @@ pub(super) fn build_child_launch_context(
         let descriptor_path = root_dir
             .to_str()
             .context("package child Agent Executable descriptor path is not UTF-8")?;
-        if !spec.has_handle(SpawnHandle::HostMounts)
-            && let Some(parent_definition_path) = parent_definition_path.as_deref()
-        {
-            launch_context
-                .host_mounts
-                .retain(|grant| grant.namespace_path != parent_definition_path);
-            launch_context.namespace.unmount(parent_definition_path);
-        }
         launch_context.descriptors.insert(
             crate::AGENT_DEFINITION_DESCRIPTOR.to_string(),
             crate::ProcessDescriptor::with_file_tree(descriptor_path, file_tree.clone())?,
         );
     } else if let Some(ResolvedLaunchRoot { root_dir, .. }) = launch_root_dir {
-        let source_path = parent
-            .namespace_path(root_dir)
-            .filter(|path| !parent.namespace.union_at(path).is_empty());
-        if source_path.as_deref() != Some("/agent-definition")
-            && let Some(source_path) = source_path
-        {
-            launch_context.namespace.unmount("/agent-definition");
-            launch_context
-                .namespace
-                .bind("/agent-definition", &source_path);
-        }
-        launch_context.host_mounts.retain(|grant| {
-            grant.namespace_path != "/agent-definition"
-                && parent_definition_path.as_deref() != Some(&grant.namespace_path)
-        });
-        launch_context = launch_context
-            .with_host_mount(crate::HostMountGrant::new(
-                "/agent-definition",
-                root_dir,
-                alan_kernel::Access::ReadOnly,
-            )?)
-            .with_descriptor(
-                crate::AGENT_DEFINITION_DESCRIPTOR,
-                crate::ProcessDescriptor::new("/agent-definition")?,
-            );
+        bail!(
+            "child Agent Definition {} must be passed as an immutable file-tree descriptor",
+            root_dir.display()
+        );
     }
     Ok(launch_context)
-}
-
-fn namespace_path_is_within(path: &str, mount: &str) -> bool {
-    path == mount
-        || path
-            .strip_prefix(mount)
-            .is_some_and(|suffix| suffix.starts_with('/'))
 }
 
 pub(super) fn validate_child_launch_contract(spec: &SpawnSpec) -> Result<Option<String>> {
@@ -182,21 +103,16 @@ pub(super) fn resolve_launch_root_dir(
             let descriptor = launch_context
                 .and_then(|context| context.descriptor(descriptor))
                 .with_context(|| format!("parent Process has no `{descriptor}` descriptor"))?;
-            let root = if descriptor.file_tree.is_some() {
-                PathBuf::from(&descriptor.path)
-            } else {
-                launch_context
-                    .and_then(|context| context.host_path(&descriptor.path))
-                    .with_context(|| {
-                        format!(
-                            "Agent Definition descriptor {} has no explicit Host Mount backing",
-                            descriptor.path
-                        )
-                    })?
-            };
+            let root = PathBuf::from(&descriptor.path);
+            let file_tree = descriptor.file_tree.clone().with_context(|| {
+                format!(
+                    "Agent Definition descriptor {} has no immutable file-tree handle",
+                    descriptor.path
+                )
+            })?;
             Ok(Some(ResolvedLaunchRoot {
                 root_dir: root,
-                file_tree: descriptor.file_tree.clone(),
+                file_tree: Some(file_tree),
             }))
         }
         SpawnTarget::PackageChildAgent { .. } => {

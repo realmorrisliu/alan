@@ -35,6 +35,7 @@ pub use agent_machine::{
     ROLLBACK_NON_DURABLE_WARNING, latest_compaction_attempt_from_rollout_items,
     latest_memory_flush_attempt_from_rollout_items,
 };
+pub use alan_agent_protocol::{SpawnHostMount, SpawnMountAccess};
 pub use config::{
     Config, ConfigSourceKind, LlmProvider, LoadedConfig, PartialStreamRecoveryMode, StreamingMode,
 };
@@ -47,9 +48,9 @@ pub use llm::{
 pub use models::{ModelCatalog, ModelInfo};
 pub use policy::{PolicyAction, PolicyDecision, PolicyEngine, PolicyRule};
 pub use process_launch::{
-    AGENT_DEFINITION_DESCRIPTOR, AgentRuntimeStoreBindings, HostMountGrant,
-    MEMORY_STORE_DESCRIPTOR, ProcessDescriptor, ProcessLaunchContext, ProcessPackageKind,
-    ProcessPackageReference, ProcessPackageSkillReference,
+    AGENT_DEFINITION_DESCRIPTOR, AgentRuntimeStoreBindings, MEMORY_STORE_DESCRIPTOR,
+    ProcessDescriptor, ProcessLaunchContext, ProcessPackageKind, ProcessPackageReference,
+    ProcessPackageSkillReference,
 };
 pub use prompts::PromptLoader;
 pub use request_controls::{
@@ -63,6 +64,6 @@ pub use rollout::{
 };
 pub use runtime::{
     AgentConfig, AgentProcessConfig, RuntimeController, RuntimeHandle,
-    configure_runtime_tool_execution_binding, spawn_with_namespace_environment,
+    spawn_with_namespace_environment,
 };
 pub use tools::ToolRegistry;

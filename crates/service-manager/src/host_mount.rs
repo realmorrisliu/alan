@@ -1,21 +1,27 @@
-use std::collections::BTreeMap;
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicU32, Ordering},
 };
 use std::time::{SystemTime, UNIX_EPOCH};
-
-use alan_agent_engine::runtime::{
-    ApprovedMountGrant, ApprovedMountGrantAccess, MountGrantApplicator, MountGrantApplicatorFactory,
+use std::{
+    any::Any,
+    collections::BTreeMap,
+    path::{Path, PathBuf},
 };
-use alan_agent_engine::tools::{ToolExecutionAuthority, ToolExecutionBinding};
+
+use alan_agent_engine::SpawnHostMount;
+use alan_agent_engine::tools::{
+    ToolExecutionAdapter, ToolExecutionAuthority, ToolExecutionBinding,
+};
 use alan_ap::{ErrorCode, FileServer, InProcessTransport};
-use alan_kernel::{Access, LiveNamespace, Namespace, Pid};
+use alan_kernel::{Access, LiveNamespace, Pid};
 use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
 
+mod delegation;
 mod file_server;
 
+use delegation::resolve_child_delegations;
 use file_server::{HostMountEventStreams, HostMountFs};
 
 const RESERVED_MOUNT_NAMESPACE_ROOTS: &[&str] = &[
@@ -50,29 +56,52 @@ impl HostMountAccess {
 /// native Tool authority, but it never receives or stores the raw Host path.
 pub trait HostMountExport: std::fmt::Debug + Send + Sync {
     fn file_tree(&self) -> InProcessTransport;
-    /// Add native Tool authority at the Process projection's effective access.
-    fn apply_tool_authority(
-        &self,
-        effective_access: HostMountAccess,
-        binding: &mut ToolExecutionBinding,
-    ) -> Result<()>;
+    fn as_any(&self) -> &dyn Any;
 }
 
-/// Transitional platform boundary for pre-authorized launch declarations.
-///
-/// Logical runtime requests use [`HostMountExport`] directly after native authorization. Only the
-/// Host implementation may inspect the raw path carried by the launch-only engine record while
-/// that record is replaced with a service-issued handle.
+/// One service-owned projection passed opaquely back to its Host adapter.
+#[derive(Clone)]
+pub struct HostMountToolProjection {
+    pub namespace_path: PathBuf,
+    pub access: HostMountAccess,
+    export: Arc<dyn HostMountExport>,
+}
+
+impl std::fmt::Debug for HostMountToolProjection {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("HostMountToolProjection")
+            .field("namespace_path", &self.namespace_path)
+            .field("access", &self.access)
+            .finish_non_exhaustive()
+    }
+}
+
+impl HostMountToolProjection {
+    pub fn export(&self) -> &Arc<dyn HostMountExport> {
+        &self.export
+    }
+}
+
+/// Host boundary that turns service-owned opaque exports into Tool Process authority.
 pub trait HostMountExportAdapter: std::fmt::Debug + Send + Sync {
-    fn export_approved(&self, grant: &ApprovedMountGrant) -> Result<Arc<dyn HostMountExport>>;
+    fn tool_execution_adapter(
+        &self,
+        projections: &[HostMountToolProjection],
+        requested_namespace_cwd: &Path,
+    ) -> Result<Arc<dyn ToolExecutionAdapter>>;
 }
 
 #[derive(Debug, Default)]
 pub struct UnavailableHostMountExportAdapter;
 
 impl HostMountExportAdapter for UnavailableHostMountExportAdapter {
-    fn export_approved(&self, _grant: &ApprovedMountGrant) -> Result<Arc<dyn HostMountExport>> {
-        anyhow::bail!("Host Mount export adapter is unavailable")
+    fn tool_execution_adapter(
+        &self,
+        _projections: &[HostMountToolProjection],
+        _requested_namespace_cwd: &Path,
+    ) -> Result<Arc<dyn ToolExecutionAdapter>> {
+        anyhow::bail!("Host Mount Tool adapter is unavailable")
     }
 }
 
@@ -145,6 +174,7 @@ struct AuditRecord {
 struct Projection {
     pid: Pid,
     namespace: LiveNamespace,
+    namespace_path: String,
     access: HostMountAccess,
 }
 
@@ -223,62 +253,86 @@ impl HostMountService {
         self.state.lock().unwrap().processes.insert(pid, namespace);
     }
 
-    fn register_process_with_inherited_grants(
+    /// Remove every Host Mount held by `pid` from an inherited namespace snapshot.
+    pub fn strip_process_projections(&self, pid: Pid, namespace: &mut alan_kernel::Namespace) {
+        let paths = self
+            .state
+            .lock()
+            .unwrap()
+            .grants
+            .values()
+            .flat_map(|grant| &grant.projections)
+            .filter(|projection| projection.pid == pid)
+            .map(|projection| projection.namespace_path.clone())
+            .collect::<Vec<_>>();
+        for path in paths {
+            namespace.unmount(&path);
+        }
+    }
+
+    /// Project delegated handles into the temporary namespace used by `/proc/clone`.
+    pub fn project_child_namespace(
         &self,
+        parent_pid: Pid,
+        namespace: &mut alan_kernel::Namespace,
+        requested: &[SpawnHostMount],
+    ) -> Result<()> {
+        let delegated = {
+            let state = self.state.lock().unwrap();
+            resolve_child_delegations(&state, parent_pid, requested)?
+        };
+        for projection in delegated {
+            namespace.mount(
+                &projection.target,
+                projection.export.file_tree(),
+                projection.access.kernel(),
+            );
+        }
+        Ok(())
+    }
+
+    /// Register a child Process and project only handles explicitly delegated by its parent.
+    pub fn register_child_process(
+        &self,
+        parent_pid: Pid,
         pid: Pid,
         namespace: LiveNamespace,
-        inherited_from: Option<Pid>,
-        inherited_grant_references: &[String],
-    ) {
-        let visible = namespace.snapshot();
+        requested: &[SpawnHostMount],
+    ) -> Result<()> {
         let mut state = self.state.lock().unwrap();
+        ensure!(
+            !state.processes.contains_key(&pid),
+            "Process {pid:?} is already registered with Host Mount Service"
+        );
+        let delegated = resolve_child_delegations(&state, parent_pid, requested)?;
+
         state.processes.insert(pid, namespace.clone());
-        let Some(inherited_from) = inherited_from else {
-            return;
-        };
-        let mut inherited = Vec::new();
-        for id in inherited_grant_references {
-            let Some(grant) = state.grants.get_mut(id) else {
-                continue;
-            };
-            let visible_access = visible
-                .union_at(&grant.public.namespace_path)
-                .last()
-                .map(|mount| mount.access);
-            if grant.public.active
-                && grant
-                    .projections
-                    .iter()
-                    .any(|projection| projection.pid == inherited_from)
-                && visible_access.is_some_and(|access| {
-                    grant.public.access.kernel() == Access::ReadWrite || access == Access::ReadOnly
-                })
-                && !grant
-                    .projections
-                    .iter()
-                    .any(|projection| projection.pid == pid)
-            {
-                let access = match visible_access.expect("validated exact mount access") {
-                    Access::ReadOnly => HostMountAccess::ReadOnly,
-                    Access::ReadWrite => grant.public.access,
-                };
-                grant.projections.push(Projection {
+        for projection in delegated {
+            namespace.replace_mount(
+                &projection.target,
+                projection.export.file_tree(),
+                projection.access.kernel(),
+            );
+            state
+                .grants
+                .get_mut(&projection.grant_id)
+                .expect("validated delegated grant remains retained")
+                .projections
+                .push(Projection {
                     pid,
                     namespace: namespace.clone(),
-                    access,
+                    namespace_path: projection.target,
+                    access: projection.access,
                 });
-                inherited.push(id.clone());
-            }
-        }
-        for id in inherited {
             audit(
                 &mut state,
                 "pass",
-                &id,
+                &projection.grant_id,
                 "service-manager".to_string(),
                 vec![pid.0],
             );
         }
+        Ok(())
     }
 
     pub fn unregister_process(&self, pid: Pid) {
@@ -484,20 +538,21 @@ impl HostMountService {
             !state.grants.iter().any(|(id, existing)| {
                 id != grant_id
                     && existing.public.active
-                    && existing
-                        .projections
-                        .iter()
-                        .any(|projection| projection.pid == pid)
-                    && namespace_paths_strictly_overlap(
-                        &namespace_path,
-                        &existing.public.namespace_path,
-                    )
+                    && existing.projections.iter().any(|projection| {
+                        projection.pid == pid
+                            && namespace_paths_strictly_overlap(
+                                &namespace_path,
+                                &projection.namespace_path,
+                            )
+                    })
             }),
             "Host Mount namespace path overlaps an active Process projection"
         );
         for (id, grant) in &mut state.grants {
-            if id != grant_id && grant.public.namespace_path == namespace_path {
-                grant.projections.retain(|projection| projection.pid != pid);
+            if id != grant_id {
+                grant.projections.retain(|projection| {
+                    projection.pid != pid || projection.namespace_path != namespace_path
+                });
             }
         }
         namespace.replace_mount(&namespace_path, export.file_tree(), access.kernel());
@@ -515,6 +570,7 @@ impl HostMountService {
         grant.projections.push(Projection {
             pid,
             namespace,
+            namespace_path,
             access,
         });
         audit(
@@ -539,7 +595,7 @@ impl HostMountService {
             .projections
             .iter()
             .map(|projection| {
-                projection.namespace.unmount(&grant.public.namespace_path);
+                projection.namespace.unmount(&projection.namespace_path);
                 projection.pid.0
             })
             .collect::<Vec<_>>();
@@ -563,19 +619,8 @@ impl HostMountService {
     }
 
     fn enqueue(&self, request: HostMountRequest) -> Result<String> {
-        self.enqueue_inner(request, false)
-    }
-
-    fn enqueue_approved_definition(&self, request: HostMountRequest) -> Result<String> {
-        self.enqueue_inner(request, true)
-    }
-
-    fn enqueue_inner(
-        &self,
-        mut request: HostMountRequest,
-        allow_agent_definition: bool,
-    ) -> Result<String> {
-        validate_request(&request, allow_agent_definition)?;
+        let mut request = request;
+        validate_request(&request)?;
         let mut state = self.state.lock().unwrap();
         if request.id.is_empty() {
             state.next_id += 1;
@@ -788,21 +833,10 @@ impl ToolExecutionAuthority for HostMountService {
         pid: Pid,
         mut binding: ToolExecutionBinding,
     ) -> Result<ToolExecutionBinding> {
-        let carried_host_mount_authority = !binding.host_mounts.is_empty();
+        let carried_host_mount_authority = binding.has_adapter();
         let requested_namespace_cwd = binding.namespace_cwd.clone();
         let state = self.state.lock().unwrap();
-        let managed_paths = state
-            .grants
-            .values()
-            .filter(|grant| {
-                grant
-                    .projections
-                    .iter()
-                    .any(|projection| projection.pid == pid)
-            })
-            .map(|grant| grant.public.namespace_path.clone())
-            .collect::<Vec<_>>();
-        let exports = state
+        let projections = state
             .grants
             .values()
             .filter_map(|grant| {
@@ -813,108 +847,37 @@ impl ToolExecutionAuthority for HostMountService {
                     .projections
                     .iter()
                     .find(|projection| projection.pid == pid)
-                    .map(|projection| (grant.export.clone(), projection.access))
+                    .map(|projection| HostMountToolProjection {
+                        namespace_path: PathBuf::from(&projection.namespace_path),
+                        access: projection.access,
+                        export: grant.export.clone(),
+                    })
             })
             .collect::<Vec<_>>();
         drop(state);
 
-        binding.remove_host_mount_paths(&managed_paths)?;
-        for (export, effective_access) in exports {
-            binding.namespace_cwd = requested_namespace_cwd.clone();
-            export.apply_tool_authority(effective_access, &mut binding)?;
+        binding.clear_adapter();
+        if !projections.is_empty() {
+            binding.set_adapter(
+                self.adapter
+                    .tool_execution_adapter(&projections, &requested_namespace_cwd)?,
+            );
         }
         // Fail closed only if reconciliation removed cached Host Mount authority.
         ensure!(
-            !carried_host_mount_authority || !binding.host_mounts.is_empty(),
+            !carried_host_mount_authority || binding.has_adapter(),
             "Tool Process has no active Host Mount"
         );
         Ok(binding)
     }
 }
 
-#[derive(Debug)]
-pub struct HostMountApplicatorFactory {
-    service: Arc<HostMountService>,
-    inherited_from: Option<Pid>,
-}
-
-impl HostMountApplicatorFactory {
-    pub fn new(service: Arc<HostMountService>) -> Self {
-        Self {
-            service,
-            inherited_from: None,
-        }
-    }
-
-    /// Create a factory that may delegate grants currently projected to `parent_pid`.
-    pub fn inheriting_from(service: Arc<HostMountService>, parent_pid: Pid) -> Self {
-        Self {
-            service,
-            inherited_from: Some(parent_pid),
-        }
-    }
-}
-
-impl MountGrantApplicatorFactory for HostMountApplicatorFactory {
-    fn create(
-        &self,
-        pid: Pid,
-        live_namespace: LiveNamespace,
-        inherited_mount_references: &[String],
-    ) -> Arc<dyn MountGrantApplicator> {
-        self.service.register_process_with_inherited_grants(
-            pid,
-            live_namespace.clone(),
-            self.inherited_from,
-            inherited_mount_references,
-        );
-        Arc::new(HostMountApplicator {
-            service: self.service.clone(),
-            pid,
-            live_namespace,
-        })
-    }
-
-    fn tool_execution_authority(&self) -> Option<Arc<dyn ToolExecutionAuthority>> {
-        Some(self.service.clone())
-    }
-}
-
-#[derive(Debug)]
-struct HostMountApplicator {
-    service: Arc<HostMountService>,
-    pid: Pid,
-    live_namespace: LiveNamespace,
-}
-
-impl MountGrantApplicator for HostMountApplicator {
-    fn apply_mount_grant(&self, grant: &ApprovedMountGrant) -> Result<Namespace> {
-        self.service
-            .register_process(self.pid, self.live_namespace.clone());
-        let id = self.service.enqueue_approved_definition(HostMountRequest {
-            id: String::new(),
-            label: grant.reason.clone(),
-            namespace_path: grant.namespace_path.clone(),
-            access: match grant.access {
-                ApprovedMountGrantAccess::ReadOnly => HostMountAccess::ReadOnly,
-                ApprovedMountGrantAccess::ReadWrite => HostMountAccess::ReadWrite,
-            },
-            reason: grant.reason.clone(),
-            requesting_pid: self.pid.0,
-        })?;
-        let export = self.service.adapter.export_approved(grant)?;
-        self.service
-            .approve_export(&id, export, "runtime-approval", "host-adapter")?;
-        Ok(self.live_namespace.snapshot())
-    }
-}
-
-fn validate_request(request: &HostMountRequest, allow_agent_definition: bool) -> Result<()> {
+fn validate_request(request: &HostMountRequest) -> Result<()> {
     ensure!(
         !request.label.trim().is_empty(),
         "Host Mount label is empty"
     );
-    validate_mount_namespace_path(&request.namespace_path, allow_agent_definition)?;
+    validate_mount_namespace_path(&request.namespace_path)?;
     ensure!(
         request.requesting_pid > 0,
         "requesting PID must be positive"
@@ -926,10 +889,7 @@ fn validate_request(request: &HostMountRequest, allow_agent_definition: bool) ->
     Ok(())
 }
 
-fn validate_mount_namespace_path(path: &str, allow_agent_definition: bool) -> Result<()> {
-    if allow_agent_definition && path == "/agent-definition" {
-        return Ok(());
-    }
+fn validate_mount_namespace_path(path: &str) -> Result<()> {
     ensure!(
         path == path.trim(),
         "Host Mount namespace path is not normalized"

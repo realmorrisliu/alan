@@ -804,51 +804,22 @@ fn child_launch_workflows_use_only_the_narrow_child_launch_handle() {
 }
 
 #[test]
-fn mount_changes_use_only_the_narrow_namespace_mount_control() {
+fn host_mount_authority_is_absent_from_the_engine_namespace_environment() {
     let namespace = read_runtime_source("transition/namespace_environment.rs");
-    let mount_control = rust_item_body(&namespace, "pub struct NamespaceMountControl<'a>");
-    for required_field in [
-        "launch_context: &'a mut Option<crate::ProcessLaunchContext>",
-        "mount_grant_applicator: Option<Arc<dyn MountGrantApplicator>>",
+    for forbidden in [
+        "NamespaceMountControl",
+        "MountGrantApplicator",
+        "ApprovedMountGrant",
+        "mount_control",
     ] {
         assert!(
-            mount_control.contains(required_field),
-            "Namespace mount control must retain {required_field}"
+            !namespace.contains(forbidden),
+            "engine namespace environment retained Host Mount authority through {forbidden}"
         );
     }
-    for forbidden_field in [
-        "root: InProcessTransport",
-        "agent_path",
-        "llm_connection",
-        "tool_process_context",
-        "child_run_registry",
-        "child_process_assembler",
-    ] {
-        assert!(
-            !mount_control.contains(forbidden_field),
-            "Namespace mount control must not gain {forbidden_field}"
-        );
-    }
-
-    let operations = read_runtime_source("transition/namespace_environment/mount_control.rs");
-    assert!(operations.contains("impl NamespaceMountControl"));
-    assert!(!operations.contains("impl NamespaceRuntimeEnvironment"));
-
-    for displaced in [
-        "apply_approved_mount_grant",
-        "persist_approved_host_mount",
-        "sync_tool_execution_binding",
-    ] {
-        assert!(
-            !namespace.contains(displaced),
-            "complete namespace environment retained displaced mount operation {displaced}"
-        );
-    }
-
-    let transition = read_runtime_source("transition.rs");
-    let engine = read_runtime_source("engine.rs");
-    assert!(!transition.contains("fn namespace_environment("));
-    assert!(!engine.contains("namespace_environment()"));
+    let retired_module = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("src/runtime/transition/namespace_environment/mount_control.rs");
+    assert!(!retired_module.exists());
 }
 
 #[test]

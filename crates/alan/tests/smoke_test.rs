@@ -1,12 +1,11 @@
 //! File-native runtime smoke tests through an explicit ephemeral Alan OS Host.
 
 use alan_agent_engine::{
-    AgentProcessConfig, AgentRuntimeStoreBindings, HostMountGrant, LlmClient, ProcessLaunchContext,
-    ToolRegistry,
+    AgentProcessConfig, AgentRuntimeStoreBindings, LlmClient, ToolRegistry,
+    tools::{Tool, ToolContext, ToolResult},
 };
 use alan_agent_protocol::{UiActivityState, UiEvent};
 use alan_ap::InProcessTransport;
-use alan_kernel::{Access, Credentials, Namespace};
 use alan_llm::{GenerationResponse, MockLlmProvider, TokenUsage, ToolCall};
 use alan_os_host::{AlanOsHost, HostBootConfig, HostEndpointPaths, LocalAttachment};
 use std::time::Duration;
@@ -14,6 +13,26 @@ use std::time::Duration;
 const AGENT_PATH: &str = "/agent/root";
 const TEST_TIMEOUT: Duration = Duration::from_secs(20);
 const ACTION_TIMEOUT: Duration = Duration::from_secs(60);
+
+struct MarkerTool;
+
+impl Tool for MarkerTool {
+    fn name(&self) -> &str {
+        "smoke_marker"
+    }
+
+    fn description(&self) -> &str {
+        "Return a deterministic marker for the Alan OS smoke test"
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        serde_json::json!({"type": "object", "additionalProperties": false})
+    }
+
+    fn execute(&self, _arguments: serde_json::Value, _context: &ToolContext) -> ToolResult {
+        Box::pin(async { Ok(serde_json::json!({"marker": "tool-process-ok"})) })
+    }
+}
 
 struct TestHost {
     root: InProcessTransport,
@@ -157,21 +176,19 @@ async fn wait_for_action(shell: &alan_shell::Shell) -> String {
 
 #[tokio::test]
 async fn alan_os_host_smoke_covers_multiple_turns_tools_and_agentfs() {
-    let temp = tempfile::tempdir().unwrap();
     let store = tempfile::tempdir().unwrap();
-    std::fs::write(temp.path().join("test.txt"), "hello from smoke test").unwrap();
     let tool_response = GenerationResponse {
         tool_calls: vec![ToolCall {
             id: Some("call_001".to_string()),
-            name: "read_file".to_string(),
-            arguments: serde_json::json!({"path": "/mnt/source/test.txt"}),
+            name: "smoke_marker".to_string(),
+            arguments: serde_json::json!({}),
         }],
         ..response("")
     };
     let mock = MockLlmProvider::new().with_responses(vec![
         response("First response"),
         tool_response,
-        response("I read the file for you."),
+        response("The Tool Process completed."),
     ]);
     let mut config = AgentProcessConfig::default();
     // This smoke owns the foreground Host -> AgentFS -> Tool Process path. Turn-end
@@ -182,17 +199,6 @@ async fn alan_os_host_smoke_covers_multiple_turns_tools_and_agentfs() {
         profile: alan_agent_protocol::GovernanceProfile::Autonomous,
         policy_path: None,
     };
-    let grant = HostMountGrant::new("/mnt/source", temp.path(), Access::ReadOnly).unwrap();
-    let mut namespace = Namespace::new();
-    alan_os_host::host_mounts::apply_host_mount_declarations(
-        &mut namespace,
-        std::slice::from_ref(&grant),
-    )
-    .unwrap();
-    config.launch_context =
-        ProcessLaunchContext::new(namespace, Credentials::user("smoke-agent"), "/mnt/source")
-            .unwrap();
-    config.launch_context.host_mounts = vec![grant];
     let store_bindings = AgentRuntimeStoreBindings {
         rollouts: store.path().join("rollouts"),
         checkpoints: store.path().join("checkpoints"),
@@ -210,7 +216,8 @@ async fn alan_os_host_smoke_covers_multiple_turns_tools_and_agentfs() {
         std::fs::create_dir_all(path).unwrap();
     }
     config.store_bindings = Some(store_bindings);
-    let tools = alan_tools::create_tool_registry_with_core_tools(temp.path().to_path_buf());
+    let mut tools = ToolRegistry::new();
+    tools.register(MarkerTool);
     let host = TestHost::boot(config, LlmClient::new(mock), tools).await;
     let shell = alan_shell::Shell::new(host.root.clone());
     let mut output = shell
@@ -228,10 +235,10 @@ async fn alan_os_host_smoke_covers_multiple_turns_tools_and_agentfs() {
     );
     wait_for_idle(&mut events).await;
 
-    submit(&shell, "Read the test file").await;
-    let second_output = read_tail_until(&mut output, "I read the file for you.").await;
+    submit(&shell, "Run the marker Tool").await;
+    let second_output = read_tail_until(&mut output, "The Tool Process completed.").await;
     wait_for_idle(&mut events).await;
-    assert_eq!(second_output, "I read the file for you.");
+    assert_eq!(second_output, "The Tool Process completed.");
     let action = wait_for_action(&shell).await;
     assert_eq!(
         String::from_utf8(
@@ -250,8 +257,7 @@ async fn alan_os_host_smoke_covers_multiple_turns_tools_and_agentfs() {
             .unwrap(),
     )
     .unwrap();
-    assert!(action_output.contains("/mnt/source/test.txt"));
-    assert!(!action_output.contains(temp.path().to_string_lossy().as_ref()));
+    assert!(action_output.contains("tool-process-ok"));
     events.close().await.unwrap();
     output.close().await.unwrap();
     host.shutdown().await;

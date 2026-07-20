@@ -13,15 +13,13 @@ use turn_execution::run_turn_with_cancel;
 
 #[cfg(test)]
 pub(super) use namespace_environment::NamespaceRequestRecord;
-pub use namespace_environment::{
-    ApprovedMountGrant, ApprovedMountGrantAccess, MountGrantApplicator,
-    MountGrantApplicatorFactory, NamespaceActionRecord, NamespaceMountApplication,
-    NamespaceMountControl, NamespaceRuntimeEnvironment, NamespaceToolActionOutput,
-    NamespaceTurnOutput, NamespaceTurnRuntime, NamespaceTurnRuntimeConfig,
-};
 pub(crate) use namespace_environment::{
     HostMountTerminalResult, HostMountTerminalStatus, NamespaceAgentFiles, NamespaceChildLaunch,
     NamespaceGeneration, NamespaceHostMountRequests, NamespaceProcessFiles, NamespaceToolExecution,
+};
+pub use namespace_environment::{
+    NamespaceActionRecord, NamespaceRuntimeEnvironment, NamespaceToolActionOutput,
+    NamespaceTurnOutput, NamespaceTurnRuntime, NamespaceTurnRuntimeConfig,
 };
 
 use std::collections::VecDeque;
@@ -674,8 +672,7 @@ fn submission_runtime(state: &mut RuntimeLoopState) -> SubmissionRuntime<'_> {
     } = state;
     let agent_files = environment.agent_files();
     let host_mount_requests = environment.host_mount_requests();
-    let mount_control = environment.mount_control();
-    SubmissionRuntime::new(machine, agent_files, host_mount_requests, mount_control)
+    SubmissionRuntime::new(machine, agent_files, host_mount_requests)
 }
 
 pub(super) async fn handle_runtime_op<E, F>(

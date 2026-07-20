@@ -26,18 +26,18 @@
 
 ## 3. Replace Host Backing With Handles
 
-- [ ] 3.1 Make Host Mount Service retain native backing and issue the opaque
+- [x] 3.1 Make Host Mount Service retain native backing and issue the opaque
   mountable handle used for namespace projection and revocation.
-- [ ] 3.2 Replace engine-owned raw Host Mount launch records with explicit
+- [x] 3.2 Replace engine-owned raw Host Mount launch records with explicit
   mounts/descriptors and prove a grant ID alone confers no access.
-- [ ] 3.3 Delete aggregate Host Mount inheritance; require each child launch to
+- [x] 3.3 Delete aggregate Host Mount inheritance; require each child launch to
   list selected grant handles and target namespace paths, defaulting to none
   without cwd-based inheritance.
-- [ ] 3.4 Move live namespace projection to Host Mount Service and delete engine
+- [x] 3.4 Move live namespace projection to Host Mount Service and delete engine
   namespace applicator traits, implementations, and callbacks.
-- [ ] 3.5 Derive native Tool Process sandbox rights from the same delegated grant
+- [x] 3.5 Derive native Tool Process sandbox rights from the same delegated grant
   inside Host adapters and delete engine-owned native writable-root mutation.
-- [ ] 3.6 Verify read-only/read-write behavior, non-amplification, idempotent
+- [x] 3.6 Verify read-only/read-write behavior, non-amplification, idempotent
   projection, revocation, restart resume, and absence of Host paths in evidence.
 
 ## 4. Make Agent Runtime Service The Agent Executable

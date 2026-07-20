@@ -1,45 +1,38 @@
+use std::collections::BTreeMap;
+use std::sync::Arc;
+
 use alan_agent_engine::{
-    AGENT_DEFINITION_DESCRIPTOR, AgentProcessConfig, ConfigSourceKind, HostMountGrant,
-    ProcessDescriptor, ProcessLaunchContext, ResolvedAgentDefinition,
+    AGENT_DEFINITION_DESCRIPTOR, AgentProcessConfig, ConfigSourceKind, ProcessDescriptor,
+    ProcessFileTree, ProcessLaunchContext, ResolvedAgentDefinition,
     runtime::effective_core_config_for_runtime, skills::SkillScope,
 };
+use alan_ap::InProcessTransport;
 use alan_kernel::{Access, Credentials, Namespace};
 
-fn launch_context_with_mounts(mounts: Vec<HostMountGrant>, cwd: &str) -> ProcessLaunchContext {
+fn namespace_with_mount(path: &str, access: Access) -> Namespace {
     let mut namespace = Namespace::new();
-    alan_os_host::host_mounts::apply_host_mount_declarations(&mut namespace, &mounts).unwrap();
-    let mut context =
-        ProcessLaunchContext::new(namespace, Credentials::user("integration-agent"), cwd).unwrap();
-    context.host_mounts = mounts;
-    context
+    namespace.mount(
+        path,
+        InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::new())),
+        access,
+    );
+    namespace
 }
 
 #[test]
-fn host_directories_are_not_agent_definitions_without_a_descriptor() {
-    let source = tempfile::tempdir().unwrap();
-    let implicit_definition = source.path().join(".alan/agents/default");
-    std::fs::create_dir_all(implicit_definition.join("persona")).unwrap();
-    std::fs::write(
-        implicit_definition.join("agent.toml"),
-        "model_reasoning_effort = \"high\"\n",
-    )
-    .unwrap();
-    std::fs::write(
-        implicit_definition.join("persona/SOUL.md"),
-        "must not be discovered",
-    )
-    .unwrap();
-
-    let context = launch_context_with_mounts(
-        vec![HostMountGrant::new("/mnt/source", source.path(), Access::ReadWrite).unwrap()],
+fn mounted_file_trees_are_not_agent_definitions_without_a_descriptor() {
+    let context = ProcessLaunchContext::new(
+        namespace_with_mount("/mnt/source", Access::ReadWrite),
+        Credentials::user("integration-agent"),
         "/mnt/source",
-    );
+    )
+    .unwrap();
     let resolved =
         ResolvedAgentDefinition::from_launch_context(&context, &[], ConfigSourceKind::Default)
             .unwrap();
 
-    assert!(resolved.root_dir.is_none());
-    assert!(resolved.persona_dirs.is_empty());
+    assert!(resolved.namespace_root.is_none());
+    assert!(resolved.persona_context.is_none());
     assert!(
         resolved
             .capability_view
@@ -57,55 +50,54 @@ fn host_directories_are_not_agent_definitions_without_a_descriptor() {
 }
 
 #[test]
-fn explicit_descriptor_resolves_one_definition_tree() {
-    let source = tempfile::tempdir().unwrap();
-    let definition = tempfile::tempdir().unwrap();
-    std::fs::create_dir_all(definition.path().join("persona")).unwrap();
-    std::fs::create_dir_all(definition.path().join("skills/reviewer")).unwrap();
-    std::fs::write(
-        definition.path().join("agent.toml"),
-        "model_reasoning_effort = \"high\"\n",
-    )
+fn explicit_descriptor_resolves_one_immutable_definition_tree() {
+    let definition = ProcessFileTree::new(BTreeMap::from([
+        (
+            "agent.toml".to_string(),
+            b"model_reasoning_effort = \"high\"\n".to_vec(),
+        ),
+        (
+            "persona/SOUL.md".to_string(),
+            b"descriptor persona".to_vec(),
+        ),
+        (
+            "skills/reviewer/SKILL.md".to_string(),
+            b"---\nname: Reviewer\ndescription: Review changes\n---\n".to_vec(),
+        ),
+        (
+            "policy.yaml".to_string(),
+            b"default_action: allow\n".to_vec(),
+        ),
+    ]))
     .unwrap();
-    std::fs::write(
-        definition.path().join("persona/SOUL.md"),
-        "descriptor persona",
+    let context = ProcessLaunchContext::new(
+        namespace_with_mount("/agent-definition", Access::ReadOnly),
+        Credentials::user("integration-agent"),
+        "/",
     )
-    .unwrap();
-    std::fs::write(
-        definition.path().join("skills/reviewer/SKILL.md"),
-        "---\nname: Reviewer\ndescription: Review changes\n---\n",
-    )
-    .unwrap();
-    std::fs::write(
-        definition.path().join("policy.yaml"),
-        "default_action: allow\n",
-    )
-    .unwrap();
-
-    let mut context = launch_context_with_mounts(
-        vec![
-            HostMountGrant::new("/mnt/source", source.path(), Access::ReadWrite).unwrap(),
-            HostMountGrant::new("/agent-definition", definition.path(), Access::ReadOnly).unwrap(),
-        ],
-        "/mnt/source",
-    );
-    context.descriptors.insert(
-        AGENT_DEFINITION_DESCRIPTOR.to_string(),
-        ProcessDescriptor::new("/agent-definition").unwrap(),
+    .unwrap()
+    .with_descriptor(
+        AGENT_DEFINITION_DESCRIPTOR,
+        ProcessDescriptor::with_file_tree("/agent-definition", definition).unwrap(),
     );
 
     let resolved =
         ResolvedAgentDefinition::from_launch_context(&context, &[], ConfigSourceKind::Default)
             .unwrap();
-    assert_eq!(resolved.root_dir.as_deref(), Some(definition.path()));
+    assert!(resolved.root_dir.is_none());
     assert_eq!(
-        resolved.persona_dirs,
-        vec![definition.path().join("persona")]
+        resolved.namespace_root.as_deref(),
+        Some(std::path::Path::new("/agent-definition"))
+    );
+    assert!(
+        resolved
+            .persona_context
+            .as_deref()
+            .is_some_and(|context| context.contains("descriptor persona"))
     );
     assert_eq!(
         resolved.policy_path.as_deref(),
-        Some(definition.path().join("policy.yaml").as_path())
+        Some(std::path::Path::new("/agent-definition/policy.yaml"))
     );
     assert!(
         resolved

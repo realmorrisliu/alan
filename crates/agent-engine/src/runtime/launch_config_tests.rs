@@ -1,7 +1,5 @@
 use super::*;
-use alan_ap::InProcessTransport;
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::path::Path;
 use tempfile::TempDir;
 
 fn write_agent_overlay(path: &Path, body: &str) {
@@ -12,75 +10,9 @@ fn write_agent_overlay(path: &Path, body: &str) {
 fn test_agent_runtime_config_default() {
     let config = AgentProcessConfig::default();
     assert_eq!(config.launch_context.cwd, "/");
-    assert!(config.launch_context.host_mounts.is_empty());
     assert!(config.launch_context.descriptors.is_empty());
     assert!(config.store_bindings.is_none());
     assert!(config.memory_store_backing.is_none());
-}
-
-#[test]
-fn runtime_tool_binding_uses_host_mount_when_process_cwd_is_virtual() {
-    let temp = TempDir::new().unwrap();
-    let source = temp.path().join("source");
-    std::fs::create_dir_all(&source).unwrap();
-    let mut launch_context = crate::ProcessLaunchContext::root();
-    launch_context.namespace.mount(
-        "/mnt/source",
-        InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::new())),
-        alan_kernel::Access::ReadWrite,
-    );
-    launch_context = launch_context.with_host_mount(
-        crate::HostMountGrant::new("/mnt/source", &source, alan_kernel::Access::ReadWrite).unwrap(),
-    );
-    let store_root = temp.path().join("system-store");
-    let config = AgentProcessConfig {
-        launch_context,
-        store_bindings: Some(crate::AgentRuntimeStoreBindings {
-            rollouts: store_root.join("rollouts"),
-            checkpoints: store_root.join("checkpoints"),
-            cache: store_root.join("cache"),
-            tmp: store_root.join("tmp"),
-            metadata: store_root.join("metadata"),
-        }),
-        ..AgentProcessConfig::default()
-    };
-    let mut tools = crate::tools::ToolRegistry::new();
-
-    configure_runtime_tool_execution_binding(&config, &mut tools).unwrap();
-
-    let binding = tools
-        .default_execution_binding()
-        .expect("an explicit Host Mount must create a runtime Tool binding");
-    assert_eq!(binding.cwd, dunce::canonicalize(&source).unwrap());
-    assert_eq!(binding.namespace_cwd, PathBuf::from("/mnt/source"));
-    assert_eq!(config.launch_context.cwd, "/");
-    assert_eq!(binding.host_mounts, config.launch_context.host_mounts);
-}
-
-#[test]
-fn package_projection_alone_does_not_require_runtime_tool_binding() {
-    let mut launch_context = crate::ProcessLaunchContext::root();
-    launch_context.add_package_reference(
-        crate::ProcessPackageReference::new(
-            "example",
-            "a".repeat(64),
-            crate::ProcessPackageKind::Installed,
-            "/lib/pkg/example",
-            Vec::new(),
-            alan_ap::InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::new())),
-        )
-        .unwrap(),
-    );
-    let config = AgentProcessConfig {
-        launch_context,
-        store_bindings: None,
-        ..AgentProcessConfig::default()
-    };
-    let mut tools = crate::tools::ToolRegistry::new();
-
-    configure_runtime_tool_execution_binding(&config, &mut tools).unwrap();
-
-    assert!(tools.default_execution_binding().is_none());
 }
 
 #[test]
@@ -89,7 +21,6 @@ fn test_agent_runtime_config_from_core_config() {
     let runtime_config = AgentProcessConfig::from(core_config);
 
     assert_eq!(runtime_config.launch_context.cwd, "/");
-    assert!(runtime_config.launch_context.host_mounts.is_empty());
     assert!(runtime_config.store_bindings.is_none());
 }
 
@@ -98,10 +29,6 @@ fn test_agent_runtime_config_clone() {
     let config = AgentProcessConfig::default();
     let cloned = config.clone();
     assert_eq!(config.launch_context.cwd, cloned.launch_context.cwd);
-    assert_eq!(
-        config.launch_context.host_mounts,
-        cloned.launch_context.host_mounts
-    );
 }
 
 #[test]

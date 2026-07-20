@@ -20,7 +20,7 @@ mod sandbox_spec;
 mod shell_syntax;
 
 pub(crate) use path_safety::protected_path_component;
-pub use sandbox_spec::{NetworkPosture, SandboxSpec};
+pub use sandbox_spec::{NetworkPosture, SandboxHostMount, SandboxSpec};
 
 use command_wrappers::{
     shell_wrapper_inline_script, validate_direct_command_shapes, validate_nested_command_evaluators,
@@ -62,7 +62,7 @@ pub struct ExecResult {
 }
 
 /// Simple host_mount-only sandbox
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct Sandbox {
     spec: SandboxSpec,
     /// Forces a specific backend instead of host detection (tests only).
@@ -519,10 +519,10 @@ impl Sandbox {
                     &grant.namespace_path,
                     grant.host_path.clone(),
                     match grant.access {
-                        alan_kernel::Access::ReadOnly => {
+                        super::reified_namespace::ReifiedMountAccess::ReadOnly => {
                             super::reified_namespace::ReifiedMountAccess::ReadOnly
                         }
-                        alan_kernel::Access::ReadWrite => {
+                        super::reified_namespace::ReifiedMountAccess::ReadWrite => {
                             super::reified_namespace::ReifiedMountAccess::ReadWrite
                         }
                     },
@@ -868,7 +868,7 @@ impl Sandbox {
 
         for grant in &self.spec.host_mounts {
             let root = &grant.host_path;
-            let namespace_path = PathBuf::from(&grant.namespace_path);
+            let namespace_path = grant.namespace_path.clone();
             if path == namespace_path {
                 return Some(root.clone());
             }

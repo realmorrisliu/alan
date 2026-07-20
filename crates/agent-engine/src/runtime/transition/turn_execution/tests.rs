@@ -893,17 +893,12 @@ fn create_test_state_with_provider_and_tools_and_shell<P: LlmProvider + 'static>
         alan_kernel::Credentials::user("test-agent"),
         "/mnt/source",
     )
-    .unwrap()
-    .with_host_mount(
-        crate::HostMountGrant::new("/mnt/source", "/tmp", alan_kernel::Access::ReadWrite).unwrap(),
-    );
-    tools.set_default_execution_binding(
-        crate::tools::ToolExecutionBinding::from_launch_context(
-            &launch_context,
-            std::path::PathBuf::from("/tmp/alan-turn-executor-test-scratch"),
-        )
-        .unwrap(),
-    );
+    .unwrap();
+    tools.set_default_execution_binding(crate::tools::test_execution_binding(
+        "/mnt/source",
+        std::path::PathBuf::from("/tmp"),
+        std::path::PathBuf::from("/tmp/alan-turn-executor-test-scratch"),
+    ));
     let procfs = alan_kernel::ProcFs::new().with_runner(std::sync::Arc::new(
         TestToolProcessRunner::new(tools.clone()),
     ));

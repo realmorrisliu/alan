@@ -323,30 +323,6 @@ impl AgentProcessConfig {
     }
 }
 
-/// Apply the Process Launch Context's explicit Host Mount authority to Tool execution.
-pub fn configure_runtime_tool_execution_binding(
-    config: &AgentProcessConfig,
-    tools: &mut crate::tools::ToolRegistry,
-) -> Result<()> {
-    if !config.launch_context.host_mounts.is_empty() {
-        let scratch_dir = config
-            .store_bindings
-            .as_ref()
-            .map(|stores| stores.tmp.clone())
-            .context(
-                "Agent Process with Host Mounts requires Agent Runtime Service store bindings",
-            )?;
-        tools.set_default_execution_binding(
-            crate::tools::ToolExecutionBinding::from_launch_context(
-                &config.launch_context,
-                scratch_dir,
-            )?,
-        );
-    }
-
-    Ok(())
-}
-
 pub fn effective_core_config_for_runtime(
     config: &AgentProcessConfig,
 ) -> Result<crate::config::Config> {

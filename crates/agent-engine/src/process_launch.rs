@@ -1,12 +1,7 @@
-use std::{
-    any::Any,
-    collections::BTreeMap,
-    path::{Component, Path, PathBuf},
-    sync::Arc,
-};
+use std::{any::Any, collections::BTreeMap, path::PathBuf, sync::Arc};
 
 use alan_ap::InProcessTransport;
-use alan_kernel::{Access, Credentials, LiveNamespace, Namespace};
+use alan_kernel::{Credentials, LiveNamespace, Namespace};
 use anyhow::{Result, ensure};
 
 use crate::skills::{
@@ -25,56 +20,6 @@ pub struct AgentRuntimeStoreBindings {
     pub cache: PathBuf,
     pub tmp: PathBuf,
     pub metadata: PathBuf,
-}
-
-/// A Host-authorized directory projected into one Process namespace.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct HostMountGrant {
-    pub namespace_path: String,
-    pub host_path: PathBuf,
-    pub access: Access,
-}
-
-impl HostMountGrant {
-    pub fn new(
-        namespace_path: impl Into<String>,
-        host_path: impl Into<PathBuf>,
-        access: Access,
-    ) -> Result<Self> {
-        let namespace_path = normalize_namespace_path(&namespace_path.into())?;
-        let host_path = host_path.into();
-        ensure!(host_path.is_absolute(), "Host Mount path must be absolute");
-        ensure!(
-            !host_path
-                .components()
-                .any(|component| matches!(component, Component::CurDir | Component::ParentDir)),
-            "Host Mount path must not contain relative components"
-        );
-        Ok(Self {
-            namespace_path,
-            host_path,
-            access,
-        })
-    }
-
-    pub(crate) fn resolve_host_path(&self, namespace_path: &str) -> Option<PathBuf> {
-        let mount = namespace_components(&self.namespace_path).ok()?;
-        let requested = namespace_components(namespace_path).ok()?;
-        if !requested.starts_with(&mount) {
-            return None;
-        }
-        let relative = requested[mount.len()..].iter().collect::<PathBuf>();
-        Some(self.host_path.join(relative))
-    }
-
-    pub(crate) fn resolve_namespace_path(&self, host_path: &Path) -> Option<PathBuf> {
-        let requested = dunce::canonicalize(host_path)
-            .unwrap_or_else(|_| dunce::simplified(host_path).to_path_buf());
-        let root = dunce::canonicalize(&self.host_path)
-            .unwrap_or_else(|_| dunce::simplified(&self.host_path).to_path_buf());
-        let suffix = requested.strip_prefix(root).ok()?;
-        Some(Path::new(&self.namespace_path).join(suffix))
-    }
 }
 
 /// A named Process descriptor referencing a path in the Process namespace.
@@ -219,21 +164,12 @@ impl ProcessDescriptor {
 #[derive(Clone)]
 pub struct ProcessLaunchContext {
     pub namespace: Namespace,
-    pub host_mounts: Vec<HostMountGrant>,
     pub descriptors: BTreeMap<String, ProcessDescriptor>,
     pub package_references: Vec<ProcessPackageReference>,
     pub credentials: Credentials,
     pub cwd: String,
-    projected_host_mounts: Vec<ProjectedHostMount>,
     live_namespace: Option<LiveNamespace>,
     retained_authorities: Vec<Arc<dyn Any + Send + Sync>>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct ProjectedHostMount {
-    grant_reference: String,
-    namespace_path: String,
-    access: Access,
 }
 
 impl std::fmt::Debug for ProcessLaunchContext {
@@ -241,12 +177,10 @@ impl std::fmt::Debug for ProcessLaunchContext {
         formatter
             .debug_struct("ProcessLaunchContext")
             .field("namespace", &self.namespace.describe())
-            .field("host_mounts", &self.host_mounts)
             .field("descriptors", &self.descriptors)
             .field("package_references", &self.package_references)
             .field("credentials", &self.credentials)
             .field("cwd", &self.cwd)
-            .field("projected_host_mounts", &self.projected_host_mounts)
             .field("live_namespace", &self.live_namespace.is_some())
             .field("retained_authorities", &self.retained_authorities.len())
             .finish()
@@ -261,12 +195,10 @@ impl ProcessLaunchContext {
     ) -> Result<Self> {
         Ok(Self {
             namespace,
-            host_mounts: Vec::new(),
             descriptors: BTreeMap::new(),
             package_references: Vec::new(),
             credentials,
             cwd: normalize_namespace_path(&cwd.into())?,
-            projected_host_mounts: Vec::new(),
             live_namespace: None,
             retained_authorities: Vec::new(),
         })
@@ -275,11 +207,6 @@ impl ProcessLaunchContext {
     pub fn root() -> Self {
         Self::new(Namespace::new(), Credentials::user("root-agent"), "/")
             .expect("root Process Launch Context is valid")
-    }
-
-    pub fn with_host_mount(mut self, grant: HostMountGrant) -> Self {
-        self.host_mounts.push(grant);
-        self
     }
 
     pub fn with_descriptor(
@@ -304,58 +231,6 @@ impl ProcessLaunchContext {
         self.package_references.push(reference);
     }
 
-    /// Record one Host-Mount-Service-owned projection without retaining Host backing.
-    pub(crate) fn record_projected_host_mount(
-        &mut self,
-        grant_reference: String,
-        namespace_path: String,
-        access: Access,
-    ) {
-        if let Some(existing) = self
-            .projected_host_mounts
-            .iter_mut()
-            .find(|mount| mount.namespace_path == namespace_path)
-        {
-            existing.grant_reference = grant_reference;
-            existing.access = access;
-        } else {
-            self.projected_host_mounts.push(ProjectedHostMount {
-                grant_reference,
-                namespace_path,
-                access,
-            });
-        }
-    }
-
-    /// Opaque Host Mount references selected for explicit child delegation.
-    ///
-    /// References are metadata, not authority: Host Mount Service must also prove that the
-    /// spawning Process currently holds the corresponding namespace projection.
-    pub fn projected_host_mount_references(&self) -> Vec<String> {
-        self.projected_host_mounts
-            .iter()
-            .map(|mount| mount.grant_reference.clone())
-            .collect()
-    }
-
-    pub fn projected_host_mounts(&self) -> Vec<(String, Access)> {
-        self.projected_host_mounts
-            .iter()
-            .map(|mount| (mount.namespace_path.clone(), mount.access))
-            .collect()
-    }
-
-    pub fn has_host_mounts(&self) -> bool {
-        !self.host_mounts.is_empty() || !self.projected_host_mounts.is_empty()
-    }
-
-    pub(crate) fn take_projected_host_mount_paths(&mut self) -> Vec<String> {
-        std::mem::take(&mut self.projected_host_mounts)
-            .into_iter()
-            .map(|mount| mount.namespace_path)
-            .collect()
-    }
-
     /// Retain an opaque owner-issued authority for the lifetime of this Process context.
     pub fn retain_authority<T>(&mut self, authority: Arc<T>)
     where
@@ -364,64 +239,13 @@ impl ProcessLaunchContext {
         self.retained_authorities.push(authority);
     }
 
-    /// Resolve an Alan OS path only through an explicit Host Mount grant.
-    pub fn host_path(&self, namespace_path: &str) -> Option<PathBuf> {
-        self.host_mounts
-            .iter()
-            .filter_map(|grant| {
-                grant.resolve_host_path(namespace_path).map(|path| {
-                    (
-                        namespace_components(&grant.namespace_path)
-                            .unwrap_or_default()
-                            .len(),
-                        path,
-                    )
-                })
-            })
-            .max_by_key(|(prefix_len, _)| *prefix_len)
-            .map(|(_, path)| path)
-    }
-
-    pub fn host_cwd(&self) -> Option<PathBuf> {
-        self.host_path(&self.cwd)
-    }
-
-    /// Resolve a Host path to its Alan OS path only through an explicit Host Mount.
-    pub fn namespace_path(&self, host_path: &Path) -> Option<String> {
-        let requested = dunce::canonicalize(host_path)
-            .unwrap_or_else(|_| dunce::simplified(host_path).to_path_buf());
-        self.host_mounts
-            .iter()
-            .filter_map(|grant| {
-                let root = dunce::canonicalize(&grant.host_path)
-                    .unwrap_or_else(|_| dunce::simplified(&grant.host_path).to_path_buf());
-                let suffix = requested.strip_prefix(&root).ok()?;
-                Some((
-                    root.components().count(),
-                    if suffix.as_os_str().is_empty() {
-                        grant.namespace_path.clone()
-                    } else {
-                        format!(
-                            "{}/{}",
-                            grant.namespace_path.trim_end_matches('/'),
-                            suffix.to_string_lossy()
-                        )
-                    },
-                ))
-            })
-            .max_by_key(|(prefix_len, _)| *prefix_len)
-            .map(|(_, path)| path)
-    }
-
     pub fn child(&self) -> Self {
         Self {
             namespace: self.namespace_snapshot(),
-            host_mounts: self.host_mounts.clone(),
             descriptors: self.descriptors.clone(),
             package_references: self.package_references.clone(),
             credentials: self.credentials.clone(),
             cwd: self.cwd.clone(),
-            projected_host_mounts: self.projected_host_mounts.clone(),
             live_namespace: None,
             retained_authorities: self.retained_authorities.clone(),
         }
@@ -439,12 +263,10 @@ impl ProcessLaunchContext {
     pub fn rebound(&self, namespace: Namespace, credentials: Credentials) -> Self {
         Self {
             namespace,
-            host_mounts: self.host_mounts.clone(),
             descriptors: self.descriptors.clone(),
             package_references: self.package_references.clone(),
             credentials,
             cwd: self.cwd.clone(),
-            projected_host_mounts: self.projected_host_mounts.clone(),
             live_namespace: None,
             retained_authorities: self.retained_authorities.clone(),
         }
@@ -454,12 +276,10 @@ impl ProcessLaunchContext {
     pub fn rebound_live(&self, namespace: LiveNamespace, credentials: Credentials) -> Self {
         Self {
             namespace: namespace.snapshot(),
-            host_mounts: self.host_mounts.clone(),
             descriptors: self.descriptors.clone(),
             package_references: self.package_references.clone(),
             credentials,
             cwd: self.cwd.clone(),
-            projected_host_mounts: self.projected_host_mounts.clone(),
             live_namespace: Some(namespace),
             retained_authorities: self.retained_authorities.clone(),
         }
@@ -532,52 +352,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn host_paths_resolve_only_through_explicit_mounts() {
-        let context = ProcessLaunchContext::root().with_host_mount(
-            HostMountGrant::new("/mnt/source", "/host/source", Access::ReadWrite).unwrap(),
-        );
-
-        assert_eq!(
-            context.host_path("/mnt/source/src/lib.rs"),
-            Some(Path::new("/host/source/src/lib.rs").to_path_buf())
-        );
-        assert_eq!(context.host_path("/host/source/src/lib.rs"), None);
-    }
-
-    #[test]
-    fn child_inherits_a_snapshot_without_gaining_mounts() {
-        let context = ProcessLaunchContext::root().with_host_mount(
-            HostMountGrant::new("/mnt/source", "/host/source", Access::ReadOnly).unwrap(),
-        );
+    fn child_inherits_a_namespace_snapshot_without_host_backing() {
+        let context = ProcessLaunchContext::root();
         let child = context.child();
 
-        assert_eq!(child.host_mounts, context.host_mounts);
         assert_eq!(child.namespace.describe(), context.namespace.describe());
         assert_eq!(child.cwd, "/");
-    }
-
-    #[test]
-    fn latest_projected_grant_reference_replaces_the_same_namespace_path() {
-        let mut context = ProcessLaunchContext::root();
-        context.record_projected_host_mount(
-            "grant-old".to_string(),
-            "/mnt/project".to_string(),
-            Access::ReadOnly,
-        );
-        context.record_projected_host_mount(
-            "grant-latest".to_string(),
-            "/mnt/project".to_string(),
-            Access::ReadWrite,
-        );
-
-        assert_eq!(
-            context.projected_host_mount_references(),
-            vec!["grant-latest".to_string()]
-        );
-        assert_eq!(
-            context.projected_host_mounts(),
-            vec![("/mnt/project".to_string(), Access::ReadWrite)]
-        );
     }
 
     #[test]

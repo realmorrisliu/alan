@@ -3,6 +3,54 @@ use crate::config::Config;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+#[derive(Debug)]
+struct TestAdapter {
+    namespace_cwd: PathBuf,
+    cwd: PathBuf,
+}
+
+impl crate::tools::ToolExecutionAdapter for TestAdapter {
+    fn namespace_cwd(&self) -> PathBuf {
+        self.namespace_cwd.clone()
+    }
+
+    fn cwd(&self) -> Result<PathBuf> {
+        Ok(self.cwd.clone())
+    }
+
+    fn resolve_path(
+        &self,
+        _namespace_cwd: &std::path::Path,
+        path: &std::path::Path,
+    ) -> Result<PathBuf> {
+        Ok(if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            self.cwd.join(path)
+        })
+    }
+
+    fn visible_path(&self, path: &std::path::Path) -> PathBuf {
+        path.to_path_buf()
+    }
+
+    fn project_text(&self, text: &str) -> String {
+        text.to_string()
+    }
+
+    fn sandbox(&self) -> Result<crate::tools::Sandbox> {
+        Ok(crate::tools::Sandbox::new(self.cwd.clone()))
+    }
+}
+
+fn test_binding(namespace_cwd: &str, cwd: PathBuf, scratch: PathBuf) -> ToolExecutionBinding {
+    ToolExecutionBinding::awaiting_host_projection(PathBuf::from(namespace_cwd), scratch)
+        .with_adapter(Arc::new(TestAdapter {
+            namespace_cwd: PathBuf::from(namespace_cwd),
+            cwd,
+        }))
+}
+
 struct TestTool;
 
 impl Tool for TestTool {
@@ -48,8 +96,8 @@ impl Tool for CwdEchoTool {
     }
 
     fn execute(&self, _arguments: Value, ctx: &ToolContext) -> ToolResult {
-        let cwd = ctx.cwd.display().to_string();
-        Box::pin(async move { Ok(serde_json::json!({"cwd": cwd})) })
+        let cwd = ctx.cwd();
+        Box::pin(async move { Ok(serde_json::json!({"cwd": cwd?.display().to_string()})) })
     }
 }
 
@@ -135,9 +183,12 @@ impl Tool for CatalogTestTool {
 }
 
 fn test_ctx() -> ToolContext {
-    ToolContext::new(
-        PathBuf::from("/mnt/source"),
-        PathBuf::from("/tmp"),
+    ToolContext::from_binding(
+        test_binding(
+            "/mnt/source",
+            PathBuf::from("/mnt/source"),
+            PathBuf::from("/tmp"),
+        ),
         Arc::new(Config::default()),
     )
 }
@@ -392,7 +443,8 @@ async fn process_server_reconciles_late_bound_authority_before_tool_execution() 
 
     let mut registry = ToolRegistry::new();
     registry.register(TestTool);
-    registry.set_default_execution_binding(ToolExecutionBinding::new(
+    registry.set_default_execution_binding(test_binding(
+        "/mnt/source",
         PathBuf::from("/host/source"),
         PathBuf::from("/tmp/scratch"),
     ));
@@ -433,7 +485,8 @@ async fn process_server_uses_spawning_agent_execution_binding() {
     let runner = ToolProcessRunner::from_registry(&registry);
     runner.register_process_binding(
         alan_kernel::Pid(7),
-        ToolExecutionBinding::new(
+        test_binding(
+            "/mnt/child",
             PathBuf::from("/tmp/child-cwd"),
             PathBuf::from("/tmp/child-scratch"),
         ),
@@ -484,7 +537,8 @@ async fn execute_requires_an_explicit_process_binding() {
 async fn execute_uses_the_configured_process_binding() {
     let mut registry = ToolRegistry::new();
     registry.register(CwdEchoTool);
-    registry.set_default_execution_binding(ToolExecutionBinding::new(
+    registry.set_default_execution_binding(test_binding(
+        "/mnt/source",
         PathBuf::from("/host/source"),
         PathBuf::from("/system-store/tmp"),
     ));
@@ -495,68 +549,6 @@ async fn execute_uses_the_configured_process_binding() {
         .unwrap();
 
     assert_eq!(result["cwd"], "/host/source");
-}
-
-#[test]
-fn complete_process_binding_updates_path_projection_and_sandbox_together() {
-    let source = tempfile::tempdir().unwrap();
-    let approved = tempfile::tempdir().unwrap();
-    let launch_context = crate::ProcessLaunchContext::new(
-        alan_kernel::Namespace::new(),
-        alan_kernel::Credentials::user("agent"),
-        "/mnt/source",
-    )
-    .unwrap()
-    .with_host_mount(
-        crate::HostMountGrant::new("/mnt/source", source.path(), alan_kernel::Access::ReadWrite)
-            .unwrap(),
-    );
-    let registry = ToolRegistry::new();
-    let runner = ToolProcessRunner::from_registry(&registry);
-    runner.register_process_binding(
-        alan_kernel::Pid(7),
-        ToolExecutionBinding::from_launch_context(&launch_context, source.path().join("scratch"))
-            .unwrap(),
-    );
-    let grant = crate::HostMountGrant::new(
-        "/mnt/approved",
-        approved.path(),
-        alan_kernel::Access::ReadOnly,
-    )
-    .unwrap();
-
-    let updated_context = launch_context.with_host_mount(grant);
-    runner.register_process_binding(
-        alan_kernel::Pid(7),
-        ToolExecutionBinding::from_launch_context(&updated_context, source.path().join("scratch"))
-            .unwrap(),
-    );
-    let binding = runner.process_binding(alan_kernel::Pid(7)).unwrap();
-    assert!(
-        binding
-            .host_mounts
-            .iter()
-            .any(|mount| mount.namespace_path == "/mnt/approved")
-    );
-    let sandbox = binding.sandbox_spec.unwrap();
-    assert!(
-        sandbox
-            .host_mounts
-            .iter()
-            .any(|mount| mount.namespace_path == "/mnt/approved")
-    );
-    assert!(
-        sandbox
-            .readable_roots
-            .iter()
-            .any(|path| path == &dunce::canonicalize(approved.path()).unwrap())
-    );
-    assert!(
-        !sandbox
-            .writable_roots
-            .iter()
-            .any(|path| path == &dunce::canonicalize(approved.path()).unwrap())
-    );
 }
 
 #[tokio::test]

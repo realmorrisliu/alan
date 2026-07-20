@@ -516,17 +516,6 @@ fn build_delegated_spawn_spec(
         .transpose()?
         .or_else(|| parent_namespace_cwd.map(lexically_normalize_path));
     let requirements = classify_delegated_task_requirements(&request.task, cwd.as_deref());
-    let mut handles = vec![SpawnHandle::ApprovalScope];
-    if cwd.as_deref().is_some_and(|cwd| {
-        launch_context.is_some_and(|context| {
-            context
-                .host_mounts
-                .iter()
-                .any(|grant| grant.resolve_host_path(&cwd.to_string_lossy()).is_some())
-        })
-    }) {
-        handles.push(SpawnHandle::HostMounts);
-    }
     Ok(SpawnSpec {
         target,
         launch: SpawnLaunchInputs {
@@ -539,7 +528,8 @@ fn build_delegated_spawn_spec(
             ),
             output_dir: None,
         },
-        handles,
+        handles: vec![SpawnHandle::ApprovalScope],
+        host_mounts: Vec::new(),
         runtime_overrides: SpawnRuntimeOverrides::default(),
         delegated: Some(DelegatedSpawnContext { requirements }),
     })

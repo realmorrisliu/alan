@@ -81,18 +81,13 @@ fn create_test_transition_state() -> super::super::transition::RuntimeLoopState 
         alan_kernel::Credentials::user("parent-agent"),
         "/mnt/source",
     )
-    .unwrap()
-    .with_host_mount(
-        crate::HostMountGrant::new("/mnt/source", &host_source, Access::ReadWrite).unwrap(),
-    );
+    .unwrap();
     let mut tools = ToolRegistry::new();
-    tools.set_default_execution_binding(
-        crate::tools::ToolExecutionBinding::from_launch_context(
-            &launch_context,
-            PathBuf::from("/tmp/alan-system-store/tmp"),
-        )
-        .unwrap(),
-    );
+    tools.set_default_execution_binding(crate::tools::test_execution_binding(
+        "/mnt/source",
+        host_source,
+        PathBuf::from("/tmp/alan-system-store/tmp"),
+    ));
     let runtime_config = RuntimeConfig::default();
     let mut prompt_cache = crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new());
     prompt_cache.set_host_capabilities(

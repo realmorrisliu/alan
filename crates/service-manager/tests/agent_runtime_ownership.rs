@@ -27,7 +27,8 @@ fn runtime_assembly_call_paths_have_explicit_owners() {
         "AgentFs::new()",
         "set_root_process(",
         "with_tool_process_context(",
-        "with_mount_grant_applicator(",
+        "self.host_mount.register_process(",
+        "register_process_authority(",
         "impl ChildAgentProcessAssembler",
         "walk child /proc/clone",
         "LiveNamespace::new(child_namespace(",
@@ -39,6 +40,7 @@ fn runtime_assembly_call_paths_have_explicit_owners() {
             "Agent Runtime Service is missing root assembly marker `{marker}`"
         );
     }
+    assert!(!service.contains("with_mount_grant_applicator("));
 
     let supervisor = include_str!("../src/runtime.rs");
     let production = supervisor

@@ -5,7 +5,7 @@ use crate::runtime::delegation_capabilities::{
 };
 use alan_agent_protocol::{DelegatedCapabilityDecision, DelegatedCapabilityRecovery, SpawnSpec};
 use anyhow::Result;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 pub(super) async fn evaluate_delegated_launch_capabilities(
     parent: &ChildLaunchRuntime,
@@ -44,13 +44,60 @@ pub(super) async fn evaluate_delegated_launch_capabilities(
 fn namespace_summary_from_child_plan(
     plan: &ChildNamespaceAssemblyPlan,
 ) -> alan_agent_protocol::DelegatedNamespaceSummary {
-    let mut described = plan.launch_context.namespace.describe();
-    described.extend([
+    let namespace = plan.launch_context.namespace_snapshot();
+    let mut described = vec![
         (plan.agent_mount.clone(), alan_kernel::Access::ReadWrite),
         (plan.llm_mount.clone(), alan_kernel::Access::ReadWrite),
         (plan.srv_mount.clone(), alan_kernel::Access::ReadOnly),
         (plan.route_mount.clone(), alan_kernel::Access::ReadWrite),
-    ]);
+    ];
+    described.extend(plan.host_mounts.iter().map(|mount| {
+        (
+            mount.target.to_string_lossy().to_string(),
+            match mount.access {
+                alan_agent_protocol::SpawnMountAccess::ReadOnly => alan_kernel::Access::ReadOnly,
+                alan_agent_protocol::SpawnMountAccess::ReadWrite => alan_kernel::Access::ReadWrite,
+            },
+        )
+    }));
+    described.extend(
+        plan.launch_context
+            .package_references
+            .iter()
+            .filter_map(|reference| {
+                namespace
+                    .resolve(&reference.namespace_path)
+                    .ok()
+                    .map(|resolved| (reference.namespace_path.clone(), resolved.access))
+            }),
+    );
+    described.extend(
+        plan.launch_context
+            .descriptors
+            .values()
+            .filter(|descriptor| {
+                !plan
+                    .launch_context
+                    .package_references
+                    .iter()
+                    .any(|reference| {
+                        Path::new(&descriptor.path).starts_with(&reference.namespace_path)
+                    })
+            })
+            .filter_map(|descriptor| {
+                namespace
+                    .resolve(&descriptor.path)
+                    .ok()
+                    .map(|resolved| (descriptor.path.clone(), resolved.access))
+            }),
+    );
+    described.sort_by(|left, right| {
+        left.0.cmp(&right.0).then_with(|| {
+            matches!(left.1, alan_kernel::Access::ReadWrite)
+                .cmp(&matches!(right.1, alan_kernel::Access::ReadWrite))
+        })
+    });
+    described.dedup();
     namespace_summary_from_bindings(
         described.iter().map(|(path, _)| path.clone()).collect(),
         described

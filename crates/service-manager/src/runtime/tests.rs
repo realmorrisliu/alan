@@ -86,30 +86,6 @@ async fn boot_rejects_root_namespace_mount_covering_package_namespace() {
 }
 
 #[tokio::test]
-async fn boot_rejects_root_host_grant_covering_package_namespace() {
-    let host = tempfile::tempdir().unwrap();
-    let mut config = ServiceManagerConfig::ephemeral(
-        "test",
-        AgentProcessConfig::default(),
-        LlmClient::new(MockLlmProvider::new()),
-        ToolRegistry::new(),
-    );
-    config
-        .process
-        .launch_context
-        .host_mounts
-        .push(alan_agent_engine::HostMountGrant::new("/", host.path(), Access::ReadOnly).unwrap());
-
-    let error = ServiceManager::boot(config).await.err().unwrap();
-
-    assert!(
-        error
-            .to_string()
-            .contains("Host Mount grants overlapping /lib/pkg are not accepted")
-    );
-}
-
-#[tokio::test]
 async fn installed_distribution_is_visible_only_after_explicit_process_reference() {
     let service = PackageService::ephemeral("test").unwrap();
     let installed = service
@@ -162,7 +138,6 @@ async fn installed_distribution_is_visible_only_after_explicit_process_reference
             .is_err()
     );
     project_package_reference(&service, &mut launch_context, "dogfood-pack").unwrap();
-    assert!(launch_context.host_mounts.is_empty());
     assert!(
         launch_context
             .namespace

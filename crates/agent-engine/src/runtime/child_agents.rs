@@ -357,6 +357,7 @@ async fn build_child_namespace_assembly_plan(
         route_mount: ROUTE_MOUNT_PATH.to_string(),
         bin_tool_mounts: Vec::new(),
         tool_packages: Vec::new(),
+        host_mounts: spec.host_mounts.clone(),
         cwd,
         launch_context,
     };

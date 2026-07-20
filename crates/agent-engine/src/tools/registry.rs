@@ -1,9 +1,6 @@
 //! Tool registry for managing and executing tools.
 
-use super::{
-    context::{ToolContext, ToolExecutionBinding},
-    sandbox::SandboxSpec,
-};
+use super::context::{ToolContext, ToolExecutionBinding};
 use anyhow::{Context, Result};
 use jsonschema::{Draft, Validator};
 use serde_json::Value;
@@ -97,29 +94,11 @@ impl ToolRegistry {
         self.default_binding_snapshot()
     }
 
-    /// Get the runtime-projected sandbox spec for default tool execution, if configured.
-    pub fn default_sandbox_spec(&self) -> Option<SandboxSpec> {
-        self.default_binding_snapshot()
-            .as_ref()
-            .and_then(|binding| binding.sandbox_spec.clone())
-    }
-
-    /// Get the writable roots that currently define default tool sandbox authority.
-    pub fn default_sandbox_writable_roots(&self) -> Vec<std::path::PathBuf> {
-        let Some(binding) = self.default_binding_snapshot() else {
-            return Vec::new();
-        };
-        if let Some(spec) = binding.sandbox_spec.as_ref() {
-            return spec.writable_roots.clone();
-        }
-        Vec::new()
-    }
-
-    /// Get the configured default working directory, if any.
+    /// Get the configured Alan OS working directory, if any.
     pub fn default_cwd(&self) -> Option<std::path::PathBuf> {
         self.default_binding_snapshot()
             .as_ref()
-            .map(|binding| binding.cwd.clone())
+            .map(|binding| binding.namespace_cwd.clone())
     }
 
     /// Register a tool

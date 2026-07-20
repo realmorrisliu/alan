@@ -81,17 +81,11 @@ where
 
     loop {
         let next_submission = if state.machine.has_pending_interaction() {
-            let RuntimeLoopState {
-                machine,
-                environment,
-                ..
-            } = state;
-            let mut mount_control = environment.mount_control();
+            let RuntimeLoopState { machine, .. } = state;
             next_pending_interaction_submission(
                 machine,
                 &agent_files,
                 &host_mount_requests,
-                &mut mount_control,
                 broker,
                 emit,
                 cancel,
