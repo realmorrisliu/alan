@@ -3,10 +3,7 @@ use crate::llm::{GenerationRequest, GenerationResponse, StreamChunk, TokenUsage}
 use crate::runtime::controller::RuntimeStartupMetadata;
 use crate::runtime::launch_config::AgentConfig;
 use crate::runtime::transition::RuntimeLoopState;
-use crate::runtime::{
-    ApprovedMountGrant, ApprovedMountGrantAccess, MountGrantApplicator,
-    MountGrantApplicatorFactory, NamespaceRuntimeEnvironment, RuntimeConfig,
-};
+use crate::runtime::{NamespaceRuntimeEnvironment, RuntimeConfig};
 use crate::skills::SkillHostCapabilities;
 use crate::tools::Tool;
 use crate::tools::ToolRegistry;
@@ -232,7 +229,6 @@ impl super::super::ChildAgentProcessAssembler for TestChildProcessAssembler {
             self.parent.clone(),
             self.tool_runner.clone(),
             binding,
-            None,
             &executable,
         )
         .await?;
@@ -380,68 +376,6 @@ impl Tool for NamedTestTool {
     }
 }
 
-#[derive(Debug, Default)]
-struct RecordingMountGrantApplicatorFactory {
-    created: Arc<Mutex<usize>>,
-    applied: Arc<Mutex<Vec<ApprovedMountGrant>>>,
-}
-
-impl RecordingMountGrantApplicatorFactory {
-    fn created_count(&self) -> usize {
-        *self
-            .created
-            .lock()
-            .expect("created count lock should not be poisoned")
-    }
-
-    fn applied_grants(&self) -> Vec<ApprovedMountGrant> {
-        self.applied
-            .lock()
-            .expect("applied grants lock should not be poisoned")
-            .clone()
-    }
-}
-
-impl MountGrantApplicatorFactory for RecordingMountGrantApplicatorFactory {
-    fn create(
-        &self,
-        _pid: alan_kernel::Pid,
-        live_namespace: alan_kernel::LiveNamespace,
-        _inherited_mount_references: &[String],
-    ) -> Arc<dyn MountGrantApplicator> {
-        *self
-            .created
-            .lock()
-            .expect("created count lock should not be poisoned") += 1;
-        Arc::new(RecordingMountGrantApplicator {
-            live_namespace,
-            applied: self.applied.clone(),
-        })
-    }
-}
-
-#[derive(Debug)]
-struct RecordingMountGrantApplicator {
-    live_namespace: alan_kernel::LiveNamespace,
-    applied: Arc<Mutex<Vec<ApprovedMountGrant>>>,
-}
-
-impl MountGrantApplicator for RecordingMountGrantApplicator {
-    fn apply_mount_grant(&self, grant: &ApprovedMountGrant) -> anyhow::Result<KernelNamespace> {
-        self.applied
-            .lock()
-            .expect("applied grants lock should not be poisoned")
-            .push(grant.clone());
-        let access = match grant.access {
-            ApprovedMountGrantAccess::ReadOnly => KernelAccess::ReadOnly,
-            ApprovedMountGrantAccess::ReadWrite => KernelAccess::ReadWrite,
-        };
-        self.live_namespace
-            .mount(&grant.namespace_path, memfs_transport(), access);
-        Ok(self.live_namespace.snapshot())
-    }
-}
-
 struct MarkerTool {
     name: String,
     marker: String,
@@ -546,26 +480,22 @@ fn make_parent_state_with_capability_view(
         "/mnt/source",
     )
     .unwrap()
-    .with_host_mount(
-        crate::HostMountGrant::new("/mnt/source", &source_root, KernelAccess::ReadWrite).unwrap(),
-    )
-    .with_host_mount(
-        crate::HostMountGrant::new(
-            "/agent-definition",
-            &definition_root,
-            KernelAccess::ReadOnly,
-        )
-        .unwrap(),
-    )
     .with_descriptor(
         crate::AGENT_DEFINITION_DESCRIPTOR,
-        crate::ProcessDescriptor::new("/agent-definition").unwrap(),
+        crate::ProcessDescriptor::with_file_tree(
+            "/agent-definition",
+            crate::ProcessFileTree::new(std::collections::BTreeMap::from([(
+                "agent.toml".to_string(),
+                b"tool_repeat_limit = 4\n".to_vec(),
+            )]))
+            .unwrap(),
+        )
+        .unwrap(),
     )
     .with_descriptor(
         crate::MEMORY_STORE_DESCRIPTOR,
         crate::ProcessDescriptor::new("/memory").unwrap(),
     );
-
     let mut core_config = crate::Config::default();
     core_config.memory.store_dir = Some(memory_store.clone());
     core_config.openai_responses_model = "gpt-5.4".to_string();
@@ -625,6 +555,59 @@ fn inherited_launch_context(parent: &RuntimeLoopState) -> crate::ProcessLaunchCo
         .child()
 }
 
+fn install_parent_definition(parent: &mut RuntimeLoopState, agent_toml: impl Into<Vec<u8>>) {
+    let mut launch_context = parent
+        .child_launch()
+        .launch_context()
+        .expect("test parent has a Process Launch Context")
+        .clone();
+    launch_context.descriptors.insert(
+        crate::AGENT_DEFINITION_DESCRIPTOR.to_string(),
+        crate::ProcessDescriptor::with_file_tree(
+            "/agent-definition",
+            crate::ProcessFileTree::new(std::collections::BTreeMap::from([(
+                "agent.toml".to_string(),
+                agent_toml.into(),
+            )]))
+            .unwrap(),
+        )
+        .unwrap(),
+    );
+    parent.environment = parent
+        .environment
+        .clone()
+        .with_launch_context(launch_context);
+}
+
+fn install_parent_package_reference(parent: &mut RuntimeLoopState) {
+    let mut launch_context = parent
+        .child_launch()
+        .launch_context()
+        .expect("test parent has a Process Launch Context")
+        .clone();
+    let package = memfs_transport();
+    launch_context.namespace.mount(
+        "/lib/pkg/repo-review",
+        package.clone(),
+        KernelAccess::ReadOnly,
+    );
+    launch_context.add_package_reference(
+        crate::ProcessPackageReference::new(
+            "repo-review",
+            "a".repeat(64),
+            crate::ProcessPackageKind::Installed,
+            "/lib/pkg/repo-review",
+            Vec::new(),
+            package,
+        )
+        .unwrap(),
+    );
+    parent.environment = parent
+        .environment
+        .clone()
+        .with_launch_context(launch_context);
+}
+
 fn launch_spec(_definition_root: PathBuf) -> SpawnSpec {
     SpawnSpec {
         target: SpawnTarget::DefinitionDescriptor {
@@ -636,7 +619,12 @@ fn launch_spec(_definition_root: PathBuf) -> SpawnSpec {
             timeout_secs: Some(30),
             output_dir: None,
         },
-        handles: vec![SpawnHandle::HostMounts],
+        handles: Vec::new(),
+        host_mounts: vec![alan_agent_protocol::SpawnHostMount {
+            grant: "grant-source".to_string(),
+            target: PathBuf::from("/mnt/source"),
+            access: alan_agent_protocol::SpawnMountAccess::ReadWrite,
+        }],
         runtime_overrides: alan_agent_protocol::SpawnRuntimeOverrides::default(),
         delegated: None,
     }
@@ -645,13 +633,10 @@ fn launch_spec(_definition_root: PathBuf) -> SpawnSpec {
 fn capability_plan(host_mount: Option<PathBuf>, tools: &[&str]) -> ChildNamespaceAssemblyPlan {
     let mut launch_context = crate::ProcessLaunchContext::root();
     let cwd = host_mount.as_ref().map(|_| PathBuf::from("/mnt/source"));
-    if let Some(host_mount) = host_mount {
+    if host_mount.is_some() {
         launch_context
             .namespace
             .mount("/mnt/source", memfs_transport(), KernelAccess::ReadWrite);
-        launch_context.host_mounts.push(
-            crate::HostMountGrant::new("/mnt/source", host_mount, KernelAccess::ReadWrite).unwrap(),
-        );
         launch_context.cwd = "/mnt/source".to_string();
     }
     ChildNamespaceAssemblyPlan {
@@ -662,6 +647,14 @@ fn capability_plan(host_mount: Option<PathBuf>, tools: &[&str]) -> ChildNamespac
         route_mount: alan_routefs::MOUNT_PATH.to_string(),
         bin_tool_mounts: tools.iter().map(|tool| format!("/bin/{tool}")).collect(),
         tool_packages: Vec::new(),
+        host_mounts: host_mount
+            .map(|_| alan_agent_protocol::SpawnHostMount {
+                grant: "grant-source".to_string(),
+                target: PathBuf::from("/mnt/source"),
+                access: alan_agent_protocol::SpawnMountAccess::ReadWrite,
+            })
+            .into_iter()
+            .collect(),
         cwd,
         launch_context,
     }
@@ -688,14 +681,8 @@ fn completed_response(text: &str) -> GenerationResponse {
     }
 }
 
-fn capability_view_with_package_child_agent(
-    temp: &TempDir,
-) -> crate::skills::ResolvedCapabilityView {
-    let package_store = temp.path().join("package-store");
-    let package_root = package_store.join("repo-review");
-    std::fs::create_dir_all(package_root.join("agents/reviewer")).unwrap();
-    std::fs::write(
-        package_root.join("SKILL.md"),
+fn capability_view_with_package_child_agent() -> crate::skills::ResolvedCapabilityView {
+    let skill = Arc::<str>::from(
         r#"---
 name: Repo Review
 description: Review repository changes
@@ -703,19 +690,53 @@ description: Review repository changes
 
 Body
 "#,
-    )
+    );
+    let package_tree = crate::ProcessFileTree::new(std::collections::BTreeMap::from([
+        ("SKILL.md".to_string(), skill.as_bytes().to_vec()),
+        (
+            "agents/reviewer/agent.toml".to_string(),
+            b"tool_repeat_limit = 4\n".to_vec(),
+        ),
+    ]))
     .unwrap();
-    std::fs::write(
-        package_root.join("agents/reviewer/agent.toml"),
-        "tool_repeat_limit = 4\n",
-    )
+    let child_tree = crate::ProcessFileTree::new(std::collections::BTreeMap::from([(
+        "agent.toml".to_string(),
+        b"tool_repeat_limit = 4\n".to_vec(),
+    )]))
     .unwrap();
-    crate::skills::ResolvedCapabilityView::from_package_dirs(vec![
-        crate::skills::ScopedPackageDir {
-            path: package_store,
+
+    crate::skills::ResolvedCapabilityView {
+        packages: vec![crate::skills::CapabilityPackage {
+            id: "skill:repo-review".to_string(),
             scope: crate::skills::SkillScope::Descriptor,
-        },
-    ])
+            root_dir: None,
+            namespace_root: Some(PathBuf::from("/lib/pkg/repo-review")),
+            exports: crate::skills::CapabilityPackageExports {
+                child_agents: vec![crate::skills::CapabilityChildAgentExport {
+                    name: "reviewer".to_string(),
+                    root_dir: PathBuf::from("/lib/pkg/repo-review/agents/reviewer"),
+                    handle: crate::skills::CapabilityChildAgentExport::package_handle(
+                        "skill:repo-review",
+                        "reviewer",
+                    ),
+                    file_tree: Some(child_tree),
+                }],
+                resources: crate::skills::CapabilityPackageResources::default(),
+            },
+            portable_skill: crate::skills::PortableSkill {
+                path: PathBuf::from("/lib/pkg/repo-review/SKILL.md"),
+                source: crate::skills::SkillContentSource::Descriptor {
+                    content: skill,
+                    file_tree: package_tree,
+                },
+            },
+            dependencies: Vec::new(),
+            package_sidecar: None,
+            skill_sidecar: None,
+            compatible_metadata: None,
+        }],
+        ..crate::skills::ResolvedCapabilityView::default()
+    }
 }
 
 fn memfs_transport() -> InProcessTransport {
@@ -725,7 +746,7 @@ fn memfs_transport() -> InProcessTransport {
 fn host_launch_root(path: impl Into<PathBuf>) -> ResolvedLaunchRoot {
     ResolvedLaunchRoot {
         root_dir: path.into(),
-        file_tree: None,
+        file_tree: Some(crate::ProcessFileTree::default()),
     }
 }
 

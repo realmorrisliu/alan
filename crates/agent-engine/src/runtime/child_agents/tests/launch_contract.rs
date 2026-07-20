@@ -42,15 +42,9 @@ async fn spawn_child_runtime_uses_effective_launch_root_config_for_llm_setup() {
     let temp = TempDir::new().unwrap();
     let requests = RecordedRequests::default();
     let response = completed_response("Child finished cleanly.");
-    let parent = make_parent_state(&temp, requests.clone(), response.clone());
+    let mut parent = make_parent_state(&temp, requests.clone(), response.clone());
     let root_dir = temp.path().join("definition");
-    std::fs::write(
-        root_dir.join("agent.toml"),
-        r#"
-tool_repeat_limit = 9
-"#,
-    )
-    .unwrap();
+    install_parent_definition(&mut parent, b"tool_repeat_limit = 9\n".to_vec());
     let seen_config = Arc::new(Mutex::new(None::<crate::Config>));
     let seen_config_for_factory = seen_config.clone();
 
@@ -117,14 +111,13 @@ async fn spawn_child_runtime_rejects_unpassed_definition_connection_reference() 
     let temp = TempDir::new().unwrap();
     let requests = RecordedRequests::default();
     let response = completed_response("Child used its definition profile.");
-    let parent = make_parent_state(&temp, requests.clone(), response.clone());
+    let mut parent = make_parent_state(&temp, requests.clone(), response.clone());
     let profile_id = "child-main";
     let root_dir = temp.path().join("definition");
-    std::fs::write(
-        root_dir.join("agent.toml"),
-        format!("connection_profile = \"{profile_id}\"\n"),
-    )
-    .unwrap();
+    install_parent_definition(
+        &mut parent,
+        format!("connection_profile = \"{profile_id}\"\n").into_bytes(),
+    );
     let error =
         match spawn_child_runtime_with_client_factory(&parent, launch_spec(root_dir), |_| {
             unreachable!("an unpassed Connection must fail before provider setup")
@@ -147,15 +140,9 @@ async fn spawn_child_runtime_applies_reasoning_effort_override_after_overlay() {
     let temp = TempDir::new().unwrap();
     let requests = RecordedRequests::default();
     let response = completed_response("Child finished cleanly.");
-    let parent = make_parent_state(&temp, requests.clone(), response.clone());
+    let mut parent = make_parent_state(&temp, requests.clone(), response.clone());
     let root_dir = temp.path().join("definition");
-    std::fs::write(
-        root_dir.join("agent.toml"),
-        r#"
-model_reasoning_effort = "high"
-"#,
-    )
-    .unwrap();
+    install_parent_definition(&mut parent, b"model_reasoning_effort = \"high\"\n".to_vec());
     let seen_config = Arc::new(Mutex::new(None::<crate::Config>));
     let seen_config_for_factory = seen_config.clone();
     let mut spec = launch_spec(root_dir);
@@ -239,7 +226,7 @@ fn child_launch_contract_rejects_non_normal_namespace_cwd() {
 }
 
 #[test]
-fn child_launch_context_does_not_inherit_parent_host_mounts_or_descriptors_by_default() {
+fn child_launch_context_defaults_to_no_descriptors_or_inherited_cwd() {
     let temp = TempDir::new().unwrap();
     let parent = make_parent_state(
         &temp,
@@ -256,13 +243,6 @@ fn child_launch_context_does_not_inherit_parent_host_mounts_or_descriptors_by_de
         build_child_launch_context(&parent_context, &spec, None, Some(&definition)).unwrap();
 
     assert_eq!(child.cwd, "/");
-    assert!(child.namespace.resolve("/mnt/source").is_err());
-    assert!(
-        child
-            .host_mounts
-            .iter()
-            .all(|grant| grant.namespace_path != "/mnt/source")
-    );
     assert_eq!(
         child
             .descriptors
@@ -319,11 +299,10 @@ fn child_launch_context_keeps_package_projection_with_inherited_reference() {
 
     let child = build_child_launch_context(&parent, &spec, None, None).unwrap();
 
-    assert_eq!(child.cwd, "/lib/pkg/parent-pack");
+    assert_eq!(child.cwd, "/");
     assert_eq!(child.package_references.len(), 1);
     assert_eq!(child.package_references[0].package_id, "parent-pack");
     assert!(child.namespace.resolve("/lib/pkg/parent-pack").is_ok());
-    assert!(child.host_mounts.is_empty());
     let resolved = crate::ResolvedAgentDefinition::from_launch_context(
         &child,
         &[],
@@ -339,7 +318,6 @@ fn child_launch_context_keeps_package_projection_with_inherited_reference() {
 
 #[tokio::test]
 async fn package_child_definition_is_passed_by_descriptor_and_package_mount() {
-    let parent_definition = TempDir::new().unwrap();
     let mut namespace = KernelNamespace::new();
     namespace.mount("/lib/pkg/review", memfs_transport(), KernelAccess::ReadOnly);
     namespace.mount(
@@ -350,17 +328,13 @@ async fn package_child_definition_is_passed_by_descriptor_and_package_mount() {
     let parent =
         crate::ProcessLaunchContext::new(namespace, KernelCredentials::user("parent-agent"), "/")
             .unwrap()
-            .with_host_mount(
-                crate::HostMountGrant::new(
-                    "/lib/agents/root",
-                    parent_definition.path(),
-                    KernelAccess::ReadOnly,
-                )
-                .unwrap(),
-            )
             .with_descriptor(
                 crate::AGENT_DEFINITION_DESCRIPTOR,
-                crate::ProcessDescriptor::new("/lib/agents/root").unwrap(),
+                crate::ProcessDescriptor::with_file_tree(
+                    "/lib/agents/root",
+                    crate::ProcessFileTree::default(),
+                )
+                .unwrap(),
             )
             .with_package_reference(
                 crate::ProcessPackageReference::new(
@@ -388,8 +362,6 @@ async fn package_child_definition_is_passed_by_descriptor_and_package_mount() {
 
     let child = build_child_launch_context(&parent, &spec, None, Some(&definition)).unwrap();
 
-    assert!(child.host_mounts.is_empty());
-    assert!(child.namespace.union_at("/lib/agents/root").is_empty());
     let descriptor = child
         .descriptor(crate::AGENT_DEFINITION_DESCRIPTOR)
         .unwrap();
@@ -432,234 +404,6 @@ async fn package_child_definition_is_passed_by_descriptor_and_package_mount() {
         .await
         .unwrap();
     spawner.clunk(Fid(90)).await.unwrap();
-}
-
-#[test]
-fn child_launch_context_binds_a_noncanonical_parent_definition_path() {
-    let definition = TempDir::new().unwrap();
-    let mut namespace = KernelNamespace::new();
-    namespace.mount(
-        "/lib/agents/root",
-        memfs_transport(),
-        KernelAccess::ReadOnly,
-    );
-    let parent =
-        crate::ProcessLaunchContext::new(namespace, KernelCredentials::user("parent-agent"), "/")
-            .unwrap()
-            .with_host_mount(
-                crate::HostMountGrant::new(
-                    "/lib/agents/root",
-                    definition.path(),
-                    KernelAccess::ReadOnly,
-                )
-                .unwrap(),
-            )
-            .with_descriptor(
-                crate::AGENT_DEFINITION_DESCRIPTOR,
-                crate::ProcessDescriptor::new("/lib/agents/root").unwrap(),
-            );
-    let spec = launch_spec(definition.path().to_path_buf());
-
-    let definition_root = host_launch_root(definition.path());
-    let child = build_child_launch_context(&parent, &spec, None, Some(&definition_root)).unwrap();
-
-    assert!(child.namespace.resolve("/agent-definition").is_ok());
-    assert_eq!(
-        child
-            .descriptor(crate::AGENT_DEFINITION_DESCRIPTOR)
-            .unwrap()
-            .path,
-        "/agent-definition"
-    );
-}
-
-#[test]
-fn child_launch_context_keeps_bootstrap_definition_until_descendant_target_is_projected() {
-    let root = TempDir::new().unwrap();
-    let parent_definition = root.path().join("parent-definition");
-    let package_root = root.path().join("package");
-    let child_definition = package_root.join("agents/reviewer");
-    std::fs::create_dir_all(&parent_definition).unwrap();
-    std::fs::create_dir_all(&child_definition).unwrap();
-
-    let mut namespace = KernelNamespace::new();
-    namespace.mount(
-        "/agent-definition",
-        memfs_transport(),
-        KernelAccess::ReadOnly,
-    );
-    namespace.mount("/mnt/package", memfs_transport(), KernelAccess::ReadOnly);
-    let parent =
-        crate::ProcessLaunchContext::new(namespace, KernelCredentials::user("parent-agent"), "/")
-            .unwrap()
-            .with_host_mount(
-                crate::HostMountGrant::new(
-                    "/agent-definition",
-                    parent_definition,
-                    KernelAccess::ReadOnly,
-                )
-                .unwrap(),
-            )
-            .with_host_mount(
-                crate::HostMountGrant::new("/mnt/package", package_root, KernelAccess::ReadOnly)
-                    .unwrap(),
-            )
-            .with_descriptor(
-                crate::AGENT_DEFINITION_DESCRIPTOR,
-                crate::ProcessDescriptor::new("/agent-definition").unwrap(),
-            );
-
-    let child_definition_root = host_launch_root(&child_definition);
-    let child = build_child_launch_context(
-        &parent,
-        &launch_spec(child_definition.clone()),
-        None,
-        Some(&child_definition_root),
-    )
-    .unwrap();
-
-    assert!(child.namespace.resolve("/agent-definition").is_ok());
-    assert_eq!(
-        child
-            .host_mounts
-            .iter()
-            .find(|grant| grant.namespace_path == "/agent-definition")
-            .unwrap()
-            .host_path,
-        child_definition
-    );
-}
-
-#[test]
-fn child_launch_context_passes_parent_host_mounts_only_with_explicit_handle() {
-    let temp = TempDir::new().unwrap();
-    let parent = make_parent_state(
-        &temp,
-        RecordedRequests::default(),
-        completed_response("done"),
-    );
-    let parent_context = parent.child_launch().launch_context().cloned().unwrap();
-    let definition = temp.path().join("child-definition");
-    let spec = launch_spec(definition.clone());
-
-    let definition = host_launch_root(definition);
-    let child =
-        build_child_launch_context(&parent_context, &spec, None, Some(&definition)).unwrap();
-
-    assert_eq!(child.cwd, "/mnt/source");
-    assert!(child.namespace.resolve("/mnt/source").is_ok());
-    assert!(
-        child
-            .host_mounts
-            .iter()
-            .any(|grant| grant.namespace_path == "/mnt/source")
-    );
-}
-
-#[test]
-fn child_launch_context_tracks_live_service_mounts_and_revocation() {
-    let temp = TempDir::new().unwrap();
-    let definition = temp.path().join("child-definition");
-    let mut parent = crate::ProcessLaunchContext::new(
-        alan_kernel::Namespace::new(),
-        alan_kernel::Credentials::user("parent"),
-        "/mnt/docs",
-    )
-    .unwrap();
-    let live = alan_kernel::LiveNamespace::new(parent.namespace.child());
-    live.mount(
-        "/mnt/docs",
-        alan_ap::InProcessTransport::new(std::sync::Arc::new(alan_ap::reference::MemFs::new())),
-        alan_kernel::Access::ReadOnly,
-    );
-    parent.record_projected_host_mount(
-        "grant-docs".to_string(),
-        "/mnt/docs".to_string(),
-        alan_kernel::Access::ReadOnly,
-    );
-    parent = parent.rebound_live(live.clone(), parent.credentials.clone());
-
-    let definition = host_launch_root(definition);
-    let child = build_child_launch_context(
-        &parent,
-        &launch_spec(temp.path().join("child-definition")),
-        None,
-        Some(&definition),
-    )
-    .unwrap();
-    assert!(child.namespace.resolve("/mnt/docs").is_ok());
-    assert_eq!(
-        child.projected_host_mounts(),
-        vec![("/mnt/docs".to_string(), alan_kernel::Access::ReadOnly)]
-    );
-    assert_eq!(
-        child.projected_host_mount_references(),
-        vec!["grant-docs".to_string()]
-    );
-
-    live.unmount("/mnt/docs");
-    let revoked_child = build_child_launch_context(
-        &parent,
-        &launch_spec(temp.path().join("child-definition")),
-        None,
-        Some(&definition),
-    )
-    .unwrap();
-    assert!(revoked_child.namespace.resolve("/mnt/docs").is_err());
-}
-
-#[test]
-fn child_launch_context_removes_unpassed_live_service_mount() {
-    let temp = TempDir::new().unwrap();
-    let mut parent = crate::ProcessLaunchContext::new(
-        alan_kernel::Namespace::new(),
-        alan_kernel::Credentials::user("parent"),
-        "/",
-    )
-    .unwrap();
-    let live = alan_kernel::LiveNamespace::new(parent.namespace.child());
-    live.mount(
-        "/mnt/docs",
-        alan_ap::InProcessTransport::new(std::sync::Arc::new(alan_ap::reference::MemFs::new())),
-        alan_kernel::Access::ReadOnly,
-    );
-    parent.record_projected_host_mount(
-        "grant-docs".to_string(),
-        "/mnt/docs".to_string(),
-        alan_kernel::Access::ReadOnly,
-    );
-    parent = parent.rebound_live(live, parent.credentials.clone());
-    let mut spec = launch_spec(temp.path().join("child-definition"));
-    spec.handles.clear();
-
-    let definition = host_launch_root(temp.path().join("child-definition"));
-    let child = build_child_launch_context(&parent, &spec, None, Some(&definition)).unwrap();
-    assert!(child.namespace.resolve("/mnt/docs").is_err());
-    assert!(child.projected_host_mounts().is_empty());
-}
-
-#[test]
-fn child_launch_rejects_cwd_inside_an_unpassed_host_mount() {
-    let temp = TempDir::new().unwrap();
-    let parent = make_parent_state(
-        &temp,
-        RecordedRequests::default(),
-        completed_response("done"),
-    );
-    let parent_context = parent.child_launch().launch_context().cloned().unwrap();
-    let definition = temp.path().join("child-definition");
-    let mut spec = launch_spec(definition.clone());
-    spec.handles.clear();
-
-    let definition = host_launch_root(definition);
-    let error = build_child_launch_context(
-        &parent_context,
-        &spec,
-        Some("/mnt/source".to_string()),
-        Some(&definition),
-    )
-    .unwrap_err();
-    assert!(error.to_string().contains("explicit host_mounts handle"));
 }
 
 #[test]

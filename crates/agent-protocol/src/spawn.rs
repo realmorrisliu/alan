@@ -108,12 +108,31 @@ pub enum SpawnTarget {
 pub enum SpawnHandle {
     Artifacts,
     Memory,
-    /// Explicitly pass the parent's current Host Mount grants.
-    HostMounts,
     Plan,
     ConversationSnapshot,
     ToolResults,
     ApprovalScope,
+}
+
+/// Access requested when explicitly delegating one Host Mount handle.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SpawnMountAccess {
+    ReadOnly,
+    ReadWrite,
+}
+
+/// One parent-held Host Mount handle selected for a child Process.
+///
+/// `grant` is only a Process-local selector. The Host Mount Service must prove
+/// that the spawning Process currently holds the corresponding handle before
+/// it projects that handle at `target` with equal or narrower `access`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct SpawnHostMount {
+    pub grant: String,
+    pub target: PathBuf,
+    pub access: SpawnMountAccess,
 }
 
 /// Launch inputs supplied for a child runtime.
@@ -180,6 +199,8 @@ pub struct SpawnSpec {
     pub launch: SpawnLaunchInputs,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub handles: Vec<SpawnHandle>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub host_mounts: Vec<SpawnHostMount>,
     #[serde(default, skip_serializing_if = "SpawnRuntimeOverrides::is_empty")]
     pub runtime_overrides: SpawnRuntimeOverrides,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -208,11 +229,12 @@ mod tests {
                 timeout_secs: Some(120),
                 output_dir: Some(PathBuf::from("/mnt/source/out")),
             },
-            handles: vec![
-                SpawnHandle::HostMounts,
-                SpawnHandle::ConversationSnapshot,
-                SpawnHandle::ToolResults,
-            ],
+            handles: vec![SpawnHandle::ConversationSnapshot, SpawnHandle::ToolResults],
+            host_mounts: vec![SpawnHostMount {
+                grant: "grant-7".to_string(),
+                target: PathBuf::from("/mnt/source"),
+                access: SpawnMountAccess::ReadOnly,
+            }],
             runtime_overrides: SpawnRuntimeOverrides {
                 model: Some("gpt-5.4".to_string()),
                 model_reasoning_effort: Some(ReasoningEffort::High),
@@ -233,7 +255,10 @@ mod tests {
 
         let value = serde_json::to_value(&spec).unwrap();
         assert_eq!(value["target"]["kind"], "definition_descriptor");
-        assert_eq!(value["handles"][0], "host_mounts");
+        assert_eq!(value["handles"][0], "conversation_snapshot");
+        assert_eq!(value["host_mounts"][0]["grant"], "grant-7");
+        assert_eq!(value["host_mounts"][0]["target"], "/mnt/source");
+        assert_eq!(value["host_mounts"][0]["access"], "read_only");
         assert_eq!(value["runtime_overrides"]["model"], "gpt-5.4");
         assert_eq!(value["runtime_overrides"]["model_reasoning_effort"], "high");
         assert_eq!(value["delegated"]["requirements"][0]["kind"], "mount_read");
@@ -258,6 +283,7 @@ mod tests {
                 ..SpawnLaunchInputs::default()
             },
             handles: Vec::new(),
+            host_mounts: Vec::new(),
             runtime_overrides: SpawnRuntimeOverrides::default(),
             delegated: None,
         };

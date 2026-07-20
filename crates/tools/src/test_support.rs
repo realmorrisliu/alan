@@ -9,8 +9,7 @@ pub(crate) fn tool_context_with_root(
     config: Arc<Config>,
 ) -> ToolContext {
     ToolContext::from_binding(
-        alan_agent_engine::tools::ToolExecutionBinding::new(root.clone(), scratch_dir)
-            .with_sandbox_spec(alan_agent_engine::tools::SandboxSpec::seed(root)),
+        crate::execution_adapter::standalone_binding(root, scratch_dir),
         config,
     )
 }

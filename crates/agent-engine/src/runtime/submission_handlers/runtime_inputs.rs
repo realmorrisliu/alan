@@ -1,10 +1,7 @@
 use crate::{
     agent_machine::{AgentMachine, PendingHostMountRequest},
     runtime::{
-        transition::{
-            HostMountTerminalResult, NamespaceAgentFiles, NamespaceHostMountRequests,
-            NamespaceMountControl,
-        },
+        transition::{HostMountTerminalResult, NamespaceAgentFiles, NamespaceHostMountRequests},
         turn_support::{
             cancel_current_task, preserve_approved_host_mount,
             reset_turn_after_cancelling_host_mounts,
@@ -19,7 +16,6 @@ pub(crate) struct SubmissionRuntime<'a> {
     pub(super) machine: &'a mut AgentMachine,
     pub(super) agent_files: NamespaceAgentFiles,
     pub(super) host_mount_requests: NamespaceHostMountRequests,
-    pub(super) mount_control: NamespaceMountControl<'a>,
 }
 
 impl<'a> SubmissionRuntime<'a> {
@@ -27,13 +23,11 @@ impl<'a> SubmissionRuntime<'a> {
         machine: &'a mut AgentMachine,
         agent_files: NamespaceAgentFiles,
         host_mount_requests: NamespaceHostMountRequests,
-        mount_control: NamespaceMountControl<'a>,
     ) -> Self {
         Self {
             machine,
             agent_files,
             host_mount_requests,
-            mount_control,
         }
     }
 
@@ -46,19 +40,13 @@ impl<'a> SubmissionRuntime<'a> {
             self.machine,
             &self.agent_files,
             &self.host_mount_requests,
-            Some(&mut self.mount_control),
             emit,
         )
         .await
     }
 
     pub(super) async fn reset_turn_after_cancelling_host_mounts(&mut self) -> Result<()> {
-        reset_turn_after_cancelling_host_mounts(
-            self.machine,
-            &self.host_mount_requests,
-            Some(&mut self.mount_control),
-        )
-        .await
+        reset_turn_after_cancelling_host_mounts(self.machine, &self.host_mount_requests).await
     }
 
     pub(super) fn preserve_approved_host_mount(
@@ -66,6 +54,6 @@ impl<'a> SubmissionRuntime<'a> {
         pending: &PendingHostMountRequest,
         terminal: &HostMountTerminalResult,
     ) -> Result<()> {
-        preserve_approved_host_mount(Some(&mut self.mount_control), pending, terminal)
+        preserve_approved_host_mount(pending, terminal)
     }
 }

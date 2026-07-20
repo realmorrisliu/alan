@@ -1,5 +1,7 @@
 use std::path::{Path, PathBuf};
 
+use super::super::reified_namespace::ReifiedMountAccess;
+
 /// Default network posture for commands run inside a sandbox.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum NetworkPosture {
@@ -17,11 +19,20 @@ impl NetworkPosture {
 /// Projected OS-sandbox confinement input.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SandboxSpec {
-    pub host_mounts: Vec<crate::HostMountGrant>,
+    pub host_mounts: Vec<SandboxHostMount>,
     pub readable_roots: Vec<PathBuf>,
     pub writable_roots: Vec<PathBuf>,
     pub read_denylist: Vec<PathBuf>,
     pub network: NetworkPosture,
+}
+
+/// Native mount input consumed only while a Host adapter constructs a
+/// [`Sandbox`](crate::tools::Sandbox).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SandboxHostMount {
+    pub namespace_path: PathBuf,
+    pub host_path: PathBuf,
+    pub access: ReifiedMountAccess,
 }
 
 impl SandboxSpec {
@@ -34,10 +45,10 @@ impl SandboxSpec {
             &writable_roots,
         );
         Self {
-            host_mounts: vec![crate::HostMountGrant {
-                namespace_path: "/mnt/source".to_string(),
+            host_mounts: vec![SandboxHostMount {
+                namespace_path: PathBuf::from("/mnt/source"),
                 host_path: root,
-                access: alan_kernel::Access::ReadWrite,
+                access: ReifiedMountAccess::ReadWrite,
             }],
             readable_roots,
             writable_roots,
@@ -47,10 +58,10 @@ impl SandboxSpec {
     }
 
     /// Derive native write authority from the same Host Mount grants used by the namespace.
-    pub fn from_host_mounts(grants: &[crate::HostMountGrant]) -> Self {
+    pub fn from_host_mounts(grants: &[SandboxHostMount]) -> Self {
         let host_mounts = grants
             .iter()
-            .map(|grant| crate::HostMountGrant {
+            .map(|grant| SandboxHostMount {
                 namespace_path: grant.namespace_path.clone(),
                 host_path: dunce::canonicalize(&grant.host_path)
                     .unwrap_or_else(|_| dunce::simplified(&grant.host_path).to_path_buf()),
@@ -63,7 +74,7 @@ impl SandboxSpec {
             .collect::<Vec<_>>();
         let writable_roots = grants
             .iter()
-            .filter(|grant| grant.access == alan_kernel::Access::ReadWrite)
+            .filter(|grant| grant.access == ReifiedMountAccess::ReadWrite)
             .map(|grant| {
                 dunce::canonicalize(&grant.host_path)
                     .unwrap_or_else(|_| dunce::simplified(&grant.host_path).to_path_buf())

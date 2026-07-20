@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use alan_agent_engine::{
     AgentProcessConfig, LlmClient, ProcessLaunchContext, ProcessPackageKind,
     ProcessPackageReference, ProcessPackageSkillReference, ToolRegistry,
-    configure_runtime_tool_execution_binding, provider_capabilities_for_config,
+    provider_capabilities_for_config,
 };
 use alan_ap::{Fid, FileServer, InProcessTransport, OpenMode};
 use alan_kernel::{Access, Credentials, LiveNamespace, Namespace, Pid};
@@ -167,23 +167,12 @@ impl ServiceManager {
             config
                 .process
                 .launch_context
-                .host_mounts
-                .iter()
-                .all(|grant| !overlaps_package_namespace(&grant.namespace_path)),
-            "Host Mount grants overlapping /lib/pkg are not accepted"
-        );
-        ensure!(
-            config
-                .process
-                .launch_context
                 .namespace
                 .describe()
                 .iter()
                 .all(|(path, _)| !overlaps_package_namespace(path)),
             "namespace mounts overlapping /lib/pkg are not accepted"
         );
-        configure_runtime_tool_execution_binding(&config.process, &mut config.tools)?;
-
         let boot_id = Uuid::new_v4();
         let manifest = BootManifest::system().context("load system /lib/boot units")?;
         let package_service = match config.package_store.take() {

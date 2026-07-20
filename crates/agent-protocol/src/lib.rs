@@ -38,8 +38,9 @@ pub use op::{
 pub use reasoning::{ReasoningControls, ReasoningEffort};
 pub use spawn::{
     DelegatedCapabilityDecision, DelegatedCapabilityRecovery, DelegatedCapabilityRequirement,
-    DelegatedNamespaceSummary, DelegatedSpawnContext, SpawnHandle, SpawnLaunchInputs,
-    SpawnRuntimeOverrides, SpawnSpec, SpawnTarget, SpawnToolProfileOverride,
+    DelegatedNamespaceSummary, DelegatedSpawnContext, SpawnHandle, SpawnHostMount,
+    SpawnLaunchInputs, SpawnMountAccess, SpawnRuntimeOverrides, SpawnSpec, SpawnTarget,
+    SpawnToolProfileOverride,
 };
 pub use ui_surface::{
     UI_SURFACE_VERSION, UiActivitySnapshot, UiActivityState, UiEvent, UiNoticeKind,

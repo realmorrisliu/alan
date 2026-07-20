@@ -446,7 +446,6 @@ async fn child_namespace_launch_and_supervisor_reattachment_use_proc_pid_files()
         None,
         tool_runner.clone(),
         plan.execution_binding(temp.path().join("scratch")).unwrap(),
-        None,
         "/bin/alan-agent",
     )
     .await
@@ -523,7 +522,6 @@ async fn child_namespace_launch_and_supervisor_reattachment_use_proc_pid_files()
         }),
         tool_runner.clone(),
         plan.execution_binding(temp.path().join("scratch")).unwrap(),
-        None,
         "/bin/alan-agent",
     )
     .await
@@ -683,7 +681,6 @@ async fn external_proc_ctl_stops_child_runtime_controller() {
         None,
         tool_runner,
         plan.execution_binding(temp.path().join("scratch")).unwrap(),
-        None,
         "/bin/alan-agent",
     )
     .await
@@ -726,121 +723,6 @@ async fn external_proc_ctl_stops_child_runtime_controller() {
             .await
             .unwrap(),
         Some(130)
-    );
-}
-
-#[tokio::test]
-async fn child_namespace_launch_attaches_mount_grant_applicator_factory() {
-    let temp = TempDir::new().unwrap();
-    let requests = RecordedRequests::default();
-    let response = completed_response("Child finished cleanly.");
-    let parent = make_parent_state(&temp, requests, response);
-    let root_dir = temp.path().join("definition");
-    let spec = launch_spec(root_dir);
-    let mut plan = build_child_namespace_assembly_plan(
-        &parent,
-        &spec,
-        &parent.core_config,
-        inherited_launch_context(&parent),
-    )
-    .await
-    .unwrap();
-    plan.launch_context
-        .host_mounts
-        .retain(|grant| grant.namespace_path != "/agent-definition");
-    let package_child_definition = temp.path().join("package-child-definition");
-    plan.launch_context.host_mounts.push(
-        crate::HostMountGrant::new(
-            "/agent-definition",
-            package_child_definition.clone(),
-            KernelAccess::ReadOnly,
-        )
-        .unwrap(),
-    );
-    let launch_procfs = KernelProcFs::new();
-    let tool_runner =
-        crate::tools::ToolProcessRunner::from_registry(&parent_test_tools(&parent.core_config));
-    let runtime_procfs = launch_procfs
-        .clone()
-        .with_runner(Arc::new(tool_runner.clone()));
-    let handles = ChildNamespaceLaunchHandles::new(
-        Arc::new(alan_agentfs::AgentFs::new()),
-        memfs_transport(),
-        memfs_transport(),
-        memfs_transport(),
-    )
-    .with_tool_package(
-        "/bin/alpha",
-        memfs_transport(),
-        "/lib/exec/alpha",
-        memfs_transport(),
-    )
-    .with_tool_package(
-        "/bin/beta",
-        memfs_transport(),
-        "/lib/exec/beta",
-        memfs_transport(),
-    );
-    let factory = Arc::new(RecordingMountGrantApplicatorFactory::default());
-
-    let mut launch = spawn_child_namespace_runtime_environment(
-        &launch_procfs,
-        &runtime_procfs,
-        &plan,
-        handles,
-        None,
-        tool_runner,
-        plan.execution_binding(temp.path().join("scratch")).unwrap(),
-        Some(factory.clone()),
-        "/bin/alan-agent",
-    )
-    .await
-    .unwrap();
-
-    assert_eq!(factory.created_count(), 1);
-    assert_eq!(
-        factory.applied_grants(),
-        [ApprovedMountGrant::new(
-            "/agent-definition",
-            package_child_definition,
-            ApprovedMountGrantAccess::ReadOnly,
-            "Agent Definition launch reference",
-        )]
-    );
-    let definition_namespace = read_proc_path(
-        &launch_procfs,
-        vec![launch.pid.clone(), "namespace".to_string()],
-        Fid(95),
-    )
-    .await;
-    assert!(
-        definition_namespace
-            .lines()
-            .any(|line| line == "/agent-definition ro"),
-        "child Agent Process must receive its target definition: {definition_namespace:?}"
-    );
-    let applied =
-        launch
-            .environment
-            .mount_control()
-            .apply_approved_grant(&ApprovedMountGrant::new(
-                "/mnt/project",
-                PathBuf::from("/unused/by/test/applicator"),
-                ApprovedMountGrantAccess::ReadWrite,
-                "Need project files",
-            ));
-    assert!(applied.namespace_applied);
-    assert_eq!(applied.namespace_error, None);
-
-    let namespace = read_proc_path(
-        &launch_procfs,
-        vec![launch.pid.clone(), "namespace".to_string()],
-        Fid(94),
-    )
-    .await;
-    assert!(
-        namespace.lines().any(|line| line == "/mnt/project rw"),
-        "child Agent Process namespace should reflect applicator live mounts: {namespace:?}"
     );
 }
 
@@ -910,7 +792,6 @@ async fn child_namespace_launch_handles_share_parent_routefs() {
         None,
         crate::tools::ToolProcessRunner::from_registry(&parent_test_tools(&parent.core_config)),
         plan.execution_binding(temp.path().join("scratch")).unwrap(),
-        None,
         "/bin/alan-agent",
     )
     .await

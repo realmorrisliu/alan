@@ -32,8 +32,8 @@ pub use control_fs::{
     ManagerState, RestartDecision, ServiceManagerFs, SystemStatus, UnitSnapshot, UnitStatus,
 };
 pub use host_mount::{
-    HostMountAccess, HostMountApplicatorFactory, HostMountExport, HostMountExportAdapter,
-    HostMountGrantRecord, HostMountRequest, HostMountService, HostMountStatus,
+    HostMountAccess, HostMountExport, HostMountExportAdapter, HostMountGrantRecord,
+    HostMountRequest, HostMountService, HostMountStatus, HostMountToolProjection,
     UnavailableHostMountExportAdapter,
 };
 pub use local_entry::LocalEntryService;

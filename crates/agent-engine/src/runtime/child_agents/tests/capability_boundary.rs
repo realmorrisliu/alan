@@ -2,7 +2,7 @@ use super::*;
 use crate::runtime::delegation_capabilities::DelegatedSpawnRejected;
 
 #[test]
-fn inherited_mount_without_host_backed_cwd_uses_authorized_native_cwd() {
+fn explicit_mount_plan_requires_an_opaque_execution_adapter() {
     let source = TempDir::new().unwrap();
     let scratch = TempDir::new().unwrap();
     let mut plan = capability_plan(Some(source.path().to_path_buf()), &["read_file"]);
@@ -14,17 +14,8 @@ fn inherited_mount_without_host_backed_cwd_uses_authorized_native_cwd() {
         .unwrap()
         .expect("an inherited Host Mount should create a child Tool binding");
 
-    assert_eq!(binding.cwd, dunce::canonicalize(source.path()).unwrap());
     assert_eq!(binding.namespace_cwd, PathBuf::from("/mnt/source"));
-    assert_eq!(binding.host_mounts.len(), 1);
-    assert_eq!(binding.host_mounts[0].namespace_path, "/mnt/source");
-    let sandbox = binding.sandbox_spec.unwrap();
-    assert!(
-        !sandbox
-            .readable_roots
-            .iter()
-            .any(|root| root == &dunce::canonicalize(scratch.path()).unwrap())
-    );
+    assert!(binding.has_adapter());
 }
 
 #[test]
@@ -149,4 +140,44 @@ async fn delegated_spawn_boundary_declines_unsatisfied_mount() {
         alan_agent_protocol::DelegatedCapabilityRecovery::AskUser
     );
     assert_eq!(rejection.decision.unsatisfied.len(), 1);
+}
+
+#[tokio::test]
+async fn delegated_spawn_boundary_ignores_unpassed_parent_host_mounts() {
+    let temp = TempDir::new().unwrap();
+    let parent = make_parent_state(
+        &temp,
+        RecordedRequests::default(),
+        completed_response("unused"),
+    );
+    let mut spec = launch_spec(temp.path().join("agent"));
+    spec.host_mounts.clear();
+    spec.launch.cwd = None;
+    spec.delegated = Some(alan_agent_protocol::DelegatedSpawnContext {
+        requirements: vec![
+            alan_agent_protocol::DelegatedCapabilityRequirement::MountRead {
+                path: Some(PathBuf::from("/mnt/source")),
+            },
+        ],
+    });
+    let mut plan = capability_plan(None, &["read_file"]);
+    plan.launch_context
+        .namespace
+        .mount("/mnt/source", memfs_transport(), KernelAccess::ReadWrite);
+
+    let error = evaluate_delegated_launch_capabilities(&parent, &mut spec, &plan)
+        .await
+        .unwrap_err();
+    let rejected = error
+        .downcast_ref::<DelegatedSpawnRejected>()
+        .expect("unpassed parent Host Mount should not satisfy child requirements");
+
+    assert!(
+        !rejected
+            .decision
+            .namespace
+            .mounts
+            .iter()
+            .any(|mount| mount == "/mnt/source")
+    );
 }

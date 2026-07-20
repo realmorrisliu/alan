@@ -1,10 +1,8 @@
 use alan_agent_engine::runtime::effective_core_config_for_runtime;
 use alan_agent_engine::{
-    AgentProcessConfig, AgentRuntimeStoreBindings, Config, HostMountGrant, LlmClient,
-    ProcessLaunchContext, ToolRegistry,
+    AgentProcessConfig, AgentRuntimeStoreBindings, Config, LlmClient, ToolRegistry,
 };
 use alan_agent_protocol::{UiActivityState, UiEvent};
-use alan_kernel::{Access, Credentials, Namespace};
 use alan_os_host::{AlanOsHost, HostBootConfig, HostEndpointPaths, LocalAttachment};
 use anyhow::{Context, Result, ensure};
 use std::{env, path::PathBuf, time::Duration};
@@ -60,20 +58,7 @@ async fn live_chatgpt_runtime_smoke_uses_agentfs() -> Result<()> {
         return Ok(());
     };
 
-    let source = TempDir::new().context("create source mount")?;
     let system_store = TempDir::new().context("create temporary System Store")?;
-    let host_mount = HostMountGrant::new("/mnt/source", source.path(), Access::ReadWrite)?;
-    let mut namespace = Namespace::new();
-    alan_os_host::host_mounts::apply_host_mount_declarations(
-        &mut namespace,
-        std::slice::from_ref(&host_mount),
-    )?;
-    let launch_context = ProcessLaunchContext::new(
-        namespace,
-        Credentials::user("live-smoke-agent"),
-        "/mnt/source",
-    )?
-    .with_host_mount(host_mount);
     let store_bindings = AgentRuntimeStoreBindings {
         rollouts: system_store.path().join("rollouts"),
         checkpoints: system_store.path().join("checkpoints"),
@@ -97,7 +82,6 @@ async fn live_chatgpt_runtime_smoke_uses_agentfs() -> Result<()> {
     core_config.chatgpt_account_id = non_empty_env(CHATGPT_ACCOUNT_ID_ENV);
 
     let mut config = AgentProcessConfig::from(core_config);
-    config.launch_context = launch_context;
     config.store_bindings = Some(store_bindings);
     let effective = effective_core_config_for_runtime(&config)?;
     let client = LlmClient::from_core_config_with_chatgpt_auth_storage_path(

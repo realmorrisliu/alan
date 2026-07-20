@@ -3,7 +3,7 @@ use crate::test_support::tool_context_with_root;
 use alan_agent_engine::Config;
 use alan_agent_engine::tools::{Tool, ToolContext};
 use serde_json::json;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tempfile::TempDir;
 
@@ -44,7 +44,7 @@ async fn test_read_file_tool_uses_mount_root_binding_from_context() {
     let args = json!({"path": "test.txt"});
     let result = tool.execute(args, &ctx).await.unwrap();
 
-    assert_eq!(result["path"], json!(mount_root.join("test.txt")));
+    assert_eq!(result["path"], json!("/mnt/source/test.txt"));
     assert_eq!(result["content"], json!("bound"));
 }
 
@@ -58,7 +58,13 @@ async fn test_read_file_tool_requires_explicit_sandbox_grant() {
 
     let tool = ReadFileTool::new();
     let config = Arc::new(Config::default());
-    let ctx = ToolContext::new(mount_root.clone(), mount_root.join("tmp"), config);
+    let ctx = ToolContext::from_binding(
+        alan_agent_engine::tools::ToolExecutionBinding::awaiting_host_projection(
+            PathBuf::from("/mnt/source"),
+            mount_root.join("tmp"),
+        ),
+        config,
+    );
 
     let err = tool
         .execute(json!({"path": "test.txt"}), &ctx)
@@ -67,7 +73,7 @@ async fn test_read_file_tool_requires_explicit_sandbox_grant() {
 
     assert!(
         err.to_string()
-            .contains("Tool Process has no explicit sandbox grant")
+            .contains("Tool Process has no explicit Host execution adapter")
     );
 }
 

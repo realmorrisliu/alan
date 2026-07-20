@@ -611,15 +611,12 @@
             Credentials::user("test-agent"),
             "/mnt/source",
         )
-        .unwrap()
-        .with_host_mount(
-            crate::HostMountGrant::new("/mnt/source", "/tmp", Access::ReadWrite).unwrap(),
-        );
-        let binding = crate::tools::ToolExecutionBinding::from_launch_context(
-            &launch_context,
-            PathBuf::from("/tmp/alan-agent-engine-test-scratch"),
-        )
         .unwrap();
+        let binding = crate::tools::test_execution_binding(
+            "/mnt/source",
+            PathBuf::from("/tmp"),
+            PathBuf::from("/tmp/alan-agent-engine-test-scratch"),
+        );
         tools.set_default_execution_binding(binding.clone());
 
         let procfs = ProcFs::new().with_runner(Arc::new(RegistryToolRunner::new(tools.clone())));

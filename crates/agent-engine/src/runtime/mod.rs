@@ -56,13 +56,8 @@ pub use controller::{
     AgentMachineDurabilityState, RuntimeController, RuntimeHandle, RuntimeStartupMetadata,
 };
 pub use engine::spawn_with_namespace_environment;
-pub use launch_config::{
-    AgentConfig, AgentProcessConfig, configure_runtime_tool_execution_binding,
-    effective_core_config_for_runtime,
-};
+pub use launch_config::{AgentConfig, AgentProcessConfig, effective_core_config_for_runtime};
 pub use transition::{
-    ApprovedMountGrant, ApprovedMountGrantAccess, MountGrantApplicator,
-    MountGrantApplicatorFactory, NamespaceMountApplication, NamespaceMountControl,
     NamespaceRuntimeEnvironment, NamespaceToolActionOutput, NamespaceTurnOutput,
     NamespaceTurnRuntime, NamespaceTurnRuntimeConfig,
 };

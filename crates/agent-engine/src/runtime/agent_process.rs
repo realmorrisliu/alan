@@ -19,6 +19,7 @@ pub struct ChildAgentProcessAssemblyPlan {
     pub route_mount: String,
     pub bin_tool_mounts: Vec<String>,
     pub tool_packages: Vec<ToolPackageManifest>,
+    pub host_mounts: Vec<crate::SpawnHostMount>,
     pub cwd: Option<PathBuf>,
     pub launch_context: crate::ProcessLaunchContext,
 }

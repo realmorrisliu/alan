@@ -1,8 +1,5 @@
 use super::ChildNamespaceAssemblyPlan;
-use crate::runtime::{
-    AgentProcessLifecycle, ApprovedMountGrant, ApprovedMountGrantAccess,
-    MountGrantApplicatorFactory, NamespaceRuntimeEnvironment,
-};
+use crate::runtime::{AgentProcessLifecycle, NamespaceRuntimeEnvironment};
 use alan_ap::{Fid, FileServer, InProcessTransport, OpenMode};
 use alan_kernel::{ExecNamespaceAccess, ExecNamespaceManifest, ExecNamespaceMount, ExecSpec};
 use anyhow::{Context, Result, bail};
@@ -19,26 +16,34 @@ impl ChildNamespaceAssemblyPlan {
         &self,
         scratch: Option<PathBuf>,
     ) -> Result<Option<crate::tools::ToolExecutionBinding>> {
-        if self.launch_context.host_mounts.is_empty() {
+        if self.host_mounts.is_empty() {
             return Ok(None);
         }
         let scratch = scratch.context(
             "child Agent Process with Host Mounts requires Agent Runtime Service store bindings",
         )?;
-        self.execution_binding(scratch)
+        let namespace_cwd = self
+            .cwd
+            .clone()
+            .or_else(|| self.host_mounts.first().map(|mount| mount.target.clone()))
+            .unwrap_or_else(|| PathBuf::from("/"));
+        Ok(Some(
+            crate::tools::ToolExecutionBinding::awaiting_host_projection(
+                namespace_cwd.clone(),
+                scratch.clone(),
+            )
+            .with_adapter(Arc::new(TestToolExecutionAdapter {
+                namespace_cwd,
+                cwd: scratch,
+            })),
+        ))
     }
 
     pub(super) fn execution_binding(
         &self,
         scratch: PathBuf,
     ) -> Result<Option<crate::tools::ToolExecutionBinding>> {
-        if self.launch_context.host_mounts.is_empty() {
-            return Ok(None);
-        }
-        let launch_context = self.launch_context.clone();
-        Ok(Some(
-            crate::tools::ToolExecutionBinding::from_launch_context(&launch_context, scratch)?,
-        ))
+        self.runtime_execution_binding(Some(scratch))
     }
     pub(super) fn clone_exec_spec_for_pid<I, S>(
         &self,
@@ -80,12 +85,16 @@ impl ChildNamespaceAssemblyPlan {
         mounts.extend(self.bin_tool_names().map(|name| {
             ExecNamespaceMount::new(format!("/lib/exec/{name}"), ExecNamespaceAccess::ReadOnly)
         }));
-        mounts.extend(self.launch_context.host_mounts.iter().map(|grant| {
+        mounts.extend(self.host_mounts.iter().map(|mount| {
             ExecNamespaceMount::new(
-                grant.namespace_path.clone(),
-                match grant.access {
-                    alan_kernel::Access::ReadOnly => ExecNamespaceAccess::ReadOnly,
-                    alan_kernel::Access::ReadWrite => ExecNamespaceAccess::ReadWrite,
+                mount.target.to_string_lossy().to_string(),
+                match mount.access {
+                    alan_agent_protocol::SpawnMountAccess::ReadOnly => {
+                        ExecNamespaceAccess::ReadOnly
+                    }
+                    alan_agent_protocol::SpawnMountAccess::ReadWrite => {
+                        ExecNamespaceAccess::ReadWrite
+                    }
                 },
             )
         }));
@@ -141,6 +150,42 @@ impl ChildNamespaceAssemblyPlan {
         });
         mounts.dedup();
         ExecNamespaceManifest { mounts }
+    }
+}
+
+#[derive(Debug)]
+struct TestToolExecutionAdapter {
+    namespace_cwd: PathBuf,
+    cwd: PathBuf,
+}
+
+impl crate::tools::ToolExecutionAdapter for TestToolExecutionAdapter {
+    fn namespace_cwd(&self) -> PathBuf {
+        self.namespace_cwd.clone()
+    }
+
+    fn cwd(&self) -> Result<PathBuf> {
+        Ok(self.cwd.clone())
+    }
+
+    fn resolve_path(&self, _namespace_cwd: &Path, path: &Path) -> Result<PathBuf> {
+        Ok(if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            self.cwd.join(path)
+        })
+    }
+
+    fn visible_path(&self, path: &Path) -> PathBuf {
+        path.to_path_buf()
+    }
+
+    fn project_text(&self, text: &str) -> String {
+        text.to_string()
+    }
+
+    fn sandbox(&self) -> Result<crate::tools::Sandbox> {
+        Ok(crate::tools::Sandbox::new(self.cwd.clone()))
     }
 }
 
@@ -216,7 +261,6 @@ pub(super) async fn spawn_child_namespace_runtime_environment(
     parent_process_context: Option<TestParentProcessContext>,
     tool_runner: crate::tools::ToolProcessRunner,
     tool_binding: Option<crate::tools::ToolExecutionBinding>,
-    mount_grant_applicator_factory: Option<Arc<dyn MountGrantApplicatorFactory>>,
     executable: &str,
 ) -> Result<ChildNamespaceRuntimeLaunch> {
     validate_child_namespace_launch_handles(plan, &handles)?;
@@ -294,49 +338,13 @@ pub(super) async fn spawn_child_namespace_runtime_environment(
     let root = InProcessTransport::new(Arc::new(alan_kernel::MountFs::from_live_namespace(
         live_namespace.clone(),
     )));
-    let mut environment = NamespaceRuntimeEnvironment::new(
+    let environment = NamespaceRuntimeEnvironment::new(
         root,
         format!("/agent/{pid}"),
         plan.llm_connection_name()?,
     )
     .with_launch_context(plan.launch_context.clone())
     .with_tool_process_context(child_pid, tool_runner.clone());
-    let has_mount_grant_applicator = mount_grant_applicator_factory.is_some();
-    if let Some(factory) = mount_grant_applicator_factory {
-        let applicator = factory.create(child_pid, live_namespace, &[]);
-        if let Some(authority) = factory.tool_execution_authority() {
-            tool_runner.register_process_authority(child_pid, authority);
-        }
-        environment = environment.with_mount_grant_applicator(applicator);
-    }
-    if let Some(grant) = plan
-        .launch_context
-        .host_mounts
-        .iter()
-        .find(|grant| grant.namespace_path == "/agent-definition")
-    {
-        let applied = environment
-            .mount_control()
-            .apply_approved_grant(&ApprovedMountGrant::new(
-                grant.namespace_path.clone(),
-                grant.host_path.clone(),
-                match grant.access {
-                    alan_kernel::Access::ReadOnly => ApprovedMountGrantAccess::ReadOnly,
-                    alan_kernel::Access::ReadWrite => ApprovedMountGrantAccess::ReadWrite,
-                },
-                "Agent Definition launch reference",
-            ));
-        if has_mount_grant_applicator {
-            anyhow::ensure!(
-                applied.namespace_applied,
-                "failed to project child Agent Process definition: {}",
-                applied
-                    .namespace_error
-                    .unwrap_or_else(|| "unknown projection error".to_string())
-            );
-        }
-    }
-
     let lifecycle: Arc<dyn AgentProcessLifecycle> = Arc::new(TestAgentProcessLifecycle {
         procfs: launch_procfs.clone(),
         agent_root: agent_root.clone(),
@@ -470,6 +478,16 @@ fn child_namespace_from_launch_handles(
     }
     for (mount, tree) in &handles.tool_manifests {
         namespace.mount(mount, tree.clone(), alan_kernel::Access::ReadOnly);
+    }
+    for mount in &plan.host_mounts {
+        namespace.mount(
+            &mount.target.to_string_lossy(),
+            InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::new())),
+            match mount.access {
+                alan_agent_protocol::SpawnMountAccess::ReadOnly => alan_kernel::Access::ReadOnly,
+                alan_agent_protocol::SpawnMountAccess::ReadWrite => alan_kernel::Access::ReadWrite,
+            },
+        );
     }
     namespace
 }
