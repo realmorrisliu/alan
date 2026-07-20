@@ -203,7 +203,11 @@ fn child_reached_observable_terminal(
     matches!(
         (exit_code, result.status),
         (0, alan_agent_protocol::AgentExecutableStatus::Completed)
-            | (1, alan_agent_protocol::AgentExecutableStatus::Paused)
+            | (
+                1,
+                alan_agent_protocol::AgentExecutableStatus::Paused
+                    | alan_agent_protocol::AgentExecutableStatus::Failed
+            )
     )
 }
 
@@ -562,7 +566,7 @@ mod tests {
     }
 
     #[test]
-    fn completed_or_paused_child_can_finish_before_live_agentfs_is_observed() {
+    fn terminal_child_can_finish_before_live_agentfs_is_observed() {
         let completed = alan_agent_protocol::AgentExecutableResult::completed("done", Vec::new());
         assert!(child_reached_observable_terminal(0, &completed));
         assert!(!child_reached_observable_terminal(1, &completed));
@@ -578,6 +582,7 @@ mod tests {
         assert!(child_reached_observable_terminal(1, &paused));
 
         let failed = alan_agent_protocol::AgentExecutableResult::failed("failed");
-        assert!(!child_reached_observable_terminal(1, &failed));
+        assert!(child_reached_observable_terminal(1, &failed));
+        assert!(!child_reached_observable_terminal(0, &failed));
     }
 }
