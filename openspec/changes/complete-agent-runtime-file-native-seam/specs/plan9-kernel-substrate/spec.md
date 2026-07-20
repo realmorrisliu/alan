@@ -4,7 +4,8 @@
 A Process-scoped `/proc` view SHALL expose `/proc/self/namespace` as a
 point-in-time description of the current Process namespace authority used for
 subsequent clone operations. The file SHALL reflect live namespace mutations
-visible at read time. A bootstrap `/proc` view without a current Process SHALL
+visible at read time, and its qid version SHALL identify the corresponding live
+namespace generation. A bootstrap `/proc` view without a current Process SHALL
 NOT expose `/proc/self`.
 
 #### Scenario: Alan Shell snapshots its current namespace
@@ -12,6 +13,8 @@ NOT expose `/proc/self`.
   command
 - **THEN** it receives the mount paths and access rights currently delegable by
   that Shell Process
+- **AND** matching qid versions before and after the read bind those bytes to one
+  stable namespace generation
 - **AND** the snapshot requires no Kernel side API or Host Process identity
 
 #### Scenario: Bootstrap has no current Process alias

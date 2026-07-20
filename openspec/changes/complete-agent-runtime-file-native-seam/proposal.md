@@ -56,7 +56,9 @@ None.
 - `os-sandbox-enforcement`: Make Host adapters the sole producer of native
   per-Tool-Process confinement input.
 - `plan9-kernel-substrate`: Expose the current Process namespace through
-  `/proc/self/namespace` for file-native explicit delegation.
+  `/proc/self/namespace` for file-native explicit delegation, and bind each
+  launch manifest to one stable namespace generation with bounded stale-read
+  retries.
 
 ## Impact
 

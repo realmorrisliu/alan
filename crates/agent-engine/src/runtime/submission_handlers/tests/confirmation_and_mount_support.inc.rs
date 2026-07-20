@@ -66,7 +66,7 @@
         let shell = Shell::new(root.clone());
         let pid = shell
             .spawn(
-                r#"{"executable":"/bin/alan-agent","args":[],"namespace":{"mounts":[]}}"#,
+                r#"{"executable":"/bin/alan-agent","args":[],"namespace":{"generation": 0,"mounts":[]}}"#,
             )
             .await
             .unwrap();

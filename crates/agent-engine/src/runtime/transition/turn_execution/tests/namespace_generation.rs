@@ -79,7 +79,7 @@ async fn test_namespace_turn_reads_agent_input_generates_via_llmfs_and_writes_ag
     let shell = alan_shell::Shell::new(root.clone());
 
     let pid = shell
-        .spawn(r#"{"executable":"/bin/agent","args":[],"namespace":{"mounts":[]}}"#)
+        .spawn(r#"{"executable":"/bin/agent","args":[],"namespace":{"generation": 0,"mounts":[]}}"#)
         .await
         .unwrap();
     assert_eq!(pid, "1");
@@ -375,7 +375,7 @@ async fn test_namespace_turn_live_openai_responses_ignored() {
     let shell = alan_shell::Shell::new(root.clone());
 
     let pid = shell
-        .spawn(r#"{"executable":"/bin/agent","args":[],"namespace":{"mounts":[]}}"#)
+        .spawn(r#"{"executable":"/bin/agent","args":[],"namespace":{"generation": 0,"mounts":[]}}"#)
         .await
         .unwrap();
     assert_eq!(pid, "1");

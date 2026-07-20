@@ -10,8 +10,8 @@ use std::{
 
 use alan_agent_protocol::{
     AGENT_DEFINITION_DESCRIPTOR as AGENT_DEFINITION_FD, AgentExecutableRequest,
-    ProcessNamespaceAccess, ProcessNamespaceMount, SpawnHandle, SpawnMountAccess, SpawnSpec,
-    SpawnTarget,
+    DelegatedCapabilityDecision, ProcessNamespaceAccess, ProcessNamespaceManifest,
+    ProcessNamespaceMount, SpawnHandle, SpawnMountAccess, SpawnSpec, SpawnTarget,
 };
 use anyhow::{Context, Result, bail, ensure};
 use tokio_util::sync::CancellationToken;
@@ -29,6 +29,7 @@ pub(crate) use task_context::project_child_task_context;
 
 const CHILD_AGENT_LAUNCH_CANCELLED_MESSAGE: &str = "Child Agent Process launch cancelled";
 const AGENT_EXECUTABLE: &str = "/bin/alan-agent";
+const MAX_CHILD_PROCESS_SPAWN_ATTEMPTS: usize = 3;
 
 #[derive(Debug, Clone)]
 struct ChildNamespacePlan {
@@ -37,6 +38,18 @@ struct ChildNamespacePlan {
     bin_tool_mounts: Vec<String>,
     llm_connection_name: String,
     cwd: PathBuf,
+}
+
+struct ChildProcessLaunch<'a> {
+    parent: &'a ChildLaunchRuntime,
+    process_files: &'a super::transition::NamespaceProcessFiles,
+    parent_pid: &'a str,
+    target_path: &'a str,
+    tool_names: &'a [String],
+    parent_descriptors: &'a BTreeMap<u32, String>,
+    descriptors: BTreeMap<u32, String>,
+    requested_spec: &'a SpawnSpec,
+    cancel: Option<&'a CancellationToken>,
 }
 
 impl ChildNamespacePlan {
@@ -70,7 +83,7 @@ pub(crate) async fn spawn_child_runtime_cancellable(
 
 async fn spawn_child_runtime_inner(
     parent: ChildLaunchRuntime,
-    mut spec: SpawnSpec,
+    spec: SpawnSpec,
     cancel: Option<&CancellationToken>,
 ) -> Result<DelegatedChildRunSupervisor> {
     ensure_not_cancelled(cancel)?;
@@ -78,40 +91,28 @@ async fn spawn_child_runtime_inner(
 
     let process_files = parent.child_launch.process_files();
     let parent_pid = process_files.current_pid()?.to_string();
-    let parent_mounts = process_files.read_process_namespace(&parent_pid).await?;
     let parent_descriptors = process_files.read_process_descriptors(&parent_pid).await?;
     let target_path = resolve_target_path(&parent, &spec.target, &parent_descriptors)?;
     let tool_names = select_tool_names(&parent, &spec).await?;
-    let plan = build_child_namespace_plan(
-        &spec,
-        &parent_mounts,
-        &target_path,
-        &parent_descriptors,
-        &tool_names,
-        parent.child_launch.connection_name(),
-    )?;
-    let delegation_capability_decision = evaluate_delegated_launch_capabilities(
-        &mut spec,
-        &plan,
-        &parent_mounts,
-        parent.child_launch.namespace_cwd(),
-    )?;
-
-    let mut descriptors = BTreeMap::from([(AGENT_DEFINITION_FD, target_path)]);
+    let mut descriptors = BTreeMap::from([(AGENT_DEFINITION_FD, target_path.clone())]);
     if spec.has_handle(SpawnHandle::Memory)
         && let Some(path) = parent_descriptors.get(&alan_agent_protocol::MEMORY_STORE_DESCRIPTOR)
     {
         descriptors.insert(alan_agent_protocol::MEMORY_STORE_DESCRIPTOR, path.clone());
     }
-    let request = AgentExecutableRequest {
-        initial_task: task_context::build_child_task_text(&parent.task_context, &spec),
-        spawn: spec.clone(),
-    };
-    ensure_not_cancelled(cancel)?;
-    let child_pid = process_files
-        .spawn_agent_process(&request, plan.process_mounts.clone(), descriptors)
-        .await
-        .context("Failed to spawn child Agent Process through /proc/clone")?;
+    let (child_pid, spec, delegation_capability_decision) = ChildProcessLaunch {
+        parent: &parent,
+        process_files,
+        parent_pid: &parent_pid,
+        target_path: &target_path,
+        tool_names: &tool_names,
+        parent_descriptors: &parent_descriptors,
+        descriptors,
+        requested_spec: &spec,
+        cancel,
+    }
+    .spawn()
+    .await?;
     let (agent_files, child_process_files) = parent.child_launch.observation_handles(&child_pid);
     wait_for_child_process_startup(&agent_files, &child_process_files, &child_pid, cancel).await?;
 
@@ -146,6 +147,67 @@ async fn spawn_child_runtime_inner(
             process_pid: child_pid,
         },
     ))
+}
+
+impl ChildProcessLaunch<'_> {
+    async fn spawn(self) -> Result<(String, SpawnSpec, Option<DelegatedCapabilityDecision>)> {
+        let mut last_stale_error = None;
+        for _ in 0..MAX_CHILD_PROCESS_SPAWN_ATTEMPTS {
+            ensure_not_cancelled(self.cancel)?;
+            let parent_namespace = self
+                .process_files
+                .read_process_namespace(self.parent_pid)
+                .await?;
+            let mut attempt_spec = self.requested_spec.clone();
+            let plan = build_child_namespace_plan(
+                &attempt_spec,
+                &parent_namespace.mounts,
+                self.target_path,
+                self.parent_descriptors,
+                self.tool_names,
+                self.parent.child_launch.connection_name(),
+            )?;
+            let decision = evaluate_delegated_launch_capabilities(
+                &mut attempt_spec,
+                &plan,
+                &parent_namespace.mounts,
+                self.parent.child_launch.namespace_cwd(),
+            )?;
+            let request = AgentExecutableRequest {
+                initial_task: task_context::build_child_task_text(
+                    &self.parent.task_context,
+                    &attempt_spec,
+                ),
+                spawn: attempt_spec.clone(),
+            };
+            let generation = parent_namespace.generation;
+            let namespace = ProcessNamespaceManifest {
+                generation,
+                mounts: plan.process_mounts,
+            };
+            match self
+                .process_files
+                .spawn_agent_process(&request, namespace, self.descriptors.clone())
+                .await
+            {
+                Ok(pid) => return Ok((pid, attempt_spec, decision)),
+                Err(error) => {
+                    if self
+                        .process_files
+                        .is_stale_namespace_launch(self.parent_pid, generation, &error)
+                        .await?
+                    {
+                        last_stale_error = Some(error);
+                        continue;
+                    }
+                    return Err(error)
+                        .context("Failed to spawn child Agent Process through /proc/clone");
+                }
+            }
+        }
+        Err(last_stale_error.expect("a retry requires a stale launch error"))
+            .context("Failed to spawn child Agent Process after namespace changes")
+    }
 }
 
 fn ensure_not_cancelled(cancel: Option<&CancellationToken>) -> Result<()> {

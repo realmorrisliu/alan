@@ -28,7 +28,10 @@ all-Host-Mounts handle, and Host Mount inheritance SHALL default to none unless
 each selected grant handle and target namespace path is listed explicitly.
 Every `/proc/clone` exec document MUST contain an explicit namespace manifest;
 Alan Kernel SHALL reject a missing manifest instead of inheriting the pending
-namespace implicitly.
+namespace implicitly. The manifest MUST identify the generation of the stable
+namespace snapshot from which its mount list was selected. Alan Kernel SHALL
+commit it only when that generation matches the spawner namespace snapshot
+captured for the clone slot.
 
 #### Scenario: Child lacks an unpassed mount
 - **WHEN** a parent launches a child without listing a parent Host Mount
@@ -43,16 +46,29 @@ namespace implicitly.
 
 #### Scenario: Tool Process receives an explicit namespace snapshot
 - **WHEN** an Agent Process starts a Tool Process through `/proc/clone`
-- **THEN** the exec document lists the namespace mounts delegated at that launch
-- **AND** a mount added to the parent's live namespace after the snapshot is not
+- **THEN** the exec document lists the namespace mounts and snapshot generation
+  delegated at that launch
+- **AND** a mount added after the generation captured for that clone slot is not
   inherited by the Tool Process
 
 #### Scenario: Alan Shell launches an ordinary Process
 - **WHEN** Alan Shell launches a command through `/proc/clone`
-- **THEN** it reads `/proc/self/namespace` and writes those delegated mounts into
-  the exec document
+- **THEN** it reads `/proc/self/namespace` between matching namespace qid
+  versions and writes those delegated mounts plus that generation into the exec
+  document
 - **AND** an unavailable or malformed current-namespace file fails the launch
   without falling back to ambient inheritance
+
+#### Scenario: Namespace changes between manifest read and clone
+- **WHEN** the live namespace generation changes after a launcher reads its
+  manifest but before `/proc/clone` captures the launch snapshot
+- **THEN** Alan Kernel rejects the stale generation and discards the pending
+  Process slot
+- **AND** Alan Shell, Agent Execution Engine, and system launchers confirm the
+  generation changed, reread one stable snapshot, and retry a bounded number of
+  times
+- **AND** Agent Execution Engine recomputes a delegated child Process's selected
+  mounts and capability decision from the fresh snapshot before retrying
 
 #### Scenario: Exec document omits its namespace manifest
 - **WHEN** a spawner commits an exec document without a namespace manifest

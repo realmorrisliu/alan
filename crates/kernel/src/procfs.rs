@@ -7,7 +7,7 @@
 //! ```text
 //! /proc
 //!   clone                 # open → pending pid; write exec spec; clunk → start
-//!   self/                 # current Process view; namespace is the live spawn authority
+//!   self/                 # current Process view; namespace qid versions live authority
 //!   <pid>/
 //!     status              # "running" | "exited"
 //!     parent              # parent pid, or "" for none
@@ -238,9 +238,13 @@ enum NamespaceSource {
 
 impl NamespaceSource {
     fn snapshot(&self) -> Namespace {
+        self.snapshot_with_generation().0
+    }
+
+    fn snapshot_with_generation(&self) -> (Namespace, u32) {
         match self {
-            Self::Snapshot(namespace) => namespace.clone(),
-            Self::Live(namespace) => namespace.snapshot(),
+            Self::Snapshot(namespace) => (namespace.clone(), 0),
+            Self::Live(namespace) => namespace.snapshot_with_generation(),
         }
     }
 
@@ -251,9 +255,12 @@ impl NamespaceSource {
         }
     }
 
-    fn child_with_path_substitution(&self, placeholder: &str, pid: &str) -> Namespace {
-        self.snapshot()
-            .child_with_path_substitution(placeholder, pid)
+    fn child_with_path_substitution(&self, placeholder: &str, pid: &str) -> (Namespace, u32) {
+        let (namespace, generation) = self.snapshot_with_generation();
+        (
+            namespace.child_with_path_substitution(placeholder, pid),
+            generation,
+        )
     }
 }
 
@@ -473,13 +480,13 @@ impl ProcFs {
         Some((process.status, process.exit_code))
     }
 
-    fn child_namespace_for_spawn(&self, pid: Pid) -> Namespace {
-        let mut child_namespace = self
+    fn child_namespace_for_spawn(&self, pid: Pid) -> (Namespace, u32) {
+        let (mut child_namespace, generation) = self
             .spawn_context
             .namespace
             .child_with_path_substitution(CHILD_PID_PLACEHOLDER, &pid.0.to_string());
         self.rebind_proc_spawners(&mut child_namespace, pid);
-        child_namespace
+        (child_namespace, generation)
     }
 
     fn rebind_proc_spawners(&self, namespace: &mut Namespace, pid: Pid) {

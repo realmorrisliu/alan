@@ -24,6 +24,7 @@ async fn spawn(fs: &ProcFs, clone_fid: Fid) -> String {
         clone_fid,
         "/bin/agent",
         Vec::<String>::new(),
+        0,
         serde_json::json!([]),
     )
     .await
@@ -34,11 +35,21 @@ async fn spawn_with_mounts(
     clone_fid: Fid,
     mounts: serde_json::Value,
 ) -> String {
+    spawn_with_mounts_at_generation(fs, clone_fid, 0, mounts).await
+}
+
+async fn spawn_with_mounts_at_generation(
+    fs: &ProcFs,
+    clone_fid: Fid,
+    generation: u32,
+    mounts: serde_json::Value,
+) -> String {
     spawn_exec(
         fs,
         clone_fid,
         "/bin/agent",
         Vec::<String>::new(),
+        generation,
         mounts,
     )
     .await
@@ -49,6 +60,7 @@ async fn spawn_exec(
     clone_fid: Fid,
     executable: &str,
     args: Vec<String>,
+    generation: u32,
     mounts: serde_json::Value,
 ) -> String {
     fs.walk(Fid::ROOT, clone_fid, &["clone".to_string()])
@@ -59,7 +71,7 @@ async fn spawn_exec(
     let exec = serde_json::json!({
         "executable": executable,
         "args": args,
-        "namespace": {"mounts": mounts},
+        "namespace": {"generation": generation,"mounts": mounts},
     })
     .to_string();
     fs.write(clone_fid, 0, exec.as_bytes()).await.unwrap();
@@ -365,7 +377,7 @@ async fn spawn_via_clone_open_write_clunk_makes_a_public_process() {
     fs.write(
         Fid(10),
         0,
-        br#"{"executable":"/bin/agent","args":[],"namespace":{"mounts":[]}}"#,
+        br#"{"executable":"/bin/agent","args":[],"namespace":{"generation": 0,"mounts":[]}}"#,
     )
         .await
         .unwrap();
@@ -500,7 +512,7 @@ async fn child_namespace_rebinds_proc_clone_to_the_child_spawn_context() {
         .call(Request::Write {
             fid: Fid(30),
             offset: 0,
-            data: br#"{"executable":"/bin/grandchild","args":[],"namespace":{"mounts":[{"path":"/proc","access":"rw"}]}}"#.to_vec(),
+            data: br#"{"executable":"/bin/grandchild","args":[],"namespace":{"generation": 0,"mounts":[{"path":"/proc","access":"rw"}]}}"#.to_vec(),
         })
         .await
         .unwrap();
@@ -750,7 +762,7 @@ async fn delegated_proc_clone_mount_rebinds_to_the_child_spawn_context() {
         .call(Request::Write {
             fid: Fid(40),
             offset: 0,
-            data: br#"{"executable":"/bin/grandchild","args":[],"namespace":{"mounts":[{"path":"/proc/clone","access":"rw"}]}}"#.to_vec(),
+            data: br#"{"executable":"/bin/grandchild","args":[],"namespace":{"generation": 0,"mounts":[{"path":"/proc/clone","access":"rw"}]}}"#.to_vec(),
         })
         .await
         .unwrap();
@@ -791,7 +803,7 @@ async fn delegated_proc_clone_root_open_allocates_a_pending_pid() {
         .write(
             Fid::ROOT,
             0,
-            br#"{"executable":"/bin/child","args":[],"namespace":{"mounts":[]}}"#,
+            br#"{"executable":"/bin/child","args":[],"namespace":{"generation": 0,"mounts":[]}}"#,
         )
         .await
         .unwrap();

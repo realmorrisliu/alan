@@ -23,55 +23,6 @@ async fn proc_output_observers_see_direct_writes() {
 }
 
 #[tokio::test]
-async fn live_spawner_view_exposes_current_namespace_at_proc_self() {
-    let fs = ProcFs::new();
-    let mut namespace = Namespace::new();
-    namespace.mount(
-        "/bin",
-        InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::empty())),
-        Access::ReadOnly,
-    );
-    let bootstrap = fs.for_spawner(None, namespace.clone(), Credentials::system());
-    let parent = spawn_with_mounts(
-        &bootstrap,
-        Fid(70),
-        serde_json::json!([{"path": "/bin", "access": "ro"}]),
-    )
-    .await;
-    let live_namespace = LiveNamespace::new(namespace);
-    let current = fs.for_live_spawner(
-        Some(Pid(parent.parse().unwrap())),
-        live_namespace.clone(),
-        Credentials::user("alan"),
-    );
-
-    let listing = String::from_utf8(read_at(&current, &[], Fid(71)).await.unwrap()).unwrap();
-    assert!(listing.lines().any(|name| name == "self"));
-    assert_eq!(
-        read_at(&current, &["self", "namespace"], Fid(72))
-            .await
-            .unwrap(),
-        b"/bin ro"
-    );
-    live_namespace.mount(
-        "/mnt/project",
-        InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::empty())),
-        Access::ReadWrite,
-    );
-    assert_eq!(
-        read_at(&current, &["self", "namespace"], Fid(74))
-            .await
-            .unwrap(),
-        b"/bin ro\n/mnt/project rw"
-    );
-    assert_eq!(
-        read_at(&fs, &["self", "namespace"], Fid(73)).await,
-        Err(ErrorCode::NotFound),
-        "a bootstrap /proc view without a current Process has no /proc/self"
-    );
-}
-
-#[tokio::test]
 async fn proc_input_observers_see_direct_writes() {
     let fs = proc();
     let pid = spawn(&fs, Fid(10)).await;
@@ -110,6 +61,7 @@ async fn registered_runner_writes_process_output_and_exit() {
         Fid(10),
         "/bin/greeting",
         vec!["hello".into(), "tool".into()],
+        0,
         serde_json::json!([{"path": "/bin", "access": "ro"}]),
     )
     .await;
@@ -242,7 +194,7 @@ async fn clone_exec_spec_write_honors_offset() {
     fs.write(
         Fid(10),
         14,
-        br#""/bin/agent","args":[],"namespace":{"mounts":[]}}"#,
+        br#""/bin/agent","args":[],"namespace":{"generation": 0,"mounts":[]}}"#,
     )
         .await
         .unwrap();
@@ -342,7 +294,7 @@ async fn proc_exposes_only_valid_descriptors_bound_inside_the_committed_namespac
     let pid = String::from_utf8(spawner.read(Fid(13), 0, 64).await.unwrap()).unwrap();
     let exec = serde_json::json!({
         "executable": "/bin/alan-agent",
-        "namespace": {"mounts": [{"path": "/definition", "access": "ro"}]},
+        "namespace": {"generation": 0,"mounts": [{"path": "/definition", "access": "ro"}]},
         "descriptors": {"3": "/definition"}
     });
     spawner
@@ -383,7 +335,7 @@ async fn clone_rejects_reserved_or_unreachable_descriptors_without_leaking_a_pro
         spawner.open(fid, OpenMode::ReadWrite).await.unwrap();
         let exec = serde_json::json!({
             "executable": "/bin/alan-agent",
-            "namespace": {"mounts": [{"path": "/definition", "access": "ro"}]},
+            "namespace": {"generation": 0,"mounts": [{"path": "/definition", "access": "ro"}]},
             "descriptors": descriptors
         });
         spawner
@@ -483,9 +435,10 @@ async fn live_spawner_namespace_reads_and_children_snapshot_explicit_live_mounts
         "live process namespace should include approved grant: {namespace:?}"
     );
 
-    let child = spawn_with_mounts(
+    let child = spawn_with_mounts_at_generation(
         &spawner,
         Fid(62),
+        live_namespace.generation(),
         serde_json::json!([
             {"path": "/data", "access": "ro"},
             {"path": "/mnt/project", "access": "rw"}
@@ -528,6 +481,7 @@ async fn clone_exec_namespace_manifest_must_match_spawner_namespace() {
         "executable": "/bin/agent",
         "args": [],
         "namespace": {
+            "generation": 0,
             "mounts": [
                 {"path": "/scratch", "access": "rw"},
                 {"path": "/data", "access": "ro"}
@@ -580,6 +534,7 @@ async fn clone_exec_namespace_manifest_may_restrict_to_a_spawner_subset() {
         "executable": "/bin/agent",
         "args": [],
         "namespace": {
+            "generation": 0,
             "mounts": [
                 {"path": "/data", "access": "ro"}
             ]
@@ -626,6 +581,7 @@ async fn clone_exec_namespace_manifest_may_downgrade_rw_mounts_to_read_only() {
         "executable": "/bin/agent",
         "args": [],
         "namespace": {
+            "generation": 0,
             "mounts": [
                 {"path": "/scratch", "access": "ro"}
             ]
@@ -677,6 +633,7 @@ async fn clone_exec_namespace_manifest_preserves_restrictive_overmounts() {
         "executable": "/bin/agent",
         "args": [],
         "namespace": {
+            "generation": 0,
             "mounts": [
                 {"path": "/data", "access": "rw"}
             ]
@@ -728,6 +685,7 @@ async fn clone_exec_namespace_manifest_rejects_omitted_nonrestrictive_descendant
         "executable": "/bin/agent",
         "args": [],
         "namespace": {
+            "generation": 0,
             "mounts": [
                 {"path": "/mnt", "access": "rw"}
             ]
@@ -770,6 +728,7 @@ async fn clone_exec_namespace_manifest_rejects_omitted_same_access_masks() {
         "executable": "/bin/agent",
         "args": [],
         "namespace": {
+            "generation": 0,
             "mounts": [
                 {"path": "/data", "access": "ro"}
             ]
@@ -820,6 +779,7 @@ async fn restricted_manifest_rebinds_delegated_proc_clone_to_the_restricted_name
         "executable": "/bin/child",
         "args": [],
         "namespace": {
+            "generation": 0,
             "mounts": [
                 {"path": "/proc/clone", "access": "rw"}
             ]
@@ -863,7 +823,7 @@ async fn restricted_manifest_rebinds_delegated_proc_clone_to_the_restricted_name
         .call(Request::Write {
             fid: Fid::ROOT,
             offset: 0,
-            data: br#"{"executable":"/bin/grandchild","args":[],"namespace":{"mounts":[{"path":"/proc/clone","access":"rw"}]}}"#.to_vec(),
+            data: br#"{"executable":"/bin/grandchild","args":[],"namespace":{"generation": 0,"mounts":[{"path":"/proc/clone","access":"rw"}]}}"#.to_vec(),
         })
         .await
         .unwrap();
@@ -901,6 +861,7 @@ async fn clone_exec_namespace_manifest_mismatch_is_rejected_without_leaking_pid(
         "executable": "/bin/agent",
         "args": [],
         "namespace": {
+            "generation": 0,
             "mounts": [
                 {"path": "/data", "access": "rw"}
             ]
@@ -943,6 +904,7 @@ async fn clone_expands_child_pid_placeholder_before_manifest_validation() {
         "executable": "/bin/agent",
         "args": [],
         "namespace": {
+            "generation": 0,
             "mounts": [
                 {"path": format!("/agent/{pid_name}"), "access": "rw"},
                 {"path": "/mnt/llm/connections/default", "access": "rw"}

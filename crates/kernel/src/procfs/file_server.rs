@@ -49,11 +49,10 @@ impl State {
             | Node::Credentials(p)
             | Node::Exit(p)
             | Node::Ctl(p) => self.table.generation(*p),
-            Node::NamespaceInfo(p) => self.table.generation(*p).wrapping_add(
-                self.live_namespaces
-                    .get(p)
-                    .map_or(0, LiveNamespace::generation),
-            ),
+            Node::NamespaceInfo(p) => self
+                .live_namespaces
+                .get(p)
+                .map_or(0, LiveNamespace::generation),
             Node::SelfNamespace => namespace_source.generation(),
             Node::Descriptors(p) => self.table.generation(*p),
         };
@@ -254,7 +253,7 @@ impl FileServer for ProcFs {
             let proc_template = self.clone();
             let slot = state
                 .table
-                .clone_begin_with_namespace(parent, credentials, |pid| {
+                .clone_begin_with_namespace_generation(parent, credentials, |pid| {
                     proc_template.child_namespace_for_spawn(pid)
                 })
                 .ok_or(ErrorCode::Io)?;
@@ -480,6 +479,12 @@ impl FileServer for ProcFs {
             if let Some(pid) = f.clone_pid {
                 match serde_json::from_slice::<ExecSpec>(&f.write_buf) {
                     Ok(exec) => {
+                        if state.table.pending_namespace_generation(pid)
+                            != Some(exec.namespace.generation)
+                        {
+                            state.table.discard(pid);
+                            return Err(ErrorCode::BadRequest);
+                        }
                         let Some(mut narrowed_namespace) = ({
                             let Some(pending_namespace) = state.table.pending_namespace(pid) else {
                                 state.table.discard(pid);

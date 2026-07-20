@@ -442,7 +442,7 @@ async fn spawn_through_proc_clone_works_across_the_mount() {
     fs.write(
         Fid(1),
         0,
-        br#"{"executable":"/bin/agent","args":[],"namespace":{"mounts":[]}}"#,
+        br#"{"executable":"/bin/agent","args":[],"namespace":{"generation": 0,"mounts":[]}}"#,
     )
         .await
         .unwrap();

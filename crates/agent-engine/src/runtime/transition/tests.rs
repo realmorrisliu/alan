@@ -226,7 +226,7 @@ async fn spawn_test_process(procfs: &alan_kernel::ProcFs) -> String {
         .write(
             clone_fid,
             0,
-            br#"{"executable":"/bin/agent","args":[],"namespace":{"mounts":[]}}"#,
+            br#"{"executable":"/bin/agent","args":[],"namespace":{"generation": 0,"mounts":[]}}"#,
         )
         .await
         .expect("write exec spec");

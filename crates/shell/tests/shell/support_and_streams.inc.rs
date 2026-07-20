@@ -419,7 +419,7 @@ async fn command_shell() -> Shell {
         .write(
             Fid(499_000),
             0,
-            br#"{"executable":"/bin/argv","args":[],"namespace":{"mounts":[{"path":"/bin/argv","access":"ro"}]}}"#,
+            br#"{"executable":"/bin/argv","args":[],"namespace":{"generation": 0,"mounts":[{"path":"/bin/argv","access":"ro"}]}}"#,
         )
         .await
         .unwrap();

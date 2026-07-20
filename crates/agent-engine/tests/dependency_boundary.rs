@@ -793,9 +793,16 @@ fn child_launch_workflows_use_only_the_narrow_child_launch_handle() {
 
     let process_files = read_runtime_source("transition/namespace_environment/process_files.rs");
     let spawn_agent = rust_item_body(&process_files, "async fn spawn_agent_process");
-    assert!(spawn_agent.contains("/proc/clone"));
     assert!(spawn_agent.contains("/bin/alan-agent"));
-    assert!(spawn_agent.contains("ProcessNamespaceManifest"));
+    assert!(spawn_agent.contains("spawn_process_with_manifest"));
+    let spawn_commit = rust_item_body(&process_files, "async fn spawn_process_with_manifest");
+    assert!(spawn_commit.contains("/proc/clone"));
+    assert!(spawn_commit.contains("ProcessExecSpec"));
+    let child_agents = read_runtime_source("child_agents.rs");
+    let child_process_launch = rust_item_body(&child_agents, "impl ChildProcessLaunch");
+    assert!(child_process_launch.contains("ProcessNamespaceManifest"));
+    assert!(child_process_launch.contains("generation"));
+    assert!(child_process_launch.contains("is_stale_namespace_launch"));
 
     for path in [
         "child_agents.rs",

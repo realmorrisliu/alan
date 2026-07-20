@@ -1,4 +1,73 @@
 use super::*;
+use alan_kernel::LiveNamespace;
+
+struct NamespaceRaceProcFs {
+    inner: ProcFs,
+    namespace: LiveNamespace,
+    mutate_before_clone: std::sync::atomic::AtomicBool,
+}
+
+#[async_trait::async_trait]
+impl FileServer for NamespaceRaceProcFs {
+    async fn walk(&self, fid: Fid, newfid: Fid, names: &[String]) -> Result<Qid, ErrorCode> {
+        self.inner.walk(fid, newfid, names).await
+    }
+
+    async fn open(&self, fid: Fid, mode: OpenMode) -> Result<Qid, ErrorCode> {
+        if mode == OpenMode::ReadWrite
+            && self
+                .mutate_before_clone
+                .swap(false, std::sync::atomic::Ordering::SeqCst)
+        {
+            self.namespace.mount(
+                "/mnt/project",
+                InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::empty())),
+                Access::ReadWrite,
+            );
+        }
+        self.inner.open(fid, mode).await
+    }
+
+    async fn read(
+        &self,
+        fid: Fid,
+        offset: alan_ap::Offset,
+        count: u32,
+    ) -> Result<Vec<u8>, ErrorCode> {
+        self.inner.read(fid, offset, count).await
+    }
+
+    async fn write(
+        &self,
+        fid: Fid,
+        offset: alan_ap::Offset,
+        data: &[u8],
+    ) -> Result<u32, ErrorCode> {
+        self.inner.write(fid, offset, data).await
+    }
+
+    async fn stat(&self, fid: Fid) -> Result<Stat, ErrorCode> {
+        self.inner.stat(fid).await
+    }
+
+    async fn create(
+        &self,
+        fid: Fid,
+        newfid: Fid,
+        name: &str,
+        kind: FileKind,
+    ) -> Result<Qid, ErrorCode> {
+        self.inner.create(fid, newfid, name, kind).await
+    }
+
+    async fn remove(&self, fid: Fid) -> Result<(), ErrorCode> {
+        self.inner.remove(fid).await
+    }
+
+    async fn clunk(&self, fid: Fid) -> Result<(), ErrorCode> {
+        self.inner.clunk(fid).await
+    }
+}
 
 #[tokio::test]
 async fn engine_spawns_process_with_explicit_namespace_manifest() {
@@ -34,7 +103,7 @@ async fn engine_spawns_process_with_explicit_namespace_manifest() {
 
     let pid = environment
         .process_files()
-        .spawn_process(
+        .spawn_process_with_mounts(
             "/bin/agent",
             Vec::<String>::new(),
             vec![ProcessNamespaceMount::new(
@@ -63,6 +132,90 @@ async fn engine_spawns_process_with_explicit_namespace_manifest() {
     let namespace =
         String::from_utf8(shell.cat(&format!("/proc/{pid}/namespace")).await.unwrap()).unwrap();
     assert_eq!(namespace, "/bin ro");
+}
+
+#[tokio::test]
+async fn engine_retries_tool_spawn_after_a_live_namespace_generation_race() {
+    let procfs = ProcFs::new();
+    let agentfs = Arc::new(AgentFs::new());
+    let binfs = Arc::new(alan_ap::reference::MemFs::new());
+    let mut process_namespace = Namespace::new();
+    process_namespace.mount(
+        "/proc",
+        InProcessTransport::new(Arc::new(procfs.clone())),
+        Access::ReadWrite,
+    );
+    process_namespace.mount(
+        "/agent/1",
+        InProcessTransport::new(agentfs.clone()),
+        Access::ReadWrite,
+    );
+    process_namespace.mount("/bin", InProcessTransport::new(binfs), Access::ReadOnly);
+    process_namespace.mount(
+        "/mnt",
+        InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::empty())),
+        Access::ReadWrite,
+    );
+    let credentials = Credentials::user("root-agent");
+    let bootstrap = procfs.for_spawner(None, process_namespace.clone(), credentials.clone());
+    bootstrap
+        .walk(Fid::ROOT, Fid(9_998), &["clone".to_string()])
+        .await
+        .unwrap();
+    bootstrap
+        .open(Fid(9_998), OpenMode::ReadWrite)
+        .await
+        .unwrap();
+    let parent_exec = ExecSpec {
+        executable: "/bin/agent".to_string(),
+        args: Vec::new(),
+        namespace: ExecNamespaceManifest::from_namespace(&process_namespace),
+        descriptors: Default::default(),
+    };
+    bootstrap
+        .write(Fid(9_998), 0, &serde_json::to_vec(&parent_exec).unwrap())
+        .await
+        .unwrap();
+    bootstrap.clunk(Fid(9_998)).await.unwrap();
+
+    let live_namespace = LiveNamespace::new(process_namespace);
+    let procfs = procfs.with_runner(Arc::new(EchoRunner));
+    procfs
+        .bind_live_namespace(Pid(1), live_namespace.clone())
+        .await;
+    let racing_procfs = NamespaceRaceProcFs {
+        inner: procfs.for_live_spawner(Some(Pid(1)), live_namespace.clone(), credentials),
+        namespace: live_namespace.clone(),
+        mutate_before_clone: std::sync::atomic::AtomicBool::new(true),
+    };
+    live_namespace.replace_mount(
+        "/proc",
+        InProcessTransport::new(Arc::new(racing_procfs)),
+        Access::ReadWrite,
+    );
+    let root = InProcessTransport::new(Arc::new(MountFs::from_live_namespace(live_namespace)));
+    let shell = Shell::new(root.clone());
+    let environment = NamespaceRuntimeEnvironment::new(root, "/agent/1", "default");
+
+    let action = environment
+        .tool_execution()
+        .run_action("echo", "/bin/greeting", ["retried".to_string()])
+        .await
+        .unwrap();
+    assert_eq!(action.output, "retried\n");
+    let child_namespace = String::from_utf8(
+        shell
+            .cat(&format!("/proc/{}/namespace", action.pid))
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(
+        child_namespace
+            .lines()
+            .any(|line| line == "/mnt/project rw"),
+        "Tool Process retry must use one fresh explicit snapshot: {child_namespace:?}"
+    );
 }
 
 #[tokio::test]

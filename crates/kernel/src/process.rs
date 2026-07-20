@@ -60,13 +60,16 @@ pub struct ExecSpec {
     pub descriptors: BTreeMap<u32, String>,
 }
 
-/// The namespace mount set the spawner expects a `/proc/clone` commit to use.
+/// The versioned namespace mount set a spawner expects a `/proc/clone` commit
+/// to use.
 ///
 /// The kernel still receives the actual namespace from the spawner context; this
-/// manifest is a commit-time check that the exec document and inherited pending
-/// namespace describe the same or a narrower capability set.
+/// manifest is a commit-time check that the exec document and pending clone
+/// snapshot have the same generation and describe the same or a narrower
+/// capability set.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 pub struct ExecNamespaceManifest {
+    pub generation: u32,
     #[serde(default)]
     pub mounts: Vec<ExecNamespaceMount>,
 }
@@ -74,12 +77,17 @@ pub struct ExecNamespaceManifest {
 impl ExecNamespaceManifest {
     /// Build the inspectable manifest for a kernel namespace.
     pub fn from_namespace(namespace: &Namespace) -> Self {
+        Self::from_snapshot(namespace, 0)
+    }
+
+    /// Build an inspectable manifest bound to one namespace generation.
+    pub fn from_snapshot(namespace: &Namespace, generation: u32) -> Self {
         let mounts = namespace
             .describe()
             .into_iter()
             .map(|(path, access)| ExecNamespaceMount::new(path, access.into()))
             .collect::<Vec<_>>();
-        Self { mounts }.normalized()
+        Self { generation, mounts }.normalized()
     }
 
     pub(crate) fn namespace_subset_from(&self, namespace: &Namespace) -> Option<Namespace> {
@@ -101,7 +109,10 @@ impl ExecNamespaceManifest {
                 .cmp(&right.path)
                 .then_with(|| left.access.cmp(&right.access))
         });
-        Self { mounts }
+        Self {
+            generation: self.generation,
+            mounts,
+        }
     }
 }
 
@@ -177,6 +188,7 @@ struct Pending {
     parent: Option<Pid>,
     credentials: Credentials,
     namespace: Namespace,
+    namespace_generation: u32,
 }
 
 /// The ephemeral process table.
@@ -245,7 +257,7 @@ impl ProcessTable {
         namespace: Namespace,
         credentials: Credentials,
     ) -> Option<Pid> {
-        self.clone_begin_with_namespace(parent, credentials, |_| namespace)
+        self.clone_begin_with_namespace_generation(parent, credentials, |_| (namespace, 0))
     }
 
     pub fn clone_begin_with_namespace(
@@ -254,14 +266,26 @@ impl ProcessTable {
         credentials: Credentials,
         build_namespace: impl FnOnce(Pid) -> Namespace,
     ) -> Option<Pid> {
+        self.clone_begin_with_namespace_generation(parent, credentials, |pid| {
+            (build_namespace(pid), 0)
+        })
+    }
+
+    pub fn clone_begin_with_namespace_generation(
+        &mut self,
+        parent: Option<Pid>,
+        credentials: Credentials,
+        build_namespace: impl FnOnce(Pid) -> (Namespace, u32),
+    ) -> Option<Pid> {
         let pid = self.alloc_pid();
-        let namespace = build_namespace(pid);
+        let (namespace, namespace_generation) = build_namespace(pid);
         self.pending.insert(
             pid,
             Pending {
                 parent,
                 credentials,
                 namespace,
+                namespace_generation,
             },
         );
         Some(pid)
@@ -297,6 +321,13 @@ impl ProcessTable {
     /// Borrow the namespace of a pending clone slot before it is committed.
     pub fn pending_namespace(&self, slot: Pid) -> Option<&Namespace> {
         self.pending.get(&slot).map(|pending| &pending.namespace)
+    }
+
+    /// Generation of the spawner namespace snapshot captured for this clone.
+    pub fn pending_namespace_generation(&self, slot: Pid) -> Option<u32> {
+        self.pending
+            .get(&slot)
+            .map(|pending| pending.namespace_generation)
     }
 
     /// Replace a pending slot's namespace before commit. Used when an exec

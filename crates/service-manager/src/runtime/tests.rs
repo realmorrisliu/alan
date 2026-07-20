@@ -551,13 +551,11 @@ async fn child_agent_executes_through_proc_clone_and_cleans_up_agentfs() {
     .unwrap();
     let root_pid = manager.root_pid();
     let shell = alan_shell::Shell::new(manager.root_namespace.clone());
-    let namespace = String::from_utf8(
-        shell
-            .cat(&format!("/proc/{}/namespace", root_pid.0))
-            .await
-            .unwrap(),
-    )
-    .unwrap();
+    let namespace_path = format!("/proc/{}/namespace", root_pid.0);
+    let before_generation = shell.stat(&namespace_path).await.unwrap().qid.version;
+    let namespace = String::from_utf8(shell.cat(&namespace_path).await.unwrap()).unwrap();
+    let generation = shell.stat(&namespace_path).await.unwrap().qid.version;
+    assert_eq!(before_generation, generation);
     let mounts = namespace
         .lines()
         .map(|line| {
@@ -590,7 +588,7 @@ async fn child_agent_executes_through_proc_clone_and_cleans_up_agentfs() {
     let exec = alan_agent_protocol::ProcessExecSpec {
         executable: "/bin/alan-agent".to_string(),
         args: vec![serde_json::to_string(&request).unwrap()],
-        namespace: alan_agent_protocol::ProcessNamespaceManifest { mounts },
+        namespace: alan_agent_protocol::ProcessNamespaceManifest { generation, mounts },
         descriptors: BTreeMap::from([(
             alan_agent_protocol::AGENT_DEFINITION_DESCRIPTOR,
             "/lib/agents/root".to_string(),

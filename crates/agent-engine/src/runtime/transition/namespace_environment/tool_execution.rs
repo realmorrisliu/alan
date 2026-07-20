@@ -114,15 +114,7 @@ impl NamespaceToolExecution {
         if cancel.is_cancelled() {
             bail!("tool process cancelled before spawn");
         }
-        let current_pid = self.process_files.current_pid()?.to_string();
-        let mounts = self
-            .process_files
-            .read_process_namespace(&current_pid)
-            .await?;
-        let pid = self
-            .process_files
-            .spawn_process(executable, args, mounts)
-            .await?;
+        let pid = self.process_files.spawn_process(executable, args).await?;
         let result = tokio::select! {
             _ = cancel.cancelled() => {
                 let _ = self.process_files.write_process_control_for_pid(&pid, "cancel").await;

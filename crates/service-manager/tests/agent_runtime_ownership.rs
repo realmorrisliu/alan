@@ -45,7 +45,7 @@ fn agent_runtime_service_owns_the_alan_agent_process_image() {
     let root_launch = rust_item_body(service, "async fn launch_root");
     assert!(root_launch.contains("walk Root Agent /proc/clone"));
     assert!(root_launch.contains("commit_clone("));
-    assert!(root_launch.contains("ExecNamespaceManifest::from_namespace"));
+    assert!(root_launch.contains("ExecNamespaceManifest::from_snapshot"));
 
     let process_image = rust_item_body(service, "async fn run_prepared_agent");
     for required in [
@@ -68,14 +68,24 @@ fn agent_runtime_service_owns_the_alan_agent_process_image() {
     let engine_child = include_str!("../../agent-engine/src/runtime/child_agents.rs");
     let launch = rust_item_body(engine_child, "async fn spawn_child_runtime_inner");
     for required in [
-        "read_process_namespace(",
         "read_process_descriptors(",
-        ".spawn_agent_process(",
         "wait_for_child_process_startup(",
     ] {
         assert!(
             launch.contains(required),
             "Engine child launch is missing `{required}`"
+        );
+    }
+    let process_launch = rust_item_body(engine_child, "impl ChildProcessLaunch");
+    for required in [
+        "read_process_namespace(",
+        "ProcessNamespaceManifest",
+        ".spawn_agent_process(",
+        "is_stale_namespace_launch(",
+    ] {
+        assert!(
+            process_launch.contains(required),
+            "Engine child Process launch is missing `{required}`"
         );
     }
     for displaced in [

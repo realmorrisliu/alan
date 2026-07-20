@@ -32,8 +32,10 @@ live namespace SHALL remain the source of truth for file walks,
 #### Scenario: Live namespace mutation invalidates namespace metadata
 - **WHEN** Host Mount Service mutates the live namespace
 - **THEN** the live namespace generation and affected synthetic qids or versions
-  change
+  change as one observable mutation
 - **AND** cache-by-qid clients can detect that namespace metadata must be reread
+- **AND** a Process launcher cannot pair the new mount table with the prior
+  generation
 
 ### Requirement: Namespace projection preserves host/kernel/engine layering
 The Host adapter SHALL construct the host-backed file-server export from the raw

@@ -78,7 +78,7 @@ async fn spawn_on_proc(proc: &ProcFs, fid: Fid) -> String {
         .await
         .expect("open clone");
     let pid = String::from_utf8(proc.read(fid, 0, 64).await.expect("read pid")).unwrap();
-    proc.write(fid, 0, br#"{"executable":"/bin/alan-agent","args":[],"namespace":{"mounts":[]}}"#)
+    proc.write(fid, 0, br#"{"executable":"/bin/alan-agent","args":[],"namespace":{"generation": 0,"mounts":[]}}"#)
         .await
         .expect("write exec");
     proc.clunk(fid).await.expect("commit process");
@@ -111,7 +111,7 @@ async fn agent_root_lists_only_proc_backed_agent_processes() {
     ));
 
     let pid = shell
-        .spawn(r#"{"executable":"/bin/alan-agent","args":[],"namespace":{"mounts":[]}}"#)
+        .spawn(r#"{"executable":"/bin/alan-agent","args":[],"namespace":{"generation": 0,"mounts":[]}}"#)
         .await
         .unwrap();
     agent_root
@@ -131,7 +131,7 @@ async fn agent_root_qid_version_changes_with_listing() {
 
     let empty_qid = agent_root.stat(Fid::ROOT).await.unwrap().qid;
     let pid = shell
-        .spawn(r#"{"executable":"/bin/alan-agent","args":[],"namespace":{"mounts":[]}}"#)
+        .spawn(r#"{"executable":"/bin/alan-agent","args":[],"namespace":{"generation": 0,"mounts":[]}}"#)
         .await
         .unwrap();
     agent_root
@@ -148,7 +148,7 @@ async fn agent_root_qid_version_changes_with_listing() {
 async fn agent_root_alias_forwards_to_the_root_agent_surface() {
     let (_, shell, agent_root, _) = namespace_shell_with_agent_root();
     let pid = shell
-        .spawn(r#"{"executable":"/bin/alan-agent","args":[],"namespace":{"mounts":[]}}"#)
+        .spawn(r#"{"executable":"/bin/alan-agent","args":[],"namespace":{"generation": 0,"mounts":[]}}"#)
         .await
         .unwrap();
     agent_root
@@ -179,7 +179,7 @@ async fn agent_root_alias_forwards_to_the_root_agent_surface() {
 async fn agent_io_output_writes_to_the_proc_output_stream() {
     let (_, shell, agent_root, _) = namespace_shell_with_agent_root();
     let pid = shell
-        .spawn(r#"{"executable":"/bin/alan-agent","args":[],"namespace":{"mounts":[]}}"#)
+        .spawn(r#"{"executable":"/bin/alan-agent","args":[],"namespace":{"generation": 0,"mounts":[]}}"#)
         .await
         .unwrap();
     agent_root
@@ -223,7 +223,7 @@ async fn agent_io_output_writes_to_the_proc_output_stream() {
 async fn agent_io_input_writes_to_the_proc_input_stream() {
     let (_, shell, agent_root, _) = namespace_shell_with_agent_root();
     let pid = shell
-        .spawn(r#"{"executable":"/bin/alan-agent","args":[],"namespace":{"mounts":[]}}"#)
+        .spawn(r#"{"executable":"/bin/alan-agent","args":[],"namespace":{"generation": 0,"mounts":[]}}"#)
         .await
         .unwrap();
     agent_root
@@ -273,7 +273,7 @@ async fn agent_io_input_writes_to_the_proc_input_stream() {
 async fn direct_proc_output_writes_publish_agent_events() {
     let (_, shell, agent_root, proc) = namespace_shell_with_agent_root();
     let pid = shell
-        .spawn(r#"{"executable":"/bin/alan-agent","args":[],"namespace":{"mounts":[]}}"#)
+        .spawn(r#"{"executable":"/bin/alan-agent","args":[],"namespace":{"generation": 0,"mounts":[]}}"#)
         .await
         .unwrap();
     agent_root
@@ -313,7 +313,7 @@ async fn direct_proc_output_writes_publish_agent_events() {
 async fn direct_proc_input_writes_publish_agent_events() {
     let (_, shell, agent_root, proc) = namespace_shell_with_agent_root();
     let pid = shell
-        .spawn(r#"{"executable":"/bin/alan-agent","args":[],"namespace":{"mounts":[]}}"#)
+        .spawn(r#"{"executable":"/bin/alan-agent","args":[],"namespace":{"generation": 0,"mounts":[]}}"#)
         .await
         .unwrap();
     agent_root
@@ -356,7 +356,7 @@ async fn bind_process_replays_existing_proc_io_events() {
     );
     let (_, shell, agent_root, _) = namespace_shell_with_agent_root_for_proc(proc);
     let pid = shell
-        .spawn(r#"{"executable":"/bin/alan-agent","args":[],"namespace":{"mounts":[]}}"#)
+        .spawn(r#"{"executable":"/bin/alan-agent","args":[],"namespace":{"generation": 0,"mounts":[]}}"#)
         .await
         .unwrap();
     wait_for_file_contains(&shell, &format!("/proc/{pid}/io/events"), "output:19").await;
@@ -379,7 +379,7 @@ async fn bind_process_replays_existing_proc_lifecycle_events() {
         Arc::new(ProcFs::new().with_runner(Arc::new(ImmediateOutputRunner::new(Vec::new()))));
     let (_, shell, agent_root, _) = namespace_shell_with_agent_root_for_proc(proc);
     let pid = shell
-        .spawn(r#"{"executable":"/bin/alan-agent","args":[],"namespace":{"mounts":[]}}"#)
+        .spawn(r#"{"executable":"/bin/alan-agent","args":[],"namespace":{"generation": 0,"mounts":[]}}"#)
         .await
         .unwrap();
     wait_for_file_contains(&shell, &format!("/proc/{pid}/status"), "exited").await;
@@ -400,7 +400,7 @@ async fn bind_process_replays_existing_proc_lifecycle_events() {
 async fn direct_proc_cancel_publishes_agent_lifecycle_events() {
     let (_, shell, agent_root, proc) = namespace_shell_with_agent_root();
     let pid = shell
-        .spawn(r#"{"executable":"/bin/alan-agent","args":[],"namespace":{"mounts":[]}}"#)
+        .spawn(r#"{"executable":"/bin/alan-agent","args":[],"namespace":{"generation": 0,"mounts":[]}}"#)
         .await
         .unwrap();
     agent_root
@@ -428,7 +428,7 @@ async fn direct_proc_cancel_publishes_agent_lifecycle_events() {
 async fn bind_process_replays_existing_proc_io_events_in_order() {
     let (_, shell, agent_root, proc) = namespace_shell_with_agent_root();
     let pid = shell
-        .spawn(r#"{"executable":"/bin/alan-agent","args":[],"namespace":{"mounts":[]}}"#)
+        .spawn(r#"{"executable":"/bin/alan-agent","args":[],"namespace":{"generation": 0,"mounts":[]}}"#)
         .await
         .unwrap();
 
@@ -497,7 +497,7 @@ async fn failed_proc_overlay_walk_does_not_clunk_unbound_proc_fid() {
 async fn failed_backing_walk_does_not_clunk_unbound_backing_fid() {
     let (_, shell, agent_root, _) = namespace_shell_with_agent_root();
     let pid = shell
-        .spawn(r#"{"executable":"/bin/alan-agent","args":[],"namespace":{"mounts":[]}}"#)
+        .spawn(r#"{"executable":"/bin/alan-agent","args":[],"namespace":{"generation": 0,"mounts":[]}}"#)
         .await
         .unwrap();
     let backing = Arc::new(FailedBackingWalkFs::new());
@@ -519,7 +519,7 @@ async fn failed_backing_walk_does_not_clunk_unbound_backing_fid() {
 async fn failed_stat_after_delegated_walk_releases_backing_fid() {
     let (_, shell, agent_root, _) = namespace_shell_with_agent_root();
     let pid = shell
-        .spawn(r#"{"executable":"/bin/alan-agent","args":[],"namespace":{"mounts":[]}}"#)
+        .spawn(r#"{"executable":"/bin/alan-agent","args":[],"namespace":{"generation": 0,"mounts":[]}}"#)
         .await
         .unwrap();
     let backing = Arc::new(StatFailWalkFs::new());
@@ -542,7 +542,7 @@ async fn failed_stat_after_delegated_walk_releases_backing_fid() {
 async fn agent_children_are_derived_from_proc_parentage() {
     let (_, shell, agent_root, proc) = namespace_shell_with_agent_root();
     let parent = shell
-        .spawn(r#"{"executable":"/bin/alan-agent","args":[],"namespace":{"mounts":[]}}"#)
+        .spawn(r#"{"executable":"/bin/alan-agent","args":[],"namespace":{"generation": 0,"mounts":[]}}"#)
         .await
         .unwrap();
     let spawner = proc.for_spawner(
@@ -595,7 +595,7 @@ async fn child_registration_wakes_parent_events_stream() {
 
     let (_, shell, agent_root, proc) = namespace_shell_with_agent_root();
     let parent = shell
-        .spawn(r#"{"executable":"/bin/alan-agent","args":[],"namespace":{"mounts":[]}}"#)
+        .spawn(r#"{"executable":"/bin/alan-agent","args":[],"namespace":{"generation": 0,"mounts":[]}}"#)
         .await
         .unwrap();
     let spawner = proc.for_spawner(
@@ -650,7 +650,7 @@ async fn child_registration_wakes_parent_events_stream() {
 async fn agent_children_qid_versions_change_with_listing() {
     let (_, shell, agent_root, proc) = namespace_shell_with_agent_root();
     let parent = shell
-        .spawn(r#"{"executable":"/bin/alan-agent","args":[],"namespace":{"mounts":[]}}"#)
+        .spawn(r#"{"executable":"/bin/alan-agent","args":[],"namespace":{"generation": 0,"mounts":[]}}"#)
         .await
         .unwrap();
     agent_root
@@ -696,11 +696,11 @@ async fn agent_children_qid_versions_change_with_listing() {
 async fn agent_root_namespaces_backing_qids_by_pid() {
     let (_, shell, agent_root, _) = namespace_shell_with_agent_root();
     let first = shell
-        .spawn(r#"{"executable":"/bin/alan-agent","args":[],"namespace":{"mounts":[]}}"#)
+        .spawn(r#"{"executable":"/bin/alan-agent","args":[],"namespace":{"generation": 0,"mounts":[]}}"#)
         .await
         .unwrap();
     let second = shell
-        .spawn(r#"{"executable":"/bin/alan-agent","args":[],"namespace":{"mounts":[]}}"#)
+        .spawn(r#"{"executable":"/bin/alan-agent","args":[],"namespace":{"generation": 0,"mounts":[]}}"#)
         .await
         .unwrap();
     agent_root
@@ -744,7 +744,7 @@ async fn agent_root_namespaces_backing_qids_by_pid() {
 async fn agent_root_rejects_creates_for_overlay_reserved_names() {
     let (_, shell, agent_root, _) = namespace_shell_with_agent_root();
     let pid = shell
-        .spawn(r#"{"executable":"/bin/alan-agent","args":[],"namespace":{"mounts":[]}}"#)
+        .spawn(r#"{"executable":"/bin/alan-agent","args":[],"namespace":{"generation": 0,"mounts":[]}}"#)
         .await
         .unwrap();
     agent_root
@@ -772,7 +772,7 @@ async fn agent_root_rejects_creates_for_overlay_reserved_names() {
 async fn concurrent_walk_rechecks_newfid_before_insert() {
     let (_, shell, agent_root, _) = namespace_shell_with_agent_root();
     let pid = shell
-        .spawn(r#"{"executable":"/bin/alan-agent","args":[],"namespace":{"mounts":[]}}"#)
+        .spawn(r#"{"executable":"/bin/alan-agent","args":[],"namespace":{"generation": 0,"mounts":[]}}"#)
         .await
         .unwrap();
     let backing = Arc::new(RacingWalkFs::new());
