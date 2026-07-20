@@ -4,18 +4,16 @@ use serde_json::json;
 
 use crate::ROLLBACK_NON_DURABLE_WARNING;
 use crate::approval::{
-    MOUNT_ESCALATION_CHECKPOINT_TYPE, RUNTIME_CONFIRMATION_CONTROL_SOURCE,
-    RUNTIME_CONFIRMATION_CONTROL_VERSION, is_effect_replay_confirmation, replays_tool_calls,
-    runtime_confirmation_control_kind,
+    RUNTIME_CONFIRMATION_CONTROL_SOURCE, RUNTIME_CONFIRMATION_CONTROL_VERSION,
+    is_effect_replay_confirmation, replays_tool_calls, runtime_confirmation_control_kind,
 };
 use crate::tape::ContentPart;
 
-use super::transition::{
-    ApprovedMountGrant, ApprovedMountGrantAccess, NamespaceAgentFiles, NamespaceMountApplication,
-    TurnRunKind,
+use super::transition::{HostMountTerminalResult, NamespaceAgentFiles, TurnRunKind};
+use crate::agent_machine::{
+    AgentMachine, HOST_MOUNT_REQUEST_TERMINAL_EVENT_TYPE, NormalizedToolCall,
+    PendingHostMountRequest, PendingYield,
 };
-use super::turn_support::cancel_current_task;
-use crate::agent_machine::{AgentMachine, NormalizedToolCall, PendingYield};
 
 mod runtime_inputs;
 
@@ -95,7 +93,7 @@ where
             .await;
         }
         Op::Interrupt => {
-            cancel_current_task(runtime.machine, &runtime.agent_files, emit).await?;
+            runtime.cancel_current_task(emit).await?;
         }
 
         // ====================================================================
@@ -112,7 +110,7 @@ where
             }
             merged_parts.extend(parts);
 
-            runtime.machine.reset_turn();
+            runtime.reset_turn_after_cancelling_host_mounts().await?;
             runtime.machine.set_active_turn_request_control_intent(
                 crate::RequestControlIntent::reasoning_effort(reasoning_effort),
             );
@@ -170,7 +168,7 @@ where
                         return Ok(RuntimeOpAction::NoTurn);
                     }
 
-                    runtime.machine.reset_turn();
+                    runtime.reset_turn_after_cancelling_host_mounts().await?;
                     return Ok(RuntimeOpAction::RunTurn {
                         turn_kind: TurnRunKind::NewTurn,
                         user_input: Some(parts),
@@ -206,6 +204,26 @@ where
             request_id,
             content,
         } => {
+            if let Some(pending) = runtime.machine.pending_host_mount(&request_id) {
+                let Some(terminal) = runtime
+                    .host_mount_requests
+                    .terminal_result(&request_id)
+                    .await?
+                else {
+                    emit(Event::Error {
+                        message: format!(
+                            "Host Mount request '{request_id}' is still pending; only Host Mount Service can settle it."
+                        ),
+                        recoverable: true,
+                    })
+                    .await;
+                    return Ok(RuntimeOpAction::NoTurn);
+                };
+                let taken = runtime.machine.take_pending(&request_id);
+                debug_assert!(matches!(taken, Some(PendingYield::HostMount(_))));
+                runtime.preserve_approved_host_mount(&pending, &terminal)?;
+                return Ok(handle_host_mount_terminal(&mut runtime, pending, terminal));
+            }
             let result = resume_content_to_value(&content);
             match runtime.machine.take_pending(&request_id) {
                 Some(PendingYield::Confirmation(pending)) => {
@@ -242,6 +260,9 @@ where
                         activate_task: false,
                     });
                 }
+                Some(PendingYield::HostMount(_)) => unreachable!(
+                    "Host Mount pending requests are resolved from service status above"
+                ),
                 None => {
                     emit(Event::Error {
                         message: format!(
@@ -298,12 +319,8 @@ fn first_resume_text(content: &[ContentPart]) -> Option<String> {
     })
 }
 
-fn default_confirmation_choice(pending: &crate::approval::PendingConfirmation) -> &'static str {
-    if pending.checkpoint_type == MOUNT_ESCALATION_CHECKPOINT_TYPE {
-        "reject"
-    } else {
-        "approve"
-    }
+fn default_confirmation_choice(_pending: &crate::approval::PendingConfirmation) -> &'static str {
+    "approve"
 }
 
 fn checkpoint_choice_for_rollout(choice_str: &str) -> &str {
@@ -366,12 +383,6 @@ async fn handle_confirmation_resolution(
 
     if let Some(modifications) = modifications {
         payload["modifications"] = serde_json::Value::String(modifications);
-    }
-
-    if pending.checkpoint_type == MOUNT_ESCALATION_CHECKPOINT_TYPE {
-        return Ok(handle_mount_escalation_resolution(
-            runtime, pending, choice_str,
-        ));
     }
 
     if let Some(control_kind) = runtime_confirmation_control_kind(&pending.checkpoint_type) {
@@ -444,213 +455,42 @@ async fn handle_confirmation_resolution(
     })
 }
 
-fn handle_mount_escalation_resolution(
+fn handle_host_mount_terminal(
     runtime: &mut SubmissionRuntime<'_>,
-    pending: crate::approval::PendingConfirmation,
-    choice_str: &str,
+    pending: PendingHostMountRequest,
+    terminal: HostMountTerminalResult,
 ) -> RuntimeOpAction {
-    let Some((tool_call_id, mount_request)) = validated_mount_escalation_request(&pending) else {
-        let result = json!({
-            "status": "invalid_mount_escalation_checkpoint",
-            "approved": false,
-            "live_applied": false,
-            "checkpoint_id": pending.checkpoint_id,
-            "checkpoint_type": pending.checkpoint_type,
-            "choice": choice_str,
-            "error": "Invalid mount escalation checkpoint.",
-        });
-        runtime
-            .machine
-            .add_tool_message(&pending.checkpoint_id, "request_mount", result);
-        return RuntimeOpAction::RunTurn {
-            turn_kind: TurnRunKind::ResumeTurn,
-            user_input: None,
-            activate_task: false,
-        };
-    };
-    let approved = choice_str == "approve";
-    let grant = parse_mount_grant_request(&mount_request);
-    let namespace_application = if approved {
-        grant
-            .as_ref()
-            .map(|grant| {
-                runtime
-                    .mount_control
-                    .apply_approved_grant(&grant.approved_mount_grant())
-            })
-            .unwrap_or_else(|| {
-                NamespaceMountApplication::unavailable("missing approved mount grant details")
-            })
-    } else {
-        NamespaceMountApplication {
-            namespace_applied: false,
-            namespace_error: None,
-        }
-    };
-    let native_grant = grant.as_ref().and_then(|grant| {
-        crate::HostMountGrant::new(
-            grant.namespace_path.clone(),
-            grant.host_path.clone(),
-            match grant.access {
-                ApprovedMountGrantAccess::ReadOnly => alan_kernel::Access::ReadOnly,
-                ApprovedMountGrantAccess::ReadWrite => alan_kernel::Access::ReadWrite,
-            },
-        )
-        .ok()
-    });
-    let namespace_applied = approved && namespace_application.namespace_applied;
-    let scratch_dir = runtime
-        .tool_execution
-        .execution_binding()
-        .map(|binding| binding.scratch_dir)
-        .or_else(|| runtime.runtime_scratch_dir.clone());
-    let tool_sandbox_projection_changed = namespace_applied
-        && native_grant.as_ref().is_some_and(|grant| {
-            runtime.mount_control.retain_host_mount(grant.clone());
-            scratch_dir
-                .clone()
-                .is_some_and(|scratch| runtime.mount_control.sync_tool_binding(scratch))
-        });
-    let tool_sandbox_applied = namespace_applied
-        && grant.as_ref().is_some_and(|grant| {
-            let binding = runtime.tool_execution.execution_binding();
-            binding.is_some_and(|binding| {
-                binding.host_mounts.iter().any(|mounted| {
-                    mounted.namespace_path == grant.namespace_path
-                        && normalize_mount_grant_host_path(&mounted.host_path)
-                            == normalize_mount_grant_host_path(&grant.host_path)
-                })
-            })
-        });
-    let status = if approved { "approved" } else { "rejected" };
+    let status = terminal.status.as_str();
+    let approved = status == "approved";
     let result = json!({
         "status": status,
         "approved": approved,
-        "live_applied": false,
-        "namespace_applied": namespace_application.namespace_applied,
-        "namespace_error": namespace_application.namespace_error,
-        "tool_sandbox_applied": tool_sandbox_applied,
-        "tool_sandbox_projection_changed": tool_sandbox_projection_changed,
-        "checkpoint_id": pending.checkpoint_id,
-        "checkpoint_type": pending.checkpoint_type,
-        "choice": choice_str,
-        "mount_request": mount_request,
+        "request_reference": pending.request_id,
+        "namespace_path": pending.namespace_path,
+        "access": pending.access,
+        "reason": pending.reason,
+        "label": pending.label,
+        "grant_reference": terminal.grant_reference,
+        "error": terminal.error,
     });
-
-    if approved {
-        runtime.machine.record_event(
-            "host_mount_grant",
-            host_mount_grant_event_payload(&pending.details, &result),
-        );
-    }
+    runtime.machine.record_event(
+        HOST_MOUNT_REQUEST_TERMINAL_EVENT_TYPE,
+        json!({
+            "request_id": pending.request_id,
+            "status": status,
+            "grant_reference": terminal.grant_reference,
+            "error": terminal.error,
+        }),
+    );
     runtime
         .machine
-        .add_tool_message(&tool_call_id, "request_mount", result);
+        .add_tool_message(&pending.tool_call_id, "request_mount", result);
 
     RuntimeOpAction::RunTurn {
         turn_kind: TurnRunKind::ResumeTurn,
         user_input: None,
         activate_task: false,
     }
-}
-
-fn validated_mount_escalation_request(
-    pending: &crate::approval::PendingConfirmation,
-) -> Option<(String, serde_json::Value)> {
-    if pending
-        .details
-        .get("kind")
-        .and_then(serde_json::Value::as_str)
-        != Some("mount_escalation")
-    {
-        return None;
-    }
-    if pending
-        .details
-        .get("tool_name")
-        .and_then(serde_json::Value::as_str)
-        != Some("request_mount")
-    {
-        return None;
-    }
-    let tool_call_id = pending
-        .details
-        .get("tool_call_id")
-        .and_then(serde_json::Value::as_str)
-        .map(str::trim)
-        .filter(|raw| !raw.is_empty())?
-        .to_string();
-    let mount_request = pending.details.get("mount_request")?;
-    let mount_request = super::mount_request_tool::parse_mount_request(mount_request)
-        .ok()?
-        .payload();
-    Some((tool_call_id, mount_request))
-}
-
-fn host_mount_grant_event_payload(
-    details: &serde_json::Value,
-    result: &serde_json::Value,
-) -> serde_json::Value {
-    let request = result
-        .get("mount_request")
-        .unwrap_or(&serde_json::Value::Null);
-    json!({
-        "namespace_path": request.get("namespace_path").and_then(serde_json::Value::as_str),
-        "host_path": request.get("host_path").and_then(serde_json::Value::as_str),
-        "access": request.get("access").and_then(serde_json::Value::as_str),
-        "reason": request.get("reason").and_then(serde_json::Value::as_str),
-        "checkpoint_id": result.get("checkpoint_id").and_then(serde_json::Value::as_str),
-        "approved": true,
-        "live_applied": false,
-        "namespace_applied": result.get("namespace_applied").and_then(serde_json::Value::as_bool),
-        "namespace_error": result.get("namespace_error").and_then(serde_json::Value::as_str),
-        "tool_sandbox_applied": result.get("tool_sandbox_applied").and_then(serde_json::Value::as_bool),
-        "tool_sandbox_projection_changed": result.get("tool_sandbox_projection_changed").and_then(serde_json::Value::as_bool),
-        "tool_call_id": details.get("tool_call_id").and_then(serde_json::Value::as_str),
-    })
-}
-
-struct MountGrantDetails {
-    namespace_path: String,
-    host_path: std::path::PathBuf,
-    access: ApprovedMountGrantAccess,
-    reason: String,
-}
-
-impl MountGrantDetails {
-    fn approved_mount_grant(&self) -> ApprovedMountGrant {
-        ApprovedMountGrant::new(
-            self.namespace_path.clone(),
-            self.host_path.clone(),
-            self.access,
-            self.reason.clone(),
-        )
-    }
-}
-
-fn parse_mount_grant_request(request: &serde_json::Value) -> Option<MountGrantDetails> {
-    let namespace_path = request.get("namespace_path")?.as_str()?.trim();
-    let host_path = request.get("host_path")?.as_str()?.trim();
-    let access = request.get("access")?.as_str()?.trim();
-    let reason = request.get("reason")?.as_str()?.trim();
-    if namespace_path.is_empty() || host_path.is_empty() || reason.is_empty() {
-        return None;
-    }
-    let access = match access {
-        "read_only" => ApprovedMountGrantAccess::ReadOnly,
-        "read_write" => ApprovedMountGrantAccess::ReadWrite,
-        _ => return None,
-    };
-    Some(MountGrantDetails {
-        namespace_path: namespace_path.to_string(),
-        host_path: std::path::PathBuf::from(host_path),
-        access,
-        reason: reason.to_string(),
-    })
-}
-
-fn normalize_mount_grant_host_path(path: &std::path::Path) -> std::path::PathBuf {
-    dunce::canonicalize(path).unwrap_or_else(|_| dunce::simplified(path).to_path_buf())
 }
 
 fn is_unknown_effect_confirmation(pending: &crate::approval::PendingConfirmation) -> bool {

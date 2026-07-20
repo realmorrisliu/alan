@@ -5,7 +5,10 @@ use crate::{
         child_runs::ChildRunRegistry,
         launch_config::AgentConfig,
         prompt_cache::PromptAssemblyCache,
-        transition::{NamespaceAgentFiles, NamespaceChildLaunch, NamespaceToolExecution},
+        transition::{
+            NamespaceAgentFiles, NamespaceChildLaunch, NamespaceHostMountRequests,
+            NamespaceToolExecution,
+        },
     },
 };
 use alan_agent_protocol::SpawnSpec;
@@ -15,6 +18,7 @@ pub(crate) struct DelegatedSkillRuntime<'a> {
     pub(super) machine: &'a mut AgentMachine,
     pub(super) prompt_cache: &'a mut PromptAssemblyCache,
     pub(super) agent_files: NamespaceAgentFiles,
+    pub(super) host_mount_requests: NamespaceHostMountRequests,
     child_runtime_inputs: DelegatedChildRuntimeInputs,
 }
 
@@ -32,12 +36,14 @@ impl<'a> DelegatedSkillRuntime<'a> {
         machine: &'a mut AgentMachine,
         prompt_cache: &'a mut PromptAssemblyCache,
         agent_files: NamespaceAgentFiles,
+        host_mount_requests: NamespaceHostMountRequests,
         child_runtime_inputs: DelegatedChildRuntimeInputs,
     ) -> Self {
         Self {
             machine,
             prompt_cache,
             agent_files,
+            host_mount_requests,
             child_runtime_inputs,
         }
     }

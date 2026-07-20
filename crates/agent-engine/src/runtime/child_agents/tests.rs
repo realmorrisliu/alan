@@ -407,7 +407,7 @@ impl MountGrantApplicatorFactory for RecordingMountGrantApplicatorFactory {
         &self,
         _pid: alan_kernel::Pid,
         live_namespace: alan_kernel::LiveNamespace,
-        _inherited_mount_paths: &[String],
+        _inherited_mount_references: &[String],
     ) -> Arc<dyn MountGrantApplicator> {
         *self
             .created

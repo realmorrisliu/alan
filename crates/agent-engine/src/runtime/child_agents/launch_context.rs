@@ -32,19 +32,26 @@ pub(super) fn build_child_launch_context(
 
     if !spec.has_handle(SpawnHandle::HostMounts) {
         let inherited_mounts = std::mem::take(&mut launch_context.host_mounts);
+        let projected_mount_paths = launch_context.take_projected_host_mount_paths();
         if let Some(cwd) = child_cwd.as_deref()
-            && inherited_mounts
+            && (inherited_mounts
                 .iter()
                 .any(|grant| grant.resolve_host_path(cwd).is_some())
+                || projected_mount_paths
+                    .iter()
+                    .any(|path| namespace_path_is_within(cwd, path)))
         {
             bail!(
                 "Child Agent Process launch cwd '{cwd}' requires the explicit host_mounts handle."
             );
         }
         if child_cwd.is_none()
-            && inherited_mounts
+            && (inherited_mounts
                 .iter()
                 .any(|grant| grant.resolve_host_path(&launch_context.cwd).is_some())
+                || projected_mount_paths
+                    .iter()
+                    .any(|path| namespace_path_is_within(&launch_context.cwd, path)))
         {
             launch_context.cwd = "/".to_string();
         }
@@ -54,6 +61,9 @@ pub(super) fn build_child_launch_context(
                 continue;
             }
             launch_context.namespace.unmount(&grant.namespace_path);
+        }
+        for path in projected_mount_paths {
+            launch_context.namespace.unmount(&path);
         }
     }
 
@@ -118,6 +128,13 @@ pub(super) fn build_child_launch_context(
             );
     }
     Ok(launch_context)
+}
+
+fn namespace_path_is_within(path: &str, mount: &str) -> bool {
+    path == mount
+        || path
+            .strip_prefix(mount)
+            .is_some_and(|suffix| suffix.starts_with('/'))
 }
 
 pub(super) fn validate_child_launch_contract(spec: &SpawnSpec) -> Result<Option<String>> {

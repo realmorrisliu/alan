@@ -738,7 +738,6 @@ final class AlanOSNativeCapabilityAdapter {
 
     private var observationTask: Task<Void, Never>?
     private var inFlight = Set<String>()
-    private var dismissedMountRequests = Set<String>()
     private var securityScopedDirectories: [String: URL] = [:]
 
     func start(attachment: AlanOSAttachmentController) {
@@ -757,7 +756,6 @@ final class AlanOSNativeCapabilityAdapter {
         observationTask?.cancel()
         observationTask = nil
         inFlight.removeAll()
-        dismissedMountRequests.removeAll()
         for url in securityScopedDirectories.values {
             url.stopAccessingSecurityScopedResource()
         }
@@ -770,13 +768,25 @@ final class AlanOSNativeCapabilityAdapter {
     }
 
     private func pollHostMounts(session: AlanOSAttachmentSession) async {
-        guard let data = try? await session.cat("/mnt/host-mount/request"),
-              let requests = try? JSONDecoder().decode([AlanHostMountNativeRequest].self, from: data)
-        else { return }
-        let pendingIDs = Set(requests.map(\.id))
-        dismissedMountRequests.formIntersection(pendingIDs)
+        guard let entries = try? await session.list("/mnt/host-mount/requests") else { return }
+        var requests: [AlanHostMountNativeRequest] = []
+        for requestID in entries where requestID != "clone" && requestID != "events" {
+            let base = "/mnt/host-mount/requests/\(requestID)"
+            guard let statusData = try? await session.cat("\(base)/status"),
+                  String(decoding: statusData, as: UTF8.self)
+                    .trimmingCharacters(in: .whitespacesAndNewlines) == "pending",
+                  let requestData = try? await session.cat("\(base)/request"),
+                  let request = try? JSONDecoder().decode(
+                    AlanHostMountNativeRequest.self,
+                    from: requestData
+                  ),
+                  request.id == requestID
+            else { continue }
+            requests.append(request)
+        }
+        requests.sort { alanAgentFileIDPrecedes($0.id, $1.id) }
         guard let request = requests.first(where: {
-            !inFlight.contains("mount:\($0.id)") && !dismissedMountRequests.contains($0.id)
+            !inFlight.contains("mount:\($0.id)")
         }) else { return }
         let key = "mount:\(request.id)"
         inFlight.insert(key)
@@ -790,7 +800,14 @@ final class AlanOSNativeCapabilityAdapter {
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = false
         guard panel.runModal() == .OK, let directory = panel.url else {
-            dismissedMountRequests.insert(request.id)
+            do {
+                try AlanOSHostCommandClient.cancelHostMount(
+                    status: session.status,
+                    requestID: request.id
+                )
+            } catch {
+                presentNativeError(title: "Directory access cancellation failed", error: error)
+            }
             return
         }
         let scoped = directory.startAccessingSecurityScopedResource()
@@ -1026,13 +1043,42 @@ private enum AlanOSHostCommandClient {
         request: AlanHostMountNativeRequest,
         directory: URL
     ) throws {
-        let descriptor = try connectUnixSocket(path: status.socket)
-        defer { Darwin.close(descriptor) }
         let command: [String: Any] = [
             "op": "approve_host_mount",
             "request_id": request.id,
             "host_path": directory.path,
         ]
+        let response = try send(status: status, command: command)
+        guard response["host_path"] == nil,
+              let grant = response["grant"] as? [String: Any],
+              grant["host_path"] == nil,
+              grant["id"] as? String == request.id,
+              grant["namespace_path"] as? String == request.namespacePath,
+              grant["access"] as? String == request.access,
+              grant["active"] as? Bool == true
+        else {
+            throw AlanOSAttachmentError.protocolFailure("Host Mount response was unbounded or mismatched.")
+        }
+    }
+
+    static func cancelHostMount(status: AlanOSHostStatus, requestID: String) throws {
+        let response = try send(status: status, command: [
+            "op": "cancel_host_mount",
+            "request_id": requestID,
+        ])
+        guard response["host_path"] == nil,
+              response["grant"] == nil || response["grant"] is NSNull
+        else {
+            throw AlanOSAttachmentError.protocolFailure("Host Mount cancellation returned authority.")
+        }
+    }
+
+    private static func send(
+        status: AlanOSHostStatus,
+        command: [String: Any]
+    ) throws -> [String: Any] {
+        let descriptor = try connectUnixSocket(path: status.socket)
+        defer { Darwin.close(descriptor) }
         let payload = try JSONSerialization.data(withJSONObject: command)
         var length = UInt32(payload.count).bigEndian
         var frame = Data(bytes: &length, count: MemoryLayout<UInt32>.size)
@@ -1054,16 +1100,7 @@ private enum AlanOSHostCommandClient {
         if let error = response["error"] as? String {
             throw AlanOSAttachmentError.hostUnavailable(error)
         }
-        guard response["host_path"] == nil,
-              let grant = response["grant"] as? [String: Any],
-              grant["host_path"] == nil,
-              grant["id"] as? String == request.id,
-              grant["namespace_path"] as? String == request.namespacePath,
-              grant["access"] as? String == request.access,
-              grant["active"] as? Bool == true
-        else {
-            throw AlanOSAttachmentError.protocolFailure("Host Mount response was unbounded or mismatched.")
-        }
+        return response
     }
 }
 

@@ -170,7 +170,15 @@ async fn test_cancel_current_task() {
     };
 
     let agent_files = state.agent_files();
-    let result = cancel_current_task(&mut state.machine, &agent_files, &mut emit).await;
+    let host_mount_requests = state.environment.host_mount_requests();
+    let result = cancel_current_task(
+        &mut state.machine,
+        &agent_files,
+        &host_mount_requests,
+        None,
+        &mut emit,
+    )
+    .await;
 
     assert!(result.is_ok());
     assert!(state.machine.pending_confirmation().is_none());

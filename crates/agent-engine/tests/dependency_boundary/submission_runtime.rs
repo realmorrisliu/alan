@@ -19,7 +19,9 @@ fn submission_handling_uses_only_explicit_runtime_inputs() {
     assert!(transition.contains("async fn handle_runtime_op"));
     assert!(transition.contains("Op::CompactWithOptions"));
     assert!(handlers.contains("handle_non_compaction_runtime_op"));
-    assert!(handlers.contains("runtime.mount_control"));
+    assert!(runtime.contains("host_mount_requests: NamespaceHostMountRequests"));
+    assert!(handlers.contains(".host_mount_requests"));
+    assert!(!handlers.contains("runtime.mount_control"));
     assert!(!handlers.contains("state.mount_control()"));
     assert!(!handlers.contains("state.environment"));
 }

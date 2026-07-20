@@ -12,9 +12,6 @@ pub const EFFECT_REPLAY_CHECKPOINT_TYPE: &str = "effect_replay_confirmation";
 pub const EFFECT_REPLAY_CHECKPOINT_PREFIX: &str = "effect_replay_";
 pub const EFFECT_REPLAY_CONTROL_KIND: &str = "effect_replay_confirmation";
 
-pub const MOUNT_ESCALATION_CHECKPOINT_TYPE: &str = "mount_escalation";
-pub const MOUNT_ESCALATION_CHECKPOINT_PREFIX: &str = "mount_escalation_";
-
 pub const RUNTIME_CONFIRMATION_CONTROL_SOURCE: &str = "runtime/submission_handlers";
 pub const RUNTIME_CONFIRMATION_CONTROL_VERSION: u64 = 1;
 

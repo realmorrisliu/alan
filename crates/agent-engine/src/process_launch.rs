@@ -6,7 +6,7 @@ use std::{
 };
 
 use alan_ap::InProcessTransport;
-use alan_kernel::{Access, Credentials, Namespace};
+use alan_kernel::{Access, Credentials, LiveNamespace, Namespace};
 use anyhow::{Result, ensure};
 
 use crate::skills::{
@@ -224,7 +224,16 @@ pub struct ProcessLaunchContext {
     pub package_references: Vec<ProcessPackageReference>,
     pub credentials: Credentials,
     pub cwd: String,
+    projected_host_mounts: Vec<ProjectedHostMount>,
+    live_namespace: Option<LiveNamespace>,
     retained_authorities: Vec<Arc<dyn Any + Send + Sync>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ProjectedHostMount {
+    grant_reference: String,
+    namespace_path: String,
+    access: Access,
 }
 
 impl std::fmt::Debug for ProcessLaunchContext {
@@ -237,6 +246,8 @@ impl std::fmt::Debug for ProcessLaunchContext {
             .field("package_references", &self.package_references)
             .field("credentials", &self.credentials)
             .field("cwd", &self.cwd)
+            .field("projected_host_mounts", &self.projected_host_mounts)
+            .field("live_namespace", &self.live_namespace.is_some())
             .field("retained_authorities", &self.retained_authorities.len())
             .finish()
     }
@@ -255,6 +266,8 @@ impl ProcessLaunchContext {
             package_references: Vec::new(),
             credentials,
             cwd: normalize_namespace_path(&cwd.into())?,
+            projected_host_mounts: Vec::new(),
+            live_namespace: None,
             retained_authorities: Vec::new(),
         })
     }
@@ -289,6 +302,58 @@ impl ProcessLaunchContext {
 
     pub fn add_package_reference(&mut self, reference: ProcessPackageReference) {
         self.package_references.push(reference);
+    }
+
+    /// Record one Host-Mount-Service-owned projection without retaining Host backing.
+    pub(crate) fn record_projected_host_mount(
+        &mut self,
+        grant_reference: String,
+        namespace_path: String,
+        access: Access,
+    ) {
+        if let Some(existing) = self
+            .projected_host_mounts
+            .iter_mut()
+            .find(|mount| mount.namespace_path == namespace_path)
+        {
+            existing.grant_reference = grant_reference;
+            existing.access = access;
+        } else {
+            self.projected_host_mounts.push(ProjectedHostMount {
+                grant_reference,
+                namespace_path,
+                access,
+            });
+        }
+    }
+
+    /// Opaque Host Mount references selected for explicit child delegation.
+    ///
+    /// References are metadata, not authority: Host Mount Service must also prove that the
+    /// spawning Process currently holds the corresponding namespace projection.
+    pub fn projected_host_mount_references(&self) -> Vec<String> {
+        self.projected_host_mounts
+            .iter()
+            .map(|mount| mount.grant_reference.clone())
+            .collect()
+    }
+
+    pub fn projected_host_mounts(&self) -> Vec<(String, Access)> {
+        self.projected_host_mounts
+            .iter()
+            .map(|mount| (mount.namespace_path.clone(), mount.access))
+            .collect()
+    }
+
+    pub fn has_host_mounts(&self) -> bool {
+        !self.host_mounts.is_empty() || !self.projected_host_mounts.is_empty()
+    }
+
+    pub(crate) fn take_projected_host_mount_paths(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.projected_host_mounts)
+            .into_iter()
+            .map(|mount| mount.namespace_path)
+            .collect()
     }
 
     /// Retain an opaque owner-issued authority for the lifetime of this Process context.
@@ -350,14 +415,24 @@ impl ProcessLaunchContext {
 
     pub fn child(&self) -> Self {
         Self {
-            namespace: self.namespace.child(),
+            namespace: self.namespace_snapshot(),
             host_mounts: self.host_mounts.clone(),
             descriptors: self.descriptors.clone(),
             package_references: self.package_references.clone(),
             credentials: self.credentials.clone(),
             cwd: self.cwd.clone(),
+            projected_host_mounts: self.projected_host_mounts.clone(),
+            live_namespace: None,
             retained_authorities: self.retained_authorities.clone(),
         }
+    }
+
+    /// Snapshot the current Process namespace, including live mount and revocation changes.
+    pub fn namespace_snapshot(&self) -> Namespace {
+        self.live_namespace
+            .as_ref()
+            .map(LiveNamespace::snapshot)
+            .unwrap_or_else(|| self.namespace.child())
     }
 
     /// Rebind inherited Process authority to a concrete live namespace and credentials.
@@ -369,6 +444,23 @@ impl ProcessLaunchContext {
             package_references: self.package_references.clone(),
             credentials,
             cwd: self.cwd.clone(),
+            projected_host_mounts: self.projected_host_mounts.clone(),
+            live_namespace: None,
+            retained_authorities: self.retained_authorities.clone(),
+        }
+    }
+
+    /// Rebind inherited Process authority to the live namespace owned by its Process.
+    pub fn rebound_live(&self, namespace: LiveNamespace, credentials: Credentials) -> Self {
+        Self {
+            namespace: namespace.snapshot(),
+            host_mounts: self.host_mounts.clone(),
+            descriptors: self.descriptors.clone(),
+            package_references: self.package_references.clone(),
+            credentials,
+            cwd: self.cwd.clone(),
+            projected_host_mounts: self.projected_host_mounts.clone(),
+            live_namespace: Some(namespace),
             retained_authorities: self.retained_authorities.clone(),
         }
     }
@@ -462,6 +554,30 @@ mod tests {
         assert_eq!(child.host_mounts, context.host_mounts);
         assert_eq!(child.namespace.describe(), context.namespace.describe());
         assert_eq!(child.cwd, "/");
+    }
+
+    #[test]
+    fn latest_projected_grant_reference_replaces_the_same_namespace_path() {
+        let mut context = ProcessLaunchContext::root();
+        context.record_projected_host_mount(
+            "grant-old".to_string(),
+            "/mnt/project".to_string(),
+            Access::ReadOnly,
+        );
+        context.record_projected_host_mount(
+            "grant-latest".to_string(),
+            "/mnt/project".to_string(),
+            Access::ReadWrite,
+        );
+
+        assert_eq!(
+            context.projected_host_mount_references(),
+            vec!["grant-latest".to_string()]
+        );
+        assert_eq!(
+            context.projected_host_mounts(),
+            vec![("/mnt/project".to_string(), Access::ReadWrite)]
+        );
     }
 
     #[test]

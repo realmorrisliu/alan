@@ -5,10 +5,16 @@ use crate::approval::{PendingConfirmation, PendingStructuredInputRequest};
 use crate::skills::ActiveSkillEnvelope;
 use crate::tape::ContentPart;
 use alan_agent_protocol::{PlanItem, Submission};
+use serde::{Deserialize, Serialize};
 
 const MAX_QUEUED_NEXT_TURN_INPUTS: usize = 16;
 const AUTO_MID_TURN_COMPACTION_LIMIT: u32 = 2;
 const AUTO_MID_TURN_COMPACTION_MIN_GROWTH_TOKENS: usize = 256;
+
+pub(crate) const HOST_MOUNT_REQUEST_WAITING_EVENT_TYPE: &str = "host_mount_request_waiting";
+pub(crate) const HOST_MOUNT_REQUEST_WAIT_CLEARED_EVENT_TYPE: &str =
+    "host_mount_request_wait_cleared";
+pub(crate) const HOST_MOUNT_REQUEST_TERMINAL_EVENT_TYPE: &str = "host_mount_request_terminal";
 
 pub(crate) fn is_auto_mid_turn_compaction_emergency(
     estimated_prompt_tokens: usize,
@@ -23,6 +29,21 @@ pub(crate) fn is_auto_mid_turn_compaction_emergency(
 pub(crate) enum PendingYield {
     Confirmation(PendingConfirmation),
     StructuredInput(PendingStructuredInputRequest),
+    HostMount(PendingHostMountRequest),
+}
+
+/// Durable logical wait state for one Host Mount Service request.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct PendingHostMountRequest {
+    pub(crate) request_id: String,
+    pub(crate) tool_call_id: String,
+    pub(crate) namespace_path: String,
+    pub(crate) access: String,
+    pub(crate) reason: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) label: Option<String>,
+    #[serde(default)]
+    pub(crate) request_events_offset: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -146,6 +167,24 @@ impl AgentMachine {
     }
 
     pub(crate) fn reset_turn(&mut self) {
+        let cleared_host_mount_requests = self
+            .transition_state
+            .pending
+            .values()
+            .filter_map(|pending| match pending {
+                PendingYield::HostMount(pending) => Some(pending.request_id.clone()),
+                PendingYield::Confirmation(_) | PendingYield::StructuredInput(_) => None,
+            })
+            .collect::<Vec<_>>();
+        for request_id in cleared_host_mount_requests {
+            self.record_event(
+                HOST_MOUNT_REQUEST_WAIT_CLEARED_EVENT_TYPE,
+                serde_json::json!({
+                    "request_id": request_id,
+                    "reason": "turn_reset",
+                }),
+            );
+        }
         self.transition_state.pending.clear();
         self.transition_state.pending_tool_replay_batches.clear();
         self.transition_state.pending_order.clear();
@@ -485,6 +524,21 @@ impl AgentMachine {
             .pending
             .insert(key.clone(), PendingYield::StructuredInput(pending));
         push_latest_key(&mut self.transition_state.pending_order, key);
+    }
+
+    pub(crate) fn set_host_mount_request(&mut self, pending: PendingHostMountRequest) {
+        let key = pending.request_id.clone();
+        self.transition_state
+            .pending
+            .insert(key.clone(), PendingYield::HostMount(pending));
+        push_latest_key(&mut self.transition_state.pending_order, key);
+    }
+
+    pub(crate) fn pending_host_mount(&self, request_id: &str) -> Option<PendingHostMountRequest> {
+        match self.transition_state.pending.get(request_id) {
+            Some(PendingYield::HostMount(pending)) => Some(pending.clone()),
+            _ => None,
+        }
     }
 
     /// Unified lookup: take any pending item by request_id.

@@ -476,11 +476,27 @@ async fn root_agent_is_replaced_without_pid_continuity() {
             .unwrap()
             .contains("channel=test")
     );
-    assert!(
-        String::from_utf8(shell.cat("/mnt/host-mount/status").await.unwrap())
-            .unwrap()
-            .contains("active=0")
+    assert_eq!(
+        shell.ls("/mnt/host-mount").await.unwrap(),
+        vec![
+            "requests".to_string(),
+            "grants".to_string(),
+            "events".to_string(),
+        ]
     );
+    assert_eq!(
+        shell.ls("/mnt/host-mount/requests").await.unwrap(),
+        vec!["clone".to_string(), "events".to_string()]
+    );
+    for retired in ["request", "projection", "approval", "status"] {
+        assert!(
+            shell
+                .stat(&format!("/mnt/host-mount/{retired}"))
+                .await
+                .is_err(),
+            "retired flat Host Mount surface {retired} must be absent"
+        );
+    }
     assert!(
         shell
             .ls("/mnt/llm/connections")

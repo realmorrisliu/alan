@@ -7,9 +7,7 @@ use serde_json::json;
 
 use crate::{
     agent_machine::NormalizedToolCall,
-    approval::{
-        MOUNT_ESCALATION_CHECKPOINT_TYPE, PendingConfirmation, append_skill_permission_hints,
-    },
+    approval::{PendingConfirmation, append_skill_permission_hints},
     llm::ToolDefinition,
 };
 
@@ -306,9 +304,6 @@ pub(super) fn parse_confirmation_request(
         .filter(|v| !v.trim().is_empty())
         .unwrap_or("confirmation")
         .to_string();
-    if checkpoint_type == MOUNT_ESCALATION_CHECKPOINT_TYPE {
-        return None;
-    }
     let summary = args.get("summary")?.as_str()?.trim().to_string();
     if summary.is_empty() {
         return None;

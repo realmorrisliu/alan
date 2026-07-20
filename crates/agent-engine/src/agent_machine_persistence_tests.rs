@@ -522,6 +522,51 @@ async fn test_flush_waits_for_queued_rollout_writes() {
 }
 
 #[tokio::test]
+async fn test_reset_turn_persists_host_mount_wait_clear_after_waiting_event() {
+    let temp_dir = TempDir::new_in(std::env::temp_dir()).unwrap();
+    let mut machine =
+        AgentMachine::new_with_recorder_in_dir("/proc/test", "test-model", temp_dir.path())
+            .await
+            .unwrap();
+    let pending = PendingHostMountRequest {
+        request_id: "request-42".to_string(),
+        tool_call_id: "call-mount".to_string(),
+        namespace_path: "/mnt/project".to_string(),
+        access: "read_only".to_string(),
+        reason: "Read project files".to_string(),
+        label: Some("Project".to_string()),
+        request_events_offset: 0,
+    };
+    machine.record_event(
+        HOST_MOUNT_REQUEST_WAITING_EVENT_TYPE,
+        serde_json::to_value(&pending).unwrap(),
+    );
+    machine.set_host_mount_request(pending);
+
+    machine.reset_turn();
+    machine.flush().await;
+
+    let items = RolloutRecorder::load_history(machine.rollout_path().unwrap())
+        .await
+        .unwrap();
+    let events = items
+        .into_iter()
+        .filter_map(|item| match item {
+            RolloutItem::Event(event) => Some(event),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[0].event_type, HOST_MOUNT_REQUEST_WAITING_EVENT_TYPE);
+    assert_eq!(
+        events[1].event_type,
+        HOST_MOUNT_REQUEST_WAIT_CLEARED_EVENT_TYPE
+    );
+    assert_eq!(events[1].payload["request_id"], "request-42");
+    assert_eq!(events[1].payload["reason"], "turn_reset");
+}
+
+#[tokio::test]
 async fn test_rollback_records_non_durable_audit_marker() {
     let temp_dir = TempDir::new_in(std::env::temp_dir()).unwrap();
 

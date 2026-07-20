@@ -46,6 +46,17 @@ impl ToolExecutionBinding {
         }
     }
 
+    /// Create a binding whose native Host projection will be supplied by the Host adapter.
+    pub fn awaiting_host_projection(namespace_cwd: PathBuf, scratch_dir: PathBuf) -> Self {
+        Self {
+            cwd: scratch_dir.clone(),
+            namespace_cwd,
+            host_mounts: Vec::new(),
+            scratch_dir,
+            sandbox_spec: None,
+        }
+    }
+
     /// Create a native adapter binding from the same Process Launch Context
     /// that owns namespace reachability and sandbox authority.
     pub fn from_launch_context(
@@ -123,12 +134,16 @@ impl ToolExecutionBinding {
         }
 
         let namespace_cwd = self.namespace_cwd.to_string_lossy();
-        let current = self.host_mounts.iter().find(|grant| {
-            namespace_cwd == grant.namespace_path
-                || namespace_cwd
-                    .strip_prefix(&grant.namespace_path)
-                    .is_some_and(|suffix| suffix.starts_with('/'))
-        });
+        let current = self
+            .host_mounts
+            .iter()
+            .filter(|grant| {
+                namespace_cwd == grant.namespace_path
+                    || namespace_cwd
+                        .strip_prefix(&grant.namespace_path)
+                        .is_some_and(|suffix| suffix.starts_with('/'))
+            })
+            .max_by_key(|grant| grant.namespace_path.len());
         let selected = current
             .or_else(|| {
                 self.host_mounts
@@ -492,5 +507,39 @@ mod tests {
         let execution = sandbox.exec("pwd", &ctx.cwd).await.unwrap();
         assert_eq!(execution.exit_code, 0, "{execution:?}");
         assert_eq!(ctx.project_text(execution.stdout.trim()), "/mnt/project");
+    }
+
+    #[test]
+    fn binding_uses_longest_namespace_prefix_for_overlapping_mounts() {
+        let project = tempfile::tempdir().unwrap();
+        let docs = tempfile::tempdir().unwrap();
+        let mut binding = ToolExecutionBinding::awaiting_host_projection(
+            PathBuf::from("/mnt/project/docs/guides"),
+            PathBuf::from("/tmp/scratch"),
+        );
+
+        binding
+            .apply_host_mount(
+                crate::HostMountGrant::new(
+                    "/mnt/project",
+                    project.path(),
+                    alan_kernel::Access::ReadWrite,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        binding
+            .apply_host_mount(
+                crate::HostMountGrant::new(
+                    "/mnt/project/docs",
+                    docs.path(),
+                    alan_kernel::Access::ReadOnly,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+
+        assert_eq!(binding.namespace_cwd, Path::new("/mnt/project/docs/guides"));
+        assert_eq!(binding.cwd, docs.path().join("guides"));
     }
 }

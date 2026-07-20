@@ -1,6 +1,130 @@
 use super::*;
 
 #[test]
+fn test_load_from_rollout_recovers_only_unsettled_logical_host_mount_waits() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let temp_dir = TempDir::new_in(std::env::temp_dir()).unwrap();
+        let rollout_path = temp_dir.path().join("rollout-host-mount-wait.jsonl");
+        let pending = PendingHostMountRequest {
+            request_id: "request-42".to_string(),
+            tool_call_id: "call-mount".to_string(),
+            namespace_path: "/mnt/project".to_string(),
+            access: "read_only".to_string(),
+            reason: "Read project files".to_string(),
+            label: Some("Project".to_string()),
+            request_events_offset: 137,
+        };
+        let mut items = vec![
+            RolloutItem::AgentMachineMeta(AgentMachineMeta {
+                rollout_id: "test-host-mount-wait".to_string(),
+                process_path: "/proc/test".to_string(),
+                started_at: "2026-07-19T00:00:00Z".to_string(),
+                cwd: "/mnt/project".to_string(),
+                model: "test-model".to_string(),
+                reasoning_effort: None,
+            }),
+            RolloutItem::Event(EventRecord {
+                event_type: HOST_MOUNT_REQUEST_WAITING_EVENT_TYPE.to_string(),
+                payload: serde_json::to_value(&pending).unwrap(),
+                timestamp: "2026-07-19T00:00:01Z".to_string(),
+            }),
+        ];
+        let waiting_payload = serde_json::to_string(&items[1]).unwrap();
+        assert!(!waiting_payload.contains("host_path"));
+        tokio::fs::write(
+            &rollout_path,
+            items
+                .iter()
+                .map(serde_json::to_string)
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap()
+                .join("\n")
+                + "\n",
+        )
+        .await
+        .unwrap();
+
+        let recovered = AgentMachine::load_from_rollout_in_dir(
+            &rollout_path,
+            "/proc/restarted",
+            "test-model",
+            temp_dir.path(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            recovered.pending_host_mount("request-42"),
+            Some(pending.clone())
+        );
+
+        items.push(RolloutItem::Event(EventRecord {
+            event_type: HOST_MOUNT_REQUEST_TERMINAL_EVENT_TYPE.to_string(),
+            payload: serde_json::json!({
+                "request_id": "request-42",
+                "status": "rejected",
+                "error": "User declined"
+            }),
+            timestamp: "2026-07-19T00:00:02Z".to_string(),
+        }));
+        tokio::fs::write(
+            &rollout_path,
+            items
+                .iter()
+                .map(serde_json::to_string)
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap()
+                .join("\n")
+                + "\n",
+        )
+        .await
+        .unwrap();
+        let settled = AgentMachine::load_from_rollout_in_dir(
+            &rollout_path,
+            "/proc/restarted-again",
+            "test-model",
+            temp_dir.path(),
+        )
+        .await
+        .unwrap();
+        assert!(settled.pending_host_mount("request-42").is_none());
+        assert!(!settled.has_pending_interaction());
+
+        items.pop();
+        items.push(RolloutItem::Event(EventRecord {
+            event_type: HOST_MOUNT_REQUEST_WAIT_CLEARED_EVENT_TYPE.to_string(),
+            payload: serde_json::json!({
+                "request_id": "request-42",
+                "reason": "turn_reset"
+            }),
+            timestamp: "2026-07-19T00:00:02Z".to_string(),
+        }));
+        tokio::fs::write(
+            &rollout_path,
+            items
+                .iter()
+                .map(serde_json::to_string)
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap()
+                .join("\n")
+                + "\n",
+        )
+        .await
+        .unwrap();
+        let cleared = AgentMachine::load_from_rollout_in_dir(
+            &rollout_path,
+            "/proc/restarted-after-turn-reset",
+            "test-model",
+            temp_dir.path(),
+        )
+        .await
+        .unwrap();
+        assert!(cleared.pending_host_mount("request-42").is_none());
+        assert!(!cleared.has_pending_interaction());
+    });
+}
+
+#[test]
 fn test_load_from_rollout_prefers_rich_message_payload_when_available() {
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(async {

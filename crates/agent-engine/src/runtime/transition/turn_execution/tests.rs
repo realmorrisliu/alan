@@ -943,6 +943,7 @@ use support::*;
 
 mod namespace_generation;
 
+mod host_mount_evidence;
 mod turn_execution;
 
 mod confirmation;

@@ -75,7 +75,6 @@ fn auto_approve_boundary_matches_human_in_the_end_posture() {
         tool_name: "request_mount",
         arguments: &serde_json::json!({
             "namespace_path": "/mnt/project",
-            "host_path": "/Users/morris/Developer/alan",
             "access": "read_only",
             "reason": "Need project files"
         }),
@@ -248,38 +247,6 @@ fn policy_rule_match_path_prefix_matches_absolute_write_path() {
 }
 
 #[test]
-fn policy_rule_match_path_prefix_matches_request_mount_host_path() {
-    let engine = PolicyEngine {
-        rules: vec![PolicyRule {
-            id: Some("deny-private-mount".to_string()),
-            tool: Some("request_mount".to_string()),
-            capability: Some("write".to_string()),
-            match_command: None,
-            match_path_prefix: Some("/Users/me/private".to_string()),
-            action: PolicyAction::Deny,
-            reason: Some("private host mounts are not allowed".to_string()),
-        }],
-        default_action: PolicyAction::Allow,
-        source: "test",
-    };
-
-    let decision = engine.evaluate(PolicyContext {
-        tool_name: "request_mount",
-        arguments: &json!({
-            "namespace_path": "/mnt/private",
-            "host_path": "/Users/me/private/project",
-            "access": "read_only",
-            "reason": "Need files"
-        }),
-        capability: alan_agent_protocol::ToolCapability::Write,
-        cwd: None,
-    });
-
-    assert_eq!(decision.action, PolicyAction::Deny);
-    assert_eq!(decision.rule_id.as_deref(), Some("deny-private-mount"));
-}
-
-#[test]
 fn policy_rule_match_path_prefix_matches_request_mount_namespace_path() {
     let engine = PolicyEngine {
         rules: vec![PolicyRule {
@@ -299,7 +266,6 @@ fn policy_rule_match_path_prefix_matches_request_mount_namespace_path() {
         tool_name: "request_mount",
         arguments: &json!({
             "namespace_path": "/mnt/private/project",
-            "host_path": "/Users/me/project",
             "access": "read_only",
             "reason": "Need files"
         }),

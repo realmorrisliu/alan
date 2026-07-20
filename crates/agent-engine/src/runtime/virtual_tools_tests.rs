@@ -20,7 +20,9 @@ use crate::{
             parse_confirmation_request, parse_plan_status, parse_plan_update,
             parse_structured_user_input_request,
         },
-        mount_request_tool::{MountRequestAccess, parse_mount_request},
+        mount_request_tool::{
+            MountRequestAccess, durable_mount_request_arguments, parse_mount_request,
+        },
         transition::NamespaceActionRecord,
         virtual_tool::VirtualToolOutcome,
     },
@@ -51,6 +53,11 @@ fn namespace_environment_for_virtual_tool_test(
     namespace.mount(
         "/agent/1",
         InProcessTransport::new(agentfs),
+        Access::ReadWrite,
+    );
+    namespace.mount(
+        "/mnt/host-mount",
+        InProcessTransport::new(crate::runtime::test_host_mount::TestHostMountFs::new()),
         Access::ReadWrite,
     );
     let root = InProcessTransport::new(Arc::new(MountFs::new(namespace)));

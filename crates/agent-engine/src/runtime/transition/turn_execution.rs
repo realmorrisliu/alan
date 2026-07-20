@@ -183,6 +183,7 @@ where
     }
 
     let agent_files = state.agent_files();
+    let host_mount_requests = state.environment.host_mount_requests();
     if matches!(turn_kind, TurnRunKind::NewTurn) && user_input.is_none() {
         let input = agent_files
             .read_next_input()
@@ -232,7 +233,15 @@ where
             warn!("Context compaction timeout - continuing without compaction");
         }
     }
-    if check_turn_cancelled(&mut state.machine, &agent_files, emit, cancel).await? {
+    if check_turn_cancelled(
+        &mut state.machine,
+        &agent_files,
+        &host_mount_requests,
+        emit,
+        cancel,
+    )
+    .await?
+    {
         return Ok(TurnExecutionOutcome::Finished);
     }
 
@@ -317,7 +326,15 @@ where
     let mut response_guardrails = ResponseGuardrails::default();
     let mut pending_guardrail_instruction: Option<String> = None;
     loop {
-        if check_turn_cancelled(&mut state.machine, &agent_files, emit, cancel).await? {
+        if check_turn_cancelled(
+            &mut state.machine,
+            &agent_files,
+            &host_mount_requests,
+            emit,
+            cancel,
+        )
+        .await?
+        {
             return Ok(TurnExecutionOutcome::Finished);
         }
         let provider = generation.provider();
@@ -396,7 +413,14 @@ where
             Ok(response) => response,
             Err(error) => {
                 if cancel.is_cancelled()
-                    && check_turn_cancelled(&mut state.machine, &agent_files, emit, cancel).await?
+                    && check_turn_cancelled(
+                        &mut state.machine,
+                        &agent_files,
+                        &host_mount_requests,
+                        emit,
+                        cancel,
+                    )
+                    .await?
                 {
                     return Ok(TurnExecutionOutcome::Finished);
                 }
@@ -467,7 +491,15 @@ where
                     ),
                 )
                 .await?;
-                if check_turn_cancelled(&mut state.machine, &agent_files, emit, cancel).await? {
+                if check_turn_cancelled(
+                    &mut state.machine,
+                    &agent_files,
+                    &host_mount_requests,
+                    emit,
+                    cancel,
+                )
+                .await?
+                {
                     return Ok(TurnExecutionOutcome::Finished);
                 }
                 continue;
@@ -508,7 +540,13 @@ where
                 .map(|tc| crate::tape::ToolRequest {
                     id: tc.id.clone(),
                     name: tc.name.clone(),
-                    arguments: tc.arguments.clone(),
+                    arguments: if tc.name == "request_mount" {
+                        crate::runtime::mount_request_tool::durable_mount_request_arguments(
+                            &tc.arguments,
+                        )
+                    } else {
+                        tc.arguments.clone()
+                    },
                 })
                 .collect();
             state
@@ -569,7 +607,15 @@ where
                         ),
                     )
                     .await?;
-                    if check_turn_cancelled(&mut state.machine, &agent_files, emit, cancel).await? {
+                    if check_turn_cancelled(
+                        &mut state.machine,
+                        &agent_files,
+                        &host_mount_requests,
+                        emit,
+                        cancel,
+                    )
+                    .await?
+                    {
                         return Ok(TurnExecutionOutcome::Finished);
                     }
                 }

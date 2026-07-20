@@ -32,9 +32,18 @@ grep -Fq 'writeDocument("/proc/\(reference.pid)/ctl"' "$ATTACHMENT_SOURCE"
 grep -Fq 'writeDocument("/agent/\(reference.pid)/machine/ctl"' "$ATTACHMENT_SOURCE"
 grep -Fq '.alert("Stop Agent Process?"' "$AGENT_CONTENT_SOURCE"
 grep -Fq 'Closing this view only detaches.' "$AGENT_CONTENT_SOURCE"
-grep -Fq 'session.cat("/mnt/host-mount/request")' "$ATTACHMENT_SOURCE"
+grep -Fq 'session.list("/mnt/host-mount/requests")' "$ATTACHMENT_SOURCE"
+if grep -Fq 'session.cat("/mnt/host-mount/request")' "$ATTACHMENT_SOURCE"; then
+    echo "Alan for macOS must not poll the retired Host Mount request file." >&2
+    exit 1
+fi
 grep -q 'let panel = NSOpenPanel()' "$ATTACHMENT_SOURCE"
 grep -q 'approveHostMount(' "$ATTACHMENT_SOURCE"
+grep -q 'cancelHostMount(' "$ATTACHMENT_SOURCE"
+if grep -q 'dismissedMountRequests' "$ATTACHMENT_SOURCE"; then
+    echo "Dismissed native Host Mount panels must settle the service request." >&2
+    exit 1
+fi
 grep -Fq 'session.cat("/mnt/connections/native-requests")' "$ATTACHMENT_SOURCE"
 grep -Fq 'host-keychain:\(channel):\(credentialID)' "$ATTACHMENT_SOURCE"
 grep -q 'ALAN_NATIVE_CONNECTION_REQUEST_ID' "$ATTACHMENT_SOURCE"

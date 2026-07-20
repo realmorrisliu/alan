@@ -810,7 +810,6 @@ fn mount_changes_use_only_the_narrow_namespace_mount_control() {
     for required_field in [
         "launch_context: &'a mut Option<crate::ProcessLaunchContext>",
         "mount_grant_applicator: Option<Arc<dyn MountGrantApplicator>>",
-        "tool_process_context: Option<NamespaceToolProcessContext>",
     ] {
         assert!(
             mount_control.contains(required_field),
@@ -821,6 +820,7 @@ fn mount_changes_use_only_the_narrow_namespace_mount_control() {
         "root: InProcessTransport",
         "agent_path",
         "llm_connection",
+        "tool_process_context",
         "child_run_registry",
         "child_process_assembler",
     ] {

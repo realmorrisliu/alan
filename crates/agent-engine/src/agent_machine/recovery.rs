@@ -1,14 +1,47 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
 use alan_agent_protocol::{CompactionAttemptSnapshot, MemoryFlushAttemptSnapshot};
 use tracing::error;
 
-use super::{AgentMachine, ResponsesContinuationState, runtime_control};
+use super::{
+    AgentMachine, HOST_MOUNT_REQUEST_TERMINAL_EVENT_TYPE,
+    HOST_MOUNT_REQUEST_WAIT_CLEARED_EVENT_TYPE, HOST_MOUNT_REQUEST_WAITING_EVENT_TYPE,
+    PendingHostMountRequest, ResponsesContinuationState, runtime_control,
+};
 use crate::rollout::{CompactedItem, EffectRecord, EventRecord, RolloutItem, RolloutRecorder};
 use crate::tape::ContextItem;
 
 impl AgentMachine {
+    fn pending_host_mounts_from_event_records(
+        event_records: &[EventRecord],
+    ) -> Vec<PendingHostMountRequest> {
+        let mut pending = BTreeMap::new();
+        for event in event_records {
+            match event.event_type.as_str() {
+                HOST_MOUNT_REQUEST_WAITING_EVENT_TYPE => {
+                    if let Ok(request) =
+                        serde_json::from_value::<PendingHostMountRequest>(event.payload.clone())
+                    {
+                        pending.insert(request.request_id.clone(), request);
+                    }
+                }
+                HOST_MOUNT_REQUEST_TERMINAL_EVENT_TYPE
+                | HOST_MOUNT_REQUEST_WAIT_CLEARED_EVENT_TYPE => {
+                    if let Some(request_id) = event
+                        .payload
+                        .get("request_id")
+                        .and_then(serde_json::Value::as_str)
+                    {
+                        pending.remove(request_id);
+                    }
+                }
+                _ => {}
+            }
+        }
+        pending.into_values().collect()
+    }
+
     fn responses_continuation_from_event_records(
         event_records: &[EventRecord],
     ) -> Option<ResponsesContinuationState> {
@@ -295,6 +328,9 @@ impl AgentMachine {
         machine.latest_memory_flush_attempt = recovered_latest_memory_flush_attempt;
         machine.responses_continuation =
             Self::responses_continuation_from_event_records(&event_records);
+        for pending in Self::pending_host_mounts_from_event_records(&event_records) {
+            machine.set_host_mount_request(pending);
+        }
 
         for effect in &effect_records {
             machine

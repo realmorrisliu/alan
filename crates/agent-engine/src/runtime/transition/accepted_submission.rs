@@ -69,6 +69,7 @@ where
     broker.clear().await;
     let _ = state.machine.clear_buffered_inband_submissions();
     let agent_files = state.agent_files();
+    let host_mount_requests = state.environment.host_mount_requests();
     handle_submission_with_cancel_and_steering(
         state,
         initial_submission,
@@ -80,9 +81,17 @@ where
 
     loop {
         let next_submission = if state.machine.has_pending_interaction() {
+            let RuntimeLoopState {
+                machine,
+                environment,
+                ..
+            } = state;
+            let mut mount_control = environment.mount_control();
             next_pending_interaction_submission(
-                &mut state.machine,
+                machine,
                 &agent_files,
+                &host_mount_requests,
+                &mut mount_control,
                 broker,
                 emit,
                 cancel,

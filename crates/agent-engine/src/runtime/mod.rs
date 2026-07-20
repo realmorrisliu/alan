@@ -26,6 +26,8 @@ mod prompt_cache;
 mod response_guardrails;
 mod steering_queue;
 mod submission_handlers;
+#[cfg(test)]
+pub(crate) mod test_host_mount;
 mod tool_authorization;
 mod tool_batch;
 mod tool_effect_lifecycle;

@@ -9,6 +9,7 @@ mod agent_files;
 mod child_launch;
 mod client;
 mod generation;
+mod host_mount_requests;
 mod mount_control;
 mod process_files;
 mod tool_execution;
@@ -133,7 +134,7 @@ pub struct NamespaceToolActionOutput {
     pub exit_code: i32,
 }
 
-/// Access mode for an approved host mount grant.
+/// Access mode for a transitional, pre-authorized Host-backed launch declaration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ApprovedMountGrantAccess {
     ReadOnly,
@@ -149,7 +150,10 @@ impl ApprovedMountGrantAccess {
     }
 }
 
-/// A host mount grant that has already passed the approval boundary.
+/// Transitional Host backing used only while pre-authorized launch mounts move to handles.
+///
+/// The file-native `request_mount` path never constructs or observes this type. Host Mount Service
+/// owns that path's requests and status; the next ownership slice removes this launch-only record.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ApprovedMountGrant {
     pub namespace_path: String,
@@ -174,25 +178,25 @@ impl ApprovedMountGrant {
     }
 }
 
-/// Host-provided hook for applying approved mount grants to a live namespace.
+/// Transitional Host hook for applying pre-authorized launch declarations.
 ///
-/// The engine owns the approval flow, but the host composition root owns
-/// host-backed file-server construction. Implementations must keep hostfs
-/// dependencies out of `alan-agent-engine`. A successful call returns the full
-/// post-application namespace snapshot so later child launches inherit the same
-/// view without exposing Host file-server construction to the engine.
+/// Host Mount Service owns runtime request approval and live projection. This hook remains only for
+/// launch-time Agent Definition backing until the handle/projection slice replaces it.
 pub trait MountGrantApplicator: std::fmt::Debug + Send + Sync {
     fn apply_mount_grant(&self, grant: &ApprovedMountGrant) -> Result<alan_kernel::Namespace>;
 }
 
 /// Host-provided factory that can build a mount grant applicator once the engine
 /// has created the live namespace handle for a runtime.
+///
+/// Inherited mount references are opaque metadata. The Host implementation must also verify that
+/// the spawning Process currently holds each referenced projection before delegating it.
 pub trait MountGrantApplicatorFactory: std::fmt::Debug + Send + Sync {
     fn create(
         &self,
         pid: alan_kernel::Pid,
         live_namespace: alan_kernel::LiveNamespace,
-        inherited_mount_paths: &[String],
+        inherited_mount_references: &[String],
     ) -> Arc<dyn MountGrantApplicator>;
 
     fn tool_execution_authority(&self) -> Option<Arc<dyn crate::tools::ToolExecutionAuthority>> {
@@ -268,6 +272,14 @@ pub(crate) struct NamespaceProcessFiles {
     agent_path: String,
 }
 
+/// Narrow aP handle for logical Host Mount Service requests and status.
+#[derive(Clone)]
+pub(crate) struct NamespaceHostMountRequests {
+    root: InProcessTransport,
+}
+
+pub(crate) use host_mount_requests::{HostMountTerminalResult, HostMountTerminalStatus};
+
 /// Narrow handle for child Agent Process launch capabilities.
 #[derive(Clone)]
 pub(crate) struct NamespaceChildLaunch {
@@ -280,7 +292,6 @@ pub(crate) struct NamespaceChildLaunch {
 pub struct NamespaceMountControl<'a> {
     launch_context: &'a mut Option<crate::ProcessLaunchContext>,
     mount_grant_applicator: Option<Arc<dyn MountGrantApplicator>>,
-    tool_process_context: Option<NamespaceToolProcessContext>,
 }
 
 /// Narrow handle for Tool package discovery, policy capability, and execution.
@@ -360,6 +371,12 @@ impl NamespaceRuntimeEnvironment {
         }
     }
 
+    pub(crate) fn host_mount_requests(&self) -> NamespaceHostMountRequests {
+        NamespaceHostMountRequests {
+            root: self.root.clone(),
+        }
+    }
+
     pub(crate) fn child_launch(&self) -> NamespaceChildLaunch {
         NamespaceChildLaunch {
             llm_connection: self.llm_connection.clone(),
@@ -373,7 +390,6 @@ impl NamespaceRuntimeEnvironment {
         NamespaceMountControl {
             launch_context: &mut self.launch_context,
             mount_grant_applicator: self.mount_grant_applicator.clone(),
-            tool_process_context: self.tool_process_context.clone(),
         }
     }
 

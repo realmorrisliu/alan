@@ -1,15 +1,11 @@
 mod runtime_inputs;
 
-use alan_agent_protocol::{AdaptivePresentationHint, ConfirmationYieldPayload, Event, YieldKind};
+use alan_agent_protocol::{CustomYieldPayload, Event, YieldKind};
 use anyhow::Result;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::path::{Component, Path, PathBuf};
 
-use crate::approval::{
-    MOUNT_ESCALATION_CHECKPOINT_PREFIX, MOUNT_ESCALATION_CHECKPOINT_TYPE, PendingConfirmation,
-    append_skill_permission_hints,
-};
+use crate::agent_machine::{HOST_MOUNT_REQUEST_WAITING_EVENT_TYPE, PendingHostMountRequest};
 use crate::llm::ToolDefinition;
 
 use super::tool_policy::{ToolPolicyDecision, evaluate_tool_policy};
@@ -19,7 +15,15 @@ use crate::agent_machine::NormalizedToolCall;
 
 pub(crate) use runtime_inputs::MountRequestRuntime;
 
-const RESERVED_MOUNT_NAMESPACE_ROOTS: &[&str] = &["llm", "mem", "route"];
+const RESERVED_MOUNT_NAMESPACE_ROOTS: &[&str] = &[
+    "connections",
+    "host-mount",
+    "llm",
+    "mem",
+    "package",
+    "route",
+    "service-manager",
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -47,20 +51,29 @@ impl MountRequestAccess {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub(super) struct MountRequest {
     pub namespace_path: String,
-    pub host_path: PathBuf,
     pub access: MountRequestAccess,
     pub reason: String,
+    pub label: Option<String>,
 }
 
 impl MountRequest {
     pub(super) fn payload(&self) -> serde_json::Value {
         json!({
             "namespace_path": &self.namespace_path,
-            "host_path": self.host_path.display().to_string(),
             "access": self.access.as_str(),
             "reason": &self.reason,
+            "label": &self.label,
         })
     }
+}
+
+/// Return the only `request_mount` arguments allowed to enter Machine or rollout evidence.
+/// Invalid documents may contain Host-owned locations or other unknown data, so their values are
+/// intentionally discarded instead of being persisted as part of the rejection record.
+pub(super) fn durable_mount_request_arguments(args: &serde_json::Value) -> serde_json::Value {
+    parse_mount_request(args)
+        .map(|request| request.payload())
+        .unwrap_or_else(|_| json!({ "invalid_request": true }))
 }
 
 pub(super) async fn handle_request_mount<E, F>(
@@ -99,7 +112,7 @@ where
             .await;
             runtime.machine.record_tool_call(
                 &tool_call.name,
-                tool_arguments.clone(),
+                durable_mount_request_arguments(tool_arguments),
                 payload.clone(),
                 false,
             );
@@ -180,7 +193,7 @@ where
         .await;
         runtime.machine.record_tool_call_with_audit(
             &tool_call.name,
-            tool_arguments.clone(),
+            mount_payload.clone(),
             payload.clone(),
             false,
             Some(audit),
@@ -221,45 +234,57 @@ where
         }),
     );
 
-    let mut details = json!({
-        "kind": "mount_escalation",
-        "tool_call_id": tool_call.id,
-        "tool_name": tool_call.name,
-        "mount_request": mount_payload,
-        "policy": {
-            "policy_source": escalation_audit.policy_source,
-            "rule_id": escalation_audit.rule_id,
-            "action": escalation_audit.action,
-            "reason": escalation_audit.reason,
-            "capability": escalation_audit.capability,
-            "sandbox_backend": escalation_audit.sandbox_backend,
-            "path_mode": escalation_audit.path_mode,
-        },
-        "live_applied": false,
-    });
-    details = append_skill_permission_hints(details, runtime.machine.active_skills());
-
-    let pending = PendingConfirmation {
-        checkpoint_id: format!("{MOUNT_ESCALATION_CHECKPOINT_PREFIX}{}", tool_call.id),
-        checkpoint_type: MOUNT_ESCALATION_CHECKPOINT_TYPE.to_string(),
-        summary: format!(
-            "Approve host mount {} at {}?",
-            mount_request.host_path.display(),
-            mount_request.namespace_path
-        ),
-        details,
-        options: vec!["approve".to_string(), "reject".to_string()],
+    let request_document = serde_json::to_vec(&mount_payload)?;
+    let request_id = match runtime.host_mount_requests.create(&request_document).await {
+        Ok(request_id) => request_id,
+        Err(error) => {
+            let payload = json!({
+                "status": "request_service_unavailable",
+                "error": "Host Mount Service did not accept the logical request",
+                "mount_request": mount_payload,
+            });
+            emit(Event::Error {
+                message: format!("Host Mount Service request failed: {error}"),
+                recoverable: true,
+            })
+            .await;
+            emit(Event::ToolCallCompleted {
+                presentation: None,
+                id: tool_call.id.clone(),
+                name: Some(tool_call.name.clone()),
+                success: Some(false),
+                result_preview: tool_result_preview(&payload),
+                audit: Some(escalation_audit.clone()),
+            })
+            .await;
+            runtime.machine.record_tool_call_with_audit(
+                &tool_call.name,
+                mount_payload.clone(),
+                payload.clone(),
+                false,
+                Some(escalation_audit),
+            );
+            runtime
+                .machine
+                .add_tool_message(&tool_call.id, &tool_call.name, payload);
+            return Ok(VirtualToolOutcome::Continue {
+                refresh_context: false,
+            });
+        }
     };
-
-    let request_id = runtime
-        .agent_files
-        .write_confirmation_request(&pending)
-        .await?;
+    let pending = PendingHostMountRequest {
+        request_id: request_id.clone(),
+        tool_call_id: tool_call.id.clone(),
+        namespace_path: mount_request.namespace_path.clone(),
+        access: mount_request.access.as_str().to_string(),
+        reason: mount_request.reason.clone(),
+        label: mount_request.label.clone(),
+        request_events_offset: 0,
+    };
     let payload = json!({
-        "status": "pending_mount_approval",
-        "request_id": request_id.clone(),
+        "status": "pending_authorization",
+        "request_reference": request_id.clone(),
         "mount_request": mount_payload,
-        "live_applied": false,
     });
     emit(Event::ToolCallCompleted {
         presentation: None,
@@ -272,25 +297,32 @@ where
     .await;
     runtime.machine.record_tool_call_with_audit(
         &tool_call.name,
-        tool_arguments.clone(),
+        mount_payload,
         payload.clone(),
         true,
         Some(escalation_audit),
     );
-    runtime
-        .machine
-        .set_confirmation_for_request(request_id.clone(), pending.clone());
+    runtime.machine.record_event(
+        HOST_MOUNT_REQUEST_WAITING_EVENT_TYPE,
+        serde_json::to_value(&pending).unwrap_or_else(|_| json!({})),
+    );
+    runtime.machine.set_host_mount_request(pending.clone());
     super::ui_surfaces::paused(&runtime.agent_files).await?;
     emit(Event::Yield {
         request_id,
-        kind: YieldKind::Confirmation,
-        payload: serde_json::to_value(ConfirmationYieldPayload {
-            checkpoint_type: pending.checkpoint_type.clone(),
-            summary: pending.summary.clone(),
-            details: Some(pending.details.clone()),
-            options: pending.options.clone(),
-            default_option: Some("reject".to_string()),
-            presentation_hints: vec![AdaptivePresentationHint::Dangerous],
+        kind: YieldKind::Custom("authorization_wait".to_string()),
+        payload: serde_json::to_value(CustomYieldPayload {
+            title: Some("Waiting for Host Mount authorization".to_string()),
+            prompt: None,
+            details: Some(json!({
+                "request_reference": pending.request_id,
+                "namespace_path": pending.namespace_path,
+                "access": pending.access,
+                "reason": pending.reason,
+                "label": pending.label,
+                "status": "pending",
+            })),
+            form: None,
         })
         .unwrap_or_else(|_| json!({})),
     })
@@ -314,30 +346,47 @@ fn merge_mount_policy_decision(
 pub(super) fn parse_mount_request(
     args: &serde_json::Value,
 ) -> std::result::Result<MountRequest, String> {
-    let namespace_path = parse_mount_namespace_path(required_string(args, "namespace_path")?)?;
-    let host_path = parse_mount_host_path(required_string(args, "host_path")?)?;
-    let access = parse_mount_access(required_string(args, "access")?)?;
-    let reason = required_string(args, "reason")?;
+    const ALLOWED_FIELDS: &[&str] = &["namespace_path", "access", "reason", "label"];
+
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Document {
+        namespace_path: String,
+        access: String,
+        reason: String,
+        #[serde(default)]
+        label: Option<String>,
+    }
+
+    let object = args
+        .as_object()
+        .ok_or_else(|| "request_mount arguments must be an object".to_string())?;
+    if object
+        .keys()
+        .any(|field| !ALLOWED_FIELDS.contains(&field.as_str()))
+    {
+        return Err("request_mount arguments contain unsupported fields".to_string());
+    }
+    let document: Document =
+        serde_json::from_value(args.clone()).map_err(|error| error.to_string())?;
+    let namespace_path = parse_mount_namespace_path(&document.namespace_path)?;
+    let access = parse_mount_access(&document.access)?;
+    let reason = document.reason.trim();
 
     if reason.trim().is_empty() {
         return Err("reason must be a non-empty string".to_string());
     }
+    let label = document.label.map(|label| label.trim().to_string());
+    if label.as_deref() == Some("") {
+        return Err("label must be a non-empty string when provided".to_string());
+    }
 
     Ok(MountRequest {
         namespace_path,
-        host_path,
         access,
-        reason: reason.trim().to_string(),
+        reason: reason.to_string(),
+        label,
     })
-}
-
-fn required_string<'a>(
-    args: &'a serde_json::Value,
-    field: &str,
-) -> std::result::Result<&'a str, String> {
-    args.get(field)
-        .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| format!("{field} must be a string"))
 }
 
 fn parse_mount_namespace_path(raw: &str) -> std::result::Result<String, String> {
@@ -368,79 +417,6 @@ fn parse_mount_namespace_path(raw: &str) -> std::result::Result<String, String> 
     Ok(format!("/{}", components.join("/")))
 }
 
-fn parse_mount_host_path(raw: &str) -> std::result::Result<PathBuf, String> {
-    let trimmed = raw.trim();
-    let path = Path::new(trimmed);
-    if is_windows_filesystem_root_path(trimmed) || path == Path::new("/") {
-        return Err("host_path must not be the host filesystem root".to_string());
-    }
-    if !path.is_absolute() {
-        return Err("host_path must be absolute".to_string());
-    }
-    if has_invalid_raw_host_path_segment(trimmed)
-        || path
-            .components()
-            .any(|component| matches!(component, Component::CurDir | Component::ParentDir))
-    {
-        return Err("host_path must not contain '.', '..', or empty components".to_string());
-    }
-    let normalized =
-        dunce::canonicalize(path).unwrap_or_else(|_| dunce::simplified(path).to_path_buf());
-    if let Some(component) = crate::tools::protected_path_component(&normalized) {
-        return Err(format!(
-            "host_path must not directly target protected `{component}` state"
-        ));
-    }
-    Ok(path.to_path_buf())
-}
-
-fn is_windows_filesystem_root_path(path: &str) -> bool {
-    let normalized = path.replace('\\', "/");
-    is_windows_drive_root_path(normalized.as_str())
-        || normalized
-            .strip_prefix("//?/")
-            .is_some_and(is_windows_drive_root_path)
-        || normalized
-            .strip_prefix("//./")
-            .is_some_and(is_windows_drive_root_path)
-        || normalized
-            .strip_prefix("//?/UNC/")
-            .is_some_and(is_windows_unc_share_root_path)
-        || normalized
-            .strip_prefix("//./UNC/")
-            .is_some_and(is_windows_unc_share_root_path)
-        || normalized
-            .strip_prefix("//")
-            .is_some_and(is_windows_unc_share_root_path)
-}
-
-fn is_windows_drive_root_path(path: &str) -> bool {
-    let bytes = path.as_bytes();
-    bytes.len() >= 3
-        && bytes[0].is_ascii_alphabetic()
-        && bytes[1] == b':'
-        && bytes[2..].iter().all(|byte| *byte == b'/')
-}
-
-fn is_windows_unc_share_root_path(path: &str) -> bool {
-    let parts = path
-        .split('/')
-        .filter(|component| !component.is_empty())
-        .collect::<Vec<_>>();
-    parts.len() == 2
-}
-
-fn has_invalid_raw_host_path_segment(path: &str) -> bool {
-    let mut segments = path.split('/');
-    let Some(first) = segments.next() else {
-        return true;
-    };
-    if !first.is_empty() {
-        return false;
-    }
-    segments.any(|segment| segment.is_empty() || segment == "." || segment == "..")
-}
-
 fn parse_mount_access(raw: &str) -> std::result::Result<MountRequestAccess, String> {
     match raw.trim() {
         "read_only" => Ok(MountRequestAccess::ReadOnly),
@@ -455,14 +431,11 @@ pub(super) fn request_mount_tool_definition() -> ToolDefinition {
         description: "Request an approval-gated host directory mount under /mnt. This asks the host to authorize a mount grant; it does not apply the mount directly.".to_string(),
         parameters: serde_json::json!({
             "type": "object",
+            "additionalProperties": false,
             "properties": {
                 "namespace_path": {
                     "type": "string",
                     "description": "Absolute Alan OS namespace path under /mnt/<name>, without '.', '..', or empty path components."
-                },
-                "host_path": {
-                    "type": "string",
-                    "description": "Absolute host directory path to request access to."
                 },
                 "access": {
                     "type": "string",
@@ -472,22 +445,13 @@ pub(super) fn request_mount_tool_definition() -> ToolDefinition {
                 "reason": {
                     "type": "string",
                     "description": "Non-empty explanation of why this mount is needed."
+                },
+                "label": {
+                    "type": "string",
+                    "description": "Optional human-readable label for the requested mount."
                 }
             },
-            "required": ["namespace_path", "host_path", "access", "reason"]
+            "required": ["namespace_path", "access", "reason"]
         }),
-    }
-}
-
-#[cfg(all(test, unix))]
-mod tests {
-    use super::parse_mount_host_path;
-
-    #[test]
-    fn rejects_protected_host_state_root() {
-        let error = parse_mount_host_path("/tmp/project/.git")
-            .expect_err("a protected Host state root must not become a direct mount");
-
-        assert!(error.contains("protected `.git` state"));
     }
 }

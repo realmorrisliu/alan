@@ -1,482 +1,299 @@
-
-    #[tokio::test]
-    async fn test_first_approved_mount_creates_process_tool_binding() {
-        let system_store = TempDir::new().unwrap();
-        let approved_host = TempDir::new().unwrap();
-        let applicator = Arc::new(RecordingMountGrantApplicator::default());
-        let mut state = create_test_state();
-        state.environment = namespace_environment_with_mount_applicator_for_test(applicator)
-            .with_launch_context(crate::ProcessLaunchContext::root());
-        state.runtime_config.store_bindings = Some(crate::AgentRuntimeStoreBindings {
-            rollouts: system_store.path().join("rollouts"),
-            checkpoints: system_store.path().join("checkpoints"),
-            cache: system_store.path().join("cache"),
-            tmp: system_store.path().join("tmp"),
-            metadata: system_store.path().join("metadata"),
+    async fn pending_host_mount_state(
+    ) -> (RuntimeLoopState, Arc<TestHostMountFs>, String) {
+        let (mut state, host_mount) = create_test_state_with_host_mount();
+        let request = json!({
+            "namespace_path": "/mnt/project",
+            "access": "read_write",
+            "reason": "Need project files",
+            "label": "Project"
         });
-        state
-            .machine
-            .set_confirmation(mount_escalation_pending_confirmation_with(
-                approved_host.path().to_str().unwrap(),
-                "read_write",
-                "Need project files",
-            ));
-        let cancel = CancellationToken::new();
-        let mut emit = |_event: Event| async {};
-
-        handle_runtime_op_with_cancel(
-            &mut state,
-            Op::Resume {
-                request_id: "mount_escalation_call_mount".to_string(),
-                content: vec![ContentPart::structured(json!({"choice": "approve"}))],
-            },
-            &mut emit,
-            &cancel,
-        )
-        .await
-        .unwrap();
-
-        let binding = state
-            .tool_execution()
-            .execution_binding()
-            .expect("first approved Host Mount should create a Tool binding");
-        assert_eq!(
-            binding.cwd,
-            dunce::canonicalize(approved_host.path()).unwrap()
-        );
-        assert_eq!(binding.namespace_cwd, std::path::Path::new("/mnt/project"));
-        assert_eq!(
-            state
-                .child_launch()
-                .launch_context()
-                .expect("the Process Launch Context should remain available")
-                .cwd,
-            "/"
-        );
-        assert_eq!(binding.host_mounts.len(), 1);
-        assert_eq!(binding.host_mounts[0].namespace_path, "/mnt/project");
-        assert_eq!(
-            binding.host_mounts[0].resolve_host_path("/mnt/project/file.txt"),
-            Some(approved_host.path().join("file.txt"))
-        );
-        let sandbox = binding.sandbox_spec.as_ref().unwrap();
-        assert!(
-            !sandbox
-                .readable_roots
-                .iter()
-                .any(|root| root == &system_store.path().join("tmp"))
-        );
-        let execution = crate::tools::Sandbox::from_spec_with_backend(
-            sandbox.clone(),
-            crate::tools::SandboxBackendKind::HostMountPathGuard,
-        )
-        .exec("pwd", &binding.cwd)
-        .await
-        .unwrap();
-        assert_eq!(execution.exit_code, 0, "{execution:?}");
-        assert_eq!(
-            execution.stdout.trim(),
-            binding.cwd.to_string_lossy().as_ref()
-        );
-        let result = tool_result_json_for_call(&state, "call_mount");
-        assert_eq!(result["tool_sandbox_applied"], true);
-        assert_eq!(result["tool_sandbox_projection_changed"], true);
-    }
-
-    #[tokio::test]
-    async fn test_handle_mount_escalation_resume_read_only_applies_namespace_only() {
-        let host_mount_root = TempDir::new().unwrap();
-        let approved_host = TempDir::new().unwrap();
-        let applicator = Arc::new(RecordingMountGrantApplicator::default());
-        let mut state = create_test_state();
-        state.environment =
-            namespace_environment_with_mount_applicator_for_test(applicator.clone());
-        bind_test_source_mount(&mut state, host_mount_root.path());
-        state
-            .machine
-            .set_confirmation(mount_escalation_pending_confirmation_with(
-                approved_host.path().to_str().unwrap(),
-                "read_only",
-                "Need to inspect project files",
-            ));
-        let cancel = CancellationToken::new();
-        let mut emit = |_event: Event| async {};
-
-        handle_runtime_op_with_cancel(
-            &mut state,
-            Op::Resume {
-                request_id: "mount_escalation_call_mount".to_string(),
-                content: vec![ContentPart::structured(json!({"choice": "approve"}))],
-            },
-            &mut emit,
-            &cancel,
-        )
-        .await
-        .unwrap();
-
-        let tool_result = tool_result_json_for_call(&state, "call_mount");
-        assert_eq!(tool_result["namespace_applied"], true);
-        assert_eq!(tool_result["tool_sandbox_applied"], true);
-        assert_eq!(tool_result["tool_sandbox_projection_changed"], true);
-        assert_eq!(
-            state.tool_execution().sandbox_writable_roots(),
-            vec![dunce::canonicalize(host_mount_root.path()).unwrap()]
-        );
-        let grants = applicator.grants();
-        assert_eq!(grants.len(), 1);
-        assert_eq!(grants[0].access, ApprovedMountGrantAccess::ReadOnly);
-    }
-
-    #[tokio::test]
-    async fn test_handle_mount_escalation_resume_reports_namespace_apply_failure() {
-        let host_mount_root = TempDir::new().unwrap();
-        let approved_host = TempDir::new().unwrap();
-        let applicator = Arc::new(RecordingMountGrantApplicator::failing("mount failed"));
-        let mut state = create_test_state();
-        state.environment =
-            namespace_environment_with_mount_applicator_for_test(applicator.clone());
-        bind_test_source_mount(&mut state, host_mount_root.path());
-        state
-            .machine
-            .set_confirmation(mount_escalation_pending_confirmation_with(
-                approved_host.path().to_str().unwrap(),
-                "read_write",
-                "Need to edit project files",
-            ));
-        let cancel = CancellationToken::new();
-        let mut emit = |_event: Event| async {};
-
-        handle_runtime_op_with_cancel(
-            &mut state,
-            Op::Resume {
-                request_id: "mount_escalation_call_mount".to_string(),
-                content: vec![ContentPart::structured(json!({"choice": "approve"}))],
-            },
-            &mut emit,
-            &cancel,
-        )
-        .await
-        .unwrap();
-
-        let tool_result = tool_result_json_for_call(&state, "call_mount");
-        assert_eq!(tool_result["namespace_applied"], false);
-        assert_eq!(tool_result["namespace_error"], "mount failed");
-        assert_eq!(tool_result["tool_sandbox_applied"], false);
-        assert_eq!(tool_result["tool_sandbox_projection_changed"], false);
-        assert_eq!(
-            state.tool_execution().sandbox_writable_roots(),
-            vec![dunce::canonicalize(host_mount_root.path()).unwrap()]
-        );
-        let grants = applicator.grants();
-        assert_eq!(grants.len(), 1);
-    }
-
-    #[tokio::test]
-    async fn test_handle_mount_escalation_resume_duplicate_read_write_grant_is_idempotent() {
-        let host_mount_root = TempDir::new().unwrap();
-        let approved_host = TempDir::new().unwrap();
-        let applicator = Arc::new(RecordingMountGrantApplicator::default());
-        let mut state = create_test_state();
-        state.environment = namespace_environment_with_mount_applicator_for_test(applicator);
-        bind_test_source_mount(&mut state, host_mount_root.path());
-        let cancel = CancellationToken::new();
-        let mut emit = |_event: Event| async {};
-
-        for _ in 0..2 {
-            state
-                .machine
-                .set_confirmation(mount_escalation_pending_confirmation_with(
-                    approved_host.path().to_str().unwrap(),
-                    "read_write",
-                    "Need to edit project files",
-                ));
-            handle_runtime_op_with_cancel(
-                &mut state,
-                Op::Resume {
-                    request_id: "mount_escalation_call_mount".to_string(),
-                    content: vec![ContentPart::structured(json!({"choice": "approve"}))],
-                },
-                &mut emit,
-                &cancel,
-            )
+        let request_id = state
+            .environment
+            .host_mount_requests()
+            .create(&serde_json::to_vec(&request).unwrap())
             .await
             .unwrap();
-        }
-
-        let roots = state.tool_execution().sandbox_writable_roots();
-        assert_eq!(
-            roots,
-            vec![
-                dunce::canonicalize(host_mount_root.path()).unwrap(),
-                dunce::canonicalize(approved_host.path()).unwrap()
-            ]
+        state.machine.set_host_mount_request(
+            crate::agent_machine::PendingHostMountRequest {
+                request_id: request_id.clone(),
+                tool_call_id: "call_mount".to_string(),
+                namespace_path: "/mnt/project".to_string(),
+                access: "read_write".to_string(),
+                reason: "Need project files".to_string(),
+                label: Some("Project".to_string()),
+                request_events_offset: 0,
+            },
         );
-        let latest = tool_result_json_for_call(&state, "call_mount");
-        assert_eq!(latest["tool_sandbox_applied"], true);
-        assert_eq!(latest["tool_sandbox_projection_changed"], false);
+        (state, host_mount, request_id)
     }
 
     #[tokio::test]
-    async fn test_reapproved_namespace_path_replaces_persisted_host_grant() {
-        let host_mount_root = TempDir::new().unwrap();
-        let first_host = TempDir::new().unwrap();
-        let replacement_host = TempDir::new().unwrap();
-        let applicator = Arc::new(RecordingMountGrantApplicator::default());
-        let mut state = create_test_state();
-        state.environment = namespace_environment_with_mount_applicator_for_test(applicator);
-        bind_test_source_mount(&mut state, host_mount_root.path());
+    async fn agent_resume_cannot_approve_pending_host_mount() {
+        let (mut state, _host_mount, request_id) = pending_host_mount_state().await;
+        let cancel = CancellationToken::new();
+        let mut events = Vec::new();
+        let mut emit = |event: Event| {
+            events.push(event);
+            async {}
+        };
+
+        let action = handle_runtime_op_with_cancel(
+            &mut state,
+            Op::Resume {
+                request_id: request_id.clone(),
+                content: vec![ContentPart::structured(json!({"choice": "approve"}))],
+            },
+            &mut emit,
+            &cancel,
+        )
+        .await
+        .unwrap();
+
+        assert!(matches!(action, RuntimeOpAction::NoTurn));
+        assert!(state.machine.pending_host_mount(&request_id).is_some());
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::Error { message, recoverable }
+                if *recoverable && message.contains("only Host Mount Service can settle")
+        )));
+        assert!(state
+            .machine
+            .messages()
+            .iter()
+            .all(|message| !matches!(message, crate::tape::Message::Tool { .. })));
+    }
+
+    #[tokio::test]
+    async fn new_turn_cancels_pending_host_mount_before_resetting_machine_state() {
+        let (mut state, host_mount, request_id) = pending_host_mount_state().await;
         let cancel = CancellationToken::new();
         let mut emit = |_event: Event| async {};
 
-        for host in [first_host.path(), replacement_host.path()] {
-            state
-                .machine
-                .set_confirmation(mount_escalation_pending_confirmation_with(
-                    host.to_str().unwrap(),
-                    "read_write",
-                    "Replace project mount",
-                ));
-            handle_runtime_op_with_cancel(
-                &mut state,
-                Op::Resume {
-                    request_id: "mount_escalation_call_mount".to_string(),
-                    content: vec![ContentPart::structured(json!({"choice": "approve"}))],
-                },
-                &mut emit,
-                &cancel,
-            )
-            .await
-            .unwrap();
-        }
+        let action = handle_runtime_op_with_cancel(
+            &mut state,
+            Op::Turn {
+                parts: vec![ContentPart::text("Start over")],
+                context: None,
+            },
+            &mut emit,
+            &cancel,
+        )
+        .await
+        .unwrap();
 
+        assert!(matches!(
+            action,
+            RuntimeOpAction::RunTurn {
+                turn_kind: TurnRunKind::NewTurn,
+                ..
+            }
+        ));
+        assert!(state.machine.pending_host_mount(&request_id).is_none());
+        assert_eq!(host_mount.status(&request_id).await.as_deref(), Some("cancelled"));
+    }
+
+    #[tokio::test]
+    async fn new_turn_retains_host_mount_when_approval_wins_cancellation_race() {
+        let (mut state, host_mount, request_id) = pending_host_mount_state().await;
+        state.environment = state
+            .environment
+            .clone()
+            .with_launch_context(crate::ProcessLaunchContext::root());
+        host_mount
+            .settle(&request_id, "approved", Some("grant-race-winner"), None)
+            .await;
+        let cancel = CancellationToken::new();
+        let mut emit = |_event: Event| async {};
+
+        let action = handle_runtime_op_with_cancel(
+            &mut state,
+            Op::Turn {
+                parts: vec![ContentPart::text("Start over")],
+                context: None,
+            },
+            &mut emit,
+            &cancel,
+        )
+        .await
+        .unwrap();
+
+        assert!(matches!(
+            action,
+            RuntimeOpAction::RunTurn {
+                turn_kind: TurnRunKind::NewTurn,
+                ..
+            }
+        ));
+        assert!(state.machine.pending_host_mount(&request_id).is_none());
+        assert_eq!(host_mount.status(&request_id).await.as_deref(), Some("approved"));
         let launch_context = state
+            .environment
             .child_launch()
             .launch_context()
-            .cloned()
-            .expect("approved grant should remain in the Process Launch Context");
+            .unwrap()
+            .clone();
         assert_eq!(
-            launch_context.host_path("/mnt/project/file.txt"),
-            Some(replacement_host.path().join("file.txt"))
+            launch_context.projected_host_mounts(),
+            vec![("/mnt/project".to_string(), alan_kernel::Access::ReadWrite)]
         );
         assert_eq!(
-            state.tool_execution().sandbox_writable_roots(),
-            vec![
-                dunce::canonicalize(host_mount_root.path()).unwrap(),
-                dunce::canonicalize(replacement_host.path()).unwrap()
-            ]
+            launch_context.projected_host_mount_references(),
+            vec!["grant-race-winner".to_string()]
         );
-        let latest = tool_result_json_for_call(&state, "call_mount");
-        assert_eq!(latest["tool_sandbox_applied"], true);
-        assert_eq!(latest["tool_sandbox_projection_changed"], true);
     }
 
     #[tokio::test]
-    async fn test_handle_mount_escalation_resume_read_only_grant_does_not_expand_tool_sandbox() {
-        let host_mount_root = TempDir::new().unwrap();
-        let approved_host = TempDir::new().unwrap();
-        let applicator = Arc::new(RecordingMountGrantApplicator::default());
-        let mut state = create_test_state();
-        state.environment = namespace_environment_with_mount_applicator_for_test(applicator);
-        bind_test_source_mount(&mut state, host_mount_root.path());
-        state
-            .machine
-            .set_confirmation(mount_escalation_pending_confirmation_with(
-                approved_host.path().to_str().unwrap(),
-                "read_only",
-                "Need to inspect project files",
-            ));
+    async fn new_turn_waits_for_in_flight_host_mount_decision_before_reset() {
+        let (mut state, host_mount, request_id) = pending_host_mount_state().await;
+        state.environment = state
+            .environment
+            .clone()
+            .with_launch_context(crate::ProcessLaunchContext::root());
+        host_mount.begin_decision(&request_id).await;
         let cancel = CancellationToken::new();
         let mut emit = |_event: Event| async {};
 
-        let result = handle_runtime_op_with_cancel(
+        let reset = handle_runtime_op_with_cancel(
+            &mut state,
+            Op::Turn {
+                parts: vec![ContentPart::text("Start over")],
+                context: None,
+            },
+            &mut emit,
+            &cancel,
+        );
+        let settle = async {
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            host_mount
+                .settle(&request_id, "approved", Some("grant-in-flight"), None)
+                .await;
+        };
+        let (action, ()) = tokio::join!(reset, settle);
+        let action = action.unwrap();
+
+        assert!(matches!(
+            action,
+            RuntimeOpAction::RunTurn {
+                turn_kind: TurnRunKind::NewTurn,
+                ..
+            }
+        ));
+        assert!(state.machine.pending_host_mount(&request_id).is_none());
+        assert_eq!(host_mount.status(&request_id).await.as_deref(), Some("approved"));
+        let launch_context = state
+            .environment
+            .child_launch()
+            .launch_context()
+            .unwrap()
+            .clone();
+        assert_eq!(
+            launch_context.projected_host_mounts(),
+            vec![("/mnt/project".to_string(), alan_kernel::Access::ReadWrite)]
+        );
+        assert_eq!(
+            launch_context.projected_host_mount_references(),
+            vec!["grant-in-flight".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn approved_service_request_resumes_with_opaque_grant_only() {
+        let (mut state, host_mount, request_id) = pending_host_mount_state().await;
+        state.environment = state
+            .environment
+            .clone()
+            .with_launch_context(crate::ProcessLaunchContext::root());
+        host_mount
+            .settle(&request_id, "approved", Some("grant-opaque-1"), None)
+            .await;
+        let cancel = CancellationToken::new();
+        let mut emit = |_event: Event| async {};
+
+        let action = handle_runtime_op_with_cancel(
             &mut state,
             Op::Resume {
-                request_id: "mount_escalation_call_mount".to_string(),
-                content: vec![ContentPart::structured(json!({"choice": "approve"}))],
+                request_id: request_id.clone(),
+                content: vec![ContentPart::structured(json!({"choice": "reject"}))],
             },
             &mut emit,
             &cancel,
         )
-        .await;
-        assert!(result.is_ok());
-
-        let tool_result = tool_result_json_for_call(&state, "call_mount");
-        assert_eq!(tool_result["status"], "approved");
-        assert_eq!(tool_result["tool_sandbox_applied"], true);
-        assert_eq!(tool_result["tool_sandbox_projection_changed"], true);
-        assert_eq!(
-            state.tool_execution().sandbox_writable_roots(),
-            vec![dunce::canonicalize(host_mount_root.path()).unwrap()]
-        );
-    }
-
-    #[tokio::test]
-    async fn test_handle_mount_escalation_resume_reject_returns_tool_result_without_grant() {
-        let temp = TempDir::new().unwrap();
-        let host_mount_root = TempDir::new().unwrap();
-        let approved_host = TempDir::new().unwrap();
-        let mut state = create_test_state();
-        state.machine =
-            AgentMachine::new_with_recorder_in_dir("mount-reject", "test-model", temp.path())
-                .await
-                .unwrap();
-        bind_test_source_mount(&mut state, host_mount_root.path());
-        state
-            .machine
-            .set_confirmation(mount_escalation_pending_confirmation_with(
-                approved_host.path().to_str().unwrap(),
-                "read_write",
-                "Need to edit project files",
-            ));
-        let cancel = CancellationToken::new();
-
-        let mut emit = |_event: Event| async {};
-        let op = Op::Resume {
-            request_id: "mount_escalation_call_mount".to_string(),
-            content: vec![ContentPart::structured(json!({"choice": "reject"}))],
-        };
-
-        let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
-        assert!(result.is_ok());
-        assert!(matches!(
-            result.unwrap(),
-            RuntimeOpAction::RunTurn {
-                turn_kind: TurnRunKind::ResumeTurn,
-                ..
-            }
-        ));
-
-        let tool_result = tool_result_json_for_call(&state, "call_mount");
-        assert_eq!(tool_result["status"], "rejected");
-        assert_eq!(tool_result["approved"], false);
-        assert_eq!(tool_result["tool_sandbox_applied"], false);
-        assert_eq!(tool_result["tool_sandbox_projection_changed"], false);
-        assert_eq!(tool_result["live_applied"], false);
-        assert_eq!(
-            state.tool_execution().sandbox_writable_roots(),
-            vec![dunce::canonicalize(host_mount_root.path()).unwrap()]
-        );
-
-        state.machine.flush().await;
-        let rollout_path = state.machine.rollout_path().unwrap().clone();
-        let items = RolloutRecorder::load_history(&rollout_path).await.unwrap();
-        assert!(!items.iter().any(|item| matches!(
-            item,
-            RolloutItem::Event(event) if event.event_type == "host_mount_grant"
-        )));
-    }
-
-    #[tokio::test]
-    async fn test_handle_mount_escalation_resume_missing_choice_defaults_to_reject() {
-        let temp = TempDir::new().unwrap();
-        let mut state = create_test_state();
-        state.machine = AgentMachine::new_with_recorder_in_dir(
-            "mount-default-reject",
-            "test-model",
-            temp.path(),
-        )
         .await
         .unwrap();
-        let host_path = std::fs::canonicalize(std::env::current_dir().unwrap()).unwrap();
-        let host_path = host_path.display().to_string();
-        state
-            .machine
-            .set_confirmation(mount_escalation_pending_confirmation_with(
-                &host_path,
-                "read_write",
-                "Need to edit project files",
-            ));
-        let cancel = CancellationToken::new();
 
-        let mut emit = |_event: Event| async {};
-        let op = Op::Resume {
-            request_id: "mount_escalation_call_mount".to_string(),
-            content: vec![ContentPart::structured(json!({}))],
-        };
-
-        let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
-        assert!(result.is_ok());
         assert!(matches!(
-            result.unwrap(),
+            action,
             RuntimeOpAction::RunTurn {
                 turn_kind: TurnRunKind::ResumeTurn,
                 ..
             }
         ));
-
-        let tool_result = tool_result_text_for_call(&state, "call_mount");
-        assert!(tool_result.contains("\"status\":\"rejected\""));
-        assert!(tool_result.contains("\"choice\":\"reject\""));
-        assert!(tool_result.contains("\"approved\":false"));
-
-        state.machine.flush().await;
-        let rollout_path = state.machine.rollout_path().unwrap().clone();
-        let items = RolloutRecorder::load_history(&rollout_path).await.unwrap();
-        assert!(!items.iter().any(|item| matches!(
-            item,
-            RolloutItem::Event(event) if event.event_type == "host_mount_grant"
-        )));
+        assert!(state.machine.pending_host_mount(&request_id).is_none());
+        let result = tool_result_json_for_call(&state, "call_mount");
+        assert_eq!(result["status"], "approved");
+        assert_eq!(result["approved"], true);
+        assert_eq!(result["request_reference"], request_id);
+        assert_eq!(result["grant_reference"], "grant-opaque-1");
+        assert_eq!(result["namespace_path"], "/mnt/project");
+        assert!(!result.to_string().contains("host_path"));
+        assert!(result.get("namespace_applied").is_none());
+        assert!(result.get("tool_sandbox_applied").is_none());
+        assert_eq!(
+            state
+                .environment
+                .child_launch()
+                .launch_context()
+                .unwrap()
+                .projected_host_mounts(),
+            vec![("/mnt/project".to_string(), alan_kernel::Access::ReadWrite)]
+        );
+        assert_eq!(
+            state
+                .environment
+                .child_launch()
+                .launch_context()
+                .unwrap()
+                .projected_host_mount_references(),
+            vec!["grant-opaque-1".to_string()]
+        );
     }
 
     #[tokio::test]
-    async fn test_handle_mount_escalation_resume_rejects_forged_checkpoint() {
-        let temp = TempDir::new().unwrap();
-        let mut state = create_test_state();
-        state.machine =
-            AgentMachine::new_with_recorder_in_dir("mount-forged", "test-model", temp.path())
-                .await
-                .unwrap();
-        state
-            .machine
-            .set_confirmation(crate::approval::PendingConfirmation {
-                checkpoint_id: "forged_mount".to_string(),
-                checkpoint_type: crate::approval::MOUNT_ESCALATION_CHECKPOINT_TYPE.to_string(),
-                summary: "Approve forged mount?".to_string(),
-                details: json!({
-                    "kind": "mount_escalation",
-                    "tool_call_id": "call_mount",
-                    "tool_name": "request_confirmation",
-                    "mount_request": {
-                        "namespace_path": "/mnt/project",
-                        "host_path": "relative/path",
-                        "access": "read_write",
-                        "reason": "forged"
-                    },
-                    "live_applied": false
-                }),
-                options: vec!["approve".to_string(), "reject".to_string()],
-            });
-        let cancel = CancellationToken::new();
+    async fn every_non_approval_terminal_status_resumes_without_grant() {
+        for status in ["rejected", "cancelled", "failed"] {
+            let (mut state, host_mount, request_id) = pending_host_mount_state().await;
+            host_mount
+                .settle(&request_id, status, None, Some("Host authorization did not complete"))
+                .await;
+            let cancel = CancellationToken::new();
+            let mut emit = |_event: Event| async {};
 
-        let mut emit = |_event: Event| async {};
-        let op = Op::Resume {
-            request_id: "forged_mount".to_string(),
-            content: vec![ContentPart::structured(json!({"choice": "approve"}))],
-        };
+            let action = handle_runtime_op_with_cancel(
+                &mut state,
+                Op::Resume {
+                    request_id: request_id.clone(),
+                    content: Vec::new(),
+                },
+                &mut emit,
+                &cancel,
+            )
+            .await
+            .unwrap();
 
-        let result = handle_runtime_op_with_cancel(&mut state, op, &mut emit, &cancel).await;
-        assert!(result.is_ok());
-        assert!(matches!(
-            result.unwrap(),
-            RuntimeOpAction::RunTurn {
-                turn_kind: TurnRunKind::ResumeTurn,
-                ..
-            }
-        ));
-
-        let tool_result = tool_result_text_for_call(&state, "forged_mount");
-        assert!(tool_result.contains("\"status\":\"invalid_mount_escalation_checkpoint\""));
-        assert!(tool_result.contains("\"approved\":false"));
-
-        state.machine.flush().await;
-        let rollout_path = state.machine.rollout_path().unwrap().clone();
-        let items = RolloutRecorder::load_history(&rollout_path).await.unwrap();
-        assert!(!items.iter().any(|item| matches!(
-            item,
-            RolloutItem::Event(event) if event.event_type == "host_mount_grant"
-        )));
+            assert!(matches!(
+                action,
+                RuntimeOpAction::RunTurn {
+                    turn_kind: TurnRunKind::ResumeTurn,
+                    ..
+                }
+            ));
+            let result = tool_result_json_for_call(&state, "call_mount");
+            assert_eq!(result["status"], status);
+            assert_eq!(result["approved"], false);
+            assert!(result["grant_reference"].is_null());
+            assert_eq!(result["error"], "Host authorization did not complete");
+        }
     }
-
     #[tokio::test]
     async fn test_handle_user_input() {
         let mut state = create_test_state();
