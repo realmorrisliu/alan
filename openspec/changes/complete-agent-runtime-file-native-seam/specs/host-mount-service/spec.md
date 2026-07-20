@@ -16,6 +16,13 @@ but MUST NOT expose the raw Host OS path.
 - **AND** no Alan OS-visible request, result, Machine, or audit record contains
   the native directory path
 
+#### Scenario: User dismisses native directory authorization
+- **WHEN** a Host adapter presents a pending request and the user dismisses the
+  native directory authorization panel
+- **THEN** the adapter asks Host Mount Service to publish a terminal `cancelled`
+  result through the same-user Host command plane
+- **AND** Agent Runtime resumes the waiting Agent Process without a grant
+
 #### Scenario: AgentFS receives an approval write
 - **WHEN** an Agent Process or renderer writes an approve-like value to an
   AgentFS request or Machine control file

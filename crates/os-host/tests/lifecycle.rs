@@ -428,6 +428,56 @@ async fn shell_client_exit_detaches_without_stopping_host_or_root_agent() {
 }
 
 #[tokio::test]
+async fn native_host_mount_cancellation_settles_waiting_agent() {
+    let _host_guard = TEST_HOST_LOCK.lock().await;
+    let runtime = tempfile::tempdir().unwrap();
+    let probe_completed = Arc::new(AtomicBool::new(false));
+    let paths = HostEndpointPaths::from_runtime_dir(runtime.path(), "test").unwrap();
+    let host = AlanOsHost::boot(
+        mount_request_config(
+            &runtime.path().join("system-store"),
+            probe_completed.clone(),
+        ),
+        paths.clone(),
+    )
+    .await
+    .unwrap();
+    let shutdown = CancellationToken::new();
+    let shutdown_request = shutdown.clone();
+    let server =
+        tokio::spawn(async move { host.serve_until(shutdown_request.cancelled_owned()).await });
+    let attachment = LocalAttachment::new(paths.clone()).connect().await.unwrap();
+    let shell = alan_shell::Shell::new(attachment.root);
+    let mut activity = shell.tail("/agent/root/machine/ui/events").await.unwrap();
+    shell
+        .write("/agent/root/io/input", b"request documents")
+        .await
+        .unwrap();
+    let request_id = wait_for_host_mount_request(&shell).await;
+
+    HostCommandPlane::new(paths)
+        .cancel_host_mount(request_id.clone())
+        .await
+        .unwrap();
+
+    wait_for_turn_idle(&mut activity, "Host Mount cancellation").await;
+    activity.close().await.unwrap();
+    assert!(!probe_completed.load(Ordering::Acquire));
+    let request_base = format!("/mnt/host-mount/requests/{request_id}");
+    assert_eq!(
+        shell.cat(&format!("{request_base}/status")).await.unwrap(),
+        b"cancelled\n"
+    );
+    assert_eq!(
+        shell.cat(&format!("{request_base}/error")).await.unwrap(),
+        b"cancelled by native user\n"
+    );
+
+    shutdown.cancel();
+    server.await.unwrap().unwrap();
+}
+
+#[tokio::test]
 async fn native_host_mount_approval_hides_host_path_and_enables_first_tool() {
     let _host_guard = TEST_HOST_LOCK.lock().await;
     let runtime = tempfile::tempdir().unwrap();

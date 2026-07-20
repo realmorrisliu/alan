@@ -39,6 +39,11 @@ if grep -Fq 'session.cat("/mnt/host-mount/request")' "$ATTACHMENT_SOURCE"; then
 fi
 grep -q 'let panel = NSOpenPanel()' "$ATTACHMENT_SOURCE"
 grep -q 'approveHostMount(' "$ATTACHMENT_SOURCE"
+grep -q 'cancelHostMount(' "$ATTACHMENT_SOURCE"
+if grep -q 'dismissedMountRequests' "$ATTACHMENT_SOURCE"; then
+    echo "Dismissed native Host Mount panels must settle the service request." >&2
+    exit 1
+fi
 grep -Fq 'session.cat("/mnt/connections/native-requests")' "$ATTACHMENT_SOURCE"
 grep -Fq 'host-keychain:\(channel):\(credentialID)' "$ATTACHMENT_SOURCE"
 grep -q 'ALAN_NATIVE_CONNECTION_REQUEST_ID' "$ATTACHMENT_SOURCE"

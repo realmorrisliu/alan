@@ -34,6 +34,9 @@ enum LocalRequest {
         request_id: String,
         host_path: PathBuf,
     },
+    CancelHostMount {
+        request_id: String,
+    },
     RevokeHostMount {
         grant_id: String,
     },
@@ -271,6 +274,22 @@ impl AlanOsHost {
                                 )
                                 .await
                             }
+                            LocalRequest::CancelHostMount { request_id } => {
+                                let result = host_mount.cancel_request(
+                                    &request_id,
+                                    "cancelled by native user",
+                                    "local-user",
+                                );
+                                write_local_response(
+                                    &mut write,
+                                    LocalResponse {
+                                        boot_id,
+                                        grant: None,
+                                        error: result.err().map(|error| error.to_string()),
+                                    },
+                                )
+                                .await
+                            }
                             LocalRequest::RevokeHostMount { grant_id } => {
                                 let result = host_mount.revoke(&grant_id, "local-user");
                                 write_local_response(
@@ -399,6 +418,14 @@ impl HostCommandPlane {
         .await?
         .grant
         .context("Host Mount approval returned no grant")
+    }
+
+    pub async fn cancel_host_mount(&self, request_id: impl Into<String>) -> Result<()> {
+        self.call(LocalRequest::CancelHostMount {
+            request_id: request_id.into(),
+        })
+        .await?;
+        Ok(())
     }
 
     pub async fn revoke_host_mount(&self, grant_id: impl Into<String>) -> Result<()> {
