@@ -388,24 +388,7 @@ manifest_state_declarations() {
             sub(/^.*[.]/, "", name)
             return name
         }
-        function inferred_factory_contains_manifest(value, owner,    call, expression, name, parts, qualifier, segment_count, qualifier_index) {
-            if (value !~ /=/) {
-                return 0
-            }
-            expression = value
-            sub(/^[^=]*=[ ]*/, "", expression)
-            while (expression ~ /^(try[!?]?|await)[ ]+/) {
-                sub(/^(try[!?]?|await)[ ]+/, "", expression)
-            }
-            if (expression !~ /\(/) {
-                return 0
-            }
-            call = expression
-            sub(/[ ]*\(.*/, "", call)
-            gsub(/[ ]*[.][ ]*/, ".", call)
-            if (call !~ /^[A-Za-z_][A-Za-z0-9_.]*$/) {
-                return 0
-            }
+        function manifest_factory_call_matches(call, owner,    name, parts, qualifier, segment_count, qualifier_index) {
             segment_count = split(call, parts, ".")
             name = parts[segment_count]
             if (segment_count == 1) {
@@ -422,6 +405,23 @@ manifest_state_declarations() {
                 }
             }
             return parts[1] == "shared" && ((owner "|" name) in manifest_factories)
+        }
+        function inferred_factory_contains_manifest(value, owner,    call, expression) {
+            if (value !~ /=/) {
+                return 0
+            }
+            expression = value
+            sub(/^[^=]*=[ ]*/, "", expression)
+            gsub(/[ ]*[.][ ]*/, ".", expression)
+            while (match(expression, /[A-Za-z_][A-Za-z0-9_.]*[ ]*\(/)) {
+                call = substr(expression, RSTART, RLENGTH)
+                sub(/[ ]*\($/, "", call)
+                if (manifest_factory_call_matches(call, owner)) {
+                    return 1
+                }
+                expression = substr(expression, RSTART + RLENGTH)
+            }
+            return 0
         }
         function inferred_generic_contains_manifest(value,    expression) {
             if (value !~ /=/) {
@@ -552,24 +552,7 @@ shell_host_static_storage_declarations() {
             sub(/^.*[.]/, "", name)
             return name
         }
-        function uses_shell_host_factory(value, owner,    call, expression, name, parts, qualifier, segment_count, qualifier_index) {
-            if (value !~ /=/) {
-                return 0
-            }
-            expression = value
-            sub(/^[^=]*=[ ]*/, "", expression)
-            while (expression ~ /^(try[!?]?|await)[ ]+/) {
-                sub(/^(try[!?]?|await)[ ]+/, "", expression)
-            }
-            if (expression !~ /\(/) {
-                return 0
-            }
-            call = expression
-            sub(/[ ]*\(.*/, "", call)
-            gsub(/[ ]*[.][ ]*/, ".", call)
-            if (call !~ /^[A-Za-z_][A-Za-z0-9_.]*$/) {
-                return 0
-            }
+        function shell_host_factory_call_matches(call, owner,    name, parts, qualifier, segment_count, qualifier_index) {
             segment_count = split(call, parts, ".")
             name = parts[segment_count]
             if (segment_count == 1) {
@@ -586,6 +569,23 @@ shell_host_static_storage_declarations() {
                 }
             }
             return parts[1] == "shared" && ((owner "|" name) in shell_host_factories)
+        }
+        function uses_shell_host_factory(value, owner,    call, expression) {
+            if (value !~ /=/) {
+                return 0
+            }
+            expression = value
+            sub(/^[^=]*=[ ]*/, "", expression)
+            gsub(/[ ]*[.][ ]*/, ".", expression)
+            while (match(expression, /[A-Za-z_][A-Za-z0-9_.]*[ ]*\(/)) {
+                call = substr(expression, RSTART, RLENGTH)
+                sub(/[ ]*\($/, "", call)
+                if (shell_host_factory_call_matches(call, owner)) {
+                    return 1
+                }
+                expression = substr(expression, RSTART + RLENGTH)
+            }
+            return 0
         }
         function is_stored_property(value,    declaration_header) {
             declaration_header = value
@@ -1127,24 +1127,7 @@ shell_snapshot_stored_property_counts() {
             sub(/^.*[.]/, "", name)
             return name
         }
-        function uses_snapshot_factory(property, owner,    call, expression, name, parts, qualifier, segment_count, qualifier_index) {
-            if (property !~ /=/) {
-                return 0
-            }
-            expression = property
-            sub(/^[^=]*=[ ]*/, "", expression)
-            while (expression ~ /^(try[!?]?|await)[ ]+/) {
-                sub(/^(try[!?]?|await)[ ]+/, "", expression)
-            }
-            if (expression !~ /\(/) {
-                return 0
-            }
-            call = expression
-            sub(/[ ]*\(.*/, "", call)
-            gsub(/[ ]*[.][ ]*/, ".", call)
-            if (call !~ /^[A-Za-z_][A-Za-z0-9_.]*$/) {
-                return 0
-            }
+        function snapshot_factory_call_matches(call, owner,    name, parts, qualifier, segment_count, qualifier_index) {
             segment_count = split(call, parts, ".")
             name = parts[segment_count]
             if (segment_count == 1) {
@@ -1161,6 +1144,23 @@ shell_snapshot_stored_property_counts() {
                 }
             }
             return parts[1] == "shared" && ((owner "|" name) in snapshot_factories)
+        }
+        function uses_snapshot_factory(property, owner,    call, expression) {
+            if (property !~ /=/) {
+                return 0
+            }
+            expression = property
+            sub(/^[^=]*=[ ]*/, "", expression)
+            gsub(/[ ]*[.][ ]*/, ".", expression)
+            while (match(expression, /[A-Za-z_][A-Za-z0-9_.]*[ ]*\(/)) {
+                call = substr(expression, RSTART, RLENGTH)
+                sub(/[ ]*\($/, "", call)
+                if (snapshot_factory_call_matches(call, owner)) {
+                    return 1
+                }
+                expression = substr(expression, RSTART + RLENGTH)
+            }
+            return 0
         }
         function inferred_generic_contains_snapshot(property,    expression) {
             if (property !~ /=/) {
