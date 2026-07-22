@@ -654,8 +654,11 @@ manifest_state_declarations() {
             buffer = ""
         }
         {
-            line = $0
-            sub(/\/\/.*/, "", line)
+            first_separator = index($0, "\t")
+            remainder = substr($0, first_separator + 1)
+            second_separator = index(remainder, "\t")
+            source_line_number = substr(remainder, 1, second_separator - 1)
+            line = substr(remainder, second_separator + 1)
             line_indent = leading_space_count(line)
             if (line !~ /^[[:space:]]*$/) {
                 while (type_depth > 0 && line_indent <= type_indent[type_depth]) {
@@ -673,7 +676,7 @@ manifest_state_declarations() {
             if (line ~ /^[[:space:]]*[^\/]*(let|var)[ ]+[A-Za-z_][A-Za-z0-9_]*/) {
                 record_declaration()
                 buffer = line
-                start_line = FNR
+                start_line = source_line_number
                 declaration_indent = line_indent
                 declaration_owner = type_depth > 0 ? type_name[type_depth] : ""
                 declaration_owner_key = current_type_owner()
@@ -686,7 +689,7 @@ manifest_state_declarations() {
             }
         }
         END { record_declaration() }
-    ' "$file"
+    ' < <(swift_code_lines "$file")
 }
 
 static_property_declarations() {
