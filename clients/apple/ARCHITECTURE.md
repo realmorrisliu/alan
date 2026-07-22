@@ -573,14 +573,16 @@ mutable retained manifest and the existing transient load, projection, and FFI
 value containers are accepted. The inventory also follows inferred stored
 values back to a repository-wide inventory of manifest-returning helper
 factories by their declaring type and function name, including instance methods
-reached through a singleton accessor. Unqualified, `Self`-qualified,
-concrete-type-qualified, or `Factory.shared` calls are discovered throughout
-the complete initializer expression, including immediately invoked closures
-and nested wrappers. They therefore cannot hide a second retained manifest by
-omitting an explicit property type or moving the factory to another file. The
-FFI-produced manifest values used for default creation, corrupt-file recovery,
-and startup pruning remain explicit transient inventory entries. Controller-side
-manifest use, a second projector, or a second scheduler fails validation.
+reached through a singleton accessor and factories declared on the target type
+with a `Self` return. Unqualified, `Self`-qualified, concrete-type-qualified,
+or `Factory.shared` calls are discovered throughout the complete initializer
+expression, including direct target constructors, `.init`, immediately invoked
+closures, and nested wrappers. They therefore cannot hide a second retained
+manifest by omitting an explicit property type or moving the factory to another
+file. The FFI-produced manifest values used for default creation, corrupt-file
+recovery, and startup pruning remain explicit transient inventory entries.
+Controller-side manifest use, a second projector, or a second scheduler fails
+validation.
 
 The same gate rejects a replacement global Shell store. `ShellHostController`
 remains the only observable owner of a mutable `ShellStateSnapshot`; the two

@@ -299,7 +299,10 @@ typed_factory_declarations() {
                 return
             }
             sub(/^.*->[ ]*/, "", return_type)
-            if (return_type !~ ("(^|[^A-Za-z0-9_])" target_type "([^A-Za-z0-9_]|$)")) {
+            if (return_type !~ ("(^|[^A-Za-z0-9_])" target_type "([^A-Za-z0-9_]|$)") &&
+                !(factory_owner == target_type &&
+                    return_type ~ /(^|[^A-Za-z0-9_])Self([^A-Za-z0-9_]|$)/))
+            {
                 factory_buffer = ""
                 return
             }
@@ -391,7 +394,13 @@ manifest_state_declarations() {
         function manifest_factory_call_matches(call, owner,    name, parts, qualifier, segment_count, qualifier_index) {
             segment_count = split(call, parts, ".")
             name = parts[segment_count]
+            if (name == "ShellContentWorkspaceManifest") {
+                return 1
+            }
             if (segment_count == 1) {
+                if (name == "init" && owner == "ShellContentWorkspaceManifest") {
+                    return 1
+                }
                 return ((owner "|" name) in manifest_factories) ||
                     (("|" name) in manifest_factories)
             }
@@ -399,6 +408,9 @@ manifest_state_declarations() {
                 qualifier = parts[qualifier_index]
                 if (qualifier == "Self" || qualifier == "self") {
                     qualifier = owner
+                }
+                if (name == "init" && qualifier == "ShellContentWorkspaceManifest") {
+                    return 1
                 }
                 if ((qualifier "|" name) in manifest_factories) {
                     return 1
@@ -555,7 +567,13 @@ shell_host_static_storage_declarations() {
         function shell_host_factory_call_matches(call, owner,    name, parts, qualifier, segment_count, qualifier_index) {
             segment_count = split(call, parts, ".")
             name = parts[segment_count]
+            if (name == "ShellHostController") {
+                return 1
+            }
             if (segment_count == 1) {
+                if (name == "init" && owner == "ShellHostController") {
+                    return 1
+                }
                 return ((owner "|" name) in shell_host_factories) ||
                     (("|" name) in shell_host_factories)
             }
@@ -563,6 +581,9 @@ shell_host_static_storage_declarations() {
                 qualifier = parts[qualifier_index]
                 if (qualifier == "Self" || qualifier == "self") {
                     qualifier = owner
+                }
+                if (name == "init" && qualifier == "ShellHostController") {
+                    return 1
                 }
                 if ((qualifier "|" name) in shell_host_factories) {
                     return 1
@@ -1130,7 +1151,13 @@ shell_snapshot_stored_property_counts() {
         function snapshot_factory_call_matches(call, owner,    name, parts, qualifier, segment_count, qualifier_index) {
             segment_count = split(call, parts, ".")
             name = parts[segment_count]
+            if (name == "ShellStateSnapshot") {
+                return 1
+            }
             if (segment_count == 1) {
+                if (name == "init" && owner == "ShellStateSnapshot") {
+                    return 1
+                }
                 return ((owner "|" name) in snapshot_factories) ||
                     (("|" name) in snapshot_factories)
             }
@@ -1138,6 +1165,9 @@ shell_snapshot_stored_property_counts() {
                 qualifier = parts[qualifier_index]
                 if (qualifier == "Self" || qualifier == "self") {
                     qualifier = owner
+                }
+                if (name == "init" && qualifier == "ShellStateSnapshot") {
+                    return 1
                 }
                 if ((qualifier "|" name) in snapshot_factories) {
                     return 1
