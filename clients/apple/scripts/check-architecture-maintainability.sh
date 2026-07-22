@@ -421,6 +421,50 @@ normalized_file_matches() {
     ' < <(swift_code_lines "$file")
 }
 
+readonly FACTORY_INSTANCE_AWK_HELPERS='
+    function matching_call_end(value, opening,    character, column, depth) {
+        depth = 0
+        for (column = opening; column <= length(value); column++) {
+            character = substr(value, column, 1)
+            if (character == "(") {
+                depth++
+            } else if (character == ")") {
+                depth--
+                if (depth == 0) {
+                    return column
+                }
+            }
+        }
+        return 0
+    }
+    function instance_receiver_invokes_factory(value, factories,    call_end, pattern, entry, fields, method, opening, receiver, remainder, suffix) {
+        for (entry in factories) {
+            split(entry, fields, "|")
+            receiver = fields[1]
+            method = fields[2]
+            if (receiver == "" || method == "") {
+                continue
+            }
+            pattern = "(^|[^A-Za-z0-9_])" receiver \
+                "([ ]*<[^>]+>)?([ ]*[.][ ]*init)?[ ]*\\("
+            remainder = value
+            while (match(remainder, pattern)) {
+                opening = RSTART + RLENGTH - 1
+                call_end = matching_call_end(remainder, opening)
+                if (call_end == 0) {
+                    break
+                }
+                suffix = substr(remainder, call_end + 1)
+                if (suffix ~ ("^[ ]*[!?]?[ ]*[.][ ]*" method "[ ]*\\(")) {
+                    return 1
+                }
+                remainder = substr(remainder, RSTART + 1)
+            }
+        }
+        return 0
+    }
+'
+
 typed_factory_declarations() {
     local file="$1"
     local target_type="$2"
@@ -476,8 +520,10 @@ typed_factory_declarations() {
             factory_buffer = ""
         }
         {
-            line = $0
-            sub(/\/\/.*/, "", line)
+            first_separator = index($0, "\t")
+            remainder = substr($0, first_separator + 1)
+            second_separator = index(remainder, "\t")
+            line = substr(remainder, second_separator + 1)
             line_indent = leading_space_count(line)
             if (line !~ /^[[:space:]]*$/) {
                 while (type_depth > 0 && line_indent <= type_indent[type_depth]) {
@@ -509,7 +555,7 @@ typed_factory_declarations() {
             }
         }
         END { record_buffered_factory() }
-    ' "$file"
+    ' < <(swift_code_lines "$file")
 }
 
 typed_factory_inventory() {
@@ -525,7 +571,7 @@ manifest_state_declarations() {
     local file="$1"
     local factory_inventory="$2"
 
-    awk -v factory_inventory="$factory_inventory" '
+    awk -v factory_inventory="$factory_inventory" "$FACTORY_INSTANCE_AWK_HELPERS"'
         BEGIN {
             factory_count = split(factory_inventory, factory_entries, ";")
             for (factory_index = 1; factory_index <= factory_count; factory_index++) {
@@ -597,6 +643,9 @@ manifest_state_declarations() {
             expression = value
             sub(/^[^=]*=[ ]*/, "", expression)
             gsub(/[ ]*[.][ ]*/, ".", expression)
+            if (instance_receiver_invokes_factory(expression, manifest_factories)) {
+                return 1
+            }
             while (match(expression, /[A-Za-z_][A-Za-z0-9_.]*[ ]*\(/)) {
                 call = substr(expression, RSTART, RLENGTH)
                 sub(/[ ]*\($/, "", call)
@@ -697,8 +746,10 @@ static_property_declarations() {
 
     awk '
         {
-            line = $0
-            sub(/\/\/.*/, "", line)
+            first_separator = index($0, "\t")
+            remainder = substr($0, first_separator + 1)
+            second_separator = index(remainder, "\t")
+            line = substr(remainder, second_separator + 1)
             if (line !~ /^[[:space:]]*[^\/]*(static|class)[ ]+([^ ]+[ ]+)*(let|var)[ ]+[A-Za-z_][A-Za-z0-9_]*/) {
                 next
             }
@@ -707,14 +758,14 @@ static_property_declarations() {
             sub(/ $/, "", line)
             print line
         }
-    ' "$file"
+    ' < <(swift_code_lines "$file")
 }
 
 shell_host_global_storage_declarations() {
     local file="$1"
     local factory_inventory="$2"
 
-    awk -v factory_inventory="$factory_inventory" '
+    awk -v factory_inventory="$factory_inventory" "$FACTORY_INSTANCE_AWK_HELPERS"'
         BEGIN {
             factory_count = split(factory_inventory, factory_entries, ";")
             for (factory_index = 1; factory_index <= factory_count; factory_index++) {
@@ -778,6 +829,9 @@ shell_host_global_storage_declarations() {
             expression = value
             sub(/^[^=]*=[ ]*/, "", expression)
             gsub(/[ ]*[.][ ]*/, ".", expression)
+            if (instance_receiver_invokes_factory(expression, shell_host_factories)) {
+                return 1
+            }
             while (match(expression, /[A-Za-z_][A-Za-z0-9_.]*[ ]*\(/)) {
                 call = substr(expression, RSTART, RLENGTH)
                 sub(/[ ]*\($/, "", call)
@@ -814,8 +868,11 @@ shell_host_global_storage_declarations() {
             property_buffer = ""
         }
         {
-            line = $0
-            sub(/\/\/.*/, "", line)
+            first_separator = index($0, "\t")
+            remainder = substr($0, first_separator + 1)
+            second_separator = index(remainder, "\t")
+            source_line_number = substr(remainder, 1, second_separator - 1)
+            line = substr(remainder, second_separator + 1)
             line_indent = leading_space_count(line)
             if (line !~ /^[[:space:]]*$/) {
                 while (type_depth > 0 && line_indent <= type_indent[type_depth]) {
@@ -835,7 +892,7 @@ shell_host_global_storage_declarations() {
             {
                 record_buffered_property()
                 property_buffer = line
-                property_start_line = FNR
+                property_start_line = source_line_number
                 property_indent = line_indent
                 property_owner = type_depth > 0 ? type_name[type_depth] : ""
             } else if (property_buffer != "" &&
@@ -847,7 +904,7 @@ shell_host_global_storage_declarations() {
             }
         }
         END { record_buffered_property() }
-    ' "$file"
+    ' < <(swift_code_lines "$file")
 }
 
 check_appkit_import_gate() {
@@ -1335,7 +1392,7 @@ shell_snapshot_stored_property_counts() {
     local file="$1"
     local factory_inventory="$2"
 
-    awk -v factory_inventory="$factory_inventory" '
+    awk -v factory_inventory="$factory_inventory" "$FACTORY_INSTANCE_AWK_HELPERS"'
         BEGIN {
             factory_count = split(factory_inventory, factory_entries, ";")
             for (factory_index = 1; factory_index <= factory_count; factory_index++) {
@@ -1399,6 +1456,9 @@ shell_snapshot_stored_property_counts() {
             expression = property
             sub(/^[^=]*=[ ]*/, "", expression)
             gsub(/[ ]*[.][ ]*/, ".", expression)
+            if (instance_receiver_invokes_factory(expression, snapshot_factories)) {
+                return 1
+            }
             while (match(expression, /[A-Za-z_][A-Za-z0-9_.]*[ ]*\(/)) {
                 call = substr(expression, RSTART, RLENGTH)
                 sub(/[ ]*\($/, "", call)
@@ -1475,8 +1535,10 @@ shell_snapshot_stored_property_counts() {
             global_buffer = ""
         }
         {
-            line = $0
-            sub(/\/\/.*/, "", line)
+            first_separator = index($0, "\t")
+            remainder = substr($0, first_separator + 1)
+            second_separator = index(remainder, "\t")
+            line = substr(remainder, second_separator + 1)
 
             # Follow the formatted type nesting so instance members of both
             # top-level and nested types are counted, while method-local scratch
@@ -1533,7 +1595,7 @@ shell_snapshot_stored_property_counts() {
             count_buffered_global_property()
             print instance_count, global_count
         }
-    ' "$file"
+    ' < <(swift_code_lines "$file")
 }
 
 reject_replacement_global_shell_store() {

@@ -573,14 +573,16 @@ mutable retained manifest and the existing transient load, projection, and FFI
 value containers are accepted. The inventory also follows inferred stored
 values back to a repository-wide inventory of manifest-returning helper
 factories by their declaring type and function name, including instance methods
-reached through a singleton accessor and factories declared on the target type
-with a `Self` return. Unqualified, `Self`-qualified, concrete-type-qualified,
-or `Factory.shared` calls are discovered throughout the complete initializer
+reached through a singleton accessor or a freshly constructed helper, and
+factories declared on the target type with a `Self` return. Unqualified,
+`Self`-qualified, concrete-type-qualified, `Factory.shared`, or
+`Factory().make()` calls are discovered throughout the complete initializer
 expression, including direct target constructors, `.init`, immediately invoked
-closures, and nested wrappers. They therefore cannot hide a second retained
-manifest by omitting an explicit property type or moving the factory to another
-file. The FFI-produced manifest values used for default creation, corrupt-file
-recovery, and startup pruning remain explicit transient inventory entries. Each
+closures, nested call arguments, and nested wrappers. They therefore cannot
+hide a second retained manifest by omitting an explicit property type or moving
+the factory to another file. The FFI-produced manifest values used for default
+creation, corrupt-file recovery, and startup pruning remain explicit transient
+inventory entries. Each
 accepted manifest declaration is keyed by its file and declaring type and must
 appear exactly once, so a second owner cannot reuse another declaration's shape.
 Controller-side manifest use, a second projector, or a second scheduler fails
