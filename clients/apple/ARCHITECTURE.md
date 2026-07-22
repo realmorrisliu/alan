@@ -584,7 +584,9 @@ recovery, and startup pruning remain explicit transient inventory entries. Each
 accepted manifest declaration is keyed by its file and declaring type and must
 appear exactly once, so a second owner cannot reuse another declaration's shape.
 Controller-side manifest use, a second projector, or a second scheduler fails
-validation.
+validation. Those code-ownership scans lex line and nested block comments out
+before matching, so architectural documentation in Swift comments remains valid
+without weakening executable-source enforcement.
 
 The same gate rejects a replacement global Shell store. `ShellHostController`
 remains the only observable owner of a mutable `ShellStateSnapshot`; the two

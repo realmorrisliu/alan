@@ -217,26 +217,120 @@ contains_line() {
     return 1
 }
 
+swift_code_matching_lines() {
+    local pattern="$1"
+    shift
+
+    awk -v pattern="$pattern" '
+        function code_without_comments(value,    character, code, column, pair, triple) {
+            code = ""
+            column = 1
+            while (column <= length(value)) {
+                pair = substr(value, column, 2)
+                triple = substr(value, column, 3)
+                character = substr(value, column, 1)
+
+                if (block_comment_depth > 0) {
+                    if (pair == "/*") {
+                        block_comment_depth++
+                        column += 2
+                    } else if (pair == "*/") {
+                        block_comment_depth--
+                        column += 2
+                    } else {
+                        column++
+                    }
+                    continue
+                }
+
+                # Keep string contents so comment delimiters inside Swift
+                # strings cannot hide executable source later on the line.
+                if (multiline_string) {
+                    if (triple == "\"\"\"") {
+                        code = code triple
+                        multiline_string = 0
+                        column += 3
+                    } else {
+                        code = code character
+                        column++
+                    }
+                    continue
+                }
+                if (quoted_string) {
+                    code = code character
+                    if (escaped_character) {
+                        escaped_character = 0
+                    } else if (character == "\\") {
+                        escaped_character = 1
+                    } else if (character == "\"") {
+                        quoted_string = 0
+                    }
+                    column++
+                    continue
+                }
+
+                if (pair == "//") {
+                    break
+                }
+                if (pair == "/*") {
+                    block_comment_depth = 1
+                    column += 2
+                    continue
+                }
+                if (triple == "\"\"\"") {
+                    code = code triple
+                    multiline_string = 1
+                    column += 3
+                    continue
+                }
+                if (character == "\"") {
+                    code = code character
+                    quoted_string = 1
+                    escaped_character = 0
+                    column++
+                    continue
+                }
+
+                code = code character
+                column++
+            }
+            return code
+        }
+        FNR == 1 {
+            block_comment_depth = 0
+            multiline_string = 0
+            quoted_string = 0
+            escaped_character = 0
+        }
+        {
+            code = code_without_comments($0)
+            if (code ~ pattern) {
+                printf "%s:%d:%s\n", FILENAME, FNR, code
+                matched = 1
+            }
+        }
+        END { exit matched ? 0 : 1 }
+    ' "$@"
+}
+
 reject_unapproved_symbol_lines() {
     local file="$1"
     local symbol_pattern="$2"
     local allowed_pattern="$3"
     local description="$4"
+    local match_file
+    local match_line
+    local rejected=0
+    local source_line
 
-    if ! awk \
-        -v symbol_pattern="$symbol_pattern" \
-        -v allowed_pattern="$allowed_pattern" '
-            {
-                line = $0
-                sub(/\/\/.*/, "", line)
-                if (line ~ symbol_pattern && line !~ allowed_pattern) {
-                    printf "%s:%d:%s\n", FILENAME, NR, $0 > "/dev/stderr"
-                    rejected = 1
-                }
-            }
-            END { exit rejected ? 1 : 0 }
-        ' "$file"
-    then
+    while IFS=: read -r match_file match_line source_line; do
+        if [[ ! "$source_line" =~ $allowed_pattern ]]; then
+            printf '%s:%s:%s\n' "$match_file" "$match_line" "$source_line" >&2
+            rejected=1
+        fi
+    done < <(swift_code_matching_lines "$symbol_pattern" "$file" || true)
+
+    if (( rejected > 0 )); then
         fail "$description"
     fi
 }
@@ -1013,6 +1107,7 @@ reject_shell_host_duplicate_selection_state() {
 reject_shell_host_duplicate_persistence_state() {
     local controller="$SOURCE_ROOT/ShellHostController.swift"
     local controller_dir="$SOURCE_ROOT/Controllers/Shell"
+    local controller_sources=("$controller" "$controller_dir"/*.swift)
     local persistence_owner="Services/Shell/ShellWorkspacePersistenceCoordinator.swift"
     local scheduler_definition_owner="Services/Shell/ShellWorkspaceManifestStore.swift"
     local projector_definition_owner="Services/Shell/ShellWorkspaceManifestProjector.swift"
@@ -1094,6 +1189,12 @@ reject_shell_host_duplicate_persistence_state() {
     done
 
     while IFS= read -r file; do
+        if ! swift_code_matching_lines \
+            'ManifestFlushScheduling|DebouncedManifestFlushScheduler' \
+            "$file" >/dev/null
+        then
+            continue
+        fi
         rel="${file#$SOURCE_ROOT/}"
         case "$rel" in
             "$persistence_owner")
@@ -1115,6 +1216,12 @@ reject_shell_host_duplicate_persistence_state() {
         "$SOURCE_ROOT" || true)
 
     while IFS= read -r file; do
+        if ! swift_code_matching_lines \
+            'ShellWorkspaceManifestProjector' \
+            "$file" >/dev/null
+        then
+            continue
+        fi
         rel="${file#$SOURCE_ROOT/}"
         case "$rel" in
             "$persistence_owner")
@@ -1135,17 +1242,17 @@ reject_shell_host_duplicate_persistence_state() {
         'ShellWorkspaceManifestProjector' \
         "$SOURCE_ROOT" || true)
 
-    if grep -RIn --include='*.swift' -F \
-        'ShellContentWorkspaceManifest' \
-        "$controller" "$controller_dir" >&2
+    if swift_code_matching_lines \
+        '(^|[^A-Za-z0-9_])ShellContentWorkspaceManifest([^A-Za-z0-9_]|$)' \
+        "${controller_sources[@]}" >&2
     then
         fail \
             "shell host must not retain or construct workspace manifests outside $persistence_owner"
     fi
 
-    if grep -RIn --include='*.swift' -E \
-        '^[[:space:]]*(private[[:space:]]+)?var[[:space:]]+workspaceManifest|ManifestFlushScheduling|DebouncedManifestFlushScheduler|manifestFlushScheduler|contentFlush(Scheduled|Pending)|scheduleContentFlush|flushPendingPersistence|syncManifestFromShellState|makeWorkspaceManifestFromShellState|ShellWorkspaceManifestProjector[[:space:]]*\(' \
-        "$controller" "$controller_dir" >&2
+    if swift_code_matching_lines \
+        '^[[:space:]]*(private[[:space:]]+)?var[[:space:]]+workspaceManifest|ManifestFlushScheduling|DebouncedManifestFlushScheduler|manifestFlushScheduler|contentFlush(Scheduled|Pending)|scheduleContentFlush|flushPendingPersistence|syncManifestFromShellState|makeWorkspaceManifestFromShellState|ShellWorkspaceManifestProjector[[:space:]]*\\(' \
+        "${controller_sources[@]}" >&2
     then
         fail \
             "shell host persistence state, projection, and scheduling must remain in ShellWorkspacePersistenceCoordinator"
