@@ -13,8 +13,7 @@ extension ShellHostController {
                 )
             }
         }
-        let previousRuntime = runtime.paneID.map { self.runtime(for: $0) }
-        terminalRuntimeRegistry.updateSnapshot(runtime)
+        let shouldProjectToShell = terminalRuntimeRegistry.updateSnapshot(runtime)
 
         if let paneID = runtime.paneID,
            runtime.isFocused,
@@ -24,19 +23,10 @@ extension ShellHostController {
             return
         }
 
-        guard TerminalRuntimePublicationPolicy.shouldProjectToShell(
-            previous: previousRuntime,
-            next: runtime
-        ) else {
-            return
+        guard shouldProjectToShell else { return }
+        terminalRuntimeRegistry.publishShellProjection(runtime) { [weak self] snapshot in
+            self?.projectTerminalRuntime(snapshot)
         }
-
-        if runtime.renderPriority == .visibleBackground {
-            scheduleVisibleBackgroundRuntimeProjection(runtime)
-            return
-        }
-
-        projectTerminalRuntime(runtime)
     }
 
     private func projectTerminalRuntime(_ runtime: TerminalHostRuntimeSnapshot) {
@@ -50,10 +40,6 @@ extension ShellHostController {
                 )
             }
         }
-        if runtime.paneID == selectedPane?.paneID || runtime.paneID == shellState.focusedPaneID {
-            setSelectedTerminalRuntime(runtime)
-        }
-
         if let paneID = runtime.paneID,
            let pane = pane(paneID: paneID)
         {
@@ -63,10 +49,10 @@ extension ShellHostController {
                 for: pane,
                 bootProfile: bootProfile
             )
-            let activeTaskChanged = recordTerminalActiveTask(
+            let activeTaskChanged = terminalRuntimeRegistry.recordActiveTask(
                 runtime.paneMetadata.activeTaskState,
                 processExited: effectProjection.processExited,
-                for: paneID
+                forPaneID: paneID
             )
             if effectProjection.processExited {
                 routeActivityNotificationIfNeeded(from: pane, nextActivity: effectProjection.activity)
@@ -160,28 +146,6 @@ extension ShellHostController {
         return AlanPerformanceDiagnosticsController.shared.isEnabled ? DispatchTime.now() : nil
     }
 
-    private func scheduleVisibleBackgroundRuntimeProjection(_ runtime: TerminalHostRuntimeSnapshot) {
-        guard let paneID = runtime.paneID else {
-            projectTerminalRuntime(runtime)
-            return
-        }
-        pendingVisibleBackgroundRuntimeByPaneID[paneID] = runtime
-        guard !visibleBackgroundRuntimeProjectionScheduled else { return }
-        visibleBackgroundRuntimeProjectionScheduled = true
-        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(16)) { [weak self] in
-            self?.flushVisibleBackgroundRuntimeProjections()
-        }
-    }
-
-    private func flushVisibleBackgroundRuntimeProjections() {
-        let pending = pendingVisibleBackgroundRuntimeByPaneID
-        pendingVisibleBackgroundRuntimeByPaneID.removeAll()
-        visibleBackgroundRuntimeProjectionScheduled = false
-        for runtime in pending.values.sorted(by: { ($0.paneID ?? "") < ($1.paneID ?? "") }) {
-            projectTerminalRuntime(runtime)
-        }
-    }
-
     func updateTerminalMetadata(_ metadata: TerminalPaneMetadataSnapshot, for paneID: String) {
         let metadataStartedAt = performanceDiagnosticsStartTime()
         guard let pane = pane(paneID: paneID) else { return }
@@ -202,10 +166,10 @@ extension ShellHostController {
             for: pane,
             bootProfile: bootProfile
         )
-        let activeTaskChanged = recordTerminalActiveTask(
+        let activeTaskChanged = terminalRuntimeRegistry.recordActiveTask(
             metadata.activeTaskState,
             processExited: effectProjection.processExited,
-            for: paneID
+            forPaneID: paneID
         )
         if effectProjection.processExited {
             routeActivityNotificationIfNeeded(from: pane, nextActivity: effectProjection.activity)
@@ -541,24 +505,14 @@ extension ShellHostController {
                 recordPerformanceDiagnostic(
                     .shellSelectionChange,
                     durationMs: performanceDurationMs(since: selectionStartedAt),
-                    runtime: terminalRuntime,
+                    runtime: selectedPaneRuntime,
                     fallbackPaneID: selectedPane?.paneID,
                     fallbackContentID: selectedPane?.terminalContentID,
                     fallbackPriority: selectedPane.map { terminalRenderPriority(for: $0) }
                 )
             }
         }
-        setSelectedTerminalRuntime(runtime(for: selectedPane?.paneID))
         synchronizeTerminalRenderPriorities()
-    }
-
-    /// Assigns the selected-pane runtime snapshot only when it differs from the
-    /// current one in something other than its publish timestamp. This stays off
-    /// the host's broad `@Published` surface so terminal-output churn does not
-    /// invalidate unrelated SwiftUI chrome.
-    private func setSelectedTerminalRuntime(_ runtime: TerminalHostRuntimeSnapshot) {
-        guard !terminalRuntime.equalsIgnoringTimestamp(runtime) else { return }
-        terminalRuntime = runtime
     }
 
     func synchronizeTerminalRenderPriorities() {
@@ -578,7 +532,7 @@ extension ShellHostController {
             recordPerformanceDiagnostic(
                 .shellPrioritySynchronization,
                 durationMs: performanceDurationMs(since: synchronizationStartedAt),
-                runtime: terminalRuntime,
+                runtime: selectedPaneRuntime,
                 fallbackPaneID: selectedPane?.paneID,
                 fallbackContentID: selectedPane?.terminalContentID,
                 fallbackPriority: selectedPane.map { terminalRenderPriority(for: $0) },

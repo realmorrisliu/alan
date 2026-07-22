@@ -443,13 +443,15 @@ extension ShellHostController {
 
     var focusedPaneHasReliableSemanticCommands: Bool {
         guard focusedContentSupportsTerminalCommands else { return false }
-        guard let paneID = selectedPane?.paneID,
-              paneID == terminalRuntime.paneID
-        else {
+        guard let paneID = selectedPane?.paneID else {
             return false
         }
-        return terminalRuntime.surfaceState.terminalMode == .normalBuffer
-            && terminalRuntime.surfaceState.semanticCommands.hasReliableCommandBoundaries
+        let runtime = terminalRuntimeRegistry.snapshot(for: paneID)
+        guard paneID == runtime.paneID else {
+            return false
+        }
+        return runtime.surfaceState.terminalMode == .normalBuffer
+            && runtime.surfaceState.semanticCommands.hasReliableCommandBoundaries
     }
 
     @discardableResult

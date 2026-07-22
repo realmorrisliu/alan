@@ -115,7 +115,6 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     let persistenceCoordinator: ShellWorkspacePersistenceCoordinator
     let actionCoordinator = ShellActionCoordinator()
     let reducerAdapter = ShellCoreReducerAdapter()
-    var terminalActiveTasksByPaneID: [String: ShellTabActiveTaskState] = [:]
     var terminalContentIDsSuppressingAutoClose: Set<String> = []
     private let paneProjection: ShellPaneProjectionService
     let platformMetadataPreserver: ShellPlatformMetadataPreserver
@@ -163,7 +162,6 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
 
     @Published var shellState: ShellStateSnapshot
     @Published var lastCopiedAt: Date?
-    var terminalRuntime: TerminalHostRuntimeSnapshot = .placeholder
     @Published var controlPlaneDiagnostics: [String] = []
     @Published var activityNotifications: [ShellActivityNotificationRoute] = []
     @Published var zoomedPaneIDByTabID: [String: String] = [:]
@@ -224,8 +222,6 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     let bootProfileCache: AlanShellBootProfileCache
     let appIsActiveProvider: @MainActor () -> Bool
     var routedActivityNotificationKeys: Set<String> = []
-    var pendingVisibleBackgroundRuntimeByPaneID: [String: TerminalHostRuntimeSnapshot] = [:]
-    var visibleBackgroundRuntimeProjectionScheduled = false
     var shellWindowIsVisibleForRendering = true
     var workspaceManifest: ShellContentWorkspaceManifest? {
         persistenceCoordinator.currentManifest()

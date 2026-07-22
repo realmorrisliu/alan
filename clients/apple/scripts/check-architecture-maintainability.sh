@@ -478,12 +478,40 @@ require_shell_core_action_metadata_query_owners() {
     fi
 }
 
-reject_shell_host_published_terminal_runtime() {
-    local file="$SOURCE_ROOT/ShellHostController.swift"
+reject_shell_host_duplicate_terminal_runtime_state() {
+    local controller="$SOURCE_ROOT/ShellHostController.swift"
+    local controller_dir="$SOURCE_ROOT/Controllers/Shell"
+    local registry="$SOURCE_ROOT/TerminalRuntimeRegistry.swift"
+    local selection_owner="$controller_dir/ShellHostProjectionAndSelection.swift"
 
-    if grep -En '@Published[^[:cntrl:]]*terminalRuntime' "$file" >&2; then
-        fail "ShellHostController.terminalRuntime must not be @Published; high-frequency terminal runtime state must not invalidate the whole SwiftUI shell"
+    if grep -En 'var[[:space:]]+terminalRuntime[[:space:]]*:' "$controller" >&2; then
+        fail \
+            "ShellHostController terminal runtime must derive from TerminalRuntimeRegistry instead of cached state"
     fi
+    if grep -RIn --include='*.swift' -E \
+        'terminalActiveTasksByPaneID|pendingVisibleBackgroundRuntimeByPaneID|visibleBackgroundRuntimeProjectionScheduled|setSelectedTerminalRuntime|scheduleVisibleBackgroundRuntimeProjection' \
+        "$controller" "$controller_dir" >&2
+    then
+        fail \
+            "shell host runtime, active-task, and projection queue state must remain in TerminalRuntimeRegistry"
+    fi
+    if ! grep -Fq 'private var activeTasksByContentID:' "$registry" \
+        || ! grep -Fq 'private var pendingShellProjectionsByContentID:' "$registry"
+    then
+        fail \
+            "TerminalRuntimeRegistry must own content-keyed active-task and shell-projection state"
+    fi
+    if ! grep -Fq 'var selectedPaneRuntime: TerminalHostRuntimeSnapshot {' "$selection_owner" \
+        || ! grep -Fq 'terminalRuntimeRegistry.snapshot(for: paneID)' "$selection_owner"
+    then
+        fail \
+            "selected terminal runtime must be a direct TerminalRuntimeRegistry projection"
+    fi
+
+    require_existing_single_owner_pattern \
+        "TerminalRuntimePublicationPolicy.shouldProjectToShell" \
+        "TerminalRuntimeRegistry.swift" \
+        "shell-facing terminal runtime publication policy"
 }
 
 reject_shell_host_duplicate_selection_state() {
@@ -703,7 +731,7 @@ require_shell_core_ffi_shared_callsite_owners
 require_shell_core_ffi_direct_init_owners
 require_shell_core_ffi_raw_symbol_owners
 require_shell_core_action_metadata_query_owners
-reject_shell_host_published_terminal_runtime
+reject_shell_host_duplicate_terminal_runtime_state
 reject_shell_host_duplicate_selection_state
 reject_swiftui_shell_hot_path_sync_boundaries
 

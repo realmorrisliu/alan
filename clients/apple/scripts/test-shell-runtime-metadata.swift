@@ -29,7 +29,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesFailedStructuralManifestSaveIsReported()
         verifiesAsyncPersistenceWriteFailureRoutesToDiagnostics()
         verifiesPaneSupportDirectoryIsCreatedPromptlyAtBoot()
-        verifiesSelectedRuntimeAssignmentIgnoresTimestampOnlyChanges()
+        verifiesRegistryRuntimeProjectionIgnoresTimestampOnlyChanges()
         verifiesRuntimeProjectsTerminalStatusIntoPaneMetadata()
         verifiesRuntimeProjectionRecordsPerformanceDiagnostics()
         verifiesShellSelectionAndFocusRecordPerformanceDiagnostics()
@@ -42,6 +42,8 @@ private enum ShellRuntimeMetadataTests {
         verifiesPaneTitleBarSuppressesInternalTitles()
         verifiesOpeningTabSkipsStaleRuntimePaneIDs()
         verifiesRuntimeRegistryKeepsContentIdentityAcrossPaneMounts()
+        verifiesRuntimeRegistryKeepsActiveTaskWithContentAcrossPaneMounts()
+        verifiesRuntimeRegistryCoalescesVisibleBackgroundShellProjection()
         verifiesRuntimeRegistryPreservesInteractiveBehaviorAcrossPaneRemount()
         verifiesRuntimeRegistryCleanupUsesCurrentMountContentIDs()
         verifiesRuntimeRegistryRekeysHostViewAcrossContentReplacement()
@@ -1085,6 +1087,97 @@ private enum ShellRuntimeMetadataTests {
         registry.releaseRuntime(for: "pane_right")
         expect(handle.teardownCount == 1, "pane convenience release must finalize the mounted content")
         expect(registry.registeredContentIDs.isEmpty, "released content must leave the registry")
+    }
+
+    private static func verifiesRuntimeRegistryKeepsActiveTaskWithContentAcrossPaneMounts() {
+        let registry = TerminalRuntimeRegistry(runtimeService: FakeAlanTerminalRuntimeService())
+        let contentID = "content_terminal_active_task"
+        let firstMount = TerminalContentMount(
+            contentID: contentID,
+            paneSlotID: "pane_left",
+            tabID: "tab_1",
+            spaceID: "space_main"
+        )
+        let secondMount = TerminalContentMount(
+            contentID: contentID,
+            paneSlotID: "pane_right",
+            tabID: "tab_2",
+            spaceID: "space_main"
+        )
+
+        _ = registry.surfaceHandle(forTerminalContent: firstMount, bootProfile: nil)
+        expect(
+            registry.recordActiveTask(
+                .foregroundCommand,
+                processExited: false,
+                forPaneID: firstMount.paneSlotID
+            ),
+            "first active-task observation must update registry truth"
+        )
+
+        _ = registry.surfaceHandle(forTerminalContent: secondMount, bootProfile: nil)
+        expect(
+            registry.strongestActiveTask(forPaneIDs: [secondMount.paneSlotID])
+                == .foregroundCommand,
+            "active task must follow terminal content identity across PaneSlot remounts"
+        )
+        expect(
+            registry.strongestActiveTask(forPaneIDs: [firstMount.paneSlotID]) == nil,
+            "the previous PaneSlot must not retain duplicate active-task state"
+        )
+
+        registry.releaseRuntime(for: secondMount.paneSlotID)
+        expect(
+            registry.strongestActiveTask(forPaneIDs: [secondMount.paneSlotID]) == nil,
+            "terminal lifecycle release must remove registry-owned active-task state"
+        )
+    }
+
+    private static func verifiesRuntimeRegistryCoalescesVisibleBackgroundShellProjection() {
+        let registry = TerminalRuntimeRegistry(runtimeService: FakeAlanTerminalRuntimeService())
+
+        func snapshot(title: String, timestamp: TimeInterval) -> TerminalHostRuntimeSnapshot {
+            TerminalHostRuntimeSnapshot(
+                stage: .windowAttached,
+                contentID: "content_background",
+                paneID: "pane_background",
+                tabID: "tab_background",
+                renderPriority: .visibleBackground,
+                logicalSize: .zero,
+                backingSize: .zero,
+                displayName: nil,
+                displayID: nil,
+                attachedWindowTitle: nil,
+                isFocused: false,
+                renderer: .placeholder,
+                paneMetadata: TerminalPaneMetadataSnapshot(
+                    title: title,
+                    workingDirectory: "/repo/app",
+                    summary: nil,
+                    attention: .idle,
+                    processExited: false,
+                    lastCommandExitCode: nil,
+                    lastUpdatedAt: Date(timeIntervalSince1970: timestamp)
+                ),
+                surfaceState: .placeholder,
+                lastUpdatedAt: Date(timeIntervalSince1970: timestamp)
+            )
+        }
+
+        var projected: [TerminalHostRuntimeSnapshot] = []
+        let first = snapshot(title: "first", timestamp: 1)
+        let second = snapshot(title: "second", timestamp: 2)
+        expect(registry.updateSnapshot(first), "first runtime must require shell projection")
+        registry.publishShellProjection(first) { projected.append($0) }
+        expect(registry.updateSnapshot(second), "changed runtime must require shell projection")
+        registry.publishShellProjection(second) { projected.append($0) }
+
+        expect(projected.isEmpty, "visible-background runtime projection must wait for coalescing")
+        registry.flushShellProjections()
+        expect(
+            projected.count == 1 && projected.first?.paneMetadata.title == "second",
+            "registry must publish only the latest background snapshot per terminal content"
+        )
     }
 
     private static func verifiesRuntimeRegistryPreservesInteractiveBehaviorAcrossPaneRemount() {
@@ -9595,7 +9688,7 @@ private enum ShellRuntimeMetadataTests {
         )
     }
 
-    private static func verifiesSelectedRuntimeAssignmentIgnoresTimestampOnlyChanges() {
+    private static func verifiesRegistryRuntimeProjectionIgnoresTimestampOnlyChanges() {
         let controller = makeController()
         guard let pane = controller.selectedPane else {
             fail("bootstrap shell must expose a selected pane")
@@ -9644,6 +9737,10 @@ private enum ShellRuntimeMetadataTests {
             changeCount == afterFirst,
             "runtime snapshot identical except for its timestamp must not re-notify "
                 + "shell observers (delta \(changeCount - afterFirst))"
+        )
+        expect(
+            controller.selectedPaneRuntime.lastUpdatedAt == Date(timeIntervalSince1970: 2),
+            "selected runtime must derive the latest registry snapshot even when shell projection is suppressed"
         )
     }
 
