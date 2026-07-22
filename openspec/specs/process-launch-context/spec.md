@@ -38,6 +38,13 @@ namespace snapshot from which its mount list was selected. Alan Kernel SHALL
 commit it only when that generation matches the spawner namespace snapshot
 captured for the clone slot.
 
+#### Scenario: Stable snapshot contains a same-path union
+- **WHEN** a namespace snapshot contains multiple mount contributors at the
+  same path, including contributors with different access rights
+- **THEN** its exec manifest preserves their relative mount order
+- **AND** Alan Kernel accepts a manifest produced from that same stable snapshot
+  without mismatching read-only and read-write contributors
+
 #### Scenario: Child lacks an unpassed mount
 - **WHEN** a parent launches a child without listing a parent Host Mount
 - **THEN** the child cannot reach that Host Mount by grant ID, Host-path

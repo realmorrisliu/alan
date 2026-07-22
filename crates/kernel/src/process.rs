@@ -104,11 +104,8 @@ impl ExecNamespaceManifest {
 
     fn normalized(&self) -> Self {
         let mut mounts = self.mounts.clone();
-        mounts.sort_by(|left, right| {
-            left.path
-                .cmp(&right.path)
-                .then_with(|| left.access.cmp(&right.access))
-        });
+        // Stable path ordering keeps same-path union contributors in mount order.
+        mounts.sort_by(|left, right| left.path.cmp(&right.path));
         Self {
             generation: self.generation,
             mounts,

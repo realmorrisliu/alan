@@ -48,6 +48,53 @@ async fn live_spawner_view_exposes_current_namespace_at_proc_self() {
 }
 
 #[tokio::test]
+async fn clone_exec_namespace_manifest_preserves_mixed_access_union_order() {
+    let fs = proc();
+    let mut namespace = Namespace::new();
+    namespace.mount(
+        "/bin",
+        InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::new())),
+        Access::ReadWrite,
+    );
+    namespace.mount(
+        "/bin",
+        InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::new())),
+        Access::ReadOnly,
+    );
+    let manifest = alan_kernel::ExecNamespaceManifest::from_snapshot(&namespace, 0);
+    let spawner = fs.for_spawner(None, namespace, Credentials::user("alan"));
+
+    spawner
+        .walk(Fid::ROOT, Fid(32), &["clone".to_string()])
+        .await
+        .unwrap();
+    spawner.open(Fid(32), OpenMode::ReadWrite).await.unwrap();
+    let pid_name = String::from_utf8(spawner.read(Fid(32), 0, 64).await.unwrap()).unwrap();
+    let exec = serde_json::json!({
+        "executable": "/bin/agent",
+        "args": [],
+        "namespace": manifest
+    })
+    .to_string();
+    spawner.write(Fid(32), 0, exec.as_bytes()).await.unwrap();
+    assert_eq!(spawner.clunk(Fid(32)).await, Ok(()));
+
+    let namespace = String::from_utf8(
+        read_at(&fs, &[&pid_name, "namespace"], Fid(33))
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        namespace
+            .lines()
+            .filter(|line| line.starts_with("/bin "))
+            .collect::<Vec<_>>(),
+        vec!["/bin rw", "/bin ro"]
+    );
+}
+
+#[tokio::test]
 async fn clone_rejects_a_stale_live_namespace_generation_and_accepts_a_fresh_retry() {
     let fs = ProcFs::new();
     let mut namespace = Namespace::new();
