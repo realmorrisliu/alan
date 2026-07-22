@@ -74,7 +74,9 @@ captured for the clone slot.
   times
 - **AND** Agent Execution Engine recomputes a delegated child Process's package
   target, Tool discovery, launch descriptors, selected mounts, and capability
-  decision from the fresh snapshot before retrying
+  decision between matching namespace generations before retrying
+- **AND** if the generation changes during that recomputation, the engine
+  discards those inputs and starts another bounded attempt
 
 #### Scenario: Exec document omits its namespace manifest
 - **WHEN** a spawner commits an exec document without a namespace manifest

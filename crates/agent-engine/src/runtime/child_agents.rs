@@ -13,7 +13,7 @@ use alan_agent_protocol::{
     DelegatedCapabilityDecision, ProcessNamespaceAccess, ProcessNamespaceManifest,
     ProcessNamespaceMount, SpawnHandle, SpawnMountAccess, SpawnSpec, SpawnTarget,
 };
-use anyhow::{Context, Result, bail, ensure};
+use anyhow::{Context, Result, anyhow, bail, ensure};
 use tokio_util::sync::CancellationToken;
 
 use super::{
@@ -148,6 +148,17 @@ impl ChildProcessLaunch<'_> {
             let target_path =
                 resolve_target_path(self.parent, &attempt_spec.target, self.parent_descriptors)?;
             let tool_names = select_tool_names(self.parent, &attempt_spec).await?;
+            let refreshed_namespace = self
+                .process_files
+                .read_process_namespace(self.parent_pid)
+                .await?;
+            if refreshed_namespace.generation != parent_namespace.generation {
+                last_stale_error = Some(anyhow!(
+                    "parent Process namespace changed while selecting child launch inputs"
+                ));
+                continue;
+            }
+            let parent_namespace = refreshed_namespace;
             let plan = build_child_namespace_plan(
                 &attempt_spec,
                 &parent_namespace.mounts,
