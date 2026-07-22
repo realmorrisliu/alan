@@ -258,6 +258,85 @@ normalized_file_matches() {
     ' "$file"
 }
 
+manifest_state_declarations() {
+    local file="$1"
+
+    awk '
+        function leading_space_count(value,    prefix) {
+            prefix = value
+            sub(/[^ ].*$/, "", prefix)
+            return length(prefix)
+        }
+        function trim(value) {
+            sub(/^[[:space:]]+/, "", value)
+            sub(/[[:space:]]+$/, "", value)
+            return value
+        }
+        function record_declaration(    declaration, header, prefix, kind) {
+            if (buffer == "") {
+                return
+            }
+            declaration = buffer
+            gsub(/[[:space:]]+/, " ", declaration)
+            declaration = trim(declaration)
+            header = declaration
+            sub(/[=].*$/, "", header)
+
+            if (header ~ /:[^=]*ShellContentWorkspaceManifest([^A-Za-z0-9_]|$)/) {
+                prefix = header
+                sub(/[ ]*:.*/, "", prefix)
+                kind = "typed"
+            } else if (declaration ~ /=[ ]*(try[!?]?[ ]+)?ShellContentWorkspaceManifest([.]init)?[ ]*\(/) {
+                prefix = declaration
+                sub(/[ ]*=[ ]*ShellContentWorkspaceManifest.*/, "", prefix)
+                kind = "constructed"
+            } else {
+                buffer = ""
+                return
+            }
+
+            printf "%d|%d|%s|%s\n", start_line, declaration_indent, trim(prefix), kind
+            buffer = ""
+        }
+        {
+            line = $0
+            sub(/\/\/.*/, "", line)
+            if (line ~ /^[[:space:]]*[^\/]*(let|var)[ ]+[A-Za-z_][A-Za-z0-9_]*/) {
+                record_declaration()
+                buffer = line
+                start_line = NR
+                declaration_indent = leading_space_count(line)
+            } else if (buffer != "" &&
+                (line ~ /^[[:space:]]*$/ ||
+                    leading_space_count(line) > declaration_indent))
+            {
+                buffer = buffer " " line
+            } else {
+                record_declaration()
+            }
+        }
+        END { record_declaration() }
+    ' "$file"
+}
+
+static_property_declarations() {
+    local file="$1"
+
+    awk '
+        {
+            line = $0
+            sub(/\/\/.*/, "", line)
+            if (line !~ /^[[:space:]]*[^\/]*(static|class)[ ]+([^ ]+[ ]+)*(let|var)[ ]+[A-Za-z_][A-Za-z0-9_]*/) {
+                next
+            }
+            gsub(/[[:space:]]+/, " ", line)
+            sub(/^ /, "", line)
+            sub(/ $/, "", line)
+            print line
+        }
+    ' "$file"
+}
+
 check_appkit_import_gate() {
     local rel="$1"
     local file="$2"
@@ -590,7 +669,18 @@ reject_shell_host_duplicate_persistence_state() {
     local persistence_owner="Services/Shell/ShellWorkspacePersistenceCoordinator.swift"
     local scheduler_definition_owner="Services/Shell/ShellWorkspaceManifestStore.swift"
     local projector_definition_owner="Services/Shell/ShellWorkspaceManifestProjector.swift"
+    local manifest_state_allowlist=(
+        "Services/Shell/ShellCoreFFIManifestAdapter.swift|4|let manifest|typed"
+        "Services/Shell/ShellWorkspaceManifestProjector.swift|8|var manifest|constructed"
+        "Services/Shell/ShellWorkspaceManifestStore.swift|4|var manifest|typed"
+        "Services/Shell/ShellWorkspacePersistenceCoordinator.swift|4|private var workspaceManifest|typed"
+    )
+    local declaration
+    local declaration_indent
+    local declaration_kind
+    local declaration_line
     local file
+    local manifest_state
     local rel
 
     require_existing_single_owner_pattern \
@@ -617,6 +707,20 @@ reject_shell_host_duplicate_persistence_state() {
         "manifestProjector.makeManifest(" \
         "$persistence_owner" \
         "workspace manifest projection invocation"
+
+    while IFS= read -r file; do
+        rel="${file#$SOURCE_ROOT/}"
+        while IFS='|' read -r declaration_line declaration_indent declaration declaration_kind; do
+            manifest_state="$rel|$declaration_indent|$declaration|$declaration_kind"
+            if ! contains_line "$manifest_state" "${manifest_state_allowlist[@]}"; then
+                printf '%s:%s:%s\n' "$file" "$declaration_line" "$declaration" >&2
+                fail \
+                    "ShellContentWorkspaceManifest storage is not in the accepted ownership inventory: $manifest_state"
+            fi
+        done < <(manifest_state_declarations "$file")
+    done < <(grep -RIl --include='*.swift' -F \
+        'ShellContentWorkspaceManifest' \
+        "$SOURCE_ROOT" || true)
 
     while IFS= read -r file; do
         rel="${file#$SOURCE_ROOT/}"
@@ -688,6 +792,9 @@ shell_snapshot_stored_property_counts() {
         }
         function is_static_property_start(value) {
             return value ~ /^[[:space:]]*[^\/]*(static|class)[ ]+([^ ]+[ ]+)*(let|var)[ ]+[A-Za-z_][A-Za-z0-9_]*/
+        }
+        function is_type_declaration(value) {
+            return value ~ /^[[:space:]]*[^\/]*(class|struct|actor|enum|extension)[ ]+[A-Za-z_][A-Za-z0-9_]*/
         }
         function is_factory_candidate(value) {
             return value ~ /^[[:space:]]*[^\/]*func[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*\(/ ||
@@ -798,16 +905,29 @@ shell_snapshot_stored_property_counts() {
             line = $0
             sub(/\/\/.*/, "", line)
 
-            # Production Swift formatting keeps top-level type members at four
-            # spaces. Collect only those property declarations and their deeper
-            # continuation lines so method-local scratch variables are ignored.
-            if (line ~ /^    [^ ]/) {
+            # Follow the formatted type nesting so instance members of both
+            # top-level and nested types are counted, while method-local scratch
+            # variables remain deeper than their enclosing type member level.
+            line_indent = leading_space_count(line)
+            if (line !~ /^[[:space:]]*$/) {
+                while (type_depth > 0 && line_indent <= type_indent[type_depth]) {
+                    delete type_indent[type_depth]
+                    type_depth--
+                }
+                if (is_type_declaration(line)) {
+                    type_depth++
+                    type_indent[type_depth] = line_indent
+                }
+            }
+
+            if (type_depth > 0 && line_indent == type_indent[type_depth] + 4) {
                 count_buffered_instance_property()
-                if (line ~ /^    .*(let|var)[ ]+[A-Za-z_][A-Za-z0-9_]*/) {
+                if (line ~ /(let|var)[ ]+[A-Za-z_][A-Za-z0-9_]*/) {
                     instance_buffer = line
+                    instance_indent = line_indent
                 }
             } else if (instance_buffer != "" &&
-                (line ~ /^        / || line ~ /^[[:space:]]*$/))
+                (line ~ /^[[:space:]]*$/ || line_indent > instance_indent))
             {
                 instance_buffer = instance_buffer " " line
             } else {
@@ -864,12 +984,23 @@ reject_replacement_global_shell_store() {
         "ShellHostController.swift|zoomedPaneIDByTabID"
         "Support/ShellVoiceCommandController.swift|isListening"
     )
+    local snapshot_static_member_allowlist=(
+        "Services/Shell/ShellSocketServer.swift|private static let commandResponseTimeoutSeconds: TimeInterval = 5"
+        "Services/Shell/ShellSocketServer.swift|private static let maxConcurrentClients = 4"
+        "Services/Shell/ShellSocketServer.swift|private static let maxRequestBytes = 1_048_576"
+        "Services/Shell/ShellSocketServer.swift|private static let readTimeoutSeconds = 5"
+        "ShellHostController.swift|static let gracefulShutdownPollInterval: TimeInterval = 0.05"
+        "ShellHostController.swift|static let iso8601Formatter = ISO8601DateFormatter()"
+        "ShellHostController.swift|static let terminalSelectionFirst = ShellPaneMovementInteractionPolicy()"
+    )
     local file
     local line_number
     local observable_owner
     local published_projection
     local snapshot_property_counts
     local snapshot_stored_properties
+    local static_member
+    local static_member_key
     local static_snapshot_stored_properties
     local source_line
     local rel
@@ -885,21 +1016,43 @@ reject_replacement_global_shell_store() {
         snapshot_stored_properties="${snapshot_property_counts%% *}"
         static_snapshot_stored_properties="${snapshot_property_counts##* }"
 
-        if [[ "$rel" == "$controller_owner" ]] \
-            && (( snapshot_stored_properties != 1 ))
-        then
-            fail \
-                "ShellHostController must keep exactly one stored ShellStateSnapshot projection"
-        elif [[ "$rel" != "$controller_owner" ]] \
-            && grep -Eq 'ObservableObject|@Observable' "$file" \
-            && (( snapshot_stored_properties > 0 ))
-        then
-            fail \
-                "stored observable ShellStateSnapshot must stay in ShellHostController; found in $rel"
-        fi
+        case "$rel" in
+            "$controller_owner")
+                if (( snapshot_stored_properties != 1 )); then
+                    fail \
+                        "ShellHostController must keep exactly one stored ShellStateSnapshot projection"
+                fi
+                ;;
+            "ShellControlPlane.swift"|"Services/Shell/ShellSocketServer.swift")
+                if (( snapshot_stored_properties > 2 )); then
+                    fail \
+                        "accepted shell transport snapshot caches must not grow in $rel"
+                fi
+                ;;
+            *)
+                if (( snapshot_stored_properties > 0 )); then
+                    fail \
+                        "mutable ShellStateSnapshot storage is not an accepted owner: $rel"
+                fi
+                ;;
+        esac
 
         if (( static_snapshot_stored_properties > 0 )); then
             fail "ShellStateSnapshot must not have a static stored owner; found in $rel"
+        fi
+
+        if (( snapshot_stored_properties > 0 )); then
+            while IFS= read -r static_member; do
+                static_member_key="$rel|$static_member"
+                if ! contains_line \
+                    "$static_member_key" \
+                    "${snapshot_static_member_allowlist[@]}"
+                then
+                    printf '%s:%s\n' "$file" "$static_member" >&2
+                    fail \
+                        "mutable ShellStateSnapshot owners must not add static/class entry points: $static_member_key"
+                fi
+            done < <(static_property_declarations "$file")
         fi
 
         if [[ "$rel" != "$controller_owner" ]] \
@@ -911,12 +1064,6 @@ reject_replacement_global_shell_store() {
                 "non-controller observable owners must not manufacture ShellStateSnapshot state; found in $rel"
         fi
 
-        if grep -Eq \
-            'static[[:space:]]+(let|var)[[:space:]]+(shared|current|default)([^A-Za-z0-9_]|$)' \
-            "$file"
-        then
-            fail "ShellStateSnapshot-referencing code must not become a global singleton; found in $rel"
-        fi
     done < <(grep -RIl --include='*.swift' -F "ShellStateSnapshot" "$SOURCE_ROOT" || true)
 
     while IFS=: read -r file line_number source_line; do

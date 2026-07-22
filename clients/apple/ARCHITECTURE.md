@@ -567,16 +567,22 @@ reintroduced controller caches, maps, queues, and publication-policy call sites.
 The persistence ownership slice moves the retained manifest, latest persistence
 context, debounce state, scheduling, and manifest projection behind
 `ShellWorkspacePersistenceCoordinator`. The architecture gate requires those
-state and cadence markers to have that single owner and rejects controller-side
-use of the `ShellContentWorkspaceManifest` type, manifest projection, or a
-second scheduler. It also rejects a replacement global Shell store:
-`ShellHostController` remains the only observable owner of a mutable
-`ShellStateSnapshot`; no static stored snapshot is allowed under any property
-name, and no singleton or catch-all `ShellStore` / `ShellModel` may wrap it. The
-current `ObservableObject` declarations and `@Published` projections form
-explicit owner allowlists, new `@Observable` owners require an architecture
-decision, and snapshot-referencing files cannot hide inferred state behind
-`shared`, `current`, or `default`.
+state and cadence markers to have that single owner. All production Swift files
+participate in an explicit manifest-storage inventory: only the coordinator's
+mutable retained manifest and the existing transient load, projection, and FFI
+value containers are accepted. Controller-side manifest use, a second
+projector, or a second scheduler fails validation.
+
+The same gate rejects a replacement global Shell store. `ShellHostController`
+remains the only observable owner of a mutable `ShellStateSnapshot`; the two
+accepted transport cache files have fixed non-growing ownership ceilings, and
+all other mutable snapshot storage is rejected. No static stored snapshot is
+allowed under any property name. Files with accepted mutable snapshot storage
+also have an exact allowlist of non-owner static utility members, so a singleton
+entry point cannot bypass the rule by choosing a new alias. The current
+`ObservableObject` declarations and `@Published` projections form explicit
+owner allowlists, new `@Observable` owners require an architecture decision,
+and no singleton or catch-all `ShellStore` / `ShellModel` may wrap shell state.
 
 The current architecture gate treats
 `clients/apple/scripts/architecture-warning-baseline.txt` as a hard downward
