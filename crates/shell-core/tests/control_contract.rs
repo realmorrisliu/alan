@@ -87,7 +87,14 @@ fn missing_tab_close_uses_stable_validation_code() {
 
 #[test]
 fn background_tab_close_preserves_the_closed_tab_subject() {
-    let state = pinned_and_unpinned_state();
+    let state = pinned_and_unpinned_state()
+        .reduce_control(command(
+            "req-create-foreground-space",
+            ShellControlCommandKind::SpaceCreate,
+        ))
+        .updated_state
+        .expect("Space creation updates focus");
+    let foreground_pane_id = state.focused_pane_id.clone();
     let mut request = command("req-close-background", ShellControlCommandKind::TabClose);
     request.tab_id = Some("tab_pinned".to_string());
 
@@ -95,9 +102,10 @@ fn background_tab_close_preserves_the_closed_tab_subject() {
 
     assert_eq!(result.response.applied, Some(true));
     assert_eq!(result.response.tab_id.as_deref(), Some("tab_pinned"));
+    assert_eq!(result.response.space_id.as_deref(), Some("space_main"));
     assert_eq!(
-        result.response.current_focused_pane_slot_id.as_deref(),
-        Some("pane_unpinned")
+        result.response.current_focused_pane_slot_id,
+        foreground_pane_id
     );
     assert!(
         result

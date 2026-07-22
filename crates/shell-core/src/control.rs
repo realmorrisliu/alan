@@ -359,10 +359,8 @@ impl ShellControlReducer {
                 let Some(tab_id) = command.tab_id.clone() else {
                     return self.validation_error(command, "tab_required", "tab_id is required.");
                 };
-                let operation = ReducerOperation::CloseTab {
-                    tab_id: tab_id.clone(),
-                };
-                self.apply_reducer(command, operation, ResponseProjection::TabSubject(tab_id))
+                let projection = ResponseProjection::removed_tab(&self.state, &tab_id);
+                self.apply_reducer(command, ReducerOperation::CloseTab { tab_id }, projection)
             }
             ShellControlCommandKind::TabPin => {
                 let Some(tab_id) = command
@@ -551,8 +549,7 @@ impl ShellControlReducer {
             .target_space_id
             .clone()
             .or_else(|| command.space_id.clone());
-        // Honor the target Space/section. `OrganizeTab` treats `index` as the absolute position
-        // inside that target section.
+        // `OrganizeTab` uses an absolute index within the requested target Space/section.
         let mut result = self.apply_reducer(
             command,
             ReducerOperation::OrganizeTab {
@@ -594,7 +591,6 @@ impl ShellControlReducer {
             },
             ResponseProjection::TargetTab(tab_id),
         );
-        // Echo the requested destination Space so automation can confirm the move target.
         result.response.target_space_id = Some(target_space_id);
         result
     }

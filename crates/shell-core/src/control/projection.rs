@@ -10,6 +10,10 @@ pub(super) enum ResponseProjection {
     Snapshot,
     Focus,
     TabSubject(String),
+    RemovedTab {
+        tab_id: String,
+        source_space_id: Option<String>,
+    },
     ResizeSplit,
     Zoom {
         tab_id: String,
@@ -22,6 +26,15 @@ pub(super) enum ResponseProjection {
     /// Report the named tab as the response subject, for commands like `tab.pin`/`tab.unpin`/
     /// `tab.reorder`/`tab.move_to_space` that mutate a specific, possibly unfocused, tab.
     TargetTab(String),
+}
+
+impl ResponseProjection {
+    pub(super) fn removed_tab(state: &WorkspaceState, tab_id: &str) -> Self {
+        Self::RemovedTab {
+            tab_id: tab_id.to_string(),
+            source_space_id: space_id_containing_tab(state, tab_id),
+        }
+    }
 }
 
 pub(super) struct TerminalTarget {
@@ -50,6 +63,13 @@ pub(super) fn project_success_response(
         ResponseProjection::Current | ResponseProjection::Focus => {}
         ResponseProjection::TabSubject(tab_id) => {
             project_tab_subject(response, state, tab_id);
+        }
+        ResponseProjection::RemovedTab {
+            tab_id,
+            source_space_id,
+        } => {
+            response.tab_id = Some(tab_id.clone());
+            response.space_id.clone_from(source_space_id);
         }
         ResponseProjection::TargetPane(pane_slot_id) => {
             // Echo the mutated pane (and its tab/Space) as the subject so automation sees the
@@ -103,13 +123,17 @@ pub(super) fn project_success_response(
 
 fn project_tab_subject(response: &mut ShellControlResponse, state: &WorkspaceState, tab_id: &str) {
     response.tab_id = Some(tab_id.to_string());
-    if let Some(space) = state
+    if let Some(space_id) = space_id_containing_tab(state, tab_id) {
+        response.space_id = Some(space_id);
+    }
+}
+
+fn space_id_containing_tab(state: &WorkspaceState, tab_id: &str) -> Option<String> {
+    state
         .spaces
         .iter()
         .find(|space| space.tabs.iter().any(|tab| tab.tab_id == tab_id))
-    {
-        response.space_id = Some(space.space_id.clone());
-    }
+        .map(|space| space.space_id.clone())
 }
 
 fn tab_id_containing_node(state: &WorkspaceState, node_id: &str) -> Option<String> {

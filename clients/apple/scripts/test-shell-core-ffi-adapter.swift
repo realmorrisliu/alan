@@ -942,13 +942,19 @@ private func testProductionAdapterControlCommands() throws {
     guard let backgroundTabID = twoTabs.spaces.first?.tabs.first?.tabID else {
         throw TestFailure.message("close fixture must expose a background tab")
     }
+    let foregroundState = twoTabs.creatingSpace(
+        launchTarget: .shell,
+        title: "Foreground Space",
+        workingDirectory: "/repo/foreground-space"
+    ).state
     let closeResult = try adapter.handleControlCommand(
         try controlCommand("tab.close", fields: ["tab_id": backgroundTabID]),
-        state: twoTabs
+        state: foregroundState
     )
     try expect(
-        closeResult.response.tabID == backgroundTabID,
-        "tab.close response must preserve the requested background tab subject"
+        closeResult.response.tabID == backgroundTabID
+            && closeResult.response.spaceID == "space_main",
+        "tab.close response must preserve the requested background Tab and source Space"
     )
 
     let unchangedEqualize = try adapter.handleControlCommand(
