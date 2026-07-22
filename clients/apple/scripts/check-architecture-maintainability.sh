@@ -668,6 +668,97 @@ typed_factory_inventory() {
     done < <(find "$SOURCE_ROOT" -type f -name '*.swift' -print | sort)
 }
 
+typed_value_member_declarations() {
+    local file="$1"
+    local target_type="$2"
+
+    awk -v target_type="$target_type" "$OWNERSHIP_AWK_HELPERS"'
+        function leading_space_count(value,    prefix) {
+            prefix = value
+            sub(/[^ ].*$/, "", prefix)
+            return length(prefix)
+        }
+        function is_type_declaration(value) {
+            return value ~ /^[[:space:]]*[^\/]*(class|struct|actor|enum|extension|protocol)[ ]+[A-Za-z_][A-Za-z0-9_.]*/
+        }
+        function declared_type_name(value,    name) {
+            name = value
+            sub(/^.*(class|struct|actor|enum|extension|protocol)[ ]+/, "", name)
+            sub(/[^A-Za-z0-9_.].*$/, "", name)
+            sub(/^.*[.]/, "", name)
+            return name
+        }
+        function is_property_start(value) {
+            return value ~ /(^|[ ])(let|var)[ ]+[A-Za-z_][A-Za-z0-9_]*/
+        }
+        function record_member(    declaration, member_name, member_type) {
+            if (member_buffer == "") {
+                return
+            }
+            declaration = member_buffer
+            gsub(/[[:space:]]+/, " ", declaration)
+            member_type = binding_type_annotation(declaration)
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", member_type)
+            if (member_type ~ ("(^|[^A-Za-z0-9_])" target_type "([^A-Za-z0-9_]|$)") &&
+                member_type !~ /->/)
+            {
+                member_name = declaration
+                sub(/^.*(let|var)[ ]+/, "", member_name)
+                sub(/[^A-Za-z0-9_].*$/, "", member_name)
+                if (member_name != "") {
+                    print member_name
+                }
+            }
+            member_buffer = ""
+        }
+        {
+            first_separator = index($0, "\t")
+            remainder = substr($0, first_separator + 1)
+            second_separator = index(remainder, "\t")
+            line = substr(remainder, second_separator + 1)
+            line_indent = leading_space_count(line)
+
+            if (line !~ /^[[:space:]]*$/) {
+                while (type_depth > 0 && line_indent <= type_indent[type_depth]) {
+                    delete type_indent[type_depth]
+                    delete type_name[type_depth]
+                    type_depth--
+                }
+                if (is_type_declaration(line)) {
+                    type_depth++
+                    type_indent[type_depth] = line_indent
+                    type_name[type_depth] = declared_type_name(line)
+                }
+            }
+
+            if (type_depth > 0 &&
+                line_indent == type_indent[type_depth] + 4 &&
+                is_property_start(line))
+            {
+                record_member()
+                member_buffer = line
+                member_indent = line_indent
+            } else if (member_buffer != "" &&
+                (line ~ /^[[:space:]]*$/ || line_indent > member_indent))
+            {
+                member_buffer = member_buffer " " line
+            } else {
+                record_member()
+            }
+        }
+        END { record_member() }
+    ' < <(swift_code_lines "$file")
+}
+
+typed_value_member_inventory() {
+    local target_type="$1"
+    local file
+
+    while IFS= read -r file; do
+        typed_value_member_declarations "$file" "$target_type"
+    done < <(find "$SOURCE_ROOT" -type f -name '*.swift' -print | sort)
+}
+
 manifest_state_declarations() {
     local file="$1"
     local factory_inventory="$2"
@@ -1614,13 +1705,23 @@ reject_shell_host_duplicate_persistence_state() {
 shell_snapshot_stored_property_counts() {
     local file="$1"
     local factory_inventory="$2"
+    local projection_inventory="$3"
 
-    awk -v factory_inventory="$factory_inventory" "$OWNERSHIP_AWK_HELPERS"'
+    awk \
+        -v factory_inventory="$factory_inventory" \
+        -v projection_inventory="$projection_inventory" \
+        "$OWNERSHIP_AWK_HELPERS"'
         BEGIN {
             factory_count = split(factory_inventory, factory_entries, ";")
             for (factory_index = 1; factory_index <= factory_count; factory_index++) {
                 if (factory_entries[factory_index] != "") {
                     snapshot_factories[factory_entries[factory_index]] = 1
+                }
+            }
+            projection_count = split(projection_inventory, projection_entries, ";")
+            for (projection_index = 1; projection_index <= projection_count; projection_index++) {
+                if (projection_entries[projection_index] != "") {
+                    snapshot_projections[projection_entries[projection_index]] = 1
                 }
             }
         }
@@ -1703,6 +1804,21 @@ shell_snapshot_stored_property_counts() {
             return expression ~ /^[A-Za-z_][A-Za-z0-9_.]*[ ]*<[^>]*ShellStateSnapshot/ ||
                 expression ~ /^\[[^]]*ShellStateSnapshot/
         }
+        function uses_snapshot_projection(property,    expression, pattern, projection) {
+            if (property !~ /=/) {
+                return 0
+            }
+            expression = property
+            sub(/^[^=]*=[ ]*/, "", expression)
+            gsub(/[ ]*[.][ ]*/, ".", expression)
+            for (projection in snapshot_projections) {
+                pattern = "[^[:space:].][.]" projection "([^A-Za-z0-9_]|$)"
+                if (expression ~ pattern) {
+                    return 1
+                }
+            }
+            return 0
+        }
         function typed_storage_contains_snapshot(property,    type) {
             if (property !~ /:/) {
                 return 0
@@ -1718,13 +1834,26 @@ shell_snapshot_stored_property_counts() {
             sub(/[=].*$/, "", type)
             return type ~ /ShellStateSnapshot([^A-Za-z0-9_]|$)/ && type !~ /->/
         }
+        function is_stored_property(value,    declaration_header) {
+            declaration_header = value
+            sub(/[{].*$/, "", declaration_header)
+            if (declaration_header ~ /=/) {
+                return 1
+            }
+            return value !~ /[{]/ ||
+                value ~ /[{][ ]*(didSet|willSet)([^A-Za-z0-9_]|$)/
+        }
         function snapshot_binding_contains_storage(binding, owner) {
             return typed_storage_contains_snapshot(binding) ||
                 binding ~ /=[ ]*ShellStateSnapshot[ ]*([.(]|$)/ ||
                 inferred_generic_contains_snapshot(binding) ||
+                uses_snapshot_projection(binding) ||
                 uses_snapshot_factory(binding, owner)
         }
         function snapshot_storage_count(property, owner,    binding_count, binding_end, binding_index, bindings, binding_start, count, effective_binding, explicit_type, inherited_types, shared_type) {
+            if (!is_stored_property(property)) {
+                return 0
+            }
             binding_start = 1
             while (binding_start <= length(property)) {
                 binding_end = top_level_binding_end(property, binding_start)
@@ -1888,6 +2017,7 @@ reject_replacement_global_shell_store() {
     local published_projection
     local snapshot_property_counts
     local snapshot_factory_inventory
+    local snapshot_projection_inventory
     local snapshot_stored_properties
     local static_member
     local static_member_key
@@ -1902,6 +2032,9 @@ reject_replacement_global_shell_store() {
 
     snapshot_factory_inventory="$(
         typed_factory_inventory "ShellStateSnapshot" | sort -u | tr '\n' ';'
+    )"
+    snapshot_projection_inventory="$(
+        typed_value_member_inventory "ShellStateSnapshot" | sort -u | tr '\n' ';'
     )"
     host_factory_inventory="$(
         typed_factory_inventory "ShellHostController" | sort -u | tr '\n' ';'
@@ -1920,7 +2053,10 @@ reject_replacement_global_shell_store() {
         done < <(guarded_shell_owner_typealias_declarations "$file")
 
         snapshot_property_counts="$(
-            shell_snapshot_stored_property_counts "$file" "$snapshot_factory_inventory"
+            shell_snapshot_stored_property_counts \
+                "$file" \
+                "$snapshot_factory_inventory" \
+                "$snapshot_projection_inventory"
         )"
         snapshot_stored_properties="${snapshot_property_counts%% *}"
         global_snapshot_stored_properties="${snapshot_property_counts##* }"

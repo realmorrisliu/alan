@@ -614,10 +614,14 @@ static/class storage of
 `ShellHostController`, including storage inferred from an unqualified, `Self`,
 concrete helper-factory, or singleton-instance factory owner; the same
 repository-wide, owner-qualified, full-initializer factory matching applies to
-snapshot storage. All production Swift files are scanned even when the stored
-property's source file contains no literal target type. That prevents a global
-controller singleton even when a closure or wrapper hides the factory call and
-the file stores no snapshot directly. Production aliases that reference
+snapshot storage. Explicit snapshot-valued properties also form a projection
+inventory, so inferred storage through member access is counted even when its
+initializer contains no snapshot constructor or factory. Storage classification
+stops before computed-property bodies, so ordinary projection reads in getters
+do not become owners. All production Swift files are scanned even when the
+stored property's source file contains no literal target type. That prevents a
+global controller singleton even when a closure or wrapper hides the factory
+call and the file stores no snapshot directly. Production aliases that reference
 `ShellHostController`, `ShellStateSnapshot`, or
 `ShellContentWorkspaceManifest` are rejected, keeping contextual factory calls
 such as `.live()` from hiding a guarded ownership type. The current `ObservableObject`
