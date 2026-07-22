@@ -4,7 +4,7 @@
 
     #[tokio::test]
     async fn namespace_tool_call_spawns_bin_executable_and_records_action() {
-        let (mut state, shell) = create_namespace_test_state_and_shell();
+        let (mut state, shell) = create_namespace_test_state_and_shell().await;
 
         let (outcome, events) = execute_single_tool_call(
             &mut state,
@@ -37,11 +37,11 @@
         assert_eq!(payload["content"], json!("from namespace read_file"));
         assert_eq!(payload["arguments"], json!({ "path": "sample.txt" }));
         assert_eq!(payload["exit_code"], json!(0));
-        assert_eq!(payload["process"], json!("/proc/1"));
+        assert_eq!(payload["process"], json!("/proc/2"));
         assert_eq!(payload["action_id"], json!("a0"));
 
         assert_eq!(
-            String::from_utf8(shell.cat("/proc/1/status").await.unwrap()).unwrap(),
+            String::from_utf8(shell.cat("/proc/2/status").await.unwrap()).unwrap(),
             "exited\n"
         );
         let action_output =
@@ -50,7 +50,7 @@
         assert_eq!(action_payload["content"], json!("from namespace read_file"));
         assert_eq!(
             String::from_utf8(shell.cat("/agent/1/actions/a0/process").await.unwrap()).unwrap(),
-            "/proc/1"
+            "/proc/2"
         );
         assert_eq!(
             String::from_utf8(shell.cat("/agent/1/actions/a0/result").await.unwrap()).unwrap(),
@@ -60,7 +60,7 @@
 
     #[tokio::test]
     async fn long_tool_output_projects_to_resolvable_action_output_reference() {
-        let (mut state, shell) = create_namespace_test_state_and_shell();
+        let (mut state, shell) = create_namespace_test_state_and_shell().await;
         let long_text = "x".repeat(crate::evidence::MAX_INLINE_EVIDENCE_BYTES + 1);
 
         execute_single_tool_call(
@@ -85,7 +85,7 @@
 
     #[tokio::test]
     async fn short_tool_output_redacts_embedded_secrets_before_tape() {
-        let (mut state, _shell) = create_namespace_test_state_and_shell();
+        let (mut state, _shell) = create_namespace_test_state_and_shell().await;
 
         execute_single_tool_call(
             &mut state,
@@ -109,7 +109,7 @@
 
     #[tokio::test]
     async fn redaction_expansion_still_projects_tool_payload_to_bounded_evidence() {
-        let (mut state, _shell) = create_namespace_test_state_and_shell();
+        let (mut state, _shell) = create_namespace_test_state_and_shell().await;
 
         execute_single_tool_call(
             &mut state,
@@ -136,7 +136,7 @@
 
     #[tokio::test]
     async fn long_tool_output_uses_runtime_action_id_for_evidence_reference() {
-        let (mut state, _shell) = create_namespace_test_state_and_shell();
+        let (mut state, _shell) = create_namespace_test_state_and_shell().await;
 
         execute_single_tool_call(
             &mut state,
@@ -176,7 +176,7 @@
 
     #[tokio::test]
     async fn durable_action_evidence_marks_secret_redaction_separately_from_truncation() {
-        let (mut state, shell) = create_namespace_test_state_and_shell();
+        let (mut state, shell) = create_namespace_test_state_and_shell().await;
         execute_single_tool_call(
             &mut state,
             "call-redacted-long",
@@ -208,7 +208,7 @@
 
     #[tokio::test]
     async fn namespace_tool_call_fails_when_bin_tool_is_withheld() {
-        let (mut state, shell) = create_namespace_test_state_and_shell_with_bin(false);
+        let (mut state, shell) = create_namespace_test_state_and_shell_with_bin(false).await;
 
         let (outcome, events) = execute_single_tool_call(
             &mut state,
@@ -245,14 +245,15 @@
             "payload should explain the withheld executable: {payload}"
         );
         assert!(
-            shell.cat("/proc/1/status").await.is_err(),
+            shell.cat("/proc/2/status").await.is_err(),
             "a withheld executable must not spawn"
         );
     }
 
     #[tokio::test]
     async fn namespace_tool_call_does_not_spawn_executable_without_manifest() {
-        let (mut state, shell) = create_namespace_test_state_and_shell_with_package(true, false);
+        let (mut state, shell) =
+            create_namespace_test_state_and_shell_with_package(true, false).await;
 
         let (outcome, events) = execute_single_tool_call(
             &mut state,
@@ -287,14 +288,14 @@
                 .is_some_and(|error| error.contains("valid manifest"))
         );
         assert!(
-            shell.cat("/proc/1/status").await.is_err(),
+            shell.cat("/proc/2/status").await.is_err(),
             "an executable without a valid Tool manifest must not spawn"
         );
     }
 
     #[tokio::test]
     async fn namespace_execution_target_spawns_every_builtin_bin_tool() {
-        let (state, shell) = create_namespace_test_state_and_shell();
+        let (state, shell) = create_namespace_test_state_and_shell().await;
         let tools = state.tool_execution();
         let cancel = CancellationToken::new();
 
@@ -308,7 +309,7 @@
             )
             .await
             .expect("namespace tool effect should execute through /bin");
-            let pid = idx + 1;
+            let pid = idx + 2;
             let action_id = format!("a{idx}");
 
             assert_eq!(payload["success"], json!(true));

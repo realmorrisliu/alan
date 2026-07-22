@@ -236,7 +236,7 @@ async fn spawn_launches_a_process_through_proc_clone_across_the_mount() {
     // namespace) with no side API, then reads its status back across the mount.
     let shell = namespace_shell();
     let pid = shell
-        .spawn(r#"{"executable":"/bin/agent","args":[]}"#)
+        .spawn(r#"{"executable":"/bin/agent","args":[],"namespace":{"generation": 0,"mounts":[]}}"#)
         .await
         .unwrap();
     assert_eq!(
@@ -284,7 +284,7 @@ async fn m2_stdio_driver_talks_to_agentfs_llmfs_agent_with_generic_builtins() {
     let root = InProcessTransport::new(Arc::new(MountFs::new(ns)));
     let shell = Shell::new(root.clone());
     let pid = shell
-        .spawn(r#"{"executable":"/bin/agent","args":[]}"#)
+        .spawn(r#"{"executable":"/bin/agent","args":[],"namespace":{"generation": 0,"mounts":[]}}"#)
         .await
         .unwrap();
     assert_eq!(

@@ -5,13 +5,14 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
-use alan_ap::{Fid, FileServer, OpenMode};
+use alan_ap::{ErrorCode, Fid, FileServer, OpenMode};
 use alan_kernel::{Access, Credentials, LiveNamespace, Pid};
 use anyhow::{Context, Result, ensure};
 
 use crate::BootUnit;
 
 static NEXT_BOOT_FID: AtomicU64 = AtomicU64::new(800_000);
+const MAX_NAMESPACE_SPAWN_ATTEMPTS: usize = 3;
 
 pub(crate) async fn spawn_process(
     procfs: &alan_kernel::ProcFs,
@@ -99,34 +100,41 @@ async fn spawn_process_with_descriptors(
     descriptors: BTreeMap<u32, String>,
 ) -> Result<Pid> {
     let spawner = procfs.for_live_spawner(parent, namespace.clone(), credentials);
-    let fid = Fid(NEXT_BOOT_FID.fetch_add(1, Ordering::Relaxed));
-    spawner
-        .walk(Fid::ROOT, fid, &["clone".to_string()])
-        .await
-        .with_context(|| format!("walk {executable} /proc/clone"))?;
-    spawner
-        .open(fid, OpenMode::ReadWrite)
-        .await
-        .with_context(|| format!("open {executable} /proc/clone"))?;
-    let pid = String::from_utf8(spawner.read(fid, 0, 64).await?)
-        .with_context(|| format!("{executable} PID is not UTF-8"))?
-        .parse::<u64>()
-        .with_context(|| format!("{executable} PID is invalid"))?;
-    let exec = alan_kernel::ExecSpec {
-        executable: executable.to_string(),
-        args: Vec::new(),
-        namespace: Some(alan_kernel::ExecNamespaceManifest::from_namespace(
-            &namespace.snapshot(),
-        )),
-        descriptors,
-    };
-    spawner
-        .write(fid, 0, &serde_json::to_vec(&exec)?)
-        .await
-        .with_context(|| format!("write {executable} exec spec"))?;
-    spawner
-        .clunk(fid)
-        .await
-        .with_context(|| format!("commit {executable} Process"))?;
-    Ok(Pid(pid))
+    for _ in 0..MAX_NAMESPACE_SPAWN_ATTEMPTS {
+        let (namespace_snapshot, generation) = namespace.snapshot_with_generation();
+        let fid = Fid(NEXT_BOOT_FID.fetch_add(1, Ordering::Relaxed));
+        spawner
+            .walk(Fid::ROOT, fid, &["clone".to_string()])
+            .await
+            .with_context(|| format!("walk {executable} /proc/clone"))?;
+        spawner
+            .open(fid, OpenMode::ReadWrite)
+            .await
+            .with_context(|| format!("open {executable} /proc/clone"))?;
+        let pid = String::from_utf8(spawner.read(fid, 0, 64).await?)
+            .with_context(|| format!("{executable} PID is not UTF-8"))?
+            .parse::<u64>()
+            .with_context(|| format!("{executable} PID is invalid"))?;
+        let exec = alan_kernel::ExecSpec {
+            executable: executable.to_string(),
+            args: Vec::new(),
+            namespace: alan_kernel::ExecNamespaceManifest::from_snapshot(
+                &namespace_snapshot,
+                generation,
+            ),
+            descriptors: descriptors.clone(),
+        };
+        spawner
+            .write(fid, 0, &serde_json::to_vec(&exec)?)
+            .await
+            .with_context(|| format!("write {executable} exec spec"))?;
+        match spawner.clunk(fid).await {
+            Ok(()) => return Ok(Pid(pid)),
+            Err(ErrorCode::BadRequest) if namespace.generation() != generation => continue,
+            Err(error) => {
+                return Err(error).with_context(|| format!("commit {executable} Process"));
+            }
+        }
+    }
+    anyhow::bail!("{executable} namespace kept changing during Process launch")
 }

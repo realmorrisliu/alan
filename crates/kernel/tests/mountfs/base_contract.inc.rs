@@ -439,7 +439,11 @@ async fn spawn_through_proc_clone_works_across_the_mount() {
         .unwrap();
     fs.open(Fid(1), OpenMode::ReadWrite).await.unwrap();
     let pid = String::from_utf8(fs.read(Fid(1), 0, 64).await.unwrap()).unwrap();
-    fs.write(Fid(1), 0, br#"{"executable":"/bin/agent","args":[]}"#)
+    fs.write(
+        Fid(1),
+        0,
+        br#"{"executable":"/bin/agent","args":[],"namespace":{"generation": 0,"mounts":[]}}"#,
+    )
         .await
         .unwrap();
     fs.clunk(Fid(1)).await.unwrap();

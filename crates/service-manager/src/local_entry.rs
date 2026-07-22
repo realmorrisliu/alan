@@ -386,7 +386,7 @@ fn qid(node: &Node) -> Qid {
 mod tests {
     use super::*;
     use alan_ap::{InProcessTransport, Request, Response};
-    use alan_kernel::{ExecSpec, Namespace, Status};
+    use alan_kernel::{Namespace, Status};
     use alan_shell::Shell;
 
     #[tokio::test]
@@ -472,15 +472,7 @@ mod tests {
             service_pid.0.to_string()
         );
         let agent_pid = process_shell
-            .spawn(
-                &serde_json::to_string(&ExecSpec {
-                    executable: "/bin/alan-agent".to_string(),
-                    args: Vec::new(),
-                    namespace: None,
-                    descriptors: Default::default(),
-                })
-                .unwrap(),
-            )
+            .spawn_process("/bin/alan-agent", &[])
             .await
             .unwrap()
             .parse::<u64>()

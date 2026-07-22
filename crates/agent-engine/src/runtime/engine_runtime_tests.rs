@@ -290,7 +290,7 @@ async fn test_namespace_io_input_frame_drives_runtime_turn_without_api_submissio
     ));
     let bootstrap_shell = alan_shell::Shell::new(root.clone());
     let pid = bootstrap_shell
-        .spawn(r#"{"executable":"/bin/agent","args":[]}"#)
+        .spawn(r#"{"executable":"/bin/agent","args":[],"namespace":{"generation": 0,"mounts":[]}}"#)
         .await
         .unwrap();
     assert_eq!(pid, "1");

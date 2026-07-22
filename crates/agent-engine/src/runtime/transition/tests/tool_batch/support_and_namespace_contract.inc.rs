@@ -11,8 +11,8 @@
         ErrorCode, Fid, FileKind, FileServer, InProcessTransport, OpenMode, Qid, Request, Stat,
     };
     use alan_kernel::{
-        Access, Credentials, MountFs, Namespace, ProcFs, ProcessInvocation, ProcessOutcome,
-        ProcessRunner,
+        Access, Credentials, ExecNamespaceManifest, ExecSpec, MountFs, Namespace, Pid, ProcFs,
+        ProcessInvocation, ProcessOutcome, ProcessRunner,
     };
     use alan_llm::{GenerationRequest, GenerationResponse, LlmProvider, StreamChunk};
     use alan_shell::Shell;
@@ -379,33 +379,32 @@
         }
     }
 
-    fn create_namespace_test_state_and_shell() -> (RuntimeLoopState, Shell) {
-        create_namespace_test_state_and_shell_with_bin(true)
+    async fn create_namespace_test_state_and_shell() -> (RuntimeLoopState, Shell) {
+        create_namespace_test_state_and_shell_with_bin(true).await
     }
 
-    fn create_namespace_test_state_and_shell_with_bin(
+    async fn create_namespace_test_state_and_shell_with_bin(
         mount_bin: bool,
     ) -> (RuntimeLoopState, Shell) {
-        create_namespace_test_state_and_shell_with_package(mount_bin, mount_bin)
+        create_namespace_test_state_and_shell_with_package(mount_bin, mount_bin).await
     }
 
-    fn create_namespace_test_state_and_shell_with_package(
+    async fn create_namespace_test_state_and_shell_with_package(
         mount_bin: bool,
         mount_manifests: bool,
     ) -> (RuntimeLoopState, Shell) {
-        let procfs = ProcFs::new().with_runner(Arc::new(JsonToolRunner));
+        let procfs = ProcFs::new();
         let agentfs = Arc::new(AgentFs::new());
         let bin = InProcessTransport::new(Arc::new(StaticBinFs::new()));
-        let mut manifests = Vec::new();
 
         let mut child_namespace = Namespace::new();
         child_namespace.mount(
             "/agent/1",
-            InProcessTransport::new(agentfs.clone()),
+            InProcessTransport::new(agentfs),
             Access::ReadWrite,
         );
         if mount_bin {
-            child_namespace.mount("/bin", bin.clone(), Access::ReadOnly);
+            child_namespace.mount("/bin", bin, Access::ReadOnly);
         }
         if mount_manifests {
             for tool_name in BUILTIN_BIN_TOOLS {
@@ -429,30 +428,30 @@
                         serde_json::to_vec(&manifest).unwrap(),
                     ),
                 ));
-                child_namespace.mount(&path, transport.clone(), Access::ReadOnly);
-                manifests.push((path, transport));
+                child_namespace.mount(&path, transport, Access::ReadOnly);
             }
         }
 
-        let spawner_procfs =
-            Arc::new(procfs.for_spawner(None, child_namespace, Credentials::user("root-agent")));
-        let mut root_namespace = Namespace::new();
+        child_namespace.mount(
+            "/proc",
+            InProcessTransport::new(Arc::new(procfs.clone())),
+            Access::ReadWrite,
+        );
+        spawn_parent_process(&procfs, &child_namespace, 1).await;
+
+        let procfs = procfs.with_runner(Arc::new(JsonToolRunner));
+        let mut root_namespace = child_namespace;
+        let spawn_namespace = root_namespace.clone();
+        root_namespace.unmount("/proc");
         root_namespace.mount(
             "/proc",
-            InProcessTransport::new(spawner_procfs),
+            InProcessTransport::new(Arc::new(procfs.for_spawner(
+                Some(Pid(1)),
+                spawn_namespace,
+                Credentials::user("root-agent"),
+            ))),
             Access::ReadWrite,
         );
-        root_namespace.mount(
-            "/agent/1",
-            InProcessTransport::new(agentfs),
-            Access::ReadWrite,
-        );
-        if mount_bin {
-            root_namespace.mount("/bin", bin, Access::ReadOnly);
-        }
-        for (path, transport) in manifests {
-            root_namespace.mount(&path, transport, Access::ReadOnly);
-        }
         let root = InProcessTransport::new(Arc::new(MountFs::new(root_namespace)));
         let shell = Shell::new(root.clone());
         let state = RuntimeLoopState {
@@ -480,7 +479,7 @@
         }
     }
 
-    fn escalating_state_with_reviewer(
+    async fn escalating_state_with_reviewer(
         counter: &Arc<AtomicUsize>,
         decision: &str,
     ) -> RuntimeLoopState {
@@ -498,12 +497,13 @@
             tools,
             alan_llm::MockLlmProvider::new().with_response(reviewer_response(decision)),
         )
+        .await
     }
 
     #[tokio::test]
     async fn reviewer_allow_executes_escalated_tool() {
         let counter = Arc::new(AtomicUsize::new(0));
-        let mut state = escalating_state_with_reviewer(&counter, "allow");
+        let mut state = escalating_state_with_reviewer(&counter, "allow").await;
         let _ = execute_single_tool_call(&mut state, "c1", "do_thing", json!({})).await;
         assert_eq!(
             counter.load(Ordering::SeqCst),
@@ -515,7 +515,7 @@
     #[tokio::test]
     async fn reviewer_deny_blocks_escalated_tool_and_feeds_back() {
         let counter = Arc::new(AtomicUsize::new(0));
-        let mut state = escalating_state_with_reviewer(&counter, "deny");
+        let mut state = escalating_state_with_reviewer(&counter, "deny").await;
         let (_, events) = execute_single_tool_call(&mut state, "c1", "do_thing", json!({})).await;
         assert_eq!(
             counter.load(Ordering::SeqCst),
@@ -531,7 +531,7 @@
     #[tokio::test]
     async fn reviewer_repeated_denials_trip_breaker_to_human() {
         let counter = Arc::new(AtomicUsize::new(0));
-        let mut state = escalating_state_with_reviewer(&counter, "deny");
+        let mut state = escalating_state_with_reviewer(&counter, "deny").await;
         // Third consecutive denial trips the circuit breaker and pauses for a human.
         execute_single_tool_call(&mut state, "c1", "do_thing", json!({})).await;
         execute_single_tool_call(&mut state, "c2", "do_thing", json!({})).await;
@@ -546,14 +546,14 @@
         assert_eq!(counter.load(Ordering::SeqCst), 0);
     }
 
-    fn create_test_state_with_machine_and_tools(
+    async fn create_test_state_with_machine_and_tools(
         machine: AgentMachine,
         tools: ToolRegistry,
     ) -> RuntimeLoopState {
-        create_test_state_with_machine_tools_and_provider(machine, tools, SimpleMockProvider)
+        create_test_state_with_machine_tools_and_provider(machine, tools, SimpleMockProvider).await
     }
 
-    fn create_test_state_with_machine_tools_and_provider<P: LlmProvider + 'static>(
+    async fn create_test_state_with_machine_tools_and_provider<P: LlmProvider + 'static>(
         machine: AgentMachine,
         tools: ToolRegistry,
         provider: P,
@@ -561,14 +561,22 @@
         create_test_state_with_machine_tools_provider_and_agent_path(
             machine, tools, provider, "/agent/1",
         )
+        .await
     }
 
-    fn create_test_state_with_machine_tools_provider_and_agent_path<P: LlmProvider + 'static>(
+    async fn create_test_state_with_machine_tools_provider_and_agent_path<
+        P: LlmProvider + 'static,
+    >(
         machine: AgentMachine,
         mut tools: ToolRegistry,
         provider: P,
         agent_path: &str,
     ) -> RuntimeLoopState {
+        let process_pid = agent_path
+            .rsplit('/')
+            .next()
+            .and_then(|value| value.parse::<u64>().ok())
+            .expect("test Agent path ends in a numeric Process ID");
         let agentfs = Arc::new(AgentFs::new());
         let llmfs = Arc::new(alan_llmfs::LlmFs::new());
         llmfs.register_connection("default", Box::new(provider));
@@ -613,17 +621,26 @@
         );
         tools.set_default_execution_binding(binding.clone());
 
-        let procfs = ProcFs::new().with_runner(Arc::new(RegistryToolRunner::new(tools.clone())));
-        let tool_runner = crate::tools::ToolProcessRunner::from_registry(&tools);
-        tool_runner.register_process_binding(1, binding);
-        let spawner_procfs = Arc::new(procfs.for_spawner(
-            None,
-            process_namespace.clone(),
-            Credentials::user("root-agent"),
-        ));
+        let procfs = ProcFs::new();
         process_namespace.mount(
             "/proc",
-            InProcessTransport::new(spawner_procfs),
+            InProcessTransport::new(Arc::new(procfs.clone())),
+            Access::ReadWrite,
+        );
+        spawn_parent_process(&procfs, &process_namespace, process_pid).await;
+
+        let procfs = procfs.with_runner(Arc::new(RegistryToolRunner::new(tools.clone())));
+        let tool_runner = crate::tools::ToolProcessRunner::from_registry(&tools);
+        tool_runner.register_process_binding(process_pid, binding);
+        let spawn_namespace = process_namespace.clone();
+        process_namespace.unmount("/proc");
+        process_namespace.mount(
+            "/proc",
+            InProcessTransport::new(Arc::new(procfs.for_spawner(
+                Some(Pid(process_pid)),
+                spawn_namespace,
+                Credentials::user("root-agent"),
+            ))),
             Access::ReadWrite,
         );
         let root = InProcessTransport::new(Arc::new(MountFs::new(process_namespace)));
@@ -635,10 +652,41 @@
             machine,
             environment: NamespaceRuntimeEnvironment::new(root, agent_path, "default")
                 .with_namespace_cwd("/mnt/source")
-                .with_tool_process_context(1, tool_runner),
+                .with_tool_process_context(process_pid, tool_runner),
             core_config: config,
             runtime_config: crate::runtime::RuntimeConfig::default(),
             prompt_cache: crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new()),
+        }
+    }
+
+    async fn spawn_parent_process(procfs: &ProcFs, namespace: &Namespace, process_pid: u64) {
+        for expected_pid in 1..=process_pid {
+            let spawner = procfs.for_spawner(
+                None,
+                namespace.clone(),
+                Credentials::user("root-agent"),
+            );
+            let fid = Fid(70_000 + expected_pid);
+            spawner
+                .walk(Fid::ROOT, fid, &["clone".to_string()])
+                .await
+                .unwrap();
+            spawner.open(fid, OpenMode::ReadWrite).await.unwrap();
+            assert_eq!(
+                String::from_utf8(spawner.read(fid, 0, 64).await.unwrap()).unwrap(),
+                expected_pid.to_string()
+            );
+            let exec = ExecSpec {
+                executable: "/bin/agent".to_string(),
+                args: Vec::new(),
+                namespace: ExecNamespaceManifest::from_namespace(namespace),
+                descriptors: Default::default(),
+            };
+            spawner
+                .write(fid, 0, &serde_json::to_vec(&exec).unwrap())
+                .await
+                .unwrap();
+            spawner.clunk(fid).await.unwrap();
         }
     }
 

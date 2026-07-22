@@ -45,9 +45,20 @@ None.
   the Agent-visible mount request contract and evidence.
 - `live-mount-grant-namespace-projection`: Move live projection from an engine
   applicator callback to Host Mount Service handle projection.
-- `mount-grant-tool-sandbox-projection`: Derive native Tool sandbox authority
+- `host-mount-tool-process-sandbox-projection`: Derive per-Tool-Process native
+  sandbox authority
   from Host Mount Service grants inside Host adapters rather than engine-owned
   raw writable roots.
+- `host-directory-mounts`: Remove the displaced Alan OS-owned SandboxSpec
+  projection requirement.
+- `namespace-sandbox-projection`: Retire the composition-root declaration-list
+  projection capability.
+- `os-sandbox-enforcement`: Make Host adapters the sole producer of native
+  per-Tool-Process confinement input.
+- `plan9-kernel-substrate`: Expose the current Process namespace through
+  `/proc/self/namespace` for file-native explicit delegation, and bind each
+  launch manifest to one stable namespace generation with bounded stale-read
+  retries.
 
 ## Impact
 

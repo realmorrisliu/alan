@@ -3,7 +3,7 @@
 async fn failed_concurrent_walk_does_not_delete_winning_fid() {
     let (_, shell, agent_root, _) = namespace_shell_with_agent_root();
     let pid = shell
-        .spawn(r#"{"executable":"/bin/alan-agent","args":[]}"#)
+        .spawn(r#"{"executable":"/bin/alan-agent","args":[],"namespace":{"generation": 0,"mounts":[]}}"#)
         .await
         .unwrap();
     let backing = Arc::new(DelayedFailWalkFs::new());
@@ -41,7 +41,7 @@ async fn failed_concurrent_walk_does_not_delete_winning_fid() {
 async fn create_collision_rolls_back_the_losing_backing_file() {
     let (_, shell, agent_root, _) = namespace_shell_with_agent_root();
     let pid = shell
-        .spawn(r#"{"executable":"/bin/alan-agent","args":[]}"#)
+        .spawn(r#"{"executable":"/bin/alan-agent","args":[],"namespace":{"generation": 0,"mounts":[]}}"#)
         .await
         .unwrap();
     let backing = Arc::new(RacingCreateFs::new());
@@ -95,7 +95,7 @@ async fn create_collision_rolls_back_the_losing_backing_file() {
 async fn agent_root_tracks_created_fids_forwarded_to_backing() {
     let (_, shell, agent_root, _) = namespace_shell_with_agent_root();
     let pid = shell
-        .spawn(r#"{"executable":"/bin/alan-agent","args":[]}"#)
+        .spawn(r#"{"executable":"/bin/alan-agent","args":[],"namespace":{"generation": 0,"mounts":[]}}"#)
         .await
         .unwrap();
     agent_root
@@ -128,7 +128,7 @@ async fn agent_root_tracks_created_fids_forwarded_to_backing() {
 async fn agent_root_releases_outer_fid_after_delegated_remove() {
     let (_, shell, agent_root, _) = namespace_shell_with_agent_root();
     let pid = shell
-        .spawn(r#"{"executable":"/bin/alan-agent","args":[]}"#)
+        .spawn(r#"{"executable":"/bin/alan-agent","args":[],"namespace":{"generation": 0,"mounts":[]}}"#)
         .await
         .unwrap();
     agent_root

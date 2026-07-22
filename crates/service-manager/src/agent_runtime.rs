@@ -226,12 +226,14 @@ impl AgentRuntimeService {
             .iter()
             .map(|descriptor| (descriptor.number, descriptor.path.clone()))
             .collect();
+        let (namespace_snapshot, namespace_generation) = live_namespace.snapshot_with_generation();
         let exec = ExecSpec {
             executable: AGENT_EXECUTABLE.to_string(),
             args: Vec::new(),
-            namespace: Some(ExecNamespaceManifest::from_namespace(
-                &live_namespace.snapshot(),
-            )),
+            namespace: ExecNamespaceManifest::from_snapshot(
+                &namespace_snapshot,
+                namespace_generation,
+            ),
             descriptors,
         };
         if let Err(error) = commit_clone(&spawner, fid, &exec).await {

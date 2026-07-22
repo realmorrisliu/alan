@@ -175,7 +175,8 @@ async fn test_run_turn_cancelled_tool_batch_does_not_refresh_memory_surfaces() {
             "",
         ),
         tools,
-    );
+    )
+    .await;
     state.core_config.memory.store_dir = Some(memory_dir.clone());
     state.machine.set_turn_activity(TurnActivityState::Running);
 

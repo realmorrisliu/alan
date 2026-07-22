@@ -17,15 +17,16 @@ pub struct ProcessExecSpec {
     pub executable: String,
     #[serde(default)]
     pub args: Vec<String>,
-    #[serde(default)]
-    pub namespace: Option<ProcessNamespaceManifest>,
+    pub namespace: ProcessNamespaceManifest,
     #[serde(default)]
     pub descriptors: BTreeMap<u32, String>,
 }
 
-/// Explicit namespace capabilities retained by a spawned Process.
+/// Explicit namespace capabilities retained by a spawned Process, bound to the
+/// source namespace generation from which they were selected.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct ProcessNamespaceManifest {
+    pub generation: u32,
     #[serde(default)]
     pub mounts: Vec<ProcessNamespaceMount>,
 }
@@ -213,12 +214,13 @@ mod tests {
         let spec = ProcessExecSpec {
             executable: "/bin/alan-agent".to_string(),
             args: Vec::new(),
-            namespace: Some(ProcessNamespaceManifest {
+            namespace: ProcessNamespaceManifest {
+                generation: 0,
                 mounts: vec![ProcessNamespaceMount::new(
                     "/agent",
                     ProcessNamespaceAccess::ReadWrite,
                 )],
-            }),
+            },
             descriptors: BTreeMap::from([(
                 AGENT_DEFINITION_DESCRIPTOR,
                 "/lib/agents/root".to_string(),
@@ -227,7 +229,25 @@ mod tests {
 
         let value = serde_json::to_value(spec).unwrap();
         assert_eq!(value["namespace"]["mounts"][0]["access"], "rw");
+        assert_eq!(value["namespace"]["generation"], 0);
         assert_eq!(value["descriptors"]["3"], "/lib/agents/root");
+        assert!(
+            serde_json::from_value::<ProcessExecSpec>(serde_json::json!({
+                "executable": "/bin/alan-agent",
+                "args": []
+            }))
+            .is_err(),
+            "an exec document cannot represent ambient namespace inheritance"
+        );
+        assert!(
+            serde_json::from_value::<ProcessExecSpec>(serde_json::json!({
+                "executable": "/bin/alan-agent",
+                "args": [],
+                "namespace": { "mounts": [] }
+            }))
+            .is_err(),
+            "a namespace manifest must identify the snapshot generation"
+        );
     }
 
     #[test]
