@@ -258,10 +258,116 @@ normalized_file_matches() {
     ' "$file"
 }
 
+typed_factory_declarations() {
+    local file="$1"
+    local target_type="$2"
+
+    awk -v target_type="$target_type" '
+        function leading_space_count(value,    prefix) {
+            prefix = value
+            sub(/[^ ].*$/, "", prefix)
+            return length(prefix)
+        }
+        function is_type_declaration(value) {
+            return value ~ /^[[:space:]]*[^\/]*(class|struct|actor|enum|extension|protocol)[ ]+[A-Za-z_][A-Za-z0-9_.]*/
+        }
+        function declared_type_name(value,    name) {
+            name = value
+            sub(/^.*(class|struct|actor|enum|extension|protocol)[ ]+/, "", name)
+            sub(/[^A-Za-z0-9_.].*$/, "", name)
+            sub(/^.*[.]/, "", name)
+            return name
+        }
+        function is_factory_candidate(value) {
+            return value ~ /^[[:space:]]*[^\/]*func[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*\(/
+        }
+        function is_same_indent_function_signature_continuation(value) {
+            return value ~ /^[[:space:]]*(\)|->|[{])/ ||
+                value ~ /^[[:space:]]*(async|throws|rethrows|where)([^A-Za-z0-9_]|$)/
+        }
+        function record_buffered_factory(    header, name, return_type, signature) {
+            if (factory_buffer == "") {
+                return
+            }
+            signature = factory_buffer
+            gsub(/[[:space:]]+/, " ", signature)
+            header = signature
+            sub(/[{].*$/, "", header)
+            return_type = header
+            if (return_type !~ /->/) {
+                factory_buffer = ""
+                return
+            }
+            sub(/^.*->[ ]*/, "", return_type)
+            if (return_type !~ ("(^|[^A-Za-z0-9_])" target_type "([^A-Za-z0-9_]|$)")) {
+                factory_buffer = ""
+                return
+            }
+            if (factory_owner != "" &&
+                header !~ /(^| )(static|class)[ ]+([^ ]+[ ]+)*func[ ]+/)
+            {
+                factory_buffer = ""
+                return
+            }
+            name = header
+            sub(/^.*func[ ]+/, "", name)
+            sub(/[^A-Za-z0-9_].*$/, "", name)
+            print factory_owner "|" name
+            factory_buffer = ""
+        }
+        {
+            line = $0
+            sub(/\/\/.*/, "", line)
+            line_indent = leading_space_count(line)
+            if (line !~ /^[[:space:]]*$/) {
+                while (type_depth > 0 && line_indent <= type_indent[type_depth]) {
+                    delete type_indent[type_depth]
+                    delete type_name[type_depth]
+                    type_depth--
+                }
+                if (is_type_declaration(line)) {
+                    type_depth++
+                    type_indent[type_depth] = line_indent
+                    type_name[type_depth] = declared_type_name(line)
+                }
+            }
+
+            if (is_factory_candidate(line)) {
+                record_buffered_factory()
+                factory_buffer = line
+                factory_indent = line_indent
+                factory_owner = type_depth > 0 ? type_name[type_depth] : ""
+            } else if (factory_buffer != "" &&
+                (line ~ /^[[:space:]]*$/ ||
+                    line_indent > factory_indent ||
+                    (line_indent == factory_indent &&
+                        is_same_indent_function_signature_continuation(line))))
+            {
+                factory_buffer = factory_buffer " " line
+            } else {
+                record_buffered_factory()
+            }
+        }
+        END { record_buffered_factory() }
+    ' "$file"
+}
+
 manifest_state_declarations() {
     local file="$1"
+    local factory_inventory
+    factory_inventory="$(
+        typed_factory_declarations "$file" "ShellContentWorkspaceManifest"
+    )"
 
-    awk '
+    awk -v factory_inventory="$factory_inventory" '
+        BEGIN {
+            factory_count = split(factory_inventory, factory_entries, "\n")
+            for (factory_index = 1; factory_index <= factory_count; factory_index++) {
+                if (factory_entries[factory_index] != "") {
+                    manifest_factories[factory_entries[factory_index]] = 1
+                }
+            }
+        }
         function leading_space_count(value,    prefix) {
             prefix = value
             sub(/[^ ].*$/, "", prefix)
@@ -272,30 +378,17 @@ manifest_state_declarations() {
             sub(/[[:space:]]+$/, "", value)
             return value
         }
-        function is_factory_candidate(value) {
-            return value ~ /^[[:space:]]*[^\/]*func[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*\(/
+        function is_type_declaration(value) {
+            return value ~ /^[[:space:]]*[^\/]*(class|struct|actor|enum|extension|protocol)[ ]+[A-Za-z_][A-Za-z0-9_.]*/
         }
-        function is_same_indent_function_signature_continuation(value) {
-            return value ~ /^[[:space:]]*(\)|->|[{])/ ||
-                value ~ /^[[:space:]]*(async|throws|rethrows|where)([^A-Za-z0-9_]|$)/
+        function declared_type_name(value,    name) {
+            name = value
+            sub(/^.*(class|struct|actor|enum|extension|protocol)[ ]+/, "", name)
+            sub(/[^A-Za-z0-9_.].*$/, "", name)
+            sub(/^.*[.]/, "", name)
+            return name
         }
-        function record_buffered_factory(    name, signature, header) {
-            if (factory_buffer == "") {
-                return
-            }
-            signature = factory_buffer
-            gsub(/[[:space:]]+/, " ", signature)
-            header = signature
-            sub(/[{].*$/, "", header)
-            if (header ~ /(^| )func[ ]+[A-Za-z_][A-Za-z0-9_]*.*->[^{}]*ShellContentWorkspaceManifest([^A-Za-z0-9_]|$)/) {
-                name = header
-                sub(/^.*func[ ]+/, "", name)
-                sub(/[^A-Za-z0-9_].*$/, "", name)
-                manifest_factories[name] = 1
-            }
-            factory_buffer = ""
-        }
-        function inferred_factory_contains_manifest(value,    expression, name) {
+        function inferred_factory_contains_manifest(value, owner,    call, expression, name, parts, qualifier, segment_count) {
             if (value !~ /=/) {
                 return 0
             }
@@ -304,13 +397,22 @@ manifest_state_declarations() {
             while (expression ~ /^(try[!?]?|await)[ ]+/) {
                 sub(/^(try[!?]?|await)[ ]+/, "", expression)
             }
-            sub(/^Self[.]/, "", expression)
-            if (expression !~ /^[A-Za-z_][A-Za-z0-9_]*[ ]*\(/) {
+            if (expression !~ /^[A-Za-z_][A-Za-z0-9_.]*[ ]*\(/) {
                 return 0
             }
-            name = expression
-            sub(/[ ]*\(.*/, "", name)
-            return name in manifest_factories
+            call = expression
+            sub(/[ ]*\(.*/, "", call)
+            segment_count = split(call, parts, ".")
+            name = parts[segment_count]
+            if (segment_count == 1) {
+                return ((owner "|" name) in manifest_factories) ||
+                    (("|" name) in manifest_factories)
+            }
+            qualifier = parts[segment_count - 1]
+            if (qualifier == "Self" || qualifier == "self") {
+                qualifier = owner
+            }
+            return (qualifier "|" name) in manifest_factories
         }
         function inferred_generic_contains_manifest(value,    expression) {
             if (value !~ /=/) {
@@ -345,7 +447,7 @@ manifest_state_declarations() {
                 prefix = declaration
                 sub(/[ ]*=.*/, "", prefix)
                 kind = "inferred-generic"
-            } else if (inferred_factory_contains_manifest(declaration)) {
+            } else if (inferred_factory_contains_manifest(declaration, declaration_owner)) {
                 prefix = declaration
                 sub(/[ ]*=.*/, "", prefix)
                 kind = "inferred-factory"
@@ -357,39 +459,31 @@ manifest_state_declarations() {
             printf "%d|%d|%s|%s\n", start_line, declaration_indent, trim(prefix), kind
             buffer = ""
         }
-        NR == FNR {
-            line = $0
-            sub(/\/\/.*/, "", line)
-            if (is_factory_candidate(line)) {
-                record_buffered_factory()
-                factory_buffer = line
-                factory_indent = leading_space_count(line)
-            } else if (factory_buffer != "" &&
-                (line ~ /^[[:space:]]*$/ ||
-                    leading_space_count(line) > factory_indent ||
-                    (leading_space_count(line) == factory_indent &&
-                        is_same_indent_function_signature_continuation(line))))
-            {
-                factory_buffer = factory_buffer " " line
-            } else {
-                record_buffered_factory()
-            }
-            next
-        }
-        FNR == 1 {
-            record_buffered_factory()
-        }
         {
             line = $0
             sub(/\/\/.*/, "", line)
+            line_indent = leading_space_count(line)
+            if (line !~ /^[[:space:]]*$/) {
+                while (type_depth > 0 && line_indent <= type_indent[type_depth]) {
+                    delete type_indent[type_depth]
+                    delete type_name[type_depth]
+                    type_depth--
+                }
+                if (is_type_declaration(line)) {
+                    type_depth++
+                    type_indent[type_depth] = line_indent
+                    type_name[type_depth] = declared_type_name(line)
+                }
+            }
+
             if (line ~ /^[[:space:]]*[^\/]*(let|var)[ ]+[A-Za-z_][A-Za-z0-9_]*/) {
                 record_declaration()
                 buffer = line
                 start_line = FNR
-                declaration_indent = leading_space_count(line)
+                declaration_indent = line_indent
+                declaration_owner = type_depth > 0 ? type_name[type_depth] : ""
             } else if (buffer != "" &&
-                (line ~ /^[[:space:]]*$/ ||
-                    leading_space_count(line) > declaration_indent))
+                (line ~ /^[[:space:]]*$/ || line_indent > declaration_indent))
             {
                 buffer = buffer " " line
             } else {
@@ -397,7 +491,7 @@ manifest_state_declarations() {
             }
         }
         END { record_declaration() }
-    ' "$file" "$file"
+    ' "$file"
 }
 
 static_property_declarations() {
@@ -420,8 +514,18 @@ static_property_declarations() {
 
 shell_host_static_storage_declarations() {
     local file="$1"
+    local factory_inventory
+    factory_inventory="$(typed_factory_declarations "$file" "ShellHostController")"
 
-    awk '
+    awk -v factory_inventory="$factory_inventory" '
+        BEGIN {
+            factory_count = split(factory_inventory, factory_entries, "\n")
+            for (factory_index = 1; factory_index <= factory_count; factory_index++) {
+                if (factory_entries[factory_index] != "") {
+                    shell_host_factories[factory_entries[factory_index]] = 1
+                }
+            }
+        }
         function leading_space_count(value,    prefix) {
             prefix = value
             sub(/[^ ].*$/, "", prefix)
@@ -430,30 +534,17 @@ shell_host_static_storage_declarations() {
         function is_static_property_start(value) {
             return value ~ /^[[:space:]]*[^\/]*(static|class)[ ]+([^ ]+[ ]+)*(let|var)[ ]+[A-Za-z_][A-Za-z0-9_]*/
         }
-        function is_factory_candidate(value) {
-            return value ~ /^[[:space:]]*[^\/]*func[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*\(/
+        function is_type_declaration(value) {
+            return value ~ /^[[:space:]]*[^\/]*(class|struct|actor|enum|extension|protocol)[ ]+[A-Za-z_][A-Za-z0-9_.]*/
         }
-        function is_same_indent_function_signature_continuation(value) {
-            return value ~ /^[[:space:]]*(\)|->|[{])/ ||
-                value ~ /^[[:space:]]*(async|throws|rethrows|where)([^A-Za-z0-9_]|$)/
+        function declared_type_name(value,    name) {
+            name = value
+            sub(/^.*(class|struct|actor|enum|extension|protocol)[ ]+/, "", name)
+            sub(/[^A-Za-z0-9_.].*$/, "", name)
+            sub(/^.*[.]/, "", name)
+            return name
         }
-        function record_buffered_factory(    name, signature, header) {
-            if (factory_buffer == "") {
-                return
-            }
-            signature = factory_buffer
-            gsub(/[[:space:]]+/, " ", signature)
-            header = signature
-            sub(/[{].*$/, "", header)
-            if (header ~ /(^| )func[ ]+[A-Za-z_][A-Za-z0-9_]*.*->[^{}]*ShellHostController([^A-Za-z0-9_]|$)/) {
-                name = header
-                sub(/^.*func[ ]+/, "", name)
-                sub(/[^A-Za-z0-9_].*$/, "", name)
-                shell_host_factories[name] = 1
-            }
-            factory_buffer = ""
-        }
-        function uses_shell_host_factory(value,    expression, name) {
+        function uses_shell_host_factory(value, owner,    call, expression, name, parts, qualifier, segment_count) {
             if (value !~ /=/) {
                 return 0
             }
@@ -462,13 +553,22 @@ shell_host_static_storage_declarations() {
             while (expression ~ /^(try[!?]?|await)[ ]+/) {
                 sub(/^(try[!?]?|await)[ ]+/, "", expression)
             }
-            sub(/^Self[.]/, "", expression)
-            if (expression !~ /^[A-Za-z_][A-Za-z0-9_]*[ ]*\(/) {
+            if (expression !~ /^[A-Za-z_][A-Za-z0-9_.]*[ ]*\(/) {
                 return 0
             }
-            name = expression
-            sub(/[ ]*\(.*/, "", name)
-            return name in shell_host_factories
+            call = expression
+            sub(/[ ]*\(.*/, "", call)
+            segment_count = split(call, parts, ".")
+            name = parts[segment_count]
+            if (segment_count == 1) {
+                return ((owner "|" name) in shell_host_factories) ||
+                    (("|" name) in shell_host_factories)
+            }
+            qualifier = parts[segment_count - 1]
+            if (qualifier == "Self" || qualifier == "self") {
+                qualifier = owner
+            }
+            return (qualifier "|" name) in shell_host_factories
         }
         function is_stored_property(value,    declaration_header) {
             declaration_header = value
@@ -489,44 +589,37 @@ shell_host_static_storage_declarations() {
             sub(/ $/, "", property)
             if (is_stored_property(property) &&
                 (property ~ /ShellHostController([^A-Za-z0-9_]|$)/ ||
-                    uses_shell_host_factory(property)))
+                    uses_shell_host_factory(property, property_owner)))
             {
                 printf "%d|%s\n", property_start_line, property
             }
             property_buffer = ""
         }
-        NR == FNR {
-            line = $0
-            sub(/\/\/.*/, "", line)
-            if (is_factory_candidate(line)) {
-                record_buffered_factory()
-                factory_buffer = line
-                factory_indent = leading_space_count(line)
-            } else if (factory_buffer != "" &&
-                (line ~ /^[[:space:]]*$/ ||
-                    leading_space_count(line) > factory_indent ||
-                    (leading_space_count(line) == factory_indent &&
-                        is_same_indent_function_signature_continuation(line))))
-            {
-                factory_buffer = factory_buffer " " line
-            } else {
-                record_buffered_factory()
-            }
-            next
-        }
-        FNR == 1 {
-            record_buffered_factory()
-        }
         {
             line = $0
             sub(/\/\/.*/, "", line)
+            line_indent = leading_space_count(line)
+            if (line !~ /^[[:space:]]*$/) {
+                while (type_depth > 0 && line_indent <= type_indent[type_depth]) {
+                    delete type_indent[type_depth]
+                    delete type_name[type_depth]
+                    type_depth--
+                }
+                if (is_type_declaration(line)) {
+                    type_depth++
+                    type_indent[type_depth] = line_indent
+                    type_name[type_depth] = declared_type_name(line)
+                }
+            }
+
             if (is_static_property_start(line)) {
                 record_buffered_property()
                 property_buffer = line
                 property_start_line = FNR
-                property_indent = leading_space_count(line)
+                property_indent = line_indent
+                property_owner = type_depth > 0 ? type_name[type_depth] : ""
             } else if (property_buffer != "" &&
-                (line ~ /^[[:space:]]*$/ || leading_space_count(line) > property_indent))
+                (line ~ /^[[:space:]]*$/ || line_indent > property_indent))
             {
                 property_buffer = property_buffer " " line
             } else {
@@ -534,7 +627,7 @@ shell_host_static_storage_declarations() {
             }
         }
         END { record_buffered_property() }
-    ' "$file" "$file"
+    ' "$file"
 }
 
 check_appkit_import_gate() {
@@ -983,8 +1076,18 @@ reject_shell_host_duplicate_persistence_state() {
 
 shell_snapshot_stored_property_counts() {
     local file="$1"
+    local factory_inventory
+    factory_inventory="$(typed_factory_declarations "$file" "ShellStateSnapshot")"
 
-    awk '
+    awk -v factory_inventory="$factory_inventory" '
+        BEGIN {
+            factory_count = split(factory_inventory, factory_entries, "\n")
+            for (factory_index = 1; factory_index <= factory_count; factory_index++) {
+                if (factory_entries[factory_index] != "") {
+                    snapshot_factories[factory_entries[factory_index]] = 1
+                }
+            }
+        }
         function leading_space_count(value,    prefix) {
             prefix = value
             sub(/[^ ].*$/, "", prefix)
@@ -994,57 +1097,40 @@ shell_snapshot_stored_property_counts() {
             return value ~ /^[[:space:]]*[^\/]*(static|class)[ ]+([^ ]+[ ]+)*(let|var)[ ]+[A-Za-z_][A-Za-z0-9_]*/
         }
         function is_type_declaration(value) {
-            return value ~ /^[[:space:]]*[^\/]*(class|struct|actor|enum|extension)[ ]+[A-Za-z_][A-Za-z0-9_]*/
+            return value ~ /^[[:space:]]*[^\/]*(class|struct|actor|enum|extension|protocol)[ ]+[A-Za-z_][A-Za-z0-9_.]*/
         }
-        function is_factory_candidate(value) {
-            return value ~ /^[[:space:]]*[^\/]*func[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*\(/ ||
-                is_static_property_start(value)
+        function declared_type_name(value,    name) {
+            name = value
+            sub(/^.*(class|struct|actor|enum|extension|protocol)[ ]+/, "", name)
+            sub(/[^A-Za-z0-9_.].*$/, "", name)
+            sub(/^.*[.]/, "", name)
+            return name
         }
-        function is_same_indent_function_signature_continuation(value) {
-            return value ~ /^[[:space:]]*(\)|->|[{])/ ||
-                value ~ /^[[:space:]]*(async|throws|rethrows|where)([^A-Za-z0-9_]|$)/
-        }
-        function record_buffered_factory(    name, signature, header) {
-            if (factory_buffer == "") {
-                return
-            }
-            signature = factory_buffer
-            gsub(/[[:space:]]+/, " ", signature)
-            header = signature
-            sub(/[{].*$/, "", header)
-            if (header ~ /(^| )func[ ]+[A-Za-z_][A-Za-z0-9_]*.*->[ ]*ShellStateSnapshot[?!]?/) {
-                name = header
-                sub(/^.*func[ ]+/, "", name)
-                sub(/[^A-Za-z0-9_].*$/, "", name)
-                snapshot_factories[name] = 1
-            }
-
-            header = signature
-            sub(/[={].*$/, "", header)
-            if (header ~ /(^| )(static|class)[ ]+([^ ]+[ ]+)*(let|var)[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*:[ ]*ShellStateSnapshot[?!]?[ ]*$/) {
-                name = header
-                sub(/^.*(let|var)[ ]+/, "", name)
-                sub(/[^A-Za-z0-9_].*$/, "", name)
-                snapshot_factories[name] = 1
-            }
-            factory_buffer = ""
-            factory_is_function = 0
-        }
-        function uses_snapshot_factory(property,    expression, name) {
+        function uses_snapshot_factory(property, owner,    call, expression, name, parts, qualifier, segment_count) {
             if (property !~ /=/) {
                 return 0
             }
             expression = property
             sub(/^[^=]*=[ ]*/, "", expression)
-            sub(/^try[!?]?[ ]+/, "", expression)
-            sub(/^await[ ]+/, "", expression)
-            sub(/^Self[.]/, "", expression)
-            if (expression !~ /^[A-Za-z_][A-Za-z0-9_]*[ ]*\(/) {
+            while (expression ~ /^(try[!?]?|await)[ ]+/) {
+                sub(/^(try[!?]?|await)[ ]+/, "", expression)
+            }
+            if (expression !~ /^[A-Za-z_][A-Za-z0-9_.]*[ ]*\(/) {
                 return 0
             }
-            name = expression
-            sub(/[ ]*\(.*/, "", name)
-            return name in snapshot_factories
+            call = expression
+            sub(/[ ]*\(.*/, "", call)
+            segment_count = split(call, parts, ".")
+            name = parts[segment_count]
+            if (segment_count == 1) {
+                return ((owner "|" name) in snapshot_factories) ||
+                    (("|" name) in snapshot_factories)
+            }
+            qualifier = parts[segment_count - 1]
+            if (qualifier == "Self" || qualifier == "self") {
+                qualifier = owner
+            }
+            return (qualifier "|" name) in snapshot_factories
         }
         function inferred_generic_contains_snapshot(property,    expression) {
             if (property !~ /=/) {
@@ -1085,7 +1171,8 @@ shell_snapshot_stored_property_counts() {
                 property ~ /var[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*=[ ]*ShellStateSnapshot[ ]*([.(]|$)/ ||
                 (property ~ /var[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*=/ &&
                     inferred_generic_contains_snapshot(property)) ||
-                (property ~ /var[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*=/ && uses_snapshot_factory(property))))
+                (property ~ /var[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*=/ &&
+                    uses_snapshot_factory(property, instance_owner))))
             {
                 instance_count++
             }
@@ -1103,35 +1190,12 @@ shell_snapshot_stored_property_counts() {
                 property ~ /(^| )(static|class)[ ]+([^ ]+[ ]+)*(let|var)[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*=[ ]*ShellStateSnapshot[ ]*([.(]|$)/ ||
                 (property ~ /(^| )(static|class)[ ]+([^ ]+[ ]+)*(let|var)[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*=/ &&
                     inferred_generic_contains_snapshot(property)) ||
-                (property ~ /(^| )(static|class)[ ]+([^ ]+[ ]+)*(let|var)[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*=/ && uses_snapshot_factory(property)))
+                (property ~ /(^| )(static|class)[ ]+([^ ]+[ ]+)*(let|var)[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*=/ &&
+                    uses_snapshot_factory(property, static_owner)))
             {
                 static_count++
             }
             static_buffer = ""
-        }
-        NR == FNR {
-            line = $0
-            sub(/\/\/.*/, "", line)
-            if (is_factory_candidate(line)) {
-                record_buffered_factory()
-                factory_buffer = line
-                factory_indent = leading_space_count(line)
-                factory_is_function = line ~ /(^|[ ])func[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*\(/
-            } else if (factory_buffer != "" &&
-                (line ~ /^[[:space:]]*$/ ||
-                    leading_space_count(line) > factory_indent ||
-                    (factory_is_function &&
-                        leading_space_count(line) == factory_indent &&
-                        is_same_indent_function_signature_continuation(line))))
-            {
-                factory_buffer = factory_buffer " " line
-            } else {
-                record_buffered_factory()
-            }
-            next
-        }
-        FNR == 1 {
-            record_buffered_factory()
         }
         {
             line = $0
@@ -1144,11 +1208,13 @@ shell_snapshot_stored_property_counts() {
             if (line !~ /^[[:space:]]*$/) {
                 while (type_depth > 0 && line_indent <= type_indent[type_depth]) {
                     delete type_indent[type_depth]
+                    delete type_name[type_depth]
                     type_depth--
                 }
                 if (is_type_declaration(line)) {
                     type_depth++
                     type_indent[type_depth] = line_indent
+                    type_name[type_depth] = declared_type_name(line)
                 }
             }
 
@@ -1157,6 +1223,7 @@ shell_snapshot_stored_property_counts() {
                 if (line ~ /(let|var)[ ]+[A-Za-z_][A-Za-z0-9_]*/) {
                     instance_buffer = line
                     instance_indent = line_indent
+                    instance_owner = type_name[type_depth]
                 }
             } else if (instance_buffer != "" &&
                 (line ~ /^[[:space:]]*$/ || line_indent > instance_indent))
@@ -1173,6 +1240,7 @@ shell_snapshot_stored_property_counts() {
                 count_buffered_static_property()
                 static_buffer = line
                 static_indent = leading_space_count(line)
+                static_owner = type_depth > 0 ? type_name[type_depth] : ""
             } else if (static_buffer != "" &&
                 (line ~ /^[[:space:]]*$/ || leading_space_count(line) > static_indent))
             {
@@ -1186,7 +1254,7 @@ shell_snapshot_stored_property_counts() {
             count_buffered_static_property()
             print instance_count, static_count
         }
-    ' "$file" "$file"
+    ' "$file"
 }
 
 reject_replacement_global_shell_store() {
