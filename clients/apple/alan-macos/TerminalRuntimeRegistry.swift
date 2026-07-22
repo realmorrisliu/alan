@@ -67,9 +67,12 @@ final class TerminalRuntimeRegistry: ObservableObject {
 
     private var hostViewsByContentID: [String: AlanTerminalHostNSView] = [:]
     private var snapshotsByContentID: [String: TerminalHostRuntimeSnapshot] = [:]
+    private var activeTasksByContentID: [String: ShellTabActiveTaskState] = [:]
     private var paneSlotIDByContentID: [String: String] = [:]
     private var contentIDByPaneSlotID: [String: String] = [:]
     private var pendingFocusPaneSlotIDs: Set<String> = []
+    private var pendingShellProjectionsByContentID: [String: TerminalHostRuntimeSnapshot] = [:]
+    private var shellProjectionFlushScheduled = false
     private let runtimeService: AlanTerminalRuntimeService
     private let mockDeliveryHandler: MockDeliveryHandler?
     private let performanceDiagnosticsRecorder: AlanPerformanceDiagnosticsRecorder?
@@ -216,10 +219,16 @@ final class TerminalRuntimeRegistry: ObservableObject {
         )
     }
 
-    func updateSnapshot(_ snapshot: TerminalHostRuntimeSnapshot) {
+    /// Records the runtime snapshot and reports whether its shell-facing
+    /// projection changed. The registry remains authoritative even when the
+    /// shell projection is suppressed as timestamp-only churn.
+    @discardableResult
+    func updateSnapshot(_ snapshot: TerminalHostRuntimeSnapshot) -> Bool {
         guard let contentID = snapshot.contentID ?? snapshot.paneID.map(terminalContentID(forPaneID:)) else {
-            return
+            return false
         }
+        let previous = snapshotsByContentID[contentID]
+            ?? runtimeSnapshot(from: runtimeService.snapshot(forTerminalContentID: contentID))
         if let paneID = snapshot.paneID {
             recordMount(contentID: contentID, paneSlotID: paneID)
         }
@@ -227,6 +236,43 @@ final class TerminalRuntimeRegistry: ObservableObject {
         runtimeService
             .existingSurfaceHandle(forTerminalContentID: contentID)?
             .updateHostRuntimeSnapshot(snapshot)
+        return TerminalRuntimePublicationPolicy.shouldProjectToShell(
+            previous: previous,
+            next: snapshot
+        )
+    }
+
+    /// Publishes immediately for foreground/hidden runtimes and coalesces
+    /// visible-background churn by terminal content identity for one frame.
+    func publishShellProjection(
+        _ snapshot: TerminalHostRuntimeSnapshot,
+        observer: @escaping (TerminalHostRuntimeSnapshot) -> Void
+    ) {
+        guard snapshot.renderPriority == .visibleBackground,
+              let contentID = snapshot.contentID
+                  ?? snapshot.paneID.map(terminalContentID(mountedAtPaneID:))
+        else {
+            observer(snapshot)
+            return
+        }
+
+        pendingShellProjectionsByContentID[contentID] = snapshot
+        guard !shellProjectionFlushScheduled else { return }
+        shellProjectionFlushScheduled = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(16)) { [weak self] in
+            self?.flushShellProjections(to: observer)
+        }
+    }
+
+    func flushShellProjections(
+        to observer: (TerminalHostRuntimeSnapshot) -> Void
+    ) {
+        let pending = pendingShellProjectionsByContentID
+        pendingShellProjectionsByContentID.removeAll()
+        shellProjectionFlushScheduled = false
+        for snapshot in pending.values.sorted(by: { ($0.paneID ?? "") < ($1.paneID ?? "") }) {
+            observer(snapshot)
+        }
     }
 
     func updateRenderPriorities(
@@ -302,6 +348,32 @@ final class TerminalRuntimeRegistry: ObservableObject {
         guard let contentID else { return .placeholder }
         return snapshotsByContentID[contentID]
             ?? runtimeSnapshot(from: runtimeService.snapshot(forTerminalContentID: contentID))
+    }
+
+    @discardableResult
+    func recordActiveTask(
+        _ activeTaskState: ShellTabActiveTaskState?,
+        processExited: Bool,
+        forPaneID paneID: String
+    ) -> Bool {
+        let nextState: ShellTabActiveTaskState?
+        if processExited {
+            nextState = .inactive
+        } else {
+            nextState = activeTaskState
+        }
+
+        guard let nextState else { return false }
+        let contentID = terminalContentID(mountedAtPaneID: paneID)
+        guard activeTasksByContentID[contentID] != nextState else { return false }
+        activeTasksByContentID[contentID] = nextState
+        return true
+    }
+
+    func strongestActiveTask(forPaneIDs paneIDs: [String]) -> ShellTabActiveTaskState? {
+        paneIDs
+            .compactMap { activeTasksByContentID[terminalContentID(mountedAtPaneID: $0)] }
+            .max { Self.activeTaskRank($0) < Self.activeTaskRank($1) }
     }
 
     func captureTranscriptSnapshot(
@@ -513,11 +585,18 @@ final class TerminalRuntimeRegistry: ObservableObject {
     }
 
     private func releaseTerminalContent(_ contentID: String) {
+        let paneSlotID = paneSlotIDByContentID[contentID]
+            ?? snapshotsByContentID[contentID]?.paneID
         if let hostView = hostViewsByContentID.removeValue(forKey: contentID) {
             hostView.teardownTerminalRuntime()
         }
         runtimeService.finalizeTerminalContent(contentID)
         snapshotsByContentID.removeValue(forKey: contentID)
+        activeTasksByContentID.removeValue(forKey: contentID)
+        pendingShellProjectionsByContentID.removeValue(forKey: contentID)
+        if let paneSlotID {
+            pendingFocusPaneSlotIDs.remove(paneSlotID)
+        }
         if let paneSlotID = paneSlotIDByContentID.removeValue(forKey: contentID),
            contentIDByPaneSlotID[paneSlotID] == contentID
         {
@@ -570,6 +649,23 @@ final class TerminalRuntimeRegistry: ObservableObject {
         }
         paneSlotIDByContentID[contentID] = paneSlotID
         contentIDByPaneSlotID[paneSlotID] = contentID
+    }
+
+    private static func activeTaskRank(_ state: ShellTabActiveTaskState) -> Int {
+        switch state {
+        case .inactive:
+            return 0
+        case .unknown:
+            return 1
+        case .foregroundCommand:
+            return 2
+        case .alanRunning:
+            return 3
+        case .alanProcess:
+            return 4
+        case .alanPendingYield:
+            return 5
+        }
     }
 
     private func runtimeSnapshot(

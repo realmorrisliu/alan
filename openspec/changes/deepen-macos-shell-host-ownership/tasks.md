@@ -27,7 +27,7 @@
 - [x] 3.1 Make controller workspace and selection publications derive directly
   from the adopted `ShellStateSnapshot`; remove independently mutable selected
   Space/Tab fields and synchronization logic.
-- [ ] 3.2 Make terminal runtime, active-task, render, and lifecycle publications
+- [x] 3.2 Make terminal runtime, active-task, render, and lifecycle publications
   derive from `TerminalRuntimeRegistry`; remove duplicate controller maps and
   queued projection state.
 - [ ] 3.3 Keep manifest loading and write scheduling in

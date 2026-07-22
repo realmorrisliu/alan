@@ -227,8 +227,11 @@ extension ShellHostController {
         for tab: ShellTab,
         panes: [ShellPane]
     ) -> ShellTabActiveTaskState {
-        if let terminalActiveTask = strongestTerminalActiveTask(
-            in: panes.filter { tab.contains(paneID: $0.paneID) }
+        let tabPaneIDs = panes
+            .filter { tab.contains(paneID: $0.paneID) }
+            .map(\.paneID)
+        if let terminalActiveTask = terminalRuntimeRegistry.strongestActiveTask(
+            forPaneIDs: tabPaneIDs
         ),
            terminalActiveTask.protectsFromPruning
         {
@@ -260,48 +263,6 @@ extension ShellHostController {
             .reduce(into: [String: ShellTabActiveTaskState]()) { result, tab in
                 result[tab.tabID] = projectedActiveTask(for: tab, panes: shellState.panes)
             }
-    }
-
-    @discardableResult
-    func recordTerminalActiveTask(
-        _ activeTaskState: ShellTabActiveTaskState?,
-        processExited: Bool,
-        for paneID: String
-    ) -> Bool {
-        let nextState: ShellTabActiveTaskState?
-        if processExited {
-            nextState = .inactive
-        } else {
-            nextState = activeTaskState
-        }
-
-        guard let nextState else { return false }
-        guard terminalActiveTasksByPaneID[paneID] != nextState else { return false }
-        terminalActiveTasksByPaneID[paneID] = nextState
-        return true
-    }
-
-    private func strongestTerminalActiveTask(in panes: [ShellPane]) -> ShellTabActiveTaskState? {
-        panes
-            .compactMap { terminalActiveTasksByPaneID[$0.paneID] }
-            .max { activeTaskRank($0) < activeTaskRank($1) }
-    }
-
-    private func activeTaskRank(_ state: ShellTabActiveTaskState) -> Int {
-        switch state {
-        case .inactive:
-            return 0
-        case .unknown:
-            return 1
-        case .foregroundCommand:
-            return 2
-        case .alanRunning:
-            return 3
-        case .alanProcess:
-            return 4
-        case .alanPendingYield:
-            return 5
-        }
     }
 
     private static let inactiveAlanMachineStates: Set<String> = [
