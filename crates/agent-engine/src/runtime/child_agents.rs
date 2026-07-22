@@ -161,40 +161,55 @@ impl ChildProcessLaunch<'_> {
             let parent_namespace = refreshed_namespace;
             let target_path = target_path?;
             let tool_names = tool_names?;
-            let plan = build_child_namespace_plan(
-                &attempt_spec,
-                &parent_namespace.mounts,
-                &target_path,
-                self.parent_descriptors,
-                &tool_names,
-                self.parent.child_launch.connection_name(),
-            )?;
-            let decision = evaluate_delegated_launch_capabilities(
-                &mut attempt_spec,
-                &plan,
-                &parent_namespace.mounts,
-                self.parent.child_launch.namespace_cwd(),
-            )?;
-            let mut descriptors = BTreeMap::from([(AGENT_DEFINITION_FD, target_path)]);
-            if attempt_spec.has_handle(SpawnHandle::Memory)
-                && let Some(path) = self
-                    .parent_descriptors
-                    .get(&alan_agent_protocol::MEMORY_STORE_DESCRIPTOR)
-            {
-                descriptors.insert(alan_agent_protocol::MEMORY_STORE_DESCRIPTOR, path.clone());
-            }
-            let request = AgentExecutableRequest {
-                initial_task: task_context::build_child_task_text(
-                    &self.parent.task_context,
+            let planned_launch: Result<_> = (|| {
+                let plan = build_child_namespace_plan(
                     &attempt_spec,
-                ),
-                spawn: attempt_spec.clone(),
-            };
+                    &parent_namespace.mounts,
+                    &target_path,
+                    self.parent_descriptors,
+                    &tool_names,
+                    self.parent.child_launch.connection_name(),
+                )?;
+                let decision = evaluate_delegated_launch_capabilities(
+                    &mut attempt_spec,
+                    &plan,
+                    &parent_namespace.mounts,
+                    self.parent.child_launch.namespace_cwd(),
+                )?;
+                let mut descriptors = BTreeMap::from([(AGENT_DEFINITION_FD, target_path)]);
+                if attempt_spec.has_handle(SpawnHandle::Memory)
+                    && let Some(path) = self
+                        .parent_descriptors
+                        .get(&alan_agent_protocol::MEMORY_STORE_DESCRIPTOR)
+                {
+                    descriptors.insert(alan_agent_protocol::MEMORY_STORE_DESCRIPTOR, path.clone());
+                }
+                let request = AgentExecutableRequest {
+                    initial_task: task_context::build_child_task_text(
+                        &self.parent.task_context,
+                        &attempt_spec,
+                    ),
+                    spawn: attempt_spec.clone(),
+                };
+                Ok((plan, decision, descriptors, request))
+            })();
+            let planned_namespace = self
+                .process_files
+                .read_process_namespace(self.parent_pid)
+                .await?;
+            if planned_namespace.generation != parent_namespace.generation {
+                last_stale_error = Some(anyhow!(
+                    "parent Process namespace changed while planning child launch"
+                ));
+                continue;
+            }
+            let (plan, decision, descriptors, request) = planned_launch?;
             let generation = parent_namespace.generation;
             let namespace = ProcessNamespaceManifest {
                 generation,
                 mounts: plan.process_mounts,
             };
+            ensure_not_cancelled(self.cancel)?;
             match self
                 .process_files
                 .spawn_agent_process(&request, namespace, descriptors)

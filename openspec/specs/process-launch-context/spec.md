@@ -78,6 +78,12 @@ captured for the clone slot.
 - **AND** if the generation changes during that recomputation, the engine
   discards either its successful inputs or its discovery error and starts
   another bounded attempt
+- **AND** selected-mount and capability-planning outcomes are accepted only
+  after a post-planning read confirms the same generation; a changed generation
+  discards either the successful plan or its error and starts another attempt
+- **AND** a cancellable Agent Execution Engine launch rechecks cancellation
+  immediately before `/proc/clone`, so cancellation observed before that point
+  creates no child Process
 
 #### Scenario: Exec document omits its namespace manifest
 - **WHEN** a spawner commits an exec document without a namespace manifest

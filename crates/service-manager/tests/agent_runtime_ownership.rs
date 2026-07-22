@@ -88,14 +88,36 @@ fn agent_runtime_service_owns_the_alan_agent_process_image() {
             "Engine child Process launch is missing `{required}`"
         );
     }
-    assert_eq!(process_launch.matches("read_process_namespace(").count(), 2);
+    let namespace_reads = process_launch
+        .match_indices("read_process_namespace(")
+        .map(|(index, _)| index)
+        .collect::<Vec<_>>();
+    assert_eq!(namespace_reads.len(), 3);
     let discovery = process_launch.find("select_tool_names(").unwrap();
-    let stable_snapshot = process_launch.rfind("read_process_namespace(").unwrap();
+    let stable_snapshot = namespace_reads[1];
     let validated_discovery = process_launch
         .find("let tool_names = tool_names?;")
         .unwrap();
     assert!(discovery < stable_snapshot && stable_snapshot < validated_discovery);
-    assert!(stable_snapshot < process_launch.find("build_child_namespace_plan(").unwrap());
+    let planning = process_launch.find("build_child_namespace_plan(").unwrap();
+    let planned_snapshot = namespace_reads[2];
+    let validated_plan = process_launch
+        .find("let (plan, decision, descriptors, request) = planned_launch?;")
+        .unwrap();
+    assert!(stable_snapshot < planning && planning < planned_snapshot);
+    assert!(planned_snapshot < validated_plan);
+    assert_eq!(
+        process_launch
+            .matches("ensure_not_cancelled(self.cancel)?;")
+            .count(),
+        2
+    );
+    let pre_spawn_cancel = process_launch
+        .rfind("ensure_not_cancelled(self.cancel)?;")
+        .unwrap();
+    let spawn = process_launch.find(".spawn_agent_process(").unwrap();
+    assert!(validated_plan < pre_spawn_cancel && pre_spawn_cancel < spawn);
+    assert!(!process_launch[pre_spawn_cancel..spawn].contains(".await"));
     for displaced in [
         "AgentFs::new()",
         "bind_process(",
