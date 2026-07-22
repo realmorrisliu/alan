@@ -272,6 +272,46 @@ manifest_state_declarations() {
             sub(/[[:space:]]+$/, "", value)
             return value
         }
+        function is_factory_candidate(value) {
+            return value ~ /^[[:space:]]*[^\/]*func[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*\(/
+        }
+        function is_same_indent_function_signature_continuation(value) {
+            return value ~ /^[[:space:]]*(\)|->|[{])/ ||
+                value ~ /^[[:space:]]*(async|throws|rethrows|where)([^A-Za-z0-9_]|$)/
+        }
+        function record_buffered_factory(    name, signature, header) {
+            if (factory_buffer == "") {
+                return
+            }
+            signature = factory_buffer
+            gsub(/[[:space:]]+/, " ", signature)
+            header = signature
+            sub(/[{].*$/, "", header)
+            if (header ~ /(^| )func[ ]+[A-Za-z_][A-Za-z0-9_]*.*->[^{}]*ShellContentWorkspaceManifest([^A-Za-z0-9_]|$)/) {
+                name = header
+                sub(/^.*func[ ]+/, "", name)
+                sub(/[^A-Za-z0-9_].*$/, "", name)
+                manifest_factories[name] = 1
+            }
+            factory_buffer = ""
+        }
+        function inferred_factory_contains_manifest(value,    expression, name) {
+            if (value !~ /=/) {
+                return 0
+            }
+            expression = value
+            sub(/^[^=]*=[ ]*/, "", expression)
+            while (expression ~ /^(try[!?]?|await)[ ]+/) {
+                sub(/^(try[!?]?|await)[ ]+/, "", expression)
+            }
+            sub(/^Self[.]/, "", expression)
+            if (expression !~ /^[A-Za-z_][A-Za-z0-9_]*[ ]*\(/) {
+                return 0
+            }
+            name = expression
+            sub(/[ ]*\(.*/, "", name)
+            return name in manifest_factories
+        }
         function inferred_generic_contains_manifest(value,    expression) {
             if (value !~ /=/) {
                 return 0
@@ -305,6 +345,10 @@ manifest_state_declarations() {
                 prefix = declaration
                 sub(/[ ]*=.*/, "", prefix)
                 kind = "inferred-generic"
+            } else if (inferred_factory_contains_manifest(declaration)) {
+                prefix = declaration
+                sub(/[ ]*=.*/, "", prefix)
+                kind = "inferred-factory"
             } else {
                 buffer = ""
                 return
@@ -313,13 +357,35 @@ manifest_state_declarations() {
             printf "%d|%d|%s|%s\n", start_line, declaration_indent, trim(prefix), kind
             buffer = ""
         }
+        NR == FNR {
+            line = $0
+            sub(/\/\/.*/, "", line)
+            if (is_factory_candidate(line)) {
+                record_buffered_factory()
+                factory_buffer = line
+                factory_indent = leading_space_count(line)
+            } else if (factory_buffer != "" &&
+                (line ~ /^[[:space:]]*$/ ||
+                    leading_space_count(line) > factory_indent ||
+                    (leading_space_count(line) == factory_indent &&
+                        is_same_indent_function_signature_continuation(line))))
+            {
+                factory_buffer = factory_buffer " " line
+            } else {
+                record_buffered_factory()
+            }
+            next
+        }
+        FNR == 1 {
+            record_buffered_factory()
+        }
         {
             line = $0
             sub(/\/\/.*/, "", line)
             if (line ~ /^[[:space:]]*[^\/]*(let|var)[ ]+[A-Za-z_][A-Za-z0-9_]*/) {
                 record_declaration()
                 buffer = line
-                start_line = NR
+                start_line = FNR
                 declaration_indent = leading_space_count(line)
             } else if (buffer != "" &&
                 (line ~ /^[[:space:]]*$/ ||
@@ -331,7 +397,7 @@ manifest_state_declarations() {
             }
         }
         END { record_declaration() }
-    ' "$file"
+    ' "$file" "$file"
 }
 
 static_property_declarations() {
@@ -350,6 +416,125 @@ static_property_declarations() {
             print line
         }
     ' "$file"
+}
+
+shell_host_static_storage_declarations() {
+    local file="$1"
+
+    awk '
+        function leading_space_count(value,    prefix) {
+            prefix = value
+            sub(/[^ ].*$/, "", prefix)
+            return length(prefix)
+        }
+        function is_static_property_start(value) {
+            return value ~ /^[[:space:]]*[^\/]*(static|class)[ ]+([^ ]+[ ]+)*(let|var)[ ]+[A-Za-z_][A-Za-z0-9_]*/
+        }
+        function is_factory_candidate(value) {
+            return value ~ /^[[:space:]]*[^\/]*func[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*\(/
+        }
+        function is_same_indent_function_signature_continuation(value) {
+            return value ~ /^[[:space:]]*(\)|->|[{])/ ||
+                value ~ /^[[:space:]]*(async|throws|rethrows|where)([^A-Za-z0-9_]|$)/
+        }
+        function record_buffered_factory(    name, signature, header) {
+            if (factory_buffer == "") {
+                return
+            }
+            signature = factory_buffer
+            gsub(/[[:space:]]+/, " ", signature)
+            header = signature
+            sub(/[{].*$/, "", header)
+            if (header ~ /(^| )func[ ]+[A-Za-z_][A-Za-z0-9_]*.*->[^{}]*ShellHostController([^A-Za-z0-9_]|$)/) {
+                name = header
+                sub(/^.*func[ ]+/, "", name)
+                sub(/[^A-Za-z0-9_].*$/, "", name)
+                shell_host_factories[name] = 1
+            }
+            factory_buffer = ""
+        }
+        function uses_shell_host_factory(value,    expression, name) {
+            if (value !~ /=/) {
+                return 0
+            }
+            expression = value
+            sub(/^[^=]*=[ ]*/, "", expression)
+            while (expression ~ /^(try[!?]?|await)[ ]+/) {
+                sub(/^(try[!?]?|await)[ ]+/, "", expression)
+            }
+            sub(/^Self[.]/, "", expression)
+            if (expression !~ /^[A-Za-z_][A-Za-z0-9_]*[ ]*\(/) {
+                return 0
+            }
+            name = expression
+            sub(/[ ]*\(.*/, "", name)
+            return name in shell_host_factories
+        }
+        function is_stored_property(value,    declaration_header) {
+            declaration_header = value
+            sub(/[{].*$/, "", declaration_header)
+            if (declaration_header ~ /=/) {
+                return 1
+            }
+            return value !~ /[{]/ ||
+                value ~ /[{][ ]*(didSet|willSet)([^A-Za-z0-9_]|$)/
+        }
+        function record_buffered_property(    property) {
+            if (property_buffer == "") {
+                return
+            }
+            property = property_buffer
+            gsub(/[[:space:]]+/, " ", property)
+            sub(/^ /, "", property)
+            sub(/ $/, "", property)
+            if (is_stored_property(property) &&
+                (property ~ /ShellHostController([^A-Za-z0-9_]|$)/ ||
+                    uses_shell_host_factory(property)))
+            {
+                printf "%d|%s\n", property_start_line, property
+            }
+            property_buffer = ""
+        }
+        NR == FNR {
+            line = $0
+            sub(/\/\/.*/, "", line)
+            if (is_factory_candidate(line)) {
+                record_buffered_factory()
+                factory_buffer = line
+                factory_indent = leading_space_count(line)
+            } else if (factory_buffer != "" &&
+                (line ~ /^[[:space:]]*$/ ||
+                    leading_space_count(line) > factory_indent ||
+                    (leading_space_count(line) == factory_indent &&
+                        is_same_indent_function_signature_continuation(line))))
+            {
+                factory_buffer = factory_buffer " " line
+            } else {
+                record_buffered_factory()
+            }
+            next
+        }
+        FNR == 1 {
+            record_buffered_factory()
+        }
+        {
+            line = $0
+            sub(/\/\/.*/, "", line)
+            if (is_static_property_start(line)) {
+                record_buffered_property()
+                property_buffer = line
+                property_start_line = FNR
+                property_indent = leading_space_count(line)
+            } else if (property_buffer != "" &&
+                (line ~ /^[[:space:]]*$/ || leading_space_count(line) > property_indent))
+            {
+                property_buffer = property_buffer " " line
+            } else {
+                record_buffered_property()
+            }
+        }
+        END { record_buffered_property() }
+    ' "$file" "$file"
 }
 
 check_appkit_import_gate() {
@@ -1112,6 +1297,16 @@ reject_replacement_global_shell_store() {
         fi
 
     done < <(grep -RIl --include='*.swift' -F "ShellStateSnapshot" "$SOURCE_ROOT" || true)
+
+    while IFS= read -r file; do
+        rel="${file#$SOURCE_ROOT/}"
+        while IFS='|' read -r line_number source_line; do
+            [[ -n "$line_number" ]] || continue
+            printf '%s:%s:%s\n' "$file" "$line_number" "$source_line" >&2
+            fail \
+                "ShellHostController must not be retained by static/class storage; found in $rel"
+        done < <(shell_host_static_storage_declarations "$file")
+    done < <(find "$SOURCE_ROOT" -type f -name '*.swift' -print | sort)
 
     while IFS=: read -r file line_number source_line; do
         rel="${file#$SOURCE_ROOT/}"

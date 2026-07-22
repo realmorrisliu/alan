@@ -570,8 +570,10 @@ context, debounce state, scheduling, and manifest projection behind
 state and cadence markers to have that single owner. All production Swift files
 participate in an explicit manifest-storage inventory: only the coordinator's
 mutable retained manifest and the existing transient load, projection, and FFI
-value containers are accepted. Controller-side manifest use, a second
-projector, or a second scheduler fails validation.
+value containers are accepted. The inventory also follows inferred stored
+values back to manifest-returning helper factories, so omitting an explicit
+property type cannot hide a second retained manifest. Controller-side manifest
+use, a second projector, or a second scheduler fails validation.
 
 The same gate rejects a replacement global Shell store. `ShellHostController`
 remains the only observable owner of a mutable `ShellStateSnapshot`; the two
@@ -579,10 +581,14 @@ accepted transport cache files have fixed non-growing ownership ceilings, and
 all other mutable snapshot storage is rejected. No static stored snapshot is
 allowed under any property name. Files with accepted mutable snapshot storage
 also have an exact allowlist of non-owner static utility members, so a singleton
-entry point cannot bypass the rule by choosing a new alias. The current
-`ObservableObject` declarations and `@Published` projections form explicit
-owner allowlists, new `@Observable` owners require an architecture decision,
-and no singleton or catch-all `ShellStore` / `ShellModel` may wrap shell state.
+entry point cannot bypass the rule by choosing a new alias. Independently, every
+production Swift file is scanned for static/class storage of
+`ShellHostController`, including storage inferred from a local helper factory;
+that prevents a global controller singleton even when the file stores no
+snapshot directly. The current `ObservableObject` declarations and `@Published`
+projections form explicit owner allowlists, new `@Observable` owners require an
+architecture decision, and no singleton or catch-all `ShellStore` / `ShellModel`
+may wrap shell state.
 
 The current architecture gate treats
 `clients/apple/scripts/architecture-warning-baseline.txt` as a hard downward
