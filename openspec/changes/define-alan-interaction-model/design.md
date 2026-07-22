@@ -105,8 +105,12 @@ entry of the `alan` CLI and Local Entry — the Shell Process still starts
 there, unchanged. What changes is only the renderer-presented default, so
 this change carries a MODIFIED delta to `macos-shell-workspace-persistence`:
 the default manifest's selected Tab becomes the workspace home surface and a
-default terminal Tab is no longer required. This is a deliberate presentation
-change, not a contradiction of the boot order.
+default terminal Tab is no longer required. Because shell core owns default
+manifest semantics and content kinds, a matching
+`shell-workspace-core-contract` delta defines a platform-neutral workspace
+home content kind so no platform-private defaulting algorithm is
+reintroduced. This is a deliberate presentation change, not a contradiction
+of the boot order.
 
 ### D6: The vocabulary rule
 

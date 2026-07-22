@@ -62,6 +62,11 @@ their own answer, and OS vocabulary will leak into the default UI.
   selected Tab becomes the workspace home surface; a default terminal Tab is
   no longer required, aligning the macOS default presentation with
   workspace-first entry.
+- `shell-workspace-core-contract`: Shell core owns a platform-neutral
+  workspace home content kind and selects it in default manifest creation
+  instead of hard-coding a terminal Tab, so the macOS persistence delta has a
+  portable owner and no platform-private defaulting algorithm is
+  reintroduced.
 
 ## Impact
 

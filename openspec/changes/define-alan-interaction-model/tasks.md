@@ -51,5 +51,6 @@
   AgentFS, or runtime event machinery is introduced.
 - [ ] 4.3 Sync delta specs into `openspec/specs/` (new
   `alan-interaction-model`, updated `alan-renderer-host-contract`, updated
-  `macos-shell-workspace-persistence`) and move the change to
+  `macos-shell-workspace-persistence`, updated
+  `shell-workspace-core-contract`) and move the change to
   `openspec/changes/archive/YYYY-MM-DD-define-alan-interaction-model/`.
