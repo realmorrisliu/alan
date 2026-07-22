@@ -699,8 +699,21 @@ shell_snapshot_stored_property_count() {
 
 reject_replacement_global_shell_store() {
     local controller_owner="ShellHostController.swift"
+    local observable_owner_allowlist=(
+        "App/AlanMacPrimaryShellOwner.swift|AlanMacPrimaryShellOwner"
+        "App/AlanMacUpdateController.swift|AlanMacUpdateController"
+        "Models/Shell/ShellSpaceCreationProfileOptions.swift|ShellSpaceCreationProfileOptionStore"
+        "Services/AlanOS/AlanOSAttachmentService.swift|AlanOSAttachmentController"
+        "ShellHostController.swift|ShellHostController"
+        "Support/ShellSidebarSpaceSliderWheelMonitor.swift|ShellSidebarTabListWheelRouter"
+        "Support/ShellVoiceCommandController.swift|ShellVoiceCommandController"
+        "TerminalRuntimeRegistry.swift|TerminalRuntimeRegistry"
+    )
     local file
+    local line_number
+    local observable_owner
     local snapshot_stored_properties
+    local source_line
     local rel
 
     require_existing_single_owner_pattern \
@@ -725,12 +738,34 @@ reject_replacement_global_shell_store() {
                 "stored observable ShellStateSnapshot must stay in ShellHostController; found in $rel"
         fi
 
-        if (( snapshot_stored_properties > 0 )) \
-            && grep -Eq 'static[[:space:]]+(let|var)[[:space:]]+(shared|current|default)([^A-Za-z0-9_]|$)' "$file"
+        if grep -Eq \
+            'static[[:space:]]+(let|var)[[:space:]]+(shared|current|default)([^A-Za-z0-9_]|$)' \
+            "$file"
         then
-            fail "stored ShellStateSnapshot must not become a global singleton; found in $rel"
+            fail "ShellStateSnapshot-referencing code must not become a global singleton; found in $rel"
         fi
     done < <(grep -RIl --include='*.swift' -F "ShellStateSnapshot" "$SOURCE_ROOT" || true)
+
+    while IFS=: read -r file line_number source_line; do
+        rel="${file#$SOURCE_ROOT/}"
+        source_line="${source_line%%//*}"
+
+        if [[ "$source_line" == *"@Observable"* ]]; then
+            printf '%s:%s:%s\n' "$file" "$line_number" "$source_line" >&2
+            fail "new @Observable owners require an explicit architecture ownership decision"
+        elif [[ "$source_line" =~ (class|struct|actor)[[:space:]]+([A-Za-z_][A-Za-z0-9_]*) ]]; then
+            observable_owner="$rel|${BASH_REMATCH[2]}"
+            if ! contains_line "$observable_owner" "${observable_owner_allowlist[@]}"; then
+                printf '%s:%s:%s\n' "$file" "$line_number" "$source_line" >&2
+                fail "new ObservableObject owner is not in the accepted architecture: $observable_owner"
+            fi
+        else
+            printf '%s:%s:%s\n' "$file" "$line_number" "$source_line" >&2
+            fail "unrecognized ObservableObject ownership declaration in $rel"
+        fi
+    done < <(grep -RInH --include='*.swift' -E \
+        'ObservableObject|@Observable' \
+        "$SOURCE_ROOT" || true)
 
     if grep -RIn --include='*.swift' -E \
         '(class|struct|actor|enum)[[:space:]]+((Alan|Global)Shell|Shell)(State|Workspace)?(Store|Model)([^A-Za-z0-9_]|$)' \
