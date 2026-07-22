@@ -397,11 +397,15 @@ manifest_state_declarations() {
             while (expression ~ /^(try[!?]?|await)[ ]+/) {
                 sub(/^(try[!?]?|await)[ ]+/, "", expression)
             }
-            if (expression !~ /^[A-Za-z_][A-Za-z0-9_.]*[ ]*\(/) {
+            if (expression !~ /\(/) {
                 return 0
             }
             call = expression
             sub(/[ ]*\(.*/, "", call)
+            gsub(/[ ]*[.][ ]*/, ".", call)
+            if (call !~ /^[A-Za-z_][A-Za-z0-9_.]*$/) {
+                return 0
+            }
             segment_count = split(call, parts, ".")
             name = parts[segment_count]
             if (segment_count == 1) {
@@ -553,11 +557,15 @@ shell_host_static_storage_declarations() {
             while (expression ~ /^(try[!?]?|await)[ ]+/) {
                 sub(/^(try[!?]?|await)[ ]+/, "", expression)
             }
-            if (expression !~ /^[A-Za-z_][A-Za-z0-9_.]*[ ]*\(/) {
+            if (expression !~ /\(/) {
                 return 0
             }
             call = expression
             sub(/[ ]*\(.*/, "", call)
+            gsub(/[ ]*[.][ ]*/, ".", call)
+            if (call !~ /^[A-Za-z_][A-Za-z0-9_.]*$/) {
+                return 0
+            }
             segment_count = split(call, parts, ".")
             name = parts[segment_count]
             if (segment_count == 1) {
@@ -1115,11 +1123,15 @@ shell_snapshot_stored_property_counts() {
             while (expression ~ /^(try[!?]?|await)[ ]+/) {
                 sub(/^(try[!?]?|await)[ ]+/, "", expression)
             }
-            if (expression !~ /^[A-Za-z_][A-Za-z0-9_.]*[ ]*\(/) {
+            if (expression !~ /\(/) {
                 return 0
             }
             call = expression
             sub(/[ ]*\(.*/, "", call)
+            gsub(/[ ]*[.][ ]*/, ".", call)
+            if (call !~ /^[A-Za-z_][A-Za-z0-9_.]*$/) {
+                return 0
+            }
             segment_count = split(call, parts, ".")
             name = parts[segment_count]
             if (segment_count == 1) {
