@@ -80,7 +80,8 @@ agent-originated request — that creates a Host Mount Service grant per
 ADR-0050. Mount and bind SHALL be side effects invisible to the default UI.
 A single Permissions surface SHALL list active grants by label, scope, and
 access, and revocation SHALL remove the projection. Raw Host paths SHALL NOT
-appear in any layer; only grant labels and `/mnt` projections may be shown.
+appear in any layer; default layers SHALL show grant labels only, and `/mnt`
+projection paths MAY appear only in the Files layer and power-user surfaces.
 
 #### Scenario: A user shares a folder with an agent
 - **WHEN** a user gives an agent access to a folder through any default flow
