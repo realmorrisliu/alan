@@ -85,7 +85,9 @@ appear in any layer; only grant labels and `/mnt` projections may be shown.
 - **WHEN** a running agent needs access beyond its current grants
 - **THEN** the user is shown an approval sheet naming the folder label and
   requested access
-- **AND** approving creates the grant; denying changes nothing
+- **AND** approving creates the grant; denying publishes an immutable terminal
+  `rejected` result per the Host Mount Service contract, creating no grant
+  and no projection, so the waiting Agent Process resumes
 
 #### Scenario: The user audits and revokes access
 - **WHEN** a user opens the Permissions surface
@@ -99,14 +101,19 @@ installed services — not a bare shell or terminal. Alan Shell SHALL be
 available as one tab type among others, launched as an ordinary Process per
 ADR-0048/0049. Services under `/srv` SHALL be presented as installed
 services/apps that open their own file-backed interfaces. This UX ordering
-SHALL NOT change the system boot order defined by ADR-0039.
+governs renderer-presented defaults only: ADR-0039's system-level rule that
+the `alan` CLI and Local Entry start Alan Shell before agent views is
+unchanged, and this change carries the matching MODIFIED delta for the
+macOS default-manifest presentation contract.
 
 #### Scenario: The app opens
 - **WHEN** a user launches Alan for macOS
-- **THEN** the default view shows active agents, recent work, and installed
-  services
+- **THEN** the default presented view shows active agents, recent work, and
+  installed services
 - **AND** opening a shell is an explicit action that creates an ordinary
   shell Process
+- **AND** the system-level Local Entry and Shell Process startup per
+  ADR-0039/0049 proceeds independently of which view is presented first
 
 #### Scenario: A service is opened from the workspace
 - **WHEN** a user opens an installed service from the workspace

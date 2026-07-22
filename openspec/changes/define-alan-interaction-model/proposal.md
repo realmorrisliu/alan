@@ -58,6 +58,10 @@ their own answer, and OS vocabulary will leak into the default UI.
 - `alan-renderer-host-contract`: Renderer hosts SHALL render agent and service
   file surfaces as domain-native affordances, provide the three disclosure
   layers, and keep OS vocabulary out of the default UI.
+- `macos-shell-workspace-persistence`: The default workspace manifest's
+  selected Tab becomes the workspace home surface; a default terminal Tab is
+  no longer required, aligning the macOS default presentation with
+  workspace-first entry.
 
 ## Impact
 

@@ -99,6 +99,14 @@ wanted, not the first screen. The TUI remains the terminal-native host and
 naturally centers the shell; the interaction model still governs its agent
 surfaces.
 
+Reconciliation with shell-first contracts: ADR-0039 governs the system-level
+entry of the `alan` CLI and Local Entry — the Shell Process still starts
+there, unchanged. What changes is only the renderer-presented default, so
+this change carries a MODIFIED delta to `macos-shell-workspace-persistence`:
+the default manifest's selected Tab becomes the workspace home surface and a
+default terminal Tab is no longer required. This is a deliberate presentation
+change, not a contradiction of the boot order.
+
 ### D6: The vocabulary rule
 
 Default UI copy names user objects: agent, conversation, work, result,
