@@ -475,6 +475,10 @@ fn tab_reorder_honors_explicit_target_space_aliases() {
 
         assert_eq!(result.response.applied, Some(true));
         assert_eq!(result.response.space_id.as_deref(), Some("space_target"));
+        assert_eq!(
+            result.response.target_space_id.as_deref(),
+            Some("space_target")
+        );
         assert_eq!(result.response.tab_id.as_deref(), Some("tab_unpinned"));
         let updated = result
             .updated_state

@@ -555,16 +555,18 @@ impl ShellControlReducer {
         // Honor the requested target section so a tab can move between the pinned and unpinned
         // sections or Spaces, not only within its current location. `OrganizeTab` treats `index`
         // as the absolute position inside the target section.
-        self.apply_reducer(
+        let mut result = self.apply_reducer(
             command,
             ReducerOperation::OrganizeTab {
                 tab_id: tab_id.clone(),
-                target_space_id,
+                target_space_id: target_space_id.clone(),
                 section,
                 index: Some(index),
             },
             ResponseProjection::TargetTab(tab_id),
-        )
+        );
+        result.response.target_space_id = target_space_id;
+        result
     }
 
     fn tab_move_to_space(&self, command: ShellControlCommand) -> ShellControlResult {

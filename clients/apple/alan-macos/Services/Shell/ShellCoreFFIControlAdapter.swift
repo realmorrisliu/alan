@@ -246,9 +246,6 @@ private struct ShellCoreControlResponse: Decodable {
                 return nil
             }
         }()
-        let projectedTargetSpaceID = command.command == .tabReorder
-            ? command.spaceID
-            : targetSpaceID
         let mountedContentInstanceID: String? = {
             switch command.command {
             case .paneMove, .paneMoveWithinTab:
@@ -366,7 +363,7 @@ private struct ShellCoreControlResponse: Decodable {
             focusedPaneSlotID: focusedPaneSlotID ?? projectedContentState.focusedPaneSlotID,
             spaceID: responseSpaceID,
             sourceSpaceID: sourceSpaceID,
-            targetSpaceID: projectedTargetSpaceID,
+            targetSpaceID: targetSpaceID,
             tabID: responseTabID,
             paneID: responsePaneID,
             paneSlotID: explicitContentTargetWasMissing
