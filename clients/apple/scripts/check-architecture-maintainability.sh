@@ -599,9 +599,19 @@ reject_shell_host_duplicate_persistence_state() {
     fi
 }
 
+mutable_shell_snapshot_declaration_count() {
+    local file="$1"
+
+    grep -Ec \
+        -e 'var[[:space:]]+[A-Za-z_][A-Za-z0-9_]*[[:space:]]*:[[:space:]]*ShellStateSnapshot[?]?' \
+        -e 'var[[:space:]]+[A-Za-z_][A-Za-z0-9_]*[[:space:]]*=[[:space:]]*ShellStateSnapshot([.(]|$)' \
+        "$file" || true
+}
+
 reject_replacement_global_shell_store() {
     local controller_owner="ShellHostController.swift"
     local file
+    local mutable_snapshot_declarations
     local rel
 
     require_existing_single_owner_pattern \
@@ -611,16 +621,22 @@ reject_replacement_global_shell_store() {
 
     while IFS= read -r file; do
         rel="${file#$SOURCE_ROOT/}"
+        mutable_snapshot_declarations="$(mutable_shell_snapshot_declaration_count "$file")"
 
-        if [[ "$rel" != "$controller_owner" ]] \
+        if [[ "$rel" == "$controller_owner" ]] \
+            && (( mutable_snapshot_declarations != 1 ))
+        then
+            fail \
+                "ShellHostController must keep exactly one mutable ShellStateSnapshot projection"
+        elif [[ "$rel" != "$controller_owner" ]] \
             && grep -Eq 'ObservableObject|@Observable' "$file" \
-            && grep -Eq 'var[[:space:]]+[A-Za-z_][A-Za-z0-9_]*[[:space:]]*:[[:space:]]*ShellStateSnapshot[?]?' "$file"
+            && (( mutable_snapshot_declarations > 0 ))
         then
             fail \
                 "mutable observable ShellStateSnapshot must stay in ShellHostController; found in $rel"
         fi
 
-        if grep -Eq 'var[[:space:]]+[A-Za-z_][A-Za-z0-9_]*[[:space:]]*:[[:space:]]*ShellStateSnapshot[?]?' "$file" \
+        if (( mutable_snapshot_declarations > 0 )) \
             && grep -Eq 'static[[:space:]]+(let|var)[[:space:]]+(shared|current|default)([^A-Za-z0-9_]|$)' "$file"
         then
             fail "mutable ShellStateSnapshot must not become a global singleton; found in $rel"
