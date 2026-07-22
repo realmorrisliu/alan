@@ -7,20 +7,14 @@ sheets, result and evidence views, and lifecycle controls — instead of
 presenting raw file listings or raw protocol content as the default
 interface. User gestures on those affordances SHALL be expressed as file
 writes and `ctl` commands, never as renderer-local state mutation. Stop
-controls SHALL write `/proc/<pid>/ctl`; Pause/Resume controls SHALL target an
-agent-owned machine control surface rather than kernel Process lifecycle.
+controls SHALL write `/proc/<pid>/ctl`. Renderer hosts SHALL NOT expose
+lifecycle controls whose owning file surface the canonical AgentFS and Agent
+Machine contracts have not defined.
 
 #### Scenario: A user stops an agent from the Work layer
 - **WHEN** a user activates a Stop control in a renderer host
 - **THEN** the host writes the corresponding `/proc/<pid>/ctl` command
 - **AND** no renderer-local execution state is mutated to simulate the stop
-
-#### Scenario: A renderer offers a Pause control
-- **WHEN** a renderer host presents a Pause or Resume control for an agent
-- **THEN** the control writes an agent-owned machine control surface such as
-  `machine/ctl`
-- **AND** the gesture is not translated into a `/proc/<pid>/ctl` interrupt or
-  cancel
 
 ### Requirement: Renderer hosts implement the Alan Interaction Model layers
 Renderer hosts SHALL provide the Intent, Work, and Files disclosure layers

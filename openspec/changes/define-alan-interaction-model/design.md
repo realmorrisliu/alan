@@ -51,9 +51,8 @@ is backed by a real file, so peeling back is always possible and always safe.
 - **Intent layer**: the user states what they want; an agent works. Objects:
   intent text, agents, results.
 - **Work layer**: agent file surfaces rendered as native affordances —
-  `machine/tape` as conversation, `machine/plan` as a plan card, pending
-  actions as approval sheets, `/proc/<pid>/ctl` as a Stop button (Pause, when
-  it exists, writes the agent-owned `machine/ctl` surface instead),
+  `machine/tape` as conversation, `machine/ui/plan` as a plan card, pending
+  actions as approval sheets, `/proc/<pid>/ctl` as a Stop button,
   rollouts as evidence views. User gestures become file writes and `ctl`
   commands.
 - **Files layer**: the raw namespace as an explicit mode ("view as files",

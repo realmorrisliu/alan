@@ -24,9 +24,10 @@ SHALL render agent file surfaces as domain-native affordances: conversation
 views from tape surfaces, plan cards from plan surfaces, approval sheets from
 pending-action surfaces, result and evidence views from execution records,
 and lifecycle controls. A Stop control SHALL write `/proc/<pid>/ctl`
-(interrupt/cancel); a Pause or Resume control, where offered, SHALL write an
-agent-owned machine control surface such as `machine/ctl` and SHALL NOT be
-modeled as a kernel Process interrupt or cancel. The Files layer SHALL
+(interrupt/cancel). Any further lifecycle control SHALL write the control
+surface that owns the corresponding semantics per the canonical AgentFS and
+Agent Machine contracts and SHALL NOT be mapped onto `/proc/<pid>/ctl` unless
+that surface owns it. The Files layer SHALL
 expose the raw namespace as an explicit inspect-and-program mode. No layer
 SHALL own copied runtime state.
 
