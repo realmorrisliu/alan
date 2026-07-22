@@ -602,10 +602,22 @@ reject_shell_host_duplicate_persistence_state() {
 mutable_shell_snapshot_declaration_count() {
     local file="$1"
 
-    grep -Ec \
-        -e 'var[[:space:]]+[A-Za-z_][A-Za-z0-9_]*[[:space:]]*:[[:space:]]*ShellStateSnapshot[?]?' \
-        -e 'var[[:space:]]+[A-Za-z_][A-Za-z0-9_]*[[:space:]]*=[[:space:]]*ShellStateSnapshot([.(]|$)' \
-        "$file" || true
+    awk '
+        {
+            source = source " " $0
+        }
+        END {
+            gsub(/[[:space:]]+/, " ", source)
+            pattern = "var[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*" \
+                "(:[ ]*ShellStateSnapshot[?]?|=[ ]*ShellStateSnapshot([.(]|$))"
+            count = 0
+            while (match(source, pattern)) {
+                count++
+                source = substr(source, RSTART + RLENGTH)
+            }
+            print count
+        }
+    ' "$file"
 }
 
 reject_replacement_global_shell_store() {
