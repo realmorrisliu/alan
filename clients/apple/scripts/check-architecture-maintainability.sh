@@ -303,12 +303,6 @@ typed_factory_declarations() {
                 factory_buffer = ""
                 return
             }
-            if (factory_owner != "" &&
-                header !~ /(^| )(static|class)[ ]+([^ ]+[ ]+)*func[ ]+/)
-            {
-                factory_buffer = ""
-                return
-            }
             name = header
             sub(/^.*func[ ]+/, "", name)
             sub(/[^A-Za-z0-9_].*$/, "", name)
@@ -394,7 +388,7 @@ manifest_state_declarations() {
             sub(/^.*[.]/, "", name)
             return name
         }
-        function inferred_factory_contains_manifest(value, owner,    call, expression, name, parts, qualifier, segment_count) {
+        function inferred_factory_contains_manifest(value, owner,    call, expression, name, parts, qualifier, segment_count, qualifier_index) {
             if (value !~ /=/) {
                 return 0
             }
@@ -418,11 +412,16 @@ manifest_state_declarations() {
                 return ((owner "|" name) in manifest_factories) ||
                     (("|" name) in manifest_factories)
             }
-            qualifier = parts[segment_count - 1]
-            if (qualifier == "Self" || qualifier == "self") {
-                qualifier = owner
+            for (qualifier_index = 1; qualifier_index < segment_count; qualifier_index++) {
+                qualifier = parts[qualifier_index]
+                if (qualifier == "Self" || qualifier == "self") {
+                    qualifier = owner
+                }
+                if ((qualifier "|" name) in manifest_factories) {
+                    return 1
+                }
             }
-            return (qualifier "|" name) in manifest_factories
+            return parts[1] == "shared" && ((owner "|" name) in manifest_factories)
         }
         function inferred_generic_contains_manifest(value,    expression) {
             if (value !~ /=/) {
@@ -553,7 +552,7 @@ shell_host_static_storage_declarations() {
             sub(/^.*[.]/, "", name)
             return name
         }
-        function uses_shell_host_factory(value, owner,    call, expression, name, parts, qualifier, segment_count) {
+        function uses_shell_host_factory(value, owner,    call, expression, name, parts, qualifier, segment_count, qualifier_index) {
             if (value !~ /=/) {
                 return 0
             }
@@ -577,11 +576,16 @@ shell_host_static_storage_declarations() {
                 return ((owner "|" name) in shell_host_factories) ||
                     (("|" name) in shell_host_factories)
             }
-            qualifier = parts[segment_count - 1]
-            if (qualifier == "Self" || qualifier == "self") {
-                qualifier = owner
+            for (qualifier_index = 1; qualifier_index < segment_count; qualifier_index++) {
+                qualifier = parts[qualifier_index]
+                if (qualifier == "Self" || qualifier == "self") {
+                    qualifier = owner
+                }
+                if ((qualifier "|" name) in shell_host_factories) {
+                    return 1
+                }
             }
-            return (qualifier "|" name) in shell_host_factories
+            return parts[1] == "shared" && ((owner "|" name) in shell_host_factories)
         }
         function is_stored_property(value,    declaration_header) {
             declaration_header = value
@@ -978,8 +982,11 @@ reject_shell_host_duplicate_persistence_state() {
     local manifest_state_allowlist=(
         "Services/Shell/ShellCoreFFIManifestAdapter.swift|4|let manifest|typed"
         "Services/Shell/ShellWorkspaceManifestProjector.swift|8|var manifest|constructed"
+        "Services/Shell/ShellWorkspaceManifestStore.swift|8|let manifest|inferred-factory"
+        "Services/Shell/ShellWorkspaceManifestStore.swift|12|let manifest|inferred-factory"
         "Services/Shell/ShellWorkspaceManifestStore.swift|4|var manifest|typed"
         "Services/Shell/ShellWorkspacePersistenceCoordinator.swift|4|private var workspaceManifest|typed"
+        "Services/Shell/ShellWorkspacePersistenceStartup.swift|12|let retainedManifest|inferred-factory"
     )
     local declaration
     local declaration_indent
@@ -1120,7 +1127,7 @@ shell_snapshot_stored_property_counts() {
             sub(/^.*[.]/, "", name)
             return name
         }
-        function uses_snapshot_factory(property, owner,    call, expression, name, parts, qualifier, segment_count) {
+        function uses_snapshot_factory(property, owner,    call, expression, name, parts, qualifier, segment_count, qualifier_index) {
             if (property !~ /=/) {
                 return 0
             }
@@ -1144,11 +1151,16 @@ shell_snapshot_stored_property_counts() {
                 return ((owner "|" name) in snapshot_factories) ||
                     (("|" name) in snapshot_factories)
             }
-            qualifier = parts[segment_count - 1]
-            if (qualifier == "Self" || qualifier == "self") {
-                qualifier = owner
+            for (qualifier_index = 1; qualifier_index < segment_count; qualifier_index++) {
+                qualifier = parts[qualifier_index]
+                if (qualifier == "Self" || qualifier == "self") {
+                    qualifier = owner
+                }
+                if ((qualifier "|" name) in snapshot_factories) {
+                    return 1
+                }
             }
-            return (qualifier "|" name) in snapshot_factories
+            return parts[1] == "shared" && ((owner "|" name) in snapshot_factories)
         }
         function inferred_generic_contains_snapshot(property,    expression) {
             if (property !~ /=/) {

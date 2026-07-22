@@ -572,11 +572,14 @@ participate in an explicit manifest-storage inventory: only the coordinator's
 mutable retained manifest and the existing transient load, projection, and FFI
 value containers are accepted. The inventory also follows inferred stored
 values back to a repository-wide inventory of manifest-returning helper
-factories by their declaring type and function name, so unqualified,
-`Self`-qualified, or concrete-type-qualified calls cannot hide a second retained
-manifest by omitting an explicit property type or moving the factory to another
-file. Controller-side manifest use, a second projector, or a second scheduler
-fails validation.
+factories by their declaring type and function name, including instance methods
+reached through a singleton accessor. Unqualified, `Self`-qualified,
+concrete-type-qualified, or `Factory.shared` calls therefore cannot hide a
+second retained manifest by omitting an explicit property type or moving the
+factory to another file. The FFI-produced manifest values used for default
+creation, corrupt-file recovery, and startup pruning remain explicit transient
+inventory entries. Controller-side manifest use, a second projector, or a
+second scheduler fails validation.
 
 The same gate rejects a replacement global Shell store. `ShellHostController`
 remains the only observable owner of a mutable `ShellStateSnapshot`; the two
@@ -587,11 +590,12 @@ also have an exact allowlist of non-owner static utility members, so a singleton
 entry point cannot bypass the rule by choosing a new alias. Independently, every
 production Swift file is scanned for static/class storage of
 `ShellHostController`, including storage inferred from an unqualified, `Self`,
-or concrete helper-factory owner; the same repository-wide, owner-qualified
-factory matching applies to snapshot storage. All production Swift files are
-scanned even when the stored property's source file contains no literal target
-type. That prevents a global controller singleton even when the file stores no
-snapshot directly. The current `ObservableObject` declarations and `@Published`
+concrete helper-factory, or singleton-instance factory owner; the same
+repository-wide, owner-qualified factory matching applies to snapshot storage.
+All production Swift files are scanned even when the stored property's source
+file contains no literal target type. That prevents a global controller
+singleton even when the file stores no snapshot directly. The current
+`ObservableObject` declarations and `@Published`
 projections form explicit owner allowlists, new `@Observable` owners require an
 architecture decision, and no catch-all type ending in `ShellStore`,
 `ShellStateStore`, `ShellWorkspaceStore`, or the corresponding `Model` form may
