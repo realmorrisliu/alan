@@ -400,8 +400,8 @@ private extension AlanShellControlCommandKind {
     var requiresHostHandler: Bool {
         switch self {
         case .spaceCreate, .tabOpen, .tabClose, .tabPin, .tabReorder, .paneSplit, .paneClose,
-            .paneMoveWithinTab, .paneSpatialFocus, .paneEqualizeSplits, .paneZoom, .paneUnzoom,
-            .terminalRenderMetrics, .terminalSendText, .terminalSendKey,
+            .paneMoveWithinTab, .paneSpatialFocus, .paneResizeSplit, .paneEqualizeSplits,
+            .paneZoom, .paneUnzoom, .terminalRenderMetrics, .terminalSendText, .terminalSendKey,
             .performanceDiagnosticsSetEnabled,
             .performanceDiagnosticsExportRecent, .performanceDiagnosticsRecordChildPressure:
             return true

@@ -769,10 +769,16 @@ impl ShellControlReducer {
                 "The requested pane is already zoomed.",
             );
         }
+        let tab_id = pane_slot.tab_id.clone();
         self.apply_reducer(
             command,
-            ReducerOperation::ZoomPane { pane_slot_id },
-            ResponseProjection::Zoom,
+            ReducerOperation::ZoomPane {
+                pane_slot_id: pane_slot_id.clone(),
+            },
+            ResponseProjection::Zoom {
+                tab_id,
+                pane_slot_id,
+            },
         )
     }
 
@@ -806,22 +812,23 @@ impl ShellControlReducer {
                 "The requested tab does not exist.",
             );
         };
-        if tab.zoomed_pane_id.is_none() {
+        let Some(previous_zoomed_pane_id) = tab.zoomed_pane_id.clone() else {
             return self.validation_error(
                 command,
                 "unchanged_state",
                 "The requested tab is not zoomed.",
             );
-        }
-        let mut result = self.apply_reducer(
+        };
+        self.apply_reducer(
             command,
             ReducerOperation::UnzoomTab {
                 tab_id: Some(tab_id.clone()),
             },
-            ResponseProjection::Zoom,
-        );
-        result.response.tab_id = Some(tab_id);
-        result
+            ResponseProjection::Zoom {
+                tab_id,
+                pane_slot_id: previous_zoomed_pane_id,
+            },
+        )
     }
 
     fn terminal_send_text(&self, command: ShellControlCommand) -> ShellControlResult {

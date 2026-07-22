@@ -10,7 +10,10 @@ pub(super) enum ResponseProjection {
     Snapshot,
     Focus,
     ResizeSplit,
-    Zoom,
+    Zoom {
+        tab_id: String,
+        pane_slot_id: String,
+    },
     MovePaneWithinTab(SplitPlacement),
     /// Report the named pane as the response subject (not the workspace focus), for commands
     /// like `attention.set` that mutate a specific, possibly unfocused, pane.
@@ -59,14 +62,7 @@ pub(super) fn project_success_response(
             }
         }
         ResponseProjection::TargetTab(tab_id) => {
-            response.tab_id = Some(tab_id.clone());
-            if let Some(space) = state
-                .spaces
-                .iter()
-                .find(|space| space.tabs.iter().any(|tab| &tab.tab_id == tab_id))
-            {
-                response.space_id = Some(space.space_id.clone());
-            }
+            project_tab_subject(response, state, tab_id);
             // Report where the tab landed so automation can confirm an accepted organization
             // mutation (pin/unpin/reorder/move) without a follow-up state read.
             if let Some((section, index)) = tab_section_and_index(state, tab_id) {
@@ -79,16 +75,29 @@ pub(super) fn project_success_response(
             response.ratio = command.ratio;
             response.changed_split_ids = command.split_node_id.clone().map(|id| vec![id]);
         }
-        ResponseProjection::Zoom => {
-            response.zoomed_pane_id = state
-                .focused_tab_id
-                .as_deref()
-                .and_then(|tab_id| state.tab(tab_id))
-                .and_then(|tab| tab.zoomed_pane_id.clone());
+        ResponseProjection::Zoom {
+            tab_id,
+            pane_slot_id,
+        } => {
+            project_tab_subject(response, state, tab_id);
+            response.pane_id = Some(pane_slot_id.clone());
+            response.pane_slot_id = Some(pane_slot_id.clone());
+            response.zoomed_pane_id = state.tab(tab_id).and_then(|tab| tab.zoomed_pane_id.clone());
         }
         ResponseProjection::MovePaneWithinTab(placement) => {
             response.placement = Some(*placement);
         }
+    }
+}
+
+fn project_tab_subject(response: &mut ShellControlResponse, state: &WorkspaceState, tab_id: &str) {
+    response.tab_id = Some(tab_id.to_string());
+    if let Some(space) = state
+        .spaces
+        .iter()
+        .find(|space| space.tabs.iter().any(|tab| tab.tab_id == tab_id))
+    {
+        response.space_id = Some(space.space_id.clone());
     }
 }
 

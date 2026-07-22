@@ -80,6 +80,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesAdvancedControlPlaneZoomFocusAndMovementResults()
         verifiesAdvancedControlPlaneRejectsUnknownUnzoomPane()
         verifiesShellCoreUnavailableFallbackIsReadOnly()
+        verifiesPaneResizeSocketRequestsRequireHostHandler()
         verifiesPaneMoveSocketRequestsUseSharedExecutor()
         verifiesTerminalSendTextSocketRequestsRequireHostHandler()
         verifiesTerminalSendKeySocketRequestsRequireHostHandler()
@@ -3189,6 +3190,44 @@ private enum ShellRuntimeMetadataTests {
         expect(
             adoptedState?.pane(paneID: "pane_1")?.tabID == targetTabID,
             "pane.move socket requests must adopt the shared executor state"
+        )
+    }
+
+    private static func verifiesPaneResizeSocketRequestsRequireHostHandler() {
+        let controller = makeController()
+        _ = controller.splitPane(paneID: "pane_1", placement: .right)
+        guard let splitNodeID = controller.selectedTab?.paneTree.splitNodes.first?.nodeID else {
+            fail("resize socket routing test must create a split node")
+        }
+        let socketServer = AlanShellSocketServer(
+            socketURL: FileManager.default.temporaryDirectory
+                .appendingPathComponent("pane-resize-host-\(UUID().uuidString).sock"),
+            commandHandler: { controller.handleControlPlaneCommand($0) },
+            stateAdoptionHandler: { _ in
+                fail("pane.resize_split must not bypass host response enrichment")
+            },
+            sideEffectHandler: { _ in
+                fail("pane.resize_split must not emit a socket-local side effect")
+            }
+        )
+        _ = socketServer.mergePublishedState(controller.shellState)
+
+        let localResponse = socketServer.handleLocally(
+            decodeControlCommand(
+                """
+                {
+                  "request_id": "pane-resize-host-routing-1",
+                  "command": "pane.resize_split",
+                  "split_node_id": "\(splitNodeID)",
+                  "ratio": 0.63
+                }
+                """
+            )
+        )
+
+        expect(
+            localResponse == nil,
+            "pane.resize_split socket requests must route through host event enrichment"
         )
     }
 

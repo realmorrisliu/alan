@@ -230,6 +230,77 @@ fn unzoom_validates_explicit_pane_before_mutating_tab() {
 }
 
 #[test]
+fn unzoom_projects_the_target_tab_instead_of_the_focused_zoom_state() {
+    let mut zoom_target = command("req-zoom-target", ShellControlCommandKind::PaneZoom);
+    zoom_target.pane_id = Some("pane_2".to_string());
+    let target_zoomed = split_state().reduce_control(zoom_target);
+    let target_zoomed_pane_id = target_zoomed
+        .response
+        .zoomed_pane_id
+        .clone()
+        .expect("target tab is zoomed");
+
+    let opened = target_zoomed
+        .updated_state
+        .expect("zoom updates target tab")
+        .reduce_control(command(
+            "req-open-foreground",
+            ShellControlCommandKind::TabOpen,
+        ));
+    let opened_state = opened.updated_state.expect("tab open updates state");
+    let foreground_tab_id = opened_state
+        .focused_tab_id
+        .clone()
+        .expect("opened tab is focused");
+    let foreground_pane_id = opened_state
+        .focused_pane_id
+        .clone()
+        .expect("opened tab has a focused pane");
+
+    let mut split_foreground = command("req-split-foreground", ShellControlCommandKind::PaneSplit);
+    split_foreground.pane_id = Some(foreground_pane_id);
+    split_foreground.direction = Some(SplitDirection::Vertical);
+    let split_foreground = opened_state.reduce_control(split_foreground);
+    let foreground_zoom_pane_id = split_foreground
+        .response
+        .pane_id
+        .clone()
+        .expect("split reports its new pane");
+    let mut zoom_foreground = command("req-zoom-foreground", ShellControlCommandKind::PaneZoom);
+    zoom_foreground.pane_id = Some(foreground_zoom_pane_id.clone());
+    let foreground_zoomed = split_foreground
+        .updated_state
+        .expect("split updates foreground tab")
+        .reduce_control(zoom_foreground);
+    let foreground_zoomed_state = foreground_zoomed
+        .updated_state
+        .expect("zoom updates foreground tab");
+
+    let mut unzoom_target = command("req-unzoom-target", ShellControlCommandKind::PaneUnzoom);
+    unzoom_target.tab_id = Some("tab_main".to_string());
+    let unzoomed = foreground_zoomed_state.reduce_control(unzoom_target);
+
+    assert_eq!(unzoomed.response.applied, Some(true));
+    assert_eq!(unzoomed.response.space_id.as_deref(), Some("space_main"));
+    assert_eq!(unzoomed.response.tab_id.as_deref(), Some("tab_main"));
+    assert_eq!(
+        unzoomed.response.pane_id.as_deref(),
+        Some(target_zoomed_pane_id.as_str())
+    );
+    assert_eq!(unzoomed.response.zoomed_pane_id, None);
+    let updated = unzoomed.updated_state.expect("unzoom updates target tab");
+    assert_eq!(updated.tab("tab_main").unwrap().zoomed_pane_id, None);
+    assert_eq!(
+        updated
+            .tab(&foreground_tab_id)
+            .unwrap()
+            .zoomed_pane_id
+            .as_deref(),
+        Some(foreground_zoom_pane_id.as_str())
+    );
+}
+
+#[test]
 fn terminal_send_text_returns_runtime_intent_without_state_update() {
     let state = base_state();
     let mut request = command("req-text", ShellControlCommandKind::TerminalSendText);
