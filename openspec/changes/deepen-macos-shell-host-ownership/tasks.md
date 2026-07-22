@@ -33,7 +33,7 @@
 - [x] 3.3 Keep manifest loading and write scheduling in
   `ShellWorkspacePersistenceCoordinator`; remove controller-owned persistence
   workflow state and forwarding.
-- [ ] 3.4 Add architecture checks that reject reintroduced duplicate state or a
+- [x] 3.4 Add architecture checks that reject reintroduced duplicate state or a
   replacement global shell store.
 
 ## 4. Consolidate Workflows And Audit Adapters

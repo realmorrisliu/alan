@@ -543,6 +543,99 @@ reject_shell_host_duplicate_selection_state() {
     fi
 }
 
+reject_shell_host_duplicate_persistence_state() {
+    local controller="$SOURCE_ROOT/ShellHostController.swift"
+    local controller_dir="$SOURCE_ROOT/Controllers/Shell"
+    local persistence_owner="Services/Shell/ShellWorkspacePersistenceCoordinator.swift"
+    local persistence_type_owners=(
+        "Services/Shell/ShellWorkspaceManifestProjector.swift"
+        "Services/Shell/ShellWorkspaceManifestStore.swift"
+        "$persistence_owner"
+    )
+    local file
+    local rel
+
+    require_existing_single_owner_pattern \
+        "var workspaceManifest: ShellContentWorkspaceManifest?" \
+        "$persistence_owner" \
+        "mutable workspace manifest state"
+    require_existing_single_owner_pattern \
+        "var latestContext: PersistenceContext?" \
+        "$persistence_owner" \
+        "latest workspace persistence context"
+    require_existing_single_owner_pattern \
+        "var contentFlushScheduled = false" \
+        "$persistence_owner" \
+        "workspace persistence scheduled-flush state"
+    require_existing_single_owner_pattern \
+        "var contentFlushPending = false" \
+        "$persistence_owner" \
+        "workspace persistence pending-content state"
+    require_existing_single_owner_pattern \
+        "manifestFlushScheduler.schedule" \
+        "$persistence_owner" \
+        "workspace persistence debounce scheduling"
+    require_existing_single_owner_pattern \
+        "manifestProjector.makeManifest(" \
+        "$persistence_owner" \
+        "workspace manifest projection invocation"
+
+    while IFS= read -r file; do
+        rel="${file#$SOURCE_ROOT/}"
+        if ! contains_line "$rel" "${persistence_type_owners[@]}"; then
+            fail \
+                "workspace persistence scheduler/projector types must stay behind the persistence owner; found in $rel"
+        fi
+    done < <(grep -RIl --include='*.swift' -E \
+        'ManifestFlushScheduling|ShellWorkspaceManifestProjector' \
+        "$SOURCE_ROOT" || true)
+
+    if grep -RIn --include='*.swift' -E \
+        '^[[:space:]]*(private[[:space:]]+)?var[[:space:]]+workspaceManifest|ManifestFlushScheduling|manifestFlushScheduler|contentFlush(Scheduled|Pending)|scheduleContentFlush|flushPendingPersistence|syncManifestFromShellState|makeWorkspaceManifestFromShellState|ShellWorkspaceManifestProjector[[:space:]]*\(' \
+        "$controller" "$controller_dir" >&2
+    then
+        fail \
+            "shell host persistence state, projection, and scheduling must remain in ShellWorkspacePersistenceCoordinator"
+    fi
+}
+
+reject_replacement_global_shell_store() {
+    local controller_owner="ShellHostController.swift"
+    local file
+    local rel
+
+    require_existing_single_owner_pattern \
+        "var shellState: ShellStateSnapshot" \
+        "$controller_owner" \
+        "observable shell snapshot state"
+
+    while IFS= read -r file; do
+        rel="${file#$SOURCE_ROOT/}"
+
+        if [[ "$rel" != "$controller_owner" ]] \
+            && grep -Eq 'ObservableObject|@Observable' "$file" \
+            && grep -Eq 'var[[:space:]]+[A-Za-z_][A-Za-z0-9_]*[[:space:]]*:[[:space:]]*ShellStateSnapshot[?]?' "$file"
+        then
+            fail \
+                "mutable observable ShellStateSnapshot must stay in ShellHostController; found in $rel"
+        fi
+
+        if grep -Eq 'var[[:space:]]+[A-Za-z_][A-Za-z0-9_]*[[:space:]]*:[[:space:]]*ShellStateSnapshot[?]?' "$file" \
+            && grep -Eq 'static[[:space:]]+(let|var)[[:space:]]+(shared|current|default)([^A-Za-z0-9_]|$)' "$file"
+        then
+            fail "mutable ShellStateSnapshot must not become a global singleton; found in $rel"
+        fi
+    done < <(grep -RIl --include='*.swift' -F "ShellStateSnapshot" "$SOURCE_ROOT" || true)
+
+    if grep -RIn --include='*.swift' -E \
+        '(class|struct|actor)[[:space:]]+((Alan|Global)Shell|Shell)(State|Workspace)?(Store|Model)([^A-Za-z0-9_]|$)' \
+        "$SOURCE_ROOT" >&2
+    then
+        fail \
+            "a replacement global Shell store/model must not sit above the accepted shell state owners"
+    fi
+}
+
 reject_swiftui_shell_hot_path_sync_boundaries() {
     local matched=0
     local pattern
@@ -733,6 +826,8 @@ require_shell_core_ffi_raw_symbol_owners
 require_shell_core_action_metadata_query_owners
 reject_shell_host_duplicate_terminal_runtime_state
 reject_shell_host_duplicate_selection_state
+reject_shell_host_duplicate_persistence_state
+reject_replacement_global_shell_store
 reject_swiftui_shell_hot_path_sync_boundaries
 
 printf 'Current Swift inventory:\n'

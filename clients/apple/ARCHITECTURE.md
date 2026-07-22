@@ -564,6 +564,15 @@ content identity, and clears that state during lifecycle release. Render
 priority effects continue through the registry. The architecture gate rejects
 reintroduced controller caches, maps, queues, and publication-policy call sites.
 
+The persistence ownership slice moves the retained manifest, latest persistence
+context, debounce state, scheduling, and manifest projection behind
+`ShellWorkspacePersistenceCoordinator`. The architecture gate requires those
+state and cadence markers to have that single owner and rejects controller-side
+manifest projection or a second scheduler. It also rejects a replacement global
+Shell store: `ShellHostController` remains the only observable owner of a
+mutable `ShellStateSnapshot`, and that snapshot cannot be placed behind a
+singleton or a new catch-all `ShellStore` / `ShellModel` type.
+
 The current architecture gate treats
 `clients/apple/scripts/architecture-warning-baseline.txt` as a hard downward
 ratchet. The report must exactly match its structured warning inventory, and
