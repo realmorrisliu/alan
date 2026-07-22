@@ -587,11 +587,11 @@ reject_shell_host_duplicate_persistence_state() {
                 "workspace persistence scheduler/projector types must stay behind the persistence owner; found in $rel"
         fi
     done < <(grep -RIl --include='*.swift' -E \
-        'ManifestFlushScheduling|ShellWorkspaceManifestProjector' \
+        'ManifestFlushScheduling|DebouncedManifestFlushScheduler|ShellWorkspaceManifestProjector' \
         "$SOURCE_ROOT" || true)
 
     if grep -RIn --include='*.swift' -E \
-        '^[[:space:]]*(private[[:space:]]+)?var[[:space:]]+workspaceManifest|ManifestFlushScheduling|manifestFlushScheduler|contentFlush(Scheduled|Pending)|scheduleContentFlush|flushPendingPersistence|syncManifestFromShellState|makeWorkspaceManifestFromShellState|ShellWorkspaceManifestProjector[[:space:]]*\(' \
+        '^[[:space:]]*(private[[:space:]]+)?var[[:space:]]+workspaceManifest|ManifestFlushScheduling|DebouncedManifestFlushScheduler|manifestFlushScheduler|contentFlush(Scheduled|Pending)|scheduleContentFlush|flushPendingPersistence|syncManifestFromShellState|makeWorkspaceManifestFromShellState|ShellWorkspaceManifestProjector[[:space:]]*\(' \
         "$controller" "$controller_dir" >&2
     then
         fail \
