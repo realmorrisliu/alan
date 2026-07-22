@@ -1098,8 +1098,8 @@ require_pattern \
     "workspace manifest restore must prefer content-container manifests"
 
 require_pattern \
-    "clients/apple/alan-macos/Controllers/Shell/ShellHostWorkspacePersistence.swift" \
-    "makeWorkspaceManifestFromShellState\\(now: Date\\) -> ShellContentWorkspaceManifest" \
+    "clients/apple/alan-macos/Services/Shell/ShellWorkspaceManifestProjector.swift" \
+    "func makeManifest\\(" \
     "workspace manifest writes must produce content-container manifests"
 
 require_pattern \
@@ -1109,21 +1109,21 @@ require_pattern \
 
 require_pattern \
     "clients/apple/alan-macos/ShellHostController.swift" \
-    "ShellWorkspaceManifestStartupCoordinator\(fileManager: fileManager\)\.prepare" \
+    "ShellWorkspacePersistenceCoordinator\.prepare" \
     "shell host startup must always prepare the workspace manifest"
 
 require_pattern \
-    "clients/apple/alan-macos/Services/Shell/ShellWorkspaceManifestStartupCoordinator.swift" \
+    "clients/apple/alan-macos/Services/Shell/ShellWorkspacePersistenceStartup.swift" \
     "ShellCoreFFIAdapter\\.shared\\.pruningExpiredTabs" \
     "workspace-manifest startup pruning must use shell-core authority"
 
 require_pattern \
-    "clients/apple/alan-macos/Services/Shell/ShellWorkspaceManifestStartupCoordinator.swift" \
+    "clients/apple/alan-macos/Services/Shell/ShellWorkspacePersistenceStartup.swift" \
     "ShellCoreFFIAdapter\\.shared\\.materializeContentWorkspaceManifest" \
     "workspace-manifest startup must materialize shell state through shell-core authority"
 
 require_pattern \
-    "clients/apple/alan-macos/Services/Shell/ShellWorkspaceManifestStartupCoordinator.swift" \
+    "clients/apple/alan-macos/Services/Shell/ShellWorkspacePersistenceStartup.swift" \
     "Disable manifest persistence for this recovery controller" \
     "workspace-manifest shell-core failure recovery must not overwrite the saved manifest"
 
@@ -1133,7 +1133,7 @@ reject_pattern \
     "workspace-manifest startup must not make shell-core manifest authority optional"
 
 reject_pattern \
-    "clients/apple/alan-macos/Services/Shell/ShellWorkspaceManifestStartupCoordinator.swift" \
+    "clients/apple/alan-macos/Services/Shell/ShellWorkspacePersistenceStartup.swift" \
     "try\\? ShellCoreFFIAdapter\\.shared\\.(defaultContentWorkspaceManifest|pruningExpiredTabs|materializeContentWorkspaceManifest)" \
     "workspace-manifest startup must not make shell-core manifest authority optional"
 
@@ -1143,7 +1143,7 @@ reject_pattern \
     "workspace-manifest startup must not fall back to Swift manifest domain algorithms"
 
 reject_pattern \
-    "clients/apple/alan-macos/Services/Shell/ShellWorkspaceManifestStartupCoordinator.swift" \
+    "clients/apple/alan-macos/Services/Shell/ShellWorkspacePersistenceStartup.swift" \
     "ShellContentWorkspaceManifest\\.defaultManifest|loadedManifest\\.pruningExpiredTabs\\(|ShellWorkspaceMaterializer\\.materialize" \
     "workspace-manifest startup must not fall back to Swift manifest domain algorithms"
 

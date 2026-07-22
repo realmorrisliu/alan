@@ -159,7 +159,7 @@ extension ShellHostController {
             adoptStateFromControlPlane(stateResult.state, publish: false)
             publishControlPlaneState()
         }
-        let manifestRemoved = clearRestoredTranscriptSnapshotFromWorkspaceManifest(
+        let manifestRemoved = persistenceCoordinator.clearRestoredTranscriptSnapshot(
             forTerminalContentID: contentID
         )
         return stateResult.removed || manifestRemoved
@@ -495,7 +495,7 @@ extension ShellHostController {
     private func requestCloseShellSurface(scope: ShellCloseGuardScope) -> Bool {
         // Flush any debounced restore content before tearing down so a clean exit
         // never loses the most recent transcript.
-        flushWorkspacePersistence()
+        persistenceCoordinator.flushWorkspacePersistence()
         if let impact = closeGuardImpact(for: scope) {
             return confirmAndApplyClose(impact)
         }

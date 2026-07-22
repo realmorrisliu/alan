@@ -2,17 +2,20 @@ import Foundation
 
 @MainActor
 final class ShellWorkspacePersistenceCoordinator {
-    typealias ManifestBuilder = (
-        _ now: Date,
-        _ transcriptSnapshotOverrides: [String: TerminalTranscriptSnapshot]
-    ) -> ShellContentWorkspaceManifest?
-    typealias PinnedSnapshotProvider = (_ tabID: String) -> ShellContentTabRestoreSnapshot?
+    private struct PersistenceContext {
+        let state: ShellStateSnapshot
+        let terminalRuntimeRegistry: TerminalRuntimeRegistry
+        let controlPlane: AlanShellControlPlane
+    }
 
     private let manifestStore: ShellWorkspaceManifestStore?
     private let persistenceWriter: ShellPersistenceWriting
     private let manifestFlushScheduler: ManifestFlushScheduling
-    private var pendingContentFlushScheduled = false
+    private let manifestProjector = ShellWorkspaceManifestProjector()
     private var workspaceManifest: ShellContentWorkspaceManifest?
+    private var latestContext: PersistenceContext?
+    private var contentFlushScheduled = false
+    private var contentFlushPending = false
 
     var onDiagnostic: (String) -> Void = { _ in }
 
@@ -46,8 +49,16 @@ final class ShellWorkspacePersistenceCoordinator {
         manifestStore != nil
     }
 
-    func currentManifest() -> ShellContentWorkspaceManifest? {
-        workspaceManifest
+    func adoptPersistenceContext(
+        state: ShellStateSnapshot,
+        terminalRuntimeRegistry: TerminalRuntimeRegistry,
+        controlPlane: AlanShellControlPlane
+    ) {
+        latestContext = PersistenceContext(
+            state: state,
+            terminalRuntimeRegistry: terminalRuntimeRegistry,
+            controlPlane: controlPlane
+        )
     }
 
     func isTabPinned(tabID: String, in state: ShellStateSnapshot) -> Bool {
@@ -63,48 +74,49 @@ final class ShellWorkspacePersistenceCoordinator {
 
     func publishControlPlaneState(
         state: ShellStateSnapshot,
+        terminalRuntimeRegistry: TerminalRuntimeRegistry,
         controlPlane: AlanShellControlPlane,
         pinSnapshotTabIDs: Set<String> = [],
-        coalesced: Bool = false,
-        latestState: @escaping () -> ShellStateSnapshot?,
-        makeManifest: @escaping ManifestBuilder,
-        makePinnedSnapshot: @escaping PinnedSnapshotProvider
+        coalesced: Bool = false
     ) {
+        adoptPersistenceContext(
+            state: state,
+            terminalRuntimeRegistry: terminalRuntimeRegistry,
+            controlPlane: controlPlane
+        )
+
         // The high-frequency terminal callback path keeps the in-memory
         // control-plane state fresh (so IPC clients never read stale pane state)
         // but defers disk work: manifest + control-plane event log + temporary
         // state.json mirror. Structural mutations persist synchronously.
         if coalesced {
             controlPlane.publishInMemory(state: state)
-            scheduleContentFlush(
-                controlPlane: controlPlane,
-                latestState: latestState,
-                makeManifest: makeManifest,
-                makePinnedSnapshot: makePinnedSnapshot
-            )
+            contentFlushPending = true
+            scheduleContentFlush()
         } else {
-            syncManifestFromShellState(
-                pinSnapshotTabIDs: pinSnapshotTabIDs,
-                makeManifest: makeManifest,
-                makePinnedSnapshot: makePinnedSnapshot
-            )
+            contentFlushPending = false
+            syncManifestFromShellState(pinSnapshotTabIDs: pinSnapshotTabIDs)
             controlPlane.publish(state: state)
         }
     }
 
-    func flushWorkspacePersistence(
-        state: ShellStateSnapshot,
-        controlPlane: AlanShellControlPlane,
-        makeManifest: ManifestBuilder,
-        makePinnedSnapshot: PinnedSnapshotProvider
+    /// Forces the latest adopted state and any pending debounced content to disk.
+    /// A queued scheduler callback becomes a no-op unless later content arrives.
+    func flushWorkspacePersistence() {
+        guard let context = latestContext else { return }
+        contentFlushPending = false
+        syncManifestFromShellState()
+        context.controlPlane.publish(state: context.state)
+        context.controlPlane.flushStateFile()
+    }
+
+    func persistCurrentManifest(
+        transcriptSnapshotOverrides: [String: TerminalTranscriptSnapshot] = [:]
     ) {
-        pendingContentFlushScheduled = false
+        contentFlushPending = false
         syncManifestFromShellState(
-            makeManifest: makeManifest,
-            makePinnedSnapshot: makePinnedSnapshot
+            transcriptSnapshotOverrides: transcriptSnapshotOverrides
         )
-        controlPlane.publish(state: state)
-        controlPlane.flushStateFile()
     }
 
     @discardableResult
@@ -126,22 +138,35 @@ final class ShellWorkspacePersistenceCoordinator {
     @discardableResult
     func updateManifestTab(
         tabID: String,
-        makeManifest: ManifestBuilder,
-        makePinnedSnapshot: PinnedSnapshotProvider,
         mutate: (inout ShellContentWorkspaceTabRecord, ShellContentTabRestoreSnapshot) -> Void,
         diagnostic: (String) -> String
     ) -> Bool {
         guard manifestPersistenceEnabled,
-              let snapshot = makePinnedSnapshot(tabID)
+              let context = latestContext,
+              let snapshot = manifestProjector.makePinnedSnapshot(
+                  tabID: tabID,
+                  state: context.state,
+                  terminalRuntimeRegistry: context.terminalRuntimeRegistry,
+                  onDiagnostic: onDiagnostic
+              )
         else {
             return false
         }
 
-        guard var manifest = makeManifest(.now, [:]) else { return false }
+        var manifest = manifestProjector.makeManifest(
+            from: context.state,
+            previousManifest: workspaceManifest,
+            terminalRuntimeRegistry: context.terminalRuntimeRegistry,
+            now: .now,
+            transcriptSnapshotOverrides: [:],
+            onDiagnostic: onDiagnostic
+        )
         var didUpdate = false
 
         for spaceIndex in manifest.spaces.indices {
-            guard let tabIndex = manifest.spaces[spaceIndex].tabs.firstIndex(where: { $0.tabID == tabID }) else {
+            guard let tabIndex = manifest.spaces[spaceIndex].tabs.firstIndex(where: {
+                $0.tabID == tabID
+            }) else {
                 continue
             }
             mutate(&manifest.spaces[spaceIndex].tabs[tabIndex], snapshot)
@@ -150,7 +175,6 @@ final class ShellWorkspacePersistenceCoordinator {
         }
 
         guard didUpdate else { return false }
-
         guard persistenceWriter.writeManifestSync(manifest) else {
             onDiagnostic("workspace manifest save failed")
             return false
@@ -160,56 +184,43 @@ final class ShellWorkspacePersistenceCoordinator {
         return true
     }
 
-    private func scheduleContentFlush(
-        controlPlane: AlanShellControlPlane,
-        latestState: @escaping () -> ShellStateSnapshot?,
-        makeManifest: @escaping ManifestBuilder,
-        makePinnedSnapshot: @escaping PinnedSnapshotProvider
-    ) {
-        guard !pendingContentFlushScheduled else { return }
-        pendingContentFlushScheduled = true
+    private func scheduleContentFlush() {
+        guard !contentFlushScheduled else { return }
+        contentFlushScheduled = true
         manifestFlushScheduler.schedule { [weak self] in
-            self?.flushPendingPersistence(
-                controlPlane: controlPlane,
-                latestState: latestState,
-                makeManifest: makeManifest,
-                makePinnedSnapshot: makePinnedSnapshot
-            )
+            self?.flushPendingPersistence()
         }
     }
 
-    private func flushPendingPersistence(
-        controlPlane: AlanShellControlPlane,
-        latestState: () -> ShellStateSnapshot?,
-        makeManifest: ManifestBuilder,
-        makePinnedSnapshot: PinnedSnapshotProvider
-    ) {
-        pendingContentFlushScheduled = false
-        guard latestState() != nil else { return }
-        syncManifestFromShellState(
-            coalesced: true,
-            makeManifest: makeManifest,
-            makePinnedSnapshot: makePinnedSnapshot
-        )
-        controlPlane.persistPublished()
+    private func flushPendingPersistence() {
+        contentFlushScheduled = false
+        guard contentFlushPending, let context = latestContext else { return }
+        contentFlushPending = false
+        syncManifestFromShellState(coalesced: true)
+        context.controlPlane.persistPublished()
     }
 
-    func syncManifestFromShellState(
+    private func syncManifestFromShellState(
         now: Date = .now,
         pinSnapshotTabIDs: Set<String> = [],
         transcriptSnapshotOverrides: [String: TerminalTranscriptSnapshot] = [:],
-        coalesced: Bool = false,
-        makeManifest: ManifestBuilder,
-        makePinnedSnapshot: PinnedSnapshotProvider
+        coalesced: Bool = false
     ) {
-        guard manifestPersistenceEnabled else { return }
+        guard manifestPersistenceEnabled, let context = latestContext else { return }
 
-        guard var manifestToSave = makeManifest(now, transcriptSnapshotOverrides) else { return }
+        var manifestToSave = manifestProjector.makeManifest(
+            from: context.state,
+            previousManifest: workspaceManifest,
+            terminalRuntimeRegistry: context.terminalRuntimeRegistry,
+            now: now,
+            transcriptSnapshotOverrides: transcriptSnapshotOverrides,
+            onDiagnostic: onDiagnostic
+        )
         if !pinSnapshotTabIDs.isEmpty {
             applyPinSnapshotOverrides(
                 to: &manifestToSave,
                 tabIDs: pinSnapshotTabIDs,
-                makePinnedSnapshot: makePinnedSnapshot
+                context: context
             )
         }
         if coalesced {
@@ -228,13 +239,18 @@ final class ShellWorkspacePersistenceCoordinator {
     private func applyPinSnapshotOverrides(
         to manifest: inout ShellContentWorkspaceManifest,
         tabIDs: Set<String>,
-        makePinnedSnapshot: PinnedSnapshotProvider
+        context: PersistenceContext
     ) {
         for spaceIndex in manifest.spaces.indices {
             for tabIndex in manifest.spaces[spaceIndex].tabs.indices {
                 let tabID = manifest.spaces[spaceIndex].tabs[tabIndex].tabID
                 guard tabIDs.contains(tabID),
-                      let snapshot = makePinnedSnapshot(tabID)
+                      let snapshot = manifestProjector.makePinnedSnapshot(
+                          tabID: tabID,
+                          state: context.state,
+                          terminalRuntimeRegistry: context.terminalRuntimeRegistry,
+                          onDiagnostic: onDiagnostic
+                      )
                 else { continue }
 
                 manifest.spaces[spaceIndex].tabs[tabIndex].isPinned = true

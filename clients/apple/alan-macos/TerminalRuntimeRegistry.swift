@@ -384,6 +384,47 @@ final class TerminalRuntimeRegistry: ObservableObject {
             .max { Self.activeTaskRank($0) < Self.activeTaskRank($1) }
     }
 
+    func strongestActiveTask(
+        for tab: ShellTab,
+        in state: ShellStateSnapshot
+    ) -> ShellTabActiveTaskState {
+        let panes = state.panes(in: tab.tabID)
+        let tabPaneIDs = panes
+            .filter { tab.contains(paneID: $0.paneID) }
+            .map(\.paneID)
+        if let terminalActiveTask = strongestActiveTask(forPaneIDs: tabPaneIDs),
+           terminalActiveTask.protectsFromPruning
+        {
+            return terminalActiveTask
+        }
+
+        for pane in panes where tab.contains(paneID: pane.paneID) {
+            if pane.alanBinding?.pendingRequest == true {
+                return .alanPendingYield
+            }
+
+            if let machineState = pane.alanBinding?.machineState,
+               !Self.inactiveAlanMachineStates.contains(machineState.lowercased())
+            {
+                return .alanRunning
+            }
+
+            if pane.context?.processState == "foreground_command" {
+                return .foregroundCommand
+            }
+        }
+
+        return .inactive
+    }
+
+    func activeTaskByTabID(in state: ShellStateSnapshot) -> [String: ShellTabActiveTaskState] {
+        state.spaces
+            .flatMap(\.tabs)
+            .reduce(into: [String: ShellTabActiveTaskState]()) { result, tab in
+                result[tab.tabID] = strongestActiveTask(for: tab, in: state)
+            }
+    }
+
     func captureTranscriptSnapshot(
         forTerminalContentID contentID: String
     ) -> TerminalTranscriptCaptureResult {
@@ -675,6 +716,15 @@ final class TerminalRuntimeRegistry: ObservableObject {
             return 5
         }
     }
+
+    private static let inactiveAlanMachineStates: Set<String> = [
+        "completed",
+        "failed",
+        "cancelled",
+        "canceled",
+        "exited",
+        "idle",
+    ]
 
     private func runtimeSnapshot(
         from surfaceSnapshot: AlanTerminalSurfaceSnapshot?
