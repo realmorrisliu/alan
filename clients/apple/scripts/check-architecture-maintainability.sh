@@ -693,6 +693,10 @@ shell_snapshot_stored_property_counts() {
             return value ~ /^[[:space:]]*[^\/]*func[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*\(/ ||
                 is_static_property_start(value)
         }
+        function is_same_indent_function_signature_continuation(value) {
+            return value ~ /^[[:space:]]*(\)|->|[{])/ ||
+                value ~ /^[[:space:]]*(async|throws|rethrows|where)([^A-Za-z0-9_]|$)/
+        }
         function record_buffered_factory(    name, signature, header) {
             if (factory_buffer == "") {
                 return
@@ -717,6 +721,7 @@ shell_snapshot_stored_property_counts() {
                 snapshot_factories[name] = 1
             }
             factory_buffer = ""
+            factory_is_function = 0
         }
         function uses_snapshot_factory(property,    expression, name) {
             if (property !~ /=/) {
@@ -772,8 +777,13 @@ shell_snapshot_stored_property_counts() {
                 record_buffered_factory()
                 factory_buffer = line
                 factory_indent = leading_space_count(line)
+                factory_is_function = line ~ /(^|[ ])func[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*\(/
             } else if (factory_buffer != "" &&
-                (line ~ /^[[:space:]]*$/ || leading_space_count(line) > factory_indent))
+                (line ~ /^[[:space:]]*$/ ||
+                    leading_space_count(line) > factory_indent ||
+                    (factory_is_function &&
+                        leading_space_count(line) == factory_indent &&
+                        is_same_indent_function_signature_continuation(line))))
             {
                 factory_buffer = factory_buffer " " line
             } else {
