@@ -548,14 +548,18 @@ impl ShellControlReducer {
                 "tab_id, section, and index are required.",
             );
         };
+        let target_space_id = command
+            .target_space_id
+            .clone()
+            .or_else(|| command.space_id.clone());
         // Honor the requested target section so a tab can move between the pinned and unpinned
-        // sections, not only within its current one. `OrganizeTab` treats `index` as the
-        // absolute position inside the target section.
+        // sections or Spaces, not only within its current location. `OrganizeTab` treats `index`
+        // as the absolute position inside the target section.
         self.apply_reducer(
             command,
             ReducerOperation::OrganizeTab {
                 tab_id: tab_id.clone(),
-                target_space_id: None,
+                target_space_id,
                 section,
                 index: Some(index),
             },

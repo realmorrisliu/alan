@@ -449,6 +449,61 @@ fn tab_reorder_moves_tab_into_requested_section() {
 }
 
 #[test]
+fn tab_reorder_honors_explicit_target_space_aliases() {
+    for use_target_space_id in [true, false] {
+        let mut state = pinned_and_unpinned_state();
+        state.spaces.push(Space {
+            space_id: "space_target".to_string(),
+            title: "Target".to_string(),
+            attention: ShellAttentionState::Idle,
+            tabs: Vec::new(),
+            selected_tab_id: None,
+            terminal_profile_id: None,
+            presentation_icon: None,
+        });
+        let mut request = command("req-reorder-space", ShellControlCommandKind::TabReorder);
+        request.tab_id = Some("tab_unpinned".to_string());
+        request.section = Some(TabOrganizationSection::Pinned);
+        request.index = Some(0);
+        if use_target_space_id {
+            request.target_space_id = Some("space_target".to_string());
+        } else {
+            request.space_id = Some("space_target".to_string());
+        }
+
+        let result = state.reduce_control(request);
+
+        assert_eq!(result.response.applied, Some(true));
+        assert_eq!(result.response.space_id.as_deref(), Some("space_target"));
+        assert_eq!(result.response.tab_id.as_deref(), Some("tab_unpinned"));
+        let updated = result
+            .updated_state
+            .expect("cross-Space reorder updates state");
+        assert!(
+            updated.spaces[0]
+                .tabs
+                .iter()
+                .all(|tab| tab.tab_id != "tab_unpinned"),
+            "cross-Space reorder must remove the tab from its source Space"
+        );
+        let target_tab = updated.spaces[1]
+            .tabs
+            .first()
+            .expect("cross-Space reorder inserts the tab into its target Space");
+        assert_eq!(target_tab.tab_id, "tab_unpinned");
+        assert!(target_tab.is_pinned);
+        assert_eq!(
+            updated
+                .pane_slots
+                .iter()
+                .find(|slot| slot.pane_slot_id == "pane_unpinned")
+                .map(|slot| slot.space_id.as_str()),
+            Some("space_target")
+        );
+    }
+}
+
+#[test]
 fn tab_unpin_reports_resulting_section_and_index() {
     let state = pinned_and_unpinned_state();
     let mut request = command("req-unpin", ShellControlCommandKind::TabUnpin);
