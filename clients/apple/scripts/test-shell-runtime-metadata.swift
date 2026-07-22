@@ -3891,9 +3891,20 @@ private enum ShellRuntimeMetadataTests {
 
     private static func verifiesAgentActivityPreservesExistingAttention() {
         let controller = makeController()
+        controller.updateTerminalMetadata(
+            metadata(
+                title: "build",
+                activeTaskState: .foregroundCommand
+            ),
+            for: "pane_1"
+        )
         expect(
             controller.setAttention(.notable, for: "pane_1"),
             "agent activity attention setup must mark the target pane"
+        )
+        expect(
+            controller.pane(paneID: "pane_1")?.context?.processState == "foreground_command",
+            "agent activity setup must project the terminal process state"
         )
 
         let response = controller.handleControlPlaneCommand(
@@ -3914,6 +3925,10 @@ private enum ShellRuntimeMetadataTests {
         expect(
             controller.pane(paneID: "pane_1")?.attention == .notable,
             "agent activity must not acknowledge existing pane attention"
+        )
+        expect(
+            controller.pane(paneID: "pane_1")?.context?.processState == "foreground_command",
+            "agent activity must not replace the terminal process state"
         )
     }
 

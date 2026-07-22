@@ -325,18 +325,10 @@ extension ShellHostController {
                 )
             }
 
-            updateTerminalMetadata(
-                TerminalPaneMetadataSnapshot(
-                    title: nil,
-                    workingDirectory: event.workingDirectory,
-                    summary: nil,
-                    attention: targetPane.attention,
-                    processExited: false,
-                    lastCommandExitCode: nil,
-                    lastUpdatedAt: Date(),
-                    activeTaskState: nil,
-                    activity: activity
-                ),
+            updateAgentActivity(
+                activity,
+                workingDirectory: event.workingDirectory,
+                observedAt: Date(),
                 for: paneID
             )
             return response(

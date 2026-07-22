@@ -234,6 +234,25 @@ extension ShellHostController {
         }
     }
 
+    func updateAgentActivity(
+        _ activity: TerminalActivitySnapshot,
+        workingDirectory: String?,
+        observedAt: Date,
+        for paneID: String
+    ) {
+        guard pane(paneID: paneID) != nil else { return }
+        _ = updatePaneState(paneID: paneID) { current in
+            let bootProfile = bootProfileCache.profile(for: current, shellState: shellState)
+            return terminalContentProjection.projectAgentActivity(
+                activity,
+                workingDirectory: workingDirectory,
+                observedAt: observedAt,
+                for: current,
+                bootProfile: bootProfile
+            )
+        }
+    }
+
     func applyAlanBinding(_ binding: ShellAlanBinding?, for paneID: String) {
         guard let pane = pane(paneID: paneID) else { return }
         let runtime = runtime(for: pane.paneID)

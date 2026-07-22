@@ -43,6 +43,45 @@ struct TerminalContentProjectionAdapter {
         )
     }
 
+    func projectAgentActivity(
+        _ activity: TerminalActivitySnapshot,
+        workingDirectory: String?,
+        observedAt: Date,
+        for pane: ShellPane,
+        bootProfile: AlanShellBootProfile
+    ) -> ShellPane {
+        let projectedContext = paneProjection.projectedContext(
+            for: pane,
+            bootProfile: bootProfile,
+            workingDirectory: workingDirectory ?? pane.cwd,
+            processExited: nil,
+            lastCommandExitCode: nil,
+            lastMetadataAt: observedAt,
+            activeTaskState: nil,
+            existing: pane.context,
+            runtime: nil
+        )
+
+        return ShellPane(
+            paneID: pane.paneID,
+            tabID: pane.tabID,
+            spaceID: pane.spaceID,
+            launchTarget: pane.launchTarget,
+            cwd: projectedPaneWorkingDirectory(
+                for: pane,
+                workingDirectory: workingDirectory ?? pane.cwd,
+                bootProfile: bootProfile
+            ),
+            process: pane.process,
+            attention: pane.attention,
+            context: projectedContext,
+            viewport: pane.viewport,
+            activity: activity,
+            alanBinding: pane.alanBinding,
+            terminalProfileID: pane.terminalProfileID
+        )
+    }
+
     func projectAlanBinding(
         _ binding: ShellAlanBinding?,
         runtime: TerminalHostRuntimeSnapshot,
