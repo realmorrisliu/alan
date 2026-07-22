@@ -217,12 +217,9 @@ contains_line() {
     return 1
 }
 
-swift_code_matching_lines() {
-    local pattern="$1"
-    shift
-
-    awk -v pattern="$pattern" '
-        function code_without_comments(value,    character, code, column, pair, triple) {
+swift_code_lines() {
+    awk '
+        function executable_code(value,    character, code, column, pair, triple) {
             code = ""
             column = 1
             while (column <= length(value)) {
@@ -243,27 +240,49 @@ swift_code_matching_lines() {
                     continue
                 }
 
-                # Keep string contents so comment delimiters inside Swift
-                # strings cannot hide executable source later on the line.
-                if (multiline_string) {
-                    if (triple == "\"\"\"") {
-                        code = code triple
-                        multiline_string = 0
+                if (string_width > 0 && interpolation_depth == 0) {
+                    if (string_width == 3 && triple == "\"\"\"") {
+                        string_width = 0
+                        code = code " "
                         column += 3
-                    } else {
-                        code = code character
-                        column++
+                        continue
                     }
+                    if (string_width == 1 && character == "\"") {
+                        string_width = 0
+                        code = code " "
+                        column++
+                        continue
+                    }
+                    if (pair == "\\(") {
+                        interpolation_depth = 1
+                        code = code " "
+                        column += 2
+                        continue
+                    }
+                    if (character == "\\") {
+                        column += (column < length(value) ? 2 : 1)
+                        continue
+                    }
+                    column++
                     continue
                 }
-                if (quoted_string) {
-                    code = code character
-                    if (escaped_character) {
-                        escaped_character = 0
-                    } else if (character == "\\") {
-                        escaped_character = 1
-                    } else if (character == "\"") {
-                        quoted_string = 0
+
+                if (interpolation_string_width > 0) {
+                    if (interpolation_string_width == 3 && triple == "\"\"\"") {
+                        interpolation_string_width = 0
+                        code = code " "
+                        column += 3
+                        continue
+                    }
+                    if (interpolation_string_width == 1 && character == "\"") {
+                        interpolation_string_width = 0
+                        code = code " "
+                        column++
+                        continue
+                    }
+                    if (character == "\\") {
+                        column += (column < length(value) ? 2 : 1)
+                        continue
                     }
                     column++
                     continue
@@ -278,17 +297,35 @@ swift_code_matching_lines() {
                     continue
                 }
                 if (triple == "\"\"\"") {
-                    code = code triple
-                    multiline_string = 1
+                    code = code " "
+                    if (interpolation_depth > 0) {
+                        interpolation_string_width = 3
+                    } else {
+                        string_width = 3
+                    }
                     column += 3
                     continue
                 }
                 if (character == "\"") {
-                    code = code character
-                    quoted_string = 1
-                    escaped_character = 0
+                    code = code " "
+                    if (interpolation_depth > 0) {
+                        interpolation_string_width = 1
+                    } else {
+                        string_width = 1
+                    }
                     column++
                     continue
+                }
+
+                if (interpolation_depth > 0 && character == "(") {
+                    interpolation_depth++
+                } else if (interpolation_depth > 0 && character == ")") {
+                    interpolation_depth--
+                    if (interpolation_depth == 0) {
+                        code = code " "
+                        column++
+                        continue
+                    }
                 }
 
                 code = code character
@@ -298,19 +335,50 @@ swift_code_matching_lines() {
         }
         FNR == 1 {
             block_comment_depth = 0
-            multiline_string = 0
-            quoted_string = 0
-            escaped_character = 0
+            interpolation_depth = 0
+            interpolation_string_width = 0
+            string_width = 0
         }
         {
-            code = code_without_comments($0)
+            printf "%s\t%d\t%s\n", FILENAME, FNR, executable_code($0)
+        }
+    ' "$@"
+}
+
+swift_code_matching_lines() {
+    local pattern="$1"
+    shift
+
+    awk -v pattern="$pattern" '
+        {
+            first_separator = index($0, "\t")
+            remainder = substr($0, first_separator + 1)
+            second_separator = index(remainder, "\t")
+            file = substr($0, 1, first_separator - 1)
+            line_number = substr(remainder, 1, second_separator - 1)
+            code = substr(remainder, second_separator + 1)
             if (code ~ pattern) {
-                printf "%s:%d:%s\n", FILENAME, FNR, code
+                printf "%s:%s:%s\n", file, line_number, code
                 matched = 1
             }
         }
         END { exit matched ? 0 : 1 }
-    ' "$@"
+    ' < <(swift_code_lines "$@")
+}
+
+swift_tree_code_matching_lines() {
+    local pattern="$1"
+    local root="$2"
+    local file
+    local matched=0
+
+    while IFS= read -r file; do
+        if swift_code_matching_lines "$pattern" "$file"; then
+            matched=1
+        fi
+    done < <(grep -RIl --include='*.swift' -E "$pattern" "$root" || true)
+
+    (( matched > 0 ))
 }
 
 reject_unapproved_symbol_lines() {
@@ -341,15 +409,16 @@ normalized_file_matches() {
 
     awk -v pattern="$pattern" '
         {
-            line = $0
-            sub(/\/\/.*/, "", line)
-            source = source " " line
+            first_separator = index($0, "\t")
+            remainder = substr($0, first_separator + 1)
+            second_separator = index(remainder, "\t")
+            source = source " " substr(remainder, second_separator + 1)
         }
         END {
             gsub(/[[:space:]]+/, " ", source)
             exit source ~ pattern ? 0 : 1
         }
-    ' "$file"
+    ' < <(swift_code_lines "$file")
 }
 
 typed_factory_declarations() {
@@ -1575,7 +1644,8 @@ reject_replacement_global_shell_store() {
         fi
 
         if [[ "$rel" != "$controller_owner" ]] \
-            && grep -Eq 'ObservableObject|@Observable' "$file" \
+            && swift_code_matching_lines \
+                'ObservableObject|@Observable' "$file" >/dev/null \
             && normalized_file_matches "$file" \
                 '->[ ]*ShellStateSnapshot[?!]?|static[ ]+(var|let)[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*:[ ]*ShellStateSnapshot[?!]?'
         then
@@ -1597,7 +1667,6 @@ reject_replacement_global_shell_store() {
 
     while IFS=: read -r file line_number source_line; do
         rel="${file#$SOURCE_ROOT/}"
-        source_line="${source_line%%//*}"
 
         if [[ "$source_line" == *"@Observable"* ]]; then
             printf '%s:%s:%s\n' "$file" "$line_number" "$source_line" >&2
@@ -1612,14 +1681,14 @@ reject_replacement_global_shell_store() {
             printf '%s:%s:%s\n' "$file" "$line_number" "$source_line" >&2
             fail "unrecognized ObservableObject ownership declaration in $rel"
         fi
-    done < <(grep -RInH --include='*.swift' -E \
-        'ObservableObject|@Observable' \
-        "$SOURCE_ROOT" || true)
+    done < <(
+        swift_tree_code_matching_lines \
+            'ObservableObject|@Observable' \
+            "$SOURCE_ROOT" || true
+    )
 
     while IFS=: read -r file line_number source_line; do
         rel="${file#$SOURCE_ROOT/}"
-        source_line="${source_line%%//*}"
-        [[ "$source_line" == *"@Published"* ]] || continue
 
         if [[ "$source_line" =~ @Published[^[:cntrl:]]*var[[:space:]]+([A-Za-z_][A-Za-z0-9_]*) ]]; then
             published_projection="$rel|${BASH_REMATCH[1]}"
@@ -1631,9 +1700,9 @@ reject_replacement_global_shell_store() {
             printf '%s:%s:%s\n' "$file" "$line_number" "$source_line" >&2
             fail "unrecognized @Published property declaration in $rel"
         fi
-    done < <(grep -RInH --include='*.swift' -F '@Published' "$SOURCE_ROOT" || true)
+    done < <(swift_tree_code_matching_lines '@Published' "$SOURCE_ROOT" || true)
 
-    if grep -RIn --include='*.swift' -E \
+    if swift_tree_code_matching_lines \
         '(class|struct|actor|enum)[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)?Shell(State|Workspace)?(Store|Model)([^A-Za-z0-9_]|$)' \
         "$SOURCE_ROOT" >&2
     then
