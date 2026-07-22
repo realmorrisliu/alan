@@ -91,7 +91,10 @@ fn agent_runtime_service_owns_the_alan_agent_process_image() {
     assert_eq!(process_launch.matches("read_process_namespace(").count(), 2);
     let discovery = process_launch.find("select_tool_names(").unwrap();
     let stable_snapshot = process_launch.rfind("read_process_namespace(").unwrap();
-    assert!(discovery < stable_snapshot);
+    let validated_discovery = process_launch
+        .find("let tool_names = tool_names?;")
+        .unwrap();
+    assert!(discovery < stable_snapshot && stable_snapshot < validated_discovery);
     assert!(stable_snapshot < process_launch.find("build_child_namespace_plan(").unwrap());
     for displaced in [
         "AgentFs::new()",

@@ -71,7 +71,8 @@ captured for the clone slot.
   target, Tool discovery, launch descriptors, selected mounts, and capability
   decision between matching namespace generations before retrying
 - **AND** if the generation changes during that recomputation, the engine
-  discards those inputs and starts another bounded attempt
+  discards either its successful inputs or its discovery error and starts
+  another bounded attempt
 
 #### Scenario: Exec document omits its namespace manifest
 - **WHEN** a spawner commits an exec document without a namespace manifest

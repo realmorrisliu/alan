@@ -146,8 +146,8 @@ impl ChildProcessLaunch<'_> {
                 .await?;
             let mut attempt_spec = self.requested_spec.clone();
             let target_path =
-                resolve_target_path(self.parent, &attempt_spec.target, self.parent_descriptors)?;
-            let tool_names = select_tool_names(self.parent, &attempt_spec).await?;
+                resolve_target_path(self.parent, &attempt_spec.target, self.parent_descriptors);
+            let tool_names = select_tool_names(self.parent, &attempt_spec).await;
             let refreshed_namespace = self
                 .process_files
                 .read_process_namespace(self.parent_pid)
@@ -159,6 +159,8 @@ impl ChildProcessLaunch<'_> {
                 continue;
             }
             let parent_namespace = refreshed_namespace;
+            let target_path = target_path?;
+            let tool_names = tool_names?;
             let plan = build_child_namespace_plan(
                 &attempt_spec,
                 &parent_namespace.mounts,
