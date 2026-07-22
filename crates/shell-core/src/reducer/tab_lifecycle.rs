@@ -368,6 +368,9 @@ impl WorkspaceReducer {
         is_pinned: bool,
     ) -> Result<(), ReducerError> {
         let (space_index, tab_index) = self.tab_location(tab_id)?;
+        if self.state.spaces[space_index].tabs[tab_index].is_pinned == is_pinned {
+            return Ok(());
+        }
         let mut tab = self.state.spaces[space_index].tabs.remove(tab_index);
         tab.is_pinned = is_pinned;
 

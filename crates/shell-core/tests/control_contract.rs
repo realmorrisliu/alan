@@ -634,6 +634,56 @@ fn tab_unpin_reports_resulting_section_and_index() {
 }
 
 #[test]
+fn repeated_pin_and_unpin_commands_preserve_tab_order() {
+    let mut state = base_state();
+    for request_id in ["req-open-second", "req-open-third"] {
+        state = state
+            .reduce_control(command(request_id, ShellControlCommandKind::TabOpen))
+            .updated_state
+            .expect("tab.open updates state");
+    }
+
+    for tab_id in ["tab_main", "tab_2"] {
+        let mut pin = command("req-pin", ShellControlCommandKind::TabPin);
+        pin.tab_id = Some(tab_id.to_string());
+        state = state
+            .reduce_control(pin)
+            .updated_state
+            .expect("tab.pin updates state");
+    }
+    let pinned_order = tab_order(&state);
+    let mut repeat_pin = command("req-repeat-pin", ShellControlCommandKind::TabPin);
+    repeat_pin.tab_id = Some("tab_main".to_string());
+    let repeated_pin = state.reduce_control(repeat_pin);
+    assert_eq!(repeated_pin.response.applied, Some(true));
+    state = repeated_pin
+        .updated_state
+        .expect("idempotent tab.pin returns state");
+    assert_eq!(tab_order(&state), pinned_order);
+
+    let mut unpin = command("req-unpin-main", ShellControlCommandKind::TabUnpin);
+    unpin.tab_id = Some("tab_main".to_string());
+    state = state
+        .reduce_control(unpin)
+        .updated_state
+        .expect("tab.unpin updates state");
+    let unpinned_order = tab_order(&state);
+    let mut repeat_unpin = command("req-repeat-unpin", ShellControlCommandKind::TabUnpin);
+    repeat_unpin.tab_id = Some("tab_3".to_string());
+    let repeated_unpin = state.reduce_control(repeat_unpin);
+    assert_eq!(repeated_unpin.response.applied, Some(true));
+    assert_eq!(
+        tab_order(
+            repeated_unpin
+                .updated_state
+                .as_ref()
+                .expect("idempotent tab.unpin returns state")
+        ),
+        unpinned_order
+    );
+}
+
+#[test]
 fn attention_set_reports_target_pane_not_focused_pane() {
     // Focus is on pane_unpinned; set attention on the background pane_pinned.
     let state = pinned_and_unpinned_state();
@@ -815,4 +865,12 @@ fn pinned_and_unpinned_state() -> WorkspaceState {
         ],
         contents: vec![content("content_pinned"), content("content_unpinned")],
     }
+}
+
+fn tab_order(state: &WorkspaceState) -> Vec<String> {
+    state.spaces[0]
+        .tabs
+        .iter()
+        .map(|tab| tab.tab_id.clone())
+        .collect()
 }

@@ -58,6 +58,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesSocketAndInProcessPortableCommandsShareExecutorSemantics()
         verifiesHostPaneSplitHonorsPaneSlotIdAndLaunchFields()
         verifiesControlPlaneTabOpenInheritsFocusedRuntimeCwd()
+        verifiesControlPlanePinAndUnpinAreIdempotent()
         verifiesSpaceCreateAllowsMoreThanNineSpacesAcrossCommandPaths()
         verifiesOpeningTerminalTabInheritsFocusedRuntimeCwd()
         verifiesShellActionNewTerminalTabInheritsFocusedRuntimeCwd()
@@ -2375,6 +2376,61 @@ private enum ShellRuntimeMetadataTests {
                     == ShellContentInstance.terminalContentID(forPaneID: "pane_1")
                 && unzoomResponse.latestEventID != nil,
             "shared pane.unzoom must report the prior zoom target and host event metadata"
+        )
+    }
+
+    private static func verifiesControlPlanePinAndUnpinAreIdempotent() {
+        let controller = makeController()
+        guard let secondTabID = controller.openTerminalTab(),
+              let thirdTabID = controller.openTerminalTab()
+        else {
+            fail("idempotent pin test must create three tabs")
+        }
+
+        func perform(_ command: String, tabID: String, requestID: String) -> AlanShellControlResponse {
+            controller.handleControlPlaneCommand(
+                decodeControlCommand(
+                    """
+                    {
+                      "request_id": "\(requestID)",
+                      "command": "\(command)",
+                      "tab_id": "\(tabID)"
+                    }
+                    """
+                )
+            )
+        }
+
+        expect(
+            perform("tab.pin", tabID: "tab_main", requestID: "pin-main").applied == true,
+            "initial tab.pin must apply"
+        )
+        expect(
+            perform("tab.pin", tabID: secondTabID, requestID: "pin-second").applied == true,
+            "second tab.pin must apply"
+        )
+        let pinnedOrder = controller.selectedSpace?.tabs.map(\.tabID)
+        expect(
+            perform("tab.pin", tabID: "tab_main", requestID: "repeat-pin-main").applied == true,
+            "repeated tab.pin must remain successful"
+        )
+        expect(
+            controller.selectedSpace?.tabs.map(\.tabID) == pinnedOrder,
+            "repeated tab.pin must not reorder the pinned section"
+        )
+
+        expect(
+            perform("tab.unpin", tabID: "tab_main", requestID: "unpin-main").applied == true,
+            "initial tab.unpin must apply"
+        )
+        let unpinnedOrder = controller.selectedSpace?.tabs.map(\.tabID)
+        expect(
+            perform("tab.unpin", tabID: thirdTabID, requestID: "repeat-unpin-third").applied == true,
+            "repeated tab.unpin must remain successful"
+        )
+        expect(
+            controller.selectedSpace?.tabs.map(\.tabID) == unpinnedOrder,
+            "repeated tab.unpin must not reorder the unpinned section"
         )
     }
 
