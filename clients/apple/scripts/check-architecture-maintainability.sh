@@ -391,6 +391,15 @@ manifest_state_declarations() {
             sub(/^.*[.]/, "", name)
             return name
         }
+        function current_type_owner(    depth, owner) {
+            if (type_depth == 0) {
+                return "<module>"
+            }
+            for (depth = 1; depth <= type_depth; depth++) {
+                owner = owner (owner == "" ? "" : ".") type_name[depth]
+            }
+            return owner
+        }
         function manifest_factory_call_matches(call, owner,    name, parts, qualifier, segment_count, qualifier_index) {
             segment_count = split(call, parts, ".")
             name = parts[segment_count]
@@ -477,7 +486,8 @@ manifest_state_declarations() {
                 return
             }
 
-            printf "%d|%d|%s|%s\n", start_line, declaration_indent, trim(prefix), kind
+            printf "%d|%s|%d|%s|%s\n", \
+                start_line, declaration_owner_key, declaration_indent, trim(prefix), kind
             buffer = ""
         }
         {
@@ -503,6 +513,7 @@ manifest_state_declarations() {
                 start_line = FNR
                 declaration_indent = line_indent
                 declaration_owner = type_depth > 0 ? type_name[type_depth] : ""
+                declaration_owner_key = current_type_owner()
             } else if (buffer != "" &&
                 (line ~ /^[[:space:]]*$/ || line_indent > declaration_indent))
             {
@@ -1006,21 +1017,25 @@ reject_shell_host_duplicate_persistence_state() {
     local scheduler_definition_owner="Services/Shell/ShellWorkspaceManifestStore.swift"
     local projector_definition_owner="Services/Shell/ShellWorkspaceManifestProjector.swift"
     local manifest_state_allowlist=(
-        "Services/Shell/ShellCoreFFIManifestAdapter.swift|4|let manifest|typed"
-        "Services/Shell/ShellWorkspaceManifestProjector.swift|8|var manifest|constructed"
-        "Services/Shell/ShellWorkspaceManifestStore.swift|8|let manifest|inferred-factory"
-        "Services/Shell/ShellWorkspaceManifestStore.swift|12|let manifest|inferred-factory"
-        "Services/Shell/ShellWorkspaceManifestStore.swift|4|var manifest|typed"
-        "Services/Shell/ShellWorkspacePersistenceCoordinator.swift|4|private var workspaceManifest|typed"
-        "Services/Shell/ShellWorkspacePersistenceStartup.swift|12|let retainedManifest|inferred-factory"
+        "Services/Shell/ShellCoreFFIManifestAdapter.swift|PruningExpiredTabsPayload|4|let manifest|typed"
+        "Services/Shell/ShellCoreFFIManifestAdapter.swift|MaterializeManifestPayload|4|let manifest|typed"
+        "Services/Shell/ShellCoreFFIManifestAdapter.swift|ManifestPayload|4|let manifest|typed"
+        "Services/Shell/ShellWorkspaceManifestProjector.swift|ShellWorkspaceManifestProjector|8|var manifest|constructed"
+        "Services/Shell/ShellWorkspaceManifestStore.swift|ShellWorkspaceManifestStore|8|let manifest|inferred-factory"
+        "Services/Shell/ShellWorkspaceManifestStore.swift|ShellWorkspaceManifestStore|12|let manifest|inferred-factory"
+        "Services/Shell/ShellWorkspaceManifestStore.swift|ShellWorkspaceManifestLoadResult|4|var manifest|typed"
+        "Services/Shell/ShellWorkspacePersistenceCoordinator.swift|ShellWorkspacePersistenceCoordinator|4|private var workspaceManifest|typed"
+        "Services/Shell/ShellWorkspacePersistenceStartup.swift|ShellWorkspacePersistenceCoordinator|12|let retainedManifest|inferred-factory"
     )
     local declaration
     local declaration_indent
     local declaration_kind
     local declaration_line
+    local declaration_owner
     local factory_inventory
     local file
     local manifest_state
+    local -a manifest_state_seen=("<inventory-sentinel>")
     local rel
 
     require_existing_single_owner_pattern \
@@ -1053,15 +1068,30 @@ reject_shell_host_duplicate_persistence_state() {
     )"
     while IFS= read -r file; do
         rel="${file#$SOURCE_ROOT/}"
-        while IFS='|' read -r declaration_line declaration_indent declaration declaration_kind; do
-            manifest_state="$rel|$declaration_indent|$declaration|$declaration_kind"
+        while IFS='|' read -r \
+            declaration_line declaration_owner declaration_indent declaration declaration_kind
+        do
+            manifest_state="$rel|$declaration_owner|$declaration_indent|$declaration|$declaration_kind"
             if ! contains_line "$manifest_state" "${manifest_state_allowlist[@]}"; then
                 printf '%s:%s:%s\n' "$file" "$declaration_line" "$declaration" >&2
                 fail \
                     "ShellContentWorkspaceManifest storage is not in the accepted ownership inventory: $manifest_state"
+            elif contains_line "$manifest_state" "${manifest_state_seen[@]}"; then
+                printf '%s:%s:%s\n' "$file" "$declaration_line" "$declaration" >&2
+                fail \
+                    "ShellContentWorkspaceManifest ownership inventory entries must be unique: $manifest_state"
+            else
+                manifest_state_seen+=("$manifest_state")
             fi
         done < <(manifest_state_declarations "$file" "$factory_inventory")
     done < <(find "$SOURCE_ROOT" -type f -name '*.swift' -print | sort)
+
+    for manifest_state in "${manifest_state_allowlist[@]}"; do
+        if ! contains_line "$manifest_state" "${manifest_state_seen[@]}"; then
+            fail \
+                "accepted ShellContentWorkspaceManifest inventory entry must remain present: $manifest_state"
+        fi
+    done
 
     while IFS= read -r file; do
         rel="${file#$SOURCE_ROOT/}"

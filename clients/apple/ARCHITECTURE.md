@@ -580,7 +580,9 @@ expression, including direct target constructors, `.init`, immediately invoked
 closures, and nested wrappers. They therefore cannot hide a second retained
 manifest by omitting an explicit property type or moving the factory to another
 file. The FFI-produced manifest values used for default creation, corrupt-file
-recovery, and startup pruning remain explicit transient inventory entries.
+recovery, and startup pruning remain explicit transient inventory entries. Each
+accepted manifest declaration is keyed by its file and declaring type and must
+appear exactly once, so a second owner cannot reuse another declaration's shape.
 Controller-side manifest use, a second projector, or a second scheduler fails
 validation.
 
