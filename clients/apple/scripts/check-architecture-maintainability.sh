@@ -872,6 +872,21 @@ shell_snapshot_stored_property_counts() {
             return expression ~ /^[A-Za-z_][A-Za-z0-9_.]*[ ]*<[^>]*ShellStateSnapshot/ ||
                 expression ~ /^\[[^]]*ShellStateSnapshot/
         }
+        function typed_storage_contains_snapshot(property,    type) {
+            if (property !~ /:/) {
+                return 0
+            }
+            if (property !~ /=/ &&
+                property ~ /[{]/ &&
+                property !~ /[{][ ]*(didSet|willSet)([^A-Za-z0-9_]|$)/)
+            {
+                return 0
+            }
+            type = property
+            sub(/^[^:]*:[ ]*/, "", type)
+            sub(/[=].*$/, "", type)
+            return type ~ /ShellStateSnapshot([^A-Za-z0-9_]|$)/ && type !~ /->/
+        }
         function count_buffered_instance_property(    property) {
             if (instance_buffer == "") {
                 return
@@ -879,7 +894,8 @@ shell_snapshot_stored_property_counts() {
             property = instance_buffer
             gsub(/[[:space:]]+/, " ", property)
             if (property !~ /(^| )(static|class)[ ]/ &&
-                (property ~ /var[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*:[ ]*ShellStateSnapshot[?!]?[ ]*($|=)/ ||
+                ((property ~ /var[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*:/ &&
+                    typed_storage_contains_snapshot(property)) ||
                 property ~ /var[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*:[ ]*ShellStateSnapshot[?!]?[ ]*[{][ ]*(didSet|willSet)([^A-Za-z0-9_]|$)/ ||
                 property ~ /var[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*=[ ]*ShellStateSnapshot[ ]*([.(]|$)/ ||
                 (property ~ /var[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*=/ &&
@@ -896,7 +912,8 @@ shell_snapshot_stored_property_counts() {
             }
             property = static_buffer
             gsub(/[[:space:]]+/, " ", property)
-            if (property ~ /(^| )(static|class)[ ]+([^ ]+[ ]+)*(let|var)[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*:[ ]*ShellStateSnapshot[?!]?[ ]*($|=)/ ||
+            if ((property ~ /(^| )(static|class)[ ]+([^ ]+[ ]+)*(let|var)[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*:/ &&
+                    typed_storage_contains_snapshot(property)) ||
                 property ~ /(^| )(static|class)[ ]+([^ ]+[ ]+)*var[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*:[ ]*ShellStateSnapshot[?!]?[ ]*[{][ ]*(didSet|willSet)([^A-Za-z0-9_]|$)/ ||
                 property ~ /(^| )(static|class)[ ]+([^ ]+[ ]+)*(let|var)[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*=[ ]*ShellStateSnapshot[ ]*([.(]|$)/ ||
                 (property ~ /(^| )(static|class)[ ]+([^ ]+[ ]+)*(let|var)[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*=/ &&
