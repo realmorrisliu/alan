@@ -601,7 +601,9 @@ conditional-compilation block cannot hide global state while function-local
 scratch values remain excluded. Comma-separated property bindings are inspected
 individually, while commas nested inside generic types, collections, calls, or
 closures remain part of their binding, so a harmless first binding cannot hide a
-later snapshot owner. Files with accepted mutable snapshot storage
+later snapshot owner. Swift's trailing shared type annotation is propagated to
+each preceding uninitialized binding before owners are counted. Files with
+accepted mutable snapshot storage
 also have an exact allowlist of non-owner static utility members, so a singleton
 entry point cannot bypass the rule by choosing a new alias.
 Independently, every production Swift file is scanned for module-scope or

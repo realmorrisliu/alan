@@ -456,9 +456,17 @@ readonly OWNERSHIP_AWK_HELPERS='
                 previous_character == "]") &&
             next_character != "" && next_character !~ /[[:space:]=<>]/
     }
-    function top_level_binding_end(value, start,    angle_depth, brace_depth, bracket_depth, character, column, parenthesis_depth) {
+    function top_level_character_position(value, target, start,    angle_depth, brace_depth, bracket_depth, character, column, parenthesis_depth) {
+        if (start < 1) {
+            start = 1
+        }
         for (column = start; column <= length(value); column++) {
             character = substr(value, column, 1)
+            if (character == target && parenthesis_depth == 0 && bracket_depth == 0 &&
+                brace_depth == 0 && angle_depth == 0)
+            {
+                return column
+            }
             if (character == "(") {
                 parenthesis_depth++
             } else if (character == ")" && parenthesis_depth > 0) {
@@ -475,13 +483,36 @@ readonly OWNERSHIP_AWK_HELPERS='
                 angle_depth++
             } else if (character == ">" && angle_depth > 0) {
                 angle_depth--
-            } else if (character == "," && parenthesis_depth == 0 &&
-                bracket_depth == 0 && brace_depth == 0 && angle_depth == 0)
-            {
-                return column
             }
         }
-        return length(value) + 1
+        return 0
+    }
+    function top_level_binding_end(value, start,    position) {
+        position = top_level_character_position(value, ",", start)
+        return position > 0 ? position : length(value) + 1
+    }
+    function binding_type_annotation(value,    assignment, body, colon, end) {
+        colon = top_level_character_position(value, ":")
+        if (colon == 0) {
+            return ""
+        }
+        assignment = top_level_character_position(value, "=")
+        body = top_level_character_position(value, "{")
+        if ((assignment > 0 && assignment < colon) || (body > 0 && body < colon)) {
+            return ""
+        }
+        end = length(value) + 1
+        if (assignment > colon && assignment < end) {
+            end = assignment
+        }
+        if (body > colon && body < end) {
+            end = body
+        }
+        return substr(value, colon + 1, end - colon - 1)
+    }
+    function binding_stops_shared_type(value) {
+        return top_level_character_position(value, "=") > 0 ||
+            top_level_character_position(value, "{") > 0
     }
     function instance_receiver_invokes_factory(value, factories,    call_end, pattern, entry, fields, method, opening, receiver, remainder, suffix) {
         for (entry in factories) {
@@ -744,7 +775,7 @@ manifest_state_declarations() {
             printf "%d|%s|%d|%s|%s\n", \
                 start_line, declaration_owner_key, declaration_indent, trim(prefix), kind
         }
-        function record_declaration(    binding, binding_end, binding_start, declaration) {
+        function record_declaration(    binding_count, binding_end, binding_index, bindings, binding_start, declaration, effective_binding, explicit_type, inherited_types, shared_type) {
             if (buffer == "") {
                 return
             }
@@ -754,9 +785,25 @@ manifest_state_declarations() {
             binding_start = 1
             while (binding_start <= length(declaration)) {
                 binding_end = top_level_binding_end(declaration, binding_start)
-                binding = substr(declaration, binding_start, binding_end - binding_start)
-                record_manifest_binding(binding)
+                bindings[++binding_count] = substr(declaration, binding_start, binding_end - binding_start)
                 binding_start = binding_end + 1
+            }
+            for (binding_index = binding_count; binding_index >= 1; binding_index--) {
+                explicit_type = trim(binding_type_annotation(bindings[binding_index]))
+                if (explicit_type != "") {
+                    shared_type = explicit_type
+                } else if (binding_stops_shared_type(bindings[binding_index])) {
+                    shared_type = ""
+                } else if (shared_type != "") {
+                    inherited_types[binding_index] = shared_type
+                }
+            }
+            for (binding_index = 1; binding_index <= binding_count; binding_index++) {
+                effective_binding = bindings[binding_index]
+                if (inherited_types[binding_index] != "") {
+                    effective_binding = effective_binding ": " inherited_types[binding_index]
+                }
+                record_manifest_binding(effective_binding)
             }
             buffer = ""
         }
@@ -1560,15 +1607,32 @@ shell_snapshot_stored_property_counts() {
                 inferred_generic_contains_snapshot(binding) ||
                 uses_snapshot_factory(binding, owner)
         }
-        function snapshot_storage_count(property, owner,    binding, binding_end, binding_start, count) {
+        function snapshot_storage_count(property, owner,    binding_count, binding_end, binding_index, bindings, binding_start, count, effective_binding, explicit_type, inherited_types, shared_type) {
             binding_start = 1
             while (binding_start <= length(property)) {
                 binding_end = top_level_binding_end(property, binding_start)
-                binding = substr(property, binding_start, binding_end - binding_start)
-                if (snapshot_binding_contains_storage(binding, owner)) {
+                bindings[++binding_count] = substr(property, binding_start, binding_end - binding_start)
+                binding_start = binding_end + 1
+            }
+            for (binding_index = binding_count; binding_index >= 1; binding_index--) {
+                explicit_type = binding_type_annotation(bindings[binding_index])
+                gsub(/^[[:space:]]+|[[:space:]]+$/, "", explicit_type)
+                if (explicit_type != "") {
+                    shared_type = explicit_type
+                } else if (binding_stops_shared_type(bindings[binding_index])) {
+                    shared_type = ""
+                } else if (shared_type != "") {
+                    inherited_types[binding_index] = shared_type
+                }
+            }
+            for (binding_index = 1; binding_index <= binding_count; binding_index++) {
+                effective_binding = bindings[binding_index]
+                if (inherited_types[binding_index] != "") {
+                    effective_binding = effective_binding ": " inherited_types[binding_index]
+                }
+                if (snapshot_binding_contains_storage(effective_binding, owner)) {
                     count++
                 }
-                binding_start = binding_end + 1
             }
             return count
         }
