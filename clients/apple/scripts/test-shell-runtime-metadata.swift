@@ -1173,7 +1173,7 @@ private enum ShellRuntimeMetadataTests {
         registry.publishShellProjection(second) { projected.append($0) }
 
         expect(projected.isEmpty, "visible-background runtime projection must wait for coalescing")
-        registry.flushShellProjections { projected.append($0) }
+        registry.flushShellProjections()
         expect(
             projected.count == 1 && projected.first?.paneMetadata.title == "second",
             "registry must publish only the latest background snapshot per terminal content"

@@ -65,13 +65,18 @@ enum TerminalHostAttachmentPolicy: Equatable {
 final class TerminalRuntimeRegistry: ObservableObject {
     typealias MockDeliveryHandler = (String, String) -> TerminalRuntimeDeliveryResult
 
+    private struct PendingShellProjection {
+        let snapshot: TerminalHostRuntimeSnapshot
+        let observer: (TerminalHostRuntimeSnapshot) -> Void
+    }
+
     private var hostViewsByContentID: [String: AlanTerminalHostNSView] = [:]
     private var snapshotsByContentID: [String: TerminalHostRuntimeSnapshot] = [:]
     private var activeTasksByContentID: [String: ShellTabActiveTaskState] = [:]
     private var paneSlotIDByContentID: [String: String] = [:]
     private var contentIDByPaneSlotID: [String: String] = [:]
     private var pendingFocusPaneSlotIDs: Set<String> = []
-    private var pendingShellProjectionsByContentID: [String: TerminalHostRuntimeSnapshot] = [:]
+    private var pendingShellProjectionsByContentID: [String: PendingShellProjection] = [:]
     private var shellProjectionFlushScheduled = false
     private let runtimeService: AlanTerminalRuntimeService
     private let mockDeliveryHandler: MockDeliveryHandler?
@@ -256,22 +261,25 @@ final class TerminalRuntimeRegistry: ObservableObject {
             return
         }
 
-        pendingShellProjectionsByContentID[contentID] = snapshot
+        pendingShellProjectionsByContentID[contentID] = PendingShellProjection(
+            snapshot: snapshot,
+            observer: observer
+        )
         guard !shellProjectionFlushScheduled else { return }
         shellProjectionFlushScheduled = true
         DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(16)) { [weak self] in
-            self?.flushShellProjections(to: observer)
+            self?.flushShellProjections()
         }
     }
 
-    func flushShellProjections(
-        to observer: (TerminalHostRuntimeSnapshot) -> Void
-    ) {
+    func flushShellProjections() {
         let pending = pendingShellProjectionsByContentID
         pendingShellProjectionsByContentID.removeAll()
         shellProjectionFlushScheduled = false
-        for snapshot in pending.values.sorted(by: { ($0.paneID ?? "") < ($1.paneID ?? "") }) {
-            observer(snapshot)
+        for projection in pending.values.sorted(
+            by: { ($0.snapshot.paneID ?? "") < ($1.snapshot.paneID ?? "") }
+        ) {
+            projection.observer(projection.snapshot)
         }
     }
 
