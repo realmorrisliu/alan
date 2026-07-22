@@ -401,10 +401,11 @@ impl ShellControlReducer {
                 let Some(pane_slot_id) = pane_slot_id_from_command(&command) else {
                     return self.validation_error(command, "pane_required", "pane_id is required.");
                 };
+                let projection = ResponseProjection::removed_pane(&self.state, &pane_slot_id);
                 self.apply_reducer(
                     command,
                     ReducerOperation::ClosePane { pane_slot_id },
-                    ResponseProjection::Current,
+                    projection,
                 )
             }
             ShellControlCommandKind::PaneLift => {

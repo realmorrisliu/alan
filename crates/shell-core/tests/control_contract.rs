@@ -116,6 +116,44 @@ fn background_tab_close_preserves_the_closed_tab_subject() {
 }
 
 #[test]
+fn background_pane_close_preserves_the_removed_pane_subject() {
+    let state = split_state()
+        .reduce_control(command(
+            "req-create-foreground-space",
+            ShellControlCommandKind::SpaceCreate,
+        ))
+        .updated_state
+        .expect("Space creation updates focus");
+    let foreground_pane_id = state.focused_pane_id.clone();
+    let mut request = command(
+        "req-close-background-pane",
+        ShellControlCommandKind::PaneClose,
+    );
+    request.pane_id = Some("pane_2".to_string());
+
+    let result = state.reduce_control(request);
+
+    assert_eq!(result.response.applied, Some(true));
+    assert_eq!(result.response.space_id.as_deref(), Some("space_main"));
+    assert_eq!(result.response.tab_id.as_deref(), Some("tab_main"));
+    assert_eq!(result.response.pane_slot_id.as_deref(), Some("pane_2"));
+    assert_eq!(
+        result.response.content_id.as_deref(),
+        Some("content_pane_2")
+    );
+    assert_eq!(
+        result.response.current_focused_pane_slot_id,
+        foreground_pane_id
+    );
+    assert!(result.updated_state.as_ref().is_some_and(|state| {
+        state
+            .pane_slots
+            .iter()
+            .all(|slot| slot.pane_slot_id != "pane_2")
+    }));
+}
+
+#[test]
 fn tab_open_applies_reducer_and_wraps_terminal_start_intent() {
     let state = base_state();
     let mut request = command("req-open", ShellControlCommandKind::TabOpen);

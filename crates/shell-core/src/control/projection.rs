@@ -14,6 +14,11 @@ pub(super) enum ResponseProjection {
         tab_id: String,
         source_space_id: Option<String>,
     },
+    RemovedPane {
+        pane_slot_id: String,
+        tab_id: Option<String>,
+        source_space_id: Option<String>,
+    },
     ResizeSplit,
     Zoom {
         tab_id: String,
@@ -33,6 +38,18 @@ impl ResponseProjection {
         Self::RemovedTab {
             tab_id: tab_id.to_string(),
             source_space_id: space_id_containing_tab(state, tab_id),
+        }
+    }
+
+    pub(super) fn removed_pane(state: &WorkspaceState, pane_slot_id: &str) -> Self {
+        let pane_slot = state
+            .pane_slots
+            .iter()
+            .find(|slot| slot.pane_slot_id == pane_slot_id);
+        Self::RemovedPane {
+            pane_slot_id: pane_slot_id.to_string(),
+            tab_id: pane_slot.map(|slot| slot.tab_id.clone()),
+            source_space_id: pane_slot.map(|slot| slot.space_id.clone()),
         }
     }
 }
@@ -69,6 +86,16 @@ pub(super) fn project_success_response(
             source_space_id,
         } => {
             response.tab_id = Some(tab_id.clone());
+            response.space_id.clone_from(source_space_id);
+        }
+        ResponseProjection::RemovedPane {
+            pane_slot_id,
+            tab_id,
+            source_space_id,
+        } => {
+            response.pane_id = Some(pane_slot_id.clone());
+            response.pane_slot_id = Some(pane_slot_id.clone());
+            response.tab_id.clone_from(tab_id);
             response.space_id.clone_from(source_space_id);
         }
         ResponseProjection::TargetPane(pane_slot_id) => {

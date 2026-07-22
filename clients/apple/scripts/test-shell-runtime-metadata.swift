@@ -142,6 +142,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesControlPlaneClosePaneReportsRequiresConfirmation()
         verifiesControlPlaneCloseTabReportsRequiresConfirmation()
         verifiesControlPlaneCloseIdlePaneSucceeds()
+        verifiesControlPlaneBackgroundPaneClosePreservesRemovedSubject()
         verifiesTabSelectionCommitsAuthoritativeFocus()
         verifiesShellActionTabNavigationTargetsCurrentSelection()
         verifiesSpaceSelectionCommitsAuthoritativeFocus()
@@ -1823,6 +1824,52 @@ private enum ShellRuntimeMetadataTests {
         expect(response.errorCode == nil, "control idle pane close must not report confirmation")
         expect(controller.pane(paneID: "pane_2") == nil, "control idle pane close must remove the pane")
         expect(handle.teardownCount == 1, "control idle pane close must finalize the runtime")
+    }
+
+    private static func verifiesControlPlaneBackgroundPaneClosePreservesRemovedSubject() {
+        let controller = makeController()
+        _ = controller.splitPane(paneID: "pane_1", placement: .right)
+        let handle = fakeSurfaceHandle(for: "pane_2", controller: controller)
+        controller.updateTerminalMetadata(
+            metadata(title: "zsh", activeTaskState: .inactive),
+            for: "pane_2"
+        )
+        guard let foregroundSpaceID = controller.createTerminalSpace(title: "Foreground"),
+              let foregroundTabID = controller.selectedTabID,
+              let foregroundPaneID = controller.shellState.focusedPaneID
+        else {
+            fail("test setup must create a foreground Space")
+        }
+
+        let response = controller.handleControlPlaneCommand(
+            decodeControlCommand(
+                """
+                {
+                  "request_id": "close-background-pane",
+                  "command": "pane.close",
+                  "pane_id": "pane_2"
+                }
+                """
+            )
+        )
+
+        expect(response.applied == true, "background pane close must apply")
+        expect(
+            response.spaceID == "space_main" && response.tabID == "tab_main",
+            "background pane close response must preserve the removed pane's source owners"
+        )
+        expect(
+            response.paneID == "pane_2" && response.contentID == "content_pane_2",
+            "background pane close response must preserve the removed pane subject"
+        )
+        expect(
+            controller.selectedSpaceID == foregroundSpaceID
+                && controller.selectedTabID == foregroundTabID
+                && controller.shellState.focusedPaneID == foregroundPaneID,
+            "background pane close must not change foreground focus"
+        )
+        expect(controller.pane(paneID: "pane_2") == nil, "background pane close must remove the pane")
+        expect(handle.teardownCount == 1, "background pane close must finalize only its runtime")
     }
 
     private static func verifiesTerminalLifecyclePreservesMovedAndLiftedRuntimes() {
