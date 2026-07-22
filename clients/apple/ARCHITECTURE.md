@@ -598,7 +598,10 @@ all other mutable snapshot storage is rejected. No module-scope, static, or
 class stored snapshot is allowed under any property name. Module scope follows
 executable brace depth rather than source indentation, so formatting inside a
 conditional-compilation block cannot hide global state while function-local
-scratch values remain excluded. Files with accepted mutable snapshot storage
+scratch values remain excluded. Comma-separated property bindings are inspected
+individually, while commas nested inside generic types, collections, calls, or
+closures remain part of their binding, so a harmless first binding cannot hide a
+later snapshot owner. Files with accepted mutable snapshot storage
 also have an exact allowlist of non-owner static utility members, so a singleton
 entry point cannot bypass the rule by choosing a new alias.
 Independently, every production Swift file is scanned for module-scope or

@@ -449,6 +449,40 @@ readonly OWNERSHIP_AWK_HELPERS='
         }
         return 0
     }
+    function is_generic_angle_open(value, column,    next_character, previous_character) {
+        previous_character = substr(value, column - 1, 1)
+        next_character = substr(value, column + 1, 1)
+        return (previous_character ~ /[A-Za-z0-9_.>]/ || previous_character == ")" ||
+                previous_character == "]") &&
+            next_character != "" && next_character !~ /[[:space:]=<>]/
+    }
+    function top_level_binding_end(value, start,    angle_depth, brace_depth, bracket_depth, character, column, parenthesis_depth) {
+        for (column = start; column <= length(value); column++) {
+            character = substr(value, column, 1)
+            if (character == "(") {
+                parenthesis_depth++
+            } else if (character == ")" && parenthesis_depth > 0) {
+                parenthesis_depth--
+            } else if (character == "[") {
+                bracket_depth++
+            } else if (character == "]" && bracket_depth > 0) {
+                bracket_depth--
+            } else if (character == "{") {
+                brace_depth++
+            } else if (character == "}" && brace_depth > 0) {
+                brace_depth--
+            } else if (character == "<" && is_generic_angle_open(value, column)) {
+                angle_depth++
+            } else if (character == ">" && angle_depth > 0) {
+                angle_depth--
+            } else if (character == "," && parenthesis_depth == 0 &&
+                bracket_depth == 0 && brace_depth == 0 && angle_depth == 0)
+            {
+                return column
+            }
+        }
+        return length(value) + 1
+    }
     function instance_receiver_invokes_factory(value, factories,    call_end, pattern, entry, fields, method, opening, receiver, remainder, suffix) {
         for (entry in factories) {
             split(entry, fields, "|")
@@ -679,13 +713,11 @@ manifest_state_declarations() {
             return expression ~ /^[A-Za-z_][A-Za-z0-9_.]*[ ]*<[^>]*ShellContentWorkspaceManifest/ ||
                 expression ~ /^\[[^]]*ShellContentWorkspaceManifest/
         }
-        function record_declaration(    declaration, header, prefix, kind) {
-            if (buffer == "") {
+        function record_manifest_binding(declaration,    header, prefix, kind) {
+            declaration = trim(declaration)
+            if (declaration == "") {
                 return
             }
-            declaration = buffer
-            gsub(/[[:space:]]+/, " ", declaration)
-            declaration = trim(declaration)
             header = declaration
             sub(/[=].*$/, "", header)
 
@@ -706,12 +738,26 @@ manifest_state_declarations() {
                 sub(/[ ]*=.*/, "", prefix)
                 kind = "inferred-factory"
             } else {
-                buffer = ""
                 return
             }
 
             printf "%d|%s|%d|%s|%s\n", \
                 start_line, declaration_owner_key, declaration_indent, trim(prefix), kind
+        }
+        function record_declaration(    binding, binding_end, binding_start, declaration) {
+            if (buffer == "") {
+                return
+            }
+            declaration = buffer
+            gsub(/[[:space:]]+/, " ", declaration)
+            declaration = trim(declaration)
+            binding_start = 1
+            while (binding_start <= length(declaration)) {
+                binding_end = top_level_binding_end(declaration, binding_start)
+                binding = substr(declaration, binding_start, binding_end - binding_start)
+                record_manifest_binding(binding)
+                binding_start = binding_end + 1
+            }
             buffer = ""
         }
         {
@@ -1508,6 +1554,24 @@ shell_snapshot_stored_property_counts() {
             sub(/[=].*$/, "", type)
             return type ~ /ShellStateSnapshot([^A-Za-z0-9_]|$)/ && type !~ /->/
         }
+        function snapshot_binding_contains_storage(binding, owner) {
+            return typed_storage_contains_snapshot(binding) ||
+                binding ~ /=[ ]*ShellStateSnapshot[ ]*([.(]|$)/ ||
+                inferred_generic_contains_snapshot(binding) ||
+                uses_snapshot_factory(binding, owner)
+        }
+        function snapshot_storage_count(property, owner,    binding, binding_end, binding_start, count) {
+            binding_start = 1
+            while (binding_start <= length(property)) {
+                binding_end = top_level_binding_end(property, binding_start)
+                binding = substr(property, binding_start, binding_end - binding_start)
+                if (snapshot_binding_contains_storage(binding, owner)) {
+                    count++
+                }
+                binding_start = binding_end + 1
+            }
+            return count
+        }
         function count_buffered_instance_property(    property) {
             if (instance_buffer == "") {
                 return
@@ -1515,16 +1579,9 @@ shell_snapshot_stored_property_counts() {
             property = instance_buffer
             gsub(/[[:space:]]+/, " ", property)
             if (property !~ /(^| )(static|class)[ ]/ &&
-                ((property ~ /var[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*:/ &&
-                    typed_storage_contains_snapshot(property)) ||
-                property ~ /var[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*:[ ]*ShellStateSnapshot[?!]?[ ]*[{][ ]*(didSet|willSet)([^A-Za-z0-9_]|$)/ ||
-                property ~ /var[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*=[ ]*ShellStateSnapshot[ ]*([.(]|$)/ ||
-                (property ~ /var[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*=/ &&
-                    inferred_generic_contains_snapshot(property)) ||
-                (property ~ /var[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*=/ &&
-                    uses_snapshot_factory(property, instance_owner))))
+                property ~ /var[ ]+[A-Za-z_][A-Za-z0-9_]*/)
             {
-                instance_count++
+                instance_count += snapshot_storage_count(property, instance_owner)
             }
             instance_buffer = ""
         }
@@ -1534,16 +1591,9 @@ shell_snapshot_stored_property_counts() {
             }
             property = global_buffer
             gsub(/[[:space:]]+/, " ", property)
-            if ((property ~ /(^| )(let|var)[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*:/ &&
-                    typed_storage_contains_snapshot(property)) ||
-                property ~ /(^| )var[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*:[ ]*ShellStateSnapshot[?!]?[ ]*[{][ ]*(didSet|willSet)([^A-Za-z0-9_]|$)/ ||
-                property ~ /(^| )(let|var)[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*=[ ]*ShellStateSnapshot[ ]*([.(]|$)/ ||
-                (property ~ /(^| )(let|var)[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*=/ &&
-                    inferred_generic_contains_snapshot(property)) ||
-                (property ~ /(^| )(let|var)[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*=/ &&
-                    uses_snapshot_factory(property, global_owner)))
+            if (property ~ /(^| )(let|var)[ ]+[A-Za-z_][A-Za-z0-9_]*/)
             {
-                global_count++
+                global_count += snapshot_storage_count(property, global_owner)
             }
             global_buffer = ""
         }
