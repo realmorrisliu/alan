@@ -44,10 +44,7 @@ struct ChildProcessLaunch<'a> {
     parent: &'a ChildLaunchRuntime,
     process_files: &'a super::transition::NamespaceProcessFiles,
     parent_pid: &'a str,
-    target_path: &'a str,
-    tool_names: &'a [String],
     parent_descriptors: &'a BTreeMap<u32, String>,
-    descriptors: BTreeMap<u32, String>,
     requested_spec: &'a SpawnSpec,
     cancel: Option<&'a CancellationToken>,
 }
@@ -92,22 +89,11 @@ async fn spawn_child_runtime_inner(
     let process_files = parent.child_launch.process_files();
     let parent_pid = process_files.current_pid()?.to_string();
     let parent_descriptors = process_files.read_process_descriptors(&parent_pid).await?;
-    let target_path = resolve_target_path(&parent, &spec.target, &parent_descriptors)?;
-    let tool_names = select_tool_names(&parent, &spec).await?;
-    let mut descriptors = BTreeMap::from([(AGENT_DEFINITION_FD, target_path.clone())]);
-    if spec.has_handle(SpawnHandle::Memory)
-        && let Some(path) = parent_descriptors.get(&alan_agent_protocol::MEMORY_STORE_DESCRIPTOR)
-    {
-        descriptors.insert(alan_agent_protocol::MEMORY_STORE_DESCRIPTOR, path.clone());
-    }
     let (child_pid, spec, delegation_capability_decision) = ChildProcessLaunch {
         parent: &parent,
         process_files,
         parent_pid: &parent_pid,
-        target_path: &target_path,
-        tool_names: &tool_names,
         parent_descriptors: &parent_descriptors,
-        descriptors,
         requested_spec: &spec,
         cancel,
     }
@@ -159,12 +145,15 @@ impl ChildProcessLaunch<'_> {
                 .read_process_namespace(self.parent_pid)
                 .await?;
             let mut attempt_spec = self.requested_spec.clone();
+            let target_path =
+                resolve_target_path(self.parent, &attempt_spec.target, self.parent_descriptors)?;
+            let tool_names = select_tool_names(self.parent, &attempt_spec).await?;
             let plan = build_child_namespace_plan(
                 &attempt_spec,
                 &parent_namespace.mounts,
-                self.target_path,
+                &target_path,
                 self.parent_descriptors,
-                self.tool_names,
+                &tool_names,
                 self.parent.child_launch.connection_name(),
             )?;
             let decision = evaluate_delegated_launch_capabilities(
@@ -173,6 +162,14 @@ impl ChildProcessLaunch<'_> {
                 &parent_namespace.mounts,
                 self.parent.child_launch.namespace_cwd(),
             )?;
+            let mut descriptors = BTreeMap::from([(AGENT_DEFINITION_FD, target_path)]);
+            if attempt_spec.has_handle(SpawnHandle::Memory)
+                && let Some(path) = self
+                    .parent_descriptors
+                    .get(&alan_agent_protocol::MEMORY_STORE_DESCRIPTOR)
+            {
+                descriptors.insert(alan_agent_protocol::MEMORY_STORE_DESCRIPTOR, path.clone());
+            }
             let request = AgentExecutableRequest {
                 initial_task: task_context::build_child_task_text(
                     &self.parent.task_context,
@@ -187,7 +184,7 @@ impl ChildProcessLaunch<'_> {
             };
             match self
                 .process_files
-                .spawn_agent_process(&request, namespace, self.descriptors.clone())
+                .spawn_agent_process(&request, namespace, descriptors)
                 .await
             {
                 Ok(pid) => return Ok((pid, attempt_spec, decision)),

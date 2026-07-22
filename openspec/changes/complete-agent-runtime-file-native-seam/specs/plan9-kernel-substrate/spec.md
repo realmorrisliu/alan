@@ -23,3 +23,9 @@ NOT expose `/proc/self`.
 - **THEN** `/proc/self` is absent
 - **AND** bootstrap uses its explicit launch context rather than inventing a
   Process identity
+
+#### Scenario: A committed Process gains live namespace authority
+- **WHEN** a committed Process switches from its creation snapshot to a live
+  namespace handle with the same initial mounts
+- **THEN** its namespace qid generation advances to identify the new authority
+- **AND** subsequent clone snapshots use that same advanced live generation

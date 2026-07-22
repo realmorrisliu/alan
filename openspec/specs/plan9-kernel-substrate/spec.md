@@ -269,6 +269,12 @@ NOT expose `/proc/self`.
 - **AND** bootstrap uses its explicit launch context rather than inventing a
   Process identity
 
+#### Scenario: A committed Process gains live namespace authority
+- **WHEN** a committed Process switches from its creation snapshot to a live
+  namespace handle with the same initial mounts
+- **THEN** its namespace qid generation advances to identify the new authority
+- **AND** subsequent clone snapshots use that same advanced live generation
+
 ### Requirement: Process creation (spawn) is an aP write via clone-via-open
 Alan Kernel SHALL expose process creation through aP, not a side API, so an
 aP-only client (such as Alan Shell) can launch processes with no non-file

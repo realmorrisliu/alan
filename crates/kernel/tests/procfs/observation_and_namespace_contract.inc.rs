@@ -413,13 +413,18 @@ async fn live_spawner_namespace_reads_and_children_snapshot_explicit_live_mounts
     )
     .await;
     let pid_value = Pid(pid.parse::<u64>().unwrap());
-    fs.bind_live_namespace(pid_value, live_namespace.clone())
-        .await;
     fs.walk(Fid::ROOT, Fid(61), &[pid.clone(), "namespace".to_string()])
         .await
         .unwrap();
     fs.open(Fid(61), OpenMode::Read).await.unwrap();
-    let before = fs.stat(Fid(61)).await.unwrap().qid.version;
+    let committed_generation = fs.stat(Fid(61)).await.unwrap().qid.version;
+
+    fs.bind_live_namespace(pid_value, live_namespace.clone())
+        .await;
+
+    let bound_generation = fs.stat(Fid(61)).await.unwrap().qid.version;
+    assert_ne!(bound_generation, committed_generation);
+    assert_eq!(bound_generation, live_namespace.generation());
 
     live_namespace.mount(
         "/mnt/project",
@@ -428,7 +433,7 @@ async fn live_spawner_namespace_reads_and_children_snapshot_explicit_live_mounts
     );
 
     let after = fs.stat(Fid(61)).await.unwrap().qid.version;
-    assert_ne!(after, before);
+    assert_ne!(after, bound_generation);
     let namespace = String::from_utf8(fs.read(Fid(61), 0, 4096).await.unwrap()).unwrap();
     assert!(
         namespace.lines().any(|line| line == "/mnt/project rw"),

@@ -389,6 +389,7 @@ impl ProcFs {
     pub async fn bind_live_namespace(&self, pid: Pid, namespace: LiveNamespace) {
         let mut state = self.state.lock().await;
         if state.table.get(pid).is_some() {
+            namespace.mark_authority_bound();
             state.live_namespaces.insert(pid, namespace);
             state.table.bump_generation(pid);
         }

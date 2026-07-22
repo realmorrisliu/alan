@@ -72,8 +72,9 @@ captured for the clone slot.
 - **AND** Alan Shell, Agent Execution Engine, and system launchers confirm the
   generation changed, reread one stable snapshot, and retry a bounded number of
   times
-- **AND** Agent Execution Engine recomputes a delegated child Process's selected
-  mounts and capability decision from the fresh snapshot before retrying
+- **AND** Agent Execution Engine recomputes a delegated child Process's package
+  target, Tool discovery, launch descriptors, selected mounts, and capability
+  decision from the fresh snapshot before retrying
 
 #### Scenario: Exec document omits its namespace manifest
 - **WHEN** a spawner commits an exec document without a namespace manifest

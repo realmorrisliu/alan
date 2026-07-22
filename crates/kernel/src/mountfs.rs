@@ -160,6 +160,13 @@ impl LiveNamespace {
         self.generation.load(Ordering::Relaxed)
     }
 
+    /// Advance the generation when this handle becomes a Process's live
+    /// namespace authority, even when its initial mount table is unchanged.
+    pub(crate) fn mark_authority_bound(&self) {
+        let _namespace_guard = self.write();
+        self.bump_generation();
+    }
+
     fn resolve_candidates(&self, path: &str) -> Vec<Resolved> {
         self.read().resolve_candidates(path)
     }

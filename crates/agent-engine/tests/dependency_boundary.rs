@@ -803,6 +803,10 @@ fn child_launch_workflows_use_only_the_narrow_child_launch_handle() {
     assert!(child_process_launch.contains("ProcessNamespaceManifest"));
     assert!(child_process_launch.contains("generation"));
     assert!(child_process_launch.contains("is_stale_namespace_launch"));
+    let retry_loop = child_process_launch.find("for _ in").unwrap();
+    assert!(child_process_launch[retry_loop..].contains("resolve_target_path("));
+    assert!(child_process_launch[retry_loop..].contains("select_tool_names("));
+    assert!(child_process_launch[retry_loop..].contains("AGENT_DEFINITION_FD"));
 
     for path in [
         "child_agents.rs",
