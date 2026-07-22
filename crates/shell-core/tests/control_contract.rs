@@ -235,6 +235,39 @@ fn equalize_reports_changed_splits_and_rejects_unchanged_state() {
 }
 
 #[test]
+fn resize_response_reports_the_effective_clamped_ratio() {
+    for requested_ratio in [0.99, 0.01] {
+        let state = split_state();
+        let split_node_id = state.spaces[0].tabs[0]
+            .pane_tree
+            .split_ratios_by_node_id()
+            .into_keys()
+            .next()
+            .expect("split fixture exposes a split node");
+        let mut resize = command(
+            "req-resize-clamped",
+            ShellControlCommandKind::PaneResizeSplit,
+        );
+        resize.split_node_id = Some(split_node_id.clone());
+        resize.ratio = Some(requested_ratio);
+
+        let result = state.reduce_control(resize);
+        let effective_ratio = PaneTreeNode::clamped_split_ratio(requested_ratio);
+
+        assert_eq!(result.response.applied, Some(true));
+        assert_eq!(result.response.ratio, Some(effective_ratio));
+        assert_eq!(
+            result
+                .updated_state
+                .as_ref()
+                .and_then(|state| state.spaces[0].tabs[0].pane_tree.node(&split_node_id))
+                .map(PaneTreeNode::split_ratio),
+            Some(effective_ratio)
+        );
+    }
+}
+
+#[test]
 fn split_mutations_project_the_background_target_space_and_tab() {
     let target_state = split_state();
     let target_split_id = target_state.spaces[0].tabs[0]

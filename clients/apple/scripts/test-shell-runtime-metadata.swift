@@ -2882,7 +2882,7 @@ private enum ShellRuntimeMetadataTests {
                   "request_id": "resize-1",
                   "command": "pane.resize_split",
                   "split_node_id": "\(splitNodeID)",
-                  "ratio": 0.72
+                  "ratio": 0.99
                 }
                 """
             )
@@ -2891,8 +2891,8 @@ private enum ShellRuntimeMetadataTests {
         expect(resizeResponse.applied == true, "resize_split must report an applied result")
         expect(resizeResponse.splitNodeID == splitNodeID, "resize response must identify the split node")
         expect(
-            abs((resizeResponse.ratio ?? 0) - 0.72) < 0.001,
-            "resize response must include the resulting ratio"
+            abs((resizeResponse.ratio ?? 0) - 0.85) < 0.001,
+            "resize response must include the effective clamped ratio"
         )
         expect(
             resizeResponse.affectedPaneIDs == ["pane_1", "pane_2"],

@@ -103,7 +103,10 @@ pub(super) fn project_success_response(
                 project_tab_subject(response, state, &tab_id);
             }
             response.split_node_id = command.split_node_id.clone();
-            response.ratio = command.ratio;
+            response.ratio = command
+                .split_node_id
+                .as_deref()
+                .and_then(|node_id| split_ratio_for_node(state, node_id));
             response.changed_split_ids = command.split_node_id.clone().map(|id| vec![id]);
         }
         ResponseProjection::Zoom {
@@ -143,6 +146,15 @@ fn tab_id_containing_node(state: &WorkspaceState, node_id: &str) -> Option<Strin
         .flat_map(|space| &space.tabs)
         .find(|tab| tab.pane_tree.contains_node_id(node_id))
         .map(|tab| tab.tab_id.clone())
+}
+
+fn split_ratio_for_node(state: &WorkspaceState, node_id: &str) -> Option<f64> {
+    state
+        .spaces
+        .iter()
+        .flat_map(|space| &space.tabs)
+        .find_map(|tab| tab.pane_tree.node(node_id))
+        .map(|node| node.split_ratio())
 }
 
 pub(super) fn project_runtime_intent_response(
