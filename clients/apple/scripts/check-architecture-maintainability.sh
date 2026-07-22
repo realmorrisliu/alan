@@ -352,16 +352,22 @@ typed_factory_declarations() {
     ' "$file"
 }
 
+typed_factory_inventory() {
+    local target_type="$1"
+    local file
+
+    while IFS= read -r file; do
+        typed_factory_declarations "$file" "$target_type"
+    done < <(find "$SOURCE_ROOT" -type f -name '*.swift' -print | sort)
+}
+
 manifest_state_declarations() {
     local file="$1"
-    local factory_inventory
-    factory_inventory="$(
-        typed_factory_declarations "$file" "ShellContentWorkspaceManifest"
-    )"
+    local factory_inventory="$2"
 
     awk -v factory_inventory="$factory_inventory" '
         BEGIN {
-            factory_count = split(factory_inventory, factory_entries, "\n")
+            factory_count = split(factory_inventory, factory_entries, ";")
             for (factory_index = 1; factory_index <= factory_count; factory_index++) {
                 if (factory_entries[factory_index] != "") {
                     manifest_factories[factory_entries[factory_index]] = 1
@@ -518,12 +524,11 @@ static_property_declarations() {
 
 shell_host_static_storage_declarations() {
     local file="$1"
-    local factory_inventory
-    factory_inventory="$(typed_factory_declarations "$file" "ShellHostController")"
+    local factory_inventory="$2"
 
     awk -v factory_inventory="$factory_inventory" '
         BEGIN {
-            factory_count = split(factory_inventory, factory_entries, "\n")
+            factory_count = split(factory_inventory, factory_entries, ";")
             for (factory_index = 1; factory_index <= factory_count; factory_index++) {
                 if (factory_entries[factory_index] != "") {
                     shell_host_factories[factory_entries[factory_index]] = 1
@@ -980,6 +985,7 @@ reject_shell_host_duplicate_persistence_state() {
     local declaration_indent
     local declaration_kind
     local declaration_line
+    local factory_inventory
     local file
     local manifest_state
     local rel
@@ -1009,6 +1015,9 @@ reject_shell_host_duplicate_persistence_state() {
         "$persistence_owner" \
         "workspace manifest projection invocation"
 
+    factory_inventory="$(
+        typed_factory_inventory "ShellContentWorkspaceManifest" | sort -u | tr '\n' ';'
+    )"
     while IFS= read -r file; do
         rel="${file#$SOURCE_ROOT/}"
         while IFS='|' read -r declaration_line declaration_indent declaration declaration_kind; do
@@ -1018,10 +1027,8 @@ reject_shell_host_duplicate_persistence_state() {
                 fail \
                     "ShellContentWorkspaceManifest storage is not in the accepted ownership inventory: $manifest_state"
             fi
-        done < <(manifest_state_declarations "$file")
-    done < <(grep -RIl --include='*.swift' -F \
-        'ShellContentWorkspaceManifest' \
-        "$SOURCE_ROOT" || true)
+        done < <(manifest_state_declarations "$file" "$factory_inventory")
+    done < <(find "$SOURCE_ROOT" -type f -name '*.swift' -print | sort)
 
     while IFS= read -r file; do
         rel="${file#$SOURCE_ROOT/}"
@@ -1084,12 +1091,11 @@ reject_shell_host_duplicate_persistence_state() {
 
 shell_snapshot_stored_property_counts() {
     local file="$1"
-    local factory_inventory
-    factory_inventory="$(typed_factory_declarations "$file" "ShellStateSnapshot")"
+    local factory_inventory="$2"
 
     awk -v factory_inventory="$factory_inventory" '
         BEGIN {
-            factory_count = split(factory_inventory, factory_entries, "\n")
+            factory_count = split(factory_inventory, factory_entries, ";")
             for (factory_index = 1; factory_index <= factory_count; factory_index++) {
                 if (factory_entries[factory_index] != "") {
                     snapshot_factories[factory_entries[factory_index]] = 1
@@ -1306,10 +1312,12 @@ reject_replacement_global_shell_store() {
         "ShellHostController.swift|static let terminalSelectionFirst = ShellPaneMovementInteractionPolicy()"
     )
     local file
+    local host_factory_inventory
     local line_number
     local observable_owner
     local published_projection
     local snapshot_property_counts
+    local snapshot_factory_inventory
     local snapshot_stored_properties
     local static_member
     local static_member_key
@@ -1322,9 +1330,18 @@ reject_replacement_global_shell_store() {
         "$controller_owner" \
         "observable shell snapshot state"
 
+    snapshot_factory_inventory="$(
+        typed_factory_inventory "ShellStateSnapshot" | sort -u | tr '\n' ';'
+    )"
+    host_factory_inventory="$(
+        typed_factory_inventory "ShellHostController" | sort -u | tr '\n' ';'
+    )"
+
     while IFS= read -r file; do
         rel="${file#$SOURCE_ROOT/}"
-        snapshot_property_counts="$(shell_snapshot_stored_property_counts "$file")"
+        snapshot_property_counts="$(
+            shell_snapshot_stored_property_counts "$file" "$snapshot_factory_inventory"
+        )"
         snapshot_stored_properties="${snapshot_property_counts%% *}"
         static_snapshot_stored_properties="${snapshot_property_counts##* }"
 
@@ -1376,7 +1393,7 @@ reject_replacement_global_shell_store() {
                 "non-controller observable owners must not manufacture ShellStateSnapshot state; found in $rel"
         fi
 
-    done < <(grep -RIl --include='*.swift' -F "ShellStateSnapshot" "$SOURCE_ROOT" || true)
+    done < <(find "$SOURCE_ROOT" -type f -name '*.swift' -print | sort)
 
     while IFS= read -r file; do
         rel="${file#$SOURCE_ROOT/}"
@@ -1385,7 +1402,7 @@ reject_replacement_global_shell_store() {
             printf '%s:%s:%s\n' "$file" "$line_number" "$source_line" >&2
             fail \
                 "ShellHostController must not be retained by static/class storage; found in $rel"
-        done < <(shell_host_static_storage_declarations "$file")
+        done < <(shell_host_static_storage_declarations "$file" "$host_factory_inventory")
     done < <(find "$SOURCE_ROOT" -type f -name '*.swift' -print | sort)
 
     while IFS=: read -r file line_number source_line; do
