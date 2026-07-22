@@ -110,6 +110,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesSidebarProgressRailBelongsToDisplayedActivity()
         verifiesFocusedCommandFailureDemotesFromSidebarProjection()
         verifiesCommandFailureAcknowledgementSticksAfterFocus()
+        verifiesControlPlaneFocusAcknowledgesCommandFailure()
         verifiesCommandFailureAcknowledgementRequiresFocusedPaneInTab()
         verifiesSpatialFocusAcknowledgesCommandFailure()
         verifiesActivityFreshnessPolicies()
@@ -2231,6 +2232,16 @@ private enum ShellRuntimeMetadataTests {
     private static func verifiesSocketAndInProcessPortableCommandsShareExecutorSemantics() {
         let fixture = makeController(windowID: "shared_control_fixture")
         _ = fixture.splitPane(paneID: "pane_1", placement: .right)
+        fixture.updateTerminalMetadata(
+            metadata(
+                title: "fish",
+                activity: TerminalActivitySnapshot.commandCompletion(
+                    exitCode: 2,
+                    now: Date(timeIntervalSince1970: 1_779_008_400)
+                )
+            ),
+            for: "pane_1"
+        )
         let initialState = fixture.shellState
         let inProcessController = makeController(
             windowID: "shared_control_in_process",
@@ -2270,6 +2281,11 @@ private enum ShellRuntimeMetadataTests {
         expect(
             socketAdoptedState?.focusedPaneID == inProcessController.shellState.focusedPaneID,
             "socket and in-process callers must adopt the same portable state"
+        )
+        expect(
+            socketAdoptedState?.pane(paneID: "pane_1")?.activity == nil
+                && inProcessController.pane(paneID: "pane_1")?.activity == nil,
+            "socket and in-process pane focus must share command-failure acknowledgement"
         )
     }
 
@@ -4473,6 +4489,45 @@ private enum ShellRuntimeMetadataTests {
         expect(
             acknowledgedProjection.secondaryLine != "Shell · Command failed 2",
             "acknowledged command failure must fall back to tab context instead of resurfacing"
+        )
+    }
+
+    private static func verifiesControlPlaneFocusAcknowledgesCommandFailure() {
+        let controller = makeController()
+        _ = controller.openTerminalTab()
+        let failure = TerminalActivitySnapshot.commandCompletion(
+            exitCode: 2,
+            now: Date(timeIntervalSince1970: 1_779_008_400)
+        )
+        controller.updateTerminalMetadata(
+            metadata(title: "fish", cwd: "/Users/morris/Developer/alan", activity: failure),
+            for: "pane_1"
+        )
+
+        let response = controller.handleControlPlaneCommand(
+            decodeControlCommand(
+                """
+                {
+                  "request_id": "focus-command-failure-pane",
+                  "command": "pane.focus",
+                  "pane_id": "pane_1"
+                }
+                """
+            )
+        )
+
+        expect(response.applied == true, "control-plane pane focus must apply")
+        expect(
+            controller.shellState.focusedPaneID == "pane_1",
+            "control-plane pane focus must adopt Rust-owned focus"
+        )
+        expect(
+            controller.pane(paneID: "pane_1")?.activity == nil,
+            "control-plane pane focus must acknowledge retained command-failure activity"
+        )
+        expect(
+            controller.pane(paneID: "pane_1")?.attention != .notable,
+            "control-plane pane focus must clear stale command-failure attention"
         )
     }
 

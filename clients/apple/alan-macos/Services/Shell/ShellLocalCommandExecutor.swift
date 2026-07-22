@@ -32,7 +32,10 @@ enum AlanShellLocalCommandExecutor {
                     state: state,
                     context: context
                 )
-                return AlanShellLocalCommandResult(shellCoreResult: result)
+                return AlanShellLocalCommandResult(
+                    shellCoreResult: result,
+                    command: command
+                )
             } catch {
                 // Only host-readable snapshots can fall through when shell-core infrastructure is
                 // unavailable. Mutations remain Rust-core-owned and fail closed.
@@ -549,10 +552,29 @@ enum AlanShellLocalCommandExecutor {
 }
 
 private extension AlanShellLocalCommandResult {
-    init(shellCoreResult: ShellCoreControlCommandResult) {
+    init(
+        shellCoreResult: ShellCoreControlCommandResult,
+        command: AlanShellControlCommand
+    ) {
+        let updatedState = shellCoreResult.updatedState.map { state in
+            guard command.command == .paneFocus,
+                  shellCoreResult.response.applied == true,
+                  let tabID = state.focusedTabID,
+                  let paneID = state.focusedPaneID
+            else {
+                return state
+            }
+            // Rust owns workspace focus. Command-failure activity is still host-projected, so
+            // apply its acknowledgement once at the shared Apple executor boundary. This keeps
+            // in-process, socket, and file-poll callers on identical state semantics.
+            return state.acknowledgingCommandFailureActivities(
+                in: tabID,
+                focusedPaneID: paneID
+            )
+        }
         self.init(
             response: shellCoreResult.response,
-            updatedState: shellCoreResult.updatedState,
+            updatedState: updatedState,
             sideEffect: shellCoreResult.sideEffect.map(AlanShellLocalCommandSideEffect.init)
         )
     }
