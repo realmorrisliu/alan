@@ -421,7 +421,19 @@ normalized_file_matches() {
     ' < <(swift_code_lines "$file")
 }
 
-readonly FACTORY_INSTANCE_AWK_HELPERS='
+readonly OWNERSHIP_AWK_HELPERS='
+    function brace_delta(value,    character, column, delta) {
+        delta = 0
+        for (column = 1; column <= length(value); column++) {
+            character = substr(value, column, 1)
+            if (character == "{") {
+                delta++
+            } else if (character == "}") {
+                delta--
+            }
+        }
+        return delta
+    }
     function matching_call_end(value, opening,    character, column, depth) {
         depth = 0
         for (column = opening; column <= length(value); column++) {
@@ -571,7 +583,7 @@ manifest_state_declarations() {
     local file="$1"
     local factory_inventory="$2"
 
-    awk -v factory_inventory="$factory_inventory" "$FACTORY_INSTANCE_AWK_HELPERS"'
+    awk -v factory_inventory="$factory_inventory" "$OWNERSHIP_AWK_HELPERS"'
         BEGIN {
             factory_count = split(factory_inventory, factory_entries, ";")
             for (factory_index = 1; factory_index <= factory_count; factory_index++) {
@@ -765,7 +777,7 @@ shell_host_global_storage_declarations() {
     local file="$1"
     local factory_inventory="$2"
 
-    awk -v factory_inventory="$factory_inventory" "$FACTORY_INSTANCE_AWK_HELPERS"'
+    awk -v factory_inventory="$factory_inventory" "$OWNERSHIP_AWK_HELPERS"'
         BEGIN {
             factory_count = split(factory_inventory, factory_entries, ";")
             for (factory_index = 1; factory_index <= factory_count; factory_index++) {
@@ -783,7 +795,7 @@ shell_host_global_storage_declarations() {
             return value ~ /^[[:space:]]*[^\/]*(static|class)[ ]+([^ ]+[ ]+)*(let|var)[ ]+[A-Za-z_][A-Za-z0-9_]*/
         }
         function is_module_property_start(value) {
-            return value ~ /^[^\/]*(let|var)[ ]+[A-Za-z_][A-Za-z0-9_]*/
+            return value ~ /^[^\/{]*(let|var)[ ]+[A-Za-z_][A-Za-z0-9_]*/
         }
         function is_type_declaration(value) {
             return value ~ /^[[:space:]]*[^\/]*(class|struct|actor|enum|extension|protocol)[ ]+[A-Za-z_][A-Za-z0-9_.]*/
@@ -888,7 +900,7 @@ shell_host_global_storage_declarations() {
             }
 
             if (is_static_property_start(line) ||
-                (type_depth == 0 && line_indent == 0 && is_module_property_start(line)))
+                (brace_depth == 0 && is_module_property_start(line)))
             {
                 record_buffered_property()
                 property_buffer = line
@@ -902,6 +914,7 @@ shell_host_global_storage_declarations() {
             } else {
                 record_buffered_property()
             }
+            brace_depth += brace_delta(line)
         }
         END { record_buffered_property() }
     ' < <(swift_code_lines "$file")
@@ -1392,7 +1405,7 @@ shell_snapshot_stored_property_counts() {
     local file="$1"
     local factory_inventory="$2"
 
-    awk -v factory_inventory="$factory_inventory" "$FACTORY_INSTANCE_AWK_HELPERS"'
+    awk -v factory_inventory="$factory_inventory" "$OWNERSHIP_AWK_HELPERS"'
         BEGIN {
             factory_count = split(factory_inventory, factory_entries, ";")
             for (factory_index = 1; factory_index <= factory_count; factory_index++) {
@@ -1410,7 +1423,7 @@ shell_snapshot_stored_property_counts() {
             return value ~ /^[[:space:]]*[^\/]*(static|class)[ ]+([^ ]+[ ]+)*(let|var)[ ]+[A-Za-z_][A-Za-z0-9_]*/
         }
         function is_module_property_start(value) {
-            return value ~ /^[^\/]*(let|var)[ ]+[A-Za-z_][A-Za-z0-9_]*/
+            return value ~ /^[^\/{]*(let|var)[ ]+[A-Za-z_][A-Za-z0-9_]*/
         }
         function is_type_declaration(value) {
             return value ~ /^[[:space:]]*[^\/]*(class|struct|actor|enum|extension|protocol)[ ]+[A-Za-z_][A-Za-z0-9_.]*/
@@ -1576,7 +1589,7 @@ shell_snapshot_stored_property_counts() {
             # or a static/class type member. Method-local variables remain out
             # of this inventory.
             if (is_static_property_start(line) ||
-                (type_depth == 0 && line_indent == 0 && is_module_property_start(line)))
+                (brace_depth == 0 && is_module_property_start(line)))
             {
                 count_buffered_global_property()
                 global_buffer = line
@@ -1589,6 +1602,7 @@ shell_snapshot_stored_property_counts() {
             } else {
                 count_buffered_global_property()
             }
+            brace_depth += brace_delta(line)
         }
         END {
             count_buffered_instance_property()
