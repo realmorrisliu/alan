@@ -24,7 +24,7 @@
 
 ## 3. Remove Duplicate Shell Host State
 
-- [ ] 3.1 Make controller workspace and selection publications derive directly
+- [x] 3.1 Make controller workspace and selection publications derive directly
   from the adopted `ShellStateSnapshot`; remove independently mutable selected
   Space/Tab fields and synchronization logic.
 - [ ] 3.2 Make terminal runtime, active-task, render, and lifecycle publications

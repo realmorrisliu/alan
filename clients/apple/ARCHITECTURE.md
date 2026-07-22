@@ -114,13 +114,13 @@ Xcode target.
 | `Models/Shell/ManagedTerminalAccountCatalog.swift` | 91 | Foundation; macOS gates | Durable managed-account catalog normalization and storage | `Models/Shell/` |
 | `Models/Shell/ManagedTerminalUserSettings.swift` | 240 | Foundation; macOS gates | Managed-user readiness, creation preview, validation, and approved provisioning flow | `Models/Shell/` |
 | `Models/Shell/ShellSettingsHostSummaries.swift` | 131 | Foundation; macOS gates | Local app/runtime/storage identity and performance-diagnostics summaries | `Models/Shell/` |
-| `ShellHostController.swift` | 383 | Foundation, Combine; macOS gates | Observable shell state, dependency assembly, startup, shutdown, and root lifecycle | Root controller with focused `Controllers/Shell/` responsibility extensions |
+| `ShellHostController.swift` | 379 | Foundation, Combine; macOS gates | Observable adopted shell state, dependency assembly, startup, shutdown, and root lifecycle | Root controller with focused `Controllers/Shell/` responsibility extensions |
 | `Controllers/Shell/ShellHostControlProjection.swift` | 268 | Foundation; macOS gates | Control response, list, routing-candidate, and terminal-delivery projection | `Controllers/Shell/` |
 | `Controllers/Shell/ShellHostPlatformControlCommandHandling.swift` | 431 | Foundation; macOS gates | Shared-executor state adoption plus close guard, terminal delivery, events, render metrics, and performance diagnostics | `Controllers/Shell/` |
-| `Controllers/Shell/ShellHostProjectionAndSelection.swift` | 494 | Foundation; macOS gates | Derived shell projection, focus, selection, zoom, and shell-surface close requests | `Controllers/Shell/` |
+| `Controllers/Shell/ShellHostProjectionAndSelection.swift` | 511 | Foundation; macOS gates | Snapshot-derived shell and selection projection, focus, zoom, and shell-surface close requests | `Controllers/Shell/` |
 | `Controllers/Shell/ShellHostSpaceAndTabLifecycle.swift` | 727 | Foundation; macOS gates | Space, tab, content, and split creation plus tab ordering and movement | `Controllers/Shell/` |
 | `Controllers/Shell/ShellHostActionAndTerminalCommandHandling.swift` | 494 | Foundation; macOS gates | Shell action execution, spatial focus, and terminal semantic-command routing | `Controllers/Shell/` |
-| `Controllers/Shell/ShellHostRuntimeProjection.swift` | 653 | Foundation; macOS gates | Terminal runtime and metadata projection, activity routing, state adoption, and selection synchronization | `Controllers/Shell/` |
+| `Controllers/Shell/ShellHostRuntimeProjection.swift` | 662 | Foundation; macOS gates | Terminal runtime and metadata projection, activity routing, state adoption, and selection-dependent runtime refresh | `Controllers/Shell/` |
 | `Controllers/Shell/ShellHostWorkspacePersistence.swift` | 328 | Foundation; macOS gates | Workspace-manifest projection, transcript capture, pinned snapshots, and active-task persistence | `Controllers/Shell/` |
 | `Controllers/Shell/ShellHostCloseAndPaneLifecycle.swift` | 551 | Foundation; macOS gates | Close guards, graceful shutdown, pane lifecycle/movement, and control-plane state publication | `Controllers/Shell/` |
 | `Controllers/Shell/ShellHostAutomationCommandHandling.swift` | 309 | Foundation; macOS gates | External shell automation command adaptation and response projection | `Controllers/Shell/` |
@@ -529,7 +529,7 @@ Rust-owned Swift legacy cleanup targets at this baseline:
 | `Models/Shell/ShellValueTypes.swift` | Removed | Cleaned: shell, Terminal Profile, managed-account, activity, context, helper-contract, planning, and effect families now have named model/service owners. Request validation, provisioning, and rollback call shell-core FFI and fail closed. Script-only managed-account state/fakes remain outside the app target, and the unused local command runner is deleted. |
 | `Models/Shell/ShellSettingsSurfaceModel.swift` | 531 | Cleaned below the report threshold: settings navigation/grouping and fail-closed row composition remain here, while Terminal Profile/helper summaries, managed-account discovery, catalog persistence, managed-user creation/provisioning, and local/diagnostics summaries live in adjacent domain modules. Managed terminal account row projection still calls `settings.managed_terminal_account_rows` through `Services/Shell/ShellCoreFFISettingsAdapter.swift`. |
 | `Services/Shell/ShellCoreFFIAdapter.swift` | 12 | Cleaned as transport facade: loader, envelope, materialization, manifest, control, action, settings, and Terminal Profile operations remain in sibling owners; reducer and managed-terminal-account callers use dedicated operation-family adapter types, with no Swift domain fallback. |
-| `ShellHostController.swift` | 383 | Cleaned below the report threshold: the root keeps observable state, dependency assembly, startup, shutdown, and root lifecycle. Selection, space/tab lifecycle, actions, runtime projection, persistence, close/pane lifecycle, and automation adaptation live in focused `Controllers/Shell/ShellHost*` extensions while Rust shell-core and existing service coordinators retain domain authority. |
+| `ShellHostController.swift` | 379 | Cleaned below the report threshold: the root keeps the adopted observable shell snapshot, dependency assembly, startup, shutdown, and root lifecycle. Selected Space/Tab IDs are read-only snapshot projections rather than duplicate published fields. Selection, space/tab lifecycle, actions, runtime projection, persistence, close/pane lifecycle, and automation adaptation live in focused `Controllers/Shell/ShellHost*` extensions while Rust shell-core and existing service coordinators retain domain authority. |
 | `Controllers/Shell/ShellHostControlCommandHandling.swift` | Removed | Deleted after in-process and socket-facing portable commands converged on `AlanShellLocalCommandExecutor`; no second portable mutation switch remains. |
 | `Controllers/Shell/ShellHostPlatformControlCommandHandling.swift` | 431 | Keeps only executor-result adoption, close guarding, descriptor-targeted terminal delivery, event/render diagnostics, and explicit platform effects. |
 
@@ -545,6 +545,14 @@ construction remain inside `AlanShellLocalCommandExecutor`, while terminal
 intents preserve both PaneSlot and ContentInstance identity through delivery.
 The reduced line count is a byproduct; success is defined by one portable
 command owner and by `check-shell-contracts.sh` rejecting a replacement switch.
+
+The next host-ownership slice removes independently mutable controller
+`selectedSpaceID` and `selectedTabID` publications. Selected Space, tab, and
+pane now resolve directly from the adopted `ShellStateSnapshot`; the remaining
+selection-dependent helper refreshes only the transitional terminal runtime
+projection and render priorities. The architecture gate rejects reintroduced
+published selection IDs, direct controller assignments, or a replacement
+`synchronizeSelection` workflow.
 
 The current architecture gate treats
 `clients/apple/scripts/architecture-warning-baseline.txt` as a hard downward
