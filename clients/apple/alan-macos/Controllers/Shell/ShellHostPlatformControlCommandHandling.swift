@@ -330,7 +330,7 @@ extension ShellHostController {
                     title: nil,
                     workingDirectory: event.workingDirectory,
                     summary: nil,
-                    attention: .idle,
+                    attention: targetPane.attention,
                     processExited: false,
                     lastCommandExitCode: nil,
                     lastUpdatedAt: Date(),

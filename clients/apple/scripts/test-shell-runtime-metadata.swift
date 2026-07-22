@@ -100,6 +100,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesAgentActivityAdapterSanitizesDefaultUIPayload()
         verifiesAgentActivityAdapterRejectsMalformedPayloadAndFallsBackForUnsupportedAgent()
         verifiesAgentActivityControlCommandProjectsOntoPane()
+        verifiesAgentActivityPreservesExistingAttention()
         verifiesClearingActivityRemovesPaneActivity()
         verifiesPublishedStateMergeClearsActivity()
         verifiesPublishedStateMergeClearsTerminalProfileMetadata()
@@ -3886,6 +3887,34 @@ private enum ShellRuntimeMetadataTests {
             "agent activity must refresh the projected git branch"
         )
         expect(controller.activityNotifications.first?.kind == .needsInput, "agent command must reuse low-noise notification routing")
+    }
+
+    private static func verifiesAgentActivityPreservesExistingAttention() {
+        let controller = makeController()
+        expect(
+            controller.setAttention(.notable, for: "pane_1"),
+            "agent activity attention setup must mark the target pane"
+        )
+
+        let response = controller.handleControlPlaneCommand(
+            decodeControlCommand(
+                """
+                {
+                  "request_id": "agent-activity-preserve-attention",
+                  "command": "agent.activity",
+                  "pane_id": "pane_1",
+                  "agent_kind": "codex",
+                  "agent_status": "running"
+                }
+                """
+            )
+        )
+
+        expect(response.applied == true, "running agent activity must be applied")
+        expect(
+            controller.pane(paneID: "pane_1")?.attention == .notable,
+            "agent activity must not acknowledge existing pane attention"
+        )
     }
 
     private static func verifiesCommandCompletionActivityFactory() {
