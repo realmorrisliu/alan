@@ -1212,13 +1212,18 @@ require_pattern \
     "enum AlanShellLocalCommandExecutor" \
     "shell local command execution must live outside the socket server boundary"
 
+if [[ -e "$REPO_ROOT/clients/apple/alan-macos/Controllers/Shell/ShellHostControlCommandHandling.swift" ]]; then
+    printf 'error: duplicate shell host control command owner must stay deleted\n' >&2
+    exit 1
+fi
+
 reject_pattern \
     "clients/apple/alan-macos/ShellControlPlane.swift" \
     "enum AlanShellLocalCommandExecutor|struct AlanShellLocalCommandResult" \
     "shell control plane transport must not own local command execution"
 
 require_pattern \
-    "clients/apple/alan-macos/Controllers/Shell/ShellHostControlCommandHandling.swift" \
+    "clients/apple/alan-macos/Controllers/Shell/ShellHostPlatformControlCommandHandling.swift" \
     "runtimePhase: delivery.runtimePhase" \
     "terminal.send_text responses must expose the service runtime phase"
 
@@ -1233,8 +1238,8 @@ require_pattern \
     "terminal text delivery must go through the runtime registry"
 
 require_pattern \
-    "clients/apple/alan-macos/Controllers/Shell/ShellHostControlCommandHandling.swift" \
-    "terminalContentID: target\\.content\\.contentID" \
+    "clients/apple/alan-macos/Controllers/Shell/ShellHostPlatformControlCommandHandling.swift" \
+    "toTerminalContentID: targetContentID" \
     "terminal.send_text must preserve the resolved terminal content target"
 
 require_pattern \
@@ -1243,8 +1248,8 @@ require_pattern \
     "shared terminal.send_text commands must use explicit content targets when present"
 
 require_pattern \
-    "clients/apple/alan-macos/Controllers/Shell/ShellHostControlCommandHandling.swift" \
-    "command\\.paneSlotID \\?\\? command\\.paneID" \
+    "clients/apple/alan-macos/Services/Shell/ShellCoreFFIControlAdapter.swift" \
+    "paneSlotID: paneSlotID" \
     "terminal.send_text must resolve PaneSlot targets before terminal delivery"
 
 require_pattern \
@@ -1553,7 +1558,7 @@ require_pattern \
     "terminal shortcut routing must enter the shared shell action registry handler"
 
 require_pattern \
-    "clients/apple/alan-macos/Controllers/Shell/ShellHostControlCommandHandling.swift" \
+    "clients/apple/alan-macos/Controllers/Shell/ShellHostPlatformControlCommandHandling.swift" \
     "func handleControlPlaneCommand\\(_ command: AlanShellControlCommand\\)" \
     "control-plane protocol commands must stay separate from UI command vocabulary while sharing shell mutation authority"
 

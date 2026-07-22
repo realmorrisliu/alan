@@ -9,13 +9,13 @@ use alan_shell_core::{
     ManagedTerminalAccountPlanner, ManagedTerminalAccountRequest,
     ManagedTerminalAccountRollbackScope, ManagedTerminalAccountSettingsSummary, ReducerError,
     ReducerOperation, ShellActionId, ShellActionRegistry, ShellActionShortcut, ShellActionTarget,
-    ShellContentWorkspaceManifest, ShellControlCommand, ShellCoreErrorCode, ShellCoreErrorEnvelope,
-    ShellCoreRequestEnvelope, ShellCoreResponseEnvelope, ShellSettingsDiagnosticsSummary,
-    ShellSettingsLocalSummary, ShellSettingsSummaryRows, TerminalExecutableAvailability,
-    TerminalLaunchEnvironment, TerminalLaunchIntent, TerminalProfileDefinition,
-    TerminalProfileDocument, TerminalProfileEditor, TerminalProfileEditorDraft,
-    TerminalProfileSettingsSummary, TerminalProfileValidator, WorkspaceState,
-    should_capture_global_default_terminal_profile,
+    ShellContentWorkspaceManifest, ShellControlCommand, ShellControlExecutionContext,
+    ShellCoreErrorCode, ShellCoreErrorEnvelope, ShellCoreRequestEnvelope,
+    ShellCoreResponseEnvelope, ShellSettingsDiagnosticsSummary, ShellSettingsLocalSummary,
+    ShellSettingsSummaryRows, TerminalExecutableAvailability, TerminalLaunchEnvironment,
+    TerminalLaunchIntent, TerminalProfileDefinition, TerminalProfileDocument,
+    TerminalProfileEditor, TerminalProfileEditorDraft, TerminalProfileSettingsSummary,
+    TerminalProfileValidator, WorkspaceState, should_capture_global_default_terminal_profile,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -265,7 +265,9 @@ fn apply_reducer(payload: Value) -> Result<Value, ShellCoreErrorEnvelope> {
 fn handle_control(payload: Value) -> Result<Value, ShellCoreErrorEnvelope> {
     let input: ControlHandleInput = decode_payload(payload, "control.handle")?;
     Ok(json!({
-        "result": input.state.reduce_control(input.command),
+        "result": input
+            .state
+            .reduce_control_with_context(input.command, input.context),
     }))
 }
 
@@ -500,6 +502,8 @@ struct ReducerApplyInput {
 struct ControlHandleInput {
     state: WorkspaceState,
     command: ShellControlCommand,
+    #[serde(default)]
+    context: ShellControlExecutionContext,
 }
 
 #[derive(Debug, Deserialize)]

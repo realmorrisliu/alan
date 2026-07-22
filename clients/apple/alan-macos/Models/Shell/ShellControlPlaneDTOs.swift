@@ -231,8 +231,8 @@ struct AlanShellControlResponse: Codable {
     let acceptedBytes: Int?
     let deliveryCode: String?
     let runtimePhase: String?
-    let terminalRenderMetrics: TerminalRenderCoordinatorMetrics?
-    let latestEventID: String?
+    var terminalRenderMetrics: TerminalRenderCoordinatorMetrics?
+    var latestEventID: String?
     let splitNodeID: String?
     let ratio: Double?
     let changedSplitIDs: [String]?

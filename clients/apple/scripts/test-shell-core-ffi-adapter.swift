@@ -889,7 +889,11 @@ private func testProductionAdapterControlCommands() throws {
         state: state
     )
     try expect(
-        sendResult.sideEffect == .sendText(paneID: "pane_1", text: "pwd"),
+        sendResult.sideEffect == .sendText(
+            paneSlotID: "pane_1",
+            contentID: ShellContentInstance.terminalContentID(forPaneID: "pane_1"),
+            text: "pwd"
+        ),
         "control adapter must map terminal text runtime intent to Swift side effect"
     )
     try expect(
@@ -910,6 +914,57 @@ private func testProductionAdapterControlCommands() throws {
     try expect(
         listResult.response.panes?.contains { $0.paneID == targetPaneID } == true,
         "pane.list panes must include the split pane"
+    )
+
+    let reservedSplitResult = try adapter.handleControlCommand(
+        try controlCommand(
+            "pane.split",
+            fields: [
+                "pane_id": "pane_1",
+                "direction": "vertical",
+            ]
+        ),
+        state: state,
+        context: AlanShellLocalCommandExecutionContext(
+            reservedPaneSlotIDs: ["pane_2"]
+        )
+    )
+    try expect(
+        reservedSplitResult.updatedState?.pane(paneID: "pane_3") != nil,
+        "control adapter must preserve host runtime pane reservations"
+    )
+
+    let twoTabs = try state.openingTerminalTab(
+        in: "space_main",
+        title: "Foreground",
+        workingDirectory: "/repo/foreground"
+    ).state
+    guard let backgroundTabID = twoTabs.spaces.first?.tabs.first?.tabID else {
+        throw TestFailure.message("close fixture must expose a background tab")
+    }
+    let foregroundState = twoTabs.creatingSpace(
+        launchTarget: .shell,
+        title: "Foreground Space",
+        workingDirectory: "/repo/foreground-space"
+    ).state
+    let closeResult = try adapter.handleControlCommand(
+        try controlCommand("tab.close", fields: ["tab_id": backgroundTabID]),
+        state: foregroundState
+    )
+    try expect(
+        closeResult.response.tabID == backgroundTabID
+            && closeResult.response.spaceID == "space_main",
+        "tab.close response must preserve the requested background Tab and source Space"
+    )
+
+    let unchangedEqualize = try adapter.handleControlCommand(
+        try controlCommand("pane.equalize_splits"),
+        state: splitResult.state
+    )
+    try expect(
+        unchangedEqualize.response.errorCode == "unchanged_state"
+            && unchangedEqualize.response.tabID == "tab_main",
+        "implicit unchanged equalize response must preserve the resolved focused tab"
     )
 }
 
@@ -951,37 +1006,62 @@ private func testProductionAdapterUnscopedPaneListSpansAllTabs() throws {
 
 
 private func testProductionAdapterTabReorderReportsSectionAndIndex() throws {
-    // Full Swift -> Rust -> Swift round-trip: a tab organization mutation must surface the
-    // resulting section/index in the control response (decoded from the portable response).
+    // Full Swift -> Rust -> Swift round-trip: tab organization must surface its target Space,
+    // section, and index from the portable response for both accepted target-Space fields.
     let adapter = try ShellCoreFFIAdapter()
-    let state = ShellStateSnapshot.bootstrapDefault(
-        windowID: "window_main",
-        workingDirectory: "/repo/app"
-    )
-    let twoTabs = try state.openingTerminalTab(
-        in: "space_main",
-        title: "Second",
-        workingDirectory: "/repo/second"
-    ).state
-    guard let firstTabID = twoTabs.spaces.first?.tabs.first?.tabID else {
-        throw TestFailure.message("fixture must expose a tab to reorder")
-    }
+    for targetSpaceField in ["target_space_id", "space_id"] {
+        let state = ShellStateSnapshot.bootstrapDefault(
+            windowID: "window_main",
+            workingDirectory: "/repo/app"
+        )
+        let twoTabs = try state.openingTerminalTab(
+            in: "space_main",
+            title: "Second",
+            workingDirectory: "/repo/second"
+        ).state
+        guard let firstTabID = twoTabs.spaces.first?.tabs.first?.tabID else {
+            throw TestFailure.message("fixture must expose a tab to reorder")
+        }
+        let twoSpaces = twoTabs.creatingSpace(
+            launchTarget: .shell,
+            title: "Target",
+            workingDirectory: "/repo/target"
+        ).state
+        guard let targetSpaceID = twoSpaces.spaces.first(where: {
+            $0.spaceID != "space_main"
+        })?.spaceID else {
+            throw TestFailure.message("fixture must expose a target Space")
+        }
 
-    let result = try adapter.handleControlCommand(
-        try controlCommand(
-            "tab.reorder",
-            fields: ["tab_id": firstTabID, "section": "pinned", "index": 0]
-        ),
-        state: twoTabs
-    )
-    try expect(
-        result.response.section == .pinned,
-        "tab.reorder response must surface the resulting pinned section"
-    )
-    try expect(
-        result.response.index == 0,
-        "tab.reorder response must surface the resulting section index"
-    )
+        let result = try adapter.handleControlCommand(
+            try controlCommand(
+                "tab.reorder",
+                fields: [
+                    "tab_id": firstTabID,
+                    targetSpaceField: targetSpaceID,
+                    "section": "pinned",
+                    "index": 0,
+                ]
+            ),
+            state: twoSpaces
+        )
+        try expect(
+            result.response.targetSpaceID == targetSpaceID,
+            "tab.reorder response must surface the requested target Space"
+        )
+        try expect(
+            result.response.section == .pinned,
+            "tab.reorder response must surface the resulting pinned section"
+        )
+        try expect(
+            result.response.index == 0,
+            "tab.reorder response must surface the resulting section index"
+        )
+        try expect(
+            result.updatedState?.space(spaceID: targetSpaceID)?.tabs.first?.tabID == firstTabID,
+            "tab.reorder must move the tab into the requested target Space"
+        )
+    }
 }
 
 private func testProductionAdapterControlCommandsPreservePlatformPaneFields() throws {

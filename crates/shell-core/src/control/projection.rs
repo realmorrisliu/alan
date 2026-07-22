@@ -9,8 +9,21 @@ pub(super) enum ResponseProjection {
     Current,
     Snapshot,
     Focus,
+    TabSubject(String),
+    RemovedTab {
+        tab_id: String,
+        source_space_id: Option<String>,
+    },
+    RemovedPane {
+        pane_slot_id: String,
+        tab_id: Option<String>,
+        source_space_id: Option<String>,
+    },
     ResizeSplit,
-    Zoom,
+    Zoom {
+        tab_id: String,
+        pane_slot_id: String,
+    },
     MovePaneWithinTab(SplitPlacement),
     /// Report the named pane as the response subject (not the workspace focus), for commands
     /// like `attention.set` that mutate a specific, possibly unfocused, pane.
@@ -18,6 +31,27 @@ pub(super) enum ResponseProjection {
     /// Report the named tab as the response subject, for commands like `tab.pin`/`tab.unpin`/
     /// `tab.reorder`/`tab.move_to_space` that mutate a specific, possibly unfocused, tab.
     TargetTab(String),
+}
+
+impl ResponseProjection {
+    pub(super) fn removed_tab(state: &WorkspaceState, tab_id: &str) -> Self {
+        Self::RemovedTab {
+            tab_id: tab_id.to_string(),
+            source_space_id: space_id_containing_tab(state, tab_id),
+        }
+    }
+
+    pub(super) fn removed_pane(state: &WorkspaceState, pane_slot_id: &str) -> Self {
+        let pane_slot = state
+            .pane_slots
+            .iter()
+            .find(|slot| slot.pane_slot_id == pane_slot_id);
+        Self::RemovedPane {
+            pane_slot_id: pane_slot_id.to_string(),
+            tab_id: pane_slot.map(|slot| slot.tab_id.clone()),
+            source_space_id: pane_slot.map(|slot| slot.space_id.clone()),
+        }
+    }
 }
 
 pub(super) struct TerminalTarget {
@@ -44,6 +78,26 @@ pub(super) fn project_success_response(
     match projection {
         ResponseProjection::Snapshot => {}
         ResponseProjection::Current | ResponseProjection::Focus => {}
+        ResponseProjection::TabSubject(tab_id) => {
+            project_tab_subject(response, state, tab_id);
+        }
+        ResponseProjection::RemovedTab {
+            tab_id,
+            source_space_id,
+        } => {
+            response.tab_id = Some(tab_id.clone());
+            response.space_id.clone_from(source_space_id);
+        }
+        ResponseProjection::RemovedPane {
+            pane_slot_id,
+            tab_id,
+            source_space_id,
+        } => {
+            response.pane_id = Some(pane_slot_id.clone());
+            response.pane_slot_id = Some(pane_slot_id.clone());
+            response.tab_id.clone_from(tab_id);
+            response.space_id.clone_from(source_space_id);
+        }
         ResponseProjection::TargetPane(pane_slot_id) => {
             // Echo the mutated pane (and its tab/Space) as the subject so automation sees the
             // object it acted on, not whichever pane happens to hold focus.
@@ -59,14 +113,7 @@ pub(super) fn project_success_response(
             }
         }
         ResponseProjection::TargetTab(tab_id) => {
-            response.tab_id = Some(tab_id.clone());
-            if let Some(space) = state
-                .spaces
-                .iter()
-                .find(|space| space.tabs.iter().any(|tab| &tab.tab_id == tab_id))
-            {
-                response.space_id = Some(space.space_id.clone());
-            }
+            project_tab_subject(response, state, tab_id);
             // Report where the tab landed so automation can confirm an accepted organization
             // mutation (pin/unpin/reorder/move) without a follow-up state read.
             if let Some((section, index)) = tab_section_and_index(state, tab_id) {
@@ -75,21 +122,66 @@ pub(super) fn project_success_response(
             }
         }
         ResponseProjection::ResizeSplit => {
+            if let Some(tab_id) = command
+                .split_node_id
+                .as_deref()
+                .and_then(|node_id| tab_id_containing_node(state, node_id))
+            {
+                project_tab_subject(response, state, &tab_id);
+            }
             response.split_node_id = command.split_node_id.clone();
-            response.ratio = command.ratio;
+            response.ratio = command
+                .split_node_id
+                .as_deref()
+                .and_then(|node_id| split_ratio_for_node(state, node_id));
             response.changed_split_ids = command.split_node_id.clone().map(|id| vec![id]);
         }
-        ResponseProjection::Zoom => {
-            response.zoomed_pane_id = state
-                .focused_tab_id
-                .as_deref()
-                .and_then(|tab_id| state.tab(tab_id))
-                .and_then(|tab| tab.zoomed_pane_id.clone());
+        ResponseProjection::Zoom {
+            tab_id,
+            pane_slot_id,
+        } => {
+            project_tab_subject(response, state, tab_id);
+            response.pane_id = Some(pane_slot_id.clone());
+            response.pane_slot_id = Some(pane_slot_id.clone());
+            response.zoomed_pane_id = state.tab(tab_id).and_then(|tab| tab.zoomed_pane_id.clone());
         }
         ResponseProjection::MovePaneWithinTab(placement) => {
             response.placement = Some(*placement);
         }
     }
+}
+
+fn project_tab_subject(response: &mut ShellControlResponse, state: &WorkspaceState, tab_id: &str) {
+    response.tab_id = Some(tab_id.to_string());
+    if let Some(space_id) = space_id_containing_tab(state, tab_id) {
+        response.space_id = Some(space_id);
+    }
+}
+
+fn space_id_containing_tab(state: &WorkspaceState, tab_id: &str) -> Option<String> {
+    state
+        .spaces
+        .iter()
+        .find(|space| space.tabs.iter().any(|tab| tab.tab_id == tab_id))
+        .map(|space| space.space_id.clone())
+}
+
+fn tab_id_containing_node(state: &WorkspaceState, node_id: &str) -> Option<String> {
+    state
+        .spaces
+        .iter()
+        .flat_map(|space| &space.tabs)
+        .find(|tab| tab.pane_tree.contains_node_id(node_id))
+        .map(|tab| tab.tab_id.clone())
+}
+
+fn split_ratio_for_node(state: &WorkspaceState, node_id: &str) -> Option<f64> {
+    state
+        .spaces
+        .iter()
+        .flat_map(|space| &space.tabs)
+        .find_map(|tab| tab.pane_tree.node(node_id))
+        .map(|node| node.split_ratio())
 }
 
 pub(super) fn project_runtime_intent_response(

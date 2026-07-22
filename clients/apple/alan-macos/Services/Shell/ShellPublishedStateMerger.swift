@@ -48,7 +48,8 @@ enum AlanShellPublishedStateMerger {
             spaces: mergedSpaces,
             panes: mergedPanes,
             paneSlots: incoming.paneSlots,
-            contents: incoming.contents
+            contents: incoming.contents,
+            zoomedPaneIDByTabID: incoming.zoomedPaneIDByTabID
         )
     }
 

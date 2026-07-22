@@ -242,6 +242,7 @@ extension ShellHostController {
             focus(paneID: paneID)
         }
         zoomedPaneIDByTabID[tab.tabID] = paneID
+        shellState.zoomedPaneIDByTabID[tab.tabID] = paneID
         controlPlane.recordZoomStateChanged(
             requestID: nil,
             spaceID: shellState.contentStateProjection().paneSlot(paneSlotID: paneID)?.spaceID,
@@ -270,6 +271,7 @@ extension ShellHostController {
         guard let zoomedPaneID = zoomedPaneIDByTabID[tabID] else { return false }
         let pane = pane(paneID: zoomedPaneID)
         zoomedPaneIDByTabID.removeValue(forKey: tabID)
+        shellState.zoomedPaneIDByTabID.removeValue(forKey: tabID)
         controlPlane.recordZoomStateChanged(
             requestID: nil,
             spaceID: pane?.spaceID,
@@ -305,7 +307,8 @@ extension ShellHostController {
                 spaces: spaces,
                 panes: shellState.panes,
                 paneSlots: shellState.paneSlots,
-                contents: shellState.contents
+                contents: shellState.contents,
+                zoomedPaneIDByTabID: shellState.zoomedPaneIDByTabID
             )
             synchronizeSelection()
             publishControlPlaneState()

@@ -521,12 +521,17 @@ reject_swiftui_shell_hot_path_sync_boundaries() {
     fi
 }
 
-require_rust_reducer_adapter \
-    "$SOURCE_ROOT/Controllers/Shell/ShellHostControlCommandHandling.swift" \
-    "shellState.resizingSplit(" \
-    "shellState.equalizingSplits(" \
-    "shellState.focusingAdjacentPane(" \
-    "shellState.movingPaneWithinTab("
+if [[ -e "$SOURCE_ROOT/Controllers/Shell/ShellHostControlCommandHandling.swift" ]]; then
+    fail "the duplicate ShellHostControlCommandHandling owner must stay deleted"
+fi
+
+platform_control_handler="$SOURCE_ROOT/Controllers/Shell/ShellHostPlatformControlCommandHandling.swift"
+if ! grep -Fq "AlanShellLocalCommandExecutor.execute" "$platform_control_handler"; then
+    fail "the shell host control entry must delegate portable commands to AlanShellLocalCommandExecutor"
+fi
+if grep -Eq 'reducerAdapter\.apply|performShellAutomationCommand' "$platform_control_handler"; then
+    fail "the platform control handler must not regain portable mutation execution"
+fi
 
 require_rust_reducer_adapter \
     "$SOURCE_ROOT/Services/Shell/ShellLocalCommandExecutor.swift" \

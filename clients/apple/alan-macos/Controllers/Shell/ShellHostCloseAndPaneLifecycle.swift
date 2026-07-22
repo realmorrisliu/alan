@@ -488,7 +488,8 @@ extension ShellHostController {
             spaces: result.state.spaces,
             panes: nextPanes,
             paneSlots: result.state.paneSlots,
-            contents: result.state.contents
+            contents: result.state.contents,
+            zoomedPaneIDByTabID: result.state.zoomedPaneIDByTabID
         )
         return ShellStateMutationResult(
             state: nextState,

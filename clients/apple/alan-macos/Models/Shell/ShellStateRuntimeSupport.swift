@@ -49,6 +49,24 @@ extension ShellStateSnapshot {
             ?? terminalProfileIDForNewTerminal(in: pane.spaceID, explicit: nil)
     }
 
+    func workingDirectoryForNewTerminal(
+        from sourcePaneID: String?,
+        explicit: String?,
+        resolvedTerminalProfileID: String?
+    ) -> String? {
+        if let explicit {
+            return explicit
+        }
+        guard resolvedTerminalProfileID == nil,
+              let sourcePaneID,
+              let workingDirectory = pane(paneID: sourcePaneID)?.cwd,
+              !workingDirectory.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else {
+            return nil
+        }
+        return workingDirectory
+    }
+
     static func bootstrapDefault(
         windowID: String = "window_main",
         workingDirectory: String = defaultShellWorkingDirectory()
@@ -244,7 +262,8 @@ extension ShellStateSnapshot {
             spaces: repairedSpaces,
             panes: panes,
             paneSlots: retained.paneSlots,
-            contents: retained.contents
+            contents: retained.contents,
+            zoomedPaneIDByTabID: zoomedPaneIDByTabID
         )
     }
 

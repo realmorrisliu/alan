@@ -576,6 +576,7 @@ final class FakeAlanTerminalRuntimeService: AlanTerminalRuntimeService {
     let bootstrap: FakeAlanGhosttyProcessBootstrap
     private(set) var handlesByContentID: [String: FakeAlanTerminalSurfaceHandle] = [:]
     private var restoredTranscriptSnapshotsByContentID: [String: TerminalTranscriptSnapshot] = [:]
+    var renderCoordinatorMetricsOverride: TerminalRenderCoordinatorMetrics?
 
     init() {
         self.bootstrap = FakeAlanGhosttyProcessBootstrap()
@@ -598,7 +599,7 @@ final class FakeAlanTerminalRuntimeService: AlanTerminalRuntimeService {
     }
 
     var renderCoordinatorMetrics: TerminalRenderCoordinatorMetrics? {
-        nil
+        renderCoordinatorMetricsOverride
     }
 
     @discardableResult

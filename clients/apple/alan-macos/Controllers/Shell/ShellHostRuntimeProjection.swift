@@ -234,6 +234,25 @@ extension ShellHostController {
         }
     }
 
+    func updateAgentActivity(
+        _ activity: TerminalActivitySnapshot,
+        workingDirectory: String?,
+        observedAt: Date,
+        for paneID: String
+    ) {
+        guard pane(paneID: paneID) != nil else { return }
+        _ = updatePaneState(paneID: paneID) { current in
+            let bootProfile = bootProfileCache.profile(for: current, shellState: shellState)
+            return terminalContentProjection.projectAgentActivity(
+                activity,
+                workingDirectory: workingDirectory,
+                observedAt: observedAt,
+                for: current,
+                bootProfile: bootProfile
+            )
+        }
+    }
+
     func applyAlanBinding(_ binding: ShellAlanBinding?, for paneID: String) {
         guard let pane = pane(paneID: paneID) else { return }
         let runtime = runtime(for: pane.paneID)
@@ -300,7 +319,8 @@ extension ShellHostController {
             spaces: updatedSpaces,
             panes: updatedPanes,
             paneSlots: shellState.paneSlots,
-            contents: shellState.contents
+            contents: shellState.contents,
+            zoomedPaneIDByTabID: shellState.zoomedPaneIDByTabID
         )
         synchronizeSelection()
         routeActivityNotificationIfNeeded(from: existingPane, to: transformedPane)
@@ -460,7 +480,8 @@ extension ShellHostController {
             spaces: repairedSpaces,
             panes: panes,
             paneSlots: shellState.paneSlots,
-            contents: shellState.contents
+            contents: shellState.contents,
+            zoomedPaneIDByTabID: shellState.zoomedPaneIDByTabID
         )
         synchronizeSelection()
         publishControlPlaneState()
@@ -481,6 +502,9 @@ extension ShellHostController {
         _ state: ShellStateSnapshot,
         publish: Bool = true
     ) {
+        let previousPanesByID = Dictionary(
+            uniqueKeysWithValues: shellState.panes.map { ($0.paneID, $0) }
+        )
         terminalContentLifecycle.reconcileRuntimes(
             afterAdopting: state,
             registry: terminalRuntimeRegistry
@@ -488,6 +512,10 @@ extension ShellHostController {
 
         shellState = platformMetadataPreserver.preservingPlatformMetadata(in: state) { [weak self] paneID in
             self?.runtime(for: paneID) ?? .placeholder
+        }
+        for pane in shellState.panes {
+            guard let previousPane = previousPanesByID[pane.paneID] else { continue }
+            routeActivityNotificationIfNeeded(from: previousPane, to: pane)
         }
         reconcilePaneZoomState()
         synchronizeSelection()
@@ -614,7 +642,7 @@ extension ShellHostController {
             ($0.tabID, $0)
         })
 
-        for (tabID, paneID) in zoomedPaneIDByTabID {
+        for (tabID, paneID) in shellState.zoomedPaneIDByTabID {
             guard let tab = tabsByID[tabID],
                   tab.paneTree.paneIDs.count > 1,
                   tab.paneTree.contains(paneID: paneID),
@@ -634,6 +662,9 @@ extension ShellHostController {
 
         if nextZoomState != zoomedPaneIDByTabID {
             zoomedPaneIDByTabID = nextZoomState
+        }
+        if nextZoomState != shellState.zoomedPaneIDByTabID {
+            shellState.zoomedPaneIDByTabID = nextZoomState
         }
     }
 

@@ -1,8 +1,8 @@
 use alan_shell_core::{
     ContentInstance, ContentKind, ContentLifecycleState, PaneSlot, PaneTreeNode,
     ShellAttentionState, ShellContentPayload, ShellControlCommand, ShellControlCommandKind,
-    ShellControlRuntimeIntent, ShellLaunchTarget, Space, Tab, TabKind, TabOrganizationSection,
-    TerminalControlKey, WorkspaceState,
+    ShellControlExecutionContext, ShellControlRuntimeIntent, ShellLaunchTarget, Space,
+    SplitDirection, Tab, TabKind, TabOrganizationSection, TerminalControlKey, WorkspaceState,
 };
 
 #[test]
@@ -25,6 +25,55 @@ fn state_command_projects_snapshot_lists_and_contract_version() {
 }
 
 #[test]
+fn creation_commands_respect_runtime_reserved_pane_slot_ids() {
+    let context = ShellControlExecutionContext {
+        reserved_pane_slot_ids: vec!["pane_2".to_string()],
+    };
+
+    let created_space = base_state()
+        .reduce_control_with_context(
+            command("req-space", ShellControlCommandKind::SpaceCreate),
+            context.clone(),
+        )
+        .updated_state
+        .expect("space creation updates state");
+    assert!(
+        created_space
+            .pane_slots
+            .iter()
+            .any(|pane| pane.pane_slot_id == "pane_3")
+    );
+
+    let opened_tab = base_state()
+        .reduce_control_with_context(
+            command("req-tab", ShellControlCommandKind::TabOpen),
+            context.clone(),
+        )
+        .updated_state
+        .expect("tab creation updates state");
+    assert!(
+        opened_tab
+            .pane_slots
+            .iter()
+            .any(|pane| pane.pane_slot_id == "pane_3")
+    );
+
+    let mut split = command("req-split", ShellControlCommandKind::PaneSplit);
+    split.pane_id = Some("pane_1".to_string());
+    split.direction = Some(SplitDirection::Vertical);
+    let split_state = base_state()
+        .reduce_control_with_context(split, context)
+        .updated_state
+        .expect("pane split updates state");
+    assert!(
+        split_state
+            .pane_slots
+            .iter()
+            .any(|pane| pane.pane_slot_id == "pane_3")
+    );
+}
+
+#[test]
 fn missing_tab_close_uses_stable_validation_code() {
     let state = base_state();
 
@@ -34,6 +83,74 @@ fn missing_tab_close_uses_stable_validation_code() {
     assert_eq!(result.response.error_code.as_deref(), Some("tab_required"));
     assert!(result.updated_state.is_none());
     assert!(result.runtime_intents.is_empty());
+}
+
+#[test]
+fn background_tab_close_preserves_the_closed_tab_subject() {
+    let state = pinned_and_unpinned_state()
+        .reduce_control(command(
+            "req-create-foreground-space",
+            ShellControlCommandKind::SpaceCreate,
+        ))
+        .updated_state
+        .expect("Space creation updates focus");
+    let foreground_pane_id = state.focused_pane_id.clone();
+    let mut request = command("req-close-background", ShellControlCommandKind::TabClose);
+    request.tab_id = Some("tab_pinned".to_string());
+
+    let result = state.reduce_control(request);
+
+    assert_eq!(result.response.applied, Some(true));
+    assert_eq!(result.response.tab_id.as_deref(), Some("tab_pinned"));
+    assert_eq!(result.response.space_id.as_deref(), Some("space_main"));
+    assert_eq!(
+        result.response.current_focused_pane_slot_id,
+        foreground_pane_id
+    );
+    assert!(
+        result
+            .updated_state
+            .as_ref()
+            .is_some_and(|state| state.tab("tab_pinned").is_none())
+    );
+}
+
+#[test]
+fn background_pane_close_preserves_the_removed_pane_subject() {
+    let state = split_state()
+        .reduce_control(command(
+            "req-create-foreground-space",
+            ShellControlCommandKind::SpaceCreate,
+        ))
+        .updated_state
+        .expect("Space creation updates focus");
+    let foreground_pane_id = state.focused_pane_id.clone();
+    let mut request = command(
+        "req-close-background-pane",
+        ShellControlCommandKind::PaneClose,
+    );
+    request.pane_id = Some("pane_2".to_string());
+
+    let result = state.reduce_control(request);
+
+    assert_eq!(result.response.applied, Some(true));
+    assert_eq!(result.response.space_id.as_deref(), Some("space_main"));
+    assert_eq!(result.response.tab_id.as_deref(), Some("tab_main"));
+    assert_eq!(result.response.pane_slot_id.as_deref(), Some("pane_2"));
+    assert_eq!(
+        result.response.content_id.as_deref(),
+        Some("content_pane_2")
+    );
+    assert_eq!(
+        result.response.current_focused_pane_slot_id,
+        foreground_pane_id
+    );
+    assert!(result.updated_state.as_ref().is_some_and(|state| {
+        state
+            .pane_slots
+            .iter()
+            .all(|slot| slot.pane_slot_id != "pane_2")
+    }));
 }
 
 #[test]
@@ -111,6 +228,225 @@ fn pane_split_missing_direction_uses_stable_validation_code() {
         Some("direction_required")
     );
     assert!(result.updated_state.is_none());
+}
+
+#[test]
+fn equalize_reports_changed_splits_and_rejects_unchanged_state() {
+    let state = split_state();
+    let split_node_id = state.spaces[0].tabs[0]
+        .pane_tree
+        .split_ratios_by_node_id()
+        .into_keys()
+        .next()
+        .expect("split fixture exposes a split node");
+    let mut resize = command("req-resize", ShellControlCommandKind::PaneResizeSplit);
+    resize.split_node_id = Some(split_node_id.clone());
+    resize.ratio = Some(0.72);
+    let resized = state.reduce_control(resize);
+    let resized_state = resized.updated_state.expect("resize updates state");
+
+    let mut equalize = command("req-equalize", ShellControlCommandKind::PaneEqualizeSplits);
+    equalize.tab_id = Some("tab_main".to_string());
+    let equalized = resized_state.reduce_control(equalize);
+
+    assert_eq!(equalized.response.applied, Some(true));
+    assert_eq!(equalized.response.ratio, Some(0.5));
+    assert_eq!(
+        equalized.response.changed_split_ids.as_deref(),
+        Some([split_node_id].as_slice())
+    );
+
+    let unchanged = equalized
+        .updated_state
+        .expect("equalize updates state")
+        .reduce_control(command(
+            "req-equalize-implicit",
+            ShellControlCommandKind::PaneEqualizeSplits,
+        ));
+    assert_eq!(unchanged.response.applied, Some(false));
+    assert_eq!(
+        unchanged.response.error_code.as_deref(),
+        Some("unchanged_state")
+    );
+    assert_eq!(unchanged.response.tab_id.as_deref(), Some("tab_main"));
+    assert!(unchanged.updated_state.is_none());
+}
+
+#[test]
+fn resize_response_reports_the_effective_clamped_ratio() {
+    for requested_ratio in [0.99, 0.01] {
+        let state = split_state();
+        let split_node_id = state.spaces[0].tabs[0]
+            .pane_tree
+            .split_ratios_by_node_id()
+            .into_keys()
+            .next()
+            .expect("split fixture exposes a split node");
+        let mut resize = command(
+            "req-resize-clamped",
+            ShellControlCommandKind::PaneResizeSplit,
+        );
+        resize.split_node_id = Some(split_node_id.clone());
+        resize.ratio = Some(requested_ratio);
+
+        let result = state.reduce_control(resize);
+        let effective_ratio = PaneTreeNode::clamped_split_ratio(requested_ratio);
+
+        assert_eq!(result.response.applied, Some(true));
+        assert_eq!(result.response.ratio, Some(effective_ratio));
+        assert_eq!(
+            result
+                .updated_state
+                .as_ref()
+                .and_then(|state| state.spaces[0].tabs[0].pane_tree.node(&split_node_id))
+                .map(PaneTreeNode::split_ratio),
+            Some(effective_ratio)
+        );
+    }
+}
+
+#[test]
+fn split_mutations_project_the_background_target_space_and_tab() {
+    let target_state = split_state();
+    let target_split_id = target_state.spaces[0].tabs[0]
+        .pane_tree
+        .split_ratios_by_node_id()
+        .into_keys()
+        .next()
+        .expect("target tab exposes a split node");
+    let focused_other_space = target_state
+        .reduce_control(command(
+            "req-create-foreground-space",
+            ShellControlCommandKind::SpaceCreate,
+        ))
+        .updated_state
+        .expect("Space creation updates focus");
+    assert_ne!(
+        focused_other_space.focused_space_id.as_deref(),
+        Some("space_main")
+    );
+
+    let mut resize = command(
+        "req-resize-background",
+        ShellControlCommandKind::PaneResizeSplit,
+    );
+    resize.split_node_id = Some(target_split_id);
+    resize.ratio = Some(0.7);
+    let resized = focused_other_space.reduce_control(resize);
+    assert_eq!(resized.response.space_id.as_deref(), Some("space_main"));
+    assert_eq!(resized.response.tab_id.as_deref(), Some("tab_main"));
+
+    let mut equalize = command(
+        "req-equalize-background",
+        ShellControlCommandKind::PaneEqualizeSplits,
+    );
+    equalize.tab_id = Some("tab_main".to_string());
+    let equalized = resized
+        .updated_state
+        .expect("resize updates target tab")
+        .reduce_control(equalize);
+    assert_eq!(equalized.response.space_id.as_deref(), Some("space_main"));
+    assert_eq!(equalized.response.tab_id.as_deref(), Some("tab_main"));
+}
+
+#[test]
+fn unzoom_validates_explicit_pane_before_mutating_tab() {
+    let state = split_state();
+    let mut zoom = command("req-zoom", ShellControlCommandKind::PaneZoom);
+    zoom.pane_id = Some("pane_2".to_string());
+    let zoomed = state.reduce_control(zoom);
+    let zoomed_state = zoomed.updated_state.expect("zoom updates state");
+
+    let mut missing = command("req-unzoom-missing", ShellControlCommandKind::PaneUnzoom);
+    missing.pane_id = Some("pane_missing".to_string());
+    let rejected = zoomed_state.reduce_control(missing);
+    assert_eq!(rejected.response.applied, Some(false));
+    assert_eq!(
+        rejected.response.error_code.as_deref(),
+        Some("pane_not_found")
+    );
+    assert!(rejected.updated_state.is_none());
+
+    let mut unzoom = command("req-unzoom", ShellControlCommandKind::PaneUnzoom);
+    unzoom.pane_id = Some("pane_2".to_string());
+    let applied = zoomed_state.reduce_control(unzoom);
+    assert_eq!(applied.response.applied, Some(true));
+    assert_eq!(applied.response.zoomed_pane_id, None);
+    assert_eq!(
+        applied.updated_state.unwrap().spaces[0].tabs[0].zoomed_pane_id,
+        None
+    );
+}
+
+#[test]
+fn unzoom_projects_the_target_tab_instead_of_the_focused_zoom_state() {
+    let mut zoom_target = command("req-zoom-target", ShellControlCommandKind::PaneZoom);
+    zoom_target.pane_id = Some("pane_2".to_string());
+    let target_zoomed = split_state().reduce_control(zoom_target);
+    let target_zoomed_pane_id = target_zoomed
+        .response
+        .zoomed_pane_id
+        .clone()
+        .expect("target tab is zoomed");
+
+    let opened = target_zoomed
+        .updated_state
+        .expect("zoom updates target tab")
+        .reduce_control(command(
+            "req-open-foreground",
+            ShellControlCommandKind::TabOpen,
+        ));
+    let opened_state = opened.updated_state.expect("tab open updates state");
+    let foreground_tab_id = opened_state
+        .focused_tab_id
+        .clone()
+        .expect("opened tab is focused");
+    let foreground_pane_id = opened_state
+        .focused_pane_id
+        .clone()
+        .expect("opened tab has a focused pane");
+
+    let mut split_foreground = command("req-split-foreground", ShellControlCommandKind::PaneSplit);
+    split_foreground.pane_id = Some(foreground_pane_id);
+    split_foreground.direction = Some(SplitDirection::Vertical);
+    let split_foreground = opened_state.reduce_control(split_foreground);
+    let foreground_zoom_pane_id = split_foreground
+        .response
+        .pane_id
+        .clone()
+        .expect("split reports its new pane");
+    let mut zoom_foreground = command("req-zoom-foreground", ShellControlCommandKind::PaneZoom);
+    zoom_foreground.pane_id = Some(foreground_zoom_pane_id.clone());
+    let foreground_zoomed = split_foreground
+        .updated_state
+        .expect("split updates foreground tab")
+        .reduce_control(zoom_foreground);
+    let foreground_zoomed_state = foreground_zoomed
+        .updated_state
+        .expect("zoom updates foreground tab");
+
+    let mut unzoom_target = command("req-unzoom-target", ShellControlCommandKind::PaneUnzoom);
+    unzoom_target.tab_id = Some("tab_main".to_string());
+    let unzoomed = foreground_zoomed_state.reduce_control(unzoom_target);
+
+    assert_eq!(unzoomed.response.applied, Some(true));
+    assert_eq!(unzoomed.response.space_id.as_deref(), Some("space_main"));
+    assert_eq!(unzoomed.response.tab_id.as_deref(), Some("tab_main"));
+    assert_eq!(
+        unzoomed.response.pane_id.as_deref(),
+        Some(target_zoomed_pane_id.as_str())
+    );
+    assert_eq!(unzoomed.response.zoomed_pane_id, None);
+    let updated = unzoomed.updated_state.expect("unzoom updates target tab");
+    assert_eq!(updated.tab("tab_main").unwrap().zoomed_pane_id, None);
+    assert_eq!(
+        updated
+            .tab(&foreground_tab_id)
+            .unwrap()
+            .zoomed_pane_id
+            .as_deref(),
+        Some(foreground_zoom_pane_id.as_str())
+    );
 }
 
 #[test]
@@ -218,6 +554,65 @@ fn tab_reorder_moves_tab_into_requested_section() {
 }
 
 #[test]
+fn tab_reorder_honors_explicit_target_space_aliases() {
+    for use_target_space_id in [true, false] {
+        let mut state = pinned_and_unpinned_state();
+        state.spaces.push(Space {
+            space_id: "space_target".to_string(),
+            title: "Target".to_string(),
+            attention: ShellAttentionState::Idle,
+            tabs: Vec::new(),
+            selected_tab_id: None,
+            terminal_profile_id: None,
+            presentation_icon: None,
+        });
+        let mut request = command("req-reorder-space", ShellControlCommandKind::TabReorder);
+        request.tab_id = Some("tab_unpinned".to_string());
+        request.section = Some(TabOrganizationSection::Pinned);
+        request.index = Some(0);
+        if use_target_space_id {
+            request.target_space_id = Some("space_target".to_string());
+        } else {
+            request.space_id = Some("space_target".to_string());
+        }
+
+        let result = state.reduce_control(request);
+
+        assert_eq!(result.response.applied, Some(true));
+        assert_eq!(result.response.space_id.as_deref(), Some("space_target"));
+        assert_eq!(
+            result.response.target_space_id.as_deref(),
+            Some("space_target")
+        );
+        assert_eq!(result.response.tab_id.as_deref(), Some("tab_unpinned"));
+        let updated = result
+            .updated_state
+            .expect("cross-Space reorder updates state");
+        assert!(
+            updated.spaces[0]
+                .tabs
+                .iter()
+                .all(|tab| tab.tab_id != "tab_unpinned"),
+            "cross-Space reorder must remove the tab from its source Space"
+        );
+        let target_tab = updated.spaces[1]
+            .tabs
+            .first()
+            .expect("cross-Space reorder inserts the tab into its target Space");
+        assert_eq!(target_tab.tab_id, "tab_unpinned");
+        assert!(target_tab.is_pinned);
+        assert_eq!(
+            updated
+                .pane_slots
+                .iter()
+                .find(|slot| slot.pane_slot_id == "pane_unpinned")
+                .map(|slot| slot.space_id.as_str()),
+            Some("space_target")
+        );
+    }
+}
+
+#[test]
 fn tab_unpin_reports_resulting_section_and_index() {
     let state = pinned_and_unpinned_state();
     let mut request = command("req-unpin", ShellControlCommandKind::TabUnpin);
@@ -235,6 +630,56 @@ fn tab_unpin_reports_resulting_section_and_index() {
     assert!(
         result.response.index.is_some(),
         "tab.unpin must report the resulting index within the section"
+    );
+}
+
+#[test]
+fn repeated_pin_and_unpin_commands_preserve_tab_order() {
+    let mut state = base_state();
+    for request_id in ["req-open-second", "req-open-third"] {
+        state = state
+            .reduce_control(command(request_id, ShellControlCommandKind::TabOpen))
+            .updated_state
+            .expect("tab.open updates state");
+    }
+
+    for tab_id in ["tab_main", "tab_2"] {
+        let mut pin = command("req-pin", ShellControlCommandKind::TabPin);
+        pin.tab_id = Some(tab_id.to_string());
+        state = state
+            .reduce_control(pin)
+            .updated_state
+            .expect("tab.pin updates state");
+    }
+    let pinned_order = tab_order(&state);
+    let mut repeat_pin = command("req-repeat-pin", ShellControlCommandKind::TabPin);
+    repeat_pin.tab_id = Some("tab_main".to_string());
+    let repeated_pin = state.reduce_control(repeat_pin);
+    assert_eq!(repeated_pin.response.applied, Some(true));
+    state = repeated_pin
+        .updated_state
+        .expect("idempotent tab.pin returns state");
+    assert_eq!(tab_order(&state), pinned_order);
+
+    let mut unpin = command("req-unpin-main", ShellControlCommandKind::TabUnpin);
+    unpin.tab_id = Some("tab_main".to_string());
+    state = state
+        .reduce_control(unpin)
+        .updated_state
+        .expect("tab.unpin updates state");
+    let unpinned_order = tab_order(&state);
+    let mut repeat_unpin = command("req-repeat-unpin", ShellControlCommandKind::TabUnpin);
+    repeat_unpin.tab_id = Some("tab_3".to_string());
+    let repeated_unpin = state.reduce_control(repeat_unpin);
+    assert_eq!(repeated_unpin.response.applied, Some(true));
+    assert_eq!(
+        tab_order(
+            repeated_unpin
+                .updated_state
+                .as_ref()
+                .expect("idempotent tab.unpin returns state")
+        ),
+        unpinned_order
     );
 }
 
@@ -351,6 +796,16 @@ fn base_state() -> WorkspaceState {
     }
 }
 
+fn split_state() -> WorkspaceState {
+    let mut split = command("fixture-split", ShellControlCommandKind::PaneSplit);
+    split.pane_id = Some("pane_1".to_string());
+    split.direction = Some(SplitDirection::Vertical);
+    base_state()
+        .reduce_control(split)
+        .updated_state
+        .expect("split fixture updates state")
+}
+
 fn pinned_and_unpinned_state() -> WorkspaceState {
     fn tab(id: &str, node: &str, pane: &str, is_pinned: bool) -> Tab {
         Tab {
@@ -410,4 +865,12 @@ fn pinned_and_unpinned_state() -> WorkspaceState {
         ],
         contents: vec![content("content_pinned"), content("content_unpinned")],
     }
+}
+
+fn tab_order(state: &WorkspaceState) -> Vec<String> {
+    state.spaces[0]
+        .tabs
+        .iter()
+        .map(|tab| tab.tab_id.clone())
+        .collect()
 }

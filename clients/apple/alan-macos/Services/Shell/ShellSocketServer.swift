@@ -399,10 +399,10 @@ final class AlanShellSocketServer {
 private extension AlanShellControlCommandKind {
     var requiresHostHandler: Bool {
         switch self {
-        case .spaceCreate, .tabOpen, .tabPin, .tabReorder, .paneSplit,
-            .paneMove, .paneMoveWithinTab, .paneSpatialFocus, .paneResizeSplit,
-            .paneEqualizeSplits, .paneZoom, .paneUnzoom, .terminalRenderMetrics,
-            .terminalSendText, .terminalSendKey, .agentActivity,
+        case .spaceCreate, .tabOpen, .tabClose, .tabPin, .tabReorder, .paneSplit, .paneClose,
+            .paneMoveWithinTab, .paneSpatialFocus, .paneResizeSplit, .paneEqualizeSplits,
+            .paneZoom, .paneUnzoom, .terminalRenderMetrics, .terminalSendText, .terminalSendKey,
+            .agentActivity,
             .performanceDiagnosticsSetEnabled,
             .performanceDiagnosticsExportRecent, .performanceDiagnosticsRecordChildPressure:
             return true

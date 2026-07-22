@@ -75,7 +75,8 @@ struct ShellPlatformMetadataPreserver {
             spaces: hydratedSpaces,
             panes: hydratedPanes,
             paneSlots: state.paneSlots,
-            contents: state.contents
+            contents: state.contents,
+            zoomedPaneIDByTabID: state.zoomedPaneIDByTabID
         )
     }
 
