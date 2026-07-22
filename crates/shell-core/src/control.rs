@@ -359,11 +359,10 @@ impl ShellControlReducer {
                 let Some(tab_id) = command.tab_id.clone() else {
                     return self.validation_error(command, "tab_required", "tab_id is required.");
                 };
-                self.apply_reducer(
-                    command,
-                    ReducerOperation::CloseTab { tab_id },
-                    ResponseProjection::Current,
-                )
+                let operation = ReducerOperation::CloseTab {
+                    tab_id: tab_id.clone(),
+                };
+                self.apply_reducer(command, operation, ResponseProjection::TabSubject(tab_id))
             }
             ShellControlCommandKind::TabPin => {
                 let Some(tab_id) = command
@@ -552,9 +551,8 @@ impl ShellControlReducer {
             .target_space_id
             .clone()
             .or_else(|| command.space_id.clone());
-        // Honor the requested target section so a tab can move between the pinned and unpinned
-        // sections or Spaces, not only within its current location. `OrganizeTab` treats `index`
-        // as the absolute position inside the target section.
+        // Honor the target Space/section. `OrganizeTab` treats `index` as the absolute position
+        // inside that target section.
         let mut result = self.apply_reducer(
             command,
             ReducerOperation::OrganizeTab {
@@ -694,7 +692,7 @@ impl ShellControlReducer {
         )
     }
 
-    fn pane_equalize_splits(&self, command: ShellControlCommand) -> ShellControlResult {
+    fn pane_equalize_splits(&self, mut command: ShellControlCommand) -> ShellControlResult {
         let Some(tab_id) = command
             .tab_id
             .clone()
@@ -702,6 +700,7 @@ impl ShellControlReducer {
         else {
             return self.validation_error(command, "tab_required", "tab_id is required.");
         };
+        command.tab_id = Some(tab_id.clone());
         let Some(tab) = self.state.tab(&tab_id) else {
             return self.validation_error(
                 command,

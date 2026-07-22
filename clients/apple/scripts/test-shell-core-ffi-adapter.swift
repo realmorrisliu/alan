@@ -933,6 +933,33 @@ private func testProductionAdapterControlCommands() throws {
         reservedSplitResult.updatedState?.pane(paneID: "pane_3") != nil,
         "control adapter must preserve host runtime pane reservations"
     )
+
+    let twoTabs = try state.openingTerminalTab(
+        in: "space_main",
+        title: "Foreground",
+        workingDirectory: "/repo/foreground"
+    ).state
+    guard let backgroundTabID = twoTabs.spaces.first?.tabs.first?.tabID else {
+        throw TestFailure.message("close fixture must expose a background tab")
+    }
+    let closeResult = try adapter.handleControlCommand(
+        try controlCommand("tab.close", fields: ["tab_id": backgroundTabID]),
+        state: twoTabs
+    )
+    try expect(
+        closeResult.response.tabID == backgroundTabID,
+        "tab.close response must preserve the requested background tab subject"
+    )
+
+    let unchangedEqualize = try adapter.handleControlCommand(
+        try controlCommand("pane.equalize_splits"),
+        state: splitResult.state
+    )
+    try expect(
+        unchangedEqualize.response.errorCode == "unchanged_state"
+            && unchangedEqualize.response.tabID == "tab_main",
+        "implicit unchanged equalize response must preserve the resolved focused tab"
+    )
 }
 
 private func testProductionAdapterUnscopedPaneListSpansAllTabs() throws {

@@ -86,6 +86,28 @@ fn missing_tab_close_uses_stable_validation_code() {
 }
 
 #[test]
+fn background_tab_close_preserves_the_closed_tab_subject() {
+    let state = pinned_and_unpinned_state();
+    let mut request = command("req-close-background", ShellControlCommandKind::TabClose);
+    request.tab_id = Some("tab_pinned".to_string());
+
+    let result = state.reduce_control(request);
+
+    assert_eq!(result.response.applied, Some(true));
+    assert_eq!(result.response.tab_id.as_deref(), Some("tab_pinned"));
+    assert_eq!(
+        result.response.current_focused_pane_slot_id.as_deref(),
+        Some("pane_unpinned")
+    );
+    assert!(
+        result
+            .updated_state
+            .as_ref()
+            .is_some_and(|state| state.tab("tab_pinned").is_none())
+    );
+}
+
+#[test]
 fn tab_open_applies_reducer_and_wraps_terminal_start_intent() {
     let state = base_state();
     let mut request = command("req-open", ShellControlCommandKind::TabOpen);
@@ -179,7 +201,7 @@ fn equalize_reports_changed_splits_and_rejects_unchanged_state() {
 
     let mut equalize = command("req-equalize", ShellControlCommandKind::PaneEqualizeSplits);
     equalize.tab_id = Some("tab_main".to_string());
-    let equalized = resized_state.reduce_control(equalize.clone());
+    let equalized = resized_state.reduce_control(equalize);
 
     assert_eq!(equalized.response.applied, Some(true));
     assert_eq!(equalized.response.ratio, Some(0.5));
@@ -191,12 +213,16 @@ fn equalize_reports_changed_splits_and_rejects_unchanged_state() {
     let unchanged = equalized
         .updated_state
         .expect("equalize updates state")
-        .reduce_control(equalize);
+        .reduce_control(command(
+            "req-equalize-implicit",
+            ShellControlCommandKind::PaneEqualizeSplits,
+        ));
     assert_eq!(unchanged.response.applied, Some(false));
     assert_eq!(
         unchanged.response.error_code.as_deref(),
         Some("unchanged_state")
     );
+    assert_eq!(unchanged.response.tab_id.as_deref(), Some("tab_main"));
     assert!(unchanged.updated_state.is_none());
 }
 
