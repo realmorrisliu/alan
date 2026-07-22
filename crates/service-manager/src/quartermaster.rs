@@ -12,6 +12,9 @@ use alan_shell::{BoundedListError, Shell};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 
+#[cfg(test)]
+use crate::process_runner::SystemProcessRunner;
+
 use crate::{
     PackageCatalog, PackageCommand, PackageCommandResult, PackageSnapshot, PackageSnapshotEntry,
 };
@@ -48,41 +51,6 @@ impl ProcessRunner for QuartermasterProcessRunner {
             Err(QError::Operation(message)) => {
                 ProcessOutcome::exited(1, format!("q: {message}\n").into_bytes())
             }
-        }
-    }
-}
-
-#[derive(Clone)]
-pub(crate) struct SystemProcessRunner {
-    quartermaster: QuartermasterProcessRunner,
-    fallback: Option<Arc<dyn ProcessRunner>>,
-}
-
-impl SystemProcessRunner {
-    pub(crate) fn new(fallback: Option<Arc<dyn ProcessRunner>>) -> Self {
-        Self {
-            quartermaster: QuartermasterProcessRunner,
-            fallback,
-        }
-    }
-}
-
-#[async_trait]
-impl ProcessRunner for SystemProcessRunner {
-    async fn run(&self, invocation: ProcessInvocation) -> ProcessOutcome {
-        if invocation.exec.executable == QUARTERMASTER_EXECUTABLE {
-            if invocation
-                .namespace
-                .resolve(&invocation.exec.executable)
-                .is_err()
-            {
-                return ProcessOutcome::exited(127, b"executable is not mounted\n");
-            }
-            return self.quartermaster.run(invocation).await;
-        }
-        match &self.fallback {
-            Some(runner) => runner.run(invocation).await,
-            None => ProcessOutcome::exited(127, b"executable has no Process image\n"),
         }
     }
 }
@@ -506,7 +474,7 @@ mod tests {
     use alan_ap::reference::MemFs;
     use alan_ap::{Fid, FileKind, FileServer, Offset, OpenMode, Qid, Stat};
     use alan_hostfs::{HostDirAccess, HostDirFs};
-    use alan_kernel::{Access, Credentials, ExecSpec, Namespace, Pid};
+    use alan_kernel::{Access, Credentials, ExecSpec, LiveNamespace, Namespace, Pid};
     use alan_shell::StdioDriver;
     use async_trait::async_trait;
     use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
@@ -581,19 +549,18 @@ mod tests {
             exec: ExecSpec {
                 executable: QUARTERMASTER_EXECUTABLE.to_string(),
                 args: args.iter().map(|value| (*value).to_string()).collect(),
-                namespace: None,
+                namespace: alan_kernel::ExecNamespaceManifest::default(),
                 descriptors: BTreeMap::new(),
             },
         }
     }
 
-    fn q_shell(
+    async fn q_shell(
         service: &Arc<crate::PackageService>,
         source: Option<&std::path::Path>,
         package_access: Access,
     ) -> Shell {
-        let procfs =
-            alan_kernel::ProcFs::new().with_runner(Arc::new(SystemProcessRunner::new(None)));
+        let procfs = alan_kernel::ProcFs::new();
         let mut namespace = Namespace::new();
         namespace.mount(
             QUARTERMASTER_EXECUTABLE,
@@ -614,10 +581,20 @@ mod tests {
                 Access::ReadOnly,
             );
         }
+        let parent = crate::process_spawn::spawn_process(
+            &procfs,
+            None,
+            LiveNamespace::new(namespace.clone()),
+            Credentials::user("q-test"),
+            QUARTERMASTER_EXECUTABLE,
+        )
+        .await
+        .unwrap();
+        let procfs = procfs.with_runner(Arc::new(SystemProcessRunner::new(None, None)));
         namespace.mount(
             "/proc",
             InProcessTransport::new(Arc::new(procfs.for_spawner(
-                None,
+                Some(parent),
                 namespace.clone(),
                 Credentials::user("q-test"),
             ))),
@@ -647,7 +624,7 @@ mod tests {
 
     #[tokio::test]
     async fn system_runner_rejects_q_without_an_executable_mount() {
-        let outcome = SystemProcessRunner::new(None)
+        let outcome = SystemProcessRunner::new(None, None)
             .run(invocation(Namespace::new(), &["list"]))
             .await;
 
@@ -737,7 +714,7 @@ mod tests {
         )
         .unwrap();
         let service = crate::PackageService::ephemeral("test").unwrap();
-        let shell = q_shell(&service, Some(source.path()), Access::ReadWrite);
+        let shell = q_shell(&service, Some(source.path()), Access::ReadWrite).await;
 
         let installed = shell
             .run(
@@ -881,7 +858,7 @@ mod tests {
     #[tokio::test]
     async fn q_fails_when_package_service_projection_is_read_only() {
         let service = crate::PackageService::ephemeral("test").unwrap();
-        let shell = q_shell(&service, None, Access::ReadOnly);
+        let shell = q_shell(&service, None, Access::ReadOnly).await;
         let result = shell
             .run(QUARTERMASTER_EXECUTABLE, &["list".to_string()])
             .await
@@ -908,7 +885,7 @@ mod tests {
         .unwrap();
         symlink("safe/SKILL.md", source.path().join("linked.md")).unwrap();
         let service = crate::PackageService::ephemeral("test").unwrap();
-        let shell = q_shell(&service, Some(source.path()), Access::ReadWrite);
+        let shell = q_shell(&service, Some(source.path()), Access::ReadWrite).await;
         let result = shell
             .run(
                 QUARTERMASTER_EXECUTABLE,
@@ -944,7 +921,7 @@ mod tests {
         .unwrap();
         symlink("safe", source.path().join(".git")).unwrap();
         let service = crate::PackageService::ephemeral("test").unwrap();
-        let shell = q_shell(&service, Some(source.path()), Access::ReadWrite);
+        let shell = q_shell(&service, Some(source.path()), Access::ReadWrite).await;
 
         let result = shell
             .run(

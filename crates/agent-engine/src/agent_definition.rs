@@ -3,8 +3,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, ensure};
 
 use crate::{
-    AGENT_DEFINITION_DESCRIPTOR, ConfigSourceKind, ProcessLaunchContext, ProcessPackageKind,
-    config::merge_skill_override_overlays_from_paths,
+    ConfigSourceKind, ProcessDescriptor, ProcessPackageKind, ProcessPackageReference,
     skills::{ResolvedCapabilityView, ScopedPackageDir, SkillOverride, SkillScope},
 };
 
@@ -43,93 +42,31 @@ impl ResolvedAgentDefinition {
         Ok(base.clone())
     }
 
-    pub fn from_launch_context(
-        launch_context: &ProcessLaunchContext,
+    pub fn from_process_inputs(
+        descriptor: Option<&ProcessDescriptor>,
+        package_references: &[ProcessPackageReference],
         base_skill_overrides: &[SkillOverride],
         base_source: ConfigSourceKind,
     ) -> Result<Self> {
-        let (package_capabilities, package_errors) = resolve_package_references(launch_context)?;
-        let Some(descriptor) = launch_context.descriptor(AGENT_DEFINITION_DESCRIPTOR) else {
+        let (package_capabilities, package_errors) =
+            resolve_package_references(package_references)?;
+        let Some(descriptor) = descriptor else {
             return Self::empty(base_skill_overrides, package_capabilities, package_errors);
         };
-        if let Some(file_tree) = descriptor.file_tree.as_ref() {
-            return Self::from_file_tree(
-                descriptor,
-                file_tree,
-                base_skill_overrides,
-                base_source,
-                package_capabilities,
-                package_errors,
-            );
-        }
-        let declared_root = launch_context
-            .host_path(&descriptor.path)
-            .with_context(|| {
-                format!(
-                    "Agent Definition descriptor {} is not backed by an explicit Host Mount",
-                    descriptor.path
-                )
-            })?;
-        let canonical_root = std::fs::canonicalize(&declared_root).with_context(|| {
+        let file_tree = descriptor.file_tree.as_ref().with_context(|| {
             format!(
-                "failed to resolve Agent Definition descriptor {}",
+                "Agent Definition descriptor {} must carry an immutable file-tree handle",
                 descriptor.path
             )
         })?;
-        let resolved_namespace_path = launch_context
-            .namespace_path(&canonical_root)
-            .with_context(|| {
-                format!(
-                    "Agent Definition descriptor {} escapes its explicit Host Mount",
-                    descriptor.path
-                )
-            })?;
-        ensure!(
-            resolved_namespace_path == descriptor.path,
-            "Agent Definition descriptor {} resolves to a different Alan OS path: {}",
-            descriptor.path,
-            resolved_namespace_path
-        );
-        validate_definition_tree(&declared_root)?;
-        let root_dir = declared_root;
-        let config_path = root_dir.join("agent.toml");
-        let persona_dir = root_dir.join("persona");
-        let skills_dir = root_dir.join("skills");
-        let policy_path = root_dir.join("policy.yaml");
-        let config_paths = (base_source != ConfigSourceKind::EnvOverride && config_path.exists())
-            .then_some(config_path.clone())
-            .into_iter()
-            .collect::<Vec<_>>();
-        let skill_overrides =
-            merge_skill_override_overlays_from_paths(base_skill_overrides, &config_paths)?;
-        let resolved = Self {
-            root_dir: Some(root_dir),
-            namespace_root: Some(PathBuf::from(&descriptor.path)),
-            config_path: config_path.exists().then_some(config_path),
-            persona_dirs: persona_dir
-                .is_dir()
-                .then_some(persona_dir)
-                .into_iter()
-                .collect(),
-            capability_view: capability_view_with_packages(
-                vec![ScopedPackageDir {
-                    path: skills_dir,
-                    scope: SkillScope::Descriptor,
-                }],
-                package_capabilities,
-                package_errors,
-            ),
-            skill_overrides,
-            policy_path: policy_path.exists().then_some(policy_path),
-            config_content: None,
-            persona_context: None,
-            descriptor_tree: None,
-        };
-        resolved
-            .capability_view
-            .validate_unique_runtime_skill_ids()
-            .context("validate Process Skill package references")?;
-        Ok(resolved)
+        Self::from_file_tree(
+            descriptor,
+            file_tree,
+            base_skill_overrides,
+            base_source,
+            package_capabilities,
+            package_errors,
+        )
     }
 
     fn empty(
@@ -231,7 +168,7 @@ impl ResolvedAgentDefinition {
 }
 
 fn resolve_package_references(
-    launch_context: &ProcessLaunchContext,
+    package_references: &[ProcessPackageReference],
 ) -> Result<(
     Vec<crate::skills::CapabilityPackage>,
     Vec<crate::skills::SkillError>,
@@ -239,17 +176,11 @@ fn resolve_package_references(
     let mut packages = Vec::new();
     let mut errors = Vec::new();
     let mut selected_packages = std::collections::BTreeSet::new();
-    for reference in &launch_context.package_references {
+    for reference in package_references {
         ensure!(
             selected_packages.insert(reference.package_id.clone()),
             "duplicate package reference `{}`",
             reference.package_id
-        );
-        let exact_mounts = launch_context.namespace.union_at(&reference.namespace_path);
-        ensure!(
-            exact_mounts.len() == 1 && exact_mounts[0].access == alan_kernel::Access::ReadOnly,
-            "package reference {} requires one exact read-only Process namespace mount",
-            reference.namespace_path
         );
         let scope = match reference.kind {
             ProcessPackageKind::Preinstalled => SkillScope::Builtin,
@@ -447,57 +378,6 @@ fn capability_view_with_packages(
     view.packages.extend(packages);
     view.descriptor_errors.extend(errors);
     view
-}
-
-fn validate_definition_tree(root_dir: &Path) -> Result<()> {
-    let root_metadata = std::fs::symlink_metadata(root_dir).with_context(|| {
-        format!(
-            "failed to inspect Agent Definition tree {}",
-            root_dir.display()
-        )
-    })?;
-    ensure!(
-        root_metadata.file_type().is_dir() && !root_metadata.file_type().is_symlink(),
-        "Agent Definition descriptor must reference a real directory: {}",
-        root_dir.display()
-    );
-
-    let mut pending = vec![root_dir.to_path_buf()];
-    while let Some(directory) = pending.pop() {
-        let entries = std::fs::read_dir(&directory).with_context(|| {
-            format!(
-                "failed to read Agent Definition tree {}",
-                directory.display()
-            )
-        })?;
-        for entry in entries {
-            let entry = entry.with_context(|| {
-                format!(
-                    "failed to read Agent Definition tree {}",
-                    directory.display()
-                )
-            })?;
-            let path = entry.path();
-            let metadata = std::fs::symlink_metadata(&path).with_context(|| {
-                format!("failed to inspect Agent Definition path {}", path.display())
-            })?;
-            ensure!(
-                !metadata.file_type().is_symlink(),
-                "Agent Definition tree must not contain symlinks: {}",
-                path.display()
-            );
-            if metadata.file_type().is_dir() {
-                pending.push(path);
-            } else {
-                ensure!(
-                    metadata.file_type().is_file(),
-                    "Agent Definition tree contains an unsupported file type: {}",
-                    path.display()
-                );
-            }
-        }
-    }
-    Ok(())
 }
 
 #[cfg(test)]

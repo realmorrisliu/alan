@@ -1,15 +1,17 @@
 //! Platform inputs for booting Service Manager.
 
-use std::sync::Arc;
+use std::{collections::BTreeMap, path::Path, sync::Arc};
 
 use alan_agent_engine::{
-    AgentProcessConfig, Config, HostMountGrant, InstallChannel, LlmClient, ProcessDescriptor,
-    ProcessLaunchContext, ToolRegistry,
+    AgentProcessConfig, Config, InstallChannel, LlmClient, ProcessDescriptor, ProcessFileTree,
+    ToolRegistry,
 };
 use alan_ap::InProcessTransport;
 use alan_kernel::{Access, Credentials, Namespace};
 use alan_llm::{GenerationRequest, GenerationResponse, LlmProvider, StreamChunk};
-use alan_service_manager::{ConnectionsFile, LlmClientFactory, ServiceManagerConfig};
+use alan_service_manager::{
+    ConnectionsFile, LlmClientFactory, ProcessLaunchContext, ServiceManagerConfig,
+};
 use anyhow::{Context, Result, bail};
 
 use crate::paths::{HostStorePaths, SystemStorePaths};
@@ -164,6 +166,7 @@ impl HostBootConfig {
         let root_definition_fs =
             alan_hostfs::HostDirFs::new(&root_definition, alan_hostfs::HostDirAccess::ReadOnly)
                 .context("failed to open system Root Agent Definition")?;
+        let root_definition_tree = snapshot_agent_definition(&root_definition)?;
         namespace.mount(
             "/lib/agents/root",
             InProcessTransport::new(Arc::new(root_definition_fs)),
@@ -171,15 +174,10 @@ impl HostBootConfig {
         );
 
         let mut process = AgentProcessConfig::from(Config::load_with_metadata()?);
-        process.launch_context = ProcessLaunchContext::new(namespace, Credentials::system(), "/")?
-            .with_host_mount(HostMountGrant::new(
-                "/lib/agents/root",
-                root_definition,
-                Access::ReadOnly,
-            )?)
+        let launch_context = ProcessLaunchContext::new(namespace, Credentials::system(), "/")?
             .with_descriptor(
                 alan_agent_engine::AGENT_DEFINITION_DESCRIPTOR,
-                ProcessDescriptor::new("/lib/agents/root")?,
+                ProcessDescriptor::with_file_tree("/lib/agents/root", root_definition_tree)?,
             )
             .with_descriptor(
                 alan_agent_engine::MEMORY_STORE_DESCRIPTOR,
@@ -204,15 +202,16 @@ impl HostBootConfig {
             managed_auth: Some(host_store.managed_auth),
         });
 
-        Ok(Self(ServiceManagerConfig::with_factory(
-            channel_id,
+        Ok(Self(ServiceManagerConfig {
+            channel_id: channel_id.into(),
             process,
-            Some(connection_store),
-            Some(system_store.packages()?),
+            launch_context,
+            connection_store: Some(connection_store),
+            package_store: Some(system_store.packages()?),
             llm_factory,
-            Arc::new(crate::host_mounts::NativeHostMountExportAdapter),
+            host_mount_adapter: Arc::new(crate::host_mounts::NativeHostMountExportAdapter),
             tools,
-        )))
+        }))
     }
 
     /// Explicit test-only inputs. Product callers never select this implicitly.
@@ -222,9 +221,15 @@ impl HostBootConfig {
         llm_client: LlmClient,
         tools: ToolRegistry,
     ) -> Self {
-        Self(ServiceManagerConfig::ephemeral(
-            channel_id, process, llm_client, tools,
-        ))
+        let mut config = ServiceManagerConfig::ephemeral(
+            channel_id,
+            process,
+            ProcessLaunchContext::root(),
+            llm_client,
+            tools,
+        );
+        config.host_mount_adapter = Arc::new(crate::host_mounts::NativeHostMountExportAdapter);
+        Self(config)
     }
 
     pub(crate) fn into_service_manager(self) -> ServiceManagerConfig {
@@ -234,6 +239,48 @@ impl HostBootConfig {
     pub(crate) fn channel_id(&self) -> &str {
         &self.0.channel_id
     }
+}
+
+fn snapshot_agent_definition(root: &Path) -> Result<ProcessFileTree> {
+    let metadata = std::fs::symlink_metadata(root)
+        .with_context(|| format!("inspect Agent Definition {}", root.display()))?;
+    anyhow::ensure!(
+        metadata.is_dir() && !metadata.file_type().is_symlink(),
+        "Agent Definition root must be a real directory"
+    );
+    let mut files = BTreeMap::new();
+    let mut pending = vec![root.to_path_buf()];
+    while let Some(directory) = pending.pop() {
+        for entry in std::fs::read_dir(&directory)
+            .with_context(|| format!("read Agent Definition {}", directory.display()))?
+        {
+            let entry = entry?;
+            let path = entry.path();
+            let metadata = std::fs::symlink_metadata(&path)?;
+            anyhow::ensure!(
+                !metadata.file_type().is_symlink(),
+                "Agent Definition contains a symlink: {}",
+                path.display()
+            );
+            if metadata.is_dir() {
+                pending.push(path);
+                continue;
+            }
+            anyhow::ensure!(
+                metadata.is_file(),
+                "Agent Definition contains a special file: {}",
+                path.display()
+            );
+            let relative = path
+                .strip_prefix(root)
+                .expect("Agent Definition traversal stays below its root")
+                .to_str()
+                .context("Agent Definition path is not UTF-8")?
+                .to_string();
+            files.insert(relative, std::fs::read(&path)?);
+        }
+    }
+    ProcessFileTree::new(files)
 }
 
 #[cfg(test)]

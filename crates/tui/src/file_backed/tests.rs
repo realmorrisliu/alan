@@ -311,7 +311,7 @@ async fn write_agent_input_targets_agent_surface() {
     let root = InProcessTransport::new(Arc::new(MountFs::new(namespace)));
     let shell = alan_shell::Shell::new(root);
     let pid = shell
-        .spawn(r#"{"executable":"/bin/alan-agent","args":[]}"#)
+        .spawn(r#"{"executable":"/bin/alan-agent","args":[],"namespace":{"generation": 0,"mounts":[]}}"#)
         .await
         .unwrap();
     agent_root
@@ -451,7 +451,7 @@ async fn hydrated_output_is_not_replayed_by_the_live_tail() {
     let root = InProcessTransport::new(Arc::new(MountFs::new(namespace)));
     let shell = alan_shell::Shell::new(root);
     let pid = shell
-        .spawn(r#"{"executable":"/bin/alan-agent","args":[]}"#)
+        .spawn(r#"{"executable":"/bin/alan-agent","args":[],"namespace":{"generation": 0,"mounts":[]}}"#)
         .await
         .unwrap();
     agent_root
@@ -741,7 +741,7 @@ async fn response_missed_at_attach_is_recovered_by_the_tape_watcher() {
     let root = InProcessTransport::new(Arc::new(MountFs::new(namespace)));
     let shell = alan_shell::Shell::new(root);
     let pid = shell
-        .spawn(r#"{"executable":"/bin/alan-agent","args":[]}"#)
+        .spawn(r#"{"executable":"/bin/alan-agent","args":[],"namespace":{"generation": 0,"mounts":[]}}"#)
         .await
         .unwrap();
     agent_root

@@ -14,6 +14,9 @@ mod flat_fs;
 mod host_mount;
 mod local_entry;
 mod package;
+mod process_launch;
+mod process_runner;
+mod process_spawn;
 mod quartermaster;
 mod runtime;
 
@@ -32,8 +35,8 @@ pub use control_fs::{
     ManagerState, RestartDecision, ServiceManagerFs, SystemStatus, UnitSnapshot, UnitStatus,
 };
 pub use host_mount::{
-    HostMountAccess, HostMountApplicatorFactory, HostMountExport, HostMountExportAdapter,
-    HostMountGrantRecord, HostMountRequest, HostMountService, HostMountStatus,
+    HostMountAccess, HostMountExport, HostMountExportAdapter, HostMountGrantRecord,
+    HostMountRequest, HostMountService, HostMountStatus, HostMountToolProjection,
     UnavailableHostMountExportAdapter,
 };
 pub use local_entry::LocalEntryService;
@@ -42,6 +45,7 @@ pub use package::{
     PackageRecord, PackageReferenceLease, PackageService, PackageSnapshot, PackageSnapshotEntry,
     PackageState,
 };
+pub use process_launch::ProcessLaunchContext;
 pub use runtime::{
     BOOT_ID_PATH, BOOT_STATE_PATH, LlmClientFactory, ServiceManager, ServiceManagerConfig,
 };

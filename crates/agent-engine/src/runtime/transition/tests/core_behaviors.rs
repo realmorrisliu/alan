@@ -175,7 +175,6 @@ async fn test_cancel_current_task() {
         &mut state.machine,
         &agent_files,
         &host_mount_requests,
-        None,
         &mut emit,
     )
     .await;

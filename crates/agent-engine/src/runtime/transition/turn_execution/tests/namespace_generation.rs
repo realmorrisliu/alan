@@ -79,7 +79,7 @@ async fn test_namespace_turn_reads_agent_input_generates_via_llmfs_and_writes_ag
     let shell = alan_shell::Shell::new(root.clone());
 
     let pid = shell
-        .spawn(r#"{"executable":"/bin/agent","args":[]}"#)
+        .spawn(r#"{"executable":"/bin/agent","args":[],"namespace":{"generation": 0,"mounts":[]}}"#)
         .await
         .unwrap();
     assert_eq!(pid, "1");
@@ -375,7 +375,7 @@ async fn test_namespace_turn_live_openai_responses_ignored() {
     let shell = alan_shell::Shell::new(root.clone());
 
     let pid = shell
-        .spawn(r#"{"executable":"/bin/agent","args":[]}"#)
+        .spawn(r#"{"executable":"/bin/agent","args":[],"namespace":{"generation": 0,"mounts":[]}}"#)
         .await
         .unwrap();
     assert_eq!(pid, "1");
@@ -832,7 +832,8 @@ async fn compaction_timeout_aborts_namespace_generation_before_continuing() {
             started: Arc::clone(&started),
         },
         ToolRegistry::new(),
-    );
+    )
+    .await;
     state.runtime_config.compaction_trigger_messages = 0;
     state.runtime_config.context_window_tokens = 1;
     state.runtime_config.compaction_soft_trigger_ratio = 0.0;

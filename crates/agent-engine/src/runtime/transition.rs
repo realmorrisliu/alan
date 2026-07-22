@@ -13,15 +13,13 @@ use turn_execution::run_turn_with_cancel;
 
 #[cfg(test)]
 pub(super) use namespace_environment::NamespaceRequestRecord;
-pub use namespace_environment::{
-    ApprovedMountGrant, ApprovedMountGrantAccess, MountGrantApplicator,
-    MountGrantApplicatorFactory, NamespaceActionRecord, NamespaceMountApplication,
-    NamespaceMountControl, NamespaceRuntimeEnvironment, NamespaceToolActionOutput,
-    NamespaceTurnOutput, NamespaceTurnRuntime, NamespaceTurnRuntimeConfig,
-};
 pub(crate) use namespace_environment::{
     HostMountTerminalResult, HostMountTerminalStatus, NamespaceAgentFiles, NamespaceChildLaunch,
     NamespaceGeneration, NamespaceHostMountRequests, NamespaceProcessFiles, NamespaceToolExecution,
+};
+pub use namespace_environment::{
+    NamespaceActionRecord, NamespaceRuntimeEnvironment, NamespaceToolActionOutput,
+    NamespaceTurnOutput, NamespaceTurnRuntime, NamespaceTurnRuntimeConfig,
 };
 
 use std::collections::VecDeque;
@@ -178,11 +176,9 @@ pub(super) fn delegated_skill_runtime(
     let host_mount_requests = state.environment.host_mount_requests();
     let child_run_registry = state.child_run_registry().clone();
     let child_launch = state.child_launch();
-    let base_agent_config = child_launch_base_agent_config(state);
     let tool_execution = state.tool_execution();
     let parent_process_path = state.process_path();
     let child_runtime_inputs = super::delegated_skill_tool::DelegatedChildRuntimeInputs::new(
-        base_agent_config,
         child_launch,
         tool_execution,
         child_run_registry,
@@ -660,12 +656,6 @@ where
     Ok(ToolBatchOrchestratorOutcome::ContinueTurnLoop { refresh_context })
 }
 
-fn child_launch_base_agent_config(state: &RuntimeLoopState) -> super::launch_config::AgentConfig {
-    let mut config = super::launch_config::AgentConfig::from(state.core_config.clone());
-    config.runtime_config = state.runtime_config.clone();
-    config
-}
-
 fn submission_runtime(state: &mut RuntimeLoopState) -> SubmissionRuntime<'_> {
     let RuntimeLoopState {
         machine,
@@ -674,8 +664,7 @@ fn submission_runtime(state: &mut RuntimeLoopState) -> SubmissionRuntime<'_> {
     } = state;
     let agent_files = environment.agent_files();
     let host_mount_requests = environment.host_mount_requests();
-    let mount_control = environment.mount_control();
-    SubmissionRuntime::new(machine, agent_files, host_mount_requests, mount_control)
+    SubmissionRuntime::new(machine, agent_files, host_mount_requests)
 }
 
 pub(super) async fn handle_runtime_op<E, F>(

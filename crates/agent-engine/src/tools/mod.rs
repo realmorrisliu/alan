@@ -10,8 +10,14 @@ mod reified_namespace;
 mod sandbox;
 mod sandbox_backend;
 
-pub use context::{ToolContext, ToolExecutionAuthority, ToolExecutionBinding};
-pub use registry::{Tool, ToolProcessRunner, ToolRegistry, ToolResult};
+#[cfg(test)]
+pub(crate) use context::test_execution_binding;
+pub use context::{
+    ToolContext, ToolExecutionAdapter, ToolExecutionAuthority, ToolExecutionBinding,
+};
+pub use registry::{
+    Tool, ToolProcessInvocation, ToolProcessOutcome, ToolProcessRunner, ToolRegistry, ToolResult,
+};
 pub use reified_namespace::{
     DEFAULT_PRIMARY_MOUNT_NAMESPACE_PATH, DEFAULT_SCRATCH_TMP_NAMESPACE_PATH,
     LinuxReifiedNamespaceRunner, ReifiedExecutionSubstrateMount, ReifiedHostMount,
@@ -20,7 +26,7 @@ pub use reified_namespace::{
     ReifiedNamespaceRunError, ReifiedNamespaceRunner, ReifiedScratchTmpMount,
     default_execution_substrate,
 };
-pub use sandbox::{ExecResult, NetworkPosture, Sandbox, SandboxSpec};
+pub use sandbox::{ExecResult, NetworkPosture, Sandbox, SandboxHostMount, SandboxSpec};
 pub use sandbox_backend::{
     LinuxReificationCapability, LinuxReificationCapabilityReport, LinuxReificationStatus,
     LinuxReifiedNamespaceBackendReadiness, SandboxBackendKind, active_backend_name,

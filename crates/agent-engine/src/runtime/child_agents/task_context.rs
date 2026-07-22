@@ -177,6 +177,7 @@ mod tests {
                 output_dir: None,
             },
             handles,
+            host_mounts: Vec::new(),
             runtime_overrides: SpawnRuntimeOverrides::default(),
             delegated: None,
         }

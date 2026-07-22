@@ -211,7 +211,7 @@
             counter: Arc::clone(&counter),
         });
 
-        let mut state = create_test_state_with_machine_and_tools(machine, tools);
+        let mut state = create_test_state_with_machine_and_tools(machine, tools).await;
         assert_eq!(state.process_path(), "/proc/1");
         let (_, first_events) = execute_single_tool_call(
             &mut state,
@@ -249,7 +249,8 @@
             recovered_tools,
             SimpleMockProvider,
             "/agent/2",
-        );
+        )
+        .await;
         assert_eq!(recovered_state.process_path(), "/proc/2");
         let replay_arguments = json!({"path": "notes.txt", "payload": "hello"});
         let replay_identity = build_effect_identity(
@@ -301,7 +302,7 @@
             capability: ToolCapability::Network,
             counter: Arc::clone(&counter),
         });
-        let mut state = create_test_state_with_machine_and_tools(machine, tools);
+        let mut state = create_test_state_with_machine_and_tools(machine, tools).await;
         // Exercise effect dedupe independent of the locked auto-approve posture
         // (which would otherwise escalate the network call).
         state.runtime_config.policy_engine = crate::policy::PolicyEngine::allow_all();
@@ -363,7 +364,7 @@
             capability: ToolCapability::Network,
             counter: Arc::clone(&counter),
         });
-        let mut state = create_test_state_with_machine_and_tools(machine, tools);
+        let mut state = create_test_state_with_machine_and_tools(machine, tools).await;
         // Exercise effect recording independent of the locked auto-approve
         // posture (which would otherwise escalate the network call).
         state.runtime_config.policy_engine = crate::policy::PolicyEngine::allow_all();
@@ -426,7 +427,7 @@
             capability: ToolCapability::Write,
             counter: Arc::clone(&counter),
         });
-        let mut state = create_test_state_with_machine_and_tools(machine, tools);
+        let mut state = create_test_state_with_machine_and_tools(machine, tools).await;
 
         let _ = execute_single_tool_call(
             &mut state,
@@ -468,7 +469,7 @@
             capability: ToolCapability::Write,
             counter: Arc::clone(&counter),
         });
-        let mut state = create_test_state_with_machine_and_tools(machine, tools);
+        let mut state = create_test_state_with_machine_and_tools(machine, tools).await;
         let arguments = json!({"path": "notes.txt", "payload": "hello"});
         let identity = build_effect_identity(
             &state.machine,
@@ -520,7 +521,7 @@
             capability: ToolCapability::Write,
             counter: Arc::clone(&counter),
         });
-        let mut state = create_test_state_with_machine_and_tools(machine, tools);
+        let mut state = create_test_state_with_machine_and_tools(machine, tools).await;
         let arguments = json!({"path": "notes.txt", "payload": "hello"});
         let identity = build_effect_identity(
             &state.machine,
@@ -608,7 +609,7 @@
             capability: ToolCapability::Unknown,
             counter: Arc::clone(&counter),
         });
-        let mut state = create_test_state_with_machine_and_tools(machine, tools);
+        let mut state = create_test_state_with_machine_and_tools(machine, tools).await;
 
         let cancel = CancellationToken::new();
         let inputs = ToolOrchestratorInputs {
@@ -668,7 +669,7 @@
             capability: ToolCapability::Write,
             counter: Arc::clone(&counter),
         });
-        let mut state = create_test_state_with_machine_and_tools(machine, tools);
+        let mut state = create_test_state_with_machine_and_tools(machine, tools).await;
         let arguments_first = json!({"path": "notes-1.txt", "payload": "hello"});
         let arguments_second = json!({"path": "notes-2.txt", "payload": "world"});
         let identity_first = build_effect_identity(

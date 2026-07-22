@@ -1,9 +1,9 @@
-use alan_agent_engine::tools::{Sandbox, Tool, ToolContext, ToolResult};
+use alan_agent_engine::tools::{Sandbox, Tool, ToolContext, ToolExecutionAdapter, ToolResult};
 use anyhow::{Result, anyhow};
 use regex::RegexBuilder;
 use serde_json::{Value, json};
 use std::fs::FileType;
-use std::path::Path;
+use std::{path::Path, sync::Arc};
 
 /// grep - Search file contents
 #[derive(Default)]
@@ -55,7 +55,10 @@ impl Tool for GrepTool {
             Ok(path) => path,
             Err(err) => return Box::pin(async move { Err(err) }),
         };
-        let host_mounts = ctx.host_mounts.clone();
+        let adapter = match ctx.execution_adapter() {
+            Ok(adapter) => adapter,
+            Err(err) => return Box::pin(async move { Err(err) }),
+        };
         let pattern = args["pattern"].as_str().unwrap_or("").to_string();
         let case_sensitive = args["case_sensitive"].as_bool().unwrap_or(false);
 
@@ -72,14 +75,14 @@ impl Tool for GrepTool {
                 for (line_num, line) in content.lines().enumerate() {
                     if regex.is_match(line) {
                         matches.push(json!({
-                            "path": visible_host_path(&path, &host_mounts),
+                            "path": adapter.visible_path(&path),
                             "line": line_num + 1,
                             "content": line
                         }));
                     }
                 }
             } else if path.is_dir() {
-                search_directory(&sandbox, &path, &regex, &host_mounts, &mut matches).await?;
+                search_directory(&sandbox, &path, &regex, &adapter, &mut matches).await?;
             }
 
             Ok(json!({
@@ -98,7 +101,7 @@ async fn search_directory(
     sandbox: &Sandbox,
     dir: &Path,
     regex: &regex::Regex,
-    host_mounts: &[alan_agent_engine::HostMountGrant],
+    adapter: &Arc<dyn ToolExecutionAdapter>,
     matches: &mut Vec<Value>,
 ) -> Result<()> {
     let entries = sandbox.list_dir(dir).await?;
@@ -113,14 +116,7 @@ async fn search_directory(
             {
                 continue;
             }
-            Box::pin(search_directory(
-                sandbox,
-                &path,
-                regex,
-                host_mounts,
-                matches,
-            ))
-            .await?;
+            Box::pin(search_directory(sandbox, &path, regex, adapter, matches)).await?;
         } else if file_type.is_file() {
             if is_binary_file(&path) {
                 continue;
@@ -130,7 +126,7 @@ async fn search_directory(
                 for (line_num, line) in content.lines().enumerate() {
                     if regex.is_match(line) {
                         matches.push(json!({
-                            "path": visible_host_path(&path, host_mounts),
+                            "path": adapter.visible_path(&path),
                             "line": line_num + 1,
                             "content": line
                         }));
@@ -191,10 +187,16 @@ impl Tool for GlobTool {
                 Err(err) => return Box::pin(async move { Err(err) }),
             }
         } else {
-            ctx.cwd.clone()
+            match ctx.cwd() {
+                Ok(cwd) => cwd,
+                Err(err) => return Box::pin(async move { Err(err) }),
+            }
         };
         let pattern = args["pattern"].as_str().unwrap_or("").to_string();
-        let host_mounts = ctx.host_mounts.clone();
+        let adapter = match ctx.execution_adapter() {
+            Ok(adapter) => adapter,
+            Err(err) => return Box::pin(async move { Err(err) }),
+        };
 
         Box::pin(async move {
             if !sandbox.is_readable(&base_path) {
@@ -215,7 +217,7 @@ impl Tool for GlobTool {
 
             for path in glob::glob(&pattern_str)?.flatten() {
                 if path.is_file() && sandbox.is_readable(&path) {
-                    matches.push(visible_host_path(&path, &host_mounts));
+                    matches.push(adapter.visible_path(&path));
                 }
             }
 
@@ -274,7 +276,10 @@ impl Tool for ListDirTool {
                 Err(err) => return Box::pin(async move { Err(err) }),
             }
         } else {
-            ctx.cwd.clone()
+            match ctx.cwd() {
+                Ok(cwd) => cwd,
+                Err(err) => return Box::pin(async move { Err(err) }),
+            }
         };
         let visible_path = ctx.visible_path(&path).to_string_lossy().to_string();
 
@@ -315,28 +320,6 @@ impl Tool for ListDirTool {
     fn capability(&self, _args: &Value) -> alan_agent_protocol::ToolCapability {
         alan_agent_protocol::ToolCapability::Read
     }
-}
-
-fn visible_host_path(path: &Path, mounts: &[alan_agent_engine::HostMountGrant]) -> String {
-    if mounts.is_empty() {
-        return path.to_string_lossy().to_string();
-    }
-    mounts
-        .iter()
-        .filter_map(|grant| {
-            let requested =
-                dunce::canonicalize(path).unwrap_or_else(|_| dunce::simplified(path).to_path_buf());
-            let root = dunce::canonicalize(&grant.host_path)
-                .unwrap_or_else(|_| dunce::simplified(&grant.host_path).to_path_buf());
-            let suffix = requested.strip_prefix(&root).ok()?;
-            Some((
-                root.components().count(),
-                Path::new(&grant.namespace_path).join(suffix),
-            ))
-        })
-        .max_by_key(|(prefix_len, _)| *prefix_len)
-        .map(|(_, path)| path.to_string_lossy().to_string())
-        .unwrap_or_else(|| "<unmapped-host-path>".to_string())
 }
 
 pub(super) fn is_binary_file(path: &Path) -> bool {

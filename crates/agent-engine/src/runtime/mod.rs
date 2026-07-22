@@ -2,7 +2,6 @@
 //!
 //! Drives the agent loop: receive input → LLM generation → tool execution → state transition.
 
-mod agent_process;
 mod child_agents;
 mod child_run_termination_tool;
 mod child_runs;
@@ -44,10 +43,6 @@ mod ui_surfaces;
 mod virtual_tool;
 mod virtual_tools;
 
-pub use agent_process::{
-    AgentProcessLifecycle, AssembledChildAgentProcess, ChildAgentProcessAssembler,
-    ChildAgentProcessAssemblyPlan, ChildAgentProcessAssemblyRequest,
-};
 pub use child_runs::{
     ChildRunRecord, ChildRunRegistryError, ChildRunStatus, ChildRunTerminationMode,
     ChildRunTerminationRequest,
@@ -56,13 +51,8 @@ pub use controller::{
     AgentMachineDurabilityState, RuntimeController, RuntimeHandle, RuntimeStartupMetadata,
 };
 pub use engine::spawn_with_namespace_environment;
-pub use launch_config::{
-    AgentConfig, AgentProcessConfig, configure_runtime_tool_execution_binding,
-    effective_core_config_for_runtime,
-};
+pub use launch_config::{AgentConfig, AgentProcessConfig, effective_core_config_for_runtime};
 pub use transition::{
-    ApprovedMountGrant, ApprovedMountGrantAccess, MountGrantApplicator,
-    MountGrantApplicatorFactory, NamespaceMountApplication, NamespaceMountControl,
     NamespaceRuntimeEnvironment, NamespaceToolActionOutput, NamespaceTurnOutput,
     NamespaceTurnRuntime, NamespaceTurnRuntimeConfig,
 };

@@ -1,20 +1,20 @@
-//! Host mount declaration and projection helpers.
+//! Native Host Mount export and Tool execution projection.
 //!
-//! These stateless helpers apply already-authorized declarations. Runtime grant
-//! authority and live projection belong to Host Mount Service.
+//! Runtime grant authority and live namespace projection belong to Host Mount
+//! Service. This adapter alone retains native backing paths.
 
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
-use alan_agent_engine::runtime::{ApprovedMountGrant, ApprovedMountGrantAccess};
-use alan_agent_engine::tools::ToolExecutionBinding;
-use alan_agent_engine::{HostMountGrant, tools::SandboxSpec};
+use alan_agent_engine::tools::{
+    ReifiedMountAccess, Sandbox, SandboxHostMount, SandboxSpec, ToolExecutionAdapter,
+};
 use alan_ap::InProcessTransport;
 use alan_hostfs::{HostDirAccess, HostDirFs};
-use alan_kernel::{Access, Namespace};
+use alan_kernel::Access;
 use alan_service_manager::{
     HostMountAccess, HostMountExport, HostMountExportAdapter, HostMountGrantRecord,
-    HostMountService,
+    HostMountService, HostMountToolProjection,
 };
 use anyhow::{Context, Result};
 
@@ -25,7 +25,8 @@ pub struct NativeHostMountExportAdapter;
 
 struct NativeHostMountExport {
     tree: InProcessTransport,
-    grant: HostMountGrant,
+    host_path: PathBuf,
+    maximum_access: HostMountAccess,
 }
 
 impl std::fmt::Debug for NativeHostMountExport {
@@ -39,35 +40,152 @@ impl HostMountExport for NativeHostMountExport {
         self.tree.clone()
     }
 
-    fn apply_tool_authority(
-        &self,
-        effective_access: HostMountAccess,
-        binding: &mut ToolExecutionBinding,
-    ) -> Result<()> {
-        let effective_access = match effective_access {
-            HostMountAccess::ReadOnly => Access::ReadOnly,
-            HostMountAccess::ReadWrite => Access::ReadWrite,
-        };
-        anyhow::ensure!(
-            self.grant.access == Access::ReadWrite || effective_access == Access::ReadOnly,
-            "Host Mount Tool authority cannot amplify export access"
-        );
-        let mut grant = self.grant.clone();
-        grant.access = effective_access;
-        binding.apply_host_mount(grant)
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+#[derive(Debug, Clone)]
+struct NativeToolMount {
+    namespace_path: PathBuf,
+    host_path: PathBuf,
+    access: HostMountAccess,
+}
+
+#[derive(Debug)]
+struct NativeToolExecutionAdapter {
+    mounts: Vec<NativeToolMount>,
+    namespace_cwd: PathBuf,
+    cwd: PathBuf,
+    sandbox: Sandbox,
+}
+
+impl ToolExecutionAdapter for NativeToolExecutionAdapter {
+    fn namespace_cwd(&self) -> PathBuf {
+        self.namespace_cwd.clone()
+    }
+
+    fn cwd(&self) -> Result<PathBuf> {
+        Ok(self.cwd.clone())
+    }
+
+    fn resolve_path(&self, namespace_cwd: &Path, path: &Path) -> Result<PathBuf> {
+        let namespace_path = normalize_tool_namespace_path(if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            namespace_cwd.join(path)
+        })?;
+        let mount = longest_namespace_mount(&self.mounts, &namespace_path).with_context(|| {
+            format!(
+                "path {} is outside delegated Host Mounts",
+                namespace_path.display()
+            )
+        })?;
+        let suffix = namespace_path
+            .strip_prefix(&mount.namespace_path)
+            .expect("selected Host Mount is a namespace prefix");
+        Ok(mount.host_path.join(suffix))
+    }
+
+    fn visible_path(&self, host_path: &Path) -> PathBuf {
+        let host_path = dunce::canonicalize(host_path)
+            .unwrap_or_else(|_| dunce::simplified(host_path).to_path_buf());
+        self.mounts
+            .iter()
+            .filter_map(|mount| {
+                host_path.strip_prefix(&mount.host_path).ok().map(|suffix| {
+                    (
+                        mount.host_path.components().count(),
+                        mount.namespace_path.join(suffix),
+                    )
+                })
+            })
+            .max_by_key(|(prefix_len, _)| *prefix_len)
+            .map_or_else(|| PathBuf::from("<unmapped-host-path>"), |(_, path)| path)
+    }
+
+    fn project_text(&self, text: &str) -> String {
+        let mut projected = text.to_string();
+        let mut mounts = self.mounts.iter().collect::<Vec<_>>();
+        mounts.sort_by_key(|mount| std::cmp::Reverse(mount.host_path.as_os_str().len()));
+        for mount in mounts {
+            projected = projected.replace(
+                mount.host_path.to_string_lossy().as_ref(),
+                mount.namespace_path.to_string_lossy().as_ref(),
+            );
+        }
+        projected
+    }
+
+    fn sandbox(&self) -> Result<Sandbox> {
+        Ok(self.sandbox.clone())
     }
 }
 
 impl HostMountExportAdapter for NativeHostMountExportAdapter {
-    fn export_approved(&self, grant: &ApprovedMountGrant) -> Result<Arc<dyn HostMountExport>> {
-        native_export(
-            &grant.namespace_path,
-            &grant.host_path,
-            match grant.access {
-                ApprovedMountGrantAccess::ReadOnly => HostMountAccess::ReadOnly,
-                ApprovedMountGrantAccess::ReadWrite => HostMountAccess::ReadWrite,
-            },
-        )
+    fn tool_execution_adapter(
+        &self,
+        projections: &[HostMountToolProjection],
+        requested_namespace_cwd: &Path,
+    ) -> Result<Arc<dyn ToolExecutionAdapter>> {
+        let mounts = projections
+            .iter()
+            .map(|projection| {
+                let export = projection
+                    .export()
+                    .as_any()
+                    .downcast_ref::<NativeHostMountExport>()
+                    .context("Host Mount export was not produced by the native Host adapter")?;
+                anyhow::ensure!(
+                    export.maximum_access == HostMountAccess::ReadWrite
+                        || projection.access == HostMountAccess::ReadOnly,
+                    "Host Mount Tool authority cannot amplify export access"
+                );
+                Ok(NativeToolMount {
+                    namespace_path: projection.namespace_path.clone(),
+                    host_path: export.host_path.clone(),
+                    access: projection.access,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        validate_native_tool_mounts(&mounts)?;
+        let requested_namespace_cwd =
+            normalize_tool_namespace_path(requested_namespace_cwd.to_path_buf())?;
+        let selected = longest_namespace_mount(&mounts, &requested_namespace_cwd)
+            .or_else(|| {
+                mounts
+                    .iter()
+                    .find(|mount| mount.access == HostMountAccess::ReadWrite)
+            })
+            .or_else(|| mounts.first())
+            .context("Tool Process has no active Host Mount")?;
+        let namespace_cwd = if requested_namespace_cwd.starts_with(&selected.namespace_path) {
+            requested_namespace_cwd
+        } else {
+            selected.namespace_path.clone()
+        };
+        let cwd = selected.host_path.join(
+            namespace_cwd
+                .strip_prefix(&selected.namespace_path)
+                .expect("selected Host Mount owns Tool cwd"),
+        );
+        let sandbox_mounts = mounts
+            .iter()
+            .map(|mount| SandboxHostMount {
+                namespace_path: mount.namespace_path.clone(),
+                host_path: mount.host_path.clone(),
+                access: match mount.access {
+                    HostMountAccess::ReadOnly => ReifiedMountAccess::ReadOnly,
+                    HostMountAccess::ReadWrite => ReifiedMountAccess::ReadWrite,
+                },
+            })
+            .collect::<Vec<_>>();
+        Ok(Arc::new(NativeToolExecutionAdapter {
+            mounts,
+            namespace_cwd,
+            cwd,
+            sandbox: Sandbox::from_spec(SandboxSpec::from_host_mounts(&sandbox_mounts)),
+        }))
     }
 }
 
@@ -105,154 +223,72 @@ fn native_export(
         HostMountAccess::ReadOnly => Access::ReadOnly,
         HostMountAccess::ReadWrite => Access::ReadWrite,
     };
-    let grant = HostMountGrant::new(namespace_path, host_path, kernel_access)?;
+    let host_path = canonical_host_path(host_path)?;
     let tree = InProcessTransport::new(Arc::new(
-        HostDirFs::new(&grant.host_path, hostfs_access(kernel_access)).with_context(|| {
+        HostDirFs::new(&host_path, hostfs_access(kernel_access)).with_context(|| {
             format!(
                 "failed to export host directory {} at {namespace_path}",
-                grant.host_path.display()
+                host_path.display()
             )
         })?,
     ));
-    Ok(Arc::new(NativeHostMountExport { tree, grant }))
+    Ok(Arc::new(NativeHostMountExport {
+        tree,
+        host_path,
+        maximum_access: access,
+    }))
 }
 
-pub fn apply_host_mount_declarations(
-    namespace: &mut Namespace,
-    declarations: &[HostMountGrant],
-) -> Result<()> {
-    validate_non_overlapping_declarations(declarations)?;
-    let writable_roots = canonical_read_write_mount_roots(declarations)?;
-    validate_read_only_mounts_not_covered_by_writable_roots(&writable_roots, declarations)?;
+fn normalize_tool_namespace_path(path: PathBuf) -> Result<PathBuf> {
+    anyhow::ensure!(path.is_absolute(), "Tool namespace path must be absolute");
+    let mut normalized = PathBuf::from("/");
+    for component in path.components() {
+        match component {
+            Component::RootDir => {}
+            Component::CurDir => {}
+            Component::Normal(part) => normalized.push(part),
+            Component::ParentDir => {
+                anyhow::ensure!(normalized.pop(), "Tool namespace path escapes root");
+            }
+            Component::Prefix(_) => anyhow::bail!("Tool namespace path contains a Host prefix"),
+        }
+    }
+    Ok(normalized)
+}
 
-    let staged_mounts = declarations
+fn longest_namespace_mount<'a>(
+    mounts: &'a [NativeToolMount],
+    path: &Path,
+) -> Option<&'a NativeToolMount> {
+    mounts
         .iter()
-        .map(|declaration| {
-            let hostfs = HostDirFs::new(&declaration.host_path, hostfs_access(declaration.access))
-                .with_context(|| {
-                    format!(
-                        "failed to mount host directory {} at {}",
-                        declaration.host_path.display(),
-                        declaration.namespace_path
-                    )
-                })?;
-            Ok((
-                declaration.namespace_path.clone(),
-                InProcessTransport::new(Arc::new(hostfs)),
-                declaration.access,
-            ))
-        })
-        .collect::<Result<Vec<_>>>()?;
+        .filter(|mount| path.starts_with(&mount.namespace_path))
+        .max_by_key(|mount| mount.namespace_path.components().count())
+}
 
-    for (namespace_path, transport, access) in staged_mounts {
-        namespace.mount(&namespace_path, transport, access);
+fn validate_native_tool_mounts(mounts: &[NativeToolMount]) -> Result<()> {
+    for (index, left) in mounts.iter().enumerate() {
+        for right in mounts.iter().skip(index + 1) {
+            anyhow::ensure!(
+                !(left.namespace_path.starts_with(&right.namespace_path)
+                    || right.namespace_path.starts_with(&left.namespace_path)),
+                "overlapping Host Mount projections are not supported: {} and {}",
+                left.namespace_path.display(),
+                right.namespace_path.display()
+            );
+            if left.access != right.access {
+                anyhow::ensure!(
+                    !host_paths_overlap(&left.host_path, &right.host_path),
+                    "read-only and read-write Host Mount projections overlap native backing"
+                );
+            }
+        }
     }
     Ok(())
-}
-
-pub fn sandbox_spec_from_host_mounts(declarations: &[HostMountGrant]) -> Result<SandboxSpec> {
-    validate_non_overlapping_declarations(declarations)?;
-    let writable_host_roots = canonical_read_write_mount_roots(declarations)?;
-    validate_read_only_mounts_not_covered_by_writable_roots(&writable_host_roots, declarations)?;
-    let spec = SandboxSpec::from_host_mounts(declarations);
-    anyhow::ensure!(
-        spec.writable_roots == writable_host_roots,
-        "Host Mount namespace and sandbox projection disagree"
-    );
-    Ok(spec)
 }
 
 fn canonical_host_path(path: &Path) -> Result<PathBuf> {
     Ok(std::fs::canonicalize(path)?)
-}
-
-fn canonical_read_write_mount_roots(declarations: &[HostMountGrant]) -> Result<Vec<PathBuf>> {
-    declarations
-        .iter()
-        .filter(|declaration| declaration.access == Access::ReadWrite)
-        .map(|declaration| {
-            canonical_host_path(&declaration.host_path).with_context(|| {
-                format!(
-                    "failed to project writable host mount {}",
-                    declaration.host_path.display()
-                )
-            })
-        })
-        .collect()
-}
-
-fn validate_read_only_mounts_not_covered_by_writable_roots(
-    writable_roots: &[PathBuf],
-    declarations: &[HostMountGrant],
-) -> Result<()> {
-    for declaration in declarations {
-        if declaration.access != Access::ReadOnly {
-            continue;
-        }
-        let host_path = canonical_host_path(&declaration.host_path).with_context(|| {
-            format!(
-                "failed to project read-only host mount {}",
-                declaration.host_path.display()
-            )
-        })?;
-        for writable_root in writable_roots {
-            if host_paths_overlap(&host_path, writable_root) {
-                anyhow::bail!(
-                    "read-only host mount {} overlaps writable root {}",
-                    host_path.display(),
-                    writable_root.display()
-                );
-            }
-        }
-    }
-    Ok(())
-}
-
-fn validate_non_overlapping_declarations(declarations: &[HostMountGrant]) -> Result<()> {
-    let paths = declarations
-        .iter()
-        .map(|declaration| {
-            normalized_namespace_components(&declaration.namespace_path)
-                .map(|components| (&declaration.namespace_path, components))
-        })
-        .collect::<Result<Vec<_>>>()?;
-
-    for (index, (left_path, left_components)) in paths.iter().enumerate() {
-        for (right_path, right_components) in paths.iter().skip(index + 1) {
-            if namespace_paths_overlap(left_components, right_components) {
-                anyhow::bail!(
-                    "overlapping host mount declarations are not supported: {} and {}",
-                    left_path,
-                    right_path
-                );
-            }
-        }
-    }
-    Ok(())
-}
-
-fn normalized_namespace_components(path: &str) -> Result<Vec<&str>> {
-    anyhow::ensure!(
-        path.starts_with('/'),
-        "host mount namespace path must be absolute: {}",
-        path
-    );
-    path.split('/')
-        .filter(|component| !component.is_empty())
-        .map(|component| {
-            anyhow::ensure!(
-                component != "." && component != "..",
-                "host mount namespace path contains invalid component: {}",
-                path
-            );
-            Ok(component)
-        })
-        .collect()
-}
-
-fn namespace_paths_overlap(left: &[&str], right: &[&str]) -> bool {
-    left.len() <= right.len() && right.starts_with(left)
-        || right.len() <= left.len() && left.starts_with(right)
 }
 
 fn host_paths_overlap(left: &Path, right: &Path) -> bool {
@@ -269,211 +305,308 @@ fn hostfs_access(access: Access) -> HostDirAccess {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alan_agent_engine::tools::NetworkPosture;
-    use alan_ap::{ErrorCode, Fid, FileKind, OpenMode, Request, Response};
-    use alan_kernel::MountFs;
 
-    fn grant(namespace_path: &str, host_path: PathBuf, access: Access) -> HostMountGrant {
-        HostMountGrant::new(namespace_path, host_path, access).unwrap()
+    use alan_agent_engine::tools::{ToolExecutionAuthority, ToolExecutionBinding};
+    use alan_ap::{ErrorCode, Fid, OpenMode, Request, Response};
+    use alan_kernel::{LiveNamespace, MountFs, Namespace, Pid};
+
+    fn service() -> Arc<HostMountService> {
+        HostMountService::new(Arc::new(NativeHostMountExportAdapter))
     }
 
-    #[tokio::test]
-    async fn writable_host_mount_is_reachable_and_projected() {
-        let host = tempfile::tempdir().unwrap();
-        std::fs::write(host.path().join("notes.txt"), "hello").unwrap();
-        let declaration = grant("/mnt/project", host.path().to_path_buf(), Access::ReadWrite);
-        let mut namespace = Namespace::new();
-        apply_host_mount_declarations(&mut namespace, std::slice::from_ref(&declaration)).unwrap();
-        let root = InProcessTransport::new(Arc::new(MountFs::new(namespace)));
-
-        assert_file_bytes(&root, Fid(1), &["mnt", "project", "notes.txt"], b"hello").await;
-        create_file_bytes(
-            &root,
-            Fid(2),
-            Fid(3),
-            &["mnt", "project"],
-            "created.txt",
-            b"created through mount",
-        )
-        .await;
-        assert_eq!(
-            std::fs::read(host.path().join("created.txt")).unwrap(),
-            b"created through mount"
-        );
-
-        let spec = sandbox_spec_from_host_mounts(&[declaration]).unwrap();
-        assert_eq!(
-            spec.writable_roots,
-            vec![std::fs::canonicalize(host.path()).unwrap()]
-        );
-        assert_eq!(
-            spec.read_denylist,
-            SandboxSpec::default_sensitive_read_denylist()
-        );
-    }
-
-    #[tokio::test]
-    async fn read_only_host_mount_is_reachable_but_not_projected_as_writable() {
-        let host = tempfile::tempdir().unwrap();
-        std::fs::write(host.path().join("manual.txt"), "read me").unwrap();
-        let declaration = grant("/mnt/docs", host.path().to_path_buf(), Access::ReadOnly);
-        let mut namespace = Namespace::new();
-        apply_host_mount_declarations(&mut namespace, std::slice::from_ref(&declaration)).unwrap();
-        let root = InProcessTransport::new(Arc::new(MountFs::new(namespace)));
-
-        assert_file_bytes(&root, Fid(1), &["mnt", "docs", "manual.txt"], b"read me").await;
-        let opened = root
-            .call(Request::Open {
-                fid: Fid(1),
-                mode: OpenMode::Write,
-            })
-            .await;
-        assert_eq!(opened.unwrap_err(), alan_ap::ErrorCode::NoAccess);
-
-        let spec = sandbox_spec_from_host_mounts(&[declaration]).unwrap();
-        let host_path = std::fs::canonicalize(host.path()).unwrap();
-        assert!(spec.writable_roots.is_empty());
-        assert!(!spec.writable_roots.contains(&host_path));
-    }
-
-    #[test]
-    fn overlapping_declarations_are_rejected_before_projection() {
-        let host = tempfile::tempdir().unwrap();
-        let declarations = vec![
-            grant("/mnt/project", host.path().to_path_buf(), Access::ReadWrite),
-            grant("/mnt/project", host.path().to_path_buf(), Access::ReadOnly),
-        ];
-
-        let err = sandbox_spec_from_host_mounts(&declarations).unwrap_err();
-        assert!(err.to_string().contains("overlapping host mount"));
-        let mut namespace = Namespace::new();
-        let err = apply_host_mount_declarations(&mut namespace, &declarations).unwrap_err();
-        assert!(err.to_string().contains("overlapping host mount"));
-    }
-
-    #[test]
-    fn nested_declarations_are_rejected_before_projection() {
-        let host = tempfile::tempdir().unwrap();
-        let declarations = vec![
-            grant("/mnt/project", host.path().to_path_buf(), Access::ReadWrite),
-            grant(
-                "/mnt/project/docs",
-                host.path().to_path_buf(),
-                Access::ReadOnly,
-            ),
-        ];
-
-        let err = sandbox_spec_from_host_mounts(&declarations).unwrap_err();
-        assert!(err.to_string().contains("overlapping host mount"));
-    }
-
-    #[test]
-    fn read_only_mount_inside_writable_host_mount_is_rejected() {
-        let host = tempfile::tempdir().unwrap();
-        let docs = host.path().join("docs");
-        std::fs::create_dir(&docs).unwrap();
-        let declarations = vec![
-            grant("/mnt/project", host.path().to_path_buf(), Access::ReadWrite),
-            grant("/mnt/docs", docs, Access::ReadOnly),
-        ];
-
-        let err = sandbox_spec_from_host_mounts(&declarations).unwrap_err();
-        assert!(err.to_string().contains("read-only host mount"));
-    }
-
-    #[test]
-    fn read_only_mount_inside_writable_host_mount_is_rejected_before_apply() {
-        let host = tempfile::tempdir().unwrap();
-        let docs = host.path().join("docs");
-        std::fs::create_dir(&docs).unwrap();
-        let declarations = vec![
-            grant("/mnt/project", host.path().to_path_buf(), Access::ReadWrite),
-            grant("/mnt/docs", docs, Access::ReadOnly),
-        ];
-        let mut namespace = Namespace::new();
-
-        let err = apply_host_mount_declarations(&mut namespace, &declarations).unwrap_err();
-        assert!(err.to_string().contains("read-only host mount"));
-    }
-
-    #[tokio::test]
-    async fn apply_host_mount_declarations_is_all_or_nothing() {
-        let host = tempfile::tempdir().unwrap();
-        std::fs::write(host.path().join("notes.txt"), "hello").unwrap();
-        let not_directory = tempfile::NamedTempFile::new().unwrap();
-        let declarations = vec![
-            grant("/mnt/project", host.path().to_path_buf(), Access::ReadWrite),
-            grant(
-                "/mnt/not-directory",
-                not_directory.path().to_path_buf(),
-                Access::ReadOnly,
-            ),
-        ];
-        let mut namespace = Namespace::new();
-
-        let err = apply_host_mount_declarations(&mut namespace, &declarations).unwrap_err();
-        assert!(err.to_string().contains("failed to mount host directory"));
-
-        let root = InProcessTransport::new(Arc::new(MountFs::new(namespace)));
-        let walked = root
+    async fn request(
+        service: &Arc<HostMountService>,
+        pid: u64,
+        namespace_path: &str,
+        access: HostMountAccess,
+    ) -> String {
+        let transport = InProcessTransport::new(service.file_server_for_process(pid));
+        transport
             .call(Request::Walk {
                 fid: Fid::ROOT,
                 newfid: Fid(1),
-                names: ["mnt", "project", "notes.txt"]
-                    .iter()
-                    .map(|name| (*name).to_string())
-                    .collect(),
+                names: vec!["requests".to_string(), "clone".to_string()],
             })
-            .await;
-        assert_eq!(walked.unwrap_err(), ErrorCode::NotFound);
+            .await
+            .unwrap();
+        transport
+            .call(Request::Open {
+                fid: Fid(1),
+                mode: OpenMode::ReadWrite,
+            })
+            .await
+            .unwrap();
+        let Response::Read { data } = transport
+            .call(Request::Read {
+                fid: Fid(1),
+                offset: 0,
+                count: 128,
+            })
+            .await
+            .unwrap()
+        else {
+            panic!("Host Mount clone did not return a request reference");
+        };
+        let request_id = String::from_utf8(data).unwrap();
+        let document = serde_json::to_vec(&serde_json::json!({
+            "namespace_path": namespace_path,
+            "access": access,
+            "reason": "native Host adapter test",
+        }))
+        .unwrap();
+        transport
+            .call(Request::Write {
+                fid: Fid(1),
+                offset: 0,
+                data: document,
+            })
+            .await
+            .unwrap();
+        transport
+            .call(Request::Clunk { fid: Fid(1) })
+            .await
+            .unwrap();
+        request_id
     }
 
-    #[test]
-    fn empty_declarations_add_no_implicit_host_authority() {
-        let spec = sandbox_spec_from_host_mounts(&[]).unwrap();
-        assert!(spec.writable_roots.is_empty());
-        assert_eq!(
-            spec.read_denylist,
-            SandboxSpec::default_sensitive_read_denylist()
-        );
-        assert_eq!(spec.network, NetworkPosture::Deny);
+    async fn approve(
+        service: &Arc<HostMountService>,
+        pid: u64,
+        namespace_path: &str,
+        access: HostMountAccess,
+        host_path: &Path,
+    ) -> HostMountGrantRecord {
+        let request_id = request(service, pid, namespace_path, access).await;
+        approve_host_mount(
+            service,
+            &request_id,
+            host_path,
+            "test-native-selection",
+            "test",
+        )
+        .unwrap()
     }
 
-    #[test]
-    fn writable_export_can_be_narrowed_for_tool_authority() {
+    fn binding(namespace_cwd: &str) -> ToolExecutionBinding {
+        ToolExecutionBinding::awaiting_host_projection(
+            PathBuf::from(namespace_cwd),
+            PathBuf::from("/tmp/alan-native-host-mount-test-scratch"),
+        )
+    }
+
+    #[tokio::test]
+    async fn native_approval_projects_one_handle_into_namespace_and_tool_execution() {
         let host = tempfile::tempdir().unwrap();
-        let export =
-            native_export("/mnt/project", host.path(), HostMountAccess::ReadWrite).unwrap();
-        let mut binding = ToolExecutionBinding::awaiting_host_projection(
-            PathBuf::from("/mnt/project"),
-            host.path().join("scratch"),
-        );
+        std::fs::write(host.path().join("notes.txt"), "hello").unwrap();
+        let service = service();
+        let namespace = LiveNamespace::new(Namespace::new());
+        service.register_process(Pid(7), namespace.clone());
 
-        export
-            .apply_tool_authority(HostMountAccess::ReadOnly, &mut binding)
+        let record = approve(
+            &service,
+            7,
+            "/mnt/project",
+            HostMountAccess::ReadWrite,
+            host.path(),
+        )
+        .await;
+
+        assert_eq!(record.namespace_path, "/mnt/project");
+        assert!(
+            !serde_json::to_string(&record)
+                .unwrap()
+                .contains(host.path().to_string_lossy().as_ref())
+        );
+        assert_eq!(
+            namespace.snapshot().resolve("/mnt/project").unwrap().access,
+            Access::ReadWrite
+        );
+        let root = InProcessTransport::new(Arc::new(MountFs::new(namespace.snapshot())));
+        assert_file_bytes(&root, Fid(10), &["mnt", "project", "notes.txt"], b"hello").await;
+
+        let execution = service.reconcile(7, binding("/mnt/project")).unwrap();
+        let adapter = execution.adapter().unwrap();
+        assert_eq!(
+            adapter.cwd().unwrap(),
+            std::fs::canonicalize(host.path()).unwrap()
+        );
+        assert_eq!(
+            adapter
+                .resolve_path(Path::new("/mnt/project"), Path::new("notes.txt"))
+                .unwrap(),
+            std::fs::canonicalize(host.path())
+                .unwrap()
+                .join("notes.txt")
+        );
+        assert_eq!(
+            adapter.visible_path(&host.path().join("notes.txt")),
+            PathBuf::from("/mnt/project/notes.txt")
+        );
+        let projected = adapter.project_text(&format!(
+            "failed at {}",
+            std::fs::canonicalize(host.path())
+                .unwrap()
+                .join("notes.txt")
+                .display()
+        ));
+        assert_eq!(projected, "failed at /mnt/project/notes.txt");
+        assert!(adapter.sandbox().unwrap().is_writable(host.path()));
+    }
+
+    #[tokio::test]
+    async fn read_only_handle_stays_read_only_in_namespace_and_sandbox() {
+        let host = tempfile::tempdir().unwrap();
+        std::fs::write(host.path().join("manual.txt"), "read me").unwrap();
+        let service = service();
+        let namespace = LiveNamespace::new(Namespace::new());
+        service.register_process(Pid(7), namespace.clone());
+
+        approve(
+            &service,
+            7,
+            "/mnt/docs",
+            HostMountAccess::ReadOnly,
+            host.path(),
+        )
+        .await;
+
+        assert_eq!(
+            namespace.snapshot().resolve("/mnt/docs").unwrap().access,
+            Access::ReadOnly
+        );
+        let root = InProcessTransport::new(Arc::new(MountFs::new(namespace.snapshot())));
+        root.call(Request::Walk {
+            fid: Fid::ROOT,
+            newfid: Fid(20),
+            names: vec!["mnt".into(), "docs".into(), "manual.txt".into()],
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            root.call(Request::Open {
+                fid: Fid(20),
+                mode: OpenMode::Write,
+            })
+            .await,
+            Err(ErrorCode::NoAccess)
+        );
+        let adapter = service
+            .reconcile(7, binding("/mnt/docs"))
+            .unwrap()
+            .adapter()
+            .unwrap();
+        assert!(adapter.sandbox().unwrap().is_readable(host.path()));
+        assert!(!adapter.sandbox().unwrap().is_writable(host.path()));
+    }
+
+    #[tokio::test]
+    async fn adapter_selects_the_mount_containing_the_logical_cwd() {
+        let first = tempfile::tempdir().unwrap();
+        let cwd_host = tempfile::tempdir().unwrap();
+        std::fs::create_dir(cwd_host.path().join("work")).unwrap();
+        let service = service();
+        service.register_process(Pid(7), LiveNamespace::new(Namespace::new()));
+        approve(
+            &service,
+            7,
+            "/mnt/a",
+            HostMountAccess::ReadOnly,
+            first.path(),
+        )
+        .await;
+        approve(
+            &service,
+            7,
+            "/mnt/z",
+            HostMountAccess::ReadWrite,
+            cwd_host.path(),
+        )
+        .await;
+
+        let execution = service.reconcile(7, binding("/mnt/z/work")).unwrap();
+
+        assert_eq!(execution.namespace_cwd, PathBuf::from("/mnt/z/work"));
+        assert_eq!(
+            execution.adapter().unwrap().cwd().unwrap(),
+            std::fs::canonicalize(cwd_host.path()).unwrap().join("work")
+        );
+    }
+
+    #[tokio::test]
+    async fn mixed_access_native_overlap_is_rejected_without_amplification() {
+        let host = tempfile::tempdir().unwrap();
+        let nested = host.path().join("nested");
+        std::fs::create_dir(&nested).unwrap();
+        let service = service();
+        service.register_process(Pid(7), LiveNamespace::new(Namespace::new()));
+        approve(
+            &service,
+            7,
+            "/mnt/project",
+            HostMountAccess::ReadWrite,
+            host.path(),
+        )
+        .await;
+        approve(&service, 7, "/mnt/docs", HostMountAccess::ReadOnly, &nested).await;
+
+        let error = service.reconcile(7, binding("/mnt/project")).unwrap_err();
+
+        assert!(error.to_string().contains("overlap native backing"));
+    }
+
+    #[tokio::test]
+    async fn namespace_path_resolution_cannot_escape_delegated_mounts() {
+        let host = tempfile::tempdir().unwrap();
+        let service = service();
+        service.register_process(Pid(7), LiveNamespace::new(Namespace::new()));
+        approve(
+            &service,
+            7,
+            "/mnt/project",
+            HostMountAccess::ReadWrite,
+            host.path(),
+        )
+        .await;
+        let adapter = service
+            .reconcile(7, binding("/mnt/project"))
+            .unwrap()
+            .adapter()
             .unwrap();
 
-        assert_eq!(binding.host_mounts.len(), 1);
-        assert_eq!(binding.host_mounts[0].access, Access::ReadOnly);
-        assert!(binding.sandbox_spec.unwrap().writable_roots.is_empty());
+        assert!(
+            adapter
+                .resolve_path(Path::new("/mnt/project"), Path::new("../../etc/passwd"))
+                .is_err()
+        );
+        assert!(
+            adapter
+                .resolve_path(Path::new("/mnt/project"), Path::new("/mnt/other/file"))
+                .is_err()
+        );
     }
 
-    #[test]
-    fn read_only_export_rejects_writable_tool_authority() {
-        let host = tempfile::tempdir().unwrap();
-        let export = native_export("/mnt/project", host.path(), HostMountAccess::ReadOnly).unwrap();
-        let mut binding = ToolExecutionBinding::awaiting_host_projection(
-            PathBuf::from("/mnt/project"),
-            host.path().join("scratch"),
+    #[tokio::test]
+    async fn invalid_native_selection_fails_without_returning_a_grant() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        let service = service();
+        service.register_process(Pid(7), LiveNamespace::new(Namespace::new()));
+        let request_id = request(&service, 7, "/mnt/project", HostMountAccess::ReadOnly).await;
+
+        let error = approve_host_mount(
+            &service,
+            &request_id,
+            file.path(),
+            "test-native-selection",
+            "test",
+        )
+        .unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("failed to export host directory")
         );
-
-        let error = export
-            .apply_tool_authority(HostMountAccess::ReadWrite, &mut binding)
-            .unwrap_err();
-
-        assert!(error.to_string().contains("cannot amplify"));
-        assert!(binding.host_mounts.is_empty());
-        assert!(binding.sandbox_spec.is_none());
+        assert!(service.pending_request(&request_id).is_none());
     }
 
     async fn assert_file_bytes(
@@ -482,80 +615,30 @@ mod tests {
         path: &[&str],
         expected: &[u8],
     ) {
-        let response = root
-            .call(Request::Walk {
-                fid: Fid::ROOT,
-                newfid: fid,
-                names: path.iter().map(|name| (*name).to_string()).collect(),
-            })
-            .await
-            .unwrap();
-        let Response::Walk { qid } = response else {
-            panic!("unexpected walk response");
-        };
-        assert_eq!(qid.kind, FileKind::File);
+        root.call(Request::Walk {
+            fid: Fid::ROOT,
+            newfid: fid,
+            names: path.iter().map(|name| (*name).to_string()).collect(),
+        })
+        .await
+        .unwrap();
         root.call(Request::Open {
             fid,
             mode: OpenMode::Read,
         })
         .await
         .unwrap();
-        let response = root
+        let Response::Read { data } = root
             .call(Request::Read {
                 fid,
                 offset: 0,
                 count: 1024,
             })
             .await
-            .unwrap();
-        let Response::Read { data } = response else {
-            panic!("unexpected read response");
+            .unwrap()
+        else {
+            panic!("unexpected Host Mount read response");
         };
         assert_eq!(data, expected);
-    }
-
-    async fn create_file_bytes(
-        root: &InProcessTransport,
-        dir_fid: Fid,
-        file_fid: Fid,
-        dir_path: &[&str],
-        name: &str,
-        bytes: &[u8],
-    ) {
-        root.call(Request::Walk {
-            fid: Fid::ROOT,
-            newfid: dir_fid,
-            names: dir_path.iter().map(|name| (*name).to_string()).collect(),
-        })
-        .await
-        .unwrap();
-        let response = root
-            .call(Request::Create {
-                fid: dir_fid,
-                newfid: file_fid,
-                name: name.to_string(),
-                kind: FileKind::File,
-            })
-            .await
-            .unwrap();
-        let Response::Create { qid } = response else {
-            panic!("unexpected create response");
-        };
-        assert_eq!(qid.kind, FileKind::File);
-        root.call(Request::Open {
-            fid: file_fid,
-            mode: OpenMode::Write,
-        })
-        .await
-        .unwrap();
-        root.call(Request::Write {
-            fid: file_fid,
-            offset: 0,
-            data: bytes.to_vec(),
-        })
-        .await
-        .unwrap();
-        root.call(Request::Clunk { fid: file_fid }).await.unwrap();
-        root.call(Request::Clunk { fid: dir_fid }).await.unwrap();
     }
 }

@@ -32,5 +32,6 @@ tracing.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+alan-agent-protocol.workspace = true
 alan-llm = { workspace = true, features = ["mock"] }
 tempfile.workspace = true

@@ -7,7 +7,7 @@ use alan_kernel::{Access, Credentials, LiveNamespace, MountFs, Pid, ProcFs};
 use async_trait::async_trait;
 use tokio::sync::Mutex;
 
-use crate::{quartermaster::SystemProcessRunner, runtime::spawn_process};
+use crate::{process_runner::SystemProcessRunner, process_spawn::spawn_process};
 
 const SHELL_EXECUTABLE: &str = "/bin/alan-shell";
 const MAX_CTL_BYTES: usize = 1024;
@@ -120,7 +120,7 @@ impl LocalEntryService {
         let command_procfs = self
             .procfs
             .clone()
-            .with_runner(Arc::new(SystemProcessRunner::new(None)));
+            .with_runner(Arc::new(SystemProcessRunner::new(None, None)));
         namespace.replace_mount(
             "/proc",
             alan_ap::InProcessTransport::new(Arc::new(command_procfs.for_live_spawner(
@@ -386,7 +386,7 @@ fn qid(node: &Node) -> Qid {
 mod tests {
     use super::*;
     use alan_ap::{InProcessTransport, Request, Response};
-    use alan_kernel::{ExecSpec, Namespace, Status};
+    use alan_kernel::{Namespace, Status};
     use alan_shell::Shell;
 
     #[tokio::test]
@@ -472,15 +472,7 @@ mod tests {
             service_pid.0.to_string()
         );
         let agent_pid = process_shell
-            .spawn(
-                &serde_json::to_string(&ExecSpec {
-                    executable: "/bin/alan-agent".to_string(),
-                    args: Vec::new(),
-                    namespace: None,
-                    descriptors: Default::default(),
-                })
-                .unwrap(),
-            )
+            .spawn_process("/bin/alan-agent", &[])
             .await
             .unwrap()
             .parse::<u64>()

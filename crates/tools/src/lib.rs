@@ -9,6 +9,7 @@
 //! - All: core + read-only exploration tools
 
 mod bash_classifier;
+mod execution_adapter;
 mod exploration_tools;
 mod file_tools;
 #[cfg(test)]
@@ -69,8 +70,14 @@ impl Tool for BashTool {
             Ok(sandbox) => sandbox,
             Err(err) => return Box::pin(async move { Err(err) }),
         };
-        let cwd = ctx.cwd.clone();
-        let host_mounts = ctx.host_mounts.clone();
+        let cwd = match ctx.cwd() {
+            Ok(cwd) => cwd,
+            Err(err) => return Box::pin(async move { Err(err) }),
+        };
+        let adapter = match ctx.execution_adapter() {
+            Ok(adapter) => adapter,
+            Err(err) => return Box::pin(async move { Err(err) }),
+        };
         let command = args["command"].as_str().unwrap_or("").to_string();
         let capability = classify_bash_command(&command);
         let timeout_secs = args["timeout"].as_u64().unwrap_or(60).clamp(1, 300);
@@ -86,8 +93,8 @@ impl Tool for BashTool {
                 .await?;
 
             Ok(json!({
-                "stdout": project_host_paths(&result.stdout, &host_mounts),
-                "stderr": project_host_paths(&result.stderr, &host_mounts),
+                "stdout": adapter.project_text(&result.stdout),
+                "stderr": adapter.project_text(&result.stderr),
                 "exit_code": result.exit_code,
                 "success": result.exit_code == 0
             }))
@@ -106,25 +113,6 @@ impl Tool for BashTool {
     fn timeout_secs(&self) -> usize {
         300 // Must be >= user-configurable timeout upper bound in schema
     }
-}
-
-// ============================================================================
-// Helpers
-// ============================================================================
-
-fn project_host_paths(text: &str, mounts: &[alan_agent_engine::HostMountGrant]) -> String {
-    let mut projected = text.to_string();
-    let mut mounts = mounts.iter().collect::<Vec<_>>();
-    mounts.sort_by_key(|grant| std::cmp::Reverse(grant.host_path.as_os_str().len()));
-    for grant in mounts {
-        for root in [
-            grant.host_path.clone(),
-            dunce::canonicalize(&grant.host_path).unwrap_or_else(|_| grant.host_path.clone()),
-        ] {
-            projected = projected.replace(root.to_string_lossy().as_ref(), &grant.namespace_path);
-        }
-    }
-    projected
 }
 
 // ============================================================================
@@ -192,13 +180,10 @@ pub fn create_all_tools() -> Vec<Box<dyn Tool>> {
 pub fn create_tool_registry_with_core_tools(host_root: std::path::PathBuf) -> ToolRegistry {
     let mut registry = ToolRegistry::new();
     register_builtin_tool_catalog(&mut registry);
-    registry.set_default_execution_binding(
-        alan_agent_engine::tools::ToolExecutionBinding::new(
-            host_root.clone(),
-            host_root.join(".alan-runtime-tmp"),
-        )
-        .with_sandbox_spec(alan_agent_engine::tools::SandboxSpec::seed(host_root)),
-    );
+    registry.set_default_execution_binding(execution_adapter::standalone_binding(
+        host_root.clone(),
+        host_root.join(".alan-runtime-tmp"),
+    ));
 
     for tool in create_core_tools() {
         registry.register_boxed(tool);
@@ -211,13 +196,10 @@ pub fn create_tool_registry_with_core_tools(host_root: std::path::PathBuf) -> To
 pub fn create_tool_registry_with_read_only_tools(host_root: std::path::PathBuf) -> ToolRegistry {
     let mut registry = ToolRegistry::new();
     register_builtin_tool_catalog(&mut registry);
-    registry.set_default_execution_binding(
-        alan_agent_engine::tools::ToolExecutionBinding::new(
-            host_root.clone(),
-            host_root.join(".alan-runtime-tmp"),
-        )
-        .with_sandbox_spec(alan_agent_engine::tools::SandboxSpec::seed(host_root)),
-    );
+    registry.set_default_execution_binding(execution_adapter::standalone_binding(
+        host_root.clone(),
+        host_root.join(".alan-runtime-tmp"),
+    ));
 
     for tool in create_read_only_tools() {
         registry.register_boxed(tool);
@@ -230,13 +212,10 @@ pub fn create_tool_registry_with_read_only_tools(host_root: std::path::PathBuf) 
 pub fn create_tool_registry_with_all_tools(host_root: std::path::PathBuf) -> ToolRegistry {
     let mut registry = ToolRegistry::new();
     register_builtin_tool_catalog(&mut registry);
-    registry.set_default_execution_binding(
-        alan_agent_engine::tools::ToolExecutionBinding::new(
-            host_root.clone(),
-            host_root.join(".alan-runtime-tmp"),
-        )
-        .with_sandbox_spec(alan_agent_engine::tools::SandboxSpec::seed(host_root)),
-    );
+    registry.set_default_execution_binding(execution_adapter::standalone_binding(
+        host_root.clone(),
+        host_root.join(".alan-runtime-tmp"),
+    ));
 
     for tool in create_all_tools() {
         registry.register_boxed(tool);
@@ -316,16 +295,12 @@ mod tests {
 
         let tool = BashTool::new();
         let config = Arc::new(Config::default());
-        let ctx = ToolContext::from_binding(
-            alan_agent_engine::tools::ToolExecutionBinding::new(
-                mount_root.join("subdir"),
-                mount_root.join("tmp"),
-            )
-            .with_sandbox_spec(alan_agent_engine::tools::SandboxSpec::seed(
-                mount_root.clone(),
-            )),
-            config,
+        let binding = execution_adapter::standalone_binding_at(
+            mount_root.clone(),
+            std::path::PathBuf::from("/mnt/source/subdir"),
+            mount_root.join("tmp"),
         );
+        let ctx = ToolContext::from_binding(binding, config);
 
         let args = json!({"command": "pwd"});
         let result = tool.execute(args, &ctx).await.unwrap();

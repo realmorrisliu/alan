@@ -112,7 +112,8 @@ impl LiveNamespace {
 
     /// Mount a file server at `at`, preserving normal namespace stacking rules.
     pub fn mount(&self, at: &str, tree: InProcessTransport, access: crate::Access) {
-        self.write().mount(at, tree, access);
+        let mut namespace = self.write();
+        namespace.mount(at, tree, access);
         self.bump_generation();
     }
 
@@ -121,13 +122,13 @@ impl LiveNamespace {
         let mut ns = self.write();
         ns.unmount(at);
         ns.mount(at, tree, access);
-        drop(ns);
         self.bump_generation();
     }
 
     /// Remove every exact mount at `at`; future walks lose that authority.
     pub fn unmount(&self, at: &str) {
-        self.write().unmount(at);
+        let mut namespace = self.write();
+        namespace.unmount(at);
         self.bump_generation();
     }
 
@@ -141,9 +142,29 @@ impl LiveNamespace {
         self.read().clone()
     }
 
+    /// Return one namespace snapshot together with the generation that names
+    /// exactly that snapshot. Mutations advance the generation while holding
+    /// the same lock, so callers never pair new mount state with an old version.
+    pub fn snapshot_with_generation(&self) -> (Namespace, u32) {
+        let namespace = self.read();
+        let generation = self.generation.load(Ordering::Relaxed);
+        (namespace.clone(), generation)
+    }
+
     /// Monotonic mount-table version used by qid/cache invalidation.
+    ///
+    /// Reading through the namespace lock keeps the observed version on one
+    /// side of every mount-table mutation and its generation bump.
     pub fn generation(&self) -> u32 {
+        let _namespace_guard = self.read();
         self.generation.load(Ordering::Relaxed)
+    }
+
+    /// Advance the generation when this handle becomes a Process's live
+    /// namespace authority, even when its initial mount table is unchanged.
+    pub(crate) fn mark_authority_bound(&self) {
+        let _namespace_guard = self.write();
+        self.bump_generation();
     }
 
     fn resolve_candidates(&self, path: &str) -> Vec<Resolved> {

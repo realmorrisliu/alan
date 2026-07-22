@@ -25,6 +25,12 @@ use tokio::task::JoinHandle;
 /// never draw the same number or one would clobber the other's open file. A single
 /// global sequence guarantees uniqueness across every shell in the process.
 static NEXT_FID: AtomicU64 = AtomicU64::new(1);
+const MAX_NAMESPACE_SPAWN_ATTEMPTS: usize = 3;
+
+struct ProcessNamespaceSnapshot {
+    generation: u32,
+    document: serde_json::Value,
+}
 
 /// The shell's view of one mounted namespace, addressed by absolute path.
 #[derive(Clone)]
@@ -365,14 +371,80 @@ impl Shell {
         Ok(pid)
     }
 
+    /// Spawn an ordinary Process with an explicit snapshot of this Process's
+    /// current namespace. The snapshot and its generation are read through
+    /// `/proc/self/namespace`, so the shell remains an aP-only client and never
+    /// relies on ambient Kernel inheritance or a Host-side Process identity
+    /// channel. A generation race causes a bounded fresh-snapshot retry.
+    pub async fn spawn_process(
+        &self,
+        executable: &str,
+        args: &[String],
+    ) -> Result<String, ErrorCode> {
+        for _ in 0..MAX_NAMESPACE_SPAWN_ATTEMPTS {
+            let namespace = self.current_namespace_manifest().await?;
+            let generation = namespace.generation;
+            let exec_spec = serde_json::to_string(&serde_json::json!({
+                "executable": executable,
+                "args": args,
+                "namespace": namespace.document,
+            }))
+            .map_err(|_| ErrorCode::Io)?;
+            match self.spawn(&exec_spec).await {
+                Ok(pid) => return Ok(pid),
+                Err(ErrorCode::BadRequest)
+                    if self.current_namespace_generation().await? != generation =>
+                {
+                    continue;
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        Err(ErrorCode::BadRequest)
+    }
+
+    async fn current_namespace_manifest(&self) -> Result<ProcessNamespaceSnapshot, ErrorCode> {
+        for _ in 0..MAX_NAMESPACE_SPAWN_ATTEMPTS {
+            let before = self.current_namespace_generation().await?;
+            let bytes = self.cat("/proc/self/namespace").await?;
+            let after = self.current_namespace_generation().await?;
+            if before != after {
+                continue;
+            }
+            let text = std::str::from_utf8(&bytes).map_err(|_| ErrorCode::Io)?;
+            let mounts = text
+                .lines()
+                .filter(|line| !line.is_empty())
+                .map(|line| {
+                    let (path, access) = line.rsplit_once(' ').ok_or(ErrorCode::Io)?;
+                    if !path.starts_with('/') || !matches!(access, "ro" | "rw") {
+                        return Err(ErrorCode::Io);
+                    }
+                    Ok(serde_json::json!({ "path": path, "access": access }))
+                })
+                .collect::<Result<Vec<_>, ErrorCode>>()?;
+            return Ok(ProcessNamespaceSnapshot {
+                generation: after,
+                document: serde_json::json!({
+                    "generation": after,
+                    "mounts": mounts,
+                }),
+            });
+        }
+        Err(ErrorCode::Io)
+    }
+
+    async fn current_namespace_generation(&self) -> Result<u32, ErrorCode> {
+        Ok(self.stat("/proc/self/namespace").await?.qid.version)
+    }
+
     /// Run an executable from the Process namespace and collect its terminal output and exit.
     pub async fn run(&self, executable: &str, args: &[String]) -> Result<CommandOutput, ErrorCode> {
-        let exec_spec = serde_json::to_string(&serde_json::json!({
-            "executable": executable,
-            "args": args,
-        }))
-        .map_err(|_| ErrorCode::Io)?;
-        let pid = self.spawn(&exec_spec).await?.trim().to_string();
+        let pid = self
+            .spawn_process(executable, args)
+            .await?
+            .trim()
+            .to_string();
         if pid.is_empty() || !pid.bytes().all(|byte| byte.is_ascii_digit()) {
             return Err(ErrorCode::Io);
         }

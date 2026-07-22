@@ -101,6 +101,7 @@ async fn boot_proc_clone_uses_the_boot_namespace_context() {
         "executable": "/bin/init",
         "args": [],
         "namespace": {
+            "generation": 0,
             "mounts": [
                 {"path": "/proc", "access": "rw"},
                 {"path": "/srv", "access": "rw"}

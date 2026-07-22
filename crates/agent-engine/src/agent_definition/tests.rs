@@ -1,9 +1,18 @@
 use super::*;
 use crate::skills::SkillTypedDependency;
-use crate::{
-    HostMountGrant, ProcessDescriptor, ProcessPackageReference, ProcessPackageSkillReference,
-};
-use alan_kernel::Access;
+use crate::{ProcessDescriptor, ProcessPackageReference, ProcessPackageSkillReference};
+
+fn resolve(
+    descriptor: Option<&ProcessDescriptor>,
+    packages: &[ProcessPackageReference],
+) -> anyhow::Result<ResolvedAgentDefinition> {
+    ResolvedAgentDefinition::from_process_inputs(
+        descriptor,
+        packages,
+        &[],
+        ConfigSourceKind::Default,
+    )
+}
 
 fn package_descriptor(id: &str) -> crate::ProcessFileTree {
     crate::ProcessFileTree::new(std::collections::BTreeMap::from([(
@@ -31,40 +40,6 @@ fn package_handle() -> alan_ap::InProcessTransport {
 }
 
 #[test]
-fn definition_resolves_only_inside_its_descriptor_tree() {
-    let host = tempfile::tempdir().unwrap();
-    let definition = host.path().join("definition");
-    std::fs::create_dir_all(definition.join("persona")).unwrap();
-    std::fs::create_dir_all(definition.join("skills/reviewer")).unwrap();
-    std::fs::write(definition.join("persona/ROLE.md"), "Reviewer").unwrap();
-    std::fs::write(
-        definition.join("skills/reviewer/SKILL.md"),
-        "---\nname: reviewer\ndescription: review\n---\n",
-    )
-    .unwrap();
-    let context = ProcessLaunchContext::root()
-        .with_host_mount(HostMountGrant::new("/mnt/import", host.path(), Access::ReadOnly).unwrap())
-        .with_descriptor(
-            AGENT_DEFINITION_DESCRIPTOR,
-            ProcessDescriptor::new("/mnt/import/definition").unwrap(),
-        );
-
-    let resolved =
-        ResolvedAgentDefinition::from_launch_context(&context, &[], ConfigSourceKind::Default)
-            .unwrap();
-
-    assert_eq!(resolved.root_dir, Some(definition.clone()));
-    assert_eq!(resolved.persona_dirs, vec![definition.join("persona")]);
-    assert!(
-        resolved
-            .capability_view
-            .packages
-            .iter()
-            .any(|package| package.id == "skill:reviewer")
-    );
-}
-
-#[test]
 fn file_tree_definition_resolves_without_host_backing() {
     let tree = crate::ProcessFileTree::new(std::collections::BTreeMap::from([
         (
@@ -86,14 +61,9 @@ fn file_tree_definition_resolves_without_host_backing() {
         ),
     ]))
     .unwrap();
-    let context = ProcessLaunchContext::root().with_descriptor(
-        AGENT_DEFINITION_DESCRIPTOR,
-        ProcessDescriptor::with_file_tree("/lib/pkg/review/agents/root", tree).unwrap(),
-    );
-
-    let resolved =
-        ResolvedAgentDefinition::from_launch_context(&context, &[], ConfigSourceKind::Default)
-            .unwrap();
+    let descriptor =
+        ProcessDescriptor::with_file_tree("/lib/pkg/review/agents/root", tree).unwrap();
+    let resolved = resolve(Some(&descriptor), &[]).unwrap();
 
     assert!(resolved.root_dir.is_none());
     assert_eq!(
@@ -135,75 +105,34 @@ fn file_tree_definition_resolves_without_host_backing() {
             .as_ref()
             .is_some_and(|tree| tree.contains_file("agent.toml"))
     );
-    assert!(context.host_mounts.is_empty());
 }
 
 #[test]
-fn file_tree_and_host_definitions_canonicalize_local_skill_ids_identically() {
-    let host = tempfile::tempdir().unwrap();
-    let definition = host.path().join("definition");
-    std::fs::create_dir_all(definition.join("skills/Repo Review")).unwrap();
-    std::fs::write(
-        definition.join("skills/Repo Review/SKILL.md"),
-        "---\nname: Repo Review\ndescription: Review changes.\n---\n",
-    )
-    .unwrap();
-    let host_context = ProcessLaunchContext::root()
-        .with_host_mount(HostMountGrant::new("/mnt/import", host.path(), Access::ReadOnly).unwrap())
-        .with_descriptor(
-            AGENT_DEFINITION_DESCRIPTOR,
-            ProcessDescriptor::new("/mnt/import/definition").unwrap(),
-        );
+fn file_tree_definitions_canonicalize_local_skill_ids() {
     let tree = crate::ProcessFileTree::new(std::collections::BTreeMap::from([(
         "skills/Repo Review/SKILL.md".to_string(),
         b"---\nname: Repo Review\ndescription: Review changes.\n---\n".to_vec(),
     )]))
     .unwrap();
-    let tree_context = ProcessLaunchContext::root().with_descriptor(
-        AGENT_DEFINITION_DESCRIPTOR,
-        ProcessDescriptor::with_file_tree("/lib/pkg/review/agents/root", tree).unwrap(),
-    );
+    let descriptor =
+        ProcessDescriptor::with_file_tree("/lib/pkg/review/agents/root", tree).unwrap();
+    let tree_resolved = resolve(Some(&descriptor), &[]).unwrap();
 
-    let host_resolved =
-        ResolvedAgentDefinition::from_launch_context(&host_context, &[], ConfigSourceKind::Default)
-            .unwrap();
-    let tree_resolved =
-        ResolvedAgentDefinition::from_launch_context(&tree_context, &[], ConfigSourceKind::Default)
-            .unwrap();
-
-    assert_eq!(
-        tree_resolved.capability_view.packages[0].id,
-        host_resolved.capability_view.packages[0].id
-    );
     assert_eq!(
         tree_resolved.capability_view.packages[0].id,
         "skill:repo-review"
     );
-    let host_registry = crate::skills::SkillsRegistry::load_capability_view(
-        &host_resolved.capability_view,
-        &host_resolved.skill_overrides,
-    )
-    .unwrap();
     let tree_registry = crate::skills::SkillsRegistry::load_capability_view(
         &tree_resolved.capability_view,
         &tree_resolved.skill_overrides,
     )
     .unwrap();
-    assert!(host_registry.has(&"repo-review".to_string()));
     assert!(tree_registry.has(&"repo-review".to_string()));
 }
 
 #[test]
-fn host_directories_are_not_scanned_without_a_descriptor() {
-    let host = tempfile::tempdir().unwrap();
-    std::fs::create_dir_all(host.path().join(".alan/agents/default/persona")).unwrap();
-    let context = ProcessLaunchContext::root().with_host_mount(
-        HostMountGrant::new("/mnt/source", host.path(), Access::ReadOnly).unwrap(),
-    );
-
-    let resolved =
-        ResolvedAgentDefinition::from_launch_context(&context, &[], ConfigSourceKind::Default)
-            .unwrap();
+fn process_without_definition_descriptor_has_no_definition() {
+    let resolved = resolve(None, &[]).unwrap();
 
     assert!(resolved.root_dir.is_none());
     assert!(resolved.persona_dirs.is_empty());
@@ -243,17 +172,10 @@ fn typed_package_reference_selects_only_manifest_skill_roots() {
             )
             .unwrap(),
         ],
-        handle.clone(),
+        handle,
     )
     .unwrap();
-    let mut context = ProcessLaunchContext::root().with_package_reference(reference);
-    context
-        .namespace
-        .mount("/lib/pkg/review-pack", handle, Access::ReadOnly);
-
-    let resolved =
-        ResolvedAgentDefinition::from_launch_context(&context, &[], ConfigSourceKind::Default)
-            .unwrap();
+    let resolved = resolve(None, &[reference]).unwrap();
     assert_eq!(resolved.capability_view.packages.len(), 1);
     let package = &resolved.capability_view.packages[0];
     assert_eq!(package.id, "installed:review-pack:reviewer");
@@ -292,53 +214,6 @@ fn typed_package_reference_selects_only_manifest_skill_roots() {
 }
 
 #[test]
-fn package_reference_requires_its_exact_read_only_namespace_mount() {
-    let handle = package_handle();
-    let reference = ProcessPackageReference::new(
-        "review-pack",
-        "e".repeat(64),
-        ProcessPackageKind::Installed,
-        "/lib/pkg/review-pack",
-        vec![
-            ProcessPackageSkillReference::new(
-                "reviewer",
-                "skills/reviewer",
-                Vec::new(),
-                package_descriptor("reviewer"),
-            )
-            .unwrap(),
-        ],
-        handle.clone(),
-    )
-    .unwrap();
-    let mut context = ProcessLaunchContext::root().with_package_reference(reference);
-
-    let error =
-        ResolvedAgentDefinition::from_launch_context(&context, &[], ConfigSourceKind::Default)
-            .unwrap_err();
-
-    assert!(
-        error
-            .to_string()
-            .contains("requires one exact read-only Process namespace mount")
-    );
-
-    context.namespace.mount(
-        "/lib/pkg/review-pack",
-        handle,
-        alan_kernel::Access::ReadWrite,
-    );
-    let error =
-        ResolvedAgentDefinition::from_launch_context(&context, &[], ConfigSourceKind::Default)
-            .unwrap_err();
-    assert!(
-        error
-            .to_string()
-            .contains("requires one exact read-only Process namespace mount")
-    );
-}
-
-#[test]
 fn malformed_package_descriptor_sidecars_are_non_fatal_registry_errors() {
     let handle = package_handle();
     let reference = ProcessPackageReference::new(
@@ -355,17 +230,10 @@ fn malformed_package_descriptor_sidecars_are_non_fatal_registry_errors() {
             )
             .unwrap(),
         ],
-        handle.clone(),
+        handle,
     )
     .unwrap();
-    let mut context = ProcessLaunchContext::root().with_package_reference(reference);
-    context
-        .namespace
-        .mount("/lib/pkg/review-pack", handle, Access::ReadOnly);
-
-    let resolved =
-        ResolvedAgentDefinition::from_launch_context(&context, &[], ConfigSourceKind::Default)
-            .unwrap();
+    let resolved = resolve(None, &[reference]).unwrap();
     let registry = crate::skills::SkillsRegistry::load_capability_view(
         &resolved.capability_view,
         &resolved.skill_overrides,
@@ -410,77 +278,19 @@ fn launch_rejects_skill_id_collision_across_package_and_definition_descriptors()
             )
             .unwrap(),
         ],
-        handle.clone(),
+        handle,
     )
     .unwrap();
-    let mut context = ProcessLaunchContext::root()
-        .with_host_mount(
-            HostMountGrant::new("/mnt/definition", &definition, Access::ReadOnly).unwrap(),
-        )
-        .with_package_reference(reference)
-        .with_descriptor(
-            AGENT_DEFINITION_DESCRIPTOR,
-            ProcessDescriptor::new("/mnt/definition").unwrap(),
-        );
-    context
-        .namespace
-        .mount("/lib/pkg/review-pack", handle, Access::ReadOnly);
-
-    let error =
-        ResolvedAgentDefinition::from_launch_context(&context, &[], ConfigSourceKind::Default)
-            .unwrap_err();
+    let descriptor = ProcessDescriptor::with_file_tree(
+        "/agent-definition",
+        crate::ProcessFileTree::new(std::collections::BTreeMap::from([(
+            "skills/reviewer/SKILL.md".to_string(),
+            b"---\nname: reviewer\ndescription: Test Skill.\n---\n".to_vec(),
+        )]))
+        .unwrap(),
+    )
+    .unwrap();
+    let error = resolve(Some(&descriptor), &[reference]).unwrap_err();
     let message = format!("{error:#}");
     assert!(message.contains("Duplicate runtime Skill id"), "{message}");
-}
-
-#[cfg(unix)]
-#[test]
-fn definition_descriptor_cannot_escape_its_host_mount_through_a_symlink() {
-    use std::os::unix::fs::symlink;
-
-    let host = tempfile::tempdir().unwrap();
-    let outside = tempfile::tempdir().unwrap();
-    std::fs::write(outside.path().join("agent.toml"), "model = \"secret\"\n").unwrap();
-    symlink(outside.path(), host.path().join("definition")).unwrap();
-    let context = ProcessLaunchContext::root()
-        .with_host_mount(HostMountGrant::new("/mnt/import", host.path(), Access::ReadOnly).unwrap())
-        .with_descriptor(
-            AGENT_DEFINITION_DESCRIPTOR,
-            ProcessDescriptor::new("/mnt/import/definition").unwrap(),
-        );
-
-    let error =
-        ResolvedAgentDefinition::from_launch_context(&context, &[], ConfigSourceKind::Default)
-            .unwrap_err();
-
-    assert!(
-        error
-            .to_string()
-            .contains("escapes its explicit Host Mount")
-    );
-}
-
-#[cfg(unix)]
-#[test]
-fn definition_tree_rejects_nested_symlinks() {
-    use std::os::unix::fs::symlink;
-
-    let host = tempfile::tempdir().unwrap();
-    let definition = host.path().join("definition");
-    std::fs::create_dir_all(definition.join("persona")).unwrap();
-    let outside = host.path().join("outside.md");
-    std::fs::write(&outside, "secret").unwrap();
-    symlink(&outside, definition.join("persona/SOUL.md")).unwrap();
-    let context = ProcessLaunchContext::root()
-        .with_host_mount(HostMountGrant::new("/mnt/import", host.path(), Access::ReadOnly).unwrap())
-        .with_descriptor(
-            AGENT_DEFINITION_DESCRIPTOR,
-            ProcessDescriptor::new("/mnt/import/definition").unwrap(),
-        );
-
-    let error =
-        ResolvedAgentDefinition::from_launch_context(&context, &[], ConfigSourceKind::Default)
-            .unwrap_err();
-
-    assert!(error.to_string().contains("must not contain symlinks"));
 }

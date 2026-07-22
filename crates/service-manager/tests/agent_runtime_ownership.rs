@@ -20,58 +20,129 @@ fn rust_item_body<'a>(source: &'a str, marker: &str) -> &'a str {
 }
 
 #[test]
-fn runtime_assembly_call_paths_have_explicit_owners() {
+fn agent_runtime_service_owns_the_alan_agent_process_image() {
     let service = include_str!("../src/agent_runtime.rs");
     for marker in [
-        "spawn_unit_process(",
+        "const AGENT_EXECUTABLE: &str = \"/bin/alan-agent\"",
+        "async fn launch_root",
+        "async fn run_agent_process",
+        "fn prepare_launch",
+        "fn child_template",
         "AgentFs::new()",
+        "bind_process(",
         "set_root_process(",
-        "with_tool_process_context(",
-        "with_mount_grant_applicator(",
-        "impl ChildAgentProcessAssembler",
-        "walk child /proc/clone",
-        "LiveNamespace::new(child_namespace(",
-        "self.procfs.record_exit(pid, 1).await;",
-        "shutdown_root",
+        "spawn_with_namespace_environment(",
+        "register_process_authority(",
+        "register_child_process(",
+        "async fn release_process",
     ] {
         assert!(
             service.contains(marker),
-            "Agent Runtime Service is missing root assembly marker `{marker}`"
+            "Agent Runtime Service is missing Process-image ownership marker `{marker}`"
         );
     }
 
-    let supervisor = include_str!("../src/runtime.rs");
-    let production = supervisor
-        .split("\n#[cfg(test)]\nmod tests")
-        .next()
-        .unwrap();
-    for displaced in [
-        "AgentFs::new()",
-        "set_root_process(",
-        "with_tool_process_context(",
+    let root_launch = rust_item_body(service, "async fn launch_root");
+    assert!(root_launch.contains("walk Root Agent /proc/clone"));
+    assert!(root_launch.contains("commit_clone("));
+    assert!(root_launch.contains("ExecNamespaceManifest::from_snapshot"));
+
+    let process_image = rust_item_body(service, "async fn run_prepared_agent");
+    for required in [
+        "bind_live_namespace(",
+        "NamespaceRuntimeEnvironment::new(",
+        "wait_for_child_terminal(",
+        "wait_for_root_stop(",
     ] {
         assert!(
-            !production.contains(displaced),
-            "Service Manager supervisor still owns `{displaced}`"
+            process_image.contains(required),
+            "Agent executable image is missing `{required}`"
         );
     }
 
-    let child_runtime = include_str!("../../agent-engine/src/runtime/child_agents.rs");
-    let live_child_launch = rust_item_body(child_runtime, "async fn spawn_child_runtime_inner");
-    assert!(child_runtime.contains("ChildLaunchRuntime"));
-    assert!(live_child_launch.contains(".child_launch"));
-    assert!(live_child_launch.contains(".assembler()"));
+    let runner = include_str!("../src/process_runner.rs");
+    let dispatch = rust_item_body(runner, "impl ProcessRunner for SystemProcessRunner");
+    assert!(dispatch.contains("invocation.exec.executable == \"/bin/alan-agent\""));
+    assert!(dispatch.contains("runtime.run_agent_process(invocation).await"));
+
+    let engine_child = include_str!("../../agent-engine/src/runtime/child_agents.rs");
+    let launch = rust_item_body(engine_child, "async fn spawn_child_runtime_inner");
+    for required in [
+        "read_process_descriptors(",
+        "wait_for_child_process_startup(",
+    ] {
+        assert!(
+            launch.contains(required),
+            "Engine child launch is missing `{required}`"
+        );
+    }
+    let process_launch = rust_item_body(engine_child, "impl ChildProcessLaunch");
+    for required in [
+        "read_process_namespace(",
+        "ProcessNamespaceManifest",
+        ".spawn_agent_process(",
+        "is_stale_namespace_launch(",
+    ] {
+        assert!(
+            process_launch.contains(required),
+            "Engine child Process launch is missing `{required}`"
+        );
+    }
+    let namespace_reads = process_launch
+        .match_indices("read_process_namespace(")
+        .map(|(index, _)| index)
+        .collect::<Vec<_>>();
+    assert_eq!(namespace_reads.len(), 3);
+    let discovery = process_launch.find("select_tool_names(").unwrap();
+    let stable_snapshot = namespace_reads[1];
+    let validated_discovery = process_launch
+        .find("let tool_names = tool_names?;")
+        .unwrap();
+    assert!(discovery < stable_snapshot && stable_snapshot < validated_discovery);
+    let planning = process_launch.find("build_child_namespace_plan(").unwrap();
+    let planned_snapshot = namespace_reads[2];
+    let validated_plan = process_launch
+        .find("let (plan, decision, descriptors, request) = planned_launch?;")
+        .unwrap();
+    assert!(stable_snapshot < planning && planning < planned_snapshot);
+    assert!(planned_snapshot < validated_plan);
+    assert_eq!(
+        process_launch
+            .matches("ensure_not_cancelled(self.cancel)?;")
+            .count(),
+        2
+    );
+    let pre_spawn_cancel = process_launch
+        .rfind("ensure_not_cancelled(self.cancel)?;")
+        .unwrap();
+    let spawn = process_launch.find(".spawn_agent_process(").unwrap();
+    assert!(validated_plan < pre_spawn_cancel && pre_spawn_cancel < spawn);
+    assert!(!process_launch[pre_spawn_cancel..spawn].contains(".await"));
     for displaced in [
-        "child_process_assembler()",
         "AgentFs::new()",
         "bind_process(",
         "LiveNamespace::new(",
-        "for_spawner(",
-        "with_tool_process_context(",
+        "ProcessLaunchContext",
+        "ChildAgentProcessAssembler",
+        "AgentProcessLifecycle",
+        ".assembler()",
     ] {
         assert!(
-            !live_child_launch.contains(displaced),
-            "Agent Execution Engine still owns child assembly marker `{displaced}`"
+            !engine_child.contains(displaced),
+            "Agent Execution Engine still owns child assembly through `{displaced}`"
+        );
+    }
+
+    let engine_runtime =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../agent-engine/src/runtime");
+    for retired in [
+        "agent_process.rs",
+        "child_agents/launch_context.rs",
+        "child_agents/runtime_startup.rs",
+    ] {
+        assert!(
+            !engine_runtime.join(retired).exists(),
+            "retired Engine launch owner still exists at {retired}"
         );
     }
 }

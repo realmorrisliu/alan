@@ -10,7 +10,6 @@ mod child_launch;
 mod client;
 mod generation;
 mod host_mount_requests;
-mod mount_control;
 mod process_files;
 mod tool_execution;
 
@@ -134,119 +133,17 @@ pub struct NamespaceToolActionOutput {
     pub exit_code: i32,
 }
 
-/// Access mode for a transitional, pre-authorized Host-backed launch declaration.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ApprovedMountGrantAccess {
-    ReadOnly,
-    ReadWrite,
-}
-
-impl ApprovedMountGrantAccess {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::ReadOnly => "read_only",
-            Self::ReadWrite => "read_write",
-        }
-    }
-}
-
-/// Transitional Host backing used only while pre-authorized launch mounts move to handles.
-///
-/// The file-native `request_mount` path never constructs or observes this type. Host Mount Service
-/// owns that path's requests and status; the next ownership slice removes this launch-only record.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ApprovedMountGrant {
-    pub namespace_path: String,
-    pub host_path: PathBuf,
-    pub access: ApprovedMountGrantAccess,
-    pub reason: String,
-}
-
-impl ApprovedMountGrant {
-    pub fn new(
-        namespace_path: impl Into<String>,
-        host_path: PathBuf,
-        access: ApprovedMountGrantAccess,
-        reason: impl Into<String>,
-    ) -> Self {
-        Self {
-            namespace_path: namespace_path.into(),
-            host_path,
-            access,
-            reason: reason.into(),
-        }
-    }
-}
-
-/// Transitional Host hook for applying pre-authorized launch declarations.
-///
-/// Host Mount Service owns runtime request approval and live projection. This hook remains only for
-/// launch-time Agent Definition backing until the handle/projection slice replaces it.
-pub trait MountGrantApplicator: std::fmt::Debug + Send + Sync {
-    fn apply_mount_grant(&self, grant: &ApprovedMountGrant) -> Result<alan_kernel::Namespace>;
-}
-
-/// Host-provided factory that can build a mount grant applicator once the engine
-/// has created the live namespace handle for a runtime.
-///
-/// Inherited mount references are opaque metadata. The Host implementation must also verify that
-/// the spawning Process currently holds each referenced projection before delegating it.
-pub trait MountGrantApplicatorFactory: std::fmt::Debug + Send + Sync {
-    fn create(
-        &self,
-        pid: alan_kernel::Pid,
-        live_namespace: alan_kernel::LiveNamespace,
-        inherited_mount_references: &[String],
-    ) -> Arc<dyn MountGrantApplicator>;
-
-    fn tool_execution_authority(&self) -> Option<Arc<dyn crate::tools::ToolExecutionAuthority>> {
-        None
-    }
-}
-
-/// Result of attempting live namespace projection for an approved grant.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct NamespaceMountApplication {
-    pub namespace_applied: bool,
-    pub namespace_error: Option<String>,
-}
-
-impl NamespaceMountApplication {
-    pub fn applied() -> Self {
-        Self {
-            namespace_applied: true,
-            namespace_error: None,
-        }
-    }
-
-    pub fn unavailable(reason: impl Into<String>) -> Self {
-        Self {
-            namespace_applied: false,
-            namespace_error: Some(reason.into()),
-        }
-    }
-
-    pub fn failed(error: anyhow::Error) -> Self {
-        Self {
-            namespace_applied: false,
-            namespace_error: Some(error.to_string()),
-        }
-    }
-}
-
 /// Namespace-backed environment for an Agent Process.
 #[derive(Clone)]
 pub struct NamespaceRuntimeEnvironment {
     root: InProcessTransport,
     agent_path: String,
     llm_connection: String,
+    namespace_cwd: PathBuf,
     tool_process_context: Option<NamespaceToolProcessContext>,
     input_offset: Arc<AtomicU64>,
     control_offset: Arc<AtomicU64>,
-    mount_grant_applicator: Option<Arc<dyn MountGrantApplicator>>,
     child_run_registry: super::super::child_runs::ChildRunRegistry,
-    child_process_assembler: Option<Arc<dyn super::super::ChildAgentProcessAssembler>>,
-    launch_context: Option<crate::ProcessLaunchContext>,
 }
 
 /// Narrow file-native handle for one mounted LLM Connection.
@@ -284,14 +181,8 @@ pub(crate) use host_mount_requests::{HostMountTerminalResult, HostMountTerminalS
 #[derive(Clone)]
 pub(crate) struct NamespaceChildLaunch {
     llm_connection: String,
-    launch_context: Option<crate::ProcessLaunchContext>,
-    child_process_assembler: Option<Arc<dyn super::super::ChildAgentProcessAssembler>>,
-}
-
-/// Narrow control surface for applying and retaining approved Namespace mounts.
-pub struct NamespaceMountControl<'a> {
-    launch_context: &'a mut Option<crate::ProcessLaunchContext>,
-    mount_grant_applicator: Option<Arc<dyn MountGrantApplicator>>,
+    namespace_cwd: PathBuf,
+    process_files: NamespaceProcessFiles,
 }
 
 /// Narrow handle for Tool package discovery, policy capability, and execution.
@@ -305,7 +196,7 @@ pub(crate) struct NamespaceToolExecution {
 
 #[derive(Clone)]
 struct NamespaceToolProcessContext {
-    pub(crate) pid: alan_kernel::Pid,
+    pub(crate) pid: u64,
     pub(crate) tool_runner: crate::tools::ToolProcessRunner,
 }
 
@@ -314,10 +205,6 @@ impl std::fmt::Debug for NamespaceRuntimeEnvironment {
         f.debug_struct("NamespaceRuntimeEnvironment")
             .field("agent_path", &self.agent_path)
             .field("llm_connection", &self.llm_connection)
-            .field(
-                "mount_grant_applicator",
-                &self.mount_grant_applicator.is_some(),
-            )
             .finish_non_exhaustive()
     }
 }
@@ -332,19 +219,17 @@ impl NamespaceRuntimeEnvironment {
             root,
             agent_path: agent_path.into(),
             llm_connection: llm_connection.into(),
+            namespace_cwd: PathBuf::from("/"),
             tool_process_context: None,
             input_offset: Arc::new(AtomicU64::new(0)),
             control_offset: Arc::new(AtomicU64::new(0)),
-            mount_grant_applicator: None,
             child_run_registry: super::super::child_runs::ChildRunRegistry::default(),
-            child_process_assembler: None,
-            launch_context: None,
         }
     }
 
-    /// Bind the explicit Process Launch Context used for child execution.
-    pub fn with_launch_context(mut self, launch_context: crate::ProcessLaunchContext) -> Self {
-        self.launch_context = Some(launch_context);
+    /// Bind the Alan OS working directory selected by Agent Runtime Service.
+    pub fn with_namespace_cwd(mut self, namespace_cwd: impl Into<PathBuf>) -> Self {
+        self.namespace_cwd = namespace_cwd.into();
         self
     }
 
@@ -380,16 +265,8 @@ impl NamespaceRuntimeEnvironment {
     pub(crate) fn child_launch(&self) -> NamespaceChildLaunch {
         NamespaceChildLaunch {
             llm_connection: self.llm_connection.clone(),
-            launch_context: self.launch_context.clone(),
-            child_process_assembler: self.child_process_assembler.clone(),
-        }
-    }
-
-    /// Borrow the concrete control surface for approved Namespace mount changes.
-    pub fn mount_control(&mut self) -> NamespaceMountControl<'_> {
-        NamespaceMountControl {
-            launch_context: &mut self.launch_context,
-            mount_grant_applicator: self.mount_grant_applicator.clone(),
+            namespace_cwd: self.namespace_cwd.clone(),
+            process_files: self.process_files(),
         }
     }
 
@@ -405,18 +282,10 @@ impl NamespaceRuntimeEnvironment {
     /// Bind transition-local Tool execution to its already-created Process.
     pub fn with_tool_process_context(
         mut self,
-        pid: alan_kernel::Pid,
+        pid: u64,
         tool_runner: crate::tools::ToolProcessRunner,
     ) -> Self {
         self.tool_process_context = Some(NamespaceToolProcessContext { pid, tool_runner });
-        self
-    }
-
-    pub fn with_mount_grant_applicator(
-        mut self,
-        applicator: Arc<dyn MountGrantApplicator>,
-    ) -> Self {
-        self.mount_grant_applicator = Some(applicator);
         self
     }
 
@@ -427,15 +296,6 @@ impl NamespaceRuntimeEnvironment {
     /// Process-local projection registry for delegated child Agent Processes.
     pub(crate) fn child_run_registry(&self) -> &super::super::child_runs::ChildRunRegistry {
         &self.child_run_registry
-    }
-
-    /// Bind the Process-scoped Agent Runtime Service capability used for child assembly.
-    pub fn with_child_process_assembler(
-        mut self,
-        assembler: Arc<dyn super::super::ChildAgentProcessAssembler>,
-    ) -> Self {
-        self.child_process_assembler = Some(assembler);
-        self
     }
 
     pub fn root_transport(&self) -> InProcessTransport {

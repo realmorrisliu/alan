@@ -63,36 +63,19 @@ fn namespace_environment_for_virtual_tool_test(
     let root = InProcessTransport::new(Arc::new(MountFs::new(namespace)));
     let runner = crate::tools::ToolProcessRunner::from_registry(tools);
     NamespaceRuntimeEnvironment::new(root, "/agent/1", "default")
-        .with_tool_process_context(alan_kernel::Pid(1), runner)
+        .with_tool_process_context(1, runner)
 }
 
 fn create_test_transition_state() -> super::super::transition::RuntimeLoopState {
     let config = Config::default();
     let machine = AgentMachine::new();
     let host_source = PathBuf::from("/tmp/alan-delegated-parent");
-    let mut launch_namespace = Namespace::new();
-    launch_namespace.mount(
-        "/mnt/source",
-        InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::new())),
-        Access::ReadWrite,
-    );
-    let launch_context = crate::ProcessLaunchContext::new(
-        launch_namespace,
-        alan_kernel::Credentials::user("parent-agent"),
-        "/mnt/source",
-    )
-    .unwrap()
-    .with_host_mount(
-        crate::HostMountGrant::new("/mnt/source", &host_source, Access::ReadWrite).unwrap(),
-    );
     let mut tools = ToolRegistry::new();
-    tools.set_default_execution_binding(
-        crate::tools::ToolExecutionBinding::from_launch_context(
-            &launch_context,
-            PathBuf::from("/tmp/alan-system-store/tmp"),
-        )
-        .unwrap(),
-    );
+    tools.set_default_execution_binding(crate::tools::test_execution_binding(
+        "/mnt/source",
+        host_source,
+        PathBuf::from("/tmp/alan-system-store/tmp"),
+    ));
     let runtime_config = RuntimeConfig::default();
     let mut prompt_cache = crate::runtime::prompt_cache::PromptAssemblyCache::new(Vec::new());
     prompt_cache.set_host_capabilities(
@@ -104,7 +87,7 @@ fn create_test_transition_state() -> super::super::transition::RuntimeLoopState 
     super::super::transition::RuntimeLoopState {
         machine,
         environment: namespace_environment_for_virtual_tool_test(&tools)
-            .with_launch_context(launch_context),
+            .with_namespace_cwd("/mnt/source"),
         core_config: config,
         runtime_config,
         prompt_cache,
