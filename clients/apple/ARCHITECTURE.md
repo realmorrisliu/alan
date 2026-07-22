@@ -568,11 +568,12 @@ The persistence ownership slice moves the retained manifest, latest persistence
 context, debounce state, scheduling, and manifest projection behind
 `ShellWorkspacePersistenceCoordinator`. The architecture gate requires those
 state and cadence markers to have that single owner and rejects controller-side
-manifest projection or a second scheduler. It also rejects a replacement global
-Shell store: `ShellHostController` remains the only observable owner of a
-mutable `ShellStateSnapshot`, and that snapshot cannot be placed behind a
-singleton or a new catch-all `ShellStore` / `ShellModel` type. The current
-`ObservableObject` declarations form an explicit owner allowlist, new
+use of the `ShellContentWorkspaceManifest` type, manifest projection, or a
+second scheduler. It also rejects a replacement global Shell store:
+`ShellHostController` remains the only observable owner of a mutable
+`ShellStateSnapshot`, and that snapshot cannot be placed behind a singleton or
+a new catch-all `ShellStore` / `ShellModel` type. The current `ObservableObject`
+declarations and `@Published` projections form explicit owner allowlists, new
 `@Observable` owners require an architecture decision, and snapshot-referencing
 files cannot hide inferred state behind `shared`, `current`, or `default`.
 

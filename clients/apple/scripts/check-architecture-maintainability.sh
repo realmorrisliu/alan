@@ -241,6 +241,23 @@ reject_unapproved_symbol_lines() {
     fi
 }
 
+normalized_file_matches() {
+    local file="$1"
+    local pattern="$2"
+
+    awk -v pattern="$pattern" '
+        {
+            line = $0
+            sub(/\/\/.*/, "", line)
+            source = source " " line
+        }
+        END {
+            gsub(/[[:space:]]+/, " ", source)
+            exit source ~ pattern ? 0 : 1
+        }
+    ' "$file"
+}
+
 check_appkit_import_gate() {
     local rel="$1"
     local file="$2"
@@ -643,6 +660,14 @@ reject_shell_host_duplicate_persistence_state() {
         'ShellWorkspaceManifestProjector' \
         "$SOURCE_ROOT" || true)
 
+    if grep -RIn --include='*.swift' -F \
+        'ShellContentWorkspaceManifest' \
+        "$controller" "$controller_dir" >&2
+    then
+        fail \
+            "shell host must not retain or construct workspace manifests outside $persistence_owner"
+    fi
+
     if grep -RIn --include='*.swift' -E \
         '^[[:space:]]*(private[[:space:]]+)?var[[:space:]]+workspaceManifest|ManifestFlushScheduling|DebouncedManifestFlushScheduler|manifestFlushScheduler|contentFlush(Scheduled|Pending)|scheduleContentFlush|flushPendingPersistence|syncManifestFromShellState|makeWorkspaceManifestFromShellState|ShellWorkspaceManifestProjector[[:space:]]*\(' \
         "$controller" "$controller_dir" >&2
@@ -709,9 +734,25 @@ reject_replacement_global_shell_store() {
         "Support/ShellVoiceCommandController.swift|ShellVoiceCommandController"
         "TerminalRuntimeRegistry.swift|TerminalRuntimeRegistry"
     )
+    local published_projection_allowlist=(
+        "App/AlanMacUpdateController.swift|decision"
+        "Models/Shell/ShellSpaceCreationProfileOptions.swift|options"
+        "Services/AlanOS/AlanOSAttachmentService.swift|state"
+        "ShellHostController.swift|activityNotifications"
+        "ShellHostController.swift|controlPlaneDiagnostics"
+        "ShellHostController.swift|isPresentingSpaceCreation"
+        "ShellHostController.swift|lastCopiedAt"
+        "ShellHostController.swift|shellState"
+        "ShellHostController.swift|spaceDraftIcon"
+        "ShellHostController.swift|spaceDraftName"
+        "ShellHostController.swift|spaceDraftProfileID"
+        "ShellHostController.swift|zoomedPaneIDByTabID"
+        "Support/ShellVoiceCommandController.swift|isListening"
+    )
     local file
     local line_number
     local observable_owner
+    local published_projection
     local snapshot_stored_properties
     local source_line
     local rel
@@ -736,6 +777,15 @@ reject_replacement_global_shell_store() {
         then
             fail \
                 "stored observable ShellStateSnapshot must stay in ShellHostController; found in $rel"
+        fi
+
+        if [[ "$rel" != "$controller_owner" ]] \
+            && grep -Eq 'ObservableObject|@Observable' "$file" \
+            && normalized_file_matches "$file" \
+                '->[ ]*ShellStateSnapshot[?!]?|static[ ]+(var|let)[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*:[ ]*ShellStateSnapshot[?!]?'
+        then
+            fail \
+                "non-controller observable owners must not manufacture ShellStateSnapshot state; found in $rel"
         fi
 
         if grep -Eq \
@@ -765,6 +815,24 @@ reject_replacement_global_shell_store() {
         fi
     done < <(grep -RInH --include='*.swift' -E \
         'ObservableObject|@Observable' \
+        "$SOURCE_ROOT" || true)
+
+    while IFS=: read -r file line_number source_line; do
+        rel="${file#$SOURCE_ROOT/}"
+        source_line="${source_line%%//*}"
+
+        if [[ "$source_line" =~ @Published[^[:cntrl:]]*var[[:space:]]+([A-Za-z_][A-Za-z0-9_]*) ]]; then
+            published_projection="$rel|${BASH_REMATCH[1]}"
+            if ! contains_line "$published_projection" "${published_projection_allowlist[@]}"; then
+                printf '%s:%s:%s\n' "$file" "$line_number" "$source_line" >&2
+                fail "new @Published projection is not in the accepted architecture: $published_projection"
+            fi
+        else
+            printf '%s:%s:%s\n' "$file" "$line_number" "$source_line" >&2
+            fail "unrecognized @Published property declaration in $rel"
+        fi
+    done < <(grep -RInH --include='*.swift' -E \
+        '^[[:space:]]*@Published([^A-Za-z0-9_]|$)' \
         "$SOURCE_ROOT" || true)
 
     if grep -RIn --include='*.swift' -E \
