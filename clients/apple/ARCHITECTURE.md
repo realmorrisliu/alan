@@ -580,7 +580,10 @@ factories declared on the target type with a `Self` return. Unqualified,
 expression, including direct target constructors, `.init`, immediately invoked
 closures, nested call arguments, and nested wrappers. They therefore cannot
 hide a second retained manifest by omitting an explicit property type or moving
-the factory to another file. The FFI-produced manifest values used for default
+the factory to another file. Factory return parsing starts only after the
+function's complete parameter list, so a closure parameter returning the target
+type does not turn a `Void` installer into a factory. The FFI-produced manifest
+values used for default
 creation, corrupt-file recovery, and startup pruning remain explicit transient
 inventory entries. Each
 accepted manifest declaration is keyed by its file and declaring type and must

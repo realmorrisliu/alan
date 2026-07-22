@@ -546,7 +546,7 @@ typed_factory_declarations() {
     local file="$1"
     local target_type="$2"
 
-    awk -v target_type="$target_type" '
+    awk -v target_type="$target_type" "$OWNERSHIP_AWK_HELPERS"'
         function leading_space_count(value,    prefix) {
             prefix = value
             sub(/[^ ].*$/, "", prefix)
@@ -563,26 +563,50 @@ typed_factory_declarations() {
             return name
         }
         function is_factory_candidate(value) {
-            return value ~ /^[[:space:]]*[^\/]*func[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*\(/
+            return value ~ /^[[:space:]]*[^\/]*func[ ]+[A-Za-z_][A-Za-z0-9_]*/
         }
         function is_same_indent_function_signature_continuation(value) {
-            return value ~ /^[[:space:]]*(\)|->|[{])/ ||
+            return value ~ /^[[:space:]]*(\(|\)|<|>|->|[{])/ ||
                 value ~ /^[[:space:]]*(async|throws|rethrows|where)([^A-Za-z0-9_]|$)/
         }
-        function record_buffered_factory(    header, name, return_type, signature) {
+        function declared_function_return_type(signature,    arrow, body, closing, function_tail, opening, where_clause) {
+            function_tail = signature
+            sub(/^.*func[ ]+[A-Za-z_][A-Za-z0-9_]*/, "", function_tail)
+            opening = index(function_tail, "(")
+            if (opening == 0) {
+                return ""
+            }
+            opening += length(signature) - length(function_tail)
+            closing = matching_call_end(signature, opening)
+            if (closing == 0) {
+                return ""
+            }
+            function_tail = substr(signature, closing + 1)
+            body = top_level_character_position(function_tail, "{")
+            if (body > 0) {
+                function_tail = substr(function_tail, 1, body - 1)
+            }
+            where_clause = match(function_tail, /[ ]where([ ]|$)/)
+            if (where_clause > 0) {
+                function_tail = substr(function_tail, 1, where_clause - 1)
+            }
+            arrow = index(function_tail, "->")
+            if (arrow == 0) {
+                return ""
+            }
+            return substr(function_tail, arrow + 2)
+        }
+        function record_buffered_factory(    name, return_type, signature) {
             if (factory_buffer == "") {
                 return
             }
             signature = factory_buffer
             gsub(/[[:space:]]+/, " ", signature)
-            header = signature
-            sub(/[{].*$/, "", header)
-            return_type = header
-            if (return_type !~ /->/) {
+            return_type = declared_function_return_type(signature)
+            if (return_type == "" || return_type ~ /->/) {
                 factory_buffer = ""
                 return
             }
-            sub(/^.*->[ ]*/, "", return_type)
             if (return_type !~ ("(^|[^A-Za-z0-9_])" target_type "([^A-Za-z0-9_]|$)") &&
                 !(factory_owner == target_type &&
                     return_type ~ /(^|[^A-Za-z0-9_])Self([^A-Za-z0-9_]|$)/))
@@ -590,7 +614,7 @@ typed_factory_declarations() {
                 factory_buffer = ""
                 return
             }
-            name = header
+            name = signature
             sub(/^.*func[ ]+/, "", name)
             sub(/[^A-Za-z0-9_].*$/, "", name)
             print factory_owner "|" name
