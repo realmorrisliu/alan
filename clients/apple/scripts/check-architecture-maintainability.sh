@@ -662,8 +662,8 @@ shell_snapshot_stored_property_count() {
             }
             property = buffer
             gsub(/[[:space:]]+/, " ", property)
-            if (property ~ /var[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*:[ ]*ShellStateSnapshot[?]?[ ]*($|=)/ ||
-                property ~ /var[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*:[ ]*ShellStateSnapshot[?]?[ ]*[{][ ]*(didSet|willSet)([^A-Za-z0-9_]|$)/ ||
+            if (property ~ /var[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*:[ ]*ShellStateSnapshot[?!]?[ ]*($|=)/ ||
+                property ~ /var[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*:[ ]*ShellStateSnapshot[?!]?[ ]*[{][ ]*(didSet|willSet)([^A-Za-z0-9_]|$)/ ||
                 property ~ /var[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*=[ ]*ShellStateSnapshot[ ]*([.(]|$)/)
             {
                 count++
