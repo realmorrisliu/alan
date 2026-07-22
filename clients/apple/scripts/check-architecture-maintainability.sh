@@ -599,22 +599,45 @@ reject_shell_host_duplicate_persistence_state() {
     fi
 }
 
-mutable_shell_snapshot_declaration_count() {
+shell_snapshot_stored_property_count() {
     local file="$1"
 
     awk '
+        function count_buffered_property(    property) {
+            if (buffer == "") {
+                return
+            }
+            property = buffer
+            gsub(/[[:space:]]+/, " ", property)
+            if (property ~ /var[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*:[ ]*ShellStateSnapshot[?]?[ ]*($|=)/ ||
+                property ~ /var[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*=[ ]*ShellStateSnapshot([.(]|$)/)
+            {
+                count++
+            }
+            buffer = ""
+        }
         {
-            source = source " " $0
+            line = $0
+            sub(/\/\/.*/, "", line)
+
+            # Production Swift formatting keeps top-level type members at four
+            # spaces. Collect only those property declarations and their deeper
+            # continuation lines so method-local scratch variables are ignored.
+            if (line ~ /^    [^ ]/) {
+                count_buffered_property()
+                if (line ~ /^    .*var[ ]+[A-Za-z_][A-Za-z0-9_]*/) {
+                    buffer = line
+                }
+            } else if (buffer != "" &&
+                (line ~ /^        / || line ~ /^[[:space:]]*$/))
+            {
+                buffer = buffer " " line
+            } else {
+                count_buffered_property()
+            }
         }
         END {
-            gsub(/[[:space:]]+/, " ", source)
-            pattern = "var[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*" \
-                "(:[ ]*ShellStateSnapshot[?]?|=[ ]*ShellStateSnapshot([.(]|$))"
-            count = 0
-            while (match(source, pattern)) {
-                count++
-                source = substr(source, RSTART + RLENGTH)
-            }
+            count_buffered_property()
             print count
         }
     ' "$file"
@@ -623,7 +646,7 @@ mutable_shell_snapshot_declaration_count() {
 reject_replacement_global_shell_store() {
     local controller_owner="ShellHostController.swift"
     local file
-    local mutable_snapshot_declarations
+    local snapshot_stored_properties
     local rel
 
     require_existing_single_owner_pattern \
@@ -633,25 +656,25 @@ reject_replacement_global_shell_store() {
 
     while IFS= read -r file; do
         rel="${file#$SOURCE_ROOT/}"
-        mutable_snapshot_declarations="$(mutable_shell_snapshot_declaration_count "$file")"
+        snapshot_stored_properties="$(shell_snapshot_stored_property_count "$file")"
 
         if [[ "$rel" == "$controller_owner" ]] \
-            && (( mutable_snapshot_declarations != 1 ))
+            && (( snapshot_stored_properties != 1 ))
         then
             fail \
-                "ShellHostController must keep exactly one mutable ShellStateSnapshot projection"
+                "ShellHostController must keep exactly one stored ShellStateSnapshot projection"
         elif [[ "$rel" != "$controller_owner" ]] \
             && grep -Eq 'ObservableObject|@Observable' "$file" \
-            && (( mutable_snapshot_declarations > 0 ))
+            && (( snapshot_stored_properties > 0 ))
         then
             fail \
-                "mutable observable ShellStateSnapshot must stay in ShellHostController; found in $rel"
+                "stored observable ShellStateSnapshot must stay in ShellHostController; found in $rel"
         fi
 
-        if (( mutable_snapshot_declarations > 0 )) \
+        if (( snapshot_stored_properties > 0 )) \
             && grep -Eq 'static[[:space:]]+(let|var)[[:space:]]+(shared|current|default)([^A-Za-z0-9_]|$)' "$file"
         then
-            fail "mutable ShellStateSnapshot must not become a global singleton; found in $rel"
+            fail "stored ShellStateSnapshot must not become a global singleton; found in $rel"
         fi
     done < <(grep -RIl --include='*.swift' -F "ShellStateSnapshot" "$SOURCE_ROOT" || true)
 
