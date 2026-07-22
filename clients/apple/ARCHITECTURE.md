@@ -593,8 +593,10 @@ scanned even when the stored property's source file contains no literal target
 type. That prevents a global controller singleton even when the file stores no
 snapshot directly. The current `ObservableObject` declarations and `@Published`
 projections form explicit owner allowlists, new `@Observable` owners require an
-architecture decision, and no singleton or catch-all `ShellStore` / `ShellModel`
-may wrap shell state.
+architecture decision, and no catch-all type ending in `ShellStore`,
+`ShellStateStore`, `ShellWorkspaceStore`, or the corresponding `Model` form may
+wrap shell state, regardless of a product or platform prefix. Focused names such
+as `AlanShellEventStore` remain distinct from those global-wrapper forms.
 
 The current architecture gate treats
 `clients/apple/scripts/architecture-warning-baseline.txt` as a hard downward
