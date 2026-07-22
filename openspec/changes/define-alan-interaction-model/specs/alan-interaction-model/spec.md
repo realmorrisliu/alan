@@ -23,7 +23,10 @@ layer SHALL present stating goals and receiving outcomes. The Work layer
 SHALL render agent file surfaces as domain-native affordances: conversation
 views from tape surfaces, plan cards from plan surfaces, approval sheets from
 pending-action surfaces, result and evidence views from execution records,
-and Stop/Pause controls that write `/proc/<pid>/ctl`. The Files layer SHALL
+and lifecycle controls. A Stop control SHALL write `/proc/<pid>/ctl`
+(interrupt/cancel); a Pause or Resume control, where offered, SHALL write an
+agent-owned machine control surface such as `machine/ctl` and SHALL NOT be
+modeled as a kernel Process interrupt or cancel. The Files layer SHALL
 expose the raw namespace as an explicit inspect-and-program mode. No layer
 SHALL own copied runtime state.
 

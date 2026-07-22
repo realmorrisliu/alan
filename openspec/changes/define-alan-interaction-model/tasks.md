@@ -25,7 +25,7 @@
   scope, and access, with revocation; wire grant creation to drag-in, file
   picker, and agent-request approval sheet through Host Mount Service.
 - [ ] 2.4 Render existing agent Work-layer affordances (conversation, plan
-  card, approval sheet, Stop/Pause via `/proc/<pid>/ctl`) from their file
+  card, approval sheet, Stop via `/proc/<pid>/ctl`) from their file
   surfaces and remove any raw-file or OS-vocabulary presentation from the
   default UI.
 - [ ] 2.5 Add the Files-layer entry point ("view as files" inspector) that
@@ -50,5 +50,6 @@
 - [ ] 4.2 PR review confirms the change stays UX-only: no kernel, aP,
   AgentFS, or runtime event machinery is introduced.
 - [ ] 4.3 Sync delta specs into `openspec/specs/` (new
-  `alan-interaction-model`, updated `alan-renderer-host-contract`) and move
-  the change to `openspec/changes/archive/YYYY-MM-DD-define-alan-interaction-model/`.
+  `alan-interaction-model`, updated `alan-renderer-host-contract`, updated
+  `macos-shell-workspace-persistence`) and move the change to
+  `openspec/changes/archive/YYYY-MM-DD-define-alan-interaction-model/`.
