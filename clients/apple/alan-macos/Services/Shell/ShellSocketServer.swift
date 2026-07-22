@@ -402,6 +402,7 @@ private extension AlanShellControlCommandKind {
         case .spaceCreate, .tabOpen, .tabClose, .tabPin, .tabReorder, .paneSplit, .paneClose,
             .paneMoveWithinTab, .paneSpatialFocus, .paneResizeSplit, .paneEqualizeSplits,
             .paneZoom, .paneUnzoom, .terminalRenderMetrics, .terminalSendText, .terminalSendKey,
+            .agentActivity,
             .performanceDiagnosticsSetEnabled,
             .performanceDiagnosticsExportRecent, .performanceDiagnosticsRecordChildPressure:
             return true

@@ -159,76 +159,6 @@ enum AlanShellLocalCommandExecutor {
                 sideEffect: nil
             )
 
-        case .agentActivity:
-            guard let paneID = command.paneID else {
-                return AlanShellLocalCommandResult(
-                    response: response(
-                        for: command,
-                        state: state,
-                        applied: false,
-                        errorCode: "pane_required",
-                        errorMessage: "pane_id is required."
-                    ),
-                    updatedState: nil,
-                    sideEffect: nil
-                )
-            }
-            guard state.pane(paneID: paneID) != nil else {
-                return AlanShellLocalCommandResult(
-                    response: failureResponse(
-                        for: .paneNotFound,
-                        command: command,
-                        state: state
-                    ),
-                    updatedState: nil,
-                    sideEffect: nil
-                )
-            }
-            guard let event = command.agentActivityEvent,
-                  let activity = TerminalAgentActivityAdapter.activity(from: event)
-            else {
-                return AlanShellLocalCommandResult(
-                    response: response(
-                        for: command,
-                        state: state,
-                        applied: false,
-                        paneID: paneID,
-                        errorCode: "invalid_agent_activity",
-                        errorMessage: "agent_kind and a supported agent_status are required."
-                    ),
-                    updatedState: nil,
-                    sideEffect: nil
-                )
-            }
-
-            do {
-                let result = try state.applyingAgentActivity(
-                    activity,
-                    to: paneID,
-                    workingDirectory: event.workingDirectory
-                )
-                return AlanShellLocalCommandResult(
-                    response: response(
-                        for: command,
-                        state: result.state,
-                        applied: true,
-                        spaceID: result.spaceID,
-                        tabID: result.tabID,
-                        paneID: result.paneID
-                    ),
-                    updatedState: result.state,
-                    sideEffect: nil
-                )
-            } catch let error as ShellStateMutationError {
-                return AlanShellLocalCommandResult(
-                    response: failureResponse(for: error, command: command, state: state),
-                    updatedState: nil,
-                    sideEffect: nil
-                )
-            } catch {
-                return mutationFailureResult(command: command, state: state, error: error)
-            }
-
         case .attentionInbox:
             return AlanShellLocalCommandResult(
                 response: response(
@@ -254,6 +184,7 @@ enum AlanShellLocalCommandExecutor {
             )
 
         case .terminalRenderMetrics,
+            .agentActivity,
             .performanceDiagnosticsSetEnabled,
             .performanceDiagnosticsExportRecent, .performanceDiagnosticsRecordChildPressure,
             .eventsRead:

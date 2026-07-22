@@ -21,7 +21,8 @@ extension ShellHostController {
         if let updatedState = localResult.updatedState {
             let pinSnapshotTabIDs = pinSnapshotTabIDs(
                 for: command,
-                result: localResult
+                result: localResult,
+                previousState: previousState
             )
             adoptStateFromControlPlane(updatedState, publish: pinSnapshotTabIDs.isEmpty)
             if !pinSnapshotTabIDs.isEmpty {
@@ -51,7 +52,8 @@ extension ShellHostController {
 
     private func pinSnapshotTabIDs(
         for command: AlanShellControlCommand,
-        result: AlanShellLocalCommandResult
+        result: AlanShellLocalCommandResult,
+        previousState: ShellStateSnapshot
     ) -> Set<String> {
         guard result.response.applied == true,
               let tabID = command.tabID ?? result.response.tabID,
@@ -60,8 +62,10 @@ extension ShellHostController {
             return []
         }
         switch command.command {
-        case .tabPin, .tabReorder:
+        case .tabPin:
             return [tabID]
+        case .tabReorder:
+            return previousState.tab(tabID: tabID)?.isPinned == true ? [] : [tabID]
         default:
             return []
         }
@@ -289,6 +293,58 @@ extension ShellHostController {
                 requestID: command.requestID,
                 applied: true,
                 terminalRenderMetrics: terminalRuntimeRegistry.renderCoordinatorMetrics
+            )
+
+        case .agentActivity:
+            guard let paneID = command.paneID else {
+                return response(
+                    requestID: command.requestID,
+                    applied: false,
+                    errorCode: "pane_required",
+                    errorMessage: "pane_id is required."
+                )
+            }
+            guard let targetPane = pane(paneID: paneID) else {
+                return response(
+                    requestID: command.requestID,
+                    applied: false,
+                    paneID: paneID,
+                    errorCode: "pane_not_found",
+                    errorMessage: "The requested pane does not exist."
+                )
+            }
+            guard let event = command.agentActivityEvent,
+                  let activity = TerminalAgentActivityAdapter.activity(from: event)
+            else {
+                return response(
+                    requestID: command.requestID,
+                    applied: false,
+                    paneID: paneID,
+                    errorCode: "invalid_agent_activity",
+                    errorMessage: "agent_kind and a supported agent_status are required."
+                )
+            }
+
+            updateTerminalMetadata(
+                TerminalPaneMetadataSnapshot(
+                    title: nil,
+                    workingDirectory: event.workingDirectory,
+                    summary: nil,
+                    attention: .idle,
+                    processExited: false,
+                    lastCommandExitCode: nil,
+                    lastUpdatedAt: Date(),
+                    activeTaskState: nil,
+                    activity: activity
+                ),
+                for: paneID
+            )
+            return response(
+                requestID: command.requestID,
+                applied: true,
+                spaceID: targetPane.spaceID,
+                tabID: targetPane.tabID,
+                paneID: paneID
             )
 
         case .eventsRead:

@@ -59,6 +59,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesHostPaneSplitHonorsPaneSlotIdAndLaunchFields()
         verifiesControlPlaneTabOpenInheritsFocusedRuntimeCwd()
         verifiesControlPlanePinAndUnpinAreIdempotent()
+        verifiesControlPlanePinnedReorderPreservesPinSnapshot()
         verifiesSpaceCreateAllowsMoreThanNineSpacesAcrossCommandPaths()
         verifiesOpeningTerminalTabInheritsFocusedRuntimeCwd()
         verifiesShellActionNewTerminalTabInheritsFocusedRuntimeCwd()
@@ -86,6 +87,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesPaneMoveSocketRequestsUseSharedExecutor()
         verifiesTerminalSendTextSocketRequestsRequireHostHandler()
         verifiesTerminalSendKeySocketRequestsRequireHostHandler()
+        verifiesAgentActivitySocketRequestsRequireHostHandler()
         verifiesTerminalActivityProjectsByPaneID()
         verifiesProgressActivityFactoryUsesSourceFirstDisplay()
         verifiesCommandCompletionActivityFactory()
@@ -2434,6 +2436,81 @@ private enum ShellRuntimeMetadataTests {
         )
     }
 
+    private static func verifiesControlPlanePinnedReorderPreservesPinSnapshot() {
+        let windowID = "control_pinned_reorder_\(UUID().uuidString)"
+        let manifestURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(windowID)-workspace.json")
+        let controller = makeController(
+            windowID: windowID,
+            workspaceManifestStore: ShellWorkspaceManifestStore(manifestURL: manifestURL),
+            workspaceManifest: defaultManifestWithShellCore(
+                windowID: windowID,
+                defaultWorkingDirectory: "/pinned",
+                now: Date(timeIntervalSince1970: 60)
+            )
+        )
+        controller.updateTerminalMetadata(
+            metadata(title: "Pinned", cwd: "/pinned"),
+            for: "pane_1"
+        )
+
+        let pinResponse = controller.handleControlPlaneCommand(
+            decodeControlCommand(
+                """
+                {
+                  "request_id": "pin-before-reorder",
+                  "command": "tab.pin",
+                  "tab_id": "tab_main"
+                }
+                """
+            )
+        )
+        expect(pinResponse.applied == true, "control-plane tab.pin must capture a pin snapshot")
+        let initialPinCwd = decodeManifest(at: manifestURL)?.spaces
+            .flatMap(\.tabs)
+            .first(where: { $0.tabID == "tab_main" })
+            .flatMap { terminalPayload(in: $0.pinSnapshot, paneSlotID: "pane_1")?.cwd }
+        expect(initialPinCwd == "/pinned", "initial control-plane tab.pin must persist its snapshot")
+        controller.updateTerminalMetadata(
+            metadata(title: "Moved", cwd: "/live"),
+            for: "pane_1"
+        )
+
+        let reorderResponse = controller.handleControlPlaneCommand(
+            decodeControlCommand(
+                """
+                {
+                  "request_id": "reorder-pinned",
+                  "command": "tab.reorder",
+                  "tab_id": "tab_main",
+                  "section": "pinned",
+                  "index": 0
+                }
+                """
+            )
+        )
+        expect(reorderResponse.applied == true, "control-plane pinned reorder must apply")
+
+        guard let tab = decodeManifest(at: manifestURL)?.spaces
+            .flatMap(\.tabs)
+            .first(where: { $0.tabID == "tab_main" })
+        else {
+            fail("control-plane pinned reorder must persist its manifest tab")
+        }
+        let persistedPinCwd = terminalPayload(
+            in: tab.pinSnapshot,
+            paneSlotID: "pane_1"
+        )?.cwd
+        expect(
+            persistedPinCwd == "/pinned",
+            "reordering an already pinned tab must not refresh its pin snapshot (got \(persistedPinCwd ?? "nil"))"
+        )
+        expect(
+            terminalPayload(in: tab.liveSnapshot, paneSlotID: "pane_1")?.cwd == "/live",
+            "pinned reorder must still persist the latest live snapshot"
+        )
+    }
+
     private static func verifiesSpaceCreateAllowsMoreThanNineSpacesAcrossCommandPaths() {
         var expandedState = ShellStateSnapshot.bootstrapDefault(windowID: "space_track_control")
         while expandedState.spaces.count < 10 {
@@ -3523,6 +3600,41 @@ private enum ShellRuntimeMetadataTests {
         )
     }
 
+    private static func verifiesAgentActivitySocketRequestsRequireHostHandler() {
+        let controller = makeController()
+        let socketServer = AlanShellSocketServer(
+            socketURL: FileManager.default.temporaryDirectory
+                .appendingPathComponent("agent-activity-host-\(UUID().uuidString).sock"),
+            commandHandler: { controller.handleControlPlaneCommand($0) },
+            stateAdoptionHandler: { _ in
+                fail("agent.activity must not bypass host metadata projection")
+            },
+            sideEffectHandler: { _ in
+                fail("agent.activity must not use socket-local side effects")
+            }
+        )
+        _ = socketServer.mergePublishedState(controller.shellState)
+
+        let localResponse = socketServer.handleLocally(
+            decodeControlCommand(
+                """
+                {
+                  "request_id": "agent-activity-host-routing-1",
+                  "command": "agent.activity",
+                  "pane_id": "pane_1",
+                  "agent_kind": "codex",
+                  "agent_status": "running"
+                }
+                """
+            )
+        )
+
+        expect(
+            localResponse == nil,
+            "agent.activity socket requests must be routed through host metadata projection"
+        )
+    }
+
     private static func verifiesTerminalActivityProjectsByPaneID() {
         let controller = makeController()
         _ = controller.openTerminalTab(workingDirectory: "/background")
@@ -3721,6 +3833,20 @@ private enum ShellRuntimeMetadataTests {
     }
 
     private static func verifiesAgentActivityControlCommandProjectsOntoPane() {
+        let repositoryRoot = temporaryDirectory(named: "agent-activity-repository")
+        let gitDirectory = repositoryRoot.appendingPathComponent(".git", isDirectory: true)
+        try! FileManager.default.createDirectory(
+            at: gitDirectory,
+            withIntermediateDirectories: true
+        )
+        try! Data("ref: refs/heads/activity-test\n".utf8).write(
+            to: gitDirectory.appendingPathComponent("HEAD")
+        )
+        let workingDirectory = repositoryRoot.appendingPathComponent("Sources", isDirectory: true)
+        try! FileManager.default.createDirectory(
+            at: workingDirectory,
+            withIntermediateDirectories: true
+        )
         let controller = makeController(appIsActive: false)
         let json = """
         {
@@ -3731,20 +3857,34 @@ private enum ShellRuntimeMetadataTests {
           "agent_status": "needs_input",
           "session_label": "session-1234567890abcdef1234567890",
           "project_label": "alan",
-          "working_directory": "/Users/morris/Developer/alan",
+          "working_directory": "\(workingDirectory.path)",
           "detail": "{\\"event\\":\\"codex.status\\"}",
           "updated_at": "2026-05-17T09:00:00Z"
         }
         """
         let command = decodeControlCommand(json)
         let response = controller.handleControlPlaneCommand(command)
-        let paneActivity = controller.pane(paneID: "pane_1")?.activity
+        let pane = controller.pane(paneID: "pane_1")
+        let paneActivity = pane?.activity
 
         expect(response.applied == true, "agent activity command must be applied")
         expect(response.paneID == "pane_1", "agent activity command must identify the updated pane")
         expect(paneActivity?.source.kind == .codex, "agent activity command must project Codex source onto pane")
         expect(paneActivity?.status == .needsInput, "agent activity command must project needs-input status")
         expect(paneActivity?.agent?.safeSessionLabel == nil, "control command projection must not expose raw session ids")
+        expect(pane?.cwd == workingDirectory.path, "agent activity must project its working directory")
+        expect(
+            pane?.context?.workingDirectoryName == "Sources",
+            "agent activity must refresh the projected working-directory name"
+        )
+        expect(
+            pane?.context?.repositoryRoot == repositoryRoot.path,
+            "agent activity must refresh the projected repository root"
+        )
+        expect(
+            pane?.context?.gitBranch == "activity-test",
+            "agent activity must refresh the projected git branch"
+        )
         expect(controller.activityNotifications.first?.kind == .needsInput, "agent command must reuse low-noise notification routing")
     }
 
