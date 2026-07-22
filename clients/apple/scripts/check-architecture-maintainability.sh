@@ -217,6 +217,30 @@ contains_line() {
     return 1
 }
 
+reject_unapproved_symbol_lines() {
+    local file="$1"
+    local symbol_pattern="$2"
+    local allowed_pattern="$3"
+    local description="$4"
+
+    if ! awk \
+        -v symbol_pattern="$symbol_pattern" \
+        -v allowed_pattern="$allowed_pattern" '
+            {
+                line = $0
+                sub(/\/\/.*/, "", line)
+                if (line ~ symbol_pattern && line !~ allowed_pattern) {
+                    printf "%s:%d:%s\n", FILENAME, NR, $0 > "/dev/stderr"
+                    rejected = 1
+                }
+            }
+            END { exit rejected ? 1 : 0 }
+        ' "$file"
+    then
+        fail "$description"
+    fi
+}
+
 check_appkit_import_gate() {
     local rel="$1"
     local file="$2"
@@ -547,11 +571,8 @@ reject_shell_host_duplicate_persistence_state() {
     local controller="$SOURCE_ROOT/ShellHostController.swift"
     local controller_dir="$SOURCE_ROOT/Controllers/Shell"
     local persistence_owner="Services/Shell/ShellWorkspacePersistenceCoordinator.swift"
-    local persistence_type_owners=(
-        "Services/Shell/ShellWorkspaceManifestProjector.swift"
-        "Services/Shell/ShellWorkspaceManifestStore.swift"
-        "$persistence_owner"
-    )
+    local scheduler_definition_owner="Services/Shell/ShellWorkspaceManifestStore.swift"
+    local projector_definition_owner="Services/Shell/ShellWorkspaceManifestProjector.swift"
     local file
     local rel
 
@@ -582,12 +603,44 @@ reject_shell_host_duplicate_persistence_state() {
 
     while IFS= read -r file; do
         rel="${file#$SOURCE_ROOT/}"
-        if ! contains_line "$rel" "${persistence_type_owners[@]}"; then
-            fail \
-                "workspace persistence scheduler/projector types must stay behind the persistence owner; found in $rel"
-        fi
+        case "$rel" in
+            "$persistence_owner")
+                ;;
+            "$scheduler_definition_owner")
+                reject_unapproved_symbol_lines \
+                    "$file" \
+                    'ManifestFlushScheduling|DebouncedManifestFlushScheduler' \
+                    '^[[:space:]]*(protocol[[:space:]]+ManifestFlushScheduling([^A-Za-z0-9_]|$)|final[[:space:]]+class[[:space:]]+DebouncedManifestFlushScheduler[[:space:]]*:[[:space:]]*ManifestFlushScheduling([^A-Za-z0-9_]|$))' \
+                    "workspace manifest store may define but must not use persistence scheduling"
+                ;;
+            *)
+                fail \
+                    "workspace persistence scheduler usage must stay in $persistence_owner; found in $rel"
+                ;;
+        esac
     done < <(grep -RIl --include='*.swift' -E \
-        'ManifestFlushScheduling|DebouncedManifestFlushScheduler|ShellWorkspaceManifestProjector' \
+        'ManifestFlushScheduling|DebouncedManifestFlushScheduler' \
+        "$SOURCE_ROOT" || true)
+
+    while IFS= read -r file; do
+        rel="${file#$SOURCE_ROOT/}"
+        case "$rel" in
+            "$persistence_owner")
+                ;;
+            "$projector_definition_owner")
+                reject_unapproved_symbol_lines \
+                    "$file" \
+                    'ShellWorkspaceManifestProjector' \
+                    '^[[:space:]]*struct[[:space:]]+ShellWorkspaceManifestProjector([^A-Za-z0-9_]|$)' \
+                    "workspace manifest projector file may define but must not construct a second projector"
+                ;;
+            *)
+                fail \
+                    "workspace manifest projector usage must stay in $persistence_owner; found in $rel"
+                ;;
+        esac
+    done < <(grep -RIl --include='*.swift' -E \
+        'ShellWorkspaceManifestProjector' \
         "$SOURCE_ROOT" || true)
 
     if grep -RIn --include='*.swift' -E \
