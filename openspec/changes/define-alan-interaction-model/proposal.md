@@ -67,6 +67,15 @@ their own answer, and OS vocabulary will leak into the default UI.
   instead of hard-coding a terminal Tab, so the macOS persistence delta has a
   portable owner and no platform-private defaulting algorithm is
   reintroduced.
+- `macos-shell-content-containers`: Define the serializable, restorable
+  `workspace_home` content kind with home-specific capabilities, so default
+  manifests and restore can materialize the workspace home surface without
+  substituting a terminal.
+- `macos-shell-ui-ux-conformance`: Replace terminal-first assertions in the
+  visual-review, smoke-evidence, and automation-chrome requirements with the
+  workspace home presentation as the default selected content.
+- `macos-shell-build-test-contract`: Update the launch smoke to verify the
+  workspace home content area instead of a terminal content area.
 
 ## Impact
 

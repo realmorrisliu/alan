@@ -50,7 +50,8 @@
 - [ ] 4.2 PR review confirms the change stays UX-only: no kernel, aP,
   AgentFS, or runtime event machinery is introduced.
 - [ ] 4.3 Sync delta specs into `openspec/specs/` (new
-  `alan-interaction-model`, updated `alan-renderer-host-contract`, updated
-  `macos-shell-workspace-persistence`, updated
-  `shell-workspace-core-contract`) and move the change to
+  `alan-interaction-model`, updated `alan-renderer-host-contract`,
+  `macos-shell-workspace-persistence`, `shell-workspace-core-contract`,
+  `macos-shell-content-containers`, `macos-shell-ui-ux-conformance`, and
+  `macos-shell-build-test-contract`) and move the change to
   `openspec/changes/archive/YYYY-MM-DD-define-alan-interaction-model/`.
