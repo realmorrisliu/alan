@@ -681,6 +681,18 @@ shell_snapshot_stored_property_counts() {
     local file="$1"
 
     awk '
+        function leading_space_count(value,    prefix) {
+            prefix = value
+            sub(/[^ ].*$/, "", prefix)
+            return length(prefix)
+        }
+        function is_static_property_start(value) {
+            return value ~ /^[[:space:]]*[^\/]*(static|class)[ ]+([^ ]+[ ]+)*(let|var)[ ]+[A-Za-z_][A-Za-z0-9_]*/
+        }
+        function is_factory_candidate(value) {
+            return value ~ /^[[:space:]]*[^\/]*func[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*\(/ ||
+                is_static_property_start(value)
+        }
         function record_buffered_factory(    name, signature, header) {
             if (factory_buffer == "") {
                 return
@@ -722,19 +734,28 @@ shell_snapshot_stored_property_counts() {
             sub(/[ ]*\(.*/, "", name)
             return name in snapshot_factories
         }
-        function count_buffered_property(    property) {
-            if (buffer == "") {
+        function count_buffered_instance_property(    property) {
+            if (instance_buffer == "") {
                 return
             }
-            property = buffer
+            property = instance_buffer
             gsub(/[[:space:]]+/, " ", property)
-            if (property ~ /var[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*:[ ]*ShellStateSnapshot[?!]?[ ]*($|=)/ ||
+            if (property !~ /(^| )(static|class)[ ]/ &&
+                (property ~ /var[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*:[ ]*ShellStateSnapshot[?!]?[ ]*($|=)/ ||
                 property ~ /var[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*:[ ]*ShellStateSnapshot[?!]?[ ]*[{][ ]*(didSet|willSet)([^A-Za-z0-9_]|$)/ ||
                 property ~ /var[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*=[ ]*ShellStateSnapshot[ ]*([.(]|$)/ ||
-                (property ~ /var[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*=/ && uses_snapshot_factory(property)))
+                (property ~ /var[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*=/ && uses_snapshot_factory(property))))
             {
-                count++
+                instance_count++
             }
+            instance_buffer = ""
+        }
+        function count_buffered_static_property(    property) {
+            if (static_buffer == "") {
+                return
+            }
+            property = static_buffer
+            gsub(/[[:space:]]+/, " ", property)
             if (property ~ /(^| )(static|class)[ ]+([^ ]+[ ]+)*(let|var)[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*:[ ]*ShellStateSnapshot[?!]?[ ]*($|=)/ ||
                 property ~ /(^| )(static|class)[ ]+([^ ]+[ ]+)*var[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*:[ ]*ShellStateSnapshot[?!]?[ ]*[{][ ]*(didSet|willSet)([^A-Za-z0-9_]|$)/ ||
                 property ~ /(^| )(static|class)[ ]+([^ ]+[ ]+)*(let|var)[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*=[ ]*ShellStateSnapshot[ ]*([.(]|$)/ ||
@@ -742,16 +763,17 @@ shell_snapshot_stored_property_counts() {
             {
                 static_count++
             }
-            buffer = ""
+            static_buffer = ""
         }
         NR == FNR {
             line = $0
             sub(/\/\/.*/, "", line)
-            if (line ~ /^    [^ ]/) {
+            if (is_factory_candidate(line)) {
                 record_buffered_factory()
                 factory_buffer = line
+                factory_indent = leading_space_count(line)
             } else if (factory_buffer != "" &&
-                (line ~ /^        / || line ~ /^[[:space:]]*$/))
+                (line ~ /^[[:space:]]*$/ || leading_space_count(line) > factory_indent))
             {
                 factory_buffer = factory_buffer " " line
             } else {
@@ -770,21 +792,37 @@ shell_snapshot_stored_property_counts() {
             # spaces. Collect only those property declarations and their deeper
             # continuation lines so method-local scratch variables are ignored.
             if (line ~ /^    [^ ]/) {
-                count_buffered_property()
+                count_buffered_instance_property()
                 if (line ~ /^    .*(let|var)[ ]+[A-Za-z_][A-Za-z0-9_]*/) {
-                    buffer = line
+                    instance_buffer = line
                 }
-            } else if (buffer != "" &&
+            } else if (instance_buffer != "" &&
                 (line ~ /^        / || line ~ /^[[:space:]]*$/))
             {
-                buffer = buffer " " line
+                instance_buffer = instance_buffer " " line
             } else {
-                count_buffered_property()
+                count_buffered_instance_property()
+            }
+
+            # Static/class storage is necessarily a type member, so scan it at
+            # every nesting depth without confusing method-local variables for
+            # globally addressable state.
+            if (is_static_property_start(line)) {
+                count_buffered_static_property()
+                static_buffer = line
+                static_indent = leading_space_count(line)
+            } else if (static_buffer != "" &&
+                (line ~ /^[[:space:]]*$/ || leading_space_count(line) > static_indent))
+            {
+                static_buffer = static_buffer " " line
+            } else {
+                count_buffered_static_property()
             }
         }
         END {
-            count_buffered_property()
-            print count, static_count
+            count_buffered_instance_property()
+            count_buffered_static_property()
+            print instance_count, static_count
         }
     ' "$file" "$file"
 }
@@ -895,6 +933,7 @@ reject_replacement_global_shell_store() {
     while IFS=: read -r file line_number source_line; do
         rel="${file#$SOURCE_ROOT/}"
         source_line="${source_line%%//*}"
+        [[ "$source_line" == *"@Published"* ]] || continue
 
         if [[ "$source_line" =~ @Published[^[:cntrl:]]*var[[:space:]]+([A-Za-z_][A-Za-z0-9_]*) ]]; then
             published_projection="$rel|${BASH_REMATCH[1]}"
@@ -906,9 +945,7 @@ reject_replacement_global_shell_store() {
             printf '%s:%s:%s\n' "$file" "$line_number" "$source_line" >&2
             fail "unrecognized @Published property declaration in $rel"
         fi
-    done < <(grep -RInH --include='*.swift' -E \
-        '^[[:space:]]*@Published([^A-Za-z0-9_]|$)' \
-        "$SOURCE_ROOT" || true)
+    done < <(grep -RInH --include='*.swift' -F '@Published' "$SOURCE_ROOT" || true)
 
     if grep -RIn --include='*.swift' -E \
         '(class|struct|actor|enum)[[:space:]]+((Alan|Global)Shell|Shell)(State|Workspace)?(Store|Model)([^A-Za-z0-9_]|$)' \
