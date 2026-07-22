@@ -691,6 +691,15 @@ typed_value_member_declarations() {
         function is_property_start(value) {
             return value ~ /(^|[ ])(let|var)[ ]+[A-Za-z_][A-Za-z0-9_]*/
         }
+        function declared_property_name(value,    declaration_head, name) {
+            if (!match(value, /(^|[ ])(let|var)[ ]+[A-Za-z_][A-Za-z0-9_]*/)) {
+                return ""
+            }
+            declaration_head = substr(value, RSTART, RLENGTH)
+            name = declaration_head
+            sub(/^.*(let|var)[ ]+/, "", name)
+            return name
+        }
         function record_member(    declaration, member_name, member_type) {
             if (member_buffer == "") {
                 return
@@ -702,9 +711,7 @@ typed_value_member_declarations() {
             if (member_type ~ ("(^|[^A-Za-z0-9_])" target_type "([^A-Za-z0-9_]|$)") &&
                 member_type !~ /->/)
             {
-                member_name = declaration
-                sub(/^.*(let|var)[ ]+/, "", member_name)
-                sub(/[^A-Za-z0-9_].*$/, "", member_name)
+                member_name = declared_property_name(declaration)
                 if (member_name != "") {
                     print member_name
                 }
