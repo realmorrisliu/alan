@@ -46,14 +46,18 @@ SHALL own copied runtime state.
   service truth
 
 ### Requirement: Conversation is one of three interaction modes
-Alan renderer hosts SHALL support conversation, background-servant, and
-event-driven interaction as first-class modes. Conversation SHALL NOT be
-assumed as the entry or primary posture. Background-servant mode SHALL let
+Alan renderer hosts SHALL support conversation and background-servant
+interaction as first-class modes. Conversation SHALL NOT be assumed as the
+entry or primary posture. Background-servant mode SHALL let
 agents run detached — closing a view detaches per ADR-0047 and never implies
 stopping execution — and SHALL present completed work for review rather than
-requiring the user to watch execution. Event-driven mode SHALL present
-standing rules that cause agents to act and SHALL deliver proactive reports
-to the same review surface as dispatched work.
+requiring the user to watch execution. Event-driven interaction — standing
+rules that cause agents to act, with proactive reports — is the recorded
+third mode and the designated direction of this model; because no runtime or
+service contract yet owns rule storage and trigger semantics, renderer hosts
+SHALL implement it only once such an owning contract lands, and SHALL keep
+the review surface unified so event-driven outcomes join user-dispatched work
+when it does.
 
 #### Scenario: The user reviews instead of watching
 - **WHEN** a user dispatches work and closes its view
@@ -62,12 +66,12 @@ to the same review surface as dispatched work.
 - **AND** no UI element required the user to keep a conversation or execution
   view open
 
-#### Scenario: Event-driven outcomes share the review surface
-- **WHEN** an agent acts because a standing rule fired
-- **THEN** its report arrives in the same review surface as user-dispatched
-  work
-- **AND** consequential actions still pass through the same approval
-  mechanism
+#### Scenario: Event-driven mode awaits its owning contract
+- **WHEN** no runtime or service contract yet owns event rules and triggers
+- **THEN** renderer hosts are not required to present a rules surface or
+  proactive reports
+- **AND** the review surface remains the designated destination for
+  event-driven outcomes once the owning contract lands
 
 ### Requirement: Permission is the UX of mounting
 Granting an agent access to Host files SHALL be presented as a permission

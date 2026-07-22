@@ -75,7 +75,10 @@ there is nothing to synchronize.
 - **Event-driven**: standing rules (triggers, schedules, watched folders,
   service notices) cause agents to act; proactive reports arrive in the same
   review surface. The user manages the rule set and the outcome stream, not
-  processes.
+  processes. This mode is recorded as the designated direction, not a current
+  obligation: no runtime or service contract owns rule storage or triggers
+  yet, so renderer conformance only requires keeping the review surface
+  unified until that owning contract lands.
 
 All three modes share one review surface for outcomes and one approval
 mechanism for consequential actions, so the user has a single place to trust.

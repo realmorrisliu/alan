@@ -28,11 +28,12 @@ their own answer, and OS vocabulary will leak into the default UI.
   and **Files** (the raw namespace as an explicit inspect/program layer for
   power users). All layers are live views of the same files per ADR-0046;
   no layer owns copied state.
-- Establish three first-class interaction modes: **conversation** (one mode,
-  not the entry assumption), **background servant** (agents run detached;
-  the user primarily reviews completed work and evidence), and
-  **event-driven** (agents act on events and proactively report; the user
-  manages rules and an inbox of outcomes).
+- Establish the interaction modes: **conversation** and **background
+  servant** (agents run detached; the user primarily reviews completed work
+  and evidence) are first-class obligations; **event-driven** (agents act on
+  events and proactively report) is recorded as the designated third mode,
+  binding on renderer hosts only once a runtime or service contract owns rule
+  storage and triggers.
 - Make permission the UX of mounting: giving an agent access to a host folder
   is a grant flow (drag in, file picker, or approval sheet) through Host Mount
   Service per ADR-0050; mount/bind are side effects, and revocation lives in a

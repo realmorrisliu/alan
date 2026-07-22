@@ -42,3 +42,32 @@ or explanatory panels to the shell workflow.
 #### Scenario: Intent result activates app
 - **WHEN** an App Intent activates a shell target
 - **THEN** the window opens to the relevant space, tab, or pane using normal shell UI rather than a special automation debug surface
+
+### Requirement: Terminal content is the center of gravity
+Within a terminal tab, the main content region SHALL make the active terminal
+canvas visually dominant and SHALL avoid nested decorative panels around the
+terminal in the default single-pane state. When the selected tab carries the
+workspace home content kind, the main content region SHALL present the
+workspace home surface as the dominant content instead; terminal dominance
+SHALL NOT be required for non-terminal content kinds.
+
+#### Scenario: Single-pane tab
+- **WHEN** a tab contains one pane
+- **THEN** the terminal appears nearly full-bleed within the content region and
+  does not show a pane selector strip
+
+#### Scenario: Split-pane tab
+- **WHEN** a tab contains multiple panes
+- **THEN** pane chrome stays lightweight and focus is conveyed by subtle
+  selection treatment rather than explicit engineering labels
+
+#### Scenario: alan as optional capability
+- **WHEN** a terminal tab is active and no alan-specific surface has been opened
+- **THEN** alan appears as an optional command or attachment capability layered
+  onto the terminal workflow, not as the structural center of the window
+
+#### Scenario: Workspace home tab
+- **WHEN** the selected tab carries the workspace home content kind
+- **THEN** the main content region presents the workspace home surface as the
+  dominant content
+- **AND** no terminal canvas is required to fill the region

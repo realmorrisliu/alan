@@ -18,16 +18,21 @@ Machine contracts have not defined.
 
 ### Requirement: Renderer hosts implement the Alan Interaction Model layers
 Renderer hosts SHALL provide the Intent, Work, and Files disclosure layers
-defined by `alan-interaction-model`, present the conversation,
-background-servant, and event-driven modes, and keep OS vocabulary out of
+defined by `alan-interaction-model`, present the conversation and
+background-servant modes, treat event-driven interaction as the recorded
+dependent mode per `alan-interaction-model`, and keep OS vocabulary out of
 default UI copy. Hosts MAY differ in entry emphasis — a terminal-native host
-may center the shell — provided all three layers and modes remain reachable.
+may center the shell — provided all three layers and both required modes
+remain reachable.
 
 #### Scenario: A renderer host is reviewed for interaction-model conformance
 - **WHEN** a renderer host's default UI is reviewed
-- **THEN** all three disclosure layers are reachable, all three interaction
-  modes are supported, and default copy passes the vocabulary rule
+- **THEN** all three disclosure layers are reachable, conversation and
+  background-servant modes are supported, and default copy passes the
+  vocabulary rule
 - **AND** any host-specific entry emphasis does not remove a layer or mode
+- **AND** event-driven surfaces are required only once their owning runtime
+  or service contract exists
 
 ## MODIFIED Requirements
 
