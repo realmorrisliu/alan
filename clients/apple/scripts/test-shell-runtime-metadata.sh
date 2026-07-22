@@ -77,8 +77,9 @@ CLANG_MODULE_CACHE_PATH="$MODULE_CACHE_DIR" swiftc \
     "$REPO_ROOT/clients/apple/alan-macos/ShellControlPlane.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/ShellPaneProjectionService.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/ShellPersistenceWriter.swift" \
-    "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/ShellWorkspaceManifestStartupCoordinator.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/ShellWorkspacePersistenceStartup.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/ShellWorkspacePersistenceCoordinator.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/ShellWorkspaceManifestProjector.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Services/Shell/ShellWorkspaceManifestStore.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Support/AlanCommandLineToolInstaller.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Support/AlanMacUpdatePolicy.swift" \
@@ -135,7 +136,6 @@ CLANG_MODULE_CACHE_PATH="$MODULE_CACHE_DIR" swiftc \
     "$REPO_ROOT/clients/apple/alan-macos/Controllers/Shell/ShellHostSpaceAndTabLifecycle.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Controllers/Shell/ShellHostActionAndTerminalCommandHandling.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Controllers/Shell/ShellHostRuntimeProjection.swift" \
-    "$REPO_ROOT/clients/apple/alan-macos/Controllers/Shell/ShellHostWorkspacePersistence.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Controllers/Shell/ShellHostCloseAndPaneLifecycle.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Controllers/Shell/ShellHostAutomationCommandHandling.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Controllers/Shell/ShellHostControlProjection.swift" \

@@ -25,6 +25,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesMetadataCallbackReusesCachedBootProfile()
         verifiesTerminalCallbackPathDoesNotWriteManifestSynchronously()
         verifiesTerminalCallbackBurstCoalescesIntoOnePersistenceWrite()
+        verifiesStructuralPublishKeepsLatestPendingPersistenceSnapshot()
         verifiesLifecycleFlushPersistsPendingContentSynchronously()
         verifiesFailedStructuralManifestSaveIsReported()
         verifiesAsyncPersistenceWriteFailureRoutesToDiagnostics()
@@ -7810,7 +7811,7 @@ private enum ShellRuntimeMetadataTests {
         )
 
         controller.updateTerminalMetadata(metadata(title: "Moved", cwd: "/moved"), for: "pane_1")
-        controller.flushWorkspacePersistence()
+        controller.persistenceCoordinator.flushWorkspacePersistence()
         guard let updatedManifest = decodeManifest(at: manifestURL),
               let updatedTab = updatedManifest.spaces
                 .flatMap(\.tabs)
@@ -8124,7 +8125,7 @@ private enum ShellRuntimeMetadataTests {
             metadata(title: "npm run dev", cwd: "/repo/app", activeTaskState: .foregroundCommand),
             for: "pane_1"
         )
-        controller.flushWorkspacePersistence()
+        controller.persistenceCoordinator.flushWorkspacePersistence()
 
         guard let savedManifest = decodeManifest(at: manifestURL),
               let transcript = terminalPayload(
@@ -9813,7 +9814,7 @@ private enum ShellRuntimeMetadataTests {
             controller.updateTerminalMetadata(
                 TerminalPaneMetadataSnapshot(
                     title: "cargo test",
-                    workingDirectory: "/repo/app",
+                    workingDirectory: "/repo/\(index)",
                     summary: "burst \(index)",
                     attention: .active,
                     processExited: false,
@@ -9845,6 +9846,61 @@ private enum ShellRuntimeMetadataTests {
         expect(
             writer.syncWrites == 0,
             "the coalesced flush must write off the main thread, not synchronously"
+        )
+        expect(
+            terminalPayload(
+                in: writer.lastManifest?.spaces.first?.tabs.first?.liveSnapshot,
+                paneSlotID: pane.paneID
+            )?.cwd == "/repo/9",
+            "the coalesced flush must persist the latest coordinator-owned snapshot"
+        )
+    }
+
+    private static func verifiesStructuralPublishKeepsLatestPendingPersistenceSnapshot() {
+        let writer = SpyPersistenceWriter()
+        let scheduler = ManualManifestFlushScheduler()
+        let controller = makeManifestIOController(writer: writer, scheduler: scheduler)
+        guard let pane = controller.selectedPane else {
+            fail("bootstrap shell must expose a selected pane")
+        }
+
+        controller.updateTerminalMetadata(
+            metadata(title: "initial", cwd: "/repo/initial"),
+            for: pane.paneID
+        )
+        expect(scheduler.scheduleCount == 1, "initial content must schedule one flush")
+
+        guard controller.splitPane(paneID: pane.paneID, placement: .right) != nil else {
+            fail("test setup must apply a structural shell mutation")
+        }
+        let synchronousWritesAfterStructure = writer.syncWrites
+        expect(
+            synchronousWritesAfterStructure >= 1,
+            "structural state must persist synchronously"
+        )
+
+        controller.updateTerminalMetadata(
+            metadata(title: "latest", cwd: "/repo/latest"),
+            for: pane.paneID
+        )
+        expect(
+            scheduler.scheduleCount == 1,
+            "later content must reuse the already scheduled coordinator flush"
+        )
+
+        scheduler.fire()
+
+        expect(writer.asyncWrites == 1, "the pending callback must flush later content once")
+        expect(
+            writer.syncWrites == synchronousWritesAfterStructure,
+            "the pending callback must not repeat synchronous persistence"
+        )
+        expect(
+            terminalPayload(
+                in: writer.lastManifest?.spaces.first?.tabs.first?.liveSnapshot,
+                paneSlotID: pane.paneID
+            )?.cwd == "/repo/latest",
+            "the queued flush must persist content newer than the structural write"
         )
     }
 
@@ -9944,7 +10000,7 @@ private enum ShellRuntimeMetadataTests {
             "a terminal callback alone must not write before the debounce fires"
         )
 
-        controller.flushWorkspacePersistence()
+        controller.persistenceCoordinator.flushWorkspacePersistence()
 
         expect(
             writer.syncWrites >= 1,
@@ -10031,14 +10087,17 @@ private enum ShellRuntimeMetadataTests {
                 manifestStore: workspaceManifestStore
             )
         let resolvedScheduler = manifestFlushScheduler ?? ImmediateManifestFlushScheduler()
+        let persistenceCoordinator = ShellWorkspacePersistenceCoordinator(
+            manifestStore: workspaceManifestStore,
+            workspaceManifest: workspaceManifest,
+            persistenceWriter: resolvedWriter,
+            manifestFlushScheduler: resolvedScheduler
+        )
         return ShellHostController(
             shellState: shellState ?? .bootstrapDefault(windowID: windowID),
             windowContext: context,
             terminalRuntimeRegistry: registry,
-            workspaceManifestStore: workspaceManifestStore,
-            workspaceManifest: workspaceManifest,
-            persistenceWriter: resolvedWriter,
-            manifestFlushScheduler: resolvedScheduler,
+            persistenceCoordinator: persistenceCoordinator,
             pasteboard: pasteboard,
             closeConfirmationPresenter: closeConfirmationPresenter,
             gracefulShutdownTimeout: gracefulShutdownTimeout,

@@ -1,45 +1,23 @@
 import Foundation
 
 @MainActor
-struct ShellWorkspaceManifestStartupResult {
+struct ShellWorkspacePersistenceStartup {
     let shellState: ShellStateSnapshot
-    let manifestStore: ShellWorkspaceManifestStore?
-    let workspaceManifest: ShellContentWorkspaceManifest?
-    let manifestRecovery: ShellWorkspaceManifestRecovery?
-    let retiredTabCount: Int
+    let coordinator: ShellWorkspacePersistenceCoordinator
     let diagnostics: [String]
 }
 
 @MainActor
-struct ShellWorkspaceManifestStartupCoordinator {
-    private static let unpinnedTabRetentionTTL: TimeInterval = 12 * 60 * 60
+extension ShellWorkspacePersistenceCoordinator {
+    private static var unpinnedTabRetentionTTL: TimeInterval { 12 * 60 * 60 }
 
-    private let fileManager: FileManager
-
-    init(fileManager: FileManager = .default) {
-        self.fileManager = fileManager
-    }
-
-    func prepare(
+    static func prepare(
         windowContext: ShellWindowContext,
         workspaceManifestURL: URL?,
         defaultWorkingDirectory: String?,
-        now: Date
-    ) -> ShellWorkspaceManifestStartupResult {
-        prepareWorkspaceManifestStartup(
-            windowContext: windowContext,
-            workspaceManifestURL: workspaceManifestURL,
-            defaultWorkingDirectory: defaultWorkingDirectory,
-            now: now
-        )
-    }
-
-    private func prepareWorkspaceManifestStartup(
-        windowContext: ShellWindowContext,
-        workspaceManifestURL: URL?,
-        defaultWorkingDirectory: String?,
-        now: Date
-    ) -> ShellWorkspaceManifestStartupResult {
+        now: Date,
+        fileManager: FileManager = .default
+    ) -> ShellWorkspacePersistenceStartup {
         let workingDirectory = defaultWorkingDirectory
             ?? fileManager.homeDirectoryForCurrentUser.path
         let store = ShellWorkspaceManifestStore(
@@ -51,6 +29,7 @@ struct ShellWorkspaceManifestStartupCoordinator {
                     channel: windowContext.installChannel
                 )
         )
+
         do {
             let loadResult = try store.loadOrCreateDefault(
                 windowID: windowContext.windowID,
@@ -59,16 +38,16 @@ struct ShellWorkspaceManifestStartupCoordinator {
             )
             let loadedManifest = loadResult.manifest
             let retainedManifest = try ShellCoreFFIAdapter.shared.pruningExpiredTabs(
-                manifest: loadResult.manifest,
+                manifest: loadedManifest,
                 now: now,
-                ttl: Self.unpinnedTabRetentionTTL
+                ttl: unpinnedTabRetentionTTL
             )
-            let prunedRetiredTabCount = max(
+            let retiredTabCount = max(
                 loadedManifest.spaces.reduce(0) { $0 + $1.tabs.count }
                     - retainedManifest.spaces.reduce(0) { $0 + $1.tabs.count },
                 0
             )
-            var diagnostics: [String] = []
+            var diagnostics = startupDiagnostics(for: loadResult.recovery)
             if retainedManifest != loadedManifest {
                 do {
                     try store.save(retainedManifest)
@@ -78,34 +57,53 @@ struct ShellWorkspaceManifestStartupCoordinator {
                     )
                 }
             }
-            let materializedState = try ShellCoreFFIAdapter.shared.materializeContentWorkspaceManifest(
+            if retiredTabCount > 0 {
+                diagnostics.append(
+                    "workspace manifest retired \(retiredTabCount) inactive unpinned tab(s)"
+                )
+            }
+
+            let shellState = try ShellCoreFFIAdapter.shared.materializeContentWorkspaceManifest(
                 manifest: retainedManifest,
                 defaultWorkingDirectory: workingDirectory,
                 now: now
             )
-            return ShellWorkspaceManifestStartupResult(
-                shellState: materializedState,
-                manifestStore: store,
-                workspaceManifest: retainedManifest,
-                manifestRecovery: loadResult.recovery,
-                retiredTabCount: prunedRetiredTabCount,
+            return ShellWorkspacePersistenceStartup(
+                shellState: shellState,
+                coordinator: ShellWorkspacePersistenceCoordinator(
+                    manifestStore: store,
+                    workspaceManifest: retainedManifest
+                ),
                 diagnostics: diagnostics
             )
         } catch {
             // Shell-core authority failures must leave any decoded valid manifest untouched.
             // Disable manifest persistence for this recovery controller so bootstrap state
             // cannot overwrite the saved manifest before the core dependency is repaired.
-            return ShellWorkspaceManifestStartupResult(
+            return ShellWorkspacePersistenceStartup(
                 shellState: .bootstrapDefault(
                     windowID: windowContext.windowID,
                     workingDirectory: workingDirectory
                 ),
-                manifestStore: nil,
-                workspaceManifest: nil,
-                manifestRecovery: nil,
-                retiredTabCount: 0,
+                coordinator: ShellWorkspacePersistenceCoordinator(
+                    manifestStore: nil,
+                    workspaceManifest: nil
+                ),
                 diagnostics: ["workspace manifest shell-core startup failed: \(error)"]
             )
+        }
+    }
+
+    private static func startupDiagnostics(
+        for recovery: ShellWorkspaceManifestRecovery
+    ) -> [String] {
+        switch recovery {
+        case .loadedExisting:
+            return []
+        case .createdDefault:
+            return ["workspace manifest created default"]
+        case .quarantinedCorruptFile(let url):
+            return ["workspace manifest corrupt file quarantined: \(url.path)"]
         }
     }
 }

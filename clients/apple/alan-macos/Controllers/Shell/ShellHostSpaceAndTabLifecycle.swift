@@ -155,12 +155,18 @@ extension ShellHostController {
     func updatePinnedTabSnapshot(tabID: String? = nil) -> Bool {
         guard let targetTabID = tabID ?? selectedTabID else { return false }
         guard isTabPinned(tabID: targetTabID) else { return false }
-        return updateWorkspaceManifestTab(tabID: targetTabID) { tab, snapshot in
+        let updated = persistenceCoordinator.updateManifestTab(
+            tabID: targetTabID
+        ) { tab, snapshot in
             tab.pinSnapshot = snapshot
             tab.liveSnapshot = snapshot
         } diagnostic: {
             "workspace manifest updated pinned tab: \($0)"
         }
+        if updated {
+            objectWillChange.send()
+        }
+        return updated
     }
 
     @discardableResult
@@ -299,7 +305,7 @@ extension ShellHostController {
     func clearableInactiveTabCount(in spaceID: String) -> Int {
         (try? shellState.clearableInactiveTemporaryTabIDs(
             in: spaceID,
-            activeTaskByTabID: activeTaskByTabID()
+            activeTaskByTabID: terminalRuntimeRegistry.activeTaskByTabID(in: shellState)
         ).count) ?? 0
     }
 
@@ -307,7 +313,8 @@ extension ShellHostController {
     func clearInactiveTemporaryTabs(in spaceID: String) -> Bool {
         let result: ShellStateMutationResult
         do {
-            let protectedTabIDs = activeTaskByTabID().compactMap { tabID, activeTask in
+            let protectedTabIDs = terminalRuntimeRegistry.activeTaskByTabID(in: shellState)
+                .compactMap { tabID, activeTask in
                 activeTask.protectsFromPruning ? tabID : nil
             }
             result = try reducerAdapter.apply(

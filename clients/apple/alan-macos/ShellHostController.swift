@@ -223,19 +223,13 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     let appIsActiveProvider: @MainActor () -> Bool
     var routedActivityNotificationKeys: Set<String> = []
     var shellWindowIsVisibleForRendering = true
-    var workspaceManifest: ShellContentWorkspaceManifest? {
-        persistenceCoordinator.currentManifest()
-    }
 
     init(
         shellState: ShellStateSnapshot,
         fileManager: FileManager = .default,
         windowContext: ShellWindowContext? = nil,
         terminalRuntimeRegistry: TerminalRuntimeRegistry? = nil,
-        workspaceManifestStore: ShellWorkspaceManifestStore? = nil,
-        workspaceManifest: ShellContentWorkspaceManifest? = nil,
-        persistenceWriter: ShellPersistenceWriting? = nil,
-        manifestFlushScheduler: ManifestFlushScheduling? = nil,
+        persistenceCoordinator: ShellWorkspacePersistenceCoordinator? = nil,
         pasteboard: ShellPasteboardAccessing? = nil,
         closeConfirmationPresenter: ShellCloseConfirmationPresenting? = nil,
         gracefulShutdownTimeout: TimeInterval = 3.0,
@@ -259,12 +253,11 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         )
         let resolvedContext = windowContext ?? ShellWindowContext.make(fileManager: fileManager)
         self.windowContext = resolvedContext
-        self.persistenceCoordinator = ShellWorkspacePersistenceCoordinator(
-            manifestStore: workspaceManifestStore,
-            workspaceManifest: workspaceManifest,
-            persistenceWriter: persistenceWriter,
-            manifestFlushScheduler: manifestFlushScheduler
-        )
+        self.persistenceCoordinator = persistenceCoordinator
+            ?? ShellWorkspacePersistenceCoordinator(
+                manifestStore: nil,
+                workspaceManifest: nil
+            )
         self.pasteboard = pasteboard ?? ShellSystemPasteboard()
         self.closeConfirmationPresenter =
             closeConfirmationPresenter ?? ShellNSAlertCloseConfirmationPresenter()
@@ -278,9 +271,14 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
 
         // Route async persistence-write failures (debounced restore content) to the
         // control-plane diagnostics surface, mirroring the synchronous paths.
-        persistenceCoordinator.onDiagnostic = { [weak self] message in
+        self.persistenceCoordinator.onDiagnostic = { [weak self] message in
             self?.recordControlPlaneDiagnostic(message)
         }
+        self.persistenceCoordinator.adoptPersistenceContext(
+            state: shellState,
+            terminalRuntimeRegistry: self.terminalRuntimeRegistry,
+            controlPlane: controlPlane
+        )
 
         if shellState.panes.isEmpty {
             publishControlPlaneState()
@@ -340,30 +338,22 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
                 windowID: "window_main",
                 installChannel: installChannel
             )
-        let startup = ShellWorkspaceManifestStartupCoordinator(fileManager: fileManager).prepare(
+        let startup = ShellWorkspacePersistenceCoordinator.prepare(
             windowContext: resolvedWindowContext,
             workspaceManifestURL: workspaceManifestURL,
             defaultWorkingDirectory: defaultWorkingDirectory,
-            now: now
+            now: now,
+            fileManager: fileManager
         )
 
         let controller = ShellHostController(
             shellState: startup.shellState,
             fileManager: fileManager,
             windowContext: resolvedWindowContext,
-            workspaceManifestStore: startup.manifestStore,
-            workspaceManifest: startup.workspaceManifest
+            persistenceCoordinator: startup.coordinator
         )
-        if let manifestRecovery = startup.manifestRecovery {
-            controller.recordWorkspaceManifestRecovery(manifestRecovery)
-        }
         for diagnostic in startup.diagnostics {
             controller.recordControlPlaneDiagnostic(diagnostic)
-        }
-        if startup.retiredTabCount > 0 {
-            controller.recordControlPlaneDiagnostic(
-                "workspace manifest retired \(startup.retiredTabCount) inactive unpinned tab(s)"
-            )
         }
         return controller
     }

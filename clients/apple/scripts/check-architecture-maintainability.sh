@@ -382,7 +382,7 @@ shell_core_ffi_shared_callsite_owner_allowlist=(
     "Services/Shell/ShellActionCoordinator.swift"
     "Services/Shell/ShellLocalCommandExecutor.swift"
     "Services/Shell/ShellCoreFFIReducerAdapter.swift"
-    "Services/Shell/ShellWorkspaceManifestStartupCoordinator.swift"
+    "Services/Shell/ShellWorkspacePersistenceStartup.swift"
     "Services/Shell/ShellWorkspaceManifestStore.swift"
     "Services/Shell/TerminalProfileStore.swift"
     "Services/Terminal/TerminalBootResolution.swift"
@@ -654,12 +654,12 @@ require_single_owner_pattern \
 
 require_single_owner_pattern \
     "ShellCoreFFIAdapter.shared.pruningExpiredTabs" \
-    "Services/Shell/ShellWorkspaceManifestStartupCoordinator.swift" \
+    "Services/Shell/ShellWorkspacePersistenceStartup.swift" \
     "shell-core workspace manifest pruning"
 
 require_single_owner_pattern \
     "ShellCoreFFIAdapter.shared.materializeContentWorkspaceManifest" \
-    "Services/Shell/ShellWorkspaceManifestStartupCoordinator.swift" \
+    "Services/Shell/ShellWorkspacePersistenceStartup.swift" \
     "shell-core workspace manifest materialization"
 
 require_single_owner_pattern \

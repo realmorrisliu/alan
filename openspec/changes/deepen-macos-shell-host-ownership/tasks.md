@@ -30,7 +30,7 @@
 - [x] 3.2 Make terminal runtime, active-task, render, and lifecycle publications
   derive from `TerminalRuntimeRegistry`; remove duplicate controller maps and
   queued projection state.
-- [ ] 3.3 Keep manifest loading and write scheduling in
+- [x] 3.3 Keep manifest loading and write scheduling in
   `ShellWorkspacePersistenceCoordinator`; remove controller-owned persistence
   workflow state and forwarding.
 - [ ] 3.4 Add architecture checks that reject reintroduced duplicate state or a

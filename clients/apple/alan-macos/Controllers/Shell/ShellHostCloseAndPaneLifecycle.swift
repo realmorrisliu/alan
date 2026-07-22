@@ -110,6 +110,23 @@ extension ShellHostController {
         }
     }
 
+    private func captureTerminalTranscriptSnapshots(
+        for impact: ShellCloseGuardImpact
+    ) -> [String: TerminalTranscriptSnapshot] {
+        impact.affectedTerminalContentIDs.reduce(into: [:]) { capturedByContentID, contentID in
+            switch terminalRuntimeRegistry.captureTranscriptSnapshot(
+                forTerminalContentID: contentID
+            ) {
+            case .captured(let transcript):
+                capturedByContentID[contentID] = transcript
+            case .failed(let failure):
+                recordControlPlaneDiagnostic(
+                    "terminal transcript capture failed for \(contentID): \(failure.code.rawValue)"
+                )
+            }
+        }
+    }
+
     private func withTerminalAutoCloseSuppressed<T>(
         for contentIDs: [String],
         operation: () -> T
@@ -211,17 +228,8 @@ extension ShellHostController {
         case .tab(let tabID):
             return applyCloseTabMutation(tabID: tabID) == .closed
         case .window, .app:
-            persistenceCoordinator.syncManifestFromShellState(
-                transcriptSnapshotOverrides: transcriptSnapshotOverrides,
-                makeManifest: { [weak self] now, transcriptSnapshotOverrides in
-                    self?.makeWorkspaceManifestFromShellState(
-                        now: now,
-                        transcriptSnapshotOverrides: transcriptSnapshotOverrides
-                    )
-                },
-                makePinnedSnapshot: { [weak self] tabID in
-                    self?.makePinnedTabSnapshot(tabID: tabID)
-                }
+            persistenceCoordinator.persistCurrentManifest(
+                transcriptSnapshotOverrides: transcriptSnapshotOverrides
             )
             shutdownTerminalRuntimes()
             return true
@@ -519,19 +527,10 @@ extension ShellHostController {
     ) {
         persistenceCoordinator.publishControlPlaneState(
             state: shellState,
+            terminalRuntimeRegistry: terminalRuntimeRegistry,
             controlPlane: controlPlane,
             pinSnapshotTabIDs: pinSnapshotTabIDs,
-            coalesced: coalesced,
-            latestState: { [weak self] in self?.shellState },
-            makeManifest: { [weak self] now, transcriptSnapshotOverrides in
-                self?.makeWorkspaceManifestFromShellState(
-                    now: now,
-                    transcriptSnapshotOverrides: transcriptSnapshotOverrides
-                )
-            },
-            makePinnedSnapshot: { [weak self] tabID in
-                self?.makePinnedTabSnapshot(tabID: tabID)
-            }
+            coalesced: coalesced
         )
     }
 
