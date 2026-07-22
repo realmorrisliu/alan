@@ -679,7 +679,7 @@ reject_replacement_global_shell_store() {
     done < <(grep -RIl --include='*.swift' -F "ShellStateSnapshot" "$SOURCE_ROOT" || true)
 
     if grep -RIn --include='*.swift' -E \
-        '(class|struct|actor)[[:space:]]+((Alan|Global)Shell|Shell)(State|Workspace)?(Store|Model)([^A-Za-z0-9_]|$)' \
+        '(class|struct|actor|enum)[[:space:]]+((Alan|Global)Shell|Shell)(State|Workspace)?(Store|Model)([^A-Za-z0-9_]|$)' \
         "$SOURCE_ROOT" >&2
     then
         fail \
