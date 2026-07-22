@@ -677,10 +677,51 @@ reject_shell_host_duplicate_persistence_state() {
     fi
 }
 
-shell_snapshot_stored_property_count() {
+shell_snapshot_stored_property_counts() {
     local file="$1"
 
     awk '
+        function record_buffered_factory(    name, signature, header) {
+            if (factory_buffer == "") {
+                return
+            }
+            signature = factory_buffer
+            gsub(/[[:space:]]+/, " ", signature)
+            header = signature
+            sub(/[{].*$/, "", header)
+            if (header ~ /(^| )func[ ]+[A-Za-z_][A-Za-z0-9_]*.*->[ ]*ShellStateSnapshot[?!]?/) {
+                name = header
+                sub(/^.*func[ ]+/, "", name)
+                sub(/[^A-Za-z0-9_].*$/, "", name)
+                snapshot_factories[name] = 1
+            }
+
+            header = signature
+            sub(/[={].*$/, "", header)
+            if (header ~ /(^| )(static|class)[ ]+([^ ]+[ ]+)*(let|var)[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*:[ ]*ShellStateSnapshot[?!]?[ ]*$/) {
+                name = header
+                sub(/^.*(let|var)[ ]+/, "", name)
+                sub(/[^A-Za-z0-9_].*$/, "", name)
+                snapshot_factories[name] = 1
+            }
+            factory_buffer = ""
+        }
+        function uses_snapshot_factory(property,    expression, name) {
+            if (property !~ /=/) {
+                return 0
+            }
+            expression = property
+            sub(/^[^=]*=[ ]*/, "", expression)
+            sub(/^try[!?]?[ ]+/, "", expression)
+            sub(/^await[ ]+/, "", expression)
+            sub(/^Self[.]/, "", expression)
+            if (expression !~ /^[A-Za-z_][A-Za-z0-9_]*[ ]*\(/) {
+                return 0
+            }
+            name = expression
+            sub(/[ ]*\(.*/, "", name)
+            return name in snapshot_factories
+        }
         function count_buffered_property(    property) {
             if (buffer == "") {
                 return
@@ -689,11 +730,37 @@ shell_snapshot_stored_property_count() {
             gsub(/[[:space:]]+/, " ", property)
             if (property ~ /var[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*:[ ]*ShellStateSnapshot[?!]?[ ]*($|=)/ ||
                 property ~ /var[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*:[ ]*ShellStateSnapshot[?!]?[ ]*[{][ ]*(didSet|willSet)([^A-Za-z0-9_]|$)/ ||
-                property ~ /var[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*=[ ]*ShellStateSnapshot[ ]*([.(]|$)/)
+                property ~ /var[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*=[ ]*ShellStateSnapshot[ ]*([.(]|$)/ ||
+                (property ~ /var[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*=/ && uses_snapshot_factory(property)))
             {
                 count++
             }
+            if (property ~ /(^| )(static|class)[ ]+([^ ]+[ ]+)*(let|var)[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*:[ ]*ShellStateSnapshot[?!]?[ ]*($|=)/ ||
+                property ~ /(^| )(static|class)[ ]+([^ ]+[ ]+)*var[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*:[ ]*ShellStateSnapshot[?!]?[ ]*[{][ ]*(didSet|willSet)([^A-Za-z0-9_]|$)/ ||
+                property ~ /(^| )(static|class)[ ]+([^ ]+[ ]+)*(let|var)[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*=[ ]*ShellStateSnapshot[ ]*([.(]|$)/ ||
+                (property ~ /(^| )(static|class)[ ]+([^ ]+[ ]+)*(let|var)[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*=/ && uses_snapshot_factory(property)))
+            {
+                static_count++
+            }
             buffer = ""
+        }
+        NR == FNR {
+            line = $0
+            sub(/\/\/.*/, "", line)
+            if (line ~ /^    [^ ]/) {
+                record_buffered_factory()
+                factory_buffer = line
+            } else if (factory_buffer != "" &&
+                (line ~ /^        / || line ~ /^[[:space:]]*$/))
+            {
+                factory_buffer = factory_buffer " " line
+            } else {
+                record_buffered_factory()
+            }
+            next
+        }
+        FNR == 1 {
+            record_buffered_factory()
         }
         {
             line = $0
@@ -704,7 +771,7 @@ shell_snapshot_stored_property_count() {
             # continuation lines so method-local scratch variables are ignored.
             if (line ~ /^    [^ ]/) {
                 count_buffered_property()
-                if (line ~ /^    .*var[ ]+[A-Za-z_][A-Za-z0-9_]*/) {
+                if (line ~ /^    .*(let|var)[ ]+[A-Za-z_][A-Za-z0-9_]*/) {
                     buffer = line
                 }
             } else if (buffer != "" &&
@@ -717,9 +784,9 @@ shell_snapshot_stored_property_count() {
         }
         END {
             count_buffered_property()
-            print count
+            print count, static_count
         }
-    ' "$file"
+    ' "$file" "$file"
 }
 
 reject_replacement_global_shell_store() {
@@ -753,7 +820,9 @@ reject_replacement_global_shell_store() {
     local line_number
     local observable_owner
     local published_projection
+    local snapshot_property_counts
     local snapshot_stored_properties
+    local static_snapshot_stored_properties
     local source_line
     local rel
 
@@ -764,7 +833,9 @@ reject_replacement_global_shell_store() {
 
     while IFS= read -r file; do
         rel="${file#$SOURCE_ROOT/}"
-        snapshot_stored_properties="$(shell_snapshot_stored_property_count "$file")"
+        snapshot_property_counts="$(shell_snapshot_stored_property_counts "$file")"
+        snapshot_stored_properties="${snapshot_property_counts%% *}"
+        static_snapshot_stored_properties="${snapshot_property_counts##* }"
 
         if [[ "$rel" == "$controller_owner" ]] \
             && (( snapshot_stored_properties != 1 ))
@@ -777,6 +848,10 @@ reject_replacement_global_shell_store() {
         then
             fail \
                 "stored observable ShellStateSnapshot must stay in ShellHostController; found in $rel"
+        fi
+
+        if (( static_snapshot_stored_properties > 0 )); then
+            fail "ShellStateSnapshot must not have a static stored owner; found in $rel"
         fi
 
         if [[ "$rel" != "$controller_owner" ]] \
