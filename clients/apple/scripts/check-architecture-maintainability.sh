@@ -533,7 +533,7 @@ static_property_declarations() {
     ' "$file"
 }
 
-shell_host_static_storage_declarations() {
+shell_host_global_storage_declarations() {
     local file="$1"
     local factory_inventory="$2"
 
@@ -553,6 +553,9 @@ shell_host_static_storage_declarations() {
         }
         function is_static_property_start(value) {
             return value ~ /^[[:space:]]*[^\/]*(static|class)[ ]+([^ ]+[ ]+)*(let|var)[ ]+[A-Za-z_][A-Za-z0-9_]*/
+        }
+        function is_module_property_start(value) {
+            return value ~ /^[^\/]*(let|var)[ ]+[A-Za-z_][A-Za-z0-9_]*/
         }
         function is_type_declaration(value) {
             return value ~ /^[[:space:]]*[^\/]*(class|struct|actor|enum|extension|protocol)[ ]+[A-Za-z_][A-Za-z0-9_.]*/
@@ -650,7 +653,9 @@ shell_host_static_storage_declarations() {
                 }
             }
 
-            if (is_static_property_start(line)) {
+            if (is_static_property_start(line) ||
+                (type_depth == 0 && line_indent == 0 && is_module_property_start(line)))
+            {
                 record_buffered_property()
                 property_buffer = line
                 property_start_line = FNR
@@ -1138,6 +1143,9 @@ shell_snapshot_stored_property_counts() {
         function is_static_property_start(value) {
             return value ~ /^[[:space:]]*[^\/]*(static|class)[ ]+([^ ]+[ ]+)*(let|var)[ ]+[A-Za-z_][A-Za-z0-9_]*/
         }
+        function is_module_property_start(value) {
+            return value ~ /^[^\/]*(let|var)[ ]+[A-Za-z_][A-Za-z0-9_]*/
+        }
         function is_type_declaration(value) {
             return value ~ /^[[:space:]]*[^\/]*(class|struct|actor|enum|extension|protocol)[ ]+[A-Za-z_][A-Za-z0-9_.]*/
         }
@@ -1238,24 +1246,24 @@ shell_snapshot_stored_property_counts() {
             }
             instance_buffer = ""
         }
-        function count_buffered_static_property(    property) {
-            if (static_buffer == "") {
+        function count_buffered_global_property(    property) {
+            if (global_buffer == "") {
                 return
             }
-            property = static_buffer
+            property = global_buffer
             gsub(/[[:space:]]+/, " ", property)
-            if ((property ~ /(^| )(static|class)[ ]+([^ ]+[ ]+)*(let|var)[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*:/ &&
+            if ((property ~ /(^| )(let|var)[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*:/ &&
                     typed_storage_contains_snapshot(property)) ||
-                property ~ /(^| )(static|class)[ ]+([^ ]+[ ]+)*var[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*:[ ]*ShellStateSnapshot[?!]?[ ]*[{][ ]*(didSet|willSet)([^A-Za-z0-9_]|$)/ ||
-                property ~ /(^| )(static|class)[ ]+([^ ]+[ ]+)*(let|var)[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*=[ ]*ShellStateSnapshot[ ]*([.(]|$)/ ||
-                (property ~ /(^| )(static|class)[ ]+([^ ]+[ ]+)*(let|var)[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*=/ &&
+                property ~ /(^| )var[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*:[ ]*ShellStateSnapshot[?!]?[ ]*[{][ ]*(didSet|willSet)([^A-Za-z0-9_]|$)/ ||
+                property ~ /(^| )(let|var)[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*=[ ]*ShellStateSnapshot[ ]*([.(]|$)/ ||
+                (property ~ /(^| )(let|var)[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*=/ &&
                     inferred_generic_contains_snapshot(property)) ||
-                (property ~ /(^| )(static|class)[ ]+([^ ]+[ ]+)*(let|var)[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*=/ &&
-                    uses_snapshot_factory(property, static_owner)))
+                (property ~ /(^| )(let|var)[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*=/ &&
+                    uses_snapshot_factory(property, global_owner)))
             {
-                static_count++
+                global_count++
             }
-            static_buffer = ""
+            global_buffer = ""
         }
         {
             line = $0
@@ -1293,26 +1301,28 @@ shell_snapshot_stored_property_counts() {
                 count_buffered_instance_property()
             }
 
-            # Static/class storage is necessarily a type member, so scan it at
-            # every nesting depth without confusing method-local variables for
-            # globally addressable state.
-            if (is_static_property_start(line)) {
-                count_buffered_static_property()
-                static_buffer = line
-                static_indent = leading_space_count(line)
-                static_owner = type_depth > 0 ? type_name[type_depth] : ""
-            } else if (static_buffer != "" &&
-                (line ~ /^[[:space:]]*$/ || leading_space_count(line) > static_indent))
+            # Globally addressable storage is either a module-scope declaration
+            # or a static/class type member. Method-local variables remain out
+            # of this inventory.
+            if (is_static_property_start(line) ||
+                (type_depth == 0 && line_indent == 0 && is_module_property_start(line)))
             {
-                static_buffer = static_buffer " " line
+                count_buffered_global_property()
+                global_buffer = line
+                global_indent = line_indent
+                global_owner = type_depth > 0 ? type_name[type_depth] : ""
+            } else if (global_buffer != "" &&
+                (line ~ /^[[:space:]]*$/ || leading_space_count(line) > global_indent))
+            {
+                global_buffer = global_buffer " " line
             } else {
-                count_buffered_static_property()
+                count_buffered_global_property()
             }
         }
         END {
             count_buffered_instance_property()
-            count_buffered_static_property()
-            print instance_count, static_count
+            count_buffered_global_property()
+            print instance_count, global_count
         }
     ' "$file"
 }
@@ -1363,7 +1373,7 @@ reject_replacement_global_shell_store() {
     local snapshot_stored_properties
     local static_member
     local static_member_key
-    local static_snapshot_stored_properties
+    local global_snapshot_stored_properties
     local source_line
     local rel
 
@@ -1385,7 +1395,7 @@ reject_replacement_global_shell_store() {
             shell_snapshot_stored_property_counts "$file" "$snapshot_factory_inventory"
         )"
         snapshot_stored_properties="${snapshot_property_counts%% *}"
-        static_snapshot_stored_properties="${snapshot_property_counts##* }"
+        global_snapshot_stored_properties="${snapshot_property_counts##* }"
 
         case "$rel" in
             "$controller_owner")
@@ -1408,8 +1418,9 @@ reject_replacement_global_shell_store() {
                 ;;
         esac
 
-        if (( static_snapshot_stored_properties > 0 )); then
-            fail "ShellStateSnapshot must not have a static stored owner; found in $rel"
+        if (( global_snapshot_stored_properties > 0 )); then
+            fail \
+                "ShellStateSnapshot must not have a module/static/class stored owner; found in $rel"
         fi
 
         if (( snapshot_stored_properties > 0 )); then
@@ -1443,8 +1454,8 @@ reject_replacement_global_shell_store() {
             [[ -n "$line_number" ]] || continue
             printf '%s:%s:%s\n' "$file" "$line_number" "$source_line" >&2
             fail \
-                "ShellHostController must not be retained by static/class storage; found in $rel"
-        done < <(shell_host_static_storage_declarations "$file" "$host_factory_inventory")
+                "ShellHostController must not be retained by module/static/class storage; found in $rel"
+        done < <(shell_host_global_storage_declarations "$file" "$host_factory_inventory")
     done < <(find "$SOURCE_ROOT" -type f -name '*.swift' -print | sort)
 
     while IFS=: read -r file line_number source_line; do

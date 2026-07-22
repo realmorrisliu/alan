@@ -587,11 +587,12 @@ validation.
 The same gate rejects a replacement global Shell store. `ShellHostController`
 remains the only observable owner of a mutable `ShellStateSnapshot`; the two
 accepted transport cache files have fixed non-growing ownership ceilings, and
-all other mutable snapshot storage is rejected. No static stored snapshot is
-allowed under any property name. Files with accepted mutable snapshot storage
-also have an exact allowlist of non-owner static utility members, so a singleton
-entry point cannot bypass the rule by choosing a new alias. Independently, every
-production Swift file is scanned for static/class storage of
+all other mutable snapshot storage is rejected. No module-scope, static, or
+class stored snapshot is allowed under any property name. Files with accepted
+mutable snapshot storage also have an exact allowlist of non-owner static utility
+members, so a singleton entry point cannot bypass the rule by choosing a new alias.
+Independently, every production Swift file is scanned for module-scope or
+static/class storage of
 `ShellHostController`, including storage inferred from an unqualified, `Self`,
 concrete helper-factory, or singleton-instance factory owner; the same
 repository-wide, owner-qualified, full-initializer factory matching applies to
