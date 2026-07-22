@@ -322,7 +322,7 @@ extension ShellHostController {
             contents: shellState.contents,
             zoomedPaneIDByTabID: shellState.zoomedPaneIDByTabID
         )
-        synchronizeSelection()
+        refreshSelectionRuntimeProjection()
         routeActivityNotificationIfNeeded(from: existingPane, to: transformedPane)
         publishControlPlaneState(coalesced: true)
         return true
@@ -483,7 +483,7 @@ extension ShellHostController {
             contents: shellState.contents,
             zoomedPaneIDByTabID: shellState.zoomedPaneIDByTabID
         )
-        synchronizeSelection()
+        refreshSelectionRuntimeProjection()
         publishControlPlaneState()
     }
 
@@ -518,7 +518,7 @@ extension ShellHostController {
             routeActivityNotificationIfNeeded(from: previousPane, to: pane)
         }
         reconcilePaneZoomState()
-        synchronizeSelection()
+        refreshSelectionRuntimeProjection()
         if publish {
             publishControlPlaneState()
         }
@@ -533,7 +533,7 @@ extension ShellHostController {
         }
     }
 
-    func synchronizeSelection() {
+    func refreshSelectionRuntimeProjection() {
         let selectionStartedAt = performanceDiagnosticsStartTime()
         defer {
             if let selectionStartedAt {
@@ -548,16 +548,6 @@ extension ShellHostController {
                 )
             }
         }
-        if let focusedPane = focusedPane {
-            selectedSpaceID = focusedPane.spaceID
-            selectedTabID = focusedPane.tabID
-            setSelectedTerminalRuntime(runtime(for: focusedPane.paneID))
-            synchronizeTerminalRenderPriorities()
-            return
-        }
-
-        selectedSpaceID = shellState.focusedSpaceID ?? selectedSpaceID ?? shellState.spaces.first?.spaceID
-        selectedTabID = shellState.focusedTabID ?? selectedSpace?.tabs.first?.tabID
         setSelectedTerminalRuntime(runtime(for: selectedPane?.paneID))
         synchronizeTerminalRenderPriorities()
     }

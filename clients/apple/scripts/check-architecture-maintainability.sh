@@ -486,6 +486,35 @@ reject_shell_host_published_terminal_runtime() {
     fi
 }
 
+reject_shell_host_duplicate_selection_state() {
+    local controller="$SOURCE_ROOT/ShellHostController.swift"
+    local selection_owner="$SOURCE_ROOT/Controllers/Shell/ShellHostProjectionAndSelection.swift"
+
+    if grep -En '@Published[^[:cntrl:]]*selected(Space|Tab)ID' "$controller" >&2; then
+        fail \
+            "ShellHostController selection IDs must derive from ShellStateSnapshot instead of duplicate @Published state"
+    fi
+    if grep -RIn --include='*.swift' -E \
+        '^[[:space:]]*(self\.)?selected(Space|Tab)ID[[:space:]]*=' \
+        "$controller" "$SOURCE_ROOT/Controllers/Shell" >&2
+    then
+        fail "shell host selection IDs must not regain independently mutable controller state"
+    fi
+    if grep -RIn --include='*.swift' -E \
+        'func[[:space:]]+synchronizeSelection' \
+        "$controller" "$SOURCE_ROOT/Controllers/Shell" >&2
+    then
+        fail \
+            "shell host selection must derive from ShellStateSnapshot without synchronization logic"
+    fi
+    if ! grep -Fq 'var selectedSpaceID: String? {' "$selection_owner" \
+        || ! grep -Fq 'var selectedTabID: String? {' "$selection_owner"
+    then
+        fail \
+            "ShellHostProjectionAndSelection must expose selection IDs as derived snapshot projections"
+    fi
+}
+
 reject_swiftui_shell_hot_path_sync_boundaries() {
     local matched=0
     local pattern
@@ -675,6 +704,7 @@ require_shell_core_ffi_direct_init_owners
 require_shell_core_ffi_raw_symbol_owners
 require_shell_core_action_metadata_query_owners
 reject_shell_host_published_terminal_runtime
+reject_shell_host_duplicate_selection_state
 reject_swiftui_shell_hot_path_sync_boundaries
 
 printf 'Current Swift inventory:\n'

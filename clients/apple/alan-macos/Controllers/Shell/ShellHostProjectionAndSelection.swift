@@ -7,14 +7,31 @@ extension ShellHostController {
     }
 
     var selectedSpace: ShellSpace? {
-        shellState.spaces.first { $0.spaceID == selectedSpaceID } ?? shellState.spaces.first
+        if let focusedSpaceID = shellState.focusedSpaceID,
+           let focusedSpace = shellState.spaces.first(where: { $0.spaceID == focusedSpaceID })
+        {
+            return focusedSpace
+        }
+        return shellState.spaces.first
+    }
+
+    var selectedSpaceID: String? {
+        selectedSpace?.spaceID
     }
 
     var selectedTab: ShellTab? {
-        guard let selectedTabID else {
-            return selectedSpace?.tabs.first
+        guard let selectedSpace else { return nil }
+        if let focusedTabID = shellState.focusedTabID,
+           let focusedTab = selectedSpace.tabs.first(where: { $0.tabID == focusedTabID })
+        {
+            return focusedTab
         }
-        return selectedSpace?.tabs.first { $0.tabID == selectedTabID } ?? selectedSpace?.tabs.first
+        guard let selectedTabID = selectedSpace.resolvedSelectedTabID else { return nil }
+        return selectedSpace.tabs.first { $0.tabID == selectedTabID }
+    }
+
+    var selectedTabID: String? {
+        selectedTab?.tabID
     }
 
     var selectedTabPaneTree: ShellPaneTreeNode? {
@@ -310,7 +327,7 @@ extension ShellHostController {
                 contents: shellState.contents,
                 zoomedPaneIDByTabID: shellState.zoomedPaneIDByTabID
             )
-            synchronizeSelection()
+            refreshSelectionRuntimeProjection()
             publishControlPlaneState()
             return
         }

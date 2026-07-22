@@ -148,6 +148,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesControlPlaneCloseTabReportsRequiresConfirmation()
         verifiesControlPlaneCloseIdlePaneSucceeds()
         verifiesControlPlaneBackgroundPaneClosePreservesRemovedSubject()
+        verifiesSelectionProjectionDerivesFromShellState()
         verifiesTabSelectionCommitsAuthoritativeFocus()
         verifiesShellActionTabNavigationTargetsCurrentSelection()
         verifiesSpaceSelectionCommitsAuthoritativeFocus()
@@ -5683,6 +5684,47 @@ private enum ShellRuntimeMetadataTests {
         expect(
             targetHostView.focusCount == 1,
             "tab selection must request focus for the target terminal runtime"
+        )
+    }
+
+    private static func verifiesSelectionProjectionDerivesFromShellState() {
+        let controller = makeController()
+        _ = controller.createTerminalSpace(title: "Second", workingDirectory: "/tmp")
+
+        expect(
+            controller.selectedSpaceID == "space_2",
+            "test setup must select the second Space"
+        )
+        expect(
+            controller.selectedTabID == "tab_2",
+            "test setup must select the second Space tab"
+        )
+
+        let state = controller.shellState
+        controller.shellState = ShellStateSnapshot(
+            contractVersion: state.contractVersion,
+            windowID: state.windowID,
+            focusedSpaceID: "space_main",
+            focusedTabID: "tab_main",
+            focusedPaneID: "pane_1",
+            spaces: state.spaces,
+            panes: state.panes,
+            paneSlots: state.paneSlots,
+            contents: state.contents,
+            zoomedPaneIDByTabID: state.zoomedPaneIDByTabID
+        )
+
+        expect(
+            controller.selectedSpaceID == "space_main",
+            "selected Space publication must derive directly from the adopted shell state"
+        )
+        expect(
+            controller.selectedTabID == "tab_main",
+            "selected tab publication must derive directly from the adopted shell state"
+        )
+        expect(
+            controller.selectedPane?.paneID == "pane_1",
+            "selected pane publication must derive directly from the adopted shell state"
         )
     }
 

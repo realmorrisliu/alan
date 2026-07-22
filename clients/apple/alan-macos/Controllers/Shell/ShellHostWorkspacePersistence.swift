@@ -127,7 +127,7 @@ extension ShellHostController {
             schemaVersion: ShellContentWorkspaceManifest.currentSchemaVersion,
             contentContractVersion: ShellContentWorkspaceManifest.currentContentContractVersion,
             windowID: shellState.windowID,
-            selectedSpaceID: shellState.focusedSpaceID ?? selectedSpaceID,
+            selectedSpaceID: selectedSpaceID,
             selectedTabID: shellState.focusedTabID,
             spaces: spaces
         )

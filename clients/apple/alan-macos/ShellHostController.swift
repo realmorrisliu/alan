@@ -162,8 +162,6 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     }
 
     @Published var shellState: ShellStateSnapshot
-    @Published var selectedSpaceID: String?
-    @Published var selectedTabID: String?
     @Published var lastCopiedAt: Date?
     var terminalRuntime: TerminalHostRuntimeSnapshot = .placeholder
     @Published var controlPlaneDiagnostics: [String] = []
@@ -281,8 +279,6 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         self.terminalRuntimeRegistry =
             terminalRuntimeRegistry
             ?? resolvedContext.terminalRuntimeRegistry
-        self.selectedSpaceID = shellState.focusedSpaceID ?? shellState.spaces.first?.spaceID
-        self.selectedTabID = shellState.focusedTabID ?? shellState.spaces.first?.tabs.first?.tabID
 
         // Route async persistence-write failures (debounced restore content) to the
         // control-plane diagnostics surface, mirroring the synchronous paths.
@@ -295,7 +291,7 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         } else {
             shellState.panes.map(\.paneID).forEach(primeBootContext)
         }
-        synchronizeSelection()
+        refreshSelectionRuntimeProjection()
     }
 
     deinit {
