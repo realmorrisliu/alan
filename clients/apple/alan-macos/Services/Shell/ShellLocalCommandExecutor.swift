@@ -2,7 +2,12 @@ import Foundation
 
 #if os(macOS)
 enum AlanShellLocalCommandSideEffect {
-    case sendText(paneID: String, text: String)
+    case sendText(paneSlotID: String, contentID: String, text: String)
+    case sendKey(
+        paneSlotID: String,
+        contentID: String,
+        key: TerminalRuntimeControlKey
+    )
 }
 
 struct AlanShellLocalCommandResult {
@@ -16,14 +21,16 @@ enum AlanShellLocalCommandExecutor {
 
     static func execute(
         command: AlanShellControlCommand,
-        state: ShellStateSnapshot
+        state: ShellStateSnapshot,
+        context: AlanShellLocalCommandExecutionContext = .init()
     ) -> AlanShellLocalCommandResult? {
         if command.command.isShellCoreLocalCommandSupported {
             let shellCoreCommand = command.resolvingShellCoreDefaults(in: state)
             do {
                 let result = try ShellCoreFFIAdapter.shared.handleControlCommand(
                     shellCoreCommand,
-                    state: state
+                    state: state,
+                    context: context
                 )
                 return AlanShellLocalCommandResult(shellCoreResult: result)
             } catch {
@@ -33,7 +40,7 @@ enum AlanShellLocalCommandExecutor {
                    let coreError = error as? ShellCoreFFIAdapterError,
                    coreError.indicatesShellCoreUnavailable
                 {
-                    return nil
+                    return hostReadableSnapshotResult(command: command, state: state)
                 }
                 return shellCoreFailureResult(command: command, state: state, error: error)
             }
@@ -62,6 +69,8 @@ enum AlanShellLocalCommandExecutor {
              .paneEqualizeSplits,
              .paneZoom,
              .paneUnzoom,
+             .terminalSendText,
+             .terminalSendKey,
              .attentionSet:
             return shellCoreRoutingFailureResult(command: command, state: state)
 
@@ -241,14 +250,69 @@ enum AlanShellLocalCommandExecutor {
                 sideEffect: nil
             )
 
-        case .terminalSendText,
-            .terminalSendKey,
-            .terminalRenderMetrics,
+        case .terminalRenderMetrics,
             .performanceDiagnosticsSetEnabled,
             .performanceDiagnosticsExportRecent, .performanceDiagnosticsRecordChildPressure,
             .eventsRead:
             return nil
         }
+    }
+
+    private static func hostReadableSnapshotResult(
+        command: AlanShellControlCommand,
+        state: ShellStateSnapshot
+    ) -> AlanShellLocalCommandResult {
+        let contentState = state.contentStateProjection()
+        let localResponse: AlanShellControlResponse
+        switch command.command {
+        case .state:
+            localResponse = response(
+                for: command,
+                state: state,
+                applied: true,
+                snapshot: state,
+                paneSlots: contentState.paneSlots,
+                contents: contentState.contents
+            )
+        case .spaceList:
+            localResponse = response(
+                for: command,
+                state: state,
+                applied: true,
+                spaces: state.spaces
+            )
+        case .tabList:
+            let tabs = command.spaceID.flatMap { spaceID in
+                state.space(spaceID: spaceID)?.tabs
+            } ?? state.spaces.flatMap(\.tabs)
+            localResponse = response(
+                for: command,
+                state: state,
+                applied: true,
+                tabs: tabs,
+                spaceID: command.spaceID
+            )
+        case .paneList:
+            let panes = command.tabID.map { tabID in
+                state.panes.filter { $0.tabID == tabID }
+            } ?? state.panes
+            localResponse = response(
+                for: command,
+                state: state,
+                applied: true,
+                panes: panes,
+                paneSlots: contentState.controlPlanePaneSlots(in: command.tabID),
+                contents: contentState.controlPlaneContents(in: command.tabID),
+                tabID: command.tabID
+            )
+        default:
+            return shellCoreRoutingFailureResult(command: command, state: state)
+        }
+        return AlanShellLocalCommandResult(
+            response: localResponse,
+            updatedState: nil,
+            sideEffect: nil
+        )
     }
 
     private static func failureResponse(
@@ -497,8 +561,18 @@ private extension AlanShellLocalCommandResult {
 private extension AlanShellLocalCommandSideEffect {
     init(_ sideEffect: ShellCoreControlSideEffect) {
         switch sideEffect {
-        case .sendText(let paneID, let text):
-            self = .sendText(paneID: paneID, text: text)
+        case .sendText(let paneSlotID, let contentID, let text):
+            self = .sendText(
+                paneSlotID: paneSlotID,
+                contentID: contentID,
+                text: text
+            )
+        case .sendKey(let paneSlotID, let contentID, let key):
+            self = .sendKey(
+                paneSlotID: paneSlotID,
+                contentID: contentID,
+                key: key
+            )
         }
     }
 }
@@ -508,14 +582,17 @@ private extension AlanShellControlCommand {
         switch command {
         case .spaceCreate:
             let resolvedTerminalProfileID = terminalProfileID
-            return withTerminalProfileID(resolvedTerminalProfileID)
+            return withShellCoreDefaults(terminalProfileID: resolvedTerminalProfileID)
 
         case .tabOpen:
             let resolvedTerminalProfileID = state.terminalProfileIDForNewTerminal(
                 in: spaceID,
                 explicit: terminalProfileID
             )
-            return withTerminalProfileID(resolvedTerminalProfileID)
+            return withShellCoreDefaults(terminalProfileID: resolvedTerminalProfileID)
+
+        case .tabPin, .tabUnpin:
+            return withShellCoreDefaults(tabID: tabID ?? state.focusedTabID)
 
         case .paneSplit:
             let resolvedTerminalProfileID = paneID.flatMap {
@@ -526,15 +603,30 @@ private extension AlanShellControlCommand {
                 ?? (resolvedTerminalProfileID == nil
                     ? paneID.flatMap { state.pane(paneID: $0)?.cwd }
                     : nil)
-            return withTerminalProfileID(resolvedTerminalProfileID, cwd: resolvedCWD)
+            return withShellCoreDefaults(
+                terminalProfileID: resolvedTerminalProfileID,
+                cwd: resolvedCWD
+            )
+
+        case .paneZoom:
+            let resolvedPaneID = paneID ?? (paneSlotID == nil ? state.focusedPaneID : nil)
+            return withShellCoreDefaults(paneID: resolvedPaneID)
+
+        case .paneUnzoom:
+            let resolvedTabID = tabID
+                ?? (paneSlotID ?? paneID).flatMap { state.pane(paneID: $0)?.tabID }
+                ?? state.focusedTabID
+            return withShellCoreDefaults(tabID: resolvedTabID)
 
         default:
             return self
         }
     }
 
-    func withTerminalProfileID(
-        _ terminalProfileID: String?,
+    func withShellCoreDefaults(
+        tabID resolvedTabID: String? = nil,
+        paneID resolvedPaneID: String? = nil,
+        terminalProfileID: String? = nil,
         cwd resolvedCWD: String? = nil
     ) -> AlanShellControlCommand {
         AlanShellControlCommand(
@@ -542,8 +634,8 @@ private extension AlanShellControlCommand {
             command: command,
             spaceID: spaceID,
             targetSpaceID: targetSpaceID,
-            tabID: tabID,
-            paneID: paneID,
+            tabID: resolvedTabID ?? tabID,
+            paneID: resolvedPaneID ?? paneID,
             paneSlotID: paneSlotID,
             contentID: contentID,
             splitNodeID: splitNodeID,
@@ -563,7 +655,7 @@ private extension AlanShellControlCommand {
             sessionLabel: sessionLabel,
             projectLabel: projectLabel,
             workingDirectory: workingDirectory,
-            terminalProfileID: terminalProfileID,
+            terminalProfileID: terminalProfileID ?? self.terminalProfileID,
             detail: detail,
             updatedAt: updatedAt,
             afterEventID: afterEventID,
@@ -603,12 +695,12 @@ private extension AlanShellControlCommandKind {
              .paneEqualizeSplits,
              .paneZoom,
              .paneUnzoom,
+             .terminalSendText,
+             .terminalSendKey,
              .attentionSet:
             return true
         case .spaceSetTerminalProfile,
              .paneSnapshot,
-             .terminalSendText,
-             .terminalSendKey,
              .terminalRenderMetrics,
              .agentActivity,
              .attentionInbox,

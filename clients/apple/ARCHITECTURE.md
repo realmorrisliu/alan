@@ -101,8 +101,8 @@ Xcode target.
 | `Models/Shell/ShellContentSnapshots.swift` | 555 | CoreGraphics, Foundation | Terminal transcript, renderer state, content payload, and content-instance DTOs | `Models/Shell/` |
 | `Models/Shell/ShellPaneTreeSnapshots.swift` | 492 | Foundation | Pane-slot split-tree and portable slot-tree query models | `Models/Shell/` |
 | `Models/Shell/ShellTabSpaceSnapshots.swift` | 310 | Foundation | Tab, content-tab, Space identity, icon, and default-name DTOs | `Models/Shell/` |
-| `Models/Shell/ShellWorkspaceSnapshots.swift` | 662 | Foundation | Workspace state snapshots and cross-family snapshot query helpers | `Models/Shell/` |
-| `Models/Shell/ShellStateRuntimeSupport.swift` | 348 | Foundation | Narrow app-target shell bootstrap defaults, mutation result/error types, Terminal Profile inheritance queries, platform activity acknowledgement/projection, and inactive temporary-tab query support | `Models/Shell/` |
+| `Models/Shell/ShellWorkspaceSnapshots.swift` | 666 | Foundation | Workspace state snapshots and cross-family snapshot query helpers | `Models/Shell/` |
+| `Models/Shell/ShellStateRuntimeSupport.swift` | 355 | Foundation | Narrow app-target shell bootstrap defaults, mutation result/error types, Terminal Profile inheritance queries, platform activity acknowledgement/projection, and inactive temporary-tab query support | `Models/Shell/` |
 | `Models/Shell/ShellTitlePresentation.swift` | 371 | Foundation | Shell titles, visible labels, terminal status, and pane title-bar detail projection | `Models/Shell/` |
 | `Models/Shell/ShellSidebarTabPresentation.swift` | 342 | Foundation | Sidebar tab projection, temporary-tab controls, and context-menu presentation | `Models/Shell/` |
 | `Models/Shell/ShellSidebarTabDragDrop.swift` | 57 | Foundation | Sidebar tab drag payloads, insertion targets, and drop-index projection | `Models/Shell/` |
@@ -115,23 +115,22 @@ Xcode target.
 | `Models/Shell/ManagedTerminalUserSettings.swift` | 240 | Foundation; macOS gates | Managed-user readiness, creation preview, validation, and approved provisioning flow | `Models/Shell/` |
 | `Models/Shell/ShellSettingsHostSummaries.swift` | 131 | Foundation; macOS gates | Local app/runtime/storage identity and performance-diagnostics summaries | `Models/Shell/` |
 | `ShellHostController.swift` | 383 | Foundation, Combine; macOS gates | Observable shell state, dependency assembly, startup, shutdown, and root lifecycle | Root controller with focused `Controllers/Shell/` responsibility extensions |
-| `Controllers/Shell/ShellHostControlCommandHandling.swift` | 1199 | Foundation; macOS gates | Shell control-plane command dispatch and pane mutation routing | `Controllers/Shell/` |
 | `Controllers/Shell/ShellHostControlProjection.swift` | 268 | Foundation; macOS gates | Control response, list, routing-candidate, and terminal-delivery projection | `Controllers/Shell/` |
-| `Controllers/Shell/ShellHostObservationControlCommandHandling.swift` | 257 | Foundation; macOS gates | Agent activity, attention, event, render-metric, and performance-diagnostic commands | `Controllers/Shell/` |
-| `Controllers/Shell/ShellHostProjectionAndSelection.swift` | 491 | Foundation; macOS gates | Derived shell projection, focus, selection, zoom, and shell-surface close requests | `Controllers/Shell/` |
+| `Controllers/Shell/ShellHostPlatformControlCommandHandling.swift` | 431 | Foundation; macOS gates | Shared-executor state adoption plus close guard, terminal delivery, events, render metrics, and performance diagnostics | `Controllers/Shell/` |
+| `Controllers/Shell/ShellHostProjectionAndSelection.swift` | 494 | Foundation; macOS gates | Derived shell projection, focus, selection, zoom, and shell-surface close requests | `Controllers/Shell/` |
 | `Controllers/Shell/ShellHostSpaceAndTabLifecycle.swift` | 727 | Foundation; macOS gates | Space, tab, content, and split creation plus tab ordering and movement | `Controllers/Shell/` |
 | `Controllers/Shell/ShellHostActionAndTerminalCommandHandling.swift` | 494 | Foundation; macOS gates | Shell action execution, spatial focus, and terminal semantic-command routing | `Controllers/Shell/` |
-| `Controllers/Shell/ShellHostRuntimeProjection.swift` | 641 | Foundation; macOS gates | Terminal runtime and metadata projection, activity routing, state adoption, and selection synchronization | `Controllers/Shell/` |
+| `Controllers/Shell/ShellHostRuntimeProjection.swift` | 653 | Foundation; macOS gates | Terminal runtime and metadata projection, activity routing, state adoption, and selection synchronization | `Controllers/Shell/` |
 | `Controllers/Shell/ShellHostWorkspacePersistence.swift` | 328 | Foundation; macOS gates | Workspace-manifest projection, transcript capture, pinned snapshots, and active-task persistence | `Controllers/Shell/` |
-| `Controllers/Shell/ShellHostCloseAndPaneLifecycle.swift` | 550 | Foundation; macOS gates | Close guards, graceful shutdown, pane lifecycle/movement, and control-plane state publication | `Controllers/Shell/` |
+| `Controllers/Shell/ShellHostCloseAndPaneLifecycle.swift` | 551 | Foundation; macOS gates | Close guards, graceful shutdown, pane lifecycle/movement, and control-plane state publication | `Controllers/Shell/` |
 | `Controllers/Shell/ShellHostAutomationCommandHandling.swift` | 309 | Foundation; macOS gates | External shell automation command adaptation and response projection | `Controllers/Shell/` |
 | `Services/Shell/ShellControlFilePoller.swift` | 182 | Foundation; macOS gates | File-backed command/result polling and alan binding-file projection | `Services/Shell/` |
 | `Services/Shell/ShellDiagnostics.swift` | 16 | Foundation; macOS gates | Shell service diagnostic routing | `Services/Shell/` |
 | `Services/Shell/ShellEventStore.swift` | 677 | Foundation; macOS gates | Shell event buffering, diffing, `events.read`, and jsonl persistence | `Services/Shell/` |
-| `Services/Shell/ShellLocalCommandExecutor.swift` | 922 | Foundation; macOS gates | Local shell control command execution against shell state and terminal delivery effects | `Services/Shell/` |
+| `Services/Shell/ShellLocalCommandExecutor.swift` | 864 | Foundation; macOS gates | Shared portable/local control execution, read-only fallback projection, state results, and descriptor-preserving platform intents | `Services/Shell/` |
 | `Services/Shell/ShellPaneProjectionService.swift` | 302 | Foundation; macOS gates | Pane boot context, runtime metadata, viewport, attention, and alan binding projection | `Services/Shell/` |
 | `Services/Shell/ShellPublishedStateMerger.swift` | 193 | Foundation; macOS gates | Merge published shell state with authoritative runtime metadata | `Services/Shell/` |
-| `Services/Shell/ShellSocketServer.swift` | 415 | Foundation, Darwin; macOS gates | Bounded local socket transport, request parsing, and client response handling | `Services/Shell/` |
+| `Services/Shell/ShellSocketServer.swift` | 414 | Foundation, Darwin; macOS gates | Bounded local socket transport, request parsing, and client response handling | `Services/Shell/` |
 | `ShellControlPlane.swift` | 463 | Foundation; macOS gates | Shell control-plane orchestration across socket, file polling, state publishing, pane support directories, event store, and diagnostics | `Services/Shell/` |
 
 ## Target Layout
@@ -526,24 +525,26 @@ Rust-owned Swift legacy cleanup targets at this baseline:
 | --- | ---: | --- |
 | `Models/Shell/ShellWorkspaceManifest.swift` | 513 | Cleaned: Swift manifest default/prune/materialize/migration parity implementations and fixture exporters are removed. Production keeps DTOs, repair, transcript cleanup, projection helpers, and file IO while Rust manifest contract tests own portable behavior. |
 | `Models/Shell/ShellActionRegistry.swift` | 248 | Cleaned: the Swift standard action registry table and resolver fixture are removed. Production keeps action IDs, targets, effects, keyboard action values, and terminal command target resolution while Rust action tests plus FFI adapter tests own registry behavior. |
-| `Models/Shell/ShellStateRuntimeSupport.swift` | 348 | Cleaned: production no longer compiles `ShellStateMutations.swift` or `ShellTreeMutations.swift`, and the script-side duplicate Swift reducer/tree implementations are removed. The app target keeps only bootstrap defaults, mutation result/error shapes, Terminal Profile inheritance queries, platform activity acknowledgement/projection, and inactive temporary-tab query support. Script state construction that still needs mutations uses the FFI-backed `ShellCoreFFITestStateBuilder.swift`. |
+| `Models/Shell/ShellStateRuntimeSupport.swift` | 355 | Cleaned: production no longer compiles `ShellStateMutations.swift` or `ShellTreeMutations.swift`, and the script-side duplicate Swift reducer/tree implementations are removed. The app target keeps only bootstrap defaults, mutation result/error shapes, Terminal Profile inheritance queries, platform activity acknowledgement/projection, and inactive temporary-tab query support. Script state construction that still needs mutations uses the FFI-backed `ShellCoreFFITestStateBuilder.swift`. |
 | `Models/Shell/ShellValueTypes.swift` | Removed | Cleaned: shell, Terminal Profile, managed-account, activity, context, helper-contract, planning, and effect families now have named model/service owners. Request validation, provisioning, and rollback call shell-core FFI and fail closed. Script-only managed-account state/fakes remain outside the app target, and the unused local command runner is deleted. |
 | `Models/Shell/ShellSettingsSurfaceModel.swift` | 531 | Cleaned below the report threshold: settings navigation/grouping and fail-closed row composition remain here, while Terminal Profile/helper summaries, managed-account discovery, catalog persistence, managed-user creation/provisioning, and local/diagnostics summaries live in adjacent domain modules. Managed terminal account row projection still calls `settings.managed_terminal_account_rows` through `Services/Shell/ShellCoreFFISettingsAdapter.swift`. |
 | `Services/Shell/ShellCoreFFIAdapter.swift` | 12 | Cleaned as transport facade: loader, envelope, materialization, manifest, control, action, settings, and Terminal Profile operations remain in sibling owners; reducer and managed-terminal-account callers use dedicated operation-family adapter types, with no Swift domain fallback. |
 | `ShellHostController.swift` | 383 | Cleaned below the report threshold: the root keeps observable state, dependency assembly, startup, shutdown, and root lifecycle. Selection, space/tab lifecycle, actions, runtime projection, persistence, close/pane lifecycle, and automation adaptation live in focused `Controllers/Shell/ShellHost*` extensions while Rust shell-core and existing service coordinators retain domain authority. |
-| `Controllers/Shell/ShellHostControlCommandHandling.swift` | 1,199 | Cleaned below the report threshold: reusable reducer invocations route through `ShellCoreReducerAdapter`, while response/list projection and observation/diagnostic commands live in adjacent controller modules. The dispatch owner retains control-command routing and pane mutation coordination without a second Rust-owned mutation implementation. |
+| `Controllers/Shell/ShellHostControlCommandHandling.swift` | Removed | Deleted after in-process and socket-facing portable commands converged on `AlanShellLocalCommandExecutor`; no second portable mutation switch remains. |
+| `Controllers/Shell/ShellHostPlatformControlCommandHandling.swift` | 431 | Keeps only executor-result adoption, close guarding, descriptor-targeted terminal delivery, event/render diagnostics, and explicit platform effects. |
 
 The first implementation batch targeted the production Swift legacy surface, not
 a line-count threshold. Manifest parity helpers and the Swift standard action
 registry plus reducer/tree mutation parity support moved out of normal
-app-target sources into script support. Direct inspection of
-`ShellHostControlCommandHandling.swift` shows no direct shell-core FFI owner or
-Swift reducer fallback remains there. Its response projection and observation
-commands now have adjacent owners, while the remaining dispatch and pane
-mutation routing stays on the platform side of the Rust-domain boundary. The
-reduced architecture warning count is a byproduct; success is defined by the
-absence of production-compiled Rust-owned Swift implementations and by
-`check-shell-contracts.sh` continuing to reject fallback paths.
+app-target sources into script support. `ShellHostControlCommandHandling.swift`
+is now absent. The single host entry in
+`ShellHostPlatformControlCommandHandling.swift` adopts shared executor results
+and applies only close guards, terminal delivery, diagnostics, and explicit
+platform effects. Read-only shell-core outage fallback and portable response
+construction remain inside `AlanShellLocalCommandExecutor`, while terminal
+intents preserve both PaneSlot and ContentInstance identity through delivery.
+The reduced line count is a byproduct; success is defined by one portable
+command owner and by `check-shell-contracts.sh` rejecting a replacement switch.
 
 The current architecture gate treats
 `clients/apple/scripts/architecture-warning-baseline.txt` as a hard downward

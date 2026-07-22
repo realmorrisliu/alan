@@ -889,7 +889,11 @@ private func testProductionAdapterControlCommands() throws {
         state: state
     )
     try expect(
-        sendResult.sideEffect == .sendText(paneID: "pane_1", text: "pwd"),
+        sendResult.sideEffect == .sendText(
+            paneSlotID: "pane_1",
+            contentID: ShellContentInstance.terminalContentID(forPaneID: "pane_1"),
+            text: "pwd"
+        ),
         "control adapter must map terminal text runtime intent to Swift side effect"
     )
     try expect(
@@ -910,6 +914,24 @@ private func testProductionAdapterControlCommands() throws {
     try expect(
         listResult.response.panes?.contains { $0.paneID == targetPaneID } == true,
         "pane.list panes must include the split pane"
+    )
+
+    let reservedSplitResult = try adapter.handleControlCommand(
+        try controlCommand(
+            "pane.split",
+            fields: [
+                "pane_id": "pane_1",
+                "direction": "vertical",
+            ]
+        ),
+        state: state,
+        context: AlanShellLocalCommandExecutionContext(
+            reservedPaneSlotIDs: ["pane_2"]
+        )
+    )
+    try expect(
+        reservedSplitResult.updatedState?.pane(paneID: "pane_3") != nil,
+        "control adapter must preserve host runtime pane reservations"
     )
 }
 

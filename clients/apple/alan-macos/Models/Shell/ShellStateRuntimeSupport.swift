@@ -244,7 +244,8 @@ extension ShellStateSnapshot {
             spaces: repairedSpaces,
             panes: panes,
             paneSlots: retained.paneSlots,
-            contents: retained.contents
+            contents: retained.contents,
+            zoomedPaneIDByTabID: zoomedPaneIDByTabID
         )
     }
 

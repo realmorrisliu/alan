@@ -1,8 +1,8 @@
 use alan_shell_core::{
     ContentInstance, ContentKind, ContentLifecycleState, PaneSlot, PaneTreeNode,
     ShellAttentionState, ShellContentPayload, ShellControlCommand, ShellControlCommandKind,
-    ShellControlRuntimeIntent, ShellLaunchTarget, Space, Tab, TabKind, TabOrganizationSection,
-    TerminalControlKey, WorkspaceState,
+    ShellControlExecutionContext, ShellControlRuntimeIntent, ShellLaunchTarget, Space,
+    SplitDirection, Tab, TabKind, TabOrganizationSection, TerminalControlKey, WorkspaceState,
 };
 
 #[test]
@@ -22,6 +22,55 @@ fn state_command_projects_snapshot_lists_and_contract_version() {
     assert_eq!(result.response.contents.as_ref().unwrap().len(), 1);
     assert!(result.updated_state.is_none());
     assert!(result.runtime_intents.is_empty());
+}
+
+#[test]
+fn creation_commands_respect_runtime_reserved_pane_slot_ids() {
+    let context = ShellControlExecutionContext {
+        reserved_pane_slot_ids: vec!["pane_2".to_string()],
+    };
+
+    let created_space = base_state()
+        .reduce_control_with_context(
+            command("req-space", ShellControlCommandKind::SpaceCreate),
+            context.clone(),
+        )
+        .updated_state
+        .expect("space creation updates state");
+    assert!(
+        created_space
+            .pane_slots
+            .iter()
+            .any(|pane| pane.pane_slot_id == "pane_3")
+    );
+
+    let opened_tab = base_state()
+        .reduce_control_with_context(
+            command("req-tab", ShellControlCommandKind::TabOpen),
+            context.clone(),
+        )
+        .updated_state
+        .expect("tab creation updates state");
+    assert!(
+        opened_tab
+            .pane_slots
+            .iter()
+            .any(|pane| pane.pane_slot_id == "pane_3")
+    );
+
+    let mut split = command("req-split", ShellControlCommandKind::PaneSplit);
+    split.pane_id = Some("pane_1".to_string());
+    split.direction = Some(SplitDirection::Vertical);
+    let split_state = base_state()
+        .reduce_control_with_context(split, context)
+        .updated_state
+        .expect("pane split updates state");
+    assert!(
+        split_state
+            .pane_slots
+            .iter()
+            .any(|pane| pane.pane_slot_id == "pane_3")
+    );
 }
 
 #[test]
@@ -111,6 +160,73 @@ fn pane_split_missing_direction_uses_stable_validation_code() {
         Some("direction_required")
     );
     assert!(result.updated_state.is_none());
+}
+
+#[test]
+fn equalize_reports_changed_splits_and_rejects_unchanged_state() {
+    let state = split_state();
+    let split_node_id = state.spaces[0].tabs[0]
+        .pane_tree
+        .split_ratios_by_node_id()
+        .into_keys()
+        .next()
+        .expect("split fixture exposes a split node");
+    let mut resize = command("req-resize", ShellControlCommandKind::PaneResizeSplit);
+    resize.split_node_id = Some(split_node_id.clone());
+    resize.ratio = Some(0.72);
+    let resized = state.reduce_control(resize);
+    let resized_state = resized.updated_state.expect("resize updates state");
+
+    let mut equalize = command("req-equalize", ShellControlCommandKind::PaneEqualizeSplits);
+    equalize.tab_id = Some("tab_main".to_string());
+    let equalized = resized_state.reduce_control(equalize.clone());
+
+    assert_eq!(equalized.response.applied, Some(true));
+    assert_eq!(equalized.response.ratio, Some(0.5));
+    assert_eq!(
+        equalized.response.changed_split_ids.as_deref(),
+        Some([split_node_id].as_slice())
+    );
+
+    let unchanged = equalized
+        .updated_state
+        .expect("equalize updates state")
+        .reduce_control(equalize);
+    assert_eq!(unchanged.response.applied, Some(false));
+    assert_eq!(
+        unchanged.response.error_code.as_deref(),
+        Some("unchanged_state")
+    );
+    assert!(unchanged.updated_state.is_none());
+}
+
+#[test]
+fn unzoom_validates_explicit_pane_before_mutating_tab() {
+    let state = split_state();
+    let mut zoom = command("req-zoom", ShellControlCommandKind::PaneZoom);
+    zoom.pane_id = Some("pane_2".to_string());
+    let zoomed = state.reduce_control(zoom);
+    let zoomed_state = zoomed.updated_state.expect("zoom updates state");
+
+    let mut missing = command("req-unzoom-missing", ShellControlCommandKind::PaneUnzoom);
+    missing.pane_id = Some("pane_missing".to_string());
+    let rejected = zoomed_state.reduce_control(missing);
+    assert_eq!(rejected.response.applied, Some(false));
+    assert_eq!(
+        rejected.response.error_code.as_deref(),
+        Some("pane_not_found")
+    );
+    assert!(rejected.updated_state.is_none());
+
+    let mut unzoom = command("req-unzoom", ShellControlCommandKind::PaneUnzoom);
+    unzoom.pane_id = Some("pane_2".to_string());
+    let applied = zoomed_state.reduce_control(unzoom);
+    assert_eq!(applied.response.applied, Some(true));
+    assert_eq!(applied.response.zoomed_pane_id, None);
+    assert_eq!(
+        applied.updated_state.unwrap().spaces[0].tabs[0].zoomed_pane_id,
+        None
+    );
 }
 
 #[test]
@@ -349,6 +465,16 @@ fn base_state() -> WorkspaceState {
             renderer_state: Default::default(),
         }],
     }
+}
+
+fn split_state() -> WorkspaceState {
+    let mut split = command("fixture-split", ShellControlCommandKind::PaneSplit);
+    split.pane_id = Some("pane_1".to_string());
+    split.direction = Some(SplitDirection::Vertical);
+    base_state()
+        .reduce_control(split)
+        .updated_state
+        .expect("split fixture updates state")
 }
 
 fn pinned_and_unpinned_state() -> WorkspaceState {

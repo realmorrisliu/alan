@@ -139,8 +139,7 @@ CLANG_MODULE_CACHE_PATH="$MODULE_CACHE_DIR" swiftc \
     "$REPO_ROOT/clients/apple/alan-macos/Controllers/Shell/ShellHostCloseAndPaneLifecycle.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Controllers/Shell/ShellHostAutomationCommandHandling.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Controllers/Shell/ShellHostControlProjection.swift" \
-    "$REPO_ROOT/clients/apple/alan-macos/Controllers/Shell/ShellHostObservationControlCommandHandling.swift" \
-    "$REPO_ROOT/clients/apple/alan-macos/Controllers/Shell/ShellHostControlCommandHandling.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Controllers/Shell/ShellHostPlatformControlCommandHandling.swift" \
     "$REPO_ROOT/clients/apple/scripts/test-shell-runtime-metadata.swift" \
     "$BUILD_DIR/AlanDarwinPtySpawn.o" \
     "$BUILD_DIR/AlanPrivilegedHelperPtySpawn.o" \

@@ -28,7 +28,12 @@ struct ShellCorePortableWorkspaceState: Codable {
         focusedSpaceID = contentState.focusedSpaceID
         focusedTabID = contentState.focusedTabID
         focusedPaneID = contentState.focusedPaneSlotID
-        spaces = contentState.spaces.map(ShellCorePortableSpace.init(contentSpace:))
+        spaces = contentState.spaces.map {
+            ShellCorePortableSpace(
+                contentSpace: $0,
+                zoomedPaneIDByTabID: state.zoomedPaneIDByTabID
+            )
+        }
         paneSlots = contentState.paneSlots
         contents = contentState.contents.map(ShellCorePortableContentInstance.init(contentInstance:))
     }
@@ -44,11 +49,16 @@ struct ShellCorePortableWorkspaceState: Codable {
             paneSlots: paneSlots,
             contents: contents.map(\.contentInstance)
         )
-        guard let shellState = contentState.materializingShellState() else {
+        guard var shellState = contentState.materializingShellState() else {
             throw ShellCoreFFIAdapterError.materializationFailed(
                 "portable workspace state could not be projected into shell state"
             )
         }
+        shellState.zoomedPaneIDByTabID = Dictionary(
+            uniqueKeysWithValues: spaces.flatMap(\.tabs).compactMap { tab in
+                tab.zoomedPaneID.map { (tab.tabID, $0) }
+            }
+        )
         return shellState
     }
 }
@@ -72,11 +82,19 @@ struct ShellCorePortableSpace: Codable {
         case presentationIconSystemName = "presentation_icon"
     }
 
-    init(contentSpace: ShellContentSpace) {
+    init(
+        contentSpace: ShellContentSpace,
+        zoomedPaneIDByTabID: [String: String] = [:]
+    ) {
         spaceID = contentSpace.spaceID
         title = contentSpace.title
         attention = contentSpace.attention
-        tabs = contentSpace.tabs.map(ShellCorePortableTab.init(contentTab:))
+        tabs = contentSpace.tabs.map {
+            ShellCorePortableTab(
+                contentTab: $0,
+                zoomedPaneID: zoomedPaneIDByTabID[$0.tabID]
+            )
+        }
         selectedTabID = contentSpace.selectedTabID
         terminalProfileID = contentSpace.terminalProfileID
         presentationIconSystemName = contentSpace.presentationIconSystemName
@@ -102,6 +120,7 @@ struct ShellCorePortableTab: Codable {
     let paneTree: ShellPaneTreeNode
     let isPinned: Bool
     let isTitleUserLocked: Bool
+    let zoomedPaneID: String?
 
     private enum CodingKeys: String, CodingKey {
         case tabID = "tab_id"
@@ -110,15 +129,17 @@ struct ShellCorePortableTab: Codable {
         case paneTree = "pane_tree"
         case isPinned = "is_pinned"
         case isTitleUserLocked = "is_title_user_locked"
+        case zoomedPaneID = "zoomed_pane_id"
     }
 
-    init(contentTab: ShellContentTab) {
+    init(contentTab: ShellContentTab, zoomedPaneID: String? = nil) {
         tabID = contentTab.tabID
         kind = contentTab.kind
         title = contentTab.title
         paneTree = contentTab.paneTree.restoringPaneTree()
         isPinned = contentTab.isPinned
         isTitleUserLocked = contentTab.isTitleUserLocked
+        self.zoomedPaneID = zoomedPaneID
     }
 
     var contentTab: ShellContentTab {
@@ -254,7 +275,8 @@ extension ShellStateSnapshot {
             spaces: spaces,
             panes: mergedPanes,
             paneSlots: paneSlots,
-            contents: contents
+            contents: contents,
+            zoomedPaneIDByTabID: zoomedPaneIDByTabID
         )
     }
 }

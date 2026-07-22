@@ -27,8 +27,8 @@ pub use actions::{
     ShellKeyboardAction, ShellResolvedAction, ShellResolvedActionTarget, ShellWorkspaceCommand,
 };
 pub use control::{
-    ShellControlCommand, ShellControlCommandKind, ShellControlResponse, ShellControlResult,
-    ShellControlRuntimeIntent, TerminalControlKey,
+    ShellControlCommand, ShellControlCommandKind, ShellControlExecutionContext,
+    ShellControlResponse, ShellControlResult, ShellControlRuntimeIntent, TerminalControlKey,
 };
 pub use envelope::{
     EnvelopeVersion, ShellCoreErrorCode, ShellCoreErrorEnvelope, ShellCoreRequestEnvelope,

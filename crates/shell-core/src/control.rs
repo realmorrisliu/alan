@@ -158,6 +158,14 @@ pub struct ShellControlCommand {
     pub terminal_profile_id: Option<String>,
 }
 
+/// Runtime collision inputs supplied by a shell host without transferring command ownership.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ShellControlExecutionContext {
+    /// Pane slot ids that remain reserved by live platform runtimes during state reconciliation.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reserved_pane_slot_ids: Vec<String>,
+}
+
 /// Portable shell control result.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ShellControlResult {
@@ -295,17 +303,27 @@ pub enum TerminalControlKey {
 impl WorkspaceState {
     /// Applies a shell control command to this workspace state.
     pub fn reduce_control(&self, command: ShellControlCommand) -> ShellControlResult {
-        ShellControlReducer::new(self.clone()).apply(command)
+        self.reduce_control_with_context(command, ShellControlExecutionContext::default())
+    }
+
+    /// Applies a shell control command with runtime collision inputs supplied by its host.
+    pub fn reduce_control_with_context(
+        &self,
+        command: ShellControlCommand,
+        context: ShellControlExecutionContext,
+    ) -> ShellControlResult {
+        ShellControlReducer::new(self.clone(), context).apply(command)
     }
 }
 
 struct ShellControlReducer {
     state: WorkspaceState,
+    context: ShellControlExecutionContext,
 }
 
 impl ShellControlReducer {
-    fn new(state: WorkspaceState) -> Self {
-        Self { state }
+    fn new(state: WorkspaceState, context: ShellControlExecutionContext) -> Self {
+        Self { state, context }
     }
 
     fn apply(&self, command: ShellControlCommand) -> ShellControlResult {
@@ -322,7 +340,7 @@ impl ShellControlReducer {
                     working_directory: command.cwd.clone(),
                     terminal_profile_id: command.terminal_profile_id,
                     presentation_icon: None,
-                    reserved_pane_slot_ids: Vec::new(),
+                    reserved_pane_slot_ids: self.context.reserved_pane_slot_ids.clone(),
                 },
                 ResponseProjection::Current,
             ),
@@ -333,7 +351,7 @@ impl ShellControlReducer {
                     title: command.title.clone(),
                     working_directory: command.cwd.clone(),
                     terminal_profile_id: command.terminal_profile_id,
-                    reserved_pane_slot_ids: Vec::new(),
+                    reserved_pane_slot_ids: self.context.reserved_pane_slot_ids.clone(),
                 },
                 ResponseProjection::Current,
             ),
@@ -432,30 +450,9 @@ impl ShellControlReducer {
                 )
             }
             ShellControlCommandKind::PaneResizeSplit => self.pane_resize_split(command),
-            ShellControlCommandKind::PaneEqualizeSplits => self.apply_reducer(
-                command.clone(),
-                ReducerOperation::EqualizeSplits {
-                    tab_id: command.tab_id,
-                },
-                ResponseProjection::Current,
-            ),
-            ShellControlCommandKind::PaneZoom => {
-                let Some(pane_slot_id) = pane_slot_id_from_command(&command) else {
-                    return self.validation_error(command, "pane_required", "pane_id is required.");
-                };
-                self.apply_reducer(
-                    command,
-                    ReducerOperation::ZoomPane { pane_slot_id },
-                    ResponseProjection::Zoom,
-                )
-            }
-            ShellControlCommandKind::PaneUnzoom => self.apply_reducer(
-                command.clone(),
-                ReducerOperation::UnzoomTab {
-                    tab_id: command.tab_id,
-                },
-                ResponseProjection::Zoom,
-            ),
+            ShellControlCommandKind::PaneEqualizeSplits => self.pane_equalize_splits(command),
+            ShellControlCommandKind::PaneZoom => self.pane_zoom(command),
+            ShellControlCommandKind::PaneUnzoom => self.pane_unzoom(command),
             ShellControlCommandKind::TerminalSendText => self.terminal_send_text(command),
             ShellControlCommandKind::TerminalSendKey => self.terminal_send_key(command),
             ShellControlCommandKind::AttentionSet => {
@@ -617,7 +614,7 @@ impl ShellControlReducer {
                 title: command.title.clone(),
                 working_directory: command.cwd.clone(),
                 terminal_profile_id: command.terminal_profile_id,
-                reserved_pane_slot_ids: Vec::new(),
+                reserved_pane_slot_ids: self.context.reserved_pane_slot_ids.clone(),
             },
             ResponseProjection::Snapshot,
         )
@@ -689,6 +686,142 @@ impl ShellControlReducer {
             },
             ResponseProjection::ResizeSplit,
         )
+    }
+
+    fn pane_equalize_splits(&self, command: ShellControlCommand) -> ShellControlResult {
+        let Some(tab_id) = command
+            .tab_id
+            .clone()
+            .or_else(|| self.state.focused_tab_id.clone())
+        else {
+            return self.validation_error(command, "tab_required", "tab_id is required.");
+        };
+        let Some(tab) = self.state.tab(&tab_id) else {
+            return self.validation_error(
+                command,
+                "tab_not_found",
+                "The requested tab does not exist.",
+            );
+        };
+        if tab.pane_tree.split_ratios_by_node_id().is_empty() {
+            return self.validation_error(
+                command,
+                "no_split_branches",
+                "The requested tab does not have split branches.",
+            );
+        }
+        let equalized_tree = tab.pane_tree.equalized_splits();
+        let changed_split_ids = equalized_tree.split_node_ids_with_changed_ratios(&tab.pane_tree);
+        if changed_split_ids.is_empty() {
+            return self.validation_error(
+                command,
+                "unchanged_state",
+                "The requested split ratios are already equalized.",
+            );
+        }
+
+        let mut result = self.apply_reducer(
+            command,
+            ReducerOperation::EqualizeSplits {
+                tab_id: Some(tab_id),
+            },
+            ResponseProjection::Current,
+        );
+        result.response.ratio = Some(0.5);
+        result.response.changed_split_ids = Some(changed_split_ids);
+        result
+    }
+
+    fn pane_zoom(&self, command: ShellControlCommand) -> ShellControlResult {
+        let Some(pane_slot_id) = pane_slot_id_from_command(&command) else {
+            return self.validation_error(command, "pane_required", "pane_id is required.");
+        };
+        let Some(pane_slot) = self
+            .state
+            .pane_slots
+            .iter()
+            .find(|candidate| candidate.pane_slot_id == pane_slot_id)
+        else {
+            return self.validation_error(
+                command,
+                "pane_not_found",
+                "The requested pane does not exist.",
+            );
+        };
+        let Some(tab) = self.state.tab(&pane_slot.tab_id) else {
+            return self.validation_error(
+                command,
+                "tab_not_found",
+                "The requested tab does not exist.",
+            );
+        };
+        if tab.pane_tree.pane_ids().len() <= 1 {
+            return self.validation_error(
+                command,
+                "split_tab_required",
+                "Pane zoom requires a split tab.",
+            );
+        }
+        if tab.zoomed_pane_id.as_deref() == Some(pane_slot_id.as_str()) {
+            return self.validation_error(
+                command,
+                "unchanged_state",
+                "The requested pane is already zoomed.",
+            );
+        }
+        self.apply_reducer(
+            command,
+            ReducerOperation::ZoomPane { pane_slot_id },
+            ResponseProjection::Zoom,
+        )
+    }
+
+    fn pane_unzoom(&self, command: ShellControlCommand) -> ShellControlResult {
+        let requested_pane_slot_id = pane_slot_id_from_command(&command);
+        let requested_pane_slot = requested_pane_slot_id.as_ref().and_then(|pane_slot_id| {
+            self.state
+                .pane_slots
+                .iter()
+                .find(|candidate| &candidate.pane_slot_id == pane_slot_id)
+        });
+        if requested_pane_slot_id.is_some() && requested_pane_slot.is_none() {
+            return self.validation_error(
+                command,
+                "pane_not_found",
+                "The requested pane does not exist.",
+            );
+        }
+        let Some(tab_id) = command
+            .tab_id
+            .clone()
+            .or_else(|| requested_pane_slot.map(|pane_slot| pane_slot.tab_id.clone()))
+            .or_else(|| self.state.focused_tab_id.clone())
+        else {
+            return self.validation_error(command, "tab_required", "tab_id is required.");
+        };
+        let Some(tab) = self.state.tab(&tab_id) else {
+            return self.validation_error(
+                command,
+                "tab_not_found",
+                "The requested tab does not exist.",
+            );
+        };
+        if tab.zoomed_pane_id.is_none() {
+            return self.validation_error(
+                command,
+                "unchanged_state",
+                "The requested tab is not zoomed.",
+            );
+        }
+        let mut result = self.apply_reducer(
+            command,
+            ReducerOperation::UnzoomTab {
+                tab_id: Some(tab_id.clone()),
+            },
+            ResponseProjection::Zoom,
+        );
+        result.response.tab_id = Some(tab_id);
+        result
     }
 
     fn terminal_send_text(&self, command: ShellControlCommand) -> ShellControlResult {

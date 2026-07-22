@@ -10,6 +10,9 @@ struct ShellStateSnapshot: Codable, Equatable {
     let panes: [ShellPane]
     var paneSlots: [ShellPaneSlot]? = nil
     var contents: [ShellContentInstance]? = nil
+    /// Portable pane-zoom state. Omitted from persisted/control snapshot encoding while the
+    /// renderer projection migrates away from its duplicate published map.
+    var zoomedPaneIDByTabID: [String: String] = [:]
 
     private enum CodingKeys: String, CodingKey {
         case contractVersion = "contract_version"
@@ -262,7 +265,8 @@ extension ShellStateSnapshot {
                 spaces: spaces,
                 panes: panes,
                 paneSlots: paneSlots,
-                contents: nextContents
+                contents: nextContents,
+                zoomedPaneIDByTabID: zoomedPaneIDByTabID
             ),
             true
         )

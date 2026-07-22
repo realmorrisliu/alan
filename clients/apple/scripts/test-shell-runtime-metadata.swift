@@ -54,6 +54,8 @@ private enum ShellRuntimeMetadataTests {
         verifiesTerminalLifecycleShutdownFinalizesAllRuntimes()
         verifiesShellHostControllerRoutesSharedAutomationCommands()
         verifiesControlPlaneRoutesSharedAutomationCommandSemantics()
+        verifiesPortableControlDefaultsAndHostMetadata()
+        verifiesSocketAndInProcessPortableCommandsShareExecutorSemantics()
         verifiesHostPaneSplitHonorsPaneSlotIdAndLaunchFields()
         verifiesSpaceCreateAllowsMoreThanNineSpacesAcrossCommandPaths()
         verifiesOpeningTerminalTabInheritsFocusedRuntimeCwd()
@@ -61,6 +63,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesShellActionNewTerminalTabHonorsContextSpace()
         verifiesOpeningTerminalTabFallsBackToFocusedPaneSnapshotCwd()
         verifiesOpeningTerminalTabHonorsExplicitCwd()
+        verifiesPortableZoomStateDoesNotChangePersistedSnapshotContract()
         verifiesSplitZoomLeavesCanonicalTreeAndKeepsSiblingRuntimes()
         verifiesTerminalRenderPrioritiesFollowSelectionAndZoom()
         verifiesTerminalRenderPrioritiesTrackWindowVisibility()
@@ -77,7 +80,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesAdvancedControlPlaneZoomFocusAndMovementResults()
         verifiesAdvancedControlPlaneRejectsUnknownUnzoomPane()
         verifiesShellCoreUnavailableFallbackIsReadOnly()
-        verifiesPaneMoveSocketRequestsRequireHostMetadataHandler()
+        verifiesPaneMoveSocketRequestsUseSharedExecutor()
         verifiesTerminalSendTextSocketRequestsRequireHostHandler()
         verifiesTerminalSendKeySocketRequestsRequireHostHandler()
         verifiesTerminalActivityProjectsByPaneID()
@@ -989,11 +992,20 @@ private enum ShellRuntimeMetadataTests {
             "test setup must register a runtime-only stale pane"
         )
 
-        _ = controller.openTerminalTab()
+        let response = controller.handleControlPlaneCommand(
+            decodeControlCommand(
+                """
+                {
+                  "request_id": "runtime-reserved-tab-open-1",
+                  "command": "tab.open"
+                }
+                """
+            )
+        )
 
         expect(
-            controller.selectedPane?.paneID == "pane_3",
-            "opening a tab must skip pane IDs still owned by the terminal runtime registry"
+            response.applied == true && controller.selectedPane?.paneID == "pane_3",
+            "shared tab.open must skip pane IDs still owned by the terminal runtime registry"
         )
         expect(
             !registry.registeredPaneIDs.contains("pane_2"),
@@ -2092,6 +2104,140 @@ private enum ShellRuntimeMetadataTests {
         )
     }
 
+    private static func verifiesSocketAndInProcessPortableCommandsShareExecutorSemantics() {
+        let fixture = makeController(windowID: "shared_control_fixture")
+        _ = fixture.splitPane(paneID: "pane_1", placement: .right)
+        let initialState = fixture.shellState
+        let inProcessController = makeController(
+            windowID: "shared_control_in_process",
+            shellState: initialState
+        )
+        let command = decodeControlCommand(
+            """
+            {
+              "request_id": "shared-control-focus-1",
+              "command": "pane.focus",
+              "pane_id": "pane_1"
+            }
+            """
+        )
+        let inProcessResponse = inProcessController.handleControlPlaneCommand(command)
+
+        var socketAdoptedState: ShellStateSnapshot?
+        let socketServer = AlanShellSocketServer(
+            socketURL: FileManager.default.temporaryDirectory
+                .appendingPathComponent("shared-control-\(UUID().uuidString).sock"),
+            commandHandler: { _ in fail("portable pane.focus must execute locally") },
+            stateAdoptionHandler: { socketAdoptedState = $0 },
+            sideEffectHandler: { _ in fail("pane.focus must not emit a platform side effect") }
+        )
+        _ = socketServer.mergePublishedState(initialState)
+        let socketResponse = socketServer.handleLocally(command)
+
+        expect(socketResponse != nil, "socket pane.focus must use the local command executor")
+        expect(
+            socketResponse?.applied == inProcessResponse.applied
+                && socketResponse?.spaceID == inProcessResponse.spaceID
+                && socketResponse?.tabID == inProcessResponse.tabID
+                && socketResponse?.paneID == inProcessResponse.paneID
+                && socketResponse?.errorCode == inProcessResponse.errorCode,
+            "socket and in-process callers must expose the same portable response semantics"
+        )
+        expect(
+            socketAdoptedState?.focusedPaneID == inProcessController.shellState.focusedPaneID,
+            "socket and in-process callers must adopt the same portable state"
+        )
+    }
+
+    private static func verifiesPortableControlDefaultsAndHostMetadata() {
+        let runtimeService = FakeAlanTerminalRuntimeService()
+        runtimeService.renderCoordinatorMetricsOverride = TerminalRenderCoordinatorMetrics()
+        let controller = makeController(
+            windowID: "portable_control_defaults",
+            terminalRuntimeRegistry: TerminalRuntimeRegistry(runtimeService: runtimeService)
+        )
+
+        let stateResponse = controller.handleControlPlaneCommand(
+            decodeControlCommand(
+                """
+                {
+                  "request_id": "portable-state-metadata-1",
+                  "command": "state"
+                }
+                """
+            )
+        )
+        expect(
+            stateResponse.terminalRenderMetrics != nil,
+            "shared state response must retain host render metrics"
+        )
+
+        let selectedTabID = controller.selectedTabID
+        let pinResponse = controller.handleControlPlaneCommand(
+            decodeControlCommand(
+                """
+                {
+                  "request_id": "portable-pin-default-1",
+                  "command": "tab.pin"
+                }
+                """
+            )
+        )
+        expect(
+            pinResponse.applied == true
+                && pinResponse.tabID == selectedTabID
+                && pinResponse.sourceSpaceID == controller.shellState.focusedSpaceID,
+            "shared tab.pin must retain selected-tab defaults and source projection"
+        )
+        _ = controller.handleControlPlaneCommand(
+            decodeControlCommand(
+                """
+                {
+                  "request_id": "portable-unpin-default-1",
+                  "command": "tab.unpin"
+                }
+                """
+            )
+        )
+
+        _ = controller.splitPane(paneID: "pane_1", placement: .right)
+        controller.focus(paneID: "pane_1")
+        let zoomResponse = controller.handleControlPlaneCommand(
+            decodeControlCommand(
+                """
+                {
+                  "request_id": "portable-zoom-default-1",
+                  "command": "pane.zoom"
+                }
+                """
+            )
+        )
+        expect(
+            zoomResponse.applied == true
+                && zoomResponse.paneID == "pane_1"
+                && zoomResponse.latestEventID != nil,
+            "shared pane.zoom must retain focused-pane defaults and host event metadata"
+        )
+        let unzoomResponse = controller.handleControlPlaneCommand(
+            decodeControlCommand(
+                """
+                {
+                  "request_id": "portable-unzoom-default-1",
+                  "command": "pane.unzoom"
+                }
+                """
+            )
+        )
+        expect(
+            unzoomResponse.applied == true
+                && unzoomResponse.paneID == "pane_1"
+                && unzoomResponse.mountedContentInstanceID
+                    == ShellContentInstance.terminalContentID(forPaneID: "pane_1")
+                && unzoomResponse.latestEventID != nil,
+            "shared pane.unzoom must report the prior zoom target and host event metadata"
+        )
+    }
+
     private static func verifiesSpaceCreateAllowsMoreThanNineSpacesAcrossCommandPaths() {
         var expandedState = ShellStateSnapshot.bootstrapDefault(windowID: "space_track_control")
         while expandedState.spaces.count < 10 {
@@ -2270,6 +2416,31 @@ private enum ShellRuntimeMetadataTests {
         expect(
             controller.displayPaneTree(for: controller.selectedTab)?.paneIDs == canonicalTree.paneIDs,
             "unzoom must restore the displayed split tree"
+        )
+    }
+
+    private static func verifiesPortableZoomStateDoesNotChangePersistedSnapshotContract() {
+        var state = ShellStateSnapshot.bootstrapDefault(
+            windowID: "zoom_persistence_contract",
+            workingDirectory: "/tmp"
+        )
+        state.zoomedPaneIDByTabID = ["tab_main": "pane_1"]
+
+        guard let data = try? JSONEncoder().encode(state),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let decoded = try? JSONDecoder().decode(ShellStateSnapshot.self, from: data)
+        else {
+            fail("zoom persistence contract fixture must encode and decode")
+        }
+
+        expect(
+            object["zoomed_pane_id_by_tab_id"] == nil
+                && object["zoomedPaneIDByTabID"] == nil,
+            "transient portable zoom state must not change persisted snapshot JSON"
+        )
+        expect(
+            decoded.zoomedPaneIDByTabID.isEmpty,
+            "persisted snapshots must restore transient zoom state from its durable owner"
         )
     }
 
@@ -2650,6 +2821,7 @@ private enum ShellRuntimeMetadataTests {
             resizeResponse.affectedPaneIDs == ["pane_1", "pane_2"],
             "resize response must include affected pane ids"
         )
+        expect(resizeResponse.latestEventID != nil, "resize response must include host event metadata")
         expect(
             controlEvents(controller).contains {
                 $0.type == "split.ratio_changed"
@@ -2675,6 +2847,10 @@ private enum ShellRuntimeMetadataTests {
         expect(
             equalizeResponse.changedSplitIDs == [splitNodeID],
             "equalize response must identify changed split ids"
+        )
+        expect(
+            equalizeResponse.latestEventID != nil,
+            "equalize response must include host event metadata"
         )
         expect(
             controlEvents(controller).contains {
@@ -2811,6 +2987,13 @@ private enum ShellRuntimeMetadataTests {
         )
         expect(unzoomResponse.applied == true, "unzoom command must clear zoom state")
         expect(unzoomResponse.zoomedPaneID == nil, "unzoom response must report cleared zoom state")
+        expect(
+            unzoomResponse.paneID == "pane_2"
+                && unzoomResponse.mountedContentInstanceID
+                    == ShellContentInstance.terminalContentID(forPaneID: "pane_2")
+                && unzoomResponse.latestEventID != nil,
+            "unzoom response must preserve the previous zoom target and event metadata"
+        )
 
         let spatialResponse = controller.handleControlPlaneCommand(
             decodeControlCommand(
@@ -2851,6 +3034,10 @@ private enum ShellRuntimeMetadataTests {
                 && noTargetResponse.currentFocusedPaneID == "pane_1",
             "no-target spatial focus must preserve focus"
         )
+        expect(
+            noTargetResponse.latestEventID != nil,
+            "no-target spatial focus must include its recorded host event metadata"
+        )
 
         let moveResponse = controller.handleControlPlaneCommand(
             decodeControlCommand(
@@ -2865,6 +3052,10 @@ private enum ShellRuntimeMetadataTests {
             )
         )
         expect(moveResponse.applied == true, "move_within_tab must apply to an adjacent target")
+        expect(
+            moveResponse.latestEventID != nil,
+            "move_within_tab response must include host event metadata"
+        )
         expect(moveResponse.sourceTabID == moveResponse.targetTabID, "in-tab move must stay in one tab")
         expect(
             moveResponse.mountedContentInstanceID
@@ -2960,31 +3151,45 @@ private enum ShellRuntimeMetadataTests {
         }
     }
 
-    private static func verifiesPaneMoveSocketRequestsRequireHostMetadataHandler() {
+    private static func verifiesPaneMoveSocketRequestsUseSharedExecutor() {
         let controller = makeController()
+        guard let targetTabID = controller.openTerminalTab() else {
+            fail("pane.move socket test must create a target tab")
+        }
+        let initialState = controller.shellState
+        var adoptedState: ShellStateSnapshot?
         let socketServer = AlanShellSocketServer(
             socketURL: FileManager.default.temporaryDirectory
-                .appendingPathComponent("pane-move-host-\(UUID().uuidString).sock"),
-            commandHandler: { controller.handleControlPlaneCommand($0) },
-            stateAdoptionHandler: { _ in fail("pane.move must not mutate through the local executor") },
+                .appendingPathComponent("pane-move-shared-\(UUID().uuidString).sock"),
+            commandHandler: { _ in fail("portable pane.move must not require the host handler") },
+            stateAdoptionHandler: { adoptedState = $0 },
             sideEffectHandler: { _ in fail("pane.move must not use local side effects") }
         )
-        _ = socketServer.mergePublishedState(controller.shellState)
+        _ = socketServer.mergePublishedState(initialState)
 
         let localResponse = socketServer.handleLocally(
             decodeControlCommand(
                 """
                 {
-                  "request_id": "pane-move-host-routing-1",
+                  "request_id": "pane-move-shared-routing-1",
                   "command": "pane.move",
                   "pane_id": "pane_1",
-                  "tab_id": "tab_main"
+                  "tab_id": "\(targetTabID)"
                 }
                 """
             )
         )
 
-        expect(localResponse == nil, "pane.move socket requests must be routed to the host handler")
+        expect(
+            localResponse?.applied == true
+                && localResponse?.sourceTabID == "tab_main"
+                && localResponse?.targetTabID == targetTabID,
+            "pane.move socket requests must use shared executor response semantics"
+        )
+        expect(
+            adoptedState?.pane(paneID: "pane_1")?.tabID == targetTabID,
+            "pane.move socket requests must adopt the shared executor state"
+        )
     }
 
     private static func verifiesTerminalSendTextSocketRequestsRequireHostHandler() {

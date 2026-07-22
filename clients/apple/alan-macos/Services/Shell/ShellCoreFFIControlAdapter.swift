@@ -1,24 +1,41 @@
 import Foundation
 
+struct AlanShellLocalCommandExecutionContext {
+    let reservedPaneSlotIDs: [String]
+
+    init(reservedPaneSlotIDs: [String] = []) {
+        self.reservedPaneSlotIDs = reservedPaneSlotIDs
+    }
+}
+
 extension ShellCoreFFIAdapter {
     func handleControlCommand(
         _ command: AlanShellControlCommand,
-        state: ShellStateSnapshot
+        state: ShellStateSnapshot,
+        context: AlanShellLocalCommandExecutionContext = .init()
     ) throws -> ShellCoreControlCommandResult {
         let response: ShellCoreControlHandleResponse = try send(
             operation: "control.handle",
             payload: ShellCoreControlHandlePayload(
                 state: ShellCorePortableWorkspaceState(projecting: state),
-                command: command
+                command: command,
+                context: ShellCoreControlExecutionContext(
+                    reservedPaneSlotIDs: context.reservedPaneSlotIDs
+                )
             )
         )
-        return try response.result.shellCommandResult(fallbackState: state)
+        return try response.result.shellCommandResult(command: command, fallbackState: state)
     }
 
 }
 
 enum ShellCoreControlSideEffect: Equatable {
-    case sendText(paneID: String, text: String)
+    case sendText(paneSlotID: String, contentID: String, text: String)
+    case sendKey(
+        paneSlotID: String,
+        contentID: String,
+        key: TerminalRuntimeControlKey
+    )
 }
 
 struct ShellCoreControlCommandResult {
@@ -30,6 +47,15 @@ struct ShellCoreControlCommandResult {
 private struct ShellCoreControlHandlePayload: Encodable {
     let state: ShellCorePortableWorkspaceState
     let command: AlanShellControlCommand
+    let context: ShellCoreControlExecutionContext
+}
+
+private struct ShellCoreControlExecutionContext: Encodable {
+    let reservedPaneSlotIDs: [String]
+
+    private enum CodingKeys: String, CodingKey {
+        case reservedPaneSlotIDs = "reserved_pane_slot_ids"
+    }
 }
 
 private struct ShellCoreControlHandleResponse: Decodable {
@@ -60,7 +86,10 @@ private struct ShellCoreControlResult: Decodable {
         ) ?? []
     }
 
-    func shellCommandResult(fallbackState: ShellStateSnapshot) throws -> ShellCoreControlCommandResult {
+    func shellCommandResult(
+        command: AlanShellControlCommand,
+        fallbackState: ShellStateSnapshot
+    ) throws -> ShellCoreControlCommandResult {
         // shell-core returns portable state that does not carry Swift-only pane fields
         // (live cwd/process/activity/viewport/alanBinding). Merge them back from the live
         // fallback state, matching `ShellCoreReducerAdapter.apply`, so adopted updates and
@@ -72,6 +101,7 @@ private struct ShellCoreControlResult: Decodable {
         let projectionState = materializedResponseState ?? materializedUpdatedState ?? fallbackState
         return ShellCoreControlCommandResult(
             response: try response.shellResponse(
+                command: command,
                 fallbackState: fallbackState,
                 projectionState: projectionState,
                 materializedResponseState: materializedResponseState
@@ -142,16 +172,170 @@ private struct ShellCoreControlResponse: Decodable {
     }
 
     func shellResponse(
+        command: AlanShellControlCommand,
         fallbackState: ShellStateSnapshot,
         projectionState: ShellStateSnapshot,
         materializedResponseState: ShellStateSnapshot?
     ) throws -> AlanShellControlResponse {
         let projectedContentState = projectionState.contentStateProjection()
+        let responseState = materializedResponseState
+        let commandPaneSlotID = command.paneSlotID ?? command.paneID
+        let previousPane = commandPaneSlotID.flatMap(fallbackState.pane(paneID:))
+        let targetZoomTabID = command.tabID ?? previousPane?.tabID ?? fallbackState.focusedTabID
+        let previousZoomedPaneID = targetZoomTabID.flatMap {
+            fallbackState.zoomedPaneIDByTabID[$0]
+        }
+        let equalizedTabID = command.tabID ?? projectionState.focusedTabID
+        let equalizedTab = equalizedTabID.flatMap(projectionState.tab(tabID:))
+        let previousEqualizedTab = equalizedTabID.flatMap(fallbackState.tab(tabID:))
+        let derivedChangedSplitIDs: [String]? = {
+            guard command.command == .paneEqualizeSplits,
+                  applied == true || errorCode == "unchanged_state",
+                  let equalizedTab,
+                  let previousEqualizedTab
+            else {
+                return changedSplitIDs
+            }
+            return equalizedTab.paneTree.splitNodeIDsWithChangedRatios(
+                comparedTo: previousEqualizedTab.paneTree
+            )
+        }()
+        let derivedAffectedPaneIDs: [String]? = {
+            switch command.command {
+            case .paneResizeSplit:
+                guard applied == true else { return nil }
+                return splitNodeID.flatMap { splitNodeID in
+                    projectionState.spaces
+                        .flatMap(\.tabs)
+                        .compactMap { $0.paneTree.node(nodeID: splitNodeID)?.paneIDs }
+                        .first
+                }
+            case .paneEqualizeSplits:
+                return applied == true || errorCode == "unchanged_state"
+                    ? equalizedTab?.paneTree.paneIDs
+                    : nil
+            default:
+                return nil
+            }
+        }()
+        let sourceSpaceID: String? = {
+            switch command.command {
+            case .tabPin, .tabUnpin, .tabReorder, .tabMoveToSpace:
+                return command.tabID.flatMap {
+                    fallbackState.tabOrganizationLocation(tabID: $0)?.spaceID
+                }
+            default:
+                return nil
+            }
+        }()
+        let sourceTabID: String? = {
+            switch command.command {
+            case .paneMove, .paneMoveWithinTab:
+                return previousPane?.tabID
+            default:
+                return nil
+            }
+        }()
+        let targetTabID: String? = {
+            switch command.command {
+            case .paneMove:
+                return command.tabID
+            case .paneMoveWithinTab:
+                return previousPane?.tabID
+            default:
+                return nil
+            }
+        }()
+        let projectedTargetSpaceID = command.command == .tabReorder
+            ? command.spaceID
+            : targetSpaceID
+        let mountedContentInstanceID: String? = {
+            switch command.command {
+            case .paneMove, .paneMoveWithinTab:
+                return commandPaneSlotID.flatMap {
+                    projectedContentState.contentMounted(in: $0)?.contentID
+                }
+            case .paneZoom:
+                return commandPaneSlotID.flatMap {
+                    projectedContentState.contentMounted(in: $0)?.contentID
+                }
+            case .paneUnzoom:
+                return previousZoomedPaneID.flatMap {
+                    fallbackState.contentStateProjection().contentMounted(in: $0)?.contentID
+                }
+            default:
+                return nil
+            }
+        }()
+        let responsePaneID: String? = {
+            switch command.command {
+            case .paneResizeSplit, .paneEqualizeSplits:
+                return applied == true ? derivedAffectedPaneIDs?.first ?? paneID : paneID
+            case .paneZoom:
+                return commandPaneSlotID ?? paneID
+            case .paneUnzoom:
+                if applied == true {
+                    return previousZoomedPaneID
+                }
+                return errorCode == "pane_not_found" ? commandPaneSlotID ?? paneID : nil
+            case .paneSpatialFocus:
+                return applied == true ? paneID : fallbackState.focusedPaneID
+            case .paneMoveWithinTab:
+                return commandPaneSlotID ?? paneID
+            default:
+                return paneID
+            }
+        }()
+        let responseSpaceID: String? = {
+            switch command.command {
+            case .paneZoom:
+                return spaceID ?? previousPane?.spaceID
+            case .paneSpatialFocus:
+                return applied == true ? spaceID : fallbackState.focusedSpaceID
+            case .paneMoveWithinTab:
+                return spaceID ?? previousPane?.spaceID
+            default:
+                return spaceID
+            }
+        }()
+        let responseTabID: String? = {
+            switch command.command {
+            case .paneZoom:
+                return tabID ?? previousPane?.tabID
+            case .paneSpatialFocus:
+                return applied == true ? tabID : fallbackState.focusedTabID
+            case .paneMoveWithinTab:
+                return previousPane?.tabID ?? tabID
+            default:
+                return tabID
+            }
+        }()
+        let responseZoomedPaneID = command.command == .paneZoom
+            && errorCode == "unchanged_state"
+            ? previousZoomedPaneID
+            : zoomedPaneID
+        let explicitContentTargetWasMissing = command.contentID != nil
+            && errorCode == "content_not_found"
+        let suppressesUnzoomTargetProjection = command.command == .paneUnzoom
+            && applied != true
+            && errorCode != "pane_not_found"
+        let responsePaneSlotID: String? = if explicitContentTargetWasMissing {
+            command.paneSlotID
+        } else if suppressesUnzoomTargetProjection {
+            nil
+        } else {
+            paneSlotID ?? responsePaneID
+        }
         let contentProjection = projectedContentState.controlPlaneContentProjection(
-            paneSlotID: paneSlotID ?? paneID,
+            paneSlotID: responsePaneSlotID,
             contentID: contentID
         )
-        let responseState = materializedResponseState
+        let reportsFocusTransition = switch command.command {
+        case .paneSpatialFocus, .paneZoom, .paneUnzoom:
+            true
+        default:
+            false
+        }
         return AlanShellControlResponse(
             requestID: requestID,
             contractVersion: contractVersion,
@@ -180,16 +364,26 @@ private struct ShellCoreControlResponse: Decodable {
             events: nil,
             focusedPaneID: projectionState.focusedPaneID ?? fallbackState.focusedPaneID,
             focusedPaneSlotID: focusedPaneSlotID ?? projectedContentState.focusedPaneSlotID,
-            spaceID: spaceID,
-            sourceSpaceID: nil,
-            targetSpaceID: targetSpaceID,
-            tabID: tabID,
-            paneID: paneID,
-            paneSlotID: paneSlotID ?? contentProjection.paneSlotID,
-            contentID: contentID ?? contentProjection.contentID,
-            contentKind: contentKind ?? contentProjection.kind,
-            contentTitle: contentProjection.title,
-            contentCapabilities: contentProjection.capabilities,
+            spaceID: responseSpaceID,
+            sourceSpaceID: sourceSpaceID,
+            targetSpaceID: projectedTargetSpaceID,
+            tabID: responseTabID,
+            paneID: responsePaneID,
+            paneSlotID: explicitContentTargetWasMissing
+                ? nil
+                : responsePaneSlotID ?? contentProjection.paneSlotID,
+            contentID: suppressesUnzoomTargetProjection
+                ? nil
+                : contentID ?? contentProjection.contentID,
+            contentKind: explicitContentTargetWasMissing || suppressesUnzoomTargetProjection
+                ? nil
+                : contentKind ?? contentProjection.kind,
+            contentTitle: explicitContentTargetWasMissing || suppressesUnzoomTargetProjection
+                ? nil
+                : contentProjection.title,
+            contentCapabilities: explicitContentTargetWasMissing || suppressesUnzoomTargetProjection
+                ? nil
+                : contentProjection.capabilities,
             section: section,
             index: index,
             acceptedBytes: nil,
@@ -198,20 +392,40 @@ private struct ShellCoreControlResponse: Decodable {
             terminalRenderMetrics: nil,
             latestEventID: nil,
             splitNodeID: splitNodeID,
-            ratio: ratio,
-            changedSplitIDs: changedSplitIDs,
-            affectedPaneIDs: nil,
-            zoomedPaneID: zoomedPaneID,
-            sourceTabID: nil,
-            targetTabID: nil,
-            previousFocusedPaneID: previousFocusedPaneSlotID,
-            currentFocusedPaneID: currentFocusedPaneSlotID,
-            previousFocusedPaneSlotID: previousFocusedPaneSlotID,
-            currentFocusedPaneSlotID: currentFocusedPaneSlotID,
-            splitDirection: nil,
-            spatialDirection: nil,
-            placement: placement,
-            mountedContentInstanceID: nil,
+            ratio: command.command == .paneEqualizeSplits
+                && (applied == true || errorCode == "unchanged_state")
+                ? 0.5
+                : ratio,
+            changedSplitIDs: derivedChangedSplitIDs,
+            affectedPaneIDs: derivedAffectedPaneIDs,
+            zoomedPaneID: responseZoomedPaneID,
+            sourceTabID: sourceTabID,
+            targetTabID: targetTabID,
+            previousFocusedPaneID: reportsFocusTransition
+                ? fallbackState.focusedPaneID
+                : previousFocusedPaneSlotID,
+            currentFocusedPaneID: reportsFocusTransition
+                ? projectionState.focusedPaneID
+                : currentFocusedPaneSlotID,
+            previousFocusedPaneSlotID: reportsFocusTransition
+                ? fallbackState.focusedPaneID
+                : previousFocusedPaneSlotID,
+            currentFocusedPaneSlotID: reportsFocusTransition
+                ? projectionState.focusedPaneID
+                : currentFocusedPaneSlotID,
+            splitDirection: command.command == .paneMove
+                ? command.direction ?? .vertical
+                : nil,
+            spatialDirection: command.command == .paneSpatialFocus
+                ? command.spatialDirection
+                : nil,
+            placement: command.command == .paneMoveWithinTab
+                ? command.placement
+                : placement,
+            mountedContentInstanceID: explicitContentTargetWasMissing
+                || suppressesUnzoomTargetProjection
+                ? nil
+                : contentProjection.contentID ?? mountedContentInstanceID,
             diagnosticsEnabled: nil,
             diagnosticsRetainedEventCount: nil,
             diagnosticsStutterMarkerCount: nil,
@@ -278,12 +492,18 @@ private enum ShellCoreControlRuntimeIntent: Decodable {
 
     var sideEffect: ShellCoreControlSideEffect? {
         switch self {
-        case .sendTerminalText(let paneSlotID, _, let text):
-            return .sendText(paneID: paneSlotID, text: text)
-        case .sendTerminalKey(let paneSlotID, _, .returnKey):
-            return .sendText(paneID: paneSlotID, text: "\r")
-        case .sendTerminalKey:
-            return nil
+        case .sendTerminalText(let paneSlotID, let contentID, let text):
+            return .sendText(
+                paneSlotID: paneSlotID,
+                contentID: contentID,
+                text: text
+            )
+        case .sendTerminalKey(let paneSlotID, let contentID, let key):
+            return .sendKey(
+                paneSlotID: paneSlotID,
+                contentID: contentID,
+                key: key
+            )
         case .reducer, .unsupported:
             return nil
         }
