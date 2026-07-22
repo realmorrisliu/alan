@@ -272,6 +272,17 @@ manifest_state_declarations() {
             sub(/[[:space:]]+$/, "", value)
             return value
         }
+        function inferred_generic_contains_manifest(value,    expression) {
+            if (value !~ /=/) {
+                return 0
+            }
+            expression = value
+            sub(/^[^=]*=[ ]*/, "", expression)
+            sub(/^try[!?]?[ ]+/, "", expression)
+            sub(/^await[ ]+/, "", expression)
+            return expression ~ /^[A-Za-z_][A-Za-z0-9_.]*[ ]*<[^>]*ShellContentWorkspaceManifest/ ||
+                expression ~ /^\[[^]]*ShellContentWorkspaceManifest/
+        }
         function record_declaration(    declaration, header, prefix, kind) {
             if (buffer == "") {
                 return
@@ -290,6 +301,10 @@ manifest_state_declarations() {
                 prefix = declaration
                 sub(/[ ]*=[ ]*ShellContentWorkspaceManifest.*/, "", prefix)
                 kind = "constructed"
+            } else if (inferred_generic_contains_manifest(declaration)) {
+                prefix = declaration
+                sub(/[ ]*=.*/, "", prefix)
+                kind = "inferred-generic"
             } else {
                 buffer = ""
                 return
@@ -846,6 +861,17 @@ shell_snapshot_stored_property_counts() {
             sub(/[ ]*\(.*/, "", name)
             return name in snapshot_factories
         }
+        function inferred_generic_contains_snapshot(property,    expression) {
+            if (property !~ /=/) {
+                return 0
+            }
+            expression = property
+            sub(/^[^=]*=[ ]*/, "", expression)
+            sub(/^try[!?]?[ ]+/, "", expression)
+            sub(/^await[ ]+/, "", expression)
+            return expression ~ /^[A-Za-z_][A-Za-z0-9_.]*[ ]*<[^>]*ShellStateSnapshot/ ||
+                expression ~ /^\[[^]]*ShellStateSnapshot/
+        }
         function count_buffered_instance_property(    property) {
             if (instance_buffer == "") {
                 return
@@ -856,6 +882,8 @@ shell_snapshot_stored_property_counts() {
                 (property ~ /var[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*:[ ]*ShellStateSnapshot[?!]?[ ]*($|=)/ ||
                 property ~ /var[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*:[ ]*ShellStateSnapshot[?!]?[ ]*[{][ ]*(didSet|willSet)([^A-Za-z0-9_]|$)/ ||
                 property ~ /var[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*=[ ]*ShellStateSnapshot[ ]*([.(]|$)/ ||
+                (property ~ /var[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*=/ &&
+                    inferred_generic_contains_snapshot(property)) ||
                 (property ~ /var[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*=/ && uses_snapshot_factory(property))))
             {
                 instance_count++
@@ -871,6 +899,8 @@ shell_snapshot_stored_property_counts() {
             if (property ~ /(^| )(static|class)[ ]+([^ ]+[ ]+)*(let|var)[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*:[ ]*ShellStateSnapshot[?!]?[ ]*($|=)/ ||
                 property ~ /(^| )(static|class)[ ]+([^ ]+[ ]+)*var[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*:[ ]*ShellStateSnapshot[?!]?[ ]*[{][ ]*(didSet|willSet)([^A-Za-z0-9_]|$)/ ||
                 property ~ /(^| )(static|class)[ ]+([^ ]+[ ]+)*(let|var)[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*=[ ]*ShellStateSnapshot[ ]*([.(]|$)/ ||
+                (property ~ /(^| )(static|class)[ ]+([^ ]+[ ]+)*(let|var)[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*=/ &&
+                    inferred_generic_contains_snapshot(property)) ||
                 (property ~ /(^| )(static|class)[ ]+([^ ]+[ ]+)*(let|var)[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]*=/ && uses_snapshot_factory(property)))
             {
                 static_count++
