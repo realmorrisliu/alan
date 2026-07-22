@@ -77,5 +77,5 @@
   into their canonical capabilities and run strict OpenSpec validation.
 - [x] 6.2 Confirm canonical specs and merged code expose only the logical request
   protocol, service-issued grant handles, and `/bin/alan-agent` launch path.
-- [ ] 6.3 Archive the change only after implementation, review, verification,
+- [x] 6.3 Archive the change only after implementation, review, verification,
   and canonical spec sync are complete.
