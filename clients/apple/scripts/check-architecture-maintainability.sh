@@ -890,6 +890,99 @@ static_property_declarations() {
     ' < <(swift_code_lines "$file")
 }
 
+guarded_shell_owner_typealias_declarations() {
+    local file="$1"
+
+    awk '
+        function leading_space_count(value,    prefix) {
+            prefix = value
+            sub(/[^ ].*$/, "", prefix)
+            return length(prefix)
+        }
+        function is_typealias_start(value) {
+            return value ~ /(^|[^A-Za-z0-9_])typealias([[:space:]]|$)/
+        }
+        function is_same_indent_continuation(value) {
+            return value ~ /^[[:space:]]*(=|[(]|[)]|\[|\]|<|>|->|@|where)([^A-Za-z0-9_]|$)/
+        }
+        function declaration_is_incomplete(value,    angle, brackets, character, column, parens, rhs) {
+            if (value !~ /=/) {
+                return 1
+            }
+            rhs = value
+            sub(/^[^=]*=/, "", rhs)
+            gsub(/[[:space:]]+/, " ", rhs)
+            sub(/^ /, "", rhs)
+            sub(/ $/, "", rhs)
+            if (rhs == "") {
+                return 1
+            }
+            for (column = 1; column <= length(rhs); column++) {
+                character = substr(rhs, column, 1)
+                if (character == "(") {
+                    parens++
+                } else if (character == ")" && parens > 0) {
+                    parens--
+                } else if (character == "[") {
+                    brackets++
+                } else if (character == "]" && brackets > 0) {
+                    brackets--
+                } else if (character == "<") {
+                    angle++
+                } else if (character == ">" && angle > 0) {
+                    angle--
+                }
+            }
+            return parens > 0 || brackets > 0 || angle > 0 ||
+                rhs ~ /(=|,|&|[.]|->|[(]|\[|<)$/
+        }
+        function record_typealias(    declaration) {
+            if (typealias_buffer == "") {
+                return
+            }
+            declaration = typealias_buffer
+            gsub(/[[:space:]]+/, " ", declaration)
+            sub(/^ /, "", declaration)
+            sub(/ $/, "", declaration)
+            if (declaration ~ guarded_type_pattern) {
+                printf "%d|%s\n", typealias_start_line, declaration
+            }
+            typealias_buffer = ""
+        }
+        BEGIN {
+            guarded_type_pattern = "(^|[^A-Za-z0-9_])" \
+                "(ShellHostController|ShellStateSnapshot|ShellContentWorkspaceManifest)" \
+                "([^A-Za-z0-9_]|$)"
+        }
+        {
+            first_separator = index($0, "\t")
+            remainder = substr($0, first_separator + 1)
+            second_separator = index(remainder, "\t")
+            source_line_number = substr(remainder, 1, second_separator - 1)
+            line = substr(remainder, second_separator + 1)
+            line_indent = leading_space_count(line)
+
+            if (is_typealias_start(line)) {
+                record_typealias()
+                typealias_buffer = line
+                typealias_start_line = source_line_number
+                typealias_indent = line_indent
+            } else if (typealias_buffer != "" &&
+                (line ~ /^[[:space:]]*$/ ||
+                    line_indent > typealias_indent ||
+                    (line_indent == typealias_indent &&
+                        (declaration_is_incomplete(typealias_buffer) ||
+                            is_same_indent_continuation(line)))))
+            {
+                typealias_buffer = typealias_buffer " " line
+            } else {
+                record_typealias()
+            }
+        }
+        END { record_typealias() }
+    ' < <(swift_code_lines "$file")
+}
+
 shell_host_global_storage_declarations() {
     local file="$1"
     local factory_inventory="$2"
@@ -1787,6 +1880,8 @@ reject_replacement_global_shell_store() {
         "ShellHostController.swift|static let terminalSelectionFirst = ShellPaneMovementInteractionPolicy()"
     )
     local file
+    local guarded_alias_declaration
+    local guarded_alias_line
     local host_factory_inventory
     local line_number
     local observable_owner
@@ -1814,6 +1909,16 @@ reject_replacement_global_shell_store() {
 
     while IFS= read -r file; do
         rel="${file#$SOURCE_ROOT/}"
+        while IFS='|' read -r guarded_alias_line guarded_alias_declaration; do
+            [[ -n "$guarded_alias_line" ]] || continue
+            printf '%s:%s:%s\n' \
+                "$file" \
+                "$guarded_alias_line" \
+                "$guarded_alias_declaration" >&2
+            fail \
+                "guarded shell ownership types must remain explicit instead of hidden behind typealias: $rel"
+        done < <(guarded_shell_owner_typealias_declarations "$file")
+
         snapshot_property_counts="$(
             shell_snapshot_stored_property_counts "$file" "$snapshot_factory_inventory"
         )"

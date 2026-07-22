@@ -617,7 +617,10 @@ repository-wide, owner-qualified, full-initializer factory matching applies to
 snapshot storage. All production Swift files are scanned even when the stored
 property's source file contains no literal target type. That prevents a global
 controller singleton even when a closure or wrapper hides the factory call and
-the file stores no snapshot directly. The current `ObservableObject`
+the file stores no snapshot directly. Production aliases that reference
+`ShellHostController`, `ShellStateSnapshot`, or
+`ShellContentWorkspaceManifest` are rejected, keeping contextual factory calls
+such as `.live()` from hiding a guarded ownership type. The current `ObservableObject`
 declarations and `@Published`
 projections form explicit owner allowlists, new `@Observable` owners require an
 architecture decision, and no catch-all type ending in `ShellStore`,
