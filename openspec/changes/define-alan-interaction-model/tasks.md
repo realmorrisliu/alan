@@ -19,7 +19,8 @@
   with no new runtime authority.
 - [ ] 2.2 Add the review surface (results inbox) that lists completed agent
   work with evidence links, shared by dispatched and event-driven outcomes;
-  data sourced from mounted execution-record files, never renderer-copied
+  data sourced from mounted rollout/checkpoint evidence files, never
+  renderer-copied
   state.
 - [ ] 2.3 Add the Permissions surface listing active host grants by label,
   scope, and access, with revocation; wire grant creation to drag-in, file

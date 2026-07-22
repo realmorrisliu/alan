@@ -22,7 +22,8 @@ Files — as live views of the same mounted file state per ADR-0046. The Intent
 layer SHALL present stating goals and receiving outcomes. The Work layer
 SHALL render agent file surfaces as domain-native affordances: conversation
 views from tape surfaces, plan cards from plan surfaces, approval sheets from
-pending-action surfaces, result and evidence views from execution records,
+pending-action surfaces, result and evidence views from rollout and
+checkpoint evidence surfaces per the evidence-retention contracts,
 and lifecycle controls. A Stop control SHALL write `/proc/<pid>/ctl`
 (interrupt/cancel). Any further lifecycle control SHALL write the control
 surface that owns the corresponding semantics per the canonical AgentFS and
