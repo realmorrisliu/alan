@@ -57,6 +57,7 @@ private enum ShellRuntimeMetadataTests {
         verifiesPortableControlDefaultsAndHostMetadata()
         verifiesSocketAndInProcessPortableCommandsShareExecutorSemantics()
         verifiesHostPaneSplitHonorsPaneSlotIdAndLaunchFields()
+        verifiesControlPlaneTabOpenInheritsFocusedRuntimeCwd()
         verifiesSpaceCreateAllowsMoreThanNineSpacesAcrossCommandPaths()
         verifiesOpeningTerminalTabInheritsFocusedRuntimeCwd()
         verifiesShellActionNewTerminalTabInheritsFocusedRuntimeCwd()
@@ -2042,6 +2043,81 @@ private enum ShellRuntimeMetadataTests {
                 .title == "Build Watcher",
             "host pane.split must honor the explicit title instead of the generic one"
         )
+
+        let inheritedResponse = controller.handleControlPlaneCommand(
+            decodeControlCommand(
+                """
+                {
+                  "request_id": "host-split-pane-slot-defaults-1",
+                  "command": "pane.split",
+                  "pane_slot_id": "pane_1",
+                  "direction": "vertical"
+                }
+                """
+            )
+        )
+        expect(
+            inheritedResponse.paneID.flatMap { controller.shellState.pane(paneID: $0)?.cwd }
+                == "/Users/morris/project",
+            "pane_slot_id split defaults must inherit the source login-shell cwd"
+        )
+
+        guard let profileState = ShellStateSnapshot.bootstrapDefault(
+            windowID: "host_split_profile_defaults",
+            workingDirectory: "/Users/morris/project"
+        ).settingTerminalProfile("profile-main", forSpaceID: "space_main")
+        else {
+            fail("profile split defaults test must bind the source Space profile")
+        }
+        let profileController = makeController(
+            windowID: "host_split_profile_defaults",
+            shellState: profileState
+        )
+        let profileResponse = profileController.handleControlPlaneCommand(
+            decodeControlCommand(
+                """
+                {
+                  "request_id": "host-split-pane-slot-profile-1",
+                  "command": "pane.split",
+                  "pane_slot_id": "pane_1",
+                  "direction": "vertical"
+                }
+                """
+            )
+        )
+        let profilePane = profileResponse.paneID.flatMap {
+            profileController.shellState.pane(paneID: $0)
+        }
+        expect(
+            profilePane?.terminalProfileID == "profile-main" && profilePane?.cwd == nil,
+            "pane_slot_id split defaults must inherit the source Space profile"
+        )
+    }
+
+    private static func verifiesControlPlaneTabOpenInheritsFocusedRuntimeCwd() {
+        let controller = makeController()
+        controller.updateTerminalMetadata(
+            metadata(title: "cwd update", cwd: "/repo/control"),
+            for: "pane_1"
+        )
+
+        let response = controller.handleControlPlaneCommand(
+            decodeControlCommand(
+                """
+                {
+                  "request_id": "control-tab-inherit-cwd-1",
+                  "command": "tab.open"
+                }
+                """
+            )
+        )
+
+        expect(
+            response.applied == true
+                && response.paneID.flatMap { controller.shellState.pane(paneID: $0)?.cwd }
+                    == "/repo/control",
+            "shared tab.open must inherit the focused runtime cwd when no profile is selected"
+        )
     }
 
     private static func verifiesControlPlaneRoutesSharedAutomationCommandSemantics() {
@@ -2881,13 +2957,19 @@ private enum ShellRuntimeMetadataTests {
 
     private static func verifiesSplitRatioEventsUseAffectedPaneForBackgroundTabs() {
         let controller = makeController()
-        guard let foregroundTabID = controller.selectedTabID else {
-            fail("bootstrap shell must expose a selected tab")
+        guard let foregroundSpaceID = controller.selectedSpaceID,
+              let foregroundTabID = controller.selectedTabID
+        else {
+            fail("bootstrap shell must expose a selected Space and tab")
         }
-        guard let backgroundTabID = controller.openTerminalTab(workingDirectory: "/background"),
+        guard let backgroundSpaceID = controller.createTerminalSpace(
+            title: "Background",
+            workingDirectory: "/background"
+        ),
+              let backgroundTabID = controller.selectedTabID,
               let backgroundPaneID = controller.shellState.panes(in: backgroundTabID).first?.paneID
         else {
-            fail("test setup must create a background tab")
+            fail("test setup must create a background Space")
         }
         _ = controller.splitPane(paneID: backgroundPaneID, placement: .right)
         guard let splitNodeID = controller.shellState
@@ -2900,6 +2982,7 @@ private enum ShellRuntimeMetadataTests {
             fail("test setup must create a split node in the background tab")
         }
 
+        controller.select(spaceID: foregroundSpaceID)
         controller.select(tabID: foregroundTabID)
         let foregroundPaneID = controller.shellState.focusedPaneID
         expect(foregroundPaneID != nil, "foreground tab selection must focus a pane")
@@ -2918,6 +3001,10 @@ private enum ShellRuntimeMetadataTests {
         )
 
         expect(resizeResponse.applied == true, "background resize must apply")
+        expect(
+            resizeResponse.spaceID == backgroundSpaceID && resizeResponse.tabID == backgroundTabID,
+            "background resize response must identify the target Space and tab"
+        )
         expect(
             resizeResponse.affectedPaneIDs?.contains(resizeResponse.paneID ?? "") == true,
             "resize response pane_id must come from the affected split"
@@ -2940,6 +3027,24 @@ private enum ShellRuntimeMetadataTests {
         expect(
             ratioEvent.paneID != foregroundPaneID,
             "split ratio event pane_id must not use the unrelated focused pane"
+        )
+
+        let equalizeResponse = controller.handleControlPlaneCommand(
+            decodeControlCommand(
+                """
+                {
+                  "request_id": "equalize-background-1",
+                  "command": "pane.equalize_splits",
+                  "tab_id": "\(backgroundTabID)"
+                }
+                """
+            )
+        )
+        expect(equalizeResponse.applied == true, "background equalize must apply")
+        expect(
+            equalizeResponse.spaceID == backgroundSpaceID
+                && equalizeResponse.tabID == backgroundTabID,
+            "background equalize response must identify the target Space and tab"
         )
     }
 

@@ -9,6 +9,7 @@ pub(super) enum ResponseProjection {
     Current,
     Snapshot,
     Focus,
+    TabSubject(String),
     ResizeSplit,
     Zoom {
         tab_id: String,
@@ -47,6 +48,9 @@ pub(super) fn project_success_response(
     match projection {
         ResponseProjection::Snapshot => {}
         ResponseProjection::Current | ResponseProjection::Focus => {}
+        ResponseProjection::TabSubject(tab_id) => {
+            project_tab_subject(response, state, tab_id);
+        }
         ResponseProjection::TargetPane(pane_slot_id) => {
             // Echo the mutated pane (and its tab/Space) as the subject so automation sees the
             // object it acted on, not whichever pane happens to hold focus.
@@ -71,6 +75,13 @@ pub(super) fn project_success_response(
             }
         }
         ResponseProjection::ResizeSplit => {
+            if let Some(tab_id) = command
+                .split_node_id
+                .as_deref()
+                .and_then(|node_id| tab_id_containing_node(state, node_id))
+            {
+                project_tab_subject(response, state, &tab_id);
+            }
             response.split_node_id = command.split_node_id.clone();
             response.ratio = command.ratio;
             response.changed_split_ids = command.split_node_id.clone().map(|id| vec![id]);
@@ -99,6 +110,15 @@ fn project_tab_subject(response: &mut ShellControlResponse, state: &WorkspaceSta
     {
         response.space_id = Some(space.space_id.clone());
     }
+}
+
+fn tab_id_containing_node(state: &WorkspaceState, node_id: &str) -> Option<String> {
+    state
+        .spaces
+        .iter()
+        .flat_map(|space| &space.tabs)
+        .find(|tab| tab.pane_tree.contains_node_id(node_id))
+        .map(|tab| tab.tab_id.clone())
 }
 
 pub(super) fn project_runtime_intent_response(

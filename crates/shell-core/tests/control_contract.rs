@@ -201,6 +201,50 @@ fn equalize_reports_changed_splits_and_rejects_unchanged_state() {
 }
 
 #[test]
+fn split_mutations_project_the_background_target_space_and_tab() {
+    let target_state = split_state();
+    let target_split_id = target_state.spaces[0].tabs[0]
+        .pane_tree
+        .split_ratios_by_node_id()
+        .into_keys()
+        .next()
+        .expect("target tab exposes a split node");
+    let focused_other_space = target_state
+        .reduce_control(command(
+            "req-create-foreground-space",
+            ShellControlCommandKind::SpaceCreate,
+        ))
+        .updated_state
+        .expect("Space creation updates focus");
+    assert_ne!(
+        focused_other_space.focused_space_id.as_deref(),
+        Some("space_main")
+    );
+
+    let mut resize = command(
+        "req-resize-background",
+        ShellControlCommandKind::PaneResizeSplit,
+    );
+    resize.split_node_id = Some(target_split_id);
+    resize.ratio = Some(0.7);
+    let resized = focused_other_space.reduce_control(resize);
+    assert_eq!(resized.response.space_id.as_deref(), Some("space_main"));
+    assert_eq!(resized.response.tab_id.as_deref(), Some("tab_main"));
+
+    let mut equalize = command(
+        "req-equalize-background",
+        ShellControlCommandKind::PaneEqualizeSplits,
+    );
+    equalize.tab_id = Some("tab_main".to_string());
+    let equalized = resized
+        .updated_state
+        .expect("resize updates target tab")
+        .reduce_control(equalize);
+    assert_eq!(equalized.response.space_id.as_deref(), Some("space_main"));
+    assert_eq!(equalized.response.tab_id.as_deref(), Some("tab_main"));
+}
+
+#[test]
 fn unzoom_validates_explicit_pane_before_mutating_tab() {
     let state = split_state();
     let mut zoom = command("req-zoom", ShellControlCommandKind::PaneZoom);

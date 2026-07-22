@@ -723,9 +723,9 @@ impl ShellControlReducer {
         let mut result = self.apply_reducer(
             command,
             ReducerOperation::EqualizeSplits {
-                tab_id: Some(tab_id),
+                tab_id: Some(tab_id.clone()),
             },
-            ResponseProjection::Current,
+            ResponseProjection::TabSubject(tab_id),
         );
         result.response.ratio = Some(0.5);
         result.response.changed_split_ids = Some(changed_split_ids);

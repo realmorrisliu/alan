@@ -589,20 +589,30 @@ private extension AlanShellControlCommand {
                 in: spaceID,
                 explicit: terminalProfileID
             )
-            return withShellCoreDefaults(terminalProfileID: resolvedTerminalProfileID)
+            let resolvedCWD = state.workingDirectoryForNewTerminal(
+                from: state.focusedPaneID,
+                explicit: cwd,
+                resolvedTerminalProfileID: resolvedTerminalProfileID
+            )
+            return withShellCoreDefaults(
+                terminalProfileID: resolvedTerminalProfileID,
+                cwd: resolvedCWD
+            )
 
         case .tabPin, .tabUnpin:
             return withShellCoreDefaults(tabID: tabID ?? state.focusedTabID)
 
         case .paneSplit:
-            let resolvedTerminalProfileID = paneID.flatMap {
+            let sourcePaneID = paneSlotID ?? paneID
+            let resolvedTerminalProfileID = sourcePaneID.flatMap {
                 state.terminalProfileIDForNewSplit(from: $0, explicit: terminalProfileID)
             }
                 ?? terminalProfileID
-            let resolvedCWD = cwd
-                ?? (resolvedTerminalProfileID == nil
-                    ? paneID.flatMap { state.pane(paneID: $0)?.cwd }
-                    : nil)
+            let resolvedCWD = state.workingDirectoryForNewTerminal(
+                from: sourcePaneID,
+                explicit: cwd,
+                resolvedTerminalProfileID: resolvedTerminalProfileID
+            )
             return withShellCoreDefaults(
                 terminalProfileID: resolvedTerminalProfileID,
                 cwd: resolvedCWD
