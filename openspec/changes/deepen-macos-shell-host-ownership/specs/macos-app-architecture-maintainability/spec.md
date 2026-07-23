@@ -67,21 +67,6 @@ mutable truths.
   duplicates an accepted owner
 - **THEN** validation fails rather than adding a synchronization helper
 
-#### Scenario: Replacement store uses an escaped Swift identifier
-- **WHEN** architecture validation scans an executable declaration such as a
-  backticked `ShellStore`
-- **THEN** it normalizes every Swift source before matching ownership symbols
-- **AND** it rejects the replacement owner while continuing to ignore comments
-  and string literals
-
-#### Scenario: Ownership declaration splits before its binding
-- **WHEN** a stored `let` or `var` places its binding name on a continuation
-  line
-- **THEN** architecture validation folds the complete Swift declaration before
-  classifying instance, static, class, or module storage
-- **AND** split declarations cannot evade shell snapshot, manifest, or host
-  ownership inventory
-
 ### Requirement: Local control commands have one execution path
 Portable and state-mutating shell control commands SHALL execute through
 `AlanShellLocalCommandExecutor` for both socket and in-process callers. The

@@ -564,97 +564,12 @@ content identity, and clears that state during lifecycle release. Render
 priority effects continue through the registry. The architecture gate rejects
 reintroduced controller caches, maps, queues, and publication-policy call sites.
 
-The persistence ownership slice moves the retained manifest, latest persistence
-context, debounce state, scheduling, and manifest projection behind
-`ShellWorkspacePersistenceCoordinator`. The architecture gate requires those
-state and cadence markers to have that single owner. All production Swift files
-participate in an explicit manifest-storage inventory: only the coordinator's
-mutable retained manifest and the existing transient load, projection, and FFI
-value containers are accepted. The inventory also follows inferred stored
-values back to a repository-wide inventory of manifest-returning helper
-factories by their declaring type and function name, including instance methods
-reached through a singleton accessor or a freshly constructed helper, and
-factories declared on the target type with a `Self` return. Unqualified,
-`Self`-qualified, concrete-type-qualified, `Factory.shared`, or
-`Factory().make()` calls are discovered throughout the complete initializer
-expression, including direct target constructors, `.init`, immediately invoked
-closures, nested call arguments, and nested wrappers. They therefore cannot
-hide a second retained manifest by omitting an explicit property type or moving
-the factory to another file. Factory return parsing starts only after the
-function's complete parameter list, so a closure parameter returning the target
-type does not turn a `Void` installer into a factory. The FFI-produced manifest
-values used for default
-creation, corrupt-file recovery, and startup pruning remain explicit transient
-inventory entries. Each
-accepted manifest declaration is keyed by its file and declaring type and must
-appear exactly once, so a second owner cannot reuse another declaration's shape.
-Controller-side manifest use, a second projector, or a second scheduler fails
-validation. Those code-ownership scans lex line comments, nested block comments,
-and string-literal prose out before matching while preserving executable string
-interpolations, and normalize backtick-escaped Swift identifiers. Architectural
-documentation and example text therefore remain valid without weakening
-executable-source enforcement.
-
-The same gate rejects a replacement global Shell store. `ShellHostController`
-remains the only observable owner of a mutable `ShellStateSnapshot`; the two
-accepted transport cache files have fixed non-growing ownership ceilings, and
-all other owner-level stored snapshot state is rejected, including immutable
-copies that could retain stale state. Bounded immutable transfer and result
-values use an exact file-and-type allowlist. No module-scope, static, or class
-stored snapshot is allowed under any property name. Module scope follows
-executable brace depth rather than source indentation, so formatting inside a
-conditional-compilation block cannot hide global state while function-local
-scratch values remain excluded. Comma-separated property bindings are inspected
-individually, while commas nested inside generic types, collections, calls, or
-closures remain part of their binding, so a harmless first binding cannot hide a
-later snapshot owner. Swift's trailing shared type annotation is propagated to
-each preceding uninitialized binding before owners are counted. Files with
-accepted snapshot storage also have an exact allowlist of non-owner static
-utility members, so a singleton
-entry point cannot bypass the rule by choosing a new alias. Postfix-optional
-`.none` and `.some` type witnesses are treated as inferred target storage rather
-than harmless empty initializers. Explicit `nil as Target?` and
-`.none as Target?` casts retain the same target-storage classification, including
-the equivalent `Optional<Target>` spelling. Property-wrapper attributes, including
-multiline initializer argument lists, are folded into their declarations and
-scanned with the same constructor, factory, projection, generic, and optional
-type-witness rules for snapshot and manifest storage.
-Independently, every production Swift file is scanned for module-scope or
-static/class storage of
-`ShellHostController`, including storage inferred from an unqualified, `Self`,
-concrete helper-factory, or singleton-instance factory owner; the same
-repository-wide, owner-qualified, full-initializer factory matching applies to
-snapshot storage. Explicit snapshot-valued properties also form a projection
-inventory, with comma-bound declarations split and their trailing shared type
-propagated to every binding, so inferred storage through any member access is
-counted even when its initializer contains no snapshot constructor or factory.
-Storage classification stops before computed-property bodies, so ordinary
-projection reads in getters do not become owners. An unrelated projection with
-the same member name can use an explicit non-snapshot type to disambiguate its
-stored value. All production
-Swift files are scanned even when the stored property's source file contains no
-literal target type. Strong stored-property references and calls to typed
-controller factories form a transitive inventory of types that retain
-`ShellHostController`; `weak` and `unowned` references do not. Module, static,
-and class storage of any inventoried type is rejected, including
-property-wrapper initialization, so a singleton cannot hide the controller
-behind an owner object. Controller factories invoked from wrapper arguments are
-scanned alongside ordinary property initializers. Type-scope tracking preserves
-declarations whose opening brace appears on the following line, so alternate
-valid Swift brace placement cannot hide a mutable owner. Production aliases
-that reference any
-controller-retaining type, `ShellStateSnapshot`, or
-`ShellContentWorkspaceManifest` are rejected, keeping contextual factory calls
-such as `.live()` from hiding a guarded ownership type. The current `ObservableObject`
-declarations and `@Published` projections form explicit owner allowlists.
-Observable ownership is read from actual class, struct, actor, protocol, and
-extension conformance clauses, including multiline declarations; generic
-constraints, parameter types, and other references do not become owners. New
-`@Observable` owners require an architecture decision, and no catch-all type
-ending in `ShellStore`,
-`ShellStateStore`, `ShellWorkspaceStore`, or the corresponding `Model` form may
-wrap shell state, regardless of a product or platform prefix. Focused names such
-as `AlanShellEventStore` remain distinct from those global-wrapper forms.
+The persistence slice keeps manifest projection and scheduler construction in
+`ShellWorkspacePersistenceCoordinator`. A conservative source ratchet rejects
+their return to controller files, new `ShellHostController` construction
+owners, new static shell-host storage, and catch-all `ShellStore`/`ShellModel`
+types. It intentionally fails closed on matching production-source text rather
+than maintaining a partial Swift parser.
 
 The current architecture gate treats
 `clients/apple/scripts/architecture-warning-baseline.txt` as a hard downward
