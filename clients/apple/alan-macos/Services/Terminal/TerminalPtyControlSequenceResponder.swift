@@ -256,4 +256,21 @@ struct AlanTerminalPtyControlSequenceResponder: Equatable {
     }
 }
 
+final class AlanTerminalPtyControlSequenceProcessor {
+    private let lock = NSLock()
+    private var responder = AlanTerminalPtyControlSequenceResponder()
+
+    func process(_ data: Data) -> AlanTerminalPtyControlSequenceResponse {
+        lock.lock()
+        defer { lock.unlock() }
+        return responder.process(data)
+    }
+
+    func suppressNextPrimaryDeviceAttributesResponse() {
+        lock.lock()
+        responder.suppressNextPrimaryDeviceAttributesResponse()
+        lock.unlock()
+    }
+}
+
 #endif

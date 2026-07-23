@@ -1262,6 +1262,16 @@ require_pattern \
     "case \\.foregroundCommand:" \
     "terminal active-task projection must use Alan-owned PTY shell activity"
 
+require_pattern \
+    "clients/apple/alan-macos/Services/Terminal/DarwinTerminalPtyRuntime.swift" \
+    "private let outputProcessor = AlanTerminalPtyControlSequenceProcessor\\(\\)" \
+    "Darwin PTY direct and renderer drains must share one control-sequence processor"
+
+require_pattern \
+    "clients/apple/alan-macos/Services/Terminal/ManagedUserTerminalPtyRuntime.swift" \
+    "private let outputProcessor = AlanTerminalPtyControlSequenceProcessor\\(\\)" \
+    "Managed User PTY direct and renderer drains must share one control-sequence processor"
+
 reject_pattern \
     "clients/apple/alan-macos" \
     "queuedForegroundCommandSubmissions|commandSubmissionCount|queuesWhileActive|advanceForegroundCommandTracking|isCommandSubmissionText|recordProgrammaticCommandSubmission|foregroundCommandStartedAt" \
@@ -2861,6 +2871,11 @@ require_pattern \
     "clients/apple/scripts/test-terminal-runtime-service.swift" \
     "verifiesManagedUserRendererAttachmentBridgesHelperSession" \
     "terminal runtime tests must prove managed_user renderer attachment bridges helper PTY sessions"
+
+require_pattern \
+    "clients/apple/scripts/test-terminal-runtime-service.swift" \
+    "verifiesManagedUserDirectDrainReportsShellActivity" \
+    "terminal runtime tests must prove managed_user direct drains publish PTY shell activity"
 
 require_pattern \
     "clients/apple/scripts/test-shell-ui-smoke.sh" \

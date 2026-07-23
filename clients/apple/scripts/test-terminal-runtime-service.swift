@@ -25,6 +25,7 @@ private enum TerminalRuntimeServiceTests {
         verifiesManagedUserPtyRuntimeUsesHelperProviderWhenAvailable()
         verifiesWindowRuntimeDefaultPtyRuntimeWiresHelperProvider()
         verifiesManagedUserSurfaceRoutesHelperPtyLifecycleControls()
+        verifiesManagedUserDirectDrainReportsShellActivity()
         verifiesManagedUserRendererAttachmentBridgesHelperSession()
         verifiesAlanGhosttySurfaceDeliveryUsesPtyRuntimeWithoutRenderer()
         verifiesDarwinPtyBackendLaunchesLocalShell()
@@ -1049,6 +1050,17 @@ private enum TerminalRuntimeServiceTests {
             fail("managed_user renderer attachment must expose a renderer file descriptor")
         }
         let transcriptObserved = waitForPtyOutput(handle, contains: "helper-output-b")
+        let helperReadDeadline = Date().addingTimeInterval(1)
+        while Date() < helperReadDeadline
+            && helper.readPTYRequests.filter({
+                $0 == AlanManagedUserPTYReadRequest(
+                    sessionID: "fake-content_terminal_managed_user_renderer",
+                    maxBytes: 4096
+                )
+            }).count < 3
+        {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.02))
+        }
         let snapshot = handle.snapshot
         let helperReadCount = helper.readPTYRequests.filter {
             $0 == AlanManagedUserPTYReadRequest(
@@ -1114,6 +1126,112 @@ private enum TerminalRuntimeServiceTests {
             stableExitSnapshot.exitStatus?.diagnosticsValue == "exit:0"
                 && stableExitSnapshot.phase == .exited,
             "managed_user renderer read failures after exit must not replace exited state with failure"
+        )
+    }
+
+    private static func verifiesManagedUserDirectDrainReportsShellActivity() {
+        let contentID = "content_terminal_managed_user_direct_drain"
+        let request = AlanTerminalBootRequest(
+            strategy: .terminalProfileManagedUser,
+            executablePath: "",
+            arguments: [],
+            workingDirectory: "/Users/lab",
+            environment: [
+                "ALAN_SHELL_CONTENT_ID": contentID,
+                "ALAN_MANAGED_USER_ACCOUNT": "lab",
+            ],
+            bootCommand: "managed_user 'lab'",
+            rendererCompatibilityCommand: nil,
+            managedUserAccountName: "lab",
+            terminalProfile: nil
+        )
+        let helper = AlanPrivilegedHelperFakeClient(channel: .dev)
+        let runtime = AlanDarwinTerminalPtyRuntime(
+            managedUserPtyProvider: AlanHelperManagedUserPtyProvider(helperClient: helper)
+        )
+        let handle = runtime.handle(
+            forTerminalContentID: contentID,
+            bootRequest: request
+        )
+        var observedShellActivity: [AlanTerminalPtyShellActivityState] = []
+        handle.onShellActivityStateChange = { observedShellActivity.append($0) }
+        let sessionID = "fake-\(contentID)"
+        helper.outputChunksBySessionID[sessionID] = [
+            Data("\u{1B}]133;".utf8),
+            Data("C\u{7}running\n".utf8),
+        ]
+
+        _ = handle.snapshot
+        expect(
+            handle.shellActivityState == .foregroundCommand
+                && observedShellActivity == [.foregroundCommand],
+            "managed_user direct snapshot drains must publish split OSC 133 command-start activity; "
+                + "observed \(observedShellActivity)"
+        )
+
+        helper.outputChunksBySessionID[sessionID] = [
+            Data("\u{1B}]133;D;0\u{7}\u{1B}]133;A\u{7}".utf8)
+        ]
+        _ = handle.snapshot
+        expect(
+            handle.shellActivityState == .shellInput
+                && observedShellActivity == [.foregroundCommand, .shellInput],
+            "managed_user direct snapshot drains must publish prompt activity; "
+                + "observed \(observedShellActivity)"
+        )
+
+        helper.outputChunksBySessionID[sessionID] = [
+            Data("\u{1B}]133;".utf8)
+        ]
+        _ = handle.snapshot
+        expect(
+            handle.shellActivityState == .shellInput,
+            "an incomplete direct-drain OSC marker must not publish activity"
+        )
+
+        helper.outputChunksBySessionID[sessionID] = [
+            Data("C\u{7}renderer-running\n".utf8)
+        ]
+        let rendererFileDescriptor: Int32
+        switch handle.makeRendererAttachment() {
+        case .attached(let attachment):
+            rendererFileDescriptor = attachment.readFileDescriptor
+        case .rejected(let rejection):
+            fail("managed_user parser handoff requires a renderer attachment: \(rejection.code)")
+        }
+        let rendererDeadline = Date().addingTimeInterval(1)
+        while Date() < rendererDeadline
+            && handle.shellActivityState != .foregroundCommand
+        {
+            _ = handle.snapshot
+            RunLoop.current.run(until: Date().addingTimeInterval(0.02))
+        }
+        expect(
+            handle.shellActivityState == .foregroundCommand
+                && observedShellActivity
+                    == [.foregroundCommand, .shellInput, .foregroundCommand],
+            "managed_user renderer attachment must continue the direct drain parser state; "
+                + "observed \(observedShellActivity)"
+        )
+
+        close(rendererFileDescriptor)
+        RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        helper.outputChunksBySessionID[sessionID] = [
+            Data("\u{1B}]133;D;0\u{7}\u{1B}]133;A\u{7}".utf8)
+        ]
+        let detachedDeadline = Date().addingTimeInterval(1)
+        while Date() < detachedDeadline
+            && handle.shellActivityState != .shellInput
+        {
+            _ = handle.snapshot
+            RunLoop.current.run(until: Date().addingTimeInterval(0.02))
+        }
+        expect(
+            handle.shellActivityState == .shellInput
+                && observedShellActivity
+                    == [.foregroundCommand, .shellInput, .foregroundCommand, .shellInput],
+            "managed_user direct drains must resume after renderer detachment; "
+                + "observed \(observedShellActivity)"
         )
     }
 
