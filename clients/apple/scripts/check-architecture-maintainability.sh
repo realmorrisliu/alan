@@ -450,6 +450,9 @@ readonly OWNERSHIP_AWK_HELPERS='
         }
         return delta
     }
+    function is_standalone_opening_brace(value) {
+        return value ~ /^[[:space:]]*[{][[:space:]]*$/
+    }
     function matching_call_end(value, opening,    character, column, depth) {
         depth = 0
         for (column = opening; column <= length(value); column++) {
@@ -803,7 +806,7 @@ typed_factory_declarations() {
             second_separator = index(remainder, "\t")
             line = substr(remainder, second_separator + 1)
             line_indent = leading_space_count(line)
-            if (line !~ /^[[:space:]]*$/) {
+            if (line !~ /^[[:space:]]*$/ && !is_standalone_opening_brace(line)) {
                 while (type_depth > 0 && line_indent <= type_indent[type_depth]) {
                     delete type_indent[type_depth]
                     delete type_name[type_depth]
@@ -902,7 +905,7 @@ typed_value_member_declarations() {
             line = substr(remainder, second_separator + 1)
             line_indent = leading_space_count(line)
 
-            if (line !~ /^[[:space:]]*$/) {
+            if (line !~ /^[[:space:]]*$/ && !is_standalone_opening_brace(line)) {
                 while (type_depth > 0 && line_indent <= type_indent[type_depth]) {
                     delete type_indent[type_depth]
                     delete type_name[type_depth]
@@ -1141,7 +1144,7 @@ manifest_state_declarations() {
             line = substr(remainder, second_separator + 1)
             line_indent = leading_space_count(line)
             declaration_line = declaration_with_pending_attributes(line, source_line_number, line_indent)
-            if (line !~ /^[[:space:]]*$/) {
+            if (line !~ /^[[:space:]]*$/ && !is_standalone_opening_brace(line)) {
                 while (type_depth > 0 && line_indent <= type_indent[type_depth]) {
                     delete type_indent[type_depth]
                     delete type_name[type_depth]
@@ -1486,7 +1489,7 @@ shell_host_retaining_type_inventory() {
             current_file = source_file
             declaration_line = declaration_with_pending_attributes(line, source_line_number, line_indent)
 
-            if (line !~ /^[[:space:]]*$/) {
+            if (line !~ /^[[:space:]]*$/ && !is_standalone_opening_brace(line)) {
                 while (type_depth > 0 && line_indent <= type_indent[type_depth]) {
                     delete type_indent[type_depth]
                     delete type_name[type_depth]
@@ -1634,7 +1637,7 @@ shell_host_global_storage_declarations() {
             line = substr(remainder, second_separator + 1)
             line_indent = leading_space_count(line)
             declaration_line = declaration_with_pending_attributes(line, source_line_number, line_indent)
-            if (line !~ /^[[:space:]]*$/) {
+            if (line !~ /^[[:space:]]*$/ && !is_standalone_opening_brace(line)) {
                 while (type_depth > 0 && line_indent <= type_indent[type_depth]) {
                     delete type_indent[type_depth]
                     delete type_name[type_depth]
@@ -2394,7 +2397,7 @@ shell_snapshot_stored_property_counts() {
             # variables remain deeper than their enclosing type member level.
             line_indent = leading_space_count(line)
             declaration_line = declaration_with_pending_attributes(line, source_line_number, line_indent)
-            if (line !~ /^[[:space:]]*$/) {
+            if (line !~ /^[[:space:]]*$/ && !is_standalone_opening_brace(line)) {
                 while (type_depth > 0 && line_indent <= type_indent[type_depth]) {
                     delete type_indent[type_depth]
                     delete type_name[type_depth]
