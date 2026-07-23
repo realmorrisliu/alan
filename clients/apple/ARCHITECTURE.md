@@ -567,8 +567,8 @@ reintroduced controller caches, maps, queues, and publication-policy call sites.
 The persistence slice keeps manifest projection and scheduler construction in
 `ShellWorkspacePersistenceCoordinator`. A conservative source ratchet rejects
 their return to controller files, new `ShellHostController` construction
-owners, new static shell-host storage, and observation or shell-owner references
-outside the base-revision production inventory. Catch-all
+owners, new persistence or static-storage lines, and observation or shell-owner
+references outside the base-revision production inventory. Catch-all
 `ShellStore`/`ShellModel` names remain denied as a secondary guard. The
 inventory intentionally fails closed on matching production-source text rather
 than maintaining a partial Swift parser.

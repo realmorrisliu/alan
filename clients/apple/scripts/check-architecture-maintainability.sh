@@ -25,9 +25,9 @@ warning_inventory_sorted="$(mktemp)"
 warning_baseline_body="$(mktemp)"
 warning_baseline_sorted="$(mktemp)"
 base_warning_baseline="$(mktemp)"
-shell_owner_base_inventory="$(mktemp)"
-shell_owner_current_inventory="$(mktemp)"
-trap 'rm -f "$warning_inventory" "$warning_inventory_sorted" "$warning_baseline_body" "$warning_baseline_sorted" "$base_warning_baseline" "$shell_owner_base_inventory" "$shell_owner_current_inventory"' EXIT
+shell_architecture_base_inventory="$(mktemp)"
+shell_architecture_current_inventory="$(mktemp)"
+trap 'rm -f "$warning_inventory" "$warning_inventory_sorted" "$warning_baseline_body" "$warning_baseline_sorted" "$base_warning_baseline" "$shell_architecture_base_inventory" "$shell_architecture_current_inventory"' EXIT
 
 git_command=(git)
 if [[ -n "${ALAN_QUALITY_GIT_DIR:-}" ]]; then
@@ -571,10 +571,7 @@ reject_shell_host_duplicate_persistence_state() {
         "workspace persistence scheduler construction"
 }
 
-reject_replacement_global_shell_store() {
-    local controller="$SOURCE_ROOT/ShellHostController.swift"
-    local controller_dir="$SOURCE_ROOT/Controllers/Shell"
-    local primary_owner="$SOURCE_ROOT/App/AlanMacPrimaryShellOwner.swift"
+reject_shell_ownership_drift() {
     local observable_owner_allowlist=(
         "App/AlanMacPrimaryShellOwner.swift|final class AlanMacPrimaryShellOwner: ObservableObject {"
         "App/AlanMacUpdateController.swift|final class AlanMacUpdateController: NSObject, ObservableObject {"
@@ -585,19 +582,19 @@ reject_replacement_global_shell_store() {
         "Support/ShellVoiceCommandController.swift|final class ShellVoiceCommandController: NSObject, ObservableObject, NSSpeechRecognizerDelegate {"
         "TerminalRuntimeRegistry.swift|final class TerminalRuntimeRegistry: ObservableObject {"
     )
-    local allowed_static_storage=(
-        "ShellHostController.swift|static let terminalSelectionFirst = ShellPaneMovementInteractionPolicy()"
-        "ShellHostController.swift|static let gracefulShutdownPollInterval: TimeInterval = 0.05"
-        "ShellHostController.swift|static let iso8601Formatter = ISO8601DateFormatter()"
-    )
     local file
-    local key
+    local guarded_reference_pattern
     local line_number
     local new_references
-    local owner_reference_pattern='ShellStateSnapshot|AlanMacPrimaryShellOwner'
     local rel
     local source_line
     local use_key
+
+    guarded_reference_pattern='ShellHostController|ShellStateSnapshot|AlanMacPrimaryShellOwner'
+    guarded_reference_pattern+='|ShellWorkspacePersistenceCoordinator'
+    guarded_reference_pattern+='|([A-Za-z_][A-Za-z0-9_]*)?[Mm]anifest[A-Za-z0-9_]*'
+    guarded_reference_pattern+='|contentFlush(Scheduled|Pending)'
+    guarded_reference_pattern+='|scheduleContentFlush|flushPendingPersistence'
 
     require_single_owner_pattern \
         "ShellHostController(" \
@@ -611,19 +608,6 @@ reject_replacement_global_shell_store() {
         "ShellHostController.init(" \
         "ShellHostController.swift" \
         "explicit ShellHostController initializer construction"
-
-    while IFS=: read -r file line_number source_line; do
-        rel="${file#$SOURCE_ROOT/}"
-        source_line="${source_line#"${source_line%%[![:space:]]*}"}"
-        key="$rel|$source_line"
-        if ! contains_line "$key" "${allowed_static_storage[@]}"; then
-            printf '%s:%s:%s\n' "$file" "$line_number" "$source_line" >&2
-            fail "new static shell-host storage is not in the accepted architecture: $key"
-        fi
-    done < <(
-        grep -HnE '(^|[[:space:]])(static|class)[[:space:]]+(let|var)([[:space:]]|$)' \
-            "$controller" "$primary_owner" "$controller_dir"/*.swift || true
-    )
 
     # ponytail: exact owner inventory; admit another observation owner only through
     # an explicit architecture change instead of teaching this shell check Swift syntax.
@@ -641,26 +625,31 @@ reject_replacement_global_shell_store() {
 
     if "${git_command[@]}" cat-file -e "$base_ref^{commit}" 2>/dev/null; then
         {
-            grep -RIn --include='*.swift' -wE "$owner_reference_pattern" \
+            grep -RIn --include='*.swift' -wE "$guarded_reference_pattern" \
                 "$SOURCE_ROOT" || true
+            grep -RIn --include='*.swift' -w 'static' "$SOURCE_ROOT" || true
         } | sed -E "s#^$SOURCE_ROOT/##; s#:[0-9]+:#|#" \
-            | LC_ALL=C sort >"$shell_owner_current_inventory"
+            | LC_ALL=C sort >"$shell_architecture_current_inventory"
 
         {
-            "${git_command[@]}" grep -n -wE "$owner_reference_pattern" \
+            "${git_command[@]}" grep -n -wE "$guarded_reference_pattern" \
+                "$base_ref" -- "$SOURCE_ROOT_REL/*.swift" || true
+            "${git_command[@]}" grep -n -w 'static' \
                 "$base_ref" -- "$SOURCE_ROOT_REL/*.swift" || true
         } | sed -E "s#^$base_ref:$SOURCE_ROOT_REL/##; s#:[0-9]+:#|#" \
-            | LC_ALL=C sort >"$shell_owner_base_inventory"
+            | LC_ALL=C sort >"$shell_architecture_base_inventory"
 
         new_references="$(
-            comm -13 "$shell_owner_base_inventory" "$shell_owner_current_inventory"
+            comm -13 \
+                "$shell_architecture_base_inventory" \
+                "$shell_architecture_current_inventory"
         )"
         if [[ -n "$new_references" ]]; then
             printf '%s\n' "$new_references" >&2
-            fail "new shell-owner references are outside the accepted production inventory"
+            fail "new shell ownership or static-storage lines are outside the accepted production inventory"
         fi
     else
-        fail "shell-state owner ratchet base is not a commit: $base_ref"
+        fail "shell ownership ratchet base is not a commit: $base_ref"
     fi
 
     if grep -RIn --include='*.swift' -E \
@@ -869,7 +858,7 @@ require_shell_core_action_metadata_query_owners
 reject_shell_host_duplicate_terminal_runtime_state
 reject_shell_host_duplicate_selection_state
 reject_shell_host_duplicate_persistence_state
-reject_replacement_global_shell_store
+reject_shell_ownership_drift
 reject_swiftui_shell_hot_path_sync_boundaries
 
 printf 'Current Swift inventory:\n'
