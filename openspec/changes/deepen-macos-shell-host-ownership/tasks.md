@@ -45,10 +45,10 @@
   stateful reporter.
 - [x] 4.3 Delete `TerminalContentLifecycleAdapter` after its active-mount
   projection and lifecycle calls move to shell state and the runtime registry.
-- [ ] 4.4 Verify and retain the projection, publication-policy, metadata,
+- [x] 4.4 Verify and retain the projection, publication-policy, metadata,
   activity-normalization, stateful reporter, and C ABI adapters only at their
   real complexity boundaries.
-- [ ] 4.5 Remove displaced controller workflow extensions and shallow forwarding
+- [x] 4.5 Remove displaced controller workflow extensions and shallow forwarding
   without creating one class per extension or a new adapter framework.
 
 ## 5. Verify And Deliver The Stack

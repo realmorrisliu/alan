@@ -2,6 +2,10 @@ import Foundation
 
 #if os(macOS)
 extension ShellHostController {
+    func pane(paneID: String) -> ShellPane? {
+        shellState.panes.first { $0.paneID == paneID }
+    }
+
     var spaces: [ShellSpace] {
         shellState.spaces
     }
@@ -480,27 +484,6 @@ extension ShellHostController {
     private func canRequestTerminalFocus(for paneID: String) -> Bool {
         guard let pane = pane(paneID: paneID) else { return false }
         return paneHasTerminalContent(pane, in: shellState.contentStateProjection())
-    }
-
-    @discardableResult
-    func requestCloseWindow() -> Bool {
-        requestCloseShellSurface(scope: .window)
-    }
-
-    @discardableResult
-    func requestTerminateApp() -> Bool {
-        requestCloseShellSurface(scope: .app)
-    }
-
-    private func requestCloseShellSurface(scope: ShellCloseGuardScope) -> Bool {
-        // Flush any debounced restore content before tearing down so a clean exit
-        // never loses the most recent transcript.
-        persistenceCoordinator.flushWorkspacePersistence()
-        if let impact = closeGuardImpact(for: scope) {
-            return confirmAndApplyClose(impact)
-        }
-        shutdownTerminalRuntimes()
-        return true
     }
 
     func terminalHostDidRequestActivation(paneID: String) {
