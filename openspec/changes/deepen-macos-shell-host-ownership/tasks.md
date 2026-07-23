@@ -38,7 +38,7 @@
 
 ## 4. Consolidate Workflows And Audit Adapters
 
-- [ ] 4.1 Move close confirmation and graceful shutdown into one concrete close
+- [x] 4.1 Move close confirmation and graceful shutdown into one concrete close
   workflow owner while keeping pane mutation in shell-core authority.
 - [ ] 4.2 Move terminal release/finalization, buffering, active-task state, and
   publication deduplication to `TerminalRuntimeRegistry` or the existing

@@ -108,21 +108,18 @@ struct ShellWindowContext {
 
 @MainActor
 final class ShellHostController: ObservableObject, TerminalHostActivationDelegate {
-    static let gracefulShutdownPollInterval: TimeInterval = 0.05
     static let iso8601Formatter = ISO8601DateFormatter()
     private let fileManager: FileManager
     private let windowContext: ShellWindowContext
     let persistenceCoordinator: ShellWorkspacePersistenceCoordinator
     let actionCoordinator = ShellActionCoordinator()
     let reducerAdapter = ShellCoreReducerAdapter()
-    var terminalContentIDsSuppressingAutoClose: Set<String> = []
     private let paneProjection: ShellPaneProjectionService
     let platformMetadataPreserver: ShellPlatformMetadataPreserver
     let terminalContentProjection: TerminalContentProjectionAdapter
     let terminalContentLifecycle = TerminalContentLifecycleAdapter()
     let pasteboard: ShellPasteboardAccessing
-    let closeConfirmationPresenter: ShellCloseConfirmationPresenting
-    let gracefulShutdownTimeout: TimeInterval
+    let closeWorkflow: ShellCloseWorkflow
     let performanceDiagnosticsRecorder: AlanPerformanceDiagnosticsRecorder?
     lazy var controlPlane = AlanShellControlPlane(
         windowID: windowContext.windowID,
@@ -259,15 +256,19 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
                 workspaceManifest: nil
             )
         self.pasteboard = pasteboard ?? ShellSystemPasteboard()
-        self.closeConfirmationPresenter =
-            closeConfirmationPresenter ?? ShellNSAlertCloseConfirmationPresenter()
-        self.gracefulShutdownTimeout = gracefulShutdownTimeout
         self.performanceDiagnosticsRecorder = performanceDiagnosticsRecorder
         self.appIsActiveProvider = appIsActiveProvider
         self.shellState = shellState
-        self.terminalRuntimeRegistry =
+        let resolvedTerminalRuntimeRegistry =
             terminalRuntimeRegistry
             ?? resolvedContext.terminalRuntimeRegistry
+        self.terminalRuntimeRegistry = resolvedTerminalRuntimeRegistry
+        self.closeWorkflow = ShellCloseWorkflow(
+            confirmationPresenter:
+                closeConfirmationPresenter ?? ShellNSAlertCloseConfirmationPresenter(),
+            terminalRuntimeRegistry: resolvedTerminalRuntimeRegistry,
+            gracefulShutdownTimeout: gracefulShutdownTimeout
+        )
 
         // Route async persistence-write failures (debounced restore content) to the
         // control-plane diagnostics surface, mirroring the synchronous paths.
