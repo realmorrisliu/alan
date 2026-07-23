@@ -99,122 +99,16 @@ extension ShellHostController {
     }
 
     func confirmAndApplyClose(_ impact: ShellCloseGuardImpact) -> Bool {
-        guard closeConfirmationPresenter.confirmClose(impact: impact) else {
-            return false
-        }
-        return withTerminalAutoCloseSuppressed(for: impact.affectedTerminalContentIDs) {
-            let gracefullyRequestedContentIDs = requestGracefulShutdownForConfirmedClose(impact)
-            waitForGracefulShutdownDrain(contentIDs: gracefullyRequestedContentIDs)
-            let capturedTranscripts = captureTerminalTranscriptSnapshots(for: impact)
-            return applyConfirmedClose(impact, transcriptSnapshotOverrides: capturedTranscripts)
-        }
-    }
-
-    private func captureTerminalTranscriptSnapshots(
-        for impact: ShellCloseGuardImpact
-    ) -> [String: TerminalTranscriptSnapshot] {
-        impact.affectedTerminalContentIDs.reduce(into: [:]) { capturedByContentID, contentID in
-            switch terminalRuntimeRegistry.captureTranscriptSnapshot(
-                forTerminalContentID: contentID
-            ) {
-            case .captured(let transcript):
-                capturedByContentID[contentID] = transcript
-            case .failed(let failure):
-                recordControlPlaneDiagnostic(
-                    "terminal transcript capture failed for \(contentID): \(failure.code.rawValue)"
+        closeWorkflow.confirmAndPerformClose(
+            impact: impact,
+            recordDiagnostic: recordControlPlaneDiagnostic,
+            applyClose: { transcriptSnapshots in
+                applyConfirmedClose(
+                    impact,
+                    transcriptSnapshotOverrides: transcriptSnapshots
                 )
             }
-        }
-    }
-
-    private func withTerminalAutoCloseSuppressed<T>(
-        for contentIDs: [String],
-        operation: () -> T
-    ) -> T {
-        guard !contentIDs.isEmpty else { return operation() }
-        let previous = terminalContentIDsSuppressingAutoClose
-        terminalContentIDsSuppressingAutoClose.formUnion(contentIDs)
-        defer {
-            terminalContentIDsSuppressingAutoClose = previous
-        }
-        return operation()
-    }
-
-    @discardableResult
-    private func requestGracefulShutdownForConfirmedClose(
-        _ impact: ShellCloseGuardImpact
-    ) -> [String] {
-        let reason = gracefulShutdownReason(for: impact.scope)
-        var requestedContentIDs: [String] = []
-        var seenContentIDs: Set<String> = []
-        for contentID in impact.activeTerminalContentIDs
-            where seenContentIDs.insert(contentID).inserted
-        {
-            let result = terminalRuntimeRegistry.requestGracefulShutdown(
-                forTerminalContentID: contentID,
-                reason: reason
-            )
-            if result.wasRequested {
-                requestedContentIDs.append(contentID)
-            } else if result.code != .alreadyExited {
-                recordControlPlaneDiagnostic(
-                    "terminal graceful shutdown request \(result.code.rawValue) for \(contentID)"
-                )
-            }
-        }
-        return requestedContentIDs
-    }
-
-    private func waitForGracefulShutdownDrain(contentIDs: [String]) {
-        guard gracefulShutdownTimeout > 0, !contentIDs.isEmpty else { return }
-        let deadline = Date().addingTimeInterval(gracefulShutdownTimeout)
-        while Date() < deadline {
-            if contentIDs.allSatisfy({ terminalGracefulShutdownSettled(contentID: $0) }) {
-                return
-            }
-            let remaining = max(0, deadline.timeIntervalSinceNow)
-            _ = RunLoop.current.run(
-                mode: .default,
-                before: Date().addingTimeInterval(
-                    min(Self.gracefulShutdownPollInterval, remaining)
-                )
-            )
-        }
-
-        let timedOutContentIDs = contentIDs.filter {
-            !terminalGracefulShutdownSettled(contentID: $0)
-        }
-        guard !timedOutContentIDs.isEmpty else { return }
-        recordControlPlaneDiagnostic(
-            "terminal graceful shutdown timed out for \(timedOutContentIDs.joined(separator: ","))"
         )
-    }
-
-    private func terminalGracefulShutdownSettled(contentID: String) -> Bool {
-        let runtime = terminalRuntimeRegistry.snapshot(forTerminalContentID: contentID)
-        let metadata = runtime.paneMetadata
-        if metadata.processExited {
-            return true
-        }
-        if let activeTaskState = metadata.activeTaskState {
-            return !activeTaskState.protectsFromPruning
-        }
-        return !terminalRuntimeRegistry.registeredContentIDs.contains(contentID)
-    }
-
-    private func gracefulShutdownReason(
-        for scope: ShellCloseGuardScope
-    ) -> TerminalRuntimeGracefulShutdownReason {
-        switch scope {
-        case .paneSlot:
-            return .paneClose
-        case .tab:
-            return .tabClose
-        case .window:
-            return .windowClose
-        case .app:
-            return .appQuit
-        }
     }
 
     @discardableResult
@@ -356,7 +250,7 @@ extension ShellHostController {
             contentState: contentState
         ) ?? pane(paneID: paneID)?.terminalContentID
         guard let contentID else { return false }
-        return terminalContentIDsSuppressingAutoClose.contains(contentID)
+        return closeWorkflow.suppressesAutoClose(forTerminalContentID: contentID)
     }
 
     func movePane(

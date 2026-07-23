@@ -114,15 +114,16 @@ Xcode target.
 | `Models/Shell/ManagedTerminalAccountCatalog.swift` | 91 | Foundation; macOS gates | Durable managed-account catalog normalization and storage | `Models/Shell/` |
 | `Models/Shell/ManagedTerminalUserSettings.swift` | 240 | Foundation; macOS gates | Managed-user readiness, creation preview, validation, and approved provisioning flow | `Models/Shell/` |
 | `Models/Shell/ShellSettingsHostSummaries.swift` | 131 | Foundation; macOS gates | Local app/runtime/storage identity and performance-diagnostics summaries | `Models/Shell/` |
-| `ShellHostController.swift` | 365 | Foundation, Combine; macOS gates | Observable adopted shell state, dependency assembly, startup, shutdown, and root lifecycle | Root controller with focused `Controllers/Shell/` responsibility extensions |
+| `ShellHostController.swift` | 362 | Foundation, Combine; macOS gates | Observable adopted shell state, dependency assembly, startup, shutdown, and root lifecycle | Root controller with focused `Controllers/Shell/` responsibility extensions |
 | `Controllers/Shell/ShellHostControlProjection.swift` | 268 | Foundation; macOS gates | Control response, list, routing-candidate, and terminal-delivery projection | `Controllers/Shell/` |
 | `Controllers/Shell/ShellHostPlatformControlCommandHandling.swift` | 431 | Foundation; macOS gates | Shared-executor state adoption plus close guard, terminal delivery, events, render metrics, and performance diagnostics | `Controllers/Shell/` |
 | `Controllers/Shell/ShellHostProjectionAndSelection.swift` | 511 | Foundation; macOS gates | Snapshot-derived shell and selection projection, focus, zoom, and shell-surface close requests | `Controllers/Shell/` |
 | `Controllers/Shell/ShellHostSpaceAndTabLifecycle.swift` | 734 | Foundation; macOS gates | Space, tab, content, and split creation plus tab ordering and movement | `Controllers/Shell/` |
 | `Controllers/Shell/ShellHostActionAndTerminalCommandHandling.swift` | 494 | Foundation; macOS gates | Shell action execution, spatial focus, and terminal semantic-command routing | `Controllers/Shell/` |
 | `Controllers/Shell/ShellHostRuntimeProjection.swift` | 616 | Foundation; macOS gates | Registry-backed terminal runtime and metadata projection, activity routing, state adoption, and render-priority refresh | `Controllers/Shell/` |
-| `Controllers/Shell/ShellHostCloseAndPaneLifecycle.swift` | 550 | Foundation; macOS gates | Close guards, graceful shutdown, pane lifecycle/movement, and control-plane state publication | `Controllers/Shell/` |
+| `Controllers/Shell/ShellHostCloseAndPaneLifecycle.swift` | 444 | Foundation; macOS gates | Close guards, shell-core pane lifecycle/movement, and control-plane state publication | `Controllers/Shell/` |
 | `Controllers/Shell/ShellHostAutomationCommandHandling.swift` | 309 | Foundation; macOS gates | External shell automation command adaptation and response projection | `Controllers/Shell/` |
+| `Services/Shell/ShellCloseWorkflow.swift` | 202 | AppKit, Foundation; macOS gates | Close confirmation, auto-close suppression, graceful terminal shutdown, and transcript-capture ordering | `Services/Shell/` |
 | `Services/Shell/ShellControlFilePoller.swift` | 182 | Foundation; macOS gates | File-backed command/result polling and alan binding-file projection | `Services/Shell/` |
 | `Services/Shell/ShellDiagnostics.swift` | 16 | Foundation; macOS gates | Shell service diagnostic routing | `Services/Shell/` |
 | `Services/Shell/ShellEventStore.swift` | 677 | Foundation; macOS gates | Shell event buffering, diffing, `events.read`, and jsonl persistence | `Services/Shell/` |
