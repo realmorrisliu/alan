@@ -1,31 +1,38 @@
-import Foundation
+struct TerminalContentMount: Equatable {
+    let contentID: String
+    let paneSlotID: String
+    let tabID: String
+    let spaceID: String
 
-#if os(macOS)
-@MainActor
-struct TerminalContentLifecycleAdapter {
-    func reconcileRuntimes(
-        afterAdopting state: ShellStateSnapshot,
-        registry: TerminalRuntimeRegistry
-    ) {
-        registry.releaseRuntimes(excluding: activeTerminalMounts(in: state))
+    init(contentID: String, paneSlotID: String, tabID: String, spaceID: String) {
+        self.contentID = contentID
+        self.paneSlotID = paneSlotID
+        self.tabID = tabID
+        self.spaceID = spaceID
     }
 
-    func finalizeAllRuntimes(registry: TerminalRuntimeRegistry) {
-        registry.releaseAllRuntimes()
+    init(pane: ShellPane) {
+        self.init(
+            contentID: pane.terminalContentID,
+            paneSlotID: pane.paneID,
+            tabID: pane.tabID,
+            spaceID: pane.spaceID
+        )
     }
+}
 
-    func activeTerminalMounts(in state: ShellStateSnapshot) -> [TerminalContentMount] {
-        let contentState = state.contentStateProjection()
+extension ShellContentStateSnapshot {
+    var activeTerminalMounts: [TerminalContentMount] {
         var contentsByID: [String: ShellContentInstance] = [:]
-        contentState.contents.forEach { content in
+        contents.forEach { content in
             contentsByID[content.contentID] = content
         }
         let mountedPaneSlotIDs = Set(
-            contentState.spaces
+            spaces
                 .flatMap(\.tabs)
                 .flatMap(\.paneTree.paneSlotIDs)
         )
-        return contentState.paneSlots.compactMap { slot -> TerminalContentMount? in
+        return paneSlots.compactMap { slot -> TerminalContentMount? in
             guard mountedPaneSlotIDs.contains(slot.paneSlotID),
                   let content = contentsByID[slot.contentID],
                   content.kind == .terminal,
@@ -43,4 +50,3 @@ struct TerminalContentLifecycleAdapter {
         }
     }
 }
-#endif

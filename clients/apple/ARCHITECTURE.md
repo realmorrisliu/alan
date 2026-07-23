@@ -55,7 +55,7 @@ Xcode target.
 | `Services/Terminal/TerminalRuntimePublicationPolicy.swift` | 46 | macOS gates | Shell-facing runtime snapshot publication policy | `Services/Terminal/` |
 | `Services/Terminal/TerminalHostRuntimeReporter.swift` | 48 | Foundation; macOS gates | Runtime snapshot deduplication and main-queue publication for terminal host updates | `Services/Terminal/` |
 | `Services/Terminal/TerminalHostWindowObserver.swift` | 55 | AppKit; macOS gates | Terminal host window key, screen, and occlusion notification ownership | `Services/Terminal/` |
-| `TerminalRuntimeRegistry.swift` | 752 | SwiftUI; macOS gates | Content-keyed terminal host/runtime, active-task, lifecycle, and shell-projection registry | `Services/Terminal/` |
+| `TerminalRuntimeRegistry.swift` | 729 | SwiftUI; macOS gates | Content-keyed terminal host/runtime, active-task, lifecycle, and shell-projection registry | `Services/Terminal/` |
 | `Services/Terminal/DarwinTerminalPtyRuntime.swift` | 820 | Darwin, Foundation; macOS gates | Local Darwin PTY handle, renderer proxy, nonblocking IO, process launch, and exit observation | `Services/Terminal/` |
 | `Services/Terminal/GhosttyProcessBootstrap.swift` | 143 | Darwin, Foundation, GhosttyKit; macOS/Ghostty gates | Process-wide Ghostty initialization and inherited terminal-environment scrubbing | `Services/Terminal/` |
 | `Services/Terminal/GhosttyTerminalSurfaceHandle.swift` | 541 | AppKit, Foundation, GhosttyKit; macOS/Ghostty gates | Ghostty surface lifecycle, PTY attachment, delivery, renderer updates, and event-engine adaptation | `Services/Terminal/` |
@@ -99,6 +99,7 @@ Xcode target.
 | `Services/Terminal/TerminalAgentActivityAdapter.swift` | 177 | Foundation | Sanitized agent-event to terminal-activity projection | `Services/Terminal/` |
 | `Models/Shell/ShellPaneSnapshots.swift` | 127 | Foundation | Pane identity, viewport, Alan binding, and pane-local runtime metadata DTOs | `Models/Shell/` |
 | `Models/Shell/ShellContentSnapshots.swift` | 555 | CoreGraphics, Foundation | Terminal transcript, renderer state, content payload, and content-instance DTOs | `Models/Shell/` |
+| `Models/Shell/TerminalContentMount.swift` | 52 | None | Terminal mount identity and active-mount projection from canonical shell content state | `Models/Shell/` |
 | `Models/Shell/ShellPaneTreeSnapshots.swift` | 492 | Foundation | Pane-slot split-tree and portable slot-tree query models | `Models/Shell/` |
 | `Models/Shell/ShellTabSpaceSnapshots.swift` | 310 | Foundation | Tab, content-tab, Space identity, icon, and default-name DTOs | `Models/Shell/` |
 | `Models/Shell/ShellWorkspaceSnapshots.swift` | 666 | Foundation | Workspace state snapshots and cross-family snapshot query helpers | `Models/Shell/` |
@@ -114,13 +115,13 @@ Xcode target.
 | `Models/Shell/ManagedTerminalAccountCatalog.swift` | 91 | Foundation; macOS gates | Durable managed-account catalog normalization and storage | `Models/Shell/` |
 | `Models/Shell/ManagedTerminalUserSettings.swift` | 240 | Foundation; macOS gates | Managed-user readiness, creation preview, validation, and approved provisioning flow | `Models/Shell/` |
 | `Models/Shell/ShellSettingsHostSummaries.swift` | 131 | Foundation; macOS gates | Local app/runtime/storage identity and performance-diagnostics summaries | `Models/Shell/` |
-| `ShellHostController.swift` | 362 | Foundation, Combine; macOS gates | Observable adopted shell state, dependency assembly, startup, shutdown, and root lifecycle | Root controller with focused `Controllers/Shell/` responsibility extensions |
+| `ShellHostController.swift` | 360 | Foundation, Combine; macOS gates | Observable adopted shell state, dependency assembly, startup, shutdown, and root lifecycle | Root controller with focused `Controllers/Shell/` responsibility extensions |
 | `Controllers/Shell/ShellHostControlProjection.swift` | 268 | Foundation; macOS gates | Control response, list, routing-candidate, and terminal-delivery projection | `Controllers/Shell/` |
 | `Controllers/Shell/ShellHostPlatformControlCommandHandling.swift` | 431 | Foundation; macOS gates | Shared-executor state adoption plus close guard, terminal delivery, events, render metrics, and performance diagnostics | `Controllers/Shell/` |
 | `Controllers/Shell/ShellHostProjectionAndSelection.swift` | 511 | Foundation; macOS gates | Snapshot-derived shell and selection projection, focus, zoom, and shell-surface close requests | `Controllers/Shell/` |
 | `Controllers/Shell/ShellHostSpaceAndTabLifecycle.swift` | 734 | Foundation; macOS gates | Space, tab, content, and split creation plus tab ordering and movement | `Controllers/Shell/` |
 | `Controllers/Shell/ShellHostActionAndTerminalCommandHandling.swift` | 494 | Foundation; macOS gates | Shell action execution, spatial focus, and terminal semantic-command routing | `Controllers/Shell/` |
-| `Controllers/Shell/ShellHostRuntimeProjection.swift` | 616 | Foundation; macOS gates | Registry-backed terminal runtime and metadata projection, activity routing, state adoption, and render-priority refresh | `Controllers/Shell/` |
+| `Controllers/Shell/ShellHostRuntimeProjection.swift` | 615 | Foundation; macOS gates | Registry-backed terminal runtime and metadata projection, activity routing, state adoption, and render-priority refresh | `Controllers/Shell/` |
 | `Controllers/Shell/ShellHostCloseAndPaneLifecycle.swift` | 444 | Foundation; macOS gates | Close guards, shell-core pane lifecycle/movement, and control-plane state publication | `Controllers/Shell/` |
 | `Controllers/Shell/ShellHostAutomationCommandHandling.swift` | 309 | Foundation; macOS gates | External shell automation command adaptation and response projection | `Controllers/Shell/` |
 | `Services/Shell/ShellCloseWorkflow.swift` | 202 | AppKit, Foundation; macOS gates | Close confirmation, auto-close suppression, graceful terminal shutdown, and transcript-capture ordering | `Services/Shell/` |

@@ -117,7 +117,6 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
     private let paneProjection: ShellPaneProjectionService
     let platformMetadataPreserver: ShellPlatformMetadataPreserver
     let terminalContentProjection: TerminalContentProjectionAdapter
-    let terminalContentLifecycle = TerminalContentLifecycleAdapter()
     let pasteboard: ShellPasteboardAccessing
     let closeWorkflow: ShellCloseWorkflow
     let performanceDiagnosticsRecorder: AlanPerformanceDiagnosticsRecorder?
@@ -291,14 +290,13 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
 
     deinit {
         let terminalRuntimeRegistry = terminalRuntimeRegistry
-        let terminalContentLifecycle = terminalContentLifecycle
         Task { @MainActor in
-            terminalContentLifecycle.finalizeAllRuntimes(registry: terminalRuntimeRegistry)
+            terminalRuntimeRegistry.releaseAllRuntimes()
         }
     }
 
     func shutdownTerminalRuntimes() {
-        terminalContentLifecycle.finalizeAllRuntimes(registry: terminalRuntimeRegistry)
+        terminalRuntimeRegistry.releaseAllRuntimes()
     }
 
     /// Persist only renderer-owned Agent offsets and presentation. Process identity is immutable.
