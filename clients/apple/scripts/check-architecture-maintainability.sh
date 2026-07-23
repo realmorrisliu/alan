@@ -600,12 +600,12 @@ reject_replacement_global_shell_store() {
             fail "new static shell-host storage is not in the accepted architecture: $key"
         fi
     done < <(
-        grep -HnE '^[[:space:]]*(static|class)[[:space:]]+(let|var)[[:space:]]' \
+        grep -HnE '(^|[[:space:]])(static|class)[[:space:]]+(let|var)([[:space:]]|$)' \
             "$controller" "$primary_owner" || true
     )
 
     if grep -RIn --include='*.swift' -E \
-        '^[[:space:]]*(final[[:space:]]+)?(class|struct|actor|enum)[[:space:]]+`?(Shell(Store|Model)|ShellState(Store|Model)|ShellWorkspace(Store|Model))`?([^A-Za-z0-9_]|$)' \
+        '(^|[^A-Za-z0-9_])(Shell(Store|Model)|ShellState(Store|Model)|ShellWorkspace(Store|Model))([^A-Za-z0-9_]|$)' \
         "$SOURCE_ROOT" >&2
     then
         fail "a replacement global Shell store/model must not sit above the accepted owners"
