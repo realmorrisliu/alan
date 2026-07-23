@@ -25,9 +25,9 @@ warning_inventory_sorted="$(mktemp)"
 warning_baseline_body="$(mktemp)"
 warning_baseline_sorted="$(mktemp)"
 base_warning_baseline="$(mktemp)"
-shell_state_base_inventory="$(mktemp)"
-shell_state_current_inventory="$(mktemp)"
-trap 'rm -f "$warning_inventory" "$warning_inventory_sorted" "$warning_baseline_body" "$warning_baseline_sorted" "$base_warning_baseline" "$shell_state_base_inventory" "$shell_state_current_inventory"' EXIT
+shell_owner_base_inventory="$(mktemp)"
+shell_owner_current_inventory="$(mktemp)"
+trap 'rm -f "$warning_inventory" "$warning_inventory_sorted" "$warning_baseline_body" "$warning_baseline_sorted" "$base_warning_baseline" "$shell_owner_base_inventory" "$shell_owner_current_inventory"' EXIT
 
 git_command=(git)
 if [[ -n "${ALAN_QUALITY_GIT_DIR:-}" ]]; then
@@ -561,11 +561,11 @@ reject_shell_host_duplicate_persistence_state() {
             "shell host persistence state, projection, and scheduling must remain in ShellWorkspacePersistenceCoordinator"
     fi
 
-    require_single_owner_pattern \
+    require_existing_single_owner_pattern \
         "ShellWorkspaceManifestProjector()" \
         "$owner" \
         "workspace manifest projector construction"
-    require_single_owner_pattern \
+    require_existing_single_owner_pattern \
         "DebouncedManifestFlushScheduler()" \
         "$owner" \
         "workspace persistence scheduler construction"
@@ -594,6 +594,7 @@ reject_replacement_global_shell_store() {
     local key
     local line_number
     local new_references
+    local owner_reference_pattern='ShellStateSnapshot|AlanMacPrimaryShellOwner'
     local rel
     local source_line
     local use_key
@@ -640,22 +641,23 @@ reject_replacement_global_shell_store() {
 
     if "${git_command[@]}" cat-file -e "$base_ref^{commit}" 2>/dev/null; then
         {
-            grep -RIn --include='*.swift' -w 'ShellStateSnapshot' "$SOURCE_ROOT" || true
+            grep -RIn --include='*.swift' -wE "$owner_reference_pattern" \
+                "$SOURCE_ROOT" || true
         } | sed -E "s#^$SOURCE_ROOT/##; s#:[0-9]+:#|#" \
-            | LC_ALL=C sort >"$shell_state_current_inventory"
+            | LC_ALL=C sort >"$shell_owner_current_inventory"
 
         {
-            "${git_command[@]}" grep -n -w 'ShellStateSnapshot' \
+            "${git_command[@]}" grep -n -wE "$owner_reference_pattern" \
                 "$base_ref" -- "$SOURCE_ROOT_REL/*.swift" || true
         } | sed -E "s#^$base_ref:$SOURCE_ROOT_REL/##; s#:[0-9]+:#|#" \
-            | LC_ALL=C sort >"$shell_state_base_inventory"
+            | LC_ALL=C sort >"$shell_owner_base_inventory"
 
         new_references="$(
-            comm -13 "$shell_state_base_inventory" "$shell_state_current_inventory"
+            comm -13 "$shell_owner_base_inventory" "$shell_owner_current_inventory"
         )"
         if [[ -n "$new_references" ]]; then
             printf '%s\n' "$new_references" >&2
-            fail "new ShellStateSnapshot references are outside the accepted owner inventory"
+            fail "new shell-owner references are outside the accepted production inventory"
         fi
     else
         fail "shell-state owner ratchet base is not a commit: $base_ref"
