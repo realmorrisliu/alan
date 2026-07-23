@@ -148,6 +148,7 @@ final class AlanUnavailableManagedUserPtyHandle: AlanTerminalPtyHandle {
 
 @MainActor
 final class AlanHelperManagedUserPtyHandle: AlanTerminalPtyHandle {
+    private let maxPendingRendererReplayBytes = 1024 * 1024
     let contentID: String
     let bootRequest: AlanTerminalBootRequest
     let helperClient: AlanPrivilegedHelperClienting
@@ -164,6 +165,11 @@ final class AlanHelperManagedUserPtyHandle: AlanTerminalPtyHandle {
     private var observedFinalOutputChunk = false
     private let helperQueue: DispatchQueue
     private let outputProcessor = AlanTerminalPtyControlSequenceProcessor()
+    private var outputPump: AlanHelperManagedUserPtyOutputPump?
+    private var semanticShellActivityState: AlanTerminalPtyShellActivityState?
+    private var processGroupShellActivityState: AlanTerminalPtyShellActivityState?
+    private var pendingRendererReplayChunks: [Data] = []
+    private var pendingRendererReplayBytes = 0
     private(set) var shellActivityState: AlanTerminalPtyShellActivityState = .unknown
     var onShellActivityStateChange: ((AlanTerminalPtyShellActivityState) -> Void)?
 
@@ -183,20 +189,28 @@ final class AlanHelperManagedUserPtyHandle: AlanTerminalPtyHandle {
             label: "dev.alan.terminal.managed-user-pty.\(contentID)",
             qos: .userInteractive
         )
+        let outputPump = AlanHelperManagedUserPtyOutputPump(
+            ptyHandle: self,
+            helperClient: helperClient,
+            sessionID: session.sessionID,
+            ioQueue: helperQueue,
+            outputProcessor: outputProcessor
+        )
+        self.outputPump = outputPump
+        outputPump.start()
     }
 
     deinit {
+        outputPump?.invalidate()
         rendererProxy?.invalidate()
     }
 
     var snapshot: AlanTerminalPtyRuntimeSnapshot {
-        applyPendingProxyOutput()
+        applyPendingOutput()
         if let rendererProxy, rendererProxy.invalidated {
             rendererProxyDidInvalidate(rendererProxy)
         }
-        if rendererProxy == nil {
-            _ = drainAvailableOutput()
-        }
+        _ = drainAvailableOutput()
         refreshExitObservation()
         if observedFinalOutputChunk, exitStatus == nil {
             exitStatus = .unknown
@@ -364,16 +378,48 @@ final class AlanHelperManagedUserPtyHandle: AlanTerminalPtyHandle {
         setNoSigpipeSocketOption(descriptors[0])
         setNoSigpipeSocketOption(descriptors[1])
 
+        guard let outputPump else {
+            close(descriptors[0])
+            close(descriptors[1])
+            return .rejected(
+                .rejected(
+                    "managed_user_helper_pty_unavailable",
+                    message: "Managed User helper PTY output service is unavailable."
+                )
+            )
+        }
         let proxy = AlanHelperManagedUserPtyRendererProxy(
             ptyHandle: self,
             helperClient: helperClient,
             sessionID: session.sessionID,
             hostFileDescriptor: descriptors[0],
-            ioQueue: helperQueue,
-            outputProcessor: outputProcessor
+            ioQueue: helperQueue
         )
-        rendererProxy = proxy
-        proxy.start()
+        let preparation = outputPump.attachRendererProxy(
+            proxy,
+            replayChunks: pendingRendererReplayChunks,
+            maxBytes: 4096
+        )
+        if preparation.attached {
+            rendererProxy = proxy
+            pendingRendererReplayChunks.removeAll()
+            pendingRendererReplayBytes = 0
+        }
+        applyOutputUpdates(preparation.updates)
+        guard preparation.attached,
+              exitStatus == nil,
+              phase == .running || phase == .inputClosed,
+              !proxy.invalidated
+        else {
+            proxy.invalidate()
+            close(descriptors[1])
+            return .rejected(
+                .rejected(
+                    "managed_user_helper_renderer_attachment_failed",
+                    message: "Managed User helper renderer attachment failed."
+                )
+            )
+        }
 
         return .attached(
             AlanTerminalPtyRendererAttachment(
@@ -421,65 +467,58 @@ final class AlanHelperManagedUserPtyHandle: AlanTerminalPtyHandle {
         if exitStatus != nil {
             inputClosed = true
             phase = .exited
+            outputPump?.invalidate()
             invalidateRendererProxy()
         }
     }
 
     @discardableResult
     fileprivate func drainAvailableOutput(maxBytes: Int = 4096) -> Data {
-        guard rendererProxy == nil, exitStatus == nil else { return Data() }
-        var collected = Data()
+        guard exitStatus == nil, let outputPump else {
+            return Data()
+        }
+        return applyOutputUpdates(
+            outputPump.pollSynchronously(maxBytes: maxBytes)
+        )
+    }
 
-        while true {
-            let result = helperQueue.sync {
-                helperClient.readManagedUserPTY(
-                    AlanManagedUserPTYReadRequest(
-                        sessionID: session.sessionID,
-                        maxBytes: maxBytes
-                    )
-                ).map { chunk in
-                    let response = outputProcessor.process(chunk.data)
-                    let responseFailure: AlanPrivilegedHelperDiagnostic?
-                    if response.didRespond {
-                        let result = helperClient.writeManagedUserPTY(
-                            AlanManagedUserPTYInputRequest(
-                                sessionID: session.sessionID,
-                                data: response.ptyResponse
-                            )
-                        )
-                        responseFailure = result.accepted ? nil : result.diagnostic
-                    } else {
-                        responseFailure = nil
-                    }
-                    return AlanHelperManagedUserPtyProcessedOutput(
-                        chunk: chunk,
-                        rendererOutput: response.rendererOutput,
-                        shellActivityTransition: response.shellActivityTransition,
-                        responseFailure: responseFailure
-                    )
-                }
-            }
-            switch result {
-            case .success(let output):
+    @discardableResult
+    fileprivate func applyOutputUpdates(
+        _ updates: [AlanHelperManagedUserPtyPendingOutputUpdate]
+    ) -> Data {
+        var collected = Data()
+        for update in updates {
+            switch update {
+            case .output(let output, let routedToRenderer):
                 applyHelperOutput(output)
-                if output.responseFailure != nil {
-                    return collected
+                if !routedToRenderer {
+                    appendPendingRendererReplay(output.rendererOutput)
                 }
-                let chunk = output.chunk
-                guard !chunk.data.isEmpty else { return collected }
                 collected.append(output.rendererOutput)
             case .failure(let diagnostic):
                 applyHelperOutputFailure(diagnostic)
-                return collected
             }
+        }
+        return collected
+    }
+
+    private func appendPendingRendererReplay(_ data: Data) {
+        guard !data.isEmpty else { return }
+        pendingRendererReplayChunks.append(data)
+        pendingRendererReplayBytes += data.count
+        while pendingRendererReplayBytes > maxPendingRendererReplayBytes,
+              pendingRendererReplayChunks.count > 1
+        {
+            pendingRendererReplayBytes -= pendingRendererReplayChunks.removeFirst().count
         }
     }
 
-    @MainActor
-    fileprivate func applyPendingProxyOutput() {
-        guard let rendererProxy else { return }
-        let updates = rendererProxy.drainPendingOutputUpdates()
-        applyPendingProxyOutputUpdates(updates)
+    fileprivate func applyPendingOutput(
+        from pendingOutputPump: AlanHelperManagedUserPtyOutputPump? = nil
+    ) {
+        if let pendingOutputPump, outputPump !== pendingOutputPump { return }
+        guard let outputPump else { return }
+        applyOutputUpdates(outputPump.takePendingUpdates())
     }
 
     @MainActor
@@ -487,30 +526,26 @@ final class AlanHelperManagedUserPtyHandle: AlanTerminalPtyHandle {
         _ invalidatedProxy: AlanHelperManagedUserPtyRendererProxy
     ) {
         guard rendererProxy === invalidatedProxy else { return }
-        let updates = invalidatedProxy.drainPendingOutputUpdates()
+        appendPendingRendererReplay(
+            invalidatedProxy.takeInvalidationHandoffOutput()
+        )
         rendererProxy = nil
-        applyPendingProxyOutputUpdates(updates)
-    }
-
-    @MainActor
-    private func applyPendingProxyOutputUpdates(
-        _ updates: [AlanHelperManagedUserPtyPendingOutputUpdate]
-    ) {
-        for update in updates {
-            switch update {
-            case .output(let output):
-                applyHelperOutput(output)
-            case .failure(let diagnostic):
-                applyHelperOutputFailure(diagnostic)
-            }
-        }
+        outputPump?.setRendererProxy(nil)
     }
 
     @MainActor
     private func applyHelperOutput(_ output: AlanHelperManagedUserPtyProcessedOutput) {
         applyHelperOutputChunk(output.chunk, rendererOutput: output.rendererOutput)
         if let transition = output.shellActivityTransition {
-            recordShellActivityState(transition)
+            recordSemanticShellActivityState(transition)
+        }
+        switch output.chunk.foregroundProcessGroupState {
+        case .shell:
+            recordProcessGroupShellActivityState(.shellInput)
+        case .foreground:
+            recordProcessGroupShellActivityState(.foregroundCommand)
+        case .unavailable:
+            break
         }
         if let responseFailure = output.responseFailure {
             applyHelperOutputFailure(responseFailure)
@@ -544,6 +579,7 @@ final class AlanHelperManagedUserPtyHandle: AlanTerminalPtyHandle {
         inputClosed = true
         phase = .failed
         exitStatus = .unknown
+        outputPump?.invalidate()
         invalidateRendererProxy()
         transcriptRingBufferLines.append(diagnostic.sanitizedMessage)
     }
@@ -553,59 +589,130 @@ final class AlanHelperManagedUserPtyHandle: AlanTerminalPtyHandle {
         acceptedInputBytes += byteCount
     }
 
-    fileprivate func recordShellActivityState(_ state: AlanTerminalPtyShellActivityState) {
+    private func recordSemanticShellActivityState(
+        _ state: AlanTerminalPtyShellActivityState
+    ) {
+        semanticShellActivityState = state
+        reconcileShellActivityState()
+    }
+
+    private func recordProcessGroupShellActivityState(
+        _ state: AlanTerminalPtyShellActivityState
+    ) {
+        processGroupShellActivityState = state
+        reconcileShellActivityState()
+    }
+
+    private func reconcileShellActivityState() {
+        let state: AlanTerminalPtyShellActivityState
+        if semanticShellActivityState == .foregroundCommand
+            || processGroupShellActivityState == .foregroundCommand
+        {
+            state = .foregroundCommand
+        } else if semanticShellActivityState == .shellInput
+            || processGroupShellActivityState == .shellInput
+        {
+            state = .shellInput
+        } else {
+            state = .unknown
+        }
+        recordShellActivityState(state)
+    }
+
+    private func recordShellActivityState(_ state: AlanTerminalPtyShellActivityState) {
         guard state != shellActivityState else { return }
         shellActivityState = state
         onShellActivityStateChange?(state)
     }
 
     private func invalidateRendererProxy() {
-        rendererProxy?.invalidate()
-        rendererProxy = nil
+        guard let rendererProxy else {
+            outputPump?.setRendererProxy(nil)
+            return
+        }
+        rendererProxy.invalidate()
+        rendererProxyDidInvalidate(rendererProxy)
     }
 
 }
 
-private struct AlanHelperManagedUserPtyProcessedOutput {
+fileprivate struct AlanHelperManagedUserPtyProcessedOutput {
     let chunk: AlanManagedUserPTYOutputChunk
     let rendererOutput: Data
     let shellActivityTransition: AlanTerminalPtyShellActivityState?
     let responseFailure: AlanPrivilegedHelperDiagnostic?
 }
 
-private enum AlanHelperManagedUserPtyPendingOutputUpdate {
-    case output(AlanHelperManagedUserPtyProcessedOutput)
+fileprivate enum AlanHelperManagedUserPtyPendingOutputUpdate {
+    case output(
+        AlanHelperManagedUserPtyProcessedOutput,
+        routedToRenderer: Bool
+    )
     case failure(AlanPrivilegedHelperDiagnostic)
 }
 
-private final class AlanHelperManagedUserPtyRendererProxy {
+fileprivate struct AlanHelperManagedUserPtyRendererPreparation {
+    let attached: Bool
+    let updates: [AlanHelperManagedUserPtyPendingOutputUpdate]
+}
+
+private func readHelperManagedUserPtyProcessedOutput(
+    helperClient: AlanPrivilegedHelperClienting,
+    sessionID: String,
+    maxBytes: Int,
+    outputProcessor: AlanTerminalPtyControlSequenceProcessor
+) -> Result<AlanHelperManagedUserPtyProcessedOutput, AlanPrivilegedHelperDiagnostic> {
+    helperClient.readManagedUserPTY(
+        AlanManagedUserPTYReadRequest(
+            sessionID: sessionID,
+            maxBytes: maxBytes
+        )
+    ).map { chunk in
+        let response = outputProcessor.process(chunk.data)
+        let responseFailure: AlanPrivilegedHelperDiagnostic?
+        if response.didRespond {
+            let result = helperClient.writeManagedUserPTY(
+                AlanManagedUserPTYInputRequest(
+                    sessionID: sessionID,
+                    data: response.ptyResponse
+                )
+            )
+            responseFailure = result.accepted ? nil : result.diagnostic
+        } else {
+            responseFailure = nil
+        }
+        return AlanHelperManagedUserPtyProcessedOutput(
+            chunk: chunk,
+            rendererOutput: response.rendererOutput,
+            shellActivityTransition: response.shellActivityTransition,
+            responseFailure: responseFailure
+        )
+    }
+}
+
+fileprivate final class AlanHelperManagedUserPtyOutputPump {
     private weak var ptyHandle: AlanHelperManagedUserPtyHandle?
     private let helperClient: AlanPrivilegedHelperClienting
     private let sessionID: String
-    private let hostFileDescriptor: Int32
     private let ioQueue: DispatchQueue
     private let outputProcessor: AlanTerminalPtyControlSequenceProcessor
-    private let invalidationLock = NSLock()
-    private let pendingOutputLock = NSLock()
-    private var rendererInputSource: DispatchSourceRead?
-    private var helperOutputTimer: DispatchSourceTimer?
-    private var rendererOutputWriteSource: DispatchSourceWrite?
-    private var isInvalidated = false
-    private var pendingOutputUpdates: [AlanHelperManagedUserPtyPendingOutputUpdate] = []
-    private var pendingRendererOutput = Data()
+    private var timer: DispatchSourceTimer?
+    private var pendingUpdates: [AlanHelperManagedUserPtyPendingOutputUpdate] = []
+    private var publishScheduled = false
+    private var lastForegroundProcessGroupState:
+        AlanManagedUserPTYForegroundProcessGroupState = .unavailable
+    private weak var rendererProxy: AlanHelperManagedUserPtyRendererProxy?
 
     init(
         ptyHandle: AlanHelperManagedUserPtyHandle,
         helperClient: AlanPrivilegedHelperClienting,
         sessionID: String,
-        hostFileDescriptor: Int32,
         ioQueue: DispatchQueue,
         outputProcessor: AlanTerminalPtyControlSequenceProcessor
     ) {
         self.ptyHandle = ptyHandle
         self.helperClient = helperClient
         self.sessionID = sessionID
-        self.hostFileDescriptor = hostFileDescriptor
         self.ioQueue = ioQueue
         self.outputProcessor = outputProcessor
     }
@@ -615,6 +722,223 @@ private final class AlanHelperManagedUserPtyRendererProxy {
     }
 
     func start() {
+        ioQueue.sync {
+            guard timer == nil else { return }
+            let timer = DispatchSource.makeTimerSource(queue: ioQueue)
+            timer.schedule(deadline: .now(), repeating: .milliseconds(30))
+            timer.setEventHandler { [weak self] in
+                self?.pollAndPublishOnQueue(maxBytes: 4096)
+            }
+            timer.resume()
+            self.timer = timer
+        }
+    }
+
+    func pollSynchronously(
+        maxBytes: Int
+    ) -> [AlanHelperManagedUserPtyPendingOutputUpdate] {
+        ioQueue.sync {
+            pollOnQueue(maxBytes: maxBytes)
+            return takePendingUpdatesOnQueue()
+        }
+    }
+
+    func takePendingUpdates() -> [AlanHelperManagedUserPtyPendingOutputUpdate] {
+        ioQueue.sync {
+            takePendingUpdatesOnQueue()
+        }
+    }
+
+    func setRendererProxy(_ rendererProxy: AlanHelperManagedUserPtyRendererProxy?) {
+        ioQueue.sync {
+            self.rendererProxy = rendererProxy
+        }
+    }
+
+    func attachRendererProxy(
+        _ rendererProxy: AlanHelperManagedUserPtyRendererProxy,
+        replayChunks: [Data],
+        maxBytes: Int
+    ) -> AlanHelperManagedUserPtyRendererPreparation {
+        ioQueue.sync {
+            pollOnQueue(maxBytes: maxBytes)
+            let updates = takePendingUpdatesOnQueue()
+            rendererProxy.startOnOutputPumpQueue()
+
+            for chunk in replayChunks {
+                let route = rendererProxy.routeRendererOutputFromOutputPump(chunk)
+                guard route.accepted, route.healthy else {
+                    rendererProxy.invalidate()
+                    return AlanHelperManagedUserPtyRendererPreparation(
+                        attached: false,
+                        updates: updates
+                    )
+                }
+            }
+            var preparedUpdates: [AlanHelperManagedUserPtyPendingOutputUpdate] = []
+            for update in updates {
+                guard case .output(let output, _) = update,
+                      !output.rendererOutput.isEmpty
+                else {
+                    preparedUpdates.append(update)
+                    continue
+                }
+                let route = rendererProxy.routeRendererOutputFromOutputPump(
+                    output.rendererOutput
+                )
+                guard route.accepted, route.healthy else {
+                    rendererProxy.invalidate()
+                    return AlanHelperManagedUserPtyRendererPreparation(
+                        attached: false,
+                        updates: updates
+                    )
+                }
+                preparedUpdates.append(
+                    .output(output, routedToRenderer: true)
+                )
+            }
+            self.rendererProxy = rendererProxy
+            return AlanHelperManagedUserPtyRendererPreparation(
+                attached: true,
+                updates: preparedUpdates
+            )
+        }
+    }
+
+    func invalidate() {
+        ioQueue.sync {
+            timer?.cancel()
+            timer = nil
+            pendingUpdates.removeAll()
+            publishScheduled = false
+        }
+    }
+
+    private func pollAndPublishOnQueue(maxBytes: Int) {
+        pollOnQueue(maxBytes: maxBytes)
+        guard !pendingUpdates.isEmpty, !publishScheduled else { return }
+        publishScheduled = true
+        DispatchQueue.main.async { [weak self, weak ptyHandle] in
+            guard let self else { return }
+            ptyHandle?.applyPendingOutput(from: self)
+        }
+    }
+
+    private func pollOnQueue(maxBytes: Int) {
+        var remainingBytes = 64 * 1024
+        while remainingBytes > 0 {
+            switch readHelperManagedUserPtyProcessedOutput(
+                helperClient: helperClient,
+                sessionID: sessionID,
+                maxBytes: min(max(1, maxBytes), remainingBytes),
+                outputProcessor: outputProcessor
+            ) {
+            case .success(let output):
+                remainingBytes -= min(remainingBytes, output.chunk.data.count)
+                var routedToRenderer = false
+                if !output.rendererOutput.isEmpty,
+                   let rendererProxy
+                {
+                    let route = rendererProxy.routeRendererOutputFromOutputPump(
+                        output.rendererOutput
+                    )
+                    routedToRenderer = route.accepted
+                    if !route.healthy {
+                        rendererProxy.invalidate()
+                        self.rendererProxy = nil
+                    }
+                }
+                let processGroupChanged =
+                    output.chunk.foregroundProcessGroupState != .unavailable
+                    && output.chunk.foregroundProcessGroupState
+                        != lastForegroundProcessGroupState
+                if output.chunk.foregroundProcessGroupState != .unavailable {
+                    lastForegroundProcessGroupState =
+                        output.chunk.foregroundProcessGroupState
+                }
+                if !output.chunk.data.isEmpty
+                    || output.chunk.final
+                    || output.responseFailure != nil
+                    || processGroupChanged
+                {
+                    pendingUpdates.append(
+                        .output(
+                            output,
+                            routedToRenderer: routedToRenderer
+                        )
+                    )
+                }
+                guard !output.chunk.data.isEmpty,
+                      output.responseFailure == nil,
+                      !output.chunk.final
+                else {
+                    if output.chunk.final || output.responseFailure != nil {
+                        stopOnQueue()
+                    }
+                    return
+                }
+            case .failure(let diagnostic):
+                pendingUpdates.append(.failure(diagnostic))
+                stopOnQueue()
+                return
+            }
+        }
+    }
+
+    private func takePendingUpdatesOnQueue() -> [AlanHelperManagedUserPtyPendingOutputUpdate] {
+        let updates = pendingUpdates
+        pendingUpdates.removeAll()
+        publishScheduled = false
+        return updates
+    }
+
+    private func stopOnQueue() {
+        timer?.cancel()
+        timer = nil
+    }
+}
+
+fileprivate final class AlanHelperManagedUserPtyRendererProxy {
+    fileprivate struct OutputRoute {
+        let accepted: Bool
+        let healthy: Bool
+    }
+
+    private weak var ptyHandle: AlanHelperManagedUserPtyHandle?
+    private let helperClient: AlanPrivilegedHelperClienting
+    private let sessionID: String
+    private let hostFileDescriptor: Int32
+    private let ioQueue: DispatchQueue
+    private let ioQueueKey = DispatchSpecificKey<UInt8>()
+    private let invalidationLock = NSLock()
+    private var rendererInputSource: DispatchSourceRead?
+    private var rendererOutputWriteSource: DispatchSourceWrite?
+    private var isInvalidated = false
+    private var pendingRendererOutput = Data()
+    private var invalidationHandoffOutput = Data()
+
+    init(
+        ptyHandle: AlanHelperManagedUserPtyHandle,
+        helperClient: AlanPrivilegedHelperClienting,
+        sessionID: String,
+        hostFileDescriptor: Int32,
+        ioQueue: DispatchQueue
+    ) {
+        self.ptyHandle = ptyHandle
+        self.helperClient = helperClient
+        self.sessionID = sessionID
+        self.hostFileDescriptor = hostFileDescriptor
+        self.ioQueue = ioQueue
+        ioQueue.setSpecific(key: ioQueueKey, value: 1)
+    }
+
+    deinit {
+        invalidate()
+    }
+
+    fileprivate func startOnOutputPumpQueue() {
+        dispatchPrecondition(condition: .onQueue(ioQueue))
+        guard !invalidated else { return }
         let inputSource = DispatchSource.makeReadSource(
             fileDescriptor: hostFileDescriptor,
             queue: ioQueue
@@ -625,27 +949,20 @@ private final class AlanHelperManagedUserPtyRendererProxy {
         inputSource.setCancelHandler { [hostFileDescriptor] in
             close(hostFileDescriptor)
         }
-        inputSource.resume()
         rendererInputSource = inputSource
-
-        let timer = DispatchSource.makeTimerSource(queue: ioQueue)
-        timer.schedule(deadline: .now(), repeating: .milliseconds(30))
-        timer.setEventHandler { [weak self] in
-            self?.pollHelperOutput()
-        }
-        timer.resume()
-        helperOutputTimer = timer
+        inputSource.resume()
     }
 
     func invalidate() {
         guard markInvalidated() else { return }
-        rendererInputSource?.cancel()
-        rendererInputSource = nil
-        helperOutputTimer?.cancel()
-        helperOutputTimer = nil
-        rendererOutputWriteSource?.cancel()
-        rendererOutputWriteSource = nil
-        pendingRendererOutput.removeAll()
+        performOnIOQueue {
+            rendererInputSource?.cancel()
+            rendererInputSource = nil
+            rendererOutputWriteSource?.cancel()
+            rendererOutputWriteSource = nil
+            invalidationHandoffOutput.append(pendingRendererOutput)
+            pendingRendererOutput.removeAll()
+        }
         Task { @MainActor [weak self, weak ptyHandle] in
             guard let self else { return }
             ptyHandle?.rendererProxyDidInvalidate(self)
@@ -666,25 +983,21 @@ private final class AlanHelperManagedUserPtyRendererProxy {
         return true
     }
 
-    fileprivate func drainPendingOutputUpdates() -> [AlanHelperManagedUserPtyPendingOutputUpdate] {
-        pendingOutputLock.lock()
-        defer { pendingOutputLock.unlock() }
-        let updates = pendingOutputUpdates
-        pendingOutputUpdates.removeAll()
-        return updates
-    }
-
-    private func enqueueOutputUpdate(_ update: AlanHelperManagedUserPtyPendingOutputUpdate) {
-        pendingOutputLock.lock()
-        pendingOutputUpdates.append(update)
-        pendingOutputLock.unlock()
-        Task { @MainActor [weak self] in
-            self?.ptyHandle?.applyPendingProxyOutput()
+    private func performOnIOQueue(_ operation: () -> Void) {
+        if DispatchQueue.getSpecific(key: ioQueueKey) != nil {
+            operation()
+        } else {
+            ioQueue.sync(execute: operation)
         }
     }
 
-    private func enqueueOutputFailure(_ diagnostic: AlanPrivilegedHelperDiagnostic) {
-        enqueueOutputUpdate(.failure(diagnostic))
+    fileprivate func takeInvalidationHandoffOutput() -> Data {
+        var output = Data()
+        performOnIOQueue {
+            output = invalidationHandoffOutput
+            invalidationHandoffOutput.removeAll()
+        }
+        return output
     }
 
     private func drainRendererInput() {
@@ -712,73 +1025,6 @@ private final class AlanHelperManagedUserPtyRendererProxy {
         }
     }
 
-    private func pollHelperOutput() {
-        guard !invalidated else { return }
-        while true {
-            let readResult = helperClient.readManagedUserPTY(
-                AlanManagedUserPTYReadRequest(
-                    sessionID: sessionID,
-                    maxBytes: 4096
-                )
-            )
-            let output: Data
-            let isFinal: Bool
-            let response: AlanTerminalPtyControlSequenceResponse
-            let responseFailure: AlanPrivilegedHelperDiagnostic?
-            switch readResult {
-            case .success(let chunk):
-                output = chunk.data
-                isFinal = chunk.final
-                response = outputProcessor.process(output)
-                if response.didRespond {
-                    let result = helperClient.writeManagedUserPTY(
-                        AlanManagedUserPTYInputRequest(
-                            sessionID: sessionID,
-                            data: response.ptyResponse
-                        )
-                    )
-                    responseFailure = result.accepted ? nil : result.diagnostic
-                } else {
-                    responseFailure = nil
-                }
-                enqueueOutputUpdate(
-                    .output(
-                        AlanHelperManagedUserPtyProcessedOutput(
-                            chunk: chunk,
-                            rendererOutput: response.rendererOutput,
-                            shellActivityTransition: response.shellActivityTransition,
-                            responseFailure: responseFailure
-                        )
-                    )
-                )
-            case .failure(let diagnostic):
-                enqueueOutputFailure(diagnostic)
-                invalidate()
-                return
-            }
-            guard !output.isEmpty else {
-                if isFinal {
-                    invalidate()
-                }
-                return
-            }
-
-            if responseFailure != nil {
-                invalidate()
-                return
-            }
-
-            if !response.rendererOutput.isEmpty, !forwardRendererOutput(response.rendererOutput) {
-                invalidate()
-                return
-            }
-            if isFinal {
-                invalidate()
-                return
-            }
-        }
-    }
-
     private func writeHelperInput(_ data: Data) -> Bool {
         guard !data.isEmpty, !invalidated else { return false }
         let result = helperClient.writeManagedUserPTY(
@@ -791,10 +1037,18 @@ private final class AlanHelperManagedUserPtyRendererProxy {
         return true
     }
 
-    private func forwardRendererOutput(_ data: Data) -> Bool {
-        guard !data.isEmpty, !invalidated else { return false }
+    fileprivate func routeRendererOutputFromOutputPump(_ data: Data) -> OutputRoute {
+        guard !data.isEmpty else {
+            return OutputRoute(accepted: true, healthy: true)
+        }
+        guard !invalidated else {
+            return OutputRoute(accepted: false, healthy: false)
+        }
         pendingRendererOutput.append(data)
-        return drainPendingRendererOutput()
+        return OutputRoute(
+            accepted: true,
+            healthy: drainPendingRendererOutput()
+        )
     }
 
     private func drainPendingRendererOutput() -> Bool {

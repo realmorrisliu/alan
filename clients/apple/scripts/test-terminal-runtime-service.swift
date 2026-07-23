@@ -5,15 +5,13 @@ import Foundation
 @main
 struct TerminalRuntimeServiceTestRunner {
     static func main() async {
-        await MainActor.run {
-            TerminalRuntimeServiceTests.run()
-        }
+        await TerminalRuntimeServiceTests.run()
     }
 }
 
 @MainActor
 private enum TerminalRuntimeServiceTests {
-    static func run() {
+    static func run() async {
         verifiesSourceTreeRepositoryRootInference()
         verifiesControlSequenceResponderAnswersPrimaryDeviceAttributes()
         verifiesControlSequenceResponderReportsShellActivity()
@@ -26,10 +24,13 @@ private enum TerminalRuntimeServiceTests {
         verifiesWindowRuntimeDefaultPtyRuntimeWiresHelperProvider()
         verifiesManagedUserSurfaceRoutesHelperPtyLifecycleControls()
         verifiesManagedUserDirectDrainReportsShellActivity()
+        await verifiesManagedUserProcessGroupActivityWithoutRenderer()
         verifiesManagedUserRendererAttachmentBridgesHelperSession()
         verifiesAlanGhosttySurfaceDeliveryUsesPtyRuntimeWithoutRenderer()
         verifiesDarwinPtyBackendLaunchesLocalShell()
         verifiesDarwinPtyBackendKeepsLoginShellAlive()
+        await verifiesDarwinPtyTracksUnintegratedShellActivityWithoutRenderer()
+        await verifiesDarwinPtyReplaysRendererlessOutputOnAttachment()
         verifiesRuntimeCwdDoesNotRequireSurfaceRecreation()
         verifiesInstallDiscoveryChangesDoNotRequireSurfaceRecreation()
         verifiesDevChannelPropagatesInstallChannelEnvironment()
@@ -299,6 +300,10 @@ private enum TerminalRuntimeServiceTests {
         expect(handle.snapshot.phase == .running, "Darwin PTY runtime must start running")
         expect(handle.isInputReady, "Darwin PTY runtime must start input-ready")
         expect(
+            handle.shellActivityState == .foregroundCommand,
+            "custom-command PTY runtimes must remain active from launch until completion"
+        )
+        expect(
             waitForDarwinPtyOutput(handle, contains: "ready"),
             "Darwin PTY runtime must capture child output"
         )
@@ -377,6 +382,183 @@ private enum TerminalRuntimeServiceTests {
         expect(
             waitForDarwinPtyOutput(handle, contains: marker, timeout: 4),
             "login shell PTY runtime must execute input over the PTY"
+        )
+    }
+
+    private static func verifiesDarwinPtyTracksUnintegratedShellActivityWithoutRenderer() async {
+        let command = AlanCommandResolution(
+            strategy: .loginShellFallback,
+            executablePath: "/bin/bash",
+            launchPath: "/bin/bash",
+            arguments: ["--noprofile", "--norc"],
+            bootCommand: "/bin/bash --noprofile --norc",
+            surfaceCommand: nil,
+            summary: "Unintegrated login shell",
+            detail: nil,
+            repoRoot: nil,
+            candidates: []
+        )
+        let contentID = "content_terminal_unintegrated_shell_activity"
+        let profile = sampleBootProfile(
+            workingDirectory: "/tmp",
+            command: command,
+            environment: [
+                "ALAN_SHELL_CONTENT_ID": contentID,
+                "TERM": "xterm-256color",
+            ]
+        )
+        let runtime = AlanDarwinTerminalPtyRuntime()
+        let surface = AlanGhosttySurfaceHandle(
+            contentID: contentID,
+            paneID: "pane_unintegrated_shell_activity",
+            bootstrap: FakeAlanGhosttyProcessBootstrap(),
+            ptyRuntime: runtime
+        )
+        surface.configure(
+            mountedAtPaneID: "pane_unintegrated_shell_activity",
+            bootProfile: profile
+        )
+        let handle = runtime.existingHandle(forTerminalContentID: contentID)
+            as! AlanDarwinTerminalPtyHandle
+        defer {
+            if handle.snapshot.exitStatus == nil {
+                _ = handle.writeInput("exit\n")
+                if waitForDarwinPtyExit(handle, timeout: 1) == nil {
+                    _ = handle.sendSignal(.kill)
+                    _ = waitForDarwinPtyExit(handle)
+                }
+            }
+        }
+
+        let idleDeadline = Date().addingTimeInterval(3)
+        while Date() < idleDeadline
+            && surface.snapshot.metadata.activeTaskState != .inactive
+        {
+            try? await Task.sleep(nanoseconds: 20_000_000)
+        }
+        expect(
+            surface.snapshot.metadata.activeTaskState == .inactive,
+            "an unintegrated idle login shell must not remain permanently unknown; "
+                + "PTY=\(handle.shellActivityState) "
+                + "surface=\(String(describing: surface.snapshot.metadata.activeTaskState))"
+        )
+
+        expect(
+            surface.sendControlText("sleep 30\n").applied,
+            "rendererless control delivery must reach the unintegrated login shell"
+        )
+        let foregroundDeadline = Date().addingTimeInterval(1)
+        while Date() < foregroundDeadline
+            && surface.snapshot.metadata.activeTaskState != .foregroundCommand
+        {
+            try? await Task.sleep(nanoseconds: 20_000_000)
+        }
+        expect(
+            surface.snapshot.metadata.activeTaskState == .foregroundCommand,
+            "rendererless PTY process-group activity must protect a foreground command"
+        )
+
+        expect(
+            handle.sendSignal(.interrupt).accepted,
+            "graceful shutdown must signal the actual foreground process group"
+        )
+        let returnedDeadline = Date().addingTimeInterval(3)
+        while Date() < returnedDeadline
+            && surface.snapshot.metadata.activeTaskState != .inactive
+        {
+            try? await Task.sleep(nanoseconds: 20_000_000)
+        }
+        expect(
+            surface.snapshot.metadata.activeTaskState == .inactive,
+            "the shell must return to idle after foreground-process-group interruption"
+        )
+    }
+
+    private static func verifiesDarwinPtyReplaysRendererlessOutputOnAttachment() async {
+        let replayMarker = "alan_renderer_replay_\(UUID().uuidString)"
+        let liveMarker = "alan_renderer_live_\(UUID().uuidString)"
+        let command =
+            "$| = 1; print \"\(replayMarker)\\n\"; "
+            + "scalar <STDIN>; print \"\(liveMarker)\\n\"; while (1) { sleep 1; }"
+        let request = AlanTerminalBootRequest(
+            strategy: .terminalProfileCustomCommand,
+            executablePath: "/usr/bin/perl",
+            arguments: ["-e", command],
+            workingDirectory: "/tmp",
+            environment: ["TERM": "xterm-256color"],
+            bootCommand: command,
+            rendererCompatibilityCommand: nil,
+            managedUserAccountName: nil,
+            terminalProfile: nil
+        )
+        let runtime = AlanDarwinTerminalPtyRuntime()
+        let handle = runtime.handle(
+            forTerminalContentID: "content_terminal_renderer_replay",
+            bootRequest: request
+        ) as! AlanDarwinTerminalPtyHandle
+        defer {
+            if handle.snapshot.exitStatus == nil {
+                _ = handle.sendSignal(.kill)
+                _ = waitForDarwinPtyExit(handle)
+            }
+        }
+
+        let outputDeadline = Date().addingTimeInterval(2)
+        while Date() < outputDeadline
+            && !handle.snapshot.transcriptLines.joined(separator: "\n").contains(replayMarker)
+        {
+            try? await Task.sleep(nanoseconds: 20_000_000)
+        }
+        expect(
+            handle.snapshot.transcriptLines.joined(separator: "\n").contains(replayMarker),
+            "rendererless PTY output must be captured before renderer attachment"
+        )
+
+        let rendererFileDescriptor: Int32
+        switch handle.makeRendererAttachment() {
+        case .attached(let attachment):
+            rendererFileDescriptor = attachment.readFileDescriptor
+        case .rejected(let rejection):
+            fail("renderer replay requires a PTY attachment: \(rejection.code)")
+        }
+        defer { close(rendererFileDescriptor) }
+
+        let continueInput = Data("continue\n".utf8)
+        let writtenBytes = continueInput.withUnsafeBytes { rawBuffer -> Int in
+            guard let baseAddress = rawBuffer.baseAddress else { return -1 }
+            return Darwin.write(rendererFileDescriptor, baseAddress, rawBuffer.count)
+        }
+        expect(
+            writtenBytes == continueInput.count,
+            "renderer ordering test must deliver post-attachment PTY input"
+        )
+
+        var rendererOutput = Data()
+        var buffer = [UInt8](repeating: 0, count: 4096)
+        let replayDeadline = Date().addingTimeInterval(1)
+        while Date() < replayDeadline
+            && !String(decoding: rendererOutput, as: UTF8.self).contains(liveMarker)
+        {
+            let count = Darwin.read(rendererFileDescriptor, &buffer, buffer.count)
+            if count > 0 {
+                rendererOutput.append(buffer, count: count)
+            } else {
+                try? await Task.sleep(nanoseconds: 20_000_000)
+            }
+        }
+        let renderedText = String(decoding: rendererOutput, as: UTF8.self)
+        expect(
+            renderedText.contains(replayMarker),
+            "renderer attachment must replay output consumed while no renderer was present"
+        )
+        guard let replayRange = renderedText.range(of: replayMarker),
+              let liveRange = renderedText.range(of: liveMarker)
+        else {
+            fail("renderer attachment must deliver both replayed and live PTY output")
+        }
+        expect(
+            replayRange.lowerBound < liveRange.lowerBound,
+            "renderer attachment must deliver replayed output before post-attachment PTY output"
         )
     }
 
@@ -1021,6 +1203,7 @@ private enum TerminalRuntimeServiceTests {
             Data("\u{1B}]133;C\u{7}helper-output-a\n".utf8),
             Data("helper-output-b\n\u{1B}]133;D;0\u{7}\u{1B}]133;A\u{7}".utf8),
         ]
+        _ = handle.snapshot
 
         var rendererFileDescriptor: Int32?
         defer {
@@ -1049,6 +1232,42 @@ private enum TerminalRuntimeServiceTests {
         guard let rendererFileDescriptor else {
             fail("managed_user renderer attachment must expose a renderer file descriptor")
         }
+        helper.enqueueOutputChunks(
+            [Data("helper-output-live\n".utf8)],
+            sessionID: "fake-content_terminal_managed_user_renderer"
+        )
+        var replayedRendererOutput = Data()
+        var rendererOutputBuffer = [UInt8](repeating: 0, count: 4096)
+        let replayDeadline = Date().addingTimeInterval(1)
+        while Date() < replayDeadline
+            && !String(decoding: replayedRendererOutput, as: UTF8.self)
+                .contains("helper-output-live")
+        {
+            let count = Darwin.read(
+                rendererFileDescriptor,
+                &rendererOutputBuffer,
+                rendererOutputBuffer.count
+            )
+            if count > 0 {
+                replayedRendererOutput.append(rendererOutputBuffer, count: count)
+            } else {
+                RunLoop.current.run(until: Date().addingTimeInterval(0.02))
+            }
+        }
+        let renderedText = String(decoding: replayedRendererOutput, as: UTF8.self)
+        expect(
+            renderedText.contains("helper-output-b"),
+            "managed_user renderer attachment must replay helper output drained before attachment"
+        )
+        guard let replayRange = renderedText.range(of: "helper-output-b"),
+              let liveRange = renderedText.range(of: "helper-output-live")
+        else {
+            fail("managed_user renderer attachment must deliver replayed and live helper output")
+        }
+        expect(
+            replayRange.lowerBound < liveRange.lowerBound,
+            "managed_user renderer attachment must deliver replayed output before live helper output"
+        )
         let transcriptObserved = waitForPtyOutput(handle, contains: "helper-output-b")
         let helperReadDeadline = Date().addingTimeInterval(1)
         while Date() < helperReadDeadline
@@ -1215,10 +1434,18 @@ private enum TerminalRuntimeServiceTests {
         )
 
         close(rendererFileDescriptor)
-        RunLoop.current.run(until: Date().addingTimeInterval(0.1))
-        helper.outputChunksBySessionID[sessionID] = [
-            Data("\u{1B}]133;D;0\u{7}\u{1B}]133;A\u{7}".utf8)
-        ]
+        let detachedOutputMarker = "helper-output-after-renderer-detach"
+        helper.enqueueOutputChunks(
+            [
+                Data(
+                    (
+                        "\(detachedOutputMarker)\n"
+                            + "\u{1B}]133;D;0\u{7}\u{1B}]133;A\u{7}"
+                    ).utf8
+                )
+            ],
+            sessionID: sessionID
+        )
         let detachedDeadline = Date().addingTimeInterval(1)
         while Date() < detachedDeadline
             && handle.shellActivityState != .shellInput
@@ -1232,6 +1459,118 @@ private enum TerminalRuntimeServiceTests {
                     == [.foregroundCommand, .shellInput, .foregroundCommand, .shellInput],
             "managed_user direct drains must resume after renderer detachment; "
                 + "observed \(observedShellActivity)"
+        )
+
+        let reattachedFileDescriptor: Int32
+        switch handle.makeRendererAttachment() {
+        case .attached(let attachment):
+            reattachedFileDescriptor = attachment.readFileDescriptor
+        case .rejected(let rejection):
+            fail("managed_user detach replay requires reattachment: \(rejection.code)")
+        }
+        defer { close(reattachedFileDescriptor) }
+        var reattachedOutput = Data()
+        var reattachedBuffer = [UInt8](repeating: 0, count: 4096)
+        let reattachedDeadline = Date().addingTimeInterval(1)
+        while Date() < reattachedDeadline
+            && !String(decoding: reattachedOutput, as: UTF8.self)
+                .contains(detachedOutputMarker)
+        {
+            let count = Darwin.read(
+                reattachedFileDescriptor,
+                &reattachedBuffer,
+                reattachedBuffer.count
+            )
+            if count > 0 {
+                reattachedOutput.append(reattachedBuffer, count: count)
+            } else {
+                RunLoop.current.run(until: Date().addingTimeInterval(0.02))
+            }
+        }
+        expect(
+            String(decoding: reattachedOutput, as: UTF8.self)
+                .contains(detachedOutputMarker),
+            "managed_user renderer detachment must hand off unread output for reattachment"
+        )
+    }
+
+    private static func verifiesManagedUserProcessGroupActivityWithoutRenderer() async {
+        let contentID = "content_terminal_managed_user_process_group"
+        let command = AlanCommandResolution(
+            strategy: .terminalProfileManagedUser,
+            executablePath: nil,
+            launchPath: "",
+            arguments: [],
+            bootCommand: "managed_user 'lab'",
+            surfaceCommand: nil,
+            summary: "Managed User lab",
+            detail: nil,
+            repoRoot: nil,
+            candidates: [],
+            managedUserAccountName: "lab"
+        )
+        let profile = sampleBootProfile(
+            workingDirectory: "/Users/lab",
+            command: command,
+            environment: [
+                "ALAN_SHELL_CONTENT_ID": contentID,
+                "ALAN_MANAGED_USER_ACCOUNT": "lab",
+            ]
+        )
+        let helper = AlanPrivilegedHelperFakeClient(channel: .dev)
+        let runtime = AlanDarwinTerminalPtyRuntime(
+            managedUserPtyProvider: AlanHelperManagedUserPtyProvider(helperClient: helper)
+        )
+        let surface = AlanGhosttySurfaceHandle(
+            contentID: contentID,
+            paneID: "pane_managed_user_process_group",
+            bootstrap: FakeAlanGhosttyProcessBootstrap(),
+            ptyRuntime: runtime
+        )
+        surface.configure(
+            mountedAtPaneID: "pane_managed_user_process_group",
+            bootProfile: profile
+        )
+        let sessionID = "fake-\(contentID)"
+        helper.enqueueForegroundProcessGroupStates([.shell], sessionID: sessionID)
+
+        let idleDeadline = Date().addingTimeInterval(1)
+        while Date() < idleDeadline
+            && surface.snapshot.metadata.activeTaskState != .inactive
+        {
+            try? await Task.sleep(nanoseconds: 20_000_000)
+        }
+        expect(
+            surface.snapshot.metadata.activeTaskState == .inactive,
+            "Managed User foreground-process observation must identify an idle helper shell"
+        )
+
+        helper.enqueueForegroundProcessGroupStates([.foreground], sessionID: sessionID)
+        expect(
+            surface.sendControlText("sleep 30\n").applied,
+            "Managed User rendererless input must continue through the helper"
+        )
+        let foregroundDeadline = Date().addingTimeInterval(1)
+        while Date() < foregroundDeadline
+            && surface.snapshot.metadata.activeTaskState != .foregroundCommand
+        {
+            try? await Task.sleep(nanoseconds: 20_000_000)
+        }
+        expect(
+            surface.snapshot.metadata.activeTaskState == .foregroundCommand,
+            "Managed User foreground-process observation must protect rendererless work"
+        )
+
+        helper.enqueueForegroundProcessGroupStates([.shell], sessionID: sessionID)
+        let returnedDeadline = Date().addingTimeInterval(1)
+        while Date() < returnedDeadline
+            && surface.snapshot.metadata.activeTaskState != .inactive
+        {
+            try? await Task.sleep(nanoseconds: 20_000_000)
+        }
+        expect(
+            surface.snapshot.metadata.activeTaskState == .inactive,
+            "Managed User foreground-process observation must return to idle"
         )
     }
 
@@ -2360,7 +2699,7 @@ private enum TerminalRuntimeServiceTests {
             if transcript.contains(needle) {
                 return true
             }
-            usleep(50_000)
+            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
         }
         return false
     }
@@ -2391,7 +2730,7 @@ private enum TerminalRuntimeServiceTests {
                 _ = handle.drainAvailableOutput()
                 return status
             }
-            usleep(50_000)
+            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
         }
         return handle.refreshExitStatus()
     }

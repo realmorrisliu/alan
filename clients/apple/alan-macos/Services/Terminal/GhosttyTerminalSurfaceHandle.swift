@@ -88,10 +88,10 @@ final class AlanGhosttySurfaceHandle: AlanTerminalSurfaceHandle {
                 forTerminalContentID: contentID,
                 bootRequest: bootProfile.bootRequest
             )
+            self.ptyHandle = ptyHandle
             ptyHandle.onShellActivityStateChange = { [weak self] _ in
                 self?.publishPtyShellActivity()
             }
-            self.ptyHandle = ptyHandle
             lastAppliedPtyGrid = nil
         }
         guard currentSnapshot.teardownStatus != .completed else { return }

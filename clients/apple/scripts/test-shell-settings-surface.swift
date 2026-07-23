@@ -345,8 +345,9 @@ private func testPrivilegedHelperXPCBoundaryIsTypedAndChannelScoped() throws {
     try expect(
         oldHelperStatus.state == .outdated
             && oldHelperStatus.installedVersion == "2"
-            && oldHelperStatus.expectedVersion == "3",
-        "v2 helper responses must require a v3 update before diagnosis"
+            && oldHelperStatus.expectedVersion
+                == String(AlanPrivilegedHelperProtocolStatus.currentVersion),
+        "outdated helper responses must require the current protocol before diagnosis"
     )
 
     let stableIdentity = AlanInstallChannel.stable.privilegedHelperIdentity(

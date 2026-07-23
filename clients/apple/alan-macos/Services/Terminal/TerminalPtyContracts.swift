@@ -77,6 +77,23 @@ enum AlanTerminalPtyShellActivityState: Equatable {
     case foregroundCommand
 }
 
+extension AlanLaunchStrategy {
+    var launchesInteractiveShell: Bool {
+        switch self {
+        case .loginShellOverride,
+             .loginShellEnv,
+             .loginShellFallback,
+             .terminalProfileSudoUser,
+             .terminalProfileSudoRoot,
+             .terminalProfileManagedUser:
+            return true
+        case .shellCommandEnv,
+             .terminalProfileCustomCommand:
+            return false
+        }
+    }
+}
+
 enum AlanTerminalPtyRendererAttachmentResult: Equatable {
     case attached(AlanTerminalPtyRendererAttachment)
     case rejected(AlanTerminalPtyOperationResult)

@@ -669,8 +669,8 @@ require_pattern \
 
 require_pattern \
     "clients/apple/alan-macos/Services/Shell/AlanPrivilegedHelperXPC.swift" \
-    "static let currentVersion = 3" \
-    "managed terminal account diagnosis schema changes must advance the helper protocol"
+    "static let currentVersion = 4" \
+    "managed-user foreground-process schema changes must advance the helper protocol"
 
 require_pattern \
     "clients/apple/alan-macos/Services/Shell/ShellCoreFFIManagedTerminalAccountAdapter.swift" \
@@ -791,6 +791,36 @@ require_pattern \
     "clients/apple/alan-macos/Services/Shell/AlanPrivilegedHelperPTYSessionStore.swift" \
     "session\\.pendingInput\\.append\\(eof\\)" \
     "managed_user helper EOF must use the pending input queue"
+
+require_pattern \
+    "clients/apple/alan-macos/Services/Shell/AlanPrivilegedHelperPTYSessionStore.swift" \
+    "tcgetpgrp\\(session\\.masterFileDescriptor\\)" \
+    "managed_user shell activity must come from the helper-owned PTY foreground process group"
+
+require_pattern \
+    "clients/apple/alan-macos/Services/Shell/AlanPrivilegedHelperPTYSessionStore.swift" \
+    "let targetProcessGroupID = foregroundProcessGroupID \\?\\? session\\.processID" \
+    "managed_user PTY signals must target the helper-owned foreground process group"
+
+require_pattern \
+    "clients/apple/alan-macos/Services/Terminal/DarwinTerminalPtyRuntime.swift" \
+    "tcgetpgrp\\(masterFileDescriptor\\)" \
+    "local shell activity must come from the Alan-owned PTY foreground process group"
+
+require_pattern \
+    "clients/apple/alan-macos/Services/Terminal/DarwinTerminalPtyRuntime.swift" \
+    "let targetProcessGroupID = foregroundProcessGroupID \\?\\? processGroupID" \
+    "local PTY signals must target the Alan-owned foreground process group"
+
+require_pattern \
+    "clients/apple/scripts/test-terminal-runtime-service.swift" \
+    "verifiesDarwinPtyTracksUnintegratedShellActivityWithoutRenderer" \
+    "terminal runtime tests must cover rendererless shells without OSC integration"
+
+require_pattern \
+    "clients/apple/scripts/test-terminal-runtime-service.swift" \
+    "verifiesManagedUserProcessGroupActivityWithoutRenderer" \
+    "managed_user tests must cover rendererless helper foreground-process activity"
 
 require_pattern \
     "clients/apple/scripts/test-terminal-runtime-service.swift" \

@@ -108,10 +108,17 @@ struct AlanXPCManagedUserPTYReadRequest: Codable, Equatable {
     let maxBytes: Int
 }
 
+enum AlanXPCManagedUserPTYForegroundProcessGroupState: String, Codable, Equatable {
+    case shell
+    case foreground
+    case unavailable
+}
+
 struct AlanXPCManagedUserPTYOutputChunk: Codable, Equatable {
     let sessionID: String
     let data: Data
     let final: Bool
+    let foregroundProcessGroupState: AlanXPCManagedUserPTYForegroundProcessGroupState
     let sanitizedMessage: String?
 }
 
