@@ -598,8 +598,10 @@ executable-source enforcement.
 The same gate rejects a replacement global Shell store. `ShellHostController`
 remains the only observable owner of a mutable `ShellStateSnapshot`; the two
 accepted transport cache files have fixed non-growing ownership ceilings, and
-all other mutable snapshot storage is rejected. No module-scope, static, or
-class stored snapshot is allowed under any property name. Module scope follows
+all other owner-level stored snapshot state is rejected, including immutable
+copies that could retain stale state. Bounded immutable transfer and result
+values use an exact file-and-type allowlist. No module-scope, static, or class
+stored snapshot is allowed under any property name. Module scope follows
 executable brace depth rather than source indentation, so formatting inside a
 conditional-compilation block cannot hide global state while function-local
 scratch values remain excluded. Comma-separated property bindings are inspected
@@ -607,8 +609,8 @@ individually, while commas nested inside generic types, collections, calls, or
 closures remain part of their binding, so a harmless first binding cannot hide a
 later snapshot owner. Swift's trailing shared type annotation is propagated to
 each preceding uninitialized binding before owners are counted. Files with
-accepted mutable snapshot storage
-also have an exact allowlist of non-owner static utility members, so a singleton
+accepted snapshot storage also have an exact allowlist of non-owner static
+utility members, so a singleton
 entry point cannot bypass the rule by choosing a new alias. Postfix-optional
 `.none` and `.some` type witnesses are treated as inferred target storage rather
 than harmless empty initializers. Explicit `nil as Target?` and
@@ -623,11 +625,13 @@ static/class storage of
 concrete helper-factory, or singleton-instance factory owner; the same
 repository-wide, owner-qualified, full-initializer factory matching applies to
 snapshot storage. Explicit snapshot-valued properties also form a projection
-inventory, so inferred storage through member access is counted even when its
-initializer contains no snapshot constructor or factory. Storage classification
-stops before computed-property bodies, so ordinary projection reads in getters
-do not become owners. An unrelated projection with the same member name can use
-an explicit non-snapshot type to disambiguate its stored value. All production
+inventory, with comma-bound declarations split and their trailing shared type
+propagated to every binding, so inferred storage through any member access is
+counted even when its initializer contains no snapshot constructor or factory.
+Storage classification stops before computed-property bodies, so ordinary
+projection reads in getters do not become owners. An unrelated projection with
+the same member name can use an explicit non-snapshot type to disambiguate its
+stored value. All production
 Swift files are scanned even when the stored property's source file contains no
 literal target type. Strong stored-property references and calls to typed
 controller factories form a transitive inventory of types that retain

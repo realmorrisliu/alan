@@ -885,20 +885,52 @@ typed_value_member_declarations() {
             sub(/^.*(let|var)[ ]+/, "", name)
             return name
         }
-        function record_member(    declaration, member_name, member_type) {
+        function trailing_binding_property_name(value,    name) {
+            name = value
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", name)
+            if (match(name, /^[A-Za-z_][A-Za-z0-9_]*/)) {
+                return substr(name, RSTART, RLENGTH)
+            }
+            return ""
+        }
+        function record_member(    binding_count, binding_end, binding_index, bindings, binding_start, declaration, explicit_type, inherited_types, member_name, member_type, shared_type) {
             if (member_buffer == "") {
                 return
             }
             declaration = member_buffer
             gsub(/[[:space:]]+/, " ", declaration)
-            member_type = binding_type_annotation(declaration)
-            gsub(/^[[:space:]]+|[[:space:]]+$/, "", member_type)
-            if (member_type ~ ("(^|[^A-Za-z0-9_])" target_type "([^A-Za-z0-9_]|$)") &&
-                member_type !~ /->/)
-            {
-                member_name = declared_property_name(declaration)
-                if (member_name != "") {
-                    print member_name
+            binding_start = 1
+            while (binding_start <= length(declaration)) {
+                binding_end = top_level_binding_end(declaration, binding_start)
+                bindings[++binding_count] = substr(declaration, binding_start, binding_end - binding_start)
+                binding_start = binding_end + 1
+            }
+            for (binding_index = binding_count; binding_index >= 1; binding_index--) {
+                explicit_type = binding_type_annotation(bindings[binding_index])
+                gsub(/^[[:space:]]+|[[:space:]]+$/, "", explicit_type)
+                if (explicit_type != "") {
+                    shared_type = explicit_type
+                } else if (binding_stops_shared_type(bindings[binding_index])) {
+                    shared_type = ""
+                } else if (shared_type != "") {
+                    inherited_types[binding_index] = shared_type
+                }
+            }
+            for (binding_index = 1; binding_index <= binding_count; binding_index++) {
+                member_type = binding_type_annotation(bindings[binding_index])
+                gsub(/^[[:space:]]+|[[:space:]]+$/, "", member_type)
+                if (member_type == "") {
+                    member_type = inherited_types[binding_index]
+                }
+                if (member_type ~ ("(^|[^A-Za-z0-9_])" target_type "([^A-Za-z0-9_]|$)") &&
+                    member_type !~ /->/)
+                {
+                    member_name = binding_index == 1 \
+                        ? declared_property_name(bindings[binding_index]) \
+                        : trailing_binding_property_name(bindings[binding_index])
+                    if (member_name != "") {
+                        print member_name
+                    }
                 }
             }
             member_buffer = ""
@@ -2161,10 +2193,14 @@ shell_snapshot_stored_property_counts() {
     local file="$1"
     local factory_inventory="$2"
     local projection_inventory="$3"
+    local immutable_value_owner_inventory="$4"
+    local source_rel="${file#$SOURCE_ROOT/}"
 
     awk \
         -v factory_inventory="$factory_inventory" \
+        -v immutable_value_owner_inventory="$immutable_value_owner_inventory" \
         -v projection_inventory="$projection_inventory" \
+        -v source_rel="$source_rel" \
         "$OWNERSHIP_AWK_HELPERS"'
         BEGIN {
             factory_count = split(factory_inventory, factory_entries, ";")
@@ -2177,6 +2213,15 @@ shell_snapshot_stored_property_counts() {
             for (projection_index = 1; projection_index <= projection_count; projection_index++) {
                 if (projection_entries[projection_index] != "") {
                     snapshot_projections[projection_entries[projection_index]] = 1
+                }
+            }
+            immutable_owner_count = split(immutable_value_owner_inventory, immutable_owner_entries, ";")
+            for (immutable_owner_index = 1;
+                immutable_owner_index <= immutable_owner_count;
+                immutable_owner_index++)
+            {
+                if (immutable_owner_entries[immutable_owner_index] != "") {
+                    immutable_value_owners[immutable_owner_entries[immutable_owner_index]] = 1
                 }
             }
         }
@@ -2200,6 +2245,24 @@ shell_snapshot_stored_property_counts() {
             sub(/[^A-Za-z0-9_.].*$/, "", name)
             sub(/^.*[.]/, "", name)
             return name
+        }
+        function declared_type_kind(value) {
+            if (value ~ /(^|[ ])class[ ]+/) {
+                return "class"
+            }
+            if (value ~ /(^|[ ])struct[ ]+/) {
+                return "struct"
+            }
+            if (value ~ /(^|[ ])actor[ ]+/) {
+                return "actor"
+            }
+            if (value ~ /(^|[ ])enum[ ]+/) {
+                return "enum"
+            }
+            if (value ~ /(^|[ ])protocol[ ]+/) {
+                return "protocol"
+            }
+            return "extension"
         }
         function snapshot_factory_call_matches(call, owner,    name, parts, qualifier, segment_count, qualifier_index) {
             segment_count = split(call, parts, ".")
@@ -2365,14 +2428,18 @@ shell_snapshot_stored_property_counts() {
             }
             return count
         }
-        function count_buffered_instance_property(    property) {
+        function count_buffered_instance_property(    immutable_owner_key, property) {
             if (instance_buffer == "") {
                 return
             }
             property = instance_buffer
             gsub(/[[:space:]]+/, " ", property)
+            immutable_owner_key = source_rel "|" instance_owner
             if (property !~ /(^| )(static|class)[ ]/ &&
-                property ~ /var[ ]+[A-Za-z_][A-Za-z0-9_]*/)
+                property ~ /(let|var)[ ]+[A-Za-z_][A-Za-z0-9_]*/ &&
+                !(instance_owner_kind == "struct" &&
+                    property ~ /(^| )let[ ]+/ &&
+                    immutable_owner_key in immutable_value_owners))
             {
                 instance_count += snapshot_storage_count(property, instance_owner)
             }
@@ -2405,12 +2472,14 @@ shell_snapshot_stored_property_counts() {
             if (line !~ /^[[:space:]]*$/ && !is_standalone_opening_brace(line)) {
                 while (type_depth > 0 && line_indent <= type_indent[type_depth]) {
                     delete type_indent[type_depth]
+                    delete type_kind[type_depth]
                     delete type_name[type_depth]
                     type_depth--
                 }
                 if (is_type_declaration(line)) {
                     type_depth++
                     type_indent[type_depth] = line_indent
+                    type_kind[type_depth] = declared_type_kind(line)
                     type_name[type_depth] = declared_type_name(line)
                 }
             }
@@ -2422,6 +2491,7 @@ shell_snapshot_stored_property_counts() {
                 {
                     instance_buffer = declaration_line
                     instance_indent = line_indent
+                    instance_owner_kind = type_kind[type_depth]
                     instance_owner = type_name[type_depth]
                 }
             } else if (instance_buffer != "" &&
@@ -2495,11 +2565,20 @@ reject_replacement_global_shell_store() {
         "ShellHostController.swift|static let iso8601Formatter = ISO8601DateFormatter()"
         "ShellHostController.swift|static let terminalSelectionFirst = ShellPaneMovementInteractionPolicy()"
     )
+    local immutable_snapshot_value_owner_allowlist=(
+        "Models/Shell/ShellControlPlaneDTOs.swift|AlanShellControlResponse"
+        "Models/Shell/ShellStateRuntimeSupport.swift|ShellStateMutationResult"
+        "Services/Shell/ShellCoreFFIControlAdapter.swift|ShellCoreControlCommandResult"
+        "Services/Shell/ShellLocalCommandExecutor.swift|AlanShellLocalCommandResult"
+        "Services/Shell/ShellWorkspacePersistenceCoordinator.swift|PersistenceContext"
+        "Services/Shell/ShellWorkspacePersistenceStartup.swift|ShellWorkspacePersistenceStartup"
+    )
     local file
     local guarded_alias_declaration
     local guarded_alias_line
     local host_factory_inventory
     local host_owner_type_inventory
+    local immutable_snapshot_value_owner_inventory
     local line_number
     local observable_owner
     local observable_owner_name
@@ -2524,6 +2603,11 @@ reject_replacement_global_shell_store() {
     )"
     snapshot_projection_inventory="$(
         typed_value_member_inventory "ShellStateSnapshot" | sort -u | tr '\n' ';'
+    )"
+    immutable_snapshot_value_owner_inventory="$(
+        printf '%s\n' "${immutable_snapshot_value_owner_allowlist[@]}" \
+            | sort -u \
+            | tr '\n' ';'
     )"
     host_factory_inventory="$(
         typed_factory_inventory "ShellHostController" | sort -u | tr '\n' ';'
@@ -2554,7 +2638,8 @@ reject_replacement_global_shell_store() {
             shell_snapshot_stored_property_counts \
                 "$file" \
                 "$snapshot_factory_inventory" \
-                "$snapshot_projection_inventory"
+                "$snapshot_projection_inventory" \
+                "$immutable_snapshot_value_owner_inventory"
         )"
         snapshot_stored_properties="${snapshot_property_counts%% *}"
         global_snapshot_stored_properties="${snapshot_property_counts##* }"
@@ -2575,7 +2660,7 @@ reject_replacement_global_shell_store() {
             *)
                 if (( snapshot_stored_properties > 0 )); then
                     fail \
-                        "mutable ShellStateSnapshot storage is not an accepted owner: $rel"
+                        "ShellStateSnapshot storage is not in the accepted ownership inventory: $rel"
                 fi
                 ;;
         esac
@@ -2594,7 +2679,7 @@ reject_replacement_global_shell_store() {
                 then
                     printf '%s:%s\n' "$file" "$static_member" >&2
                     fail \
-                        "mutable ShellStateSnapshot owners must not add static/class entry points: $static_member_key"
+                        "ShellStateSnapshot owners must not add static/class entry points: $static_member_key"
                 fi
             done < <(static_property_declarations "$file")
         fi
