@@ -33,29 +33,6 @@ final class MockTerminalRuntimeHandle: TerminalRuntimeHandle {
     }
 }
 
-struct TerminalContentMount: Equatable {
-    let contentID: String
-    let paneSlotID: String
-    let tabID: String
-    let spaceID: String
-
-    init(contentID: String, paneSlotID: String, tabID: String, spaceID: String) {
-        self.contentID = contentID
-        self.paneSlotID = paneSlotID
-        self.tabID = tabID
-        self.spaceID = spaceID
-    }
-
-    init(pane: ShellPane) {
-        self.init(
-            contentID: pane.terminalContentID,
-            paneSlotID: pane.paneID,
-            tabID: pane.tabID,
-            spaceID: pane.spaceID
-        )
-    }
-}
-
 enum TerminalHostAttachmentPolicy: Equatable {
     case immediate
     case deferUntilWindowAttached

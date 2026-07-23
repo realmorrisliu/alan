@@ -115,7 +115,7 @@
 		000000000000000000000032 /* Services/Terminal/TerminalHostOverlayPresenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000132 /* Services/Terminal/TerminalHostOverlayPresenter.swift */; };
 		000000000000000000000033 /* Services/Terminal/TerminalHostViewSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000133 /* Services/Terminal/TerminalHostViewSupport.swift */; };
 		000000000000000000000040 /* Services/Terminal/TerminalContentProjectionAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000140 /* Services/Terminal/TerminalContentProjectionAdapter.swift */; };
-		000000000000000000000041 /* Services/Terminal/TerminalContentLifecycleAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000141 /* Services/Terminal/TerminalContentLifecycleAdapter.swift */; };
+		000000000000000000000041 /* Models/Shell/TerminalContentMount.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000141 /* Models/Shell/TerminalContentMount.swift */; };
 		000000000000000000000042 /* Services/Shell/ShellContentRenderingRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000142 /* Services/Shell/ShellContentRenderingRegistry.swift */; };
 		00000000000000000000007A /* Services/AlanOS/AlanOSAttachmentService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000017A /* Services/AlanOS/AlanOSAttachmentService.swift */; };
 		000000000000000000000043 /* Models/Shell/ShellAutomationCommand.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000143 /* Models/Shell/ShellAutomationCommand.swift */; };
@@ -322,7 +322,7 @@
 		000000000000000000000132 /* Services/Terminal/TerminalHostOverlayPresenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Terminal/TerminalHostOverlayPresenter.swift; sourceTree = "<group>"; };
 		000000000000000000000133 /* Services/Terminal/TerminalHostViewSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Terminal/TerminalHostViewSupport.swift; sourceTree = "<group>"; };
 		000000000000000000000140 /* Services/Terminal/TerminalContentProjectionAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Terminal/TerminalContentProjectionAdapter.swift; sourceTree = "<group>"; };
-		000000000000000000000141 /* Services/Terminal/TerminalContentLifecycleAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Terminal/TerminalContentLifecycleAdapter.swift; sourceTree = "<group>"; };
+		000000000000000000000141 /* Models/Shell/TerminalContentMount.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/Shell/TerminalContentMount.swift; sourceTree = "<group>"; };
 		000000000000000000000142 /* Services/Shell/ShellContentRenderingRegistry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Shell/ShellContentRenderingRegistry.swift; sourceTree = "<group>"; };
 		00000000000000000000017A /* Services/AlanOS/AlanOSAttachmentService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/AlanOS/AlanOSAttachmentService.swift; sourceTree = "<group>"; };
 		000000000000000000000143 /* Models/Shell/ShellAutomationCommand.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/Shell/ShellAutomationCommand.swift; sourceTree = "<group>"; };
@@ -543,6 +543,7 @@
 				A12000000000000000000109 /* Models/Shell/ShellContextSnapshot.swift */,
 				000000000000000000000122 /* Models/Shell/ShellPaneSnapshots.swift */,
 				A11F00000000000000000101 /* Models/Shell/ShellContentSnapshots.swift */,
+				000000000000000000000141 /* Models/Shell/TerminalContentMount.swift */,
 				A11F00000000000000000102 /* Models/Shell/ShellPaneTreeSnapshots.swift */,
 				A11F00000000000000000103 /* Models/Shell/ShellTabSpaceSnapshots.swift */,
 				A11F00000000000000000104 /* Models/Shell/ShellWorkspaceSnapshots.swift */,
@@ -664,7 +665,6 @@
 				A12000000000000000000108 /* Services/Terminal/TerminalAgentActivityAdapter.swift */,
 				000000000000000000000127 /* Services/Terminal/TerminalHostRuntimeReporter.swift */,
 				000000000000000000000128 /* Services/Terminal/TerminalHostWindowObserver.swift */,
-				000000000000000000000141 /* Services/Terminal/TerminalContentLifecycleAdapter.swift */,
 				000000000000000000000140 /* Services/Terminal/TerminalContentProjectionAdapter.swift */,
 				000000000000000000000132 /* Services/Terminal/TerminalHostOverlayPresenter.swift */,
 				000000000000000000000133 /* Services/Terminal/TerminalHostViewSupport.swift */,
@@ -984,7 +984,7 @@
 				A11C00000000000000000002 /* Services/Shell/ShellCloseWorkflow.swift in Sources */,
 				000000000000000000000042 /* Services/Shell/ShellContentRenderingRegistry.swift in Sources */,
 				00000000000000000000007A /* Services/AlanOS/AlanOSAttachmentService.swift in Sources */,
-				000000000000000000000041 /* Services/Terminal/TerminalContentLifecycleAdapter.swift in Sources */,
+				000000000000000000000041 /* Models/Shell/TerminalContentMount.swift in Sources */,
 				000000000000000000000040 /* Services/Terminal/TerminalContentProjectionAdapter.swift in Sources */,
 				000000000000000000000031 /* Services/Terminal/TerminalNativeScrollViewAdapter.swift in Sources */,
 				000000000000000000000032 /* Services/Terminal/TerminalHostOverlayPresenter.swift in Sources */,

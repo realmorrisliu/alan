@@ -34,6 +34,7 @@ CLANG_MODULE_CACHE_PATH="$MODULE_CACHE_DIR" swiftc \
     "$REPO_ROOT/clients/apple/scripts/support/ManagedTerminalAccountTestSupport.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Models/Shell/ShellPaneSnapshots.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Models/Shell/ShellContentSnapshots.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Models/Shell/TerminalContentMount.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Models/Shell/ShellPaneTreeSnapshots.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Models/Shell/ShellTabSpaceSnapshots.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Models/Shell/ShellWorkspaceSnapshots.swift" \
@@ -104,7 +105,6 @@ CLANG_MODULE_CACHE_PATH="$MODULE_CACHE_DIR" swiftc \
     "$REPO_ROOT/clients/apple/alan-macos/Services/Terminal/TerminalBootResolution.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Services/Terminal/TerminalRenderCoordinator.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Services/Terminal/TerminalRuntimePublicationPolicy.swift" \
-    "$REPO_ROOT/clients/apple/alan-macos/Services/Terminal/TerminalContentLifecycleAdapter.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Services/Terminal/TerminalContentProjectionAdapter.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Services/Terminal/TerminalNativeScrollViewAdapter.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Services/Terminal/TerminalSemanticCommands.swift" \

@@ -469,9 +469,8 @@ extension ShellHostController {
         let previousPanesByID = Dictionary(
             uniqueKeysWithValues: shellState.panes.map { ($0.paneID, $0) }
         )
-        terminalContentLifecycle.reconcileRuntimes(
-            afterAdopting: state,
-            registry: terminalRuntimeRegistry
+        terminalRuntimeRegistry.releaseRuntimes(
+            excluding: state.contentStateProjection().activeTerminalMounts
         )
 
         shellState = platformMetadataPreserver.preservingPlatformMetadata(in: state) { [weak self] paneID in

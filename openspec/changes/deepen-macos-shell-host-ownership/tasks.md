@@ -40,10 +40,10 @@
 
 - [x] 4.1 Move close confirmation and graceful shutdown into one concrete close
   workflow owner while keeping pane mutation in shell-core authority.
-- [ ] 4.2 Move terminal release/finalization, buffering, active-task state, and
+- [x] 4.2 Move terminal release/finalization, buffering, active-task state, and
   publication deduplication to `TerminalRuntimeRegistry` or the existing
   stateful reporter.
-- [ ] 4.3 Delete `TerminalContentLifecycleAdapter` after its active-mount
+- [x] 4.3 Delete `TerminalContentLifecycleAdapter` after its active-mount
   projection and lifecycle calls move to shell state and the runtime registry.
 - [ ] 4.4 Verify and retain the projection, publication-policy, metadata,
   activity-normalization, stateful reporter, and C ABI adapters only at their
