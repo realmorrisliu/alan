@@ -438,6 +438,18 @@ readonly OWNERSHIP_AWK_HELPERS='
         }
         return delta
     }
+    function parenthesis_delta(value,    character, column, delta) {
+        delta = 0
+        for (column = 1; column <= length(value); column++) {
+            character = substr(value, column, 1)
+            if (character == "(") {
+                delta++
+            } else if (character == ")") {
+                delta--
+            }
+        }
+        return delta
+    }
     function matching_call_end(value, opening,    character, column, depth) {
         depth = 0
         for (column = opening; column <= length(value); column++) {
@@ -494,6 +506,106 @@ readonly OWNERSHIP_AWK_HELPERS='
     function top_level_binding_end(value, start,    position) {
         position = top_level_character_position(value, ",", start)
         return position > 0 ? position : length(value) + 1
+    }
+    function variable_declaration_position(value,    angle_depth, brace_depth, bracket_depth, character, column, keyword, next_character, parenthesis_depth, previous_character) {
+        for (column = 1; column <= length(value); column++) {
+            character = substr(value, column, 1)
+            if (parenthesis_depth == 0 && bracket_depth == 0 &&
+                brace_depth == 0 && angle_depth == 0)
+            {
+                keyword = substr(value, column, 3)
+                previous_character = substr(value, column - 1, 1)
+                next_character = substr(value, column + 3, 1)
+                if ((keyword == "let" || keyword == "var") &&
+                    (column == 1 || previous_character !~ /[A-Za-z0-9_]/) &&
+                    next_character ~ /[[:space:]]/ &&
+                    substr(value, column + 4) ~ /^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*/)
+                {
+                    return column
+                }
+            }
+            if (character == "(") {
+                parenthesis_depth++
+            } else if (character == ")" && parenthesis_depth > 0) {
+                parenthesis_depth--
+            } else if (character == "[") {
+                bracket_depth++
+            } else if (character == "]" && bracket_depth > 0) {
+                bracket_depth--
+            } else if (character == "{") {
+                brace_depth++
+            } else if (character == "}" && brace_depth > 0) {
+                brace_depth--
+            } else if (character == "<" && is_generic_angle_open(value, column)) {
+                angle_depth++
+            } else if (character == ">" && angle_depth > 0) {
+                angle_depth--
+            }
+        }
+        return 0
+    }
+    function property_attribute_prefix(value,    position, prefix) {
+        position = variable_declaration_position(value)
+        if (position == 0) {
+            return ""
+        }
+        prefix = substr(value, 1, position - 1)
+        return prefix ~ /(^|[[:space:]])@[A-Za-z_]/ ? prefix : ""
+    }
+    function clear_pending_property_attributes() {
+        pending_property_attributes = ""
+        pending_property_attribute_depth = 0
+        pending_property_attribute_indent = -1
+        pending_property_attribute_start_line = 0
+    }
+    # Preserve multiline wrapper initializer arguments until their property
+    # declaration arrives, without attaching attributes to unrelated symbols.
+    function declaration_with_pending_attributes(value, line_number, indent,    has_declaration, is_attribute, result) {
+        combined_declaration_start_line = line_number
+        has_declaration = variable_declaration_position(value) > 0
+        is_attribute = value ~ /^[[:space:]]*@[A-Za-z_][A-Za-z0-9_.]*/
+
+        if (pending_property_attributes != "") {
+            if (pending_property_attribute_depth > 0) {
+                pending_property_attributes = pending_property_attributes " " value
+                pending_property_attribute_depth += parenthesis_delta(value)
+                if (has_declaration && indent == pending_property_attribute_indent &&
+                    pending_property_attribute_depth <= 0)
+                {
+                    result = pending_property_attributes
+                    combined_declaration_start_line = pending_property_attribute_start_line
+                    clear_pending_property_attributes()
+                    return result
+                }
+                return ""
+            }
+            if (is_attribute && !has_declaration &&
+                indent == pending_property_attribute_indent)
+            {
+                pending_property_attributes = pending_property_attributes " " value
+                pending_property_attribute_depth += parenthesis_delta(value)
+                return ""
+            }
+            if (has_declaration && indent == pending_property_attribute_indent) {
+                result = pending_property_attributes " " value
+                combined_declaration_start_line = pending_property_attribute_start_line
+                clear_pending_property_attributes()
+                return result
+            }
+            if (value ~ /^[[:space:]]*$/) {
+                return ""
+            }
+            clear_pending_property_attributes()
+        }
+
+        if (is_attribute && !has_declaration) {
+            pending_property_attributes = value
+            pending_property_attribute_depth = parenthesis_delta(value)
+            pending_property_attribute_indent = indent
+            pending_property_attribute_start_line = line_number
+            return ""
+        }
+        return value
     }
     function binding_type_annotation(value,    assignment, body, colon, end) {
         colon = top_level_character_position(value, ":")
@@ -853,12 +965,7 @@ manifest_state_declarations() {
             }
             return parts[1] == "shared" && ((owner "|" name) in manifest_factories)
         }
-        function inferred_factory_contains_manifest(value, owner,    call, expression) {
-            if (value !~ /=/) {
-                return 0
-            }
-            expression = value
-            sub(/^[^=]*=[ ]*/, "", expression)
+        function manifest_factory_expression_contains(expression, owner,    call) {
             gsub(/[ ]*[.][ ]*/, ".", expression)
             if (instance_receiver_invokes_factory(expression, manifest_factories)) {
                 return 1
@@ -873,6 +980,14 @@ manifest_state_declarations() {
             }
             return 0
         }
+        function inferred_factory_contains_manifest(value, owner,    expression) {
+            if (value !~ /=/) {
+                return 0
+            }
+            expression = value
+            sub(/^[^=]*=[ ]*/, "", expression)
+            return manifest_factory_expression_contains(expression, owner)
+        }
         function inferred_generic_contains_manifest(value,    expression) {
             if (value !~ /=/) {
                 return 0
@@ -884,7 +999,21 @@ manifest_state_declarations() {
             return expression ~ /^[A-Za-z_][A-Za-z0-9_.]*[ ]*<[^>]*ShellContentWorkspaceManifest/ ||
                 expression ~ /^\[[^]]*ShellContentWorkspaceManifest/
         }
-        function record_manifest_binding(declaration,    header, prefix, kind) {
+        function wrapper_attributes_contain_manifest(declaration, owner,    attributes, normalized) {
+            attributes = property_attribute_prefix(declaration)
+            if (attributes == "") {
+                return 0
+            }
+            normalized = attributes
+            gsub(/[ ]*[?][ ]*/, "?", normalized)
+            gsub(/[ ]*[!][ ]*/, "!", normalized)
+            gsub(/[ ]*[.][ ]*/, ".", normalized)
+            return manifest_factory_expression_contains(attributes, owner) ||
+                normalized ~ /(^|[^A-Za-z0-9_])ShellContentWorkspaceManifest[?!][.](none|some)([^A-Za-z0-9_]|$)/ ||
+                attributes ~ /<[^>]*ShellContentWorkspaceManifest/ ||
+                attributes ~ /\[[^]]*ShellContentWorkspaceManifest/
+        }
+        function record_manifest_binding(declaration,    header, prefix, kind, property_position) {
             declaration = trim(declaration)
             if (declaration == "") {
                 return
@@ -892,7 +1021,13 @@ manifest_state_declarations() {
             header = declaration
             sub(/[=].*$/, "", header)
 
-            if (header ~ /:[^=]*ShellContentWorkspaceManifest([^A-Za-z0-9_]|$)/) {
+            if (wrapper_attributes_contain_manifest(declaration, declaration_owner)) {
+                property_position = variable_declaration_position(declaration)
+                prefix = substr(declaration, property_position)
+                sub(/[=:{].*$/, "", prefix)
+                prefix = trim(prefix)
+                kind = "wrapper-initialized"
+            } else if (header ~ /:[^=]*ShellContentWorkspaceManifest([^A-Za-z0-9_]|$)/) {
                 prefix = header
                 sub(/[ ]*:.*/, "", prefix)
                 kind = "typed"
@@ -958,6 +1093,7 @@ manifest_state_declarations() {
             source_line_number = substr(remainder, 1, second_separator - 1)
             line = substr(remainder, second_separator + 1)
             line_indent = leading_space_count(line)
+            declaration_line = declaration_with_pending_attributes(line, source_line_number, line_indent)
             if (line !~ /^[[:space:]]*$/) {
                 while (type_depth > 0 && line_indent <= type_indent[type_depth]) {
                     delete type_indent[type_depth]
@@ -971,10 +1107,12 @@ manifest_state_declarations() {
                 }
             }
 
-            if (line ~ /^[[:space:]]*[^\/]*(let|var)[ ]+[A-Za-z_][A-Za-z0-9_]*/) {
+            if (declaration_line != "" &&
+                variable_declaration_position(declaration_line) > 0)
+            {
                 record_declaration()
-                buffer = line
-                start_line = source_line_number
+                buffer = declaration_line
+                start_line = combined_declaration_start_line
                 declaration_indent = line_indent
                 declaration_owner = type_depth > 0 ? type_name[type_depth] : ""
                 declaration_owner_key = current_type_owner()
@@ -1125,7 +1263,7 @@ shell_host_global_storage_declarations() {
             return value ~ /^[[:space:]]*[^\/]*(static|class)[ ]+([^ ]+[ ]+)*(let|var)[ ]+[A-Za-z_][A-Za-z0-9_]*/
         }
         function is_module_property_start(value) {
-            return value ~ /^[^\/{]*(let|var)[ ]+[A-Za-z_][A-Za-z0-9_]*/
+            return variable_declaration_position(value) > 0
         }
         function is_type_declaration(value) {
             return value ~ /^[[:space:]]*[^\/]*(class|struct|actor|enum|extension|protocol)[ ]+[A-Za-z_][A-Za-z0-9_.]*/
@@ -1802,12 +1940,7 @@ shell_snapshot_stored_property_counts() {
             }
             return parts[1] == "shared" && ((owner "|" name) in snapshot_factories)
         }
-        function uses_snapshot_factory(property, owner,    call, expression) {
-            if (property !~ /=/) {
-                return 0
-            }
-            expression = property
-            sub(/^[^=]*=[ ]*/, "", expression)
+        function snapshot_factory_expression_contains(expression, owner,    call) {
             gsub(/[ ]*[.][ ]*/, ".", expression)
             if (instance_receiver_invokes_factory(expression, snapshot_factories)) {
                 return 1
@@ -1822,6 +1955,14 @@ shell_snapshot_stored_property_counts() {
             }
             return 0
         }
+        function uses_snapshot_factory(property, owner,    expression) {
+            if (property !~ /=/) {
+                return 0
+            }
+            expression = property
+            sub(/^[^=]*=[ ]*/, "", expression)
+            return snapshot_factory_expression_contains(expression, owner)
+        }
         function inferred_generic_contains_snapshot(property,    expression) {
             if (property !~ /=/) {
                 return 0
@@ -1833,12 +1974,7 @@ shell_snapshot_stored_property_counts() {
             return expression ~ /^[A-Za-z_][A-Za-z0-9_.]*[ ]*<[^>]*ShellStateSnapshot/ ||
                 expression ~ /^\[[^]]*ShellStateSnapshot/
         }
-        function uses_snapshot_projection(property,    expression, pattern, projection) {
-            if (property !~ /=/) {
-                return 0
-            }
-            expression = property
-            sub(/^[^=]*=[ ]*/, "", expression)
+        function snapshot_expression_uses_projection(expression,    pattern, projection) {
             gsub(/[ ]*[.][ ]*/, ".", expression)
             for (projection in snapshot_projections) {
                 pattern = "[^[:space:].][.]" projection "([^A-Za-z0-9_]|$)"
@@ -1847,6 +1983,14 @@ shell_snapshot_stored_property_counts() {
                 }
             }
             return 0
+        }
+        function uses_snapshot_projection(property,    expression) {
+            if (property !~ /=/) {
+                return 0
+            }
+            expression = property
+            sub(/^[^=]*=[ ]*/, "", expression)
+            return snapshot_expression_uses_projection(expression)
         }
         function typed_storage_contains_snapshot(property,    type) {
             if (property !~ /:/) {
@@ -1877,8 +2021,24 @@ shell_snapshot_stored_property_counts() {
             gsub(/^[[:space:]]+|[[:space:]]+$/, "", type)
             return type != ""
         }
+        function wrapper_attributes_contain_snapshot(binding, owner,    attributes, normalized) {
+            attributes = property_attribute_prefix(binding)
+            if (attributes == "") {
+                return 0
+            }
+            normalized = attributes
+            gsub(/[ ]*[?][ ]*/, "?", normalized)
+            gsub(/[ ]*[!][ ]*/, "!", normalized)
+            gsub(/[ ]*[.][ ]*/, ".", normalized)
+            return snapshot_factory_expression_contains(attributes, owner) ||
+                snapshot_expression_uses_projection(attributes) ||
+                normalized ~ /(^|[^A-Za-z0-9_])ShellStateSnapshot[?!][.](none|some)([^A-Za-z0-9_]|$)/ ||
+                attributes ~ /<[^>]*ShellStateSnapshot/ ||
+                attributes ~ /\[[^]]*ShellStateSnapshot/
+        }
         function snapshot_binding_contains_storage(binding, owner) {
-            return typed_storage_contains_snapshot(binding) ||
+            return wrapper_attributes_contain_snapshot(binding, owner) ||
+                typed_storage_contains_snapshot(binding) ||
                 binding ~ /=[ ]*ShellStateSnapshot[ ]*([.(]|$)/ ||
                 inferred_generic_contains_snapshot(binding) ||
                 inferred_optional_case_contains_target(binding, "ShellStateSnapshot") ||
@@ -1947,11 +2107,13 @@ shell_snapshot_stored_property_counts() {
             remainder = substr($0, first_separator + 1)
             second_separator = index(remainder, "\t")
             line = substr(remainder, second_separator + 1)
+            source_line_number = substr(remainder, 1, second_separator - 1)
 
             # Follow the formatted type nesting so instance members of both
             # top-level and nested types are counted, while method-local scratch
             # variables remain deeper than their enclosing type member level.
             line_indent = leading_space_count(line)
+            declaration_line = declaration_with_pending_attributes(line, source_line_number, line_indent)
             if (line !~ /^[[:space:]]*$/) {
                 while (type_depth > 0 && line_indent <= type_indent[type_depth]) {
                     delete type_indent[type_depth]
@@ -1967,8 +2129,10 @@ shell_snapshot_stored_property_counts() {
 
             if (type_depth > 0 && line_indent == type_indent[type_depth] + 4) {
                 count_buffered_instance_property()
-                if (line ~ /(let|var)[ ]+[A-Za-z_][A-Za-z0-9_]*/) {
-                    instance_buffer = line
+                if (declaration_line != "" &&
+                    variable_declaration_position(declaration_line) > 0)
+                {
+                    instance_buffer = declaration_line
                     instance_indent = line_indent
                     instance_owner = type_name[type_depth]
                 }
@@ -1983,11 +2147,11 @@ shell_snapshot_stored_property_counts() {
             # Globally addressable storage is either a module-scope declaration
             # or a static/class type member. Method-local variables remain out
             # of this inventory.
-            if (is_static_property_start(line) ||
-                (brace_depth == 0 && is_module_property_start(line)))
+            if (is_static_property_start(declaration_line) ||
+                (brace_depth == 0 && is_module_property_start(declaration_line)))
             {
                 count_buffered_global_property()
-                global_buffer = line
+                global_buffer = declaration_line
                 global_indent = line_indent
                 global_owner = type_depth > 0 ? type_name[type_depth] : ""
             } else if (global_buffer != "" &&

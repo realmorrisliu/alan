@@ -611,7 +611,10 @@ accepted mutable snapshot storage
 also have an exact allowlist of non-owner static utility members, so a singleton
 entry point cannot bypass the rule by choosing a new alias. Postfix-optional
 `.none` and `.some` type witnesses are treated as inferred target storage rather
-than harmless empty initializers.
+than harmless empty initializers. Property-wrapper attributes, including
+multiline initializer argument lists, are folded into their declarations and
+scanned with the same constructor, factory, projection, generic, and optional
+type-witness rules for snapshot and manifest storage.
 Independently, every production Swift file is scanned for module-scope or
 static/class storage of
 `ShellHostController`, including storage inferred from an unqualified, `Self`,
