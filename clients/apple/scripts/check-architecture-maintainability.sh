@@ -633,7 +633,7 @@ readonly OWNERSHIP_AWK_HELPERS='
         return top_level_character_position(value, "=") > 0 ||
             top_level_character_position(value, "{") > 0
     }
-    function inferred_optional_case_contains_target(value, target_type,    expression, pattern) {
+    function inferred_optional_case_contains_target(value, target_type,    cast_pattern, expression, optional_type, pattern) {
         if (value !~ /=/) {
             return 0
         }
@@ -644,8 +644,12 @@ readonly OWNERSHIP_AWK_HELPERS='
         gsub(/[ ]*[?][ ]*/, "?", expression)
         gsub(/[ ]*[!][ ]*/, "!", expression)
         gsub(/[ ]*[.][ ]*/, ".", expression)
-        pattern = "^" target_type "[?!][.](none|some)([^A-Za-z0-9_]|$)"
-        return expression ~ pattern
+        optional_type = "(" target_type "[?!]|Optional[ ]*<[ ]*" target_type "[ ]*>)"
+        pattern = "^(" target_type "[?!]|Optional[ ]*<[ ]*" target_type \
+            "[ ]*>)[.](none|some)([^A-Za-z0-9_]|$)"
+        cast_pattern = "^(nil|[.]none)[ ]+as[!?]?[ ]*" optional_type \
+            "([^A-Za-z0-9_]|$)"
+        return expression ~ pattern || expression ~ cast_pattern
     }
     function instance_receiver_invokes_factory(value, factories,    call_end, pattern, entry, fields, method, opening, receiver, remainder, suffix) {
         for (entry in factories) {
