@@ -5,6 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 APPLE_ROOT="$REPO_ROOT/clients/apple"
 SOURCE_ROOT="$APPLE_ROOT/alan-macos"
+SOURCE_ROOT_REL="clients/apple/alan-macos"
 HELPER_SOURCE_ROOT="$APPLE_ROOT/alan-macos-privileged-helper"
 PROJECT_FILE="$APPLE_ROOT/alan-macos.xcodeproj/project.pbxproj"
 README_FILE="$APPLE_ROOT/README.md"
@@ -24,7 +25,10 @@ warning_inventory_sorted="$(mktemp)"
 warning_baseline_body="$(mktemp)"
 warning_baseline_sorted="$(mktemp)"
 base_warning_baseline="$(mktemp)"
-trap 'rm -f "$warning_inventory" "$warning_inventory_sorted" "$warning_baseline_body" "$warning_baseline_sorted" "$base_warning_baseline"' EXIT
+shell_architecture_base_inventory="$(mktemp)"
+shell_architecture_current_inventory="$(mktemp)"
+shell_architecture_base_tree="$(mktemp -d)"
+trap 'rm -f "$warning_inventory" "$warning_inventory_sorted" "$warning_baseline_body" "$warning_baseline_sorted" "$base_warning_baseline" "$shell_architecture_base_inventory" "$shell_architecture_current_inventory"; rm -rf "$shell_architecture_base_tree"' EXIT
 
 git_command=(git)
 if [[ -n "${ALAN_QUALITY_GIT_DIR:-}" ]]; then
@@ -543,6 +547,128 @@ reject_shell_host_duplicate_selection_state() {
     fi
 }
 
+reject_shell_host_duplicate_persistence_state() {
+    local controller="$SOURCE_ROOT/ShellHostController.swift"
+    local controller_dir="$SOURCE_ROOT/Controllers/Shell"
+    local owner="Services/Shell/ShellWorkspacePersistenceCoordinator.swift"
+
+    # ponytail: conservative token ratchet; move to SwiftSyntax only if harmless
+    # source matches become a recurring maintenance problem.
+    if grep -RIn --include='*.swift' -E \
+        'ShellContentWorkspaceManifest|ManifestFlushScheduling|DebouncedManifestFlushScheduler|manifestFlushScheduler|contentFlush(Scheduled|Pending)|scheduleContentFlush|flushPendingPersistence|syncManifestFromShellState|makeWorkspaceManifestFromShellState|ShellWorkspaceManifestProjector' \
+        "$controller" "$controller_dir" >&2
+    then
+        fail \
+            "shell host persistence state, projection, and scheduling must remain in ShellWorkspacePersistenceCoordinator"
+    fi
+
+    require_existing_single_owner_pattern \
+        "ShellWorkspaceManifestProjector()" \
+        "$owner" \
+        "workspace manifest projector construction"
+    require_existing_single_owner_pattern \
+        "DebouncedManifestFlushScheduler()" \
+        "$owner" \
+        "workspace persistence scheduler construction"
+}
+
+append_static_storage_inventory() {
+    local root="$1"
+
+    (
+        cd "$root"
+        rg -U --count-matches \
+            '(?m)^[\t ]*(?:(?:@[A-Za-z_][A-Za-z0-9_.]*|[A-Za-z_][A-Za-z0-9_]*)(?:\([^\n)]*\))?[\t ]+)*static(?:[\t ]+|\n[\t ]*)+(?:let|var)\b' \
+            . -g '*.swift' || true
+    ) | awk -F: '
+        {
+            count = $NF
+            sub(/:[0-9]+$/, "")
+            sub(/^\.\//, "")
+            for (i = 0; i < count; i++) {
+                print "static-storage|" $0
+            }
+        }
+    '
+}
+
+reject_shell_ownership_drift() {
+    local guarded_reference_pattern
+    local new_references
+
+    guarded_reference_pattern='ShellHostController|ShellStateSnapshot|AlanMacPrimaryShellOwner'
+    guarded_reference_pattern+='|ShellWorkspacePersistenceCoordinator|ShellContentWorkspaceManifest'
+    guarded_reference_pattern+='|ShellWorkspaceManifestStore|ShellWorkspaceManifestProjector'
+    guarded_reference_pattern+='|DebouncedManifestFlushScheduler|ManifestFlushScheduling'
+    guarded_reference_pattern+='|workspaceManifest|manifestStore|manifestProjector|manifestFlushScheduler'
+    guarded_reference_pattern+='|contentFlush(Scheduled|Pending)'
+    guarded_reference_pattern+='|scheduleContentFlush|flushPendingPersistence'
+    guarded_reference_pattern+='|syncManifestFromShellState|makeWorkspaceManifestFromShellState'
+
+    require_existing_single_owner_pattern \
+        "final class AlanMacPrimaryShellOwner: ObservableObject {" \
+        "App/AlanMacPrimaryShellOwner.swift" \
+        "primary shell composition owner"
+    require_existing_single_owner_pattern \
+        "final class ShellHostController: ObservableObject, TerminalHostActivationDelegate {" \
+        "ShellHostController.swift" \
+        "observable shell host owner"
+    require_existing_single_owner_pattern \
+        "final class TerminalRuntimeRegistry: ObservableObject {" \
+        "TerminalRuntimeRegistry.swift" \
+        "terminal runtime state owner"
+    require_existing_single_owner_pattern \
+        "final class ShellWorkspacePersistenceCoordinator {" \
+        "Services/Shell/ShellWorkspacePersistenceCoordinator.swift" \
+        "workspace persistence owner"
+
+    require_single_owner_pattern \
+        "ShellHostController(" \
+        "ShellHostController.swift" \
+        "ShellHostController construction"
+    require_single_owner_pattern \
+        "ShellHostController.live(" \
+        "App/AlanMacPrimaryShellOwner.swift" \
+        "live ShellHostController construction"
+    require_single_owner_pattern \
+        "ShellHostController.init(" \
+        "ShellHostController.swift" \
+        "explicit ShellHostController initializer construction"
+
+    if "${git_command[@]}" cat-file -e "$base_ref^{commit}" 2>/dev/null; then
+        "${git_command[@]}" archive "$base_ref" "$SOURCE_ROOT_REL" \
+            | tar -x -C "$shell_architecture_base_tree"
+
+        {
+            grep -RIn --include='*.swift' -wE "$guarded_reference_pattern" \
+                "$SOURCE_ROOT" || true
+            append_static_storage_inventory "$SOURCE_ROOT"
+        } | sed -E "s#^$SOURCE_ROOT/##; s#:[0-9]+:#|#" \
+            | LC_ALL=C sort >"$shell_architecture_current_inventory"
+
+        {
+            "${git_command[@]}" grep -n -wE "$guarded_reference_pattern" \
+                "$base_ref" -- "$SOURCE_ROOT_REL/*.swift" \
+                | cut -d: -f2- || true
+            append_static_storage_inventory \
+                "$shell_architecture_base_tree/$SOURCE_ROOT_REL"
+        } | sed -E "s#^$SOURCE_ROOT_REL/##; s#:[0-9]+:#|#" \
+            | LC_ALL=C sort >"$shell_architecture_base_inventory"
+
+        new_references="$(
+            comm -13 \
+                "$shell_architecture_base_inventory" \
+                "$shell_architecture_current_inventory"
+        )"
+        if [[ -n "$new_references" ]]; then
+            printf '%s\n' "$new_references" >&2
+            fail "new shell ownership lines or static-storage declarations are outside the accepted production inventory"
+        fi
+    else
+        fail "shell ownership ratchet base is not a commit: $base_ref"
+    fi
+}
+
 reject_swiftui_shell_hot_path_sync_boundaries() {
     local matched=0
     local pattern
@@ -733,6 +859,8 @@ require_shell_core_ffi_raw_symbol_owners
 require_shell_core_action_metadata_query_owners
 reject_shell_host_duplicate_terminal_runtime_state
 reject_shell_host_duplicate_selection_state
+reject_shell_host_duplicate_persistence_state
+reject_shell_ownership_drift
 reject_swiftui_shell_hot_path_sync_boundaries
 
 printf 'Current Swift inventory:\n'

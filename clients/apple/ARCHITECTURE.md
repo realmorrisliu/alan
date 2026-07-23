@@ -564,6 +564,14 @@ content identity, and clears that state during lifecycle release. Render
 priority effects continue through the registry. The architecture gate rejects
 reintroduced controller caches, maps, queues, and publication-policy call sites.
 
+The persistence slice keeps manifest projection and scheduler construction in
+`ShellWorkspacePersistenceCoordinator`. A conservative source ratchet rejects
+their return to controller files, new `ShellHostController` construction
+owners, new persistence references or static-storage declarations, and
+shell-state or shell-owner references outside the base-revision production
+inventory. The inventory intentionally fails closed on matching production
+source text rather than maintaining a partial Swift parser.
+
 The current architecture gate treats
 `clients/apple/scripts/architecture-warning-baseline.txt` as a hard downward
 ratchet. The report must exactly match its structured warning inventory, and

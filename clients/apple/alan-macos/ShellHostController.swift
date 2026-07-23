@@ -358,8 +358,4 @@ final class ShellHostController: ObservableObject, TerminalHostActivationDelegat
         return controller
     }
 }
-
-extension ShellHostController {
-    static let spikePreview = ShellHostController(shellState: .bootstrapDefault())
-}
 #endif
