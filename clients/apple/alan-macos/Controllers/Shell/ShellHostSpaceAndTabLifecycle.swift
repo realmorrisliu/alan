@@ -331,6 +331,19 @@ extension ShellHostController {
         return true
     }
 
+    private func focusedPaneWorkingDirectory() -> String? {
+        guard let pane = focusedPane ?? selectedPane else { return nil }
+        let runtimeCwd = runtime(for: pane.paneID).paneMetadata.workingDirectory
+        return nonEmptyWorkingDirectory(runtimeCwd)
+            ?? nonEmptyWorkingDirectory(pane.cwd)
+    }
+
+    private func nonEmptyWorkingDirectory(_ path: String?) -> String? {
+        guard let path else { return nil }
+        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
     @discardableResult
     func openContentTab(
         _ contentIntent: ShellContentIntent = .terminal(
@@ -348,7 +361,7 @@ extension ShellHostController {
             case .terminal(let launchTarget, let title, let workingDirectory):
                 switch launchTarget {
                 case .shell:
-                    let resolvedTerminalProfileID = targetTerminalProfileID(
+                    let resolvedTerminalProfileID = shellState.terminalProfileIDForNewTerminal(
                         in: spaceID,
                         explicit: terminalProfileID
                     )
@@ -463,7 +476,7 @@ extension ShellHostController {
         workingDirectory: String? = nil,
         terminalProfileID: String? = nil
     ) -> String? {
-        let resolvedTerminalProfileID = targetTerminalProfileID(
+        let resolvedTerminalProfileID = shellState.terminalProfileIDForNewTerminal(
             in: spaceID,
             explicit: terminalProfileID
         )
@@ -487,7 +500,7 @@ extension ShellHostController {
         workingDirectory: String? = nil,
         terminalProfileID: String? = nil
     ) throws -> ShellStateMutationResult {
-        let resolvedTerminalProfileID = targetTerminalProfileID(
+        let resolvedTerminalProfileID = shellState.terminalProfileIDForNewTerminal(
             in: spaceID,
             explicit: terminalProfileID
         )
@@ -587,8 +600,8 @@ extension ShellHostController {
         contentIntent: ShellContentIntent? = nil,
         terminalProfileID: String? = nil
     ) -> String? {
-        let resolvedTerminalProfileID = targetTerminalProfileID(
-            forSplitFromPaneID: paneID,
+        let resolvedTerminalProfileID = shellState.terminalProfileIDForNewSplit(
+            from: paneID,
             explicit: terminalProfileID
         )
         let result: ShellStateMutationResult

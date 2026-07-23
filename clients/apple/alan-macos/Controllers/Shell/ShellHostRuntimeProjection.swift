@@ -57,10 +57,9 @@ extension ShellHostController {
             if effectProjection.processExited {
                 routeActivityNotificationIfNeeded(from: pane, nextActivity: effectProjection.activity)
             }
-            if closePaneAfterChildExitIfNeeded(
-                paneID: paneID,
-                processExited: effectProjection.processExited
-            ) {
+            if effectProjection.processExited,
+               closePaneAfterTerminalRuntimeExit(paneID: paneID)
+            {
                 return
             }
 
@@ -174,10 +173,9 @@ extension ShellHostController {
         if effectProjection.processExited {
             routeActivityNotificationIfNeeded(from: pane, nextActivity: effectProjection.activity)
         }
-        if closePaneAfterChildExitIfNeeded(
-            paneID: paneID,
-            processExited: effectProjection.processExited
-        ) {
+        if effectProjection.processExited,
+           closePaneAfterTerminalRuntimeExit(paneID: paneID)
+        {
             return
         }
 
@@ -577,6 +575,40 @@ extension ShellHostController {
         shellState.spaces
             .flatMap(\.tabs)
             .first { $0.contains(paneID: paneID) }
+    }
+
+    func strongestAttention(in panes: [ShellPane]) -> ShellAttentionState {
+        let now = Date()
+        return panes
+            .map { shellEffectiveAttention(for: $0, now: now) }
+            .max(by: { Self.attentionRank(for: $0) < Self.attentionRank(for: $1) })
+            ?? .idle
+    }
+
+    func publishControlPlaneState(
+        pinSnapshotTabIDs: Set<String> = [],
+        coalesced: Bool = false
+    ) {
+        persistenceCoordinator.publishControlPlaneState(
+            state: shellState,
+            terminalRuntimeRegistry: terminalRuntimeRegistry,
+            controlPlane: controlPlane,
+            pinSnapshotTabIDs: pinSnapshotTabIDs,
+            coalesced: coalesced
+        )
+    }
+
+    static func attentionRank(for attention: ShellAttentionState) -> Int {
+        switch attention {
+        case .idle:
+            return 0
+        case .active:
+            return 1
+        case .notable:
+            return 2
+        case .awaitingUser:
+            return 3
+        }
     }
 
     private func reconcilePaneZoomState() {

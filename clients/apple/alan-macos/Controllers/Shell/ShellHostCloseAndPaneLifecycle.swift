@@ -2,24 +2,6 @@ import Foundation
 
 #if os(macOS)
 extension ShellHostController {
-    func pane(paneID: String) -> ShellPane? {
-        shellState.panes.first { $0.paneID == paneID }
-    }
-
-    private func nextID(prefix: String, existing: [String]) -> String {
-        let nextOrdinal = existing
-            .compactMap { identifier -> Int? in
-                let components = identifier.split(separator: "_")
-                guard let last = components.last else { return nil }
-                return Int(last)
-            }
-            .max()
-            .map { $0 + 1 }
-            ?? (existing.isEmpty ? 1 : existing.count + 1)
-
-        return "\(prefix)_\(nextOrdinal)"
-    }
-
     func closeTab(tabID: String) -> ShellTabCloseResult {
         if let impact = closeGuardImpact(for: .tab(tabID)) {
             return .requiresConfirmation(impact)
@@ -98,7 +80,28 @@ extension ShellHostController {
         return applyClosePaneMutation(paneID: paneID) == .closed
     }
 
-    func confirmAndApplyClose(_ impact: ShellCloseGuardImpact) -> Bool {
+    @discardableResult
+    func requestCloseWindow() -> Bool {
+        requestCloseShellSurface(scope: .window)
+    }
+
+    @discardableResult
+    func requestTerminateApp() -> Bool {
+        requestCloseShellSurface(scope: .app)
+    }
+
+    private func requestCloseShellSurface(scope: ShellCloseGuardScope) -> Bool {
+        // Flush any debounced restore content before tearing down so a clean exit
+        // never loses the most recent transcript.
+        persistenceCoordinator.flushWorkspacePersistence()
+        if let impact = closeGuardImpact(for: scope) {
+            return confirmAndApplyClose(impact)
+        }
+        shutdownTerminalRuntimes()
+        return true
+    }
+
+    private func confirmAndApplyClose(_ impact: ShellCloseGuardImpact) -> Bool {
         closeWorkflow.confirmAndPerformClose(
             impact: impact,
             recordDiagnostic: recordControlPlaneDiagnostic,
@@ -209,38 +212,6 @@ extension ShellHostController {
             return activeTaskState.protectsFromPruning
         }
         return terminalRuntimeRegistry.registeredContentIDs.contains(contentID)
-    }
-
-    func focusedPaneWorkingDirectory() -> String? {
-        guard let pane = focusedPane ?? selectedPane else { return nil }
-        let runtimeCwd = runtime(for: pane.paneID).paneMetadata.workingDirectory
-        return nonEmptyWorkingDirectory(runtimeCwd)
-            ?? nonEmptyWorkingDirectory(pane.cwd)
-    }
-
-    func targetTerminalProfileID(in requestedSpaceID: String?, explicit: String?) -> String? {
-        shellState.terminalProfileIDForNewTerminal(in: requestedSpaceID, explicit: explicit)
-    }
-
-    func targetTerminalProfileID(forSplitFromPaneID paneID: String, explicit: String?) -> String? {
-        shellState.terminalProfileIDForNewSplit(from: paneID, explicit: explicit)
-    }
-
-    private func nonEmptyWorkingDirectory(_ path: String?) -> String? {
-        guard let path else { return nil }
-        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : trimmed
-    }
-
-    @discardableResult
-    func closePaneAfterChildExitIfNeeded(
-        paneID: String,
-        processExited: Bool
-    ) -> Bool {
-        guard processExited else { return false }
-        guard pane(paneID: paneID) != nil else { return false }
-        guard !terminalAutoCloseIsSuppressed(paneID: paneID) else { return false }
-        return applyClosePaneMutation(paneID: paneID) == .closed
     }
 
     private func terminalAutoCloseIsSuppressed(paneID: String) -> Bool {
@@ -399,46 +370,6 @@ extension ShellHostController {
             tabID: result.tabID,
             paneID: result.paneID
         )
-    }
-
-    private var totalTabCount: Int {
-        shellState.spaces.reduce(into: 0) { partialResult, space in
-            partialResult += space.tabs.count
-        }
-    }
-
-    func strongestAttention(in panes: [ShellPane]) -> ShellAttentionState {
-        let now = Date()
-        return panes
-            .map { shellEffectiveAttention(for: $0, now: now) }
-            .max(by: { Self.attentionRank(for: $0) < Self.attentionRank(for: $1) })
-            ?? .idle
-    }
-
-    func publishControlPlaneState(
-        pinSnapshotTabIDs: Set<String> = [],
-        coalesced: Bool = false
-    ) {
-        persistenceCoordinator.publishControlPlaneState(
-            state: shellState,
-            terminalRuntimeRegistry: terminalRuntimeRegistry,
-            controlPlane: controlPlane,
-            pinSnapshotTabIDs: pinSnapshotTabIDs,
-            coalesced: coalesced
-        )
-    }
-
-    static func attentionRank(for attention: ShellAttentionState) -> Int {
-        switch attention {
-        case .idle:
-            return 0
-        case .active:
-            return 1
-        case .notable:
-            return 2
-        case .awaitingUser:
-            return 3
-        }
     }
 }
 #endif
