@@ -570,6 +570,7 @@ reject_shell_host_duplicate_persistence_state() {
 
 reject_replacement_global_shell_store() {
     local controller="$SOURCE_ROOT/ShellHostController.swift"
+    local controller_dir="$SOURCE_ROOT/Controllers/Shell"
     local primary_owner="$SOURCE_ROOT/App/AlanMacPrimaryShellOwner.swift"
     local allowed_static_storage=(
         "ShellHostController.swift|static let terminalSelectionFirst = ShellPaneMovementInteractionPolicy()"
@@ -590,6 +591,10 @@ reject_replacement_global_shell_store() {
         "ShellHostController.live(" \
         "App/AlanMacPrimaryShellOwner.swift" \
         "live ShellHostController construction"
+    require_single_owner_pattern \
+        "ShellHostController.init(" \
+        "ShellHostController.swift" \
+        "explicit ShellHostController initializer construction"
 
     while IFS=: read -r file line_number source_line; do
         rel="${file#$SOURCE_ROOT/}"
@@ -601,7 +606,7 @@ reject_replacement_global_shell_store() {
         fi
     done < <(
         grep -HnE '(^|[[:space:]])(static|class)[[:space:]]+(let|var)([[:space:]]|$)' \
-            "$controller" "$primary_owner" || true
+            "$controller" "$primary_owner" "$controller_dir"/*.swift || true
     )
 
     if grep -RIn --include='*.swift' -E \
