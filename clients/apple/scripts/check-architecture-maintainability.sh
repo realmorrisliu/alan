@@ -316,6 +316,10 @@ swift_code_lines() {
                     column++
                     continue
                 }
+                if (character == "`") {
+                    column++
+                    continue
+                }
 
                 if (interpolation_depth > 0 && character == "(") {
                     interpolation_depth++
@@ -1850,11 +1854,16 @@ shell_snapshot_stored_property_counts() {
             return value !~ /[{]/ ||
                 value ~ /[{][ ]*(didSet|willSet)([^A-Za-z0-9_]|$)/
         }
+        function binding_has_explicit_type(binding,    type) {
+            type = binding_type_annotation(binding)
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", type)
+            return type != ""
+        }
         function snapshot_binding_contains_storage(binding, owner) {
             return typed_storage_contains_snapshot(binding) ||
                 binding ~ /=[ ]*ShellStateSnapshot[ ]*([.(]|$)/ ||
                 inferred_generic_contains_snapshot(binding) ||
-                uses_snapshot_projection(binding) ||
+                (!binding_has_explicit_type(binding) && uses_snapshot_projection(binding)) ||
                 uses_snapshot_factory(binding, owner)
         }
         function snapshot_storage_count(property, owner,    binding_count, binding_end, binding_index, bindings, binding_start, count, effective_binding, explicit_type, inherited_types, shared_type) {

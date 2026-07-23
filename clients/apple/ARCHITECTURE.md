@@ -591,8 +591,9 @@ appear exactly once, so a second owner cannot reuse another declaration's shape.
 Controller-side manifest use, a second projector, or a second scheduler fails
 validation. Those code-ownership scans lex line comments, nested block comments,
 and string-literal prose out before matching while preserving executable string
-interpolations. Architectural documentation and example text therefore remain
-valid without weakening executable-source enforcement.
+interpolations, and normalize backtick-escaped Swift identifiers. Architectural
+documentation and example text therefore remain valid without weakening
+executable-source enforcement.
 
 The same gate rejects a replacement global Shell store. `ShellHostController`
 remains the only observable owner of a mutable `ShellStateSnapshot`; the two
@@ -618,10 +619,12 @@ snapshot storage. Explicit snapshot-valued properties also form a projection
 inventory, so inferred storage through member access is counted even when its
 initializer contains no snapshot constructor or factory. Storage classification
 stops before computed-property bodies, so ordinary projection reads in getters
-do not become owners. All production Swift files are scanned even when the
-stored property's source file contains no literal target type. That prevents a
-global controller singleton even when a closure or wrapper hides the factory
-call and the file stores no snapshot directly. Production aliases that reference
+do not become owners. An unrelated projection with the same member name can use
+an explicit non-snapshot type to disambiguate its stored value. All production
+Swift files are scanned even when the stored property's source file contains no
+literal target type. That prevents a global controller singleton even when a
+closure or wrapper hides the factory call and the file stores no snapshot
+directly. Production aliases that reference
 `ShellHostController`, `ShellStateSnapshot`, or
 `ShellContentWorkspaceManifest` are rejected, keeping contextual factory calls
 such as `.live()` from hiding a guarded ownership type. The current `ObservableObject`
