@@ -95,9 +95,10 @@ final class AlanGhosttySurfaceHandle: AlanTerminalSurfaceHandle {
             lastAppliedPtyGrid = nil
         }
         guard currentSnapshot.teardownStatus != .completed else { return }
+        let metadata = metadataApplyingPtyShellActivity(metadataWithBootProfile(bootProfile))
         updateSnapshot(
             lifecyclePhase: bootProfile == nil ? .pending : .attachable,
-            metadata: metadataWithBootProfile(bootProfile)
+            metadata: metadata
         )
     }
 
@@ -445,15 +446,17 @@ final class AlanGhosttySurfaceHandle: AlanTerminalSurfaceHandle {
         let activeTaskState: ShellTabActiveTaskState
         if metadata.processExited {
             activeTaskState = .inactive
-        } else {
-            switch ptyHandle?.shellActivityState ?? .unknown {
+        } else if let ptyHandle {
+            switch ptyHandle.shellActivityState {
             case .unknown:
-                return metadata
+                activeTaskState = .unknown
             case .shellInput:
                 activeTaskState = .inactive
             case .foregroundCommand:
                 activeTaskState = .foregroundCommand
             }
+        } else {
+            return metadata
         }
 
         guard metadata.activeTaskState != activeTaskState else { return metadata }

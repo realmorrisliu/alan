@@ -71,6 +71,7 @@ struct AlanTerminalPtyControlSequenceResponse: Equatable {
 }
 
 enum AlanTerminalPtyShellActivityState: Equatable {
+    /// No prompt marker has been observed; consumers must preserve this uncertainty conservatively.
     case unknown
     case shellInput
     case foregroundCommand

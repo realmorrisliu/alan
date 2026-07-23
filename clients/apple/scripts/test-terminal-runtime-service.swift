@@ -1251,6 +1251,10 @@ private enum TerminalRuntimeServiceTests {
         surface.configure(mountedAtPaneID: "pane_surface_pty", bootProfile: profile)
 
         expect(!surface.isSurfaceReady, "renderer must not be required for PTY delivery readiness")
+        expect(
+            surface.snapshot.metadata.activeTaskState == .unknown,
+            "unknown PTY shell activity must fail closed before any input is delivered"
+        )
 
         let delivery = surface.sendControlText("pwd\n")
         let handle = runtime.existingHandle(forTerminalContentID: contentID)
@@ -1261,8 +1265,12 @@ private enum TerminalRuntimeServiceTests {
             "surface delivery must write to the PTY handle rather than Ghostty renderer text"
         )
         expect(
-            surface.snapshot.metadata.activeTaskState == .inactive,
-            "accepted newline text must not infer foreground command activity"
+            handle.shellActivityState == .unknown,
+            "accepted newline text must not infer PTY shell activity"
+        )
+        expect(
+            surface.snapshot.metadata.activeTaskState == .unknown,
+            "unknown PTY shell activity must fail closed until a prompt marker is observed"
         )
 
         handle.recordShellActivityState(.foregroundCommand)
