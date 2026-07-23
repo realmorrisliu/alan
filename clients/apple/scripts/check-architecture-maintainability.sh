@@ -572,6 +572,22 @@ reject_replacement_global_shell_store() {
     local controller="$SOURCE_ROOT/ShellHostController.swift"
     local controller_dir="$SOURCE_ROOT/Controllers/Shell"
     local primary_owner="$SOURCE_ROOT/App/AlanMacPrimaryShellOwner.swift"
+    local observable_owner_allowlist=(
+        "App/AlanMacPrimaryShellOwner.swift|final class AlanMacPrimaryShellOwner: ObservableObject {"
+        "App/AlanMacUpdateController.swift|final class AlanMacUpdateController: NSObject, ObservableObject {"
+        "Models/Shell/ShellSpaceCreationProfileOptions.swift|final class ShellSpaceCreationProfileOptionStore: ObservableObject {"
+        "Services/AlanOS/AlanOSAttachmentService.swift|final class AlanOSAttachmentController: ObservableObject {"
+        "ShellHostController.swift|final class ShellHostController: ObservableObject, TerminalHostActivationDelegate {"
+        "Support/ShellSidebarSpaceSliderWheelMonitor.swift|final class ShellSidebarTabListWheelRouter: ObservableObject {"
+        "Support/ShellVoiceCommandController.swift|final class ShellVoiceCommandController: NSObject, ObservableObject, NSSpeechRecognizerDelegate {"
+        "TerminalRuntimeRegistry.swift|final class TerminalRuntimeRegistry: ObservableObject {"
+    )
+    local observable_shell_state_use_allowlist=(
+        "ShellHostController.swift|@Published var shellState: ShellStateSnapshot"
+        "ShellHostController.swift|shellState: ShellStateSnapshot,"
+        "TerminalRuntimeRegistry.swift|func activeTaskByTabID(in state: ShellStateSnapshot) -> [String: ShellTabActiveTaskState] {"
+        "TerminalRuntimeRegistry.swift|in state: ShellStateSnapshot"
+    )
     local allowed_static_storage=(
         "ShellHostController.swift|static let terminalSelectionFirst = ShellPaneMovementInteractionPolicy()"
         "ShellHostController.swift|static let gracefulShutdownPollInterval: TimeInterval = 0.05"
@@ -580,8 +596,10 @@ reject_replacement_global_shell_store() {
     local file
     local key
     local line_number
+    local owner_entry
     local rel
     local source_line
+    local use_key
 
     require_single_owner_pattern \
         "ShellHostController(" \
@@ -608,6 +626,39 @@ reject_replacement_global_shell_store() {
         grep -HnE '(^|[[:space:]])(static|class)[[:space:]]+(let|var)([[:space:]]|$)' \
             "$controller" "$primary_owner" "$controller_dir"/*.swift || true
     )
+
+    # ponytail: exact owner inventory; admit another observation owner only through
+    # an explicit architecture change instead of teaching this shell check Swift syntax.
+    while IFS=: read -r file line_number source_line; do
+        rel="${file#$SOURCE_ROOT/}"
+        source_line="${source_line#"${source_line%%[![:space:]]*}"}"
+        use_key="$rel|$source_line"
+        if ! contains_line "$use_key" "${observable_owner_allowlist[@]}"; then
+            printf '%s:%s:%s\n' "$file" "$line_number" "$source_line" >&2
+            fail "new observable shell state owner is not in the accepted architecture: $use_key"
+        fi
+    done < <(
+        grep -RIn --include='*.swift' -w 'ObservableObject' "$SOURCE_ROOT" || true
+    )
+
+    for owner_entry in "${observable_owner_allowlist[@]}"; do
+        rel="${owner_entry%%|*}"
+        while IFS=: read -r file line_number source_line; do
+            source_line="${source_line#"${source_line%%[![:space:]]*}"}"
+            use_key="$rel|$source_line"
+            if ! contains_line "$use_key" "${observable_shell_state_use_allowlist[@]}"; then
+                printf '%s:%s:%s\n' "$file" "$line_number" "$source_line" >&2
+                fail "observable shell state use is not in the accepted owner inventory: $use_key"
+            fi
+        done < <(grep -Hn -w 'ShellStateSnapshot' "$SOURCE_ROOT/$rel" || true)
+    done
+
+    if grep -RIn --include='*.swift' -E \
+        '(^|[^A-Za-z0-9_])@([A-Za-z_][A-Za-z0-9_]*\.)*Observable([^A-Za-z0-9_]|$)' \
+        "$SOURCE_ROOT" >&2
+    then
+        fail "new @Observable shell state owners require an explicit architecture owner"
+    fi
 
     if grep -RIn --include='*.swift' -E \
         '(^|[^A-Za-z0-9_])(Shell(Store|Model)|ShellState(Store|Model)|ShellWorkspace(Store|Model))([^A-Za-z0-9_]|$)' \
