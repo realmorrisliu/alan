@@ -945,7 +945,7 @@ run_restart_restore_step() {
 
     cwd_json=$(json_escape_fragment "$RESTART_RESTORE_CWD")
     before_json=$(json_escape_fragment "$before_token")
-    printf -v terminal_payload 'cd \\"%s\\"; echo %s; sleep 30\\n' \
+    printf -v terminal_payload 'cd \\"%s\\"\\necho %s\\nsleep 30\\n' \
         "$cwd_json" "$before_json"
     if ! terminal_result=$(send_terminal_payload_until_applied \
         "$pane_id" \

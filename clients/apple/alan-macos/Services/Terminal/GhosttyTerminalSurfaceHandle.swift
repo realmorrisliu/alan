@@ -25,6 +25,7 @@ final class AlanGhosttySurfaceHandle: AlanTerminalSurfaceHandle {
     private var latestHostRuntime: TerminalHostRuntimeSnapshot?
     private var lastAppliedPtyGrid: AlanTerminalPtyDimensions?
     private var transcriptRingBufferLines: [String] = []
+    private var metadataObserver: ((TerminalPaneMetadataSnapshot) -> Void)?
     private(set) var seededTranscriptSnapshot: TerminalTranscriptSnapshot?
 #if canImport(GhosttyKit)
     private let liveHost = AlanGhosttyLiveHost()
@@ -82,10 +83,15 @@ final class AlanGhosttySurfaceHandle: AlanTerminalSurfaceHandle {
         self.paneID = paneID
         self.bootProfile = bootProfile
         if let bootProfile {
-            ptyHandle = ptyRuntime.handle(
+            ptyHandle?.onShellActivityStateChange = nil
+            let ptyHandle = ptyRuntime.handle(
                 forTerminalContentID: contentID,
                 bootRequest: bootProfile.bootRequest
             )
+            ptyHandle.onShellActivityStateChange = { [weak self] _ in
+                self?.publishPtyShellActivity()
+            }
+            self.ptyHandle = ptyHandle
             lastAppliedPtyGrid = nil
         }
         guard currentSnapshot.teardownStatus != .completed else { return }
@@ -122,6 +128,7 @@ final class AlanGhosttySurfaceHandle: AlanTerminalSurfaceHandle {
             onMetadataChange(currentSnapshot.metadata)
             return
         }
+        metadataObserver = onMetadataChange
 
         updateSnapshot(lifecyclePhase: .bootstrapping, attachedViewCount: 1)
         let diagnostics = bootstrap.ensureReady()
@@ -165,6 +172,7 @@ final class AlanGhosttySurfaceHandle: AlanTerminalSurfaceHandle {
         }
         liveHost.onMetadataChange = { [weak self] metadata in
             guard let self else { return }
+            let metadata = metadataApplyingPtyShellActivity(metadata)
             updateSnapshot(metadata: metadata)
             onMetadataChange(metadata)
         }
@@ -192,7 +200,7 @@ final class AlanGhosttySurfaceHandle: AlanTerminalSurfaceHandle {
         resizePtyToRendererGridIfAvailable()
         updateSnapshot(
             lifecyclePhase: liveHost.isSurfaceReady ? .attached : .attachable,
-            metadata: liveHost.latestMetadata
+            metadata: metadataApplyingPtyShellActivity(liveHost.latestMetadata)
         )
 #else
         let renderer = TerminalRendererSnapshot(
@@ -258,7 +266,7 @@ final class AlanGhosttySurfaceHandle: AlanTerminalSurfaceHandle {
             )
         }
 
-        return recordInputDelivery(ptyHandle.writeInput(text), text: text)
+        return recordDelivery(ptyHandle.writeInput(text))
     }
 
     func sendControlKey(_ key: TerminalRuntimeControlKey) -> TerminalRuntimeDeliveryResult {
@@ -301,7 +309,7 @@ final class AlanGhosttySurfaceHandle: AlanTerminalSurfaceHandle {
         case .returnKey:
             text = "\r"
         }
-        return recordInputDelivery(ptyHandle.writeInput(text), text: text)
+        return recordDelivery(ptyHandle.writeInput(text))
     }
 
     func requestGracefulShutdown(
@@ -362,8 +370,10 @@ final class AlanGhosttySurfaceHandle: AlanTerminalSurfaceHandle {
 #if canImport(GhosttyKit)
         liveHost.teardown()
 #endif
+        ptyHandle?.onShellActivityStateChange = nil
         _ = ptyHandle?.terminateForCleanup()
         ptyHandle = nil
+        metadataObserver = nil
         updateSnapshot(
             lifecyclePhase: .closed,
             metadata: .placeholder,
@@ -396,18 +406,6 @@ final class AlanGhosttySurfaceHandle: AlanTerminalSurfaceHandle {
         return delivery
     }
 
-    private func recordInputDelivery(
-        _ delivery: TerminalRuntimeDeliveryResult,
-        text: String
-    ) -> TerminalRuntimeDeliveryResult {
-#if canImport(GhosttyKit)
-        if delivery.applied {
-            liveHost.recordProgrammaticCommandSubmission(in: text)
-        }
-#endif
-        return recordDelivery(delivery)
-    }
-
     private func resizePtyToRendererGridIfAvailable() {
         guard let rendererGrid = rendererTerminalGridForPtyResize else { return }
         guard rendererGrid.isUsable else { return }
@@ -430,6 +428,47 @@ final class AlanGhosttySurfaceHandle: AlanTerminalSurfaceHandle {
         }
 #endif
         return nil
+    }
+
+    private func publishPtyShellActivity() {
+        let metadata = metadataApplyingPtyShellActivity(currentSnapshot.metadata)
+        guard metadata.activeTaskState != currentSnapshot.metadata.activeTaskState else {
+            return
+        }
+        updateSnapshot(metadata: metadata)
+        metadataObserver?(metadata)
+    }
+
+    private func metadataApplyingPtyShellActivity(
+        _ metadata: TerminalPaneMetadataSnapshot
+    ) -> TerminalPaneMetadataSnapshot {
+        let activeTaskState: ShellTabActiveTaskState
+        if metadata.processExited {
+            activeTaskState = .inactive
+        } else {
+            switch ptyHandle?.shellActivityState ?? .unknown {
+            case .unknown:
+                return metadata
+            case .shellInput:
+                activeTaskState = .inactive
+            case .foregroundCommand:
+                activeTaskState = .foregroundCommand
+            }
+        }
+
+        guard metadata.activeTaskState != activeTaskState else { return metadata }
+        return TerminalPaneMetadataSnapshot(
+            title: metadata.title,
+            workingDirectory: metadata.workingDirectory,
+            summary: metadata.summary,
+            attention: metadata.attention,
+            processExited: metadata.processExited,
+            lastCommandExitCode: metadata.lastCommandExitCode,
+            lastUpdatedAt: metadata.lastUpdatedAt,
+            activeTaskState: activeTaskState,
+            activity: metadata.activity,
+            clearsActivity: metadata.clearsActivity
+        )
     }
 
     private func updateSnapshot(

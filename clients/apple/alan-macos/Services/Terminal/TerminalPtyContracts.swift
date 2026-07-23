@@ -63,10 +63,17 @@ struct AlanTerminalPtyRendererAttachment: Equatable {
 struct AlanTerminalPtyControlSequenceResponse: Equatable {
     let rendererOutput: Data
     let ptyResponse: Data
+    let shellActivityTransition: AlanTerminalPtyShellActivityState?
 
     var didRespond: Bool {
         !ptyResponse.isEmpty
     }
+}
+
+enum AlanTerminalPtyShellActivityState: Equatable {
+    case unknown
+    case shellInput
+    case foregroundCommand
 }
 
 enum AlanTerminalPtyRendererAttachmentResult: Equatable {
@@ -92,6 +99,8 @@ protocol AlanTerminalPtyHandle: AnyObject {
     var bootRequest: AlanTerminalBootRequest { get }
     var snapshot: AlanTerminalPtyRuntimeSnapshot { get }
     var isInputReady: Bool { get }
+    var shellActivityState: AlanTerminalPtyShellActivityState { get }
+    var onShellActivityStateChange: ((AlanTerminalPtyShellActivityState) -> Void)? { get set }
 
     func writeInput(_ text: String) -> TerminalRuntimeDeliveryResult
     func resize(columns: Int, rows: Int) -> AlanTerminalPtyOperationResult

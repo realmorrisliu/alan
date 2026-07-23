@@ -84,6 +84,8 @@ final class FakeAlanTerminalPtyHandle: AlanTerminalPtyHandle {
     private(set) var inputClosed = false
     private(set) var exitStatus: AlanTerminalProcessExitStatus?
     private var transcriptRingBufferLines: [String] = []
+    private(set) var shellActivityState: AlanTerminalPtyShellActivityState = .unknown
+    var onShellActivityStateChange: ((AlanTerminalPtyShellActivityState) -> Void)?
 
     init(contentID: String, bootRequest: AlanTerminalBootRequest) {
         self.contentID = contentID
@@ -200,6 +202,12 @@ final class FakeAlanTerminalPtyHandle: AlanTerminalPtyHandle {
     func markExited(_ status: AlanTerminalProcessExitStatus) {
         exitStatus = status
         phase = .exited
+    }
+
+    func recordShellActivityState(_ state: AlanTerminalPtyShellActivityState) {
+        guard state != shellActivityState else { return }
+        shellActivityState = state
+        onShellActivityStateChange?(state)
     }
 }
 

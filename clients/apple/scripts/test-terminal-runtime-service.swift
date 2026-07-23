@@ -16,6 +16,7 @@ private enum TerminalRuntimeServiceTests {
     static func run() {
         verifiesSourceTreeRepositoryRootInference()
         verifiesControlSequenceResponderAnswersPrimaryDeviceAttributes()
+        verifiesControlSequenceResponderReportsShellActivity()
         verifiesGhosttyTerminfoEnvironmentProjection()
         verifiesBootProfileExposesStructuredBootRequest()
         verifiesManagedUserLaunchResolutionUsesHelperIdentityWithoutSudo()
@@ -162,6 +163,63 @@ private enum TerminalRuntimeServiceTests {
             "non-query OSC sequences must continue to Ghostty unchanged"
         )
         expect(response.ptyResponse.isEmpty, "non-query OSC sequences must not emit PTY responses")
+    }
+
+    private static func verifiesControlSequenceResponderReportsShellActivity() {
+        var responder = AlanTerminalPtyControlSequenceResponder()
+
+        var response = responder.process(Data("\u{1B}]133;C\u{7}".utf8))
+        expect(
+            response.shellActivityTransition == .foregroundCommand,
+            "OSC 133 C must report foreground command activity"
+        )
+        expect(
+            response.rendererOutput == Data("\u{1B}]133;C\u{7}".utf8),
+            "shell activity markers must continue to Ghostty unchanged"
+        )
+
+        response = responder.process(Data("stdin line\n".utf8))
+        expect(
+            response.shellActivityTransition == nil,
+            "ordinary newline-delimited PTY input or output must not be treated as a command"
+        )
+
+        response = responder.process(Data("\u{1B}]133;D;0\u{7}".utf8))
+        expect(
+            response.shellActivityTransition == nil,
+            "command completion must remain active until shell integration returns to a prompt"
+        )
+
+        response = responder.process(Data("\u{1B}]133;A;cl=line\u{7}".utf8))
+        expect(
+            response.shellActivityTransition == .shellInput,
+            "OSC 133 prompt start must report shell input readiness"
+        )
+
+        response = responder.process(Data("\u{1B}]133;Cextra\u{7}".utf8))
+        expect(
+            response.shellActivityTransition == nil,
+            "malformed OSC 133 command markers must not change shell activity"
+        )
+
+        response = responder.process(
+            Data("\u{1B}]133;A\u{7}\u{1B}]133;C;aid=next\u{1B}\\".utf8)
+        )
+        expect(
+            response.shellActivityTransition == .foregroundCommand,
+            "the last semantic transition in one PTY chunk must win"
+        )
+
+        response = responder.process(Data("\u{1B}]133;".utf8))
+        expect(
+            response.shellActivityTransition == nil,
+            "partial shell integration markers must be buffered across PTY chunks"
+        )
+        response = responder.process(Data("B\u{7}".utf8))
+        expect(
+            response.shellActivityTransition == .shellInput,
+            "split OSC 133 prompt markers must preserve semantic state"
+        )
     }
 
     private static func verifiesGhosttyTerminfoEnvironmentProjection() {
@@ -956,9 +1014,11 @@ private enum TerminalRuntimeServiceTests {
             forTerminalContentID: "content_terminal_managed_user_renderer",
             bootRequest: request
         )
+        var observedShellActivity: [AlanTerminalPtyShellActivityState] = []
+        handle.onShellActivityStateChange = { observedShellActivity.append($0) }
         helper.outputChunksBySessionID["fake-content_terminal_managed_user_renderer"] = [
-            Data("helper-output-a\n".utf8),
-            Data("helper-output-b\n".utf8),
+            Data("\u{1B}]133;C\u{7}helper-output-a\n".utf8),
+            Data("helper-output-b\n\u{1B}]133;D;0\u{7}\u{1B}]133;A\u{7}".utf8),
         ]
 
         var rendererFileDescriptor: Int32?
@@ -1007,6 +1067,11 @@ private enum TerminalRuntimeServiceTests {
         expect(
             transcriptObserved,
             "managed_user renderer attachment must update the fallback transcript from helper output"
+        )
+        expect(
+            observedShellActivity == [.foregroundCommand, .shellInput],
+            "managed_user renderer output must publish OSC 133 activity through the PTY handle; "
+                + "observed \(observedShellActivity)"
         )
 
         let binaryRendererInput = Data([0xff, 0x00, 0x1b, 0x7f])
@@ -1076,6 +1141,21 @@ private enum TerminalRuntimeServiceTests {
         expect(
             handle.deliveredText == ["pwd\n"],
             "surface delivery must write to the PTY handle rather than Ghostty renderer text"
+        )
+        expect(
+            surface.snapshot.metadata.activeTaskState == .inactive,
+            "accepted newline text must not infer foreground command activity"
+        )
+
+        handle.recordShellActivityState(.foregroundCommand)
+        expect(
+            surface.snapshot.metadata.activeTaskState == .foregroundCommand,
+            "Alan-owned PTY shell activity must protect the terminal surface"
+        )
+        handle.recordShellActivityState(.shellInput)
+        expect(
+            surface.snapshot.metadata.activeTaskState == .inactive,
+            "returning to shell input must clear foreground command protection"
         )
 
         let shutdown = surface.requestGracefulShutdown(reason: .paneClose)

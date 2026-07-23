@@ -45,6 +45,7 @@ struct AlanTerminalPtyControlSequenceResponder: Equatable {
     mutating func process(_ data: Data) -> AlanTerminalPtyControlSequenceResponse {
         var rendererOutput: [UInt8] = []
         var ptyResponse: [UInt8] = []
+        var shellActivityTransition: AlanTerminalPtyShellActivityState?
 
         for byte in data {
             switch state {
@@ -101,11 +102,11 @@ struct AlanTerminalPtyControlSequenceResponder: Equatable {
             case .osc:
                 pendingControlSequence.append(byte)
                 if byte == Self.bellByte {
-                    Self.completeOSCSequence(
+                    shellActivityTransition = Self.completeOSCSequence(
                         pendingControlSequence,
                         rendererOutput: &rendererOutput,
                         ptyResponse: &ptyResponse
-                    )
+                    ) ?? shellActivityTransition
                     pendingControlSequence.removeAll(keepingCapacity: true)
                     state = .normal
                 } else if byte == Self.escapeByte {
@@ -119,11 +120,11 @@ struct AlanTerminalPtyControlSequenceResponder: Equatable {
             case .oscEscape:
                 pendingControlSequence.append(byte)
                 if byte == Self.backslashByte {
-                    Self.completeOSCSequence(
+                    shellActivityTransition = Self.completeOSCSequence(
                         pendingControlSequence,
                         rendererOutput: &rendererOutput,
                         ptyResponse: &ptyResponse
-                    )
+                    ) ?? shellActivityTransition
                     pendingControlSequence.removeAll(keepingCapacity: true)
                     state = .normal
                 } else if pendingControlSequence.count > Self.maxBufferedControlSequenceBytes {
@@ -138,7 +139,8 @@ struct AlanTerminalPtyControlSequenceResponder: Equatable {
 
         return AlanTerminalPtyControlSequenceResponse(
             rendererOutput: Data(rendererOutput),
-            ptyResponse: Data(ptyResponse)
+            ptyResponse: Data(ptyResponse),
+            shellActivityTransition: shellActivityTransition
         )
     }
 
@@ -186,37 +188,71 @@ struct AlanTerminalPtyControlSequenceResponder: Equatable {
         _ bytes: [UInt8],
         rendererOutput: inout [UInt8],
         ptyResponse: inout [UInt8]
-    ) {
+    ) -> AlanTerminalPtyShellActivityState? {
         if isBackgroundColorQuery(bytes) {
             ptyResponse.append(contentsOf: backgroundColorResponse)
-        } else {
-            rendererOutput.append(contentsOf: bytes)
+            return nil
         }
+        rendererOutput.append(contentsOf: bytes)
+        return shellActivityTransition(in: bytes)
     }
 
     private static func isBackgroundColorQuery(_ bytes: [UInt8]) -> Bool {
-        let payloadRange: Range<Int>
+        guard let payloadRange = oscPayloadRange(in: bytes) else { return false }
+        let payload = String(decoding: bytes[payloadRange], as: UTF8.self)
+        return payload == "11;?"
+    }
+
+    private static func shellActivityTransition(
+        in bytes: [UInt8]
+    ) -> AlanTerminalPtyShellActivityState? {
+        guard let payloadRange = oscPayloadRange(in: bytes) else { return nil }
+        let payload = bytes[payloadRange]
+        let prefix = Array("133;".utf8)
+        guard payload.starts(with: prefix), payload.count >= prefix.count + 1 else {
+            return nil
+        }
+
+        let actionIndex = payload.index(payload.startIndex, offsetBy: prefix.count)
+        let action = payload[actionIndex]
+        let trailingIndex = payload.index(after: actionIndex)
+        guard trailingIndex == payload.endIndex || payload[trailingIndex] == UInt8(ascii: ";") else {
+            return nil
+        }
+
+        switch action {
+        case UInt8(ascii: "C"):
+            return .foregroundCommand
+        case UInt8(ascii: "A"),
+             UInt8(ascii: "B"),
+             UInt8(ascii: "I"),
+             UInt8(ascii: "N"),
+             UInt8(ascii: "P"):
+            return .shellInput
+        default:
+            return nil
+        }
+    }
+
+    private static func oscPayloadRange(in bytes: [UInt8]) -> Range<Int>? {
         if bytes.first == escapeByte {
-            guard bytes.count >= 6, bytes[1] == rightBracketByte else { return false }
+            guard bytes.count >= 4, bytes[1] == rightBracketByte else { return nil }
             if bytes.last == bellByte {
-                payloadRange = 2..<(bytes.count - 1)
-            } else if bytes.count >= 7,
+                return 2..<(bytes.count - 1)
+            }
+            if bytes.count >= 5,
                 bytes[bytes.count - 2] == escapeByte,
                 bytes.last == backslashByte
             {
-                payloadRange = 2..<(bytes.count - 2)
-            } else {
-                return false
+                return 2..<(bytes.count - 2)
             }
-        } else if bytes.first == oscByte {
-            guard bytes.count >= 5, bytes.last == bellByte else { return false }
-            payloadRange = 1..<(bytes.count - 1)
-        } else {
-            return false
+            return nil
         }
-
-        let payload = String(decoding: bytes[payloadRange], as: UTF8.self)
-        return payload == "11;?"
+        if bytes.first == oscByte {
+            guard bytes.count >= 3, bytes.last == bellByte else { return nil }
+            return 1..<(bytes.count - 1)
+        }
+        return nil
     }
 }
 

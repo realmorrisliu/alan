@@ -34,7 +34,6 @@ final class AlanGhosttyLiveHost: NSObject {
     private var renderPriority: TerminalRuntimeRenderPriority = .hiddenBackground
     private let terminalModeTracker = AlanTerminalModeTracker()
     private var didEmitNonConfirmingCloseRequest = false
-    private var foregroundCommandStartedAt: Date?
 
     func attach(
         to canvasView: AlanGhosttyCanvasView,
@@ -158,9 +157,6 @@ final class AlanGhosttyLiveHost: NSObject {
         guard let surface else { return false }
         let handled = ghostty_surface_key(surface, keyEvent)
         ghostty_surface_refresh(surface)
-        if handled, isCommandSubmissionKey(keyEvent) {
-            markForegroundCommandStarted()
-        }
         return handled
     }
 
@@ -204,22 +200,14 @@ final class AlanGhosttyLiveHost: NSObject {
 
     func sendProgrammaticText(_ text: String) {
         guard let surface, !text.isEmpty else { return }
-        let isCommandSubmission = isCommandSubmissionText(text)
-        recordProgrammaticCommandSubmission(in: text)
         text.withCString { cString in
             ghostty_surface_text(surface, cString, UInt(strlen(cString)))
         }
         ghostty_surface_refresh(surface)
         updateMetadata(
             summary: "input committed",
-            attention: .active,
-            activeTaskState: isCommandSubmission ? .foregroundCommand : nil
+            attention: .active
         )
-    }
-
-    func recordProgrammaticCommandSubmission(in text: String) {
-        guard isCommandSubmissionText(text) else { return }
-        markForegroundCommandStarted()
     }
 
     func sendPreedit(_ text: String?) {
@@ -845,8 +833,10 @@ final class AlanGhosttyLiveHost: NSObject {
             return true
 
         case GHOSTTY_ACTION_COMMAND_FINISHED:
-            let exitCode = action.action.command_finished.exit_code
+            let completion = action.action.command_finished
+            let exitCode = completion.exit_code
             let finishedAt = Date()
+            let durationMilliseconds = Int(clamping: completion.duration / 1_000_000)
             let summary: String
             if exitCode < 0 {
                 summary = "command finished"
@@ -856,8 +846,6 @@ final class AlanGhosttyLiveHost: NSObject {
                 summary = "command failed (\(exitCode))"
             }
             performOnMain {
-                let durationMilliseconds = self.commandDurationMilliseconds(finishedAt: finishedAt)
-                self.foregroundCommandStartedAt = nil
                 let activity = exitCode >= 0
                     ? TerminalActivitySnapshot.commandCompletion(
                         exitCode: Int(exitCode),
@@ -1066,34 +1054,7 @@ final class AlanGhosttyLiveHost: NSObject {
         onMetadataChange?(snapshot)
     }
 
-    private func isCommandSubmissionKey(_ keyEvent: ghostty_input_key_s) -> Bool {
-        keyEvent.action == GHOSTTY_ACTION_PRESS
-            && (
-                keyEvent.keycode == AlanGhosttyKeyCode.returnKey
-                    || keyEvent.keycode == AlanGhosttyKeyCode.keypadEnter
-            )
-    }
-
-    private func isCommandSubmissionText(_ text: String) -> Bool {
-        text.contains("\n") || text.contains("\r")
-    }
-
-    private func markForegroundCommandStarted() {
-        if foregroundCommandStartedAt == nil {
-            foregroundCommandStartedAt = .now
-        }
-        updateMetadata(attention: .active, activeTaskState: .foregroundCommand)
-    }
-
-    private func commandDurationMilliseconds(finishedAt: Date) -> Int? {
-        guard let foregroundCommandStartedAt else { return nil }
-        let duration = finishedAt.timeIntervalSince(foregroundCommandStartedAt)
-        guard duration >= 0 else { return nil }
-        return Int((duration * 1_000).rounded())
-    }
-
     private func resetMetadata() {
-        foregroundCommandStartedAt = nil
         guard metadata != .placeholder else { return }
         metadata = .placeholder
         onMetadataChange?(.placeholder)

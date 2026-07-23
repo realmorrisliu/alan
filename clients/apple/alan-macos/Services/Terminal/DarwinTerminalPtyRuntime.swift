@@ -38,6 +38,8 @@ final class AlanDarwinTerminalPtyHandle: AlanTerminalPtyHandle {
     private var rendererProxy: AlanDarwinTerminalPtyRendererProxy?
     private var pendingDirectPtyInputChunks: [PendingDirectPtyInputChunk] = []
     private var directPtyInputWriteSource: DispatchSourceWrite?
+    private(set) var shellActivityState: AlanTerminalPtyShellActivityState = .unknown
+    var onShellActivityStateChange: ((AlanTerminalPtyShellActivityState) -> Void)?
 
     init(contentID: String, bootRequest: AlanTerminalBootRequest) {
         self.contentID = contentID
@@ -274,6 +276,9 @@ final class AlanDarwinTerminalPtyHandle: AlanTerminalPtyHandle {
 
         guard !collected.isEmpty else { return [] }
         let response = controlSequenceResponder.process(collected)
+        if let transition = response.shellActivityTransition {
+            recordShellActivityState(transition)
+        }
         if response.didRespond {
             _ = writePtyProtocolResponse(response.ptyResponse)
         }
@@ -391,6 +396,12 @@ final class AlanDarwinTerminalPtyHandle: AlanTerminalPtyHandle {
                 transcriptRingBufferLines.suffix(TerminalTranscriptSnapshot.defaultMaxRows)
             )
         }
+    }
+
+    fileprivate func recordShellActivityState(_ state: AlanTerminalPtyShellActivityState) {
+        guard state != shellActivityState else { return }
+        shellActivityState = state
+        onShellActivityStateChange?(state)
     }
 
     @discardableResult
@@ -640,6 +651,11 @@ private final class AlanDarwinTerminalPtyRendererProxy {
 
         guard !collected.isEmpty else { return }
         let response = controlSequenceResponder.process(collected)
+        if let transition = response.shellActivityTransition {
+            Task { @MainActor [weak self] in
+                self?.ptyHandle?.recordShellActivityState(transition)
+            }
+        }
         if response.didRespond {
             guard enqueuePtyInput(response.ptyResponse, countedBytes: 0) else {
                 invalidate()

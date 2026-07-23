@@ -1253,24 +1253,19 @@ require_pattern \
     "terminal.send_text must resolve PaneSlot targets before terminal delivery"
 
 require_pattern \
-    "clients/apple/alan-macos/GhosttyLiveHost.swift" \
-    "let isCommandSubmission = isCommandSubmissionText\\(text\\)" \
-    "text-delivered terminal commands must start foreground command duration tracking"
+    "clients/apple/alan-macos/Services/Terminal/TerminalPtyControlSequenceResponder.swift" \
+    "case UInt8\\(ascii: \"C\"\\):" \
+    "Alan-owned PTY output must recognize the OSC 133 foreground-command transition"
 
 require_pattern \
-    "clients/apple/alan-macos/GhosttyLiveHost.swift" \
-    "private func isCommandSubmissionText\\(_ text: String\\)" \
-    "foreground command detection must include pasted/control text submissions"
-
-require_pattern \
-    "clients/apple/alan-macos/GhosttyLiveHost.swift" \
-    "if foregroundCommandStartedAt == nil" \
-    "foreground command duration tracking must preserve the original command start time"
+    "clients/apple/alan-macos/Services/Terminal/GhosttyTerminalSurfaceHandle.swift" \
+    "case \\.foregroundCommand:" \
+    "terminal active-task projection must use Alan-owned PTY shell activity"
 
 reject_pattern \
-    "clients/apple/alan-macos/GhosttyLiveHost.swift" \
-    "queuedForegroundCommandSubmissions|commandSubmissionCount|queuesWhileActive|advanceForegroundCommandTracking" \
-    "terminal active-task tracking must not infer queued commands from input newline counts"
+    "clients/apple/alan-macos" \
+    "queuedForegroundCommandSubmissions|commandSubmissionCount|queuesWhileActive|advanceForegroundCommandTracking|isCommandSubmissionText|recordProgrammaticCommandSubmission|foregroundCommandStartedAt" \
+    "terminal active-task tracking must not infer shell execution from input text"
 
 require_pattern \
     "clients/apple/alan-macos/Views/Shell/Terminal/ShellTerminalLeafView.swift" \
