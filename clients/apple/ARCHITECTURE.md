@@ -568,7 +568,7 @@ The persistence slice keeps manifest projection and scheduler construction in
 `ShellWorkspacePersistenceCoordinator`. A conservative source ratchet rejects
 their return to controller files, new `ShellHostController` construction
 owners, new static shell-host storage, and observation owners or shell-state
-uses outside the explicit production inventory. Catch-all
+uses outside the base-revision production inventory. Catch-all
 `ShellStore`/`ShellModel` names remain denied as a secondary guard. The
 inventory intentionally fails closed on matching production-source text rather
 than maintaining a partial Swift parser.
