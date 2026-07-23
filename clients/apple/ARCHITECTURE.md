@@ -627,10 +627,12 @@ stops before computed-property bodies, so ordinary projection reads in getters
 do not become owners. An unrelated projection with the same member name can use
 an explicit non-snapshot type to disambiguate its stored value. All production
 Swift files are scanned even when the stored property's source file contains no
-literal target type. That prevents a global controller singleton even when a
-closure or wrapper hides the factory call and the file stores no snapshot
-directly. Production aliases that reference
-`ShellHostController`, `ShellStateSnapshot`, or
+literal target type. Strong stored-property references form a transitive
+inventory of types that retain `ShellHostController`; `weak` and `unowned`
+references do not. Module, static, and class storage of any inventoried type is
+rejected, including property-wrapper initialization, so a singleton cannot hide
+the controller behind an owner object. Production aliases that reference any
+controller-retaining type, `ShellStateSnapshot`, or
 `ShellContentWorkspaceManifest` are rejected, keeping contextual factory calls
 such as `.live()` from hiding a guarded ownership type. The current `ObservableObject`
 declarations and `@Published` projections form explicit owner allowlists.

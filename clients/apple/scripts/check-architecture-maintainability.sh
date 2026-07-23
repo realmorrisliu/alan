@@ -1254,8 +1254,9 @@ observable_object_owner_declarations() {
 
 guarded_shell_owner_typealias_declarations() {
     local file="$1"
+    local retaining_type_inventory="$2"
 
-    awk '
+    awk -v retaining_type_inventory="$retaining_type_inventory" '
         function leading_space_count(value,    prefix) {
             prefix = value
             sub(/[^ ].*$/, "", prefix)
@@ -1312,8 +1313,15 @@ guarded_shell_owner_typealias_declarations() {
             typealias_buffer = ""
         }
         BEGIN {
-            guarded_type_pattern = "(^|[^A-Za-z0-9_])" \
-                "(ShellHostController|ShellStateSnapshot|ShellContentWorkspaceManifest)" \
+            guarded_types = "ShellStateSnapshot|ShellContentWorkspaceManifest"
+            retaining_type_count = split(retaining_type_inventory, retaining_type_entries, ";")
+            for (retaining_type_index = 1; retaining_type_index <= retaining_type_count; retaining_type_index++)
+            {
+                if (retaining_type_entries[retaining_type_index] != "") {
+                    guarded_types = guarded_types "|" retaining_type_entries[retaining_type_index]
+                }
+            }
+            guarded_type_pattern = "(^|[^A-Za-z0-9_])(" guarded_types ")" \
                 "([^A-Za-z0-9_]|$)"
         }
         {
@@ -1345,16 +1353,160 @@ guarded_shell_owner_typealias_declarations() {
     ' < <(swift_code_lines "$file")
 }
 
+shell_host_retaining_type_inventory() {
+    local file
+    local -a files=()
+
+    while IFS= read -r file; do
+        files+=("$file")
+    done < <(find "$SOURCE_ROOT" -type f -name '*.swift' -print | sort)
+    (( ${#files[@]} > 0 )) || return
+
+    awk "$OWNERSHIP_AWK_HELPERS"'
+        function leading_space_count(value,    prefix) {
+            prefix = value
+            sub(/[^ ].*$/, "", prefix)
+            return length(prefix)
+        }
+        function is_type_declaration(value) {
+            return value ~ /^[[:space:]]*[^\/]*(class|struct|actor|enum|extension|protocol)[ ]+[A-Za-z_][A-Za-z0-9_.]*/
+        }
+        function declared_type_name(value,    name) {
+            name = value
+            sub(/^.*(class|struct|actor|enum|extension|protocol)[ ]+/, "", name)
+            sub(/[^A-Za-z0-9_.].*$/, "", name)
+            sub(/^.*[.]/, "", name)
+            return name
+        }
+        function is_stored_property(value,    declaration_header) {
+            declaration_header = value
+            sub(/[{].*$/, "", declaration_header)
+            if (declaration_header ~ /=/) {
+                return 1
+            }
+            return value !~ /[{]/ ||
+                value ~ /[{][ ]*(didSet|willSet)([^A-Za-z0-9_]|$)/
+        }
+        function is_nonretaining_reference(value) {
+            return value ~ /(^|[ ])(weak|unowned([ ]*[(][^)]*[)])?)[ ]+(let|var)[ ]/
+        }
+        function record_buffered_property(    property) {
+            if (property_buffer == "") {
+                return
+            }
+            property = property_buffer
+            gsub(/[[:space:]]+/, " ", property)
+            sub(/^ /, "", property)
+            sub(/ $/, "", property)
+            if (property_owner != "" &&
+                property !~ /(^|[ ])(static|class)[ ]/ &&
+                is_stored_property(property) &&
+                !is_nonretaining_reference(property))
+            {
+                property_count++
+                property_owners[property_count] = property_owner
+                properties[property_count] = property
+            }
+            property_buffer = ""
+        }
+        function property_mentions_type(property, type,    pattern) {
+            pattern = "(^|[^A-Za-z0-9_])" type "([^A-Za-z0-9_]|$)"
+            return property ~ pattern
+        }
+        {
+            first_separator = index($0, "\t")
+            remainder = substr($0, first_separator + 1)
+            second_separator = index(remainder, "\t")
+            source_file = substr($0, 1, first_separator - 1)
+            source_line_number = substr(remainder, 1, second_separator - 1)
+            line = substr(remainder, second_separator + 1)
+            line_indent = leading_space_count(line)
+
+            if (current_file != "" && source_file != current_file) {
+                record_buffered_property()
+                clear_pending_property_attributes()
+                type_depth = 0
+            }
+            current_file = source_file
+            declaration_line = declaration_with_pending_attributes(line, source_line_number, line_indent)
+
+            if (line !~ /^[[:space:]]*$/) {
+                while (type_depth > 0 && line_indent <= type_indent[type_depth]) {
+                    delete type_indent[type_depth]
+                    delete type_name[type_depth]
+                    type_depth--
+                }
+                if (is_type_declaration(line)) {
+                    type_depth++
+                    type_indent[type_depth] = line_indent
+                    type_name[type_depth] = declared_type_name(line)
+                }
+            }
+
+            if (type_depth > 0 && line_indent == type_indent[type_depth] + 4) {
+                record_buffered_property()
+                if (declaration_line != "" &&
+                    variable_declaration_position(declaration_line) > 0)
+                {
+                    property_buffer = declaration_line
+                    property_indent = line_indent
+                    property_owner = type_name[type_depth]
+                }
+            } else if (property_buffer != "" &&
+                (line ~ /^[[:space:]]*$/ || line_indent > property_indent))
+            {
+                property_buffer = property_buffer " " line
+            } else {
+                record_buffered_property()
+            }
+        }
+        END {
+            record_buffered_property()
+            retaining_types["ShellHostController"] = 1
+            changed = 1
+            while (changed) {
+                changed = 0
+                for (property_index = 1; property_index <= property_count; property_index++) {
+                    owner = property_owners[property_index]
+                    if (owner in retaining_types) {
+                        continue
+                    }
+                    for (retained_type in retaining_types) {
+                        if (property_mentions_type(properties[property_index], retained_type)) {
+                            retaining_types[owner] = 1
+                            changed = 1
+                            break
+                        }
+                    }
+                }
+            }
+            for (owner in retaining_types) {
+                print owner
+            }
+        }
+    ' < <(swift_code_lines "${files[@]}")
+}
+
 shell_host_global_storage_declarations() {
     local file="$1"
     local factory_inventory="$2"
+    local owner_type_inventory="$3"
 
-    awk -v factory_inventory="$factory_inventory" "$OWNERSHIP_AWK_HELPERS"'
+    awk \
+        -v factory_inventory="$factory_inventory" \
+        -v owner_type_inventory="$owner_type_inventory" \
+        "$OWNERSHIP_AWK_HELPERS"'
         BEGIN {
             factory_count = split(factory_inventory, factory_entries, ";")
             for (factory_index = 1; factory_index <= factory_count; factory_index++) {
                 if (factory_entries[factory_index] != "") {
                     shell_host_factories[factory_entries[factory_index]] = 1
+                }
+            }
+            owner_type_count = split(owner_type_inventory, owner_type_entries, ";")
+            for (owner_type_index = 1; owner_type_index <= owner_type_count; owner_type_index++) {
+                if (owner_type_entries[owner_type_index] != "") {
+                    shell_host_owner_types[owner_type_entries[owner_type_index]] = 1
                 }
             }
         }
@@ -1426,6 +1578,15 @@ shell_host_global_storage_declarations() {
             }
             return 0
         }
+        function property_contains_shell_host_owner(value,    owner_type, pattern) {
+            for (owner_type in shell_host_owner_types) {
+                pattern = "(^|[^A-Za-z0-9_])" owner_type "([^A-Za-z0-9_]|$)"
+                if (value ~ pattern) {
+                    return 1
+                }
+            }
+            return 0
+        }
         function is_stored_property(value,    declaration_header) {
             declaration_header = value
             sub(/[{].*$/, "", declaration_header)
@@ -1444,7 +1605,7 @@ shell_host_global_storage_declarations() {
             sub(/^ /, "", property)
             sub(/ $/, "", property)
             if (is_stored_property(property) &&
-                (property ~ /ShellHostController([^A-Za-z0-9_]|$)/ ||
+                (property_contains_shell_host_owner(property) ||
                     uses_shell_host_factory(property, property_owner)))
             {
                 printf "%d|%s\n", property_start_line, property
@@ -1458,6 +1619,7 @@ shell_host_global_storage_declarations() {
             source_line_number = substr(remainder, 1, second_separator - 1)
             line = substr(remainder, second_separator + 1)
             line_indent = leading_space_count(line)
+            declaration_line = declaration_with_pending_attributes(line, source_line_number, line_indent)
             if (line !~ /^[[:space:]]*$/) {
                 while (type_depth > 0 && line_indent <= type_indent[type_depth]) {
                     delete type_indent[type_depth]
@@ -1471,11 +1633,11 @@ shell_host_global_storage_declarations() {
                 }
             }
 
-            if (is_static_property_start(line) ||
-                (brace_depth == 0 && is_module_property_start(line)))
+            if (is_static_property_start(declaration_line) ||
+                (brace_depth == 0 && is_module_property_start(declaration_line)))
             {
                 record_buffered_property()
-                property_buffer = line
+                property_buffer = declaration_line
                 property_start_line = source_line_number
                 property_indent = line_indent
                 property_owner = type_depth > 0 ? type_name[type_depth] : ""
@@ -2315,6 +2477,7 @@ reject_replacement_global_shell_store() {
     local guarded_alias_declaration
     local guarded_alias_line
     local host_factory_inventory
+    local host_owner_type_inventory
     local line_number
     local observable_owner
     local observable_owner_name
@@ -2343,6 +2506,9 @@ reject_replacement_global_shell_store() {
     host_factory_inventory="$(
         typed_factory_inventory "ShellHostController" | sort -u | tr '\n' ';'
     )"
+    host_owner_type_inventory="$(
+        shell_host_retaining_type_inventory | sort -u | tr '\n' ';'
+    )"
 
     while IFS= read -r file; do
         rel="${file#$SOURCE_ROOT/}"
@@ -2354,7 +2520,11 @@ reject_replacement_global_shell_store() {
                 "$guarded_alias_declaration" >&2
             fail \
                 "guarded shell ownership types must remain explicit instead of hidden behind typealias: $rel"
-        done < <(guarded_shell_owner_typealias_declarations "$file")
+        done < <(
+            guarded_shell_owner_typealias_declarations \
+                "$file" \
+                "$host_owner_type_inventory"
+        )
 
         snapshot_property_counts="$(
             shell_snapshot_stored_property_counts \
@@ -2424,7 +2594,12 @@ reject_replacement_global_shell_store() {
             printf '%s:%s:%s\n' "$file" "$line_number" "$source_line" >&2
             fail \
                 "ShellHostController must not be retained by module/static/class storage; found in $rel"
-        done < <(shell_host_global_storage_declarations "$file" "$host_factory_inventory")
+        done < <(
+            shell_host_global_storage_declarations \
+                "$file" \
+                "$host_factory_inventory" \
+                "$host_owner_type_inventory"
+        )
     done < <(find "$SOURCE_ROOT" -type f -name '*.swift' -print | sort)
 
     while IFS=: read -r file line_number source_line; do
