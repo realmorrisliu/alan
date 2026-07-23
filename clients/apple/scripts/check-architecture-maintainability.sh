@@ -27,7 +27,8 @@ warning_baseline_sorted="$(mktemp)"
 base_warning_baseline="$(mktemp)"
 shell_architecture_base_inventory="$(mktemp)"
 shell_architecture_current_inventory="$(mktemp)"
-trap 'rm -f "$warning_inventory" "$warning_inventory_sorted" "$warning_baseline_body" "$warning_baseline_sorted" "$base_warning_baseline" "$shell_architecture_base_inventory" "$shell_architecture_current_inventory"' EXIT
+shell_architecture_base_tree="$(mktemp -d)"
+trap 'rm -f "$warning_inventory" "$warning_inventory_sorted" "$warning_baseline_body" "$warning_baseline_sorted" "$base_warning_baseline" "$shell_architecture_base_inventory" "$shell_architecture_current_inventory"; rm -rf "$shell_architecture_base_tree"' EXIT
 
 git_command=(git)
 if [[ -n "${ALAN_QUALITY_GIT_DIR:-}" ]]; then
@@ -571,30 +572,55 @@ reject_shell_host_duplicate_persistence_state() {
         "workspace persistence scheduler construction"
 }
 
+append_static_storage_inventory() {
+    local root="$1"
+
+    (
+        cd "$root"
+        rg -U --count-matches \
+            '(?m)^[\t ]*(?:(?:@[A-Za-z_][A-Za-z0-9_.]*|[A-Za-z_][A-Za-z0-9_]*)(?:\([^\n)]*\))?[\t ]+)*static(?:[\t ]+|\n[\t ]*)+(?:let|var)\b' \
+            . -g '*.swift' || true
+    ) | awk -F: '
+        {
+            count = $NF
+            sub(/:[0-9]+$/, "")
+            sub(/^\.\//, "")
+            for (i = 0; i < count; i++) {
+                print "static-storage|" $0
+            }
+        }
+    '
+}
+
 reject_shell_ownership_drift() {
-    local observable_owner_allowlist=(
-        "App/AlanMacPrimaryShellOwner.swift|final class AlanMacPrimaryShellOwner: ObservableObject {"
-        "App/AlanMacUpdateController.swift|final class AlanMacUpdateController: NSObject, ObservableObject {"
-        "Models/Shell/ShellSpaceCreationProfileOptions.swift|final class ShellSpaceCreationProfileOptionStore: ObservableObject {"
-        "Services/AlanOS/AlanOSAttachmentService.swift|final class AlanOSAttachmentController: ObservableObject {"
-        "ShellHostController.swift|final class ShellHostController: ObservableObject, TerminalHostActivationDelegate {"
-        "Support/ShellSidebarSpaceSliderWheelMonitor.swift|final class ShellSidebarTabListWheelRouter: ObservableObject {"
-        "Support/ShellVoiceCommandController.swift|final class ShellVoiceCommandController: NSObject, ObservableObject, NSSpeechRecognizerDelegate {"
-        "TerminalRuntimeRegistry.swift|final class TerminalRuntimeRegistry: ObservableObject {"
-    )
-    local file
     local guarded_reference_pattern
-    local line_number
     local new_references
-    local rel
-    local source_line
-    local use_key
 
     guarded_reference_pattern='ShellHostController|ShellStateSnapshot|AlanMacPrimaryShellOwner'
-    guarded_reference_pattern+='|ShellWorkspacePersistenceCoordinator'
-    guarded_reference_pattern+='|([A-Za-z_][A-Za-z0-9_]*)?[Mm]anifest[A-Za-z0-9_]*'
+    guarded_reference_pattern+='|ShellWorkspacePersistenceCoordinator|ShellContentWorkspaceManifest'
+    guarded_reference_pattern+='|ShellWorkspaceManifestStore|ShellWorkspaceManifestProjector'
+    guarded_reference_pattern+='|DebouncedManifestFlushScheduler|ManifestFlushScheduling'
+    guarded_reference_pattern+='|workspaceManifest|manifestStore|manifestProjector|manifestFlushScheduler'
     guarded_reference_pattern+='|contentFlush(Scheduled|Pending)'
     guarded_reference_pattern+='|scheduleContentFlush|flushPendingPersistence'
+    guarded_reference_pattern+='|syncManifestFromShellState|makeWorkspaceManifestFromShellState'
+
+    require_existing_single_owner_pattern \
+        "final class AlanMacPrimaryShellOwner: ObservableObject {" \
+        "App/AlanMacPrimaryShellOwner.swift" \
+        "primary shell composition owner"
+    require_existing_single_owner_pattern \
+        "final class ShellHostController: ObservableObject, TerminalHostActivationDelegate {" \
+        "ShellHostController.swift" \
+        "observable shell host owner"
+    require_existing_single_owner_pattern \
+        "final class TerminalRuntimeRegistry: ObservableObject {" \
+        "TerminalRuntimeRegistry.swift" \
+        "terminal runtime state owner"
+    require_existing_single_owner_pattern \
+        "final class ShellWorkspacePersistenceCoordinator {" \
+        "Services/Shell/ShellWorkspacePersistenceCoordinator.swift" \
+        "workspace persistence owner"
 
     require_single_owner_pattern \
         "ShellHostController(" \
@@ -609,34 +635,24 @@ reject_shell_ownership_drift() {
         "ShellHostController.swift" \
         "explicit ShellHostController initializer construction"
 
-    # ponytail: exact owner inventory; admit another observation owner only through
-    # an explicit architecture change instead of teaching this shell check Swift syntax.
-    while IFS=: read -r file line_number source_line; do
-        rel="${file#$SOURCE_ROOT/}"
-        source_line="${source_line#"${source_line%%[![:space:]]*}"}"
-        use_key="$rel|$source_line"
-        if ! contains_line "$use_key" "${observable_owner_allowlist[@]}"; then
-            printf '%s:%s:%s\n' "$file" "$line_number" "$source_line" >&2
-            fail "new observable shell state owner is not in the accepted architecture: $use_key"
-        fi
-    done < <(
-        grep -RIn --include='*.swift' -w 'ObservableObject' "$SOURCE_ROOT" || true
-    )
-
     if "${git_command[@]}" cat-file -e "$base_ref^{commit}" 2>/dev/null; then
+        "${git_command[@]}" archive "$base_ref" "$SOURCE_ROOT_REL" \
+            | tar -x -C "$shell_architecture_base_tree"
+
         {
             grep -RIn --include='*.swift' -wE "$guarded_reference_pattern" \
                 "$SOURCE_ROOT" || true
-            grep -RIn --include='*.swift' -w 'static' "$SOURCE_ROOT" || true
+            append_static_storage_inventory "$SOURCE_ROOT"
         } | sed -E "s#^$SOURCE_ROOT/##; s#:[0-9]+:#|#" \
             | LC_ALL=C sort >"$shell_architecture_current_inventory"
 
         {
             "${git_command[@]}" grep -n -wE "$guarded_reference_pattern" \
-                "$base_ref" -- "$SOURCE_ROOT_REL/*.swift" || true
-            "${git_command[@]}" grep -n -w 'static' \
-                "$base_ref" -- "$SOURCE_ROOT_REL/*.swift" || true
-        } | sed -E "s#^$base_ref:$SOURCE_ROOT_REL/##; s#:[0-9]+:#|#" \
+                "$base_ref" -- "$SOURCE_ROOT_REL/*.swift" \
+                | cut -d: -f2- || true
+            append_static_storage_inventory \
+                "$shell_architecture_base_tree/$SOURCE_ROOT_REL"
+        } | sed -E "s#^$SOURCE_ROOT_REL/##; s#:[0-9]+:#|#" \
             | LC_ALL=C sort >"$shell_architecture_base_inventory"
 
         new_references="$(
@@ -646,24 +662,10 @@ reject_shell_ownership_drift() {
         )"
         if [[ -n "$new_references" ]]; then
             printf '%s\n' "$new_references" >&2
-            fail "new shell ownership or static-storage lines are outside the accepted production inventory"
+            fail "new shell ownership lines or static-storage declarations are outside the accepted production inventory"
         fi
     else
         fail "shell ownership ratchet base is not a commit: $base_ref"
-    fi
-
-    if grep -RIn --include='*.swift' -E \
-        '(^|[^A-Za-z0-9_])@([A-Za-z_][A-Za-z0-9_]*\.)*Observable([^A-Za-z0-9_]|$)' \
-        "$SOURCE_ROOT" >&2
-    then
-        fail "new @Observable shell state owners require an explicit architecture owner"
-    fi
-
-    if grep -RIn --include='*.swift' -E \
-        '(^|[^A-Za-z0-9_])(Shell(Store|Model)|ShellState(Store|Model)|ShellWorkspace(Store|Model))([^A-Za-z0-9_]|$)' \
-        "$SOURCE_ROOT" >&2
-    then
-        fail "a replacement global Shell store/model must not sit above the accepted owners"
     fi
 }
 

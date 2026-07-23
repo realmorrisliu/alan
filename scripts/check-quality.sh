@@ -31,6 +31,7 @@ cargo build --locked -p alan --bin alan
 "$ROOT/scripts/check-legacy-macos-absence.sh"
 bash "$ROOT/scripts/check-openspec-current-surfaces.sh"
 
+bash "$ROOT/clients/apple/scripts/test-architecture-maintainability.sh"
 apple_report="$(bash "$ROOT/clients/apple/scripts/check-architecture-maintainability.sh")"
 printf '%s\n' "$apple_report" | tail -n 1
 

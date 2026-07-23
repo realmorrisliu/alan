@@ -567,11 +567,10 @@ reintroduced controller caches, maps, queues, and publication-policy call sites.
 The persistence slice keeps manifest projection and scheduler construction in
 `ShellWorkspacePersistenceCoordinator`. A conservative source ratchet rejects
 their return to controller files, new `ShellHostController` construction
-owners, new persistence or static-storage lines, and observation or shell-owner
-references outside the base-revision production inventory. Catch-all
-`ShellStore`/`ShellModel` names remain denied as a secondary guard. The
-inventory intentionally fails closed on matching production-source text rather
-than maintaining a partial Swift parser.
+owners, new persistence references or static-storage declarations, and
+shell-state or shell-owner references outside the base-revision production
+inventory. The inventory intentionally fails closed on matching production
+source text rather than maintaining a partial Swift parser.
 
 The current architecture gate treats
 `clients/apple/scripts/architecture-warning-baseline.txt` as a hard downward
