@@ -670,6 +670,53 @@ readonly OWNERSHIP_AWK_HELPERS='
         }
         return 0
     }
+    function shell_host_factory_call_matches(call, owner,    name, parts, qualifier, segment_count, qualifier_index) {
+        segment_count = split(call, parts, ".")
+        name = parts[segment_count]
+        if (name == "ShellHostController") {
+            return 1
+        }
+        if (segment_count == 1) {
+            if (name == "init" && owner == "ShellHostController") {
+                return 1
+            }
+            return ((owner "|" name) in shell_host_factories) ||
+                (("|" name) in shell_host_factories)
+        }
+        for (qualifier_index = 1; qualifier_index < segment_count; qualifier_index++) {
+            qualifier = parts[qualifier_index]
+            if (qualifier == "Self" || qualifier == "self") {
+                qualifier = owner
+            }
+            if (name == "init" && qualifier == "ShellHostController") {
+                return 1
+            }
+            if ((qualifier "|" name) in shell_host_factories) {
+                return 1
+            }
+        }
+        return parts[1] == "shared" && ((owner "|" name) in shell_host_factories)
+    }
+    function uses_shell_host_factory(value, owner,    call, expression) {
+        if (value !~ /=/) {
+            return 0
+        }
+        expression = value
+        sub(/^[^=]*=[ ]*/, "", expression)
+        gsub(/[ ]*[.][ ]*/, ".", expression)
+        if (instance_receiver_invokes_factory(expression, shell_host_factories)) {
+            return 1
+        }
+        while (match(expression, /[A-Za-z_][A-Za-z0-9_.]*[ ]*\(/)) {
+            call = substr(expression, RSTART, RLENGTH)
+            sub(/[ ]*\($/, "", call)
+            if (shell_host_factory_call_matches(call, owner)) {
+                return 1
+            }
+            expression = substr(expression, RSTART + RLENGTH)
+        }
+        return 0
+    }
 '
 
 typed_factory_declarations() {
@@ -1354,6 +1401,7 @@ guarded_shell_owner_typealias_declarations() {
 }
 
 shell_host_retaining_type_inventory() {
+    local factory_inventory="$1"
     local file
     local -a files=()
 
@@ -1362,7 +1410,15 @@ shell_host_retaining_type_inventory() {
     done < <(find "$SOURCE_ROOT" -type f -name '*.swift' -print | sort)
     (( ${#files[@]} > 0 )) || return
 
-    awk "$OWNERSHIP_AWK_HELPERS"'
+    awk -v factory_inventory="$factory_inventory" "$OWNERSHIP_AWK_HELPERS"'
+        BEGIN {
+            factory_count = split(factory_inventory, factory_entries, ";")
+            for (factory_index = 1; factory_index <= factory_count; factory_index++) {
+                if (factory_entries[factory_index] != "") {
+                    shell_host_factories[factory_entries[factory_index]] = 1
+                }
+            }
+        }
         function leading_space_count(value,    prefix) {
             prefix = value
             sub(/[^ ].*$/, "", prefix)
@@ -1471,6 +1527,11 @@ shell_host_retaining_type_inventory() {
                     if (owner in retaining_types) {
                         continue
                     }
+                    if (uses_shell_host_factory(properties[property_index], owner)) {
+                        retaining_types[owner] = 1
+                        changed = 1
+                        continue
+                    }
                     for (retained_type in retaining_types) {
                         if (property_mentions_type(properties[property_index], retained_type)) {
                             retaining_types[owner] = 1
@@ -1530,53 +1591,6 @@ shell_host_global_storage_declarations() {
             sub(/[^A-Za-z0-9_.].*$/, "", name)
             sub(/^.*[.]/, "", name)
             return name
-        }
-        function shell_host_factory_call_matches(call, owner,    name, parts, qualifier, segment_count, qualifier_index) {
-            segment_count = split(call, parts, ".")
-            name = parts[segment_count]
-            if (name == "ShellHostController") {
-                return 1
-            }
-            if (segment_count == 1) {
-                if (name == "init" && owner == "ShellHostController") {
-                    return 1
-                }
-                return ((owner "|" name) in shell_host_factories) ||
-                    (("|" name) in shell_host_factories)
-            }
-            for (qualifier_index = 1; qualifier_index < segment_count; qualifier_index++) {
-                qualifier = parts[qualifier_index]
-                if (qualifier == "Self" || qualifier == "self") {
-                    qualifier = owner
-                }
-                if (name == "init" && qualifier == "ShellHostController") {
-                    return 1
-                }
-                if ((qualifier "|" name) in shell_host_factories) {
-                    return 1
-                }
-            }
-            return parts[1] == "shared" && ((owner "|" name) in shell_host_factories)
-        }
-        function uses_shell_host_factory(value, owner,    call, expression) {
-            if (value !~ /=/) {
-                return 0
-            }
-            expression = value
-            sub(/^[^=]*=[ ]*/, "", expression)
-            gsub(/[ ]*[.][ ]*/, ".", expression)
-            if (instance_receiver_invokes_factory(expression, shell_host_factories)) {
-                return 1
-            }
-            while (match(expression, /[A-Za-z_][A-Za-z0-9_.]*[ ]*\(/)) {
-                call = substr(expression, RSTART, RLENGTH)
-                sub(/[ ]*\($/, "", call)
-                if (shell_host_factory_call_matches(call, owner)) {
-                    return 1
-                }
-                expression = substr(expression, RSTART + RLENGTH)
-            }
-            return 0
         }
         function property_contains_shell_host_owner(value,    owner_type, pattern) {
             for (owner_type in shell_host_owner_types) {
@@ -2507,7 +2521,9 @@ reject_replacement_global_shell_store() {
         typed_factory_inventory "ShellHostController" | sort -u | tr '\n' ';'
     )"
     host_owner_type_inventory="$(
-        shell_host_retaining_type_inventory | sort -u | tr '\n' ';'
+        shell_host_retaining_type_inventory "$host_factory_inventory" \
+            | sort -u \
+            | tr '\n' ';'
     )"
 
     while IFS= read -r file; do
