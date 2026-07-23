@@ -609,7 +609,9 @@ later snapshot owner. Swift's trailing shared type annotation is propagated to
 each preceding uninitialized binding before owners are counted. Files with
 accepted mutable snapshot storage
 also have an exact allowlist of non-owner static utility members, so a singleton
-entry point cannot bypass the rule by choosing a new alias.
+entry point cannot bypass the rule by choosing a new alias. Postfix-optional
+`.none` and `.some` type witnesses are treated as inferred target storage rather
+than harmless empty initializers.
 Independently, every production Swift file is scanned for module-scope or
 static/class storage of
 `ShellHostController`, including storage inferred from an unqualified, `Self`,

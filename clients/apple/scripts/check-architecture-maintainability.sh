@@ -518,6 +518,20 @@ readonly OWNERSHIP_AWK_HELPERS='
         return top_level_character_position(value, "=") > 0 ||
             top_level_character_position(value, "{") > 0
     }
+    function inferred_optional_case_contains_target(value, target_type,    expression, pattern) {
+        if (value !~ /=/) {
+            return 0
+        }
+        expression = value
+        sub(/^[^=]*=[ ]*/, "", expression)
+        sub(/^try[!?]?[ ]+/, "", expression)
+        sub(/^await[ ]+/, "", expression)
+        gsub(/[ ]*[?][ ]*/, "?", expression)
+        gsub(/[ ]*[!][ ]*/, "!", expression)
+        gsub(/[ ]*[.][ ]*/, ".", expression)
+        pattern = "^" target_type "[?!][.](none|some)([^A-Za-z0-9_]|$)"
+        return expression ~ pattern
+    }
     function instance_receiver_invokes_factory(value, factories,    call_end, pattern, entry, fields, method, opening, receiver, remainder, suffix) {
         for (entry in factories) {
             split(entry, fields, "|")
@@ -890,6 +904,10 @@ manifest_state_declarations() {
                 prefix = declaration
                 sub(/[ ]*=.*/, "", prefix)
                 kind = "inferred-generic"
+            } else if (inferred_optional_case_contains_target(declaration, "ShellContentWorkspaceManifest")) {
+                prefix = declaration
+                sub(/[ ]*=.*/, "", prefix)
+                kind = "inferred-optional"
             } else if (inferred_factory_contains_manifest(declaration, declaration_owner)) {
                 prefix = declaration
                 sub(/[ ]*=.*/, "", prefix)
@@ -1863,6 +1881,7 @@ shell_snapshot_stored_property_counts() {
             return typed_storage_contains_snapshot(binding) ||
                 binding ~ /=[ ]*ShellStateSnapshot[ ]*([.(]|$)/ ||
                 inferred_generic_contains_snapshot(binding) ||
+                inferred_optional_case_contains_target(binding, "ShellStateSnapshot") ||
                 (!binding_has_explicit_type(binding) && uses_snapshot_projection(binding)) ||
                 uses_snapshot_factory(binding, owner)
         }
