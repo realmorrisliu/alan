@@ -700,12 +700,13 @@ readonly OWNERSHIP_AWK_HELPERS='
         }
         return parts[1] == "shared" && ((owner "|" name) in shell_host_factories)
     }
-    function uses_shell_host_factory(value, owner,    call, expression) {
-        if (value !~ /=/) {
-            return 0
+    function uses_shell_host_factory(value, owner,    attributes, call, expression, initializer) {
+        attributes = property_attribute_prefix(value)
+        if (value ~ /=/) {
+            initializer = value
+            sub(/^[^=]*=[ ]*/, "", initializer)
         }
-        expression = value
-        sub(/^[^=]*=[ ]*/, "", expression)
+        expression = attributes " " initializer
         gsub(/[ ]*[.][ ]*/, ".", expression)
         if (instance_receiver_invokes_factory(expression, shell_host_factories)) {
             return 1

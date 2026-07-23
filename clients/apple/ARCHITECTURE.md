@@ -632,9 +632,11 @@ controller factories form a transitive inventory of types that retain
 `ShellHostController`; `weak` and `unowned` references do not. Module, static,
 and class storage of any inventoried type is rejected, including
 property-wrapper initialization, so a singleton cannot hide the controller
-behind an owner object. Type-scope tracking preserves declarations whose opening
-brace appears on the following line, so alternate valid Swift brace placement
-cannot hide a mutable owner. Production aliases that reference any
+behind an owner object. Controller factories invoked from wrapper arguments are
+scanned alongside ordinary property initializers. Type-scope tracking preserves
+declarations whose opening brace appears on the following line, so alternate
+valid Swift brace placement cannot hide a mutable owner. Production aliases
+that reference any
 controller-retaining type, `ShellStateSnapshot`, or
 `ShellContentWorkspaceManifest` are rejected, keeping contextual factory calls
 such as `.live()` from hiding a guarded ownership type. The current `ObservableObject`
