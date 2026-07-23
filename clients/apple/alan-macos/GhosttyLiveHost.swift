@@ -206,12 +206,7 @@ final class AlanGhosttyLiveHost: NSObject {
     func sendProgrammaticText(_ text: String) {
         guard let surface, !text.isEmpty else { return }
         let isCommandSubmission = isCommandSubmissionText(text)
-        if isCommandSubmission {
-            markForegroundCommandStarted(
-                commandCount: commandSubmissionCount(in: text),
-                queuesWhileActive: true
-            )
-        }
+        recordProgrammaticCommandSubmission(in: text)
         text.withCString { cString in
             ghostty_surface_text(surface, cString, UInt(strlen(cString)))
         }
@@ -221,6 +216,12 @@ final class AlanGhosttyLiveHost: NSObject {
             attention: .active,
             activeTaskState: isCommandSubmission ? .foregroundCommand : nil
         )
+    }
+
+    func recordProgrammaticCommandSubmission(in text: String) {
+        let commandCount = commandSubmissionCount(in: text)
+        guard commandCount > 0 else { return }
+        markForegroundCommandStarted(commandCount: commandCount, queuesWhileActive: true)
     }
 
     func sendPreedit(_ text: String?) {

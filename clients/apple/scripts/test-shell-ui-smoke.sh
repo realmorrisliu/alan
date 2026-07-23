@@ -831,12 +831,14 @@ on run argv
             end repeat
             if foundClearTerminal and not clickedClearTerminal then error "clear terminal menu item disabled"
             if not clickedClearTerminal then keystroke "k" using command down
+        else if actionName is "quit" then
+            keystroke "q" using command down
         else if actionName is "quit-confirm" then
             keystroke "q" using command down
             set closeDeadline to (current date) + timeoutSeconds
             repeat
                 set matches to every process whose unix id is targetPID
-                if (count of matches) = 0 then return
+                if (count of matches) = 0 then error "alan process exited before close confirmation appeared"
                 set targetProcess to item 1 of matches
                 try
                     set frontmost of targetProcess to true
@@ -854,13 +856,12 @@ on run argv
                     end repeat
                 on error
                     set matches to every process whose unix id is targetPID
-                    if (count of matches) = 0 then return
+                    if (count of matches) = 0 then error "alan process exited before close confirmation appeared"
                     error "close confirmation lookup failed"
                 end try
-                key code 36
                 delay 0.25
                 set matches to every process whose unix id is targetPID
-                if (count of matches) = 0 then return
+                if (count of matches) = 0 then error "alan process exited before close confirmation appeared"
                 if (current date) > closeDeadline then error "close confirmation did not appear"
                 delay 0.25
             end repeat
@@ -900,7 +901,8 @@ run_ui_step() {
 }
 
 quit_smoke_app_for_restart() {
-    if run_ui_step quit-confirm; then
+    local action="${1:-quit}"
+    if run_ui_step "$action"; then
         return 0
     fi
     if ! kill -0 "$APP_PID" 2>/dev/null; then
@@ -956,7 +958,7 @@ run_restart_restore_step() {
     sleep 1
     capture_step restart-before-quit
 
-    quit_smoke_app_for_restart
+    quit_smoke_app_for_restart quit-confirm
     wait_for_app_exit "restart restore confirmed quit"
 
     wait_for_file "$manifest_path" "workspace manifest after restart restore quit"

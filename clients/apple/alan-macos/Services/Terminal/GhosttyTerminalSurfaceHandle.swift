@@ -258,7 +258,7 @@ final class AlanGhosttySurfaceHandle: AlanTerminalSurfaceHandle {
             )
         }
 
-        return recordDelivery(ptyHandle.writeInput(text))
+        return recordInputDelivery(ptyHandle.writeInput(text), text: text)
     }
 
     func sendControlKey(_ key: TerminalRuntimeControlKey) -> TerminalRuntimeDeliveryResult {
@@ -301,7 +301,7 @@ final class AlanGhosttySurfaceHandle: AlanTerminalSurfaceHandle {
         case .returnKey:
             text = "\r"
         }
-        return recordDelivery(ptyHandle.writeInput(text))
+        return recordInputDelivery(ptyHandle.writeInput(text), text: text)
     }
 
     func requestGracefulShutdown(
@@ -394,6 +394,18 @@ final class AlanGhosttySurfaceHandle: AlanTerminalSurfaceHandle {
     ) -> TerminalRuntimeDeliveryResult {
         updateSnapshot(lastDelivery: delivery)
         return delivery
+    }
+
+    private func recordInputDelivery(
+        _ delivery: TerminalRuntimeDeliveryResult,
+        text: String
+    ) -> TerminalRuntimeDeliveryResult {
+#if canImport(GhosttyKit)
+        if delivery.applied {
+            liveHost.recordProgrammaticCommandSubmission(in: text)
+        }
+#endif
+        return recordDelivery(delivery)
     }
 
     private func resizePtyToRendererGridIfAvailable() {
