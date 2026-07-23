@@ -832,7 +832,7 @@ on run argv
             if foundClearTerminal and not clickedClearTerminal then error "clear terminal menu item disabled"
             if not clickedClearTerminal then keystroke "k" using command down
         else if actionName is "quit-confirm" then
-            keystroke "q" using {command down, option down}
+            keystroke "q" using command down
             set closeDeadline to (current date) + timeoutSeconds
             repeat
                 set matches to every process whose unix id is targetPID
