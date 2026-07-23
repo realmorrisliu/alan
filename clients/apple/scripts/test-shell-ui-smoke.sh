@@ -595,6 +595,11 @@ control_terminal_send_return() {
 }"
 }
 
+control_terminal_send_eof() {
+    local pane_slot_id="$1"
+    control_terminal_send_text_payload "$pane_slot_id" "\\u0004" "terminal-eof"
+}
+
 control_tab_open_cwd() {
     local cwd="$1"
     local request_id
@@ -928,6 +933,8 @@ run_restart_restore_step() {
     local restored_pane_id
     local cwd_result
     local clear_deadline
+    local stdin_token
+    local stdin_json
 
     manifest_path=$(workspace_manifest_path)
     tab_result=$(control_tab_open_cwd "$RESTART_RESTORE_CWD")
@@ -1014,8 +1021,36 @@ run_restart_restore_step() {
     sleep 1
     capture_step restart-clear
 
+    stdin_token="alan-ui-smoke-stdin-$$"
+    stdin_json=$(json_escape_fragment "$stdin_token")
+    if ! terminal_result=$(send_terminal_payload_until_applied \
+        "$restored_pane_id" \
+        "cat\\n" \
+        "restart-stdin-cat")
+    then
+        require_control_applied "$terminal_result" "restart stdin cat command"
+    fi
+    require_control_applied "$terminal_result" "restart stdin cat command"
+    sleep 0.5
+
+    printf -v terminal_payload '%s\\n' "$stdin_json"
+    if ! terminal_result=$(send_terminal_payload_until_applied \
+        "$restored_pane_id" \
+        "$terminal_payload" \
+        "restart-stdin-line")
+    then
+        require_control_applied "$terminal_result" "restart stdin line"
+    fi
+    require_control_applied "$terminal_result" "restart stdin line"
+    sleep 0.5
+
+    terminal_result=$(control_terminal_send_eof "$restored_pane_id")
+    require_control_applied "$terminal_result" "restart stdin EOF"
+    append_manifest "restart_stdin_eof_token=$stdin_token"
+    sleep 1
+
     quit_smoke_app_for_restart
-    wait_for_app_exit "restart restore post-clear confirmed quit"
+    wait_for_app_exit "restart restore post-stdin quit"
 
     info "relaunching alan smoke app after restored transcript clear"
     if [[ "$LAUNCH_MODE" == "direct" ]]; then

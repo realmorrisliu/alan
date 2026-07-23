@@ -35,7 +35,6 @@ final class AlanGhosttyLiveHost: NSObject {
     private let terminalModeTracker = AlanTerminalModeTracker()
     private var didEmitNonConfirmingCloseRequest = false
     private var foregroundCommandStartedAt: Date?
-    private var queuedForegroundCommandSubmissions = 0
 
     func attach(
         to canvasView: AlanGhosttyCanvasView,
@@ -160,7 +159,7 @@ final class AlanGhosttyLiveHost: NSObject {
         let handled = ghostty_surface_key(surface, keyEvent)
         ghostty_surface_refresh(surface)
         if handled, isCommandSubmissionKey(keyEvent) {
-            markForegroundCommandStarted(commandCount: 1, queuesWhileActive: false)
+            markForegroundCommandStarted()
         }
         return handled
     }
@@ -219,9 +218,8 @@ final class AlanGhosttyLiveHost: NSObject {
     }
 
     func recordProgrammaticCommandSubmission(in text: String) {
-        let commandCount = commandSubmissionCount(in: text)
-        guard commandCount > 0 else { return }
-        markForegroundCommandStarted(commandCount: commandCount, queuesWhileActive: true)
+        guard isCommandSubmissionText(text) else { return }
+        markForegroundCommandStarted()
     }
 
     func sendPreedit(_ text: String?) {
@@ -859,9 +857,7 @@ final class AlanGhosttyLiveHost: NSObject {
             }
             performOnMain {
                 let durationMilliseconds = self.commandDurationMilliseconds(finishedAt: finishedAt)
-                let hasQueuedForegroundCommand = self.advanceForegroundCommandTracking(
-                    finishedAt: finishedAt
-                )
+                self.foregroundCommandStartedAt = nil
                 let activity = exitCode >= 0
                     ? TerminalActivitySnapshot.commandCompletion(
                         exitCode: Int(exitCode),
@@ -874,7 +870,7 @@ final class AlanGhosttyLiveHost: NSObject {
                     attention: exitCode == 0 ? .active : .notable,
                     processExited: false,
                     lastCommandExitCode: Int(exitCode),
-                    activeTaskState: hasQueuedForegroundCommand ? .foregroundCommand : .inactive,
+                    activeTaskState: .inactive,
                     activity: activity,
                     clearActivity: exitCode < 0
                 )
@@ -1079,35 +1075,12 @@ final class AlanGhosttyLiveHost: NSObject {
     }
 
     private func isCommandSubmissionText(_ text: String) -> Bool {
-        commandSubmissionCount(in: text) > 0
+        text.contains("\n") || text.contains("\r")
     }
 
-    private func commandSubmissionCount(in text: String) -> Int {
-        var count = 0
-        var previousWasCarriageReturn = false
-        for character in text {
-            if character == "\r" {
-                count += 1
-                previousWasCarriageReturn = true
-            } else if character == "\n" {
-                if !previousWasCarriageReturn {
-                    count += 1
-                }
-                previousWasCarriageReturn = false
-            } else {
-                previousWasCarriageReturn = false
-            }
-        }
-        return count
-    }
-
-    private func markForegroundCommandStarted(commandCount: Int, queuesWhileActive: Bool) {
-        let commandCount = max(commandCount, 1)
+    private func markForegroundCommandStarted() {
         if foregroundCommandStartedAt == nil {
             foregroundCommandStartedAt = .now
-            queuedForegroundCommandSubmissions = commandCount
-        } else if queuesWhileActive {
-            queuedForegroundCommandSubmissions += commandCount
         }
         updateMetadata(attention: .active, activeTaskState: .foregroundCommand)
     }
@@ -1119,20 +1092,8 @@ final class AlanGhosttyLiveHost: NSObject {
         return Int((duration * 1_000).rounded())
     }
 
-    private func advanceForegroundCommandTracking(finishedAt: Date) -> Bool {
-        if queuedForegroundCommandSubmissions > 1 {
-            queuedForegroundCommandSubmissions -= 1
-            foregroundCommandStartedAt = finishedAt
-            return true
-        }
-        queuedForegroundCommandSubmissions = 0
-        foregroundCommandStartedAt = nil
-        return false
-    }
-
     private func resetMetadata() {
         foregroundCommandStartedAt = nil
-        queuedForegroundCommandSubmissions = 0
         guard metadata != .placeholder else { return }
         metadata = .placeholder
         onMetadataChange?(.placeholder)
