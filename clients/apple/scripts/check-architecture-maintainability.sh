@@ -373,16 +373,19 @@ swift_code_matching_lines() {
 swift_tree_code_matching_lines() {
     local pattern="$1"
     local root="$2"
+    local -a files=()
     local file
-    local matched=0
 
     while IFS= read -r file; do
-        if swift_code_matching_lines "$pattern" "$file"; then
-            matched=1
-        fi
-    done < <(grep -RIl --include='*.swift' -E "$pattern" "$root" || true)
+        files+=("$file")
+    done < <(find "$root" -type f -name '*.swift' -print | sort)
 
-    (( matched > 0 ))
+    (( ${#files[@]} > 0 )) || return 1
+
+    # Match only after lexical normalization. A raw-text prefilter would miss
+    # executable spellings such as `ShellStore` while the normalized matcher
+    # intentionally ignores the same symbol inside comments and strings.
+    swift_code_matching_lines "$pattern" "${files[@]}"
 }
 
 reject_unapproved_symbol_lines() {
