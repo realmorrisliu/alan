@@ -1148,6 +1148,110 @@ static_property_declarations() {
     ' < <(swift_code_lines "$file")
 }
 
+observable_object_owner_declarations() {
+    local file
+    local -a files=()
+
+    while IFS= read -r file; do
+        files+=("$file")
+    done < <(find "$SOURCE_ROOT" -type f -name '*.swift' -print | sort)
+    (( ${#files[@]} > 0 )) || return
+
+    awk "$OWNERSHIP_AWK_HELPERS"'
+        function trim(value) {
+            sub(/^[[:space:]]+/, "", value)
+            sub(/[[:space:]]+$/, "", value)
+            return value
+        }
+        function is_owner_declaration_start(value) {
+            return value ~ /^[[:space:]]*[^\/]*(class|struct|actor|extension|protocol)[ ]+[A-Za-z_][A-Za-z0-9_.]*/
+        }
+        function declaration_has_body(value) {
+            return top_level_character_position(value, "{") > 0
+        }
+        function declared_owner_name(value,    name) {
+            name = value
+            sub(/^.*(class|struct|actor|extension|protocol)[ ]+/, "", name)
+            sub(/[^A-Za-z0-9_.].*$/, "", name)
+            return name
+        }
+        function declares_observable_object_conformance(value,    body, clause, colon, entry, entry_end, entry_start, signature, where_clause) {
+            signature = value
+            gsub(/[[:space:]]+/, " ", signature)
+            sub(/^.*(class|struct|actor|extension|protocol)[ ]+/, "", signature)
+            colon = top_level_character_position(signature, ":")
+            if (colon == 0) {
+                return 0
+            }
+            clause = substr(signature, colon + 1)
+            body = top_level_character_position(clause, "{")
+            if (body > 0) {
+                clause = substr(clause, 1, body - 1)
+            }
+            where_clause = match(clause, /[ ]where([ ]|$)/)
+            if (where_clause > 0) {
+                clause = substr(clause, 1, where_clause - 1)
+            }
+
+            entry_start = 1
+            while (entry_start <= length(clause)) {
+                entry_end = top_level_binding_end(clause, entry_start)
+                entry = trim(substr(clause, entry_start, entry_end - entry_start))
+                while (entry ~ /^@[A-Za-z_][A-Za-z0-9_.]*[ ]+/) {
+                    sub(/^@[A-Za-z_][A-Za-z0-9_.]*[ ]+/, "", entry)
+                }
+                if (entry ~ /^([A-Za-z_][A-Za-z0-9_]*[.])*ObservableObject$/) {
+                    return 1
+                }
+                entry_start = entry_end + 1
+            }
+            return 0
+        }
+        function record_buffered_owner(    name, signature) {
+            if (owner_buffer == "") {
+                return
+            }
+            signature = owner_buffer
+            if (declares_observable_object_conformance(signature)) {
+                name = declared_owner_name(signature)
+                gsub(/[[:space:]]+/, " ", signature)
+                print current_file "|" owner_start_line "|" name "|" trim(signature)
+            }
+            owner_buffer = ""
+        }
+        {
+            first_separator = index($0, "\t")
+            remainder = substr($0, first_separator + 1)
+            second_separator = index(remainder, "\t")
+            source_file = substr($0, 1, first_separator - 1)
+            source_line_number = substr(remainder, 1, second_separator - 1)
+            line = substr(remainder, second_separator + 1)
+
+            if (current_file != "" && source_file != current_file) {
+                record_buffered_owner()
+            }
+            current_file = source_file
+
+            if (owner_buffer != "") {
+                owner_buffer = owner_buffer " " line
+                if (declaration_has_body(owner_buffer)) {
+                    record_buffered_owner()
+                }
+                next
+            }
+
+            if (is_owner_declaration_start(line)) {
+                owner_buffer = line
+                owner_start_line = source_line_number
+                if (declaration_has_body(owner_buffer)) {
+                    record_buffered_owner()
+                }
+            }
+        }
+        END { record_buffered_owner() }
+    ' < <(swift_code_lines "${files[@]}")
+}
+
 guarded_shell_owner_typealias_declarations() {
     local file="$1"
 
@@ -2213,6 +2317,7 @@ reject_replacement_global_shell_store() {
     local host_factory_inventory
     local line_number
     local observable_owner
+    local observable_owner_name
     local published_projection
     local snapshot_property_counts
     local snapshot_factory_inventory
@@ -2324,25 +2429,23 @@ reject_replacement_global_shell_store() {
 
     while IFS=: read -r file line_number source_line; do
         rel="${file#$SOURCE_ROOT/}"
-
-        if [[ "$source_line" == *"@Observable"* ]]; then
-            printf '%s:%s:%s\n' "$file" "$line_number" "$source_line" >&2
-            fail "new @Observable owners require an explicit architecture ownership decision"
-        elif [[ "$source_line" =~ (class|struct|actor)[[:space:]]+([A-Za-z_][A-Za-z0-9_]*) ]]; then
-            observable_owner="$rel|${BASH_REMATCH[2]}"
-            if ! contains_line "$observable_owner" "${observable_owner_allowlist[@]}"; then
-                printf '%s:%s:%s\n' "$file" "$line_number" "$source_line" >&2
-                fail "new ObservableObject owner is not in the accepted architecture: $observable_owner"
-            fi
-        else
-            printf '%s:%s:%s\n' "$file" "$line_number" "$source_line" >&2
-            fail "unrecognized ObservableObject ownership declaration in $rel"
-        fi
+        printf '%s:%s:%s\n' "$file" "$line_number" "$source_line" >&2
+        fail "new @Observable owners require an explicit architecture ownership decision"
     done < <(
         swift_tree_code_matching_lines \
-            'ObservableObject|@Observable' \
+            '@Observable([^A-Za-z0-9_]|$)' \
             "$SOURCE_ROOT" || true
     )
+
+    while IFS='|' read -r file line_number observable_owner_name source_line; do
+        rel="${file#$SOURCE_ROOT/}"
+        [[ -n "$line_number" ]] || continue
+        observable_owner="$rel|$observable_owner_name"
+        if ! contains_line "$observable_owner" "${observable_owner_allowlist[@]}"; then
+            printf '%s:%s:%s\n' "$file" "$line_number" "$source_line" >&2
+            fail "new ObservableObject owner is not in the accepted architecture: $observable_owner"
+        fi
+    done < <(observable_object_owner_declarations)
 
     while IFS=: read -r file line_number source_line; do
         rel="${file#$SOURCE_ROOT/}"

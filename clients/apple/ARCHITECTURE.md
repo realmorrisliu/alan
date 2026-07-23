@@ -633,9 +633,12 @@ directly. Production aliases that reference
 `ShellHostController`, `ShellStateSnapshot`, or
 `ShellContentWorkspaceManifest` are rejected, keeping contextual factory calls
 such as `.live()` from hiding a guarded ownership type. The current `ObservableObject`
-declarations and `@Published`
-projections form explicit owner allowlists, new `@Observable` owners require an
-architecture decision, and no catch-all type ending in `ShellStore`,
+declarations and `@Published` projections form explicit owner allowlists.
+Observable ownership is read from actual class, struct, actor, protocol, and
+extension conformance clauses, including multiline declarations; generic
+constraints, parameter types, and other references do not become owners. New
+`@Observable` owners require an architecture decision, and no catch-all type
+ending in `ShellStore`,
 `ShellStateStore`, `ShellWorkspaceStore`, or the corresponding `Model` form may
 wrap shell state, regardless of a product or platform prefix. Focused names such
 as `AlanShellEventStore` remain distinct from those global-wrapper forms.
