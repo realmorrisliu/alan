@@ -513,7 +513,7 @@ readonly OWNERSHIP_AWK_HELPERS='
         position = top_level_character_position(value, ",", start)
         return position > 0 ? position : length(value) + 1
     }
-    function variable_declaration_position(value,    angle_depth, brace_depth, bracket_depth, character, column, keyword, next_character, parenthesis_depth, previous_character) {
+    function variable_declaration_keyword_position(value,    angle_depth, brace_depth, bracket_depth, character, column, keyword, next_character, parenthesis_depth, previous_character) {
         for (column = 1; column <= length(value); column++) {
             character = substr(value, column, 1)
             if (parenthesis_depth == 0 && bracket_depth == 0 &&
@@ -524,8 +524,7 @@ readonly OWNERSHIP_AWK_HELPERS='
                 next_character = substr(value, column + 3, 1)
                 if ((keyword == "let" || keyword == "var") &&
                     (column == 1 || previous_character !~ /[A-Za-z0-9_]/) &&
-                    next_character ~ /[[:space:]]/ &&
-                    substr(value, column + 4) ~ /^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*/)
+                    (next_character == "" || next_character ~ /[[:space:]]/))
                 {
                     return column
                 }
@@ -550,6 +549,29 @@ readonly OWNERSHIP_AWK_HELPERS='
         }
         return 0
     }
+    function variable_declaration_position(value,    position) {
+        position = variable_declaration_keyword_position(value)
+        if (position > 0 &&
+            substr(value, position + 3) ~ /^[[:space:]]+[A-Za-z_][A-Za-z0-9_]*/)
+        {
+            return position
+        }
+        return 0
+    }
+    function is_static_variable_declaration_start(value,    position, prefix) {
+        position = variable_declaration_keyword_position(value)
+        if (position == 0) {
+            return 0
+        }
+        prefix = substr(value, 1, position - 1)
+        return prefix ~ /(^|[[:space:]])(static|class)([[:space:]]|$)/
+    }
+    function is_variable_declaration_continuation(value, indent, declaration, declaration_indent) {
+        return value ~ /^[[:space:]]*$/ ||
+            indent > declaration_indent ||
+            (indent == declaration_indent &&
+                variable_declaration_position(declaration) == 0)
+    }
     function property_attribute_prefix(value,    position, prefix) {
         position = variable_declaration_position(value)
         if (position == 0) {
@@ -565,10 +587,11 @@ readonly OWNERSHIP_AWK_HELPERS='
         pending_property_attribute_start_line = 0
     }
     # Preserve multiline wrapper initializer arguments until their property
-    # declaration arrives, without attaching attributes to unrelated symbols.
+    # keyword arrives, including declarations whose binding starts on the next
+    # line, without attaching attributes to unrelated symbols.
     function declaration_with_pending_attributes(value, line_number, indent,    has_declaration, is_attribute, result) {
         combined_declaration_start_line = line_number
-        has_declaration = variable_declaration_position(value) > 0
+        has_declaration = variable_declaration_keyword_position(value) > 0
         is_attribute = value ~ /^[[:space:]]*@[A-Za-z_][A-Za-z0-9_.]*/
 
         if (pending_property_attributes != "") {
@@ -877,7 +900,7 @@ typed_value_member_declarations() {
             return name
         }
         function is_property_start(value) {
-            return value ~ /(^|[ ])(let|var)[ ]+[A-Za-z_][A-Za-z0-9_]*/
+            return variable_declaration_keyword_position(value) > 0
         }
         function declared_property_name(value,    declaration_head, name) {
             if (!match(value, /(^|[ ])(let|var)[ ]+[A-Za-z_][A-Za-z0-9_]*/)) {
@@ -966,7 +989,7 @@ typed_value_member_declarations() {
                 member_buffer = line
                 member_indent = line_indent
             } else if (member_buffer != "" &&
-                (line ~ /^[[:space:]]*$/ || line_indent > member_indent))
+                is_variable_declaration_continuation(line, line_indent, member_buffer, member_indent))
             {
                 member_buffer = member_buffer " " line
             } else {
@@ -1198,7 +1221,7 @@ manifest_state_declarations() {
             }
 
             if (declaration_line != "" &&
-                variable_declaration_position(declaration_line) > 0)
+                variable_declaration_keyword_position(declaration_line) > 0)
             {
                 record_declaration()
                 buffer = declaration_line
@@ -1207,7 +1230,7 @@ manifest_state_declarations() {
                 declaration_owner = type_depth > 0 ? type_name[type_depth] : ""
                 declaration_owner_key = current_type_owner()
             } else if (buffer != "" &&
-                (line ~ /^[[:space:]]*$/ || line_indent > declaration_indent))
+                is_variable_declaration_continuation(line, line_indent, buffer, declaration_indent))
             {
                 buffer = buffer " " line
             } else {
@@ -1221,20 +1244,45 @@ manifest_state_declarations() {
 static_property_declarations() {
     local file="$1"
 
-    awk '
+    awk "$OWNERSHIP_AWK_HELPERS"'
+        function leading_space_count(value,    prefix) {
+            prefix = value
+            sub(/[^ ].*$/, "", prefix)
+            return length(prefix)
+        }
+        function record_buffered_property(    property) {
+            if (property_buffer == "") {
+                return
+            }
+            property = property_buffer
+            gsub(/[[:space:]]+/, " ", property)
+            sub(/^ /, "", property)
+            sub(/ $/, "", property)
+            if (variable_declaration_position(property) > 0) {
+                print property
+            }
+            property_buffer = ""
+        }
         {
             first_separator = index($0, "\t")
             remainder = substr($0, first_separator + 1)
             second_separator = index(remainder, "\t")
             line = substr(remainder, second_separator + 1)
-            if (line !~ /^[[:space:]]*[^\/]*(static|class)[ ]+([^ ]+[ ]+)*(let|var)[ ]+[A-Za-z_][A-Za-z0-9_]*/) {
-                next
+            line_indent = leading_space_count(line)
+
+            if (is_static_variable_declaration_start(line)) {
+                record_buffered_property()
+                property_buffer = line
+                property_indent = line_indent
+            } else if (property_buffer != "" &&
+                is_variable_declaration_continuation(line, line_indent, property_buffer, property_indent))
+            {
+                property_buffer = property_buffer " " line
+            } else {
+                record_buffered_property()
             }
-            gsub(/[[:space:]]+/, " ", line)
-            sub(/^ /, "", line)
-            sub(/ $/, "", line)
-            print line
         }
+        END { record_buffered_property() }
     ' < <(swift_code_lines "$file")
 }
 
@@ -1545,14 +1593,14 @@ shell_host_retaining_type_inventory() {
             if (type_depth > 0 && line_indent == type_indent[type_depth] + 4) {
                 record_buffered_property()
                 if (declaration_line != "" &&
-                    variable_declaration_position(declaration_line) > 0)
+                    variable_declaration_keyword_position(declaration_line) > 0)
                 {
                     property_buffer = declaration_line
                     property_indent = line_indent
                     property_owner = type_name[type_depth]
                 }
             } else if (property_buffer != "" &&
-                (line ~ /^[[:space:]]*$/ || line_indent > property_indent))
+                is_variable_declaration_continuation(line, line_indent, property_buffer, property_indent))
             {
                 property_buffer = property_buffer " " line
             } else {
@@ -1619,11 +1667,8 @@ shell_host_global_storage_declarations() {
             sub(/[^ ].*$/, "", prefix)
             return length(prefix)
         }
-        function is_static_property_start(value) {
-            return value ~ /^[[:space:]]*[^\/]*(static|class)[ ]+([^ ]+[ ]+)*(let|var)[ ]+[A-Za-z_][A-Za-z0-9_]*/
-        }
         function is_module_property_start(value) {
-            return variable_declaration_position(value) > 0
+            return variable_declaration_keyword_position(value) > 0
         }
         function is_type_declaration(value) {
             return value ~ /^[[:space:]]*[^\/]*(class|struct|actor|enum|extension|protocol)[ ]+[A-Za-z_][A-Za-z0-9_.]*/
@@ -1690,16 +1735,16 @@ shell_host_global_storage_declarations() {
                 }
             }
 
-            if (is_static_property_start(declaration_line) ||
+            if (is_static_variable_declaration_start(declaration_line) ||
                 (brace_depth == 0 && is_module_property_start(declaration_line)))
             {
                 record_buffered_property()
                 property_buffer = declaration_line
-                property_start_line = source_line_number
+                property_start_line = combined_declaration_start_line
                 property_indent = line_indent
                 property_owner = type_depth > 0 ? type_name[type_depth] : ""
             } else if (property_buffer != "" &&
-                (line ~ /^[[:space:]]*$/ || line_indent > property_indent))
+                is_variable_declaration_continuation(line, line_indent, property_buffer, property_indent))
             {
                 property_buffer = property_buffer " " line
             } else {
@@ -2233,11 +2278,8 @@ shell_snapshot_stored_property_counts() {
             sub(/[^ ].*$/, "", prefix)
             return length(prefix)
         }
-        function is_static_property_start(value) {
-            return value ~ /^[[:space:]]*[^\/]*(static|class)[ ]+([^ ]+[ ]+)*(let|var)[ ]+[A-Za-z_][A-Za-z0-9_]*/
-        }
         function is_module_property_start(value) {
-            return value ~ /^[^\/{]*(let|var)[ ]+[A-Za-z_][A-Za-z0-9_]*/
+            return variable_declaration_keyword_position(value) > 0
         }
         function is_type_declaration(value) {
             return value ~ /^[[:space:]]*[^\/]*(class|struct|actor|enum|extension|protocol)[ ]+[A-Za-z_][A-Za-z0-9_.]*/
@@ -2490,7 +2532,7 @@ shell_snapshot_stored_property_counts() {
             if (type_depth > 0 && line_indent == type_indent[type_depth] + 4) {
                 count_buffered_instance_property()
                 if (declaration_line != "" &&
-                    variable_declaration_position(declaration_line) > 0)
+                    variable_declaration_keyword_position(declaration_line) > 0)
                 {
                     instance_buffer = declaration_line
                     instance_indent = line_indent
@@ -2498,7 +2540,7 @@ shell_snapshot_stored_property_counts() {
                     instance_owner = type_name[type_depth]
                 }
             } else if (instance_buffer != "" &&
-                (line ~ /^[[:space:]]*$/ || line_indent > instance_indent))
+                is_variable_declaration_continuation(line, line_indent, instance_buffer, instance_indent))
             {
                 instance_buffer = instance_buffer " " line
             } else {
@@ -2508,7 +2550,7 @@ shell_snapshot_stored_property_counts() {
             # Globally addressable storage is either a module-scope declaration
             # or a static/class type member. Method-local variables remain out
             # of this inventory.
-            if (is_static_property_start(declaration_line) ||
+            if (is_static_variable_declaration_start(declaration_line) ||
                 (brace_depth == 0 && is_module_property_start(declaration_line)))
             {
                 count_buffered_global_property()
@@ -2516,7 +2558,7 @@ shell_snapshot_stored_property_counts() {
                 global_indent = line_indent
                 global_owner = type_depth > 0 ? type_name[type_depth] : ""
             } else if (global_buffer != "" &&
-                (line ~ /^[[:space:]]*$/ || leading_space_count(line) > global_indent))
+                is_variable_declaration_continuation(line, line_indent, global_buffer, global_indent))
             {
                 global_buffer = global_buffer " " line
             } else {
