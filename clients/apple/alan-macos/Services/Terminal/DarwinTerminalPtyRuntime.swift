@@ -16,7 +16,6 @@ private func alanDarwinPtySpawn(
 
 @MainActor
 final class AlanDarwinTerminalPtyHandle: AlanTerminalPtyHandle {
-    private let maxPendingRendererReplayBytes = 1024 * 1024
     private struct PendingDirectPtyInputChunk {
         var data: Data
         var countedBytesRemaining: Int
@@ -43,8 +42,9 @@ final class AlanDarwinTerminalPtyHandle: AlanTerminalPtyHandle {
     private var processGroupTimer: DispatchSourceTimer?
     private var semanticShellActivityState: AlanTerminalPtyShellActivityState?
     private var processGroupShellActivityState: AlanTerminalPtyShellActivityState?
-    private var pendingRendererReplayChunks: [Data] = []
-    private var pendingRendererReplayBytes = 0
+    private var pendingRendererReplay = AlanTerminalPtyBoundedReplayBuffer(
+        maxBytes: 1024 * 1024
+    )
     private(set) var shellActivityState: AlanTerminalPtyShellActivityState = .unknown
     var onShellActivityStateChange: ((AlanTerminalPtyShellActivityState) -> Void)?
 
@@ -263,9 +263,7 @@ final class AlanDarwinTerminalPtyHandle: AlanTerminalPtyHandle {
             outputProcessor: outputProcessor
         )
         rendererProxy = proxy
-        let replayChunks = pendingRendererReplayChunks
-        pendingRendererReplayChunks.removeAll()
-        pendingRendererReplayBytes = 0
+        let replayChunks = pendingRendererReplay.takeChunks()
         proxy.start(initialRendererOutput: replayChunks)
 
         return .attached(
@@ -322,14 +320,7 @@ final class AlanDarwinTerminalPtyHandle: AlanTerminalPtyHandle {
     }
 
     private func appendPendingRendererReplay(_ data: Data) {
-        guard !data.isEmpty else { return }
-        pendingRendererReplayChunks.append(data)
-        pendingRendererReplayBytes += data.count
-        while pendingRendererReplayBytes > maxPendingRendererReplayBytes,
-              pendingRendererReplayChunks.count > 1
-        {
-            pendingRendererReplayBytes -= pendingRendererReplayChunks.removeFirst().count
-        }
+        pendingRendererReplay.append(data)
     }
 
     @discardableResult
@@ -449,21 +440,13 @@ final class AlanDarwinTerminalPtyHandle: AlanTerminalPtyHandle {
     }
 
     private func reconcileShellActivityState() {
-        let state: AlanTerminalPtyShellActivityState
-        if !bootRequest.strategy.launchesInteractiveShell {
-            state = semanticShellActivityState ?? .foregroundCommand
-        } else if semanticShellActivityState == .foregroundCommand
-            || processGroupShellActivityState == .foregroundCommand
-        {
-            state = .foregroundCommand
-        } else if semanticShellActivityState == .shellInput
-            || processGroupShellActivityState == .shellInput
-        {
-            state = .shellInput
-        } else {
-            state = .unknown
-        }
-        recordShellActivityState(state)
+        recordShellActivityState(
+            AlanTerminalPtyShellActivityResolver.resolve(
+                launchesInteractiveShell: bootRequest.strategy.launchesInteractiveShell,
+                semanticState: semanticShellActivityState,
+                processGroupState: processGroupShellActivityState
+            )
+        )
     }
 
     private func startRendererlessOutputDraining() {

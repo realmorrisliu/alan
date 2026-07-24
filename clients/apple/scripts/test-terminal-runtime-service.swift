@@ -15,6 +15,8 @@ private enum TerminalRuntimeServiceTests {
         verifiesSourceTreeRepositoryRootInference()
         verifiesControlSequenceResponderAnswersPrimaryDeviceAttributes()
         verifiesControlSequenceResponderReportsShellActivity()
+        verifiesShellActivityResolverPrioritizesKnownProcessGroup()
+        verifiesBoundedReplayBufferTrimsOversizedHandoffChunks()
         verifiesGhosttyTerminfoEnvironmentProjection()
         verifiesBootProfileExposesStructuredBootRequest()
         verifiesManagedUserLaunchResolutionUsesHelperIdentityWithoutSudo()
@@ -221,6 +223,73 @@ private enum TerminalRuntimeServiceTests {
         expect(
             response.shellActivityTransition == .shellInput,
             "split OSC 133 prompt markers must preserve semantic state"
+        )
+    }
+
+    private static func verifiesShellActivityResolverPrioritizesKnownProcessGroup() {
+        expect(
+            AlanTerminalPtyShellActivityResolver.resolve(
+                launchesInteractiveShell: true,
+                semanticState: .foregroundCommand,
+                processGroupState: .shellInput
+            ) == .shellInput,
+            "a known idle process group must clear stale semantic foreground activity"
+        )
+        expect(
+            AlanTerminalPtyShellActivityResolver.resolve(
+                launchesInteractiveShell: true,
+                semanticState: .shellInput,
+                processGroupState: .foregroundCommand
+            ) == .foregroundCommand,
+            "a known foreground process group must override stale semantic prompt activity"
+        )
+        expect(
+            AlanTerminalPtyShellActivityResolver.resolve(
+                launchesInteractiveShell: true,
+                semanticState: .foregroundCommand,
+                processGroupState: nil
+            ) == .foregroundCommand,
+            "semantic activity must remain the fallback when process-group state is unavailable"
+        )
+        expect(
+            AlanTerminalPtyShellActivityResolver.resolve(
+                launchesInteractiveShell: false,
+                semanticState: nil,
+                processGroupState: .shellInput
+            ) == .foregroundCommand,
+            "a custom command must remain foreground from launch"
+        )
+    }
+
+    private static func verifiesBoundedReplayBufferTrimsOversizedHandoffChunks() {
+        var replayBuffer = AlanTerminalPtyBoundedReplayBuffer(maxBytes: 8)
+        replayBuffer.append(Data("old".utf8))
+        replayBuffer.append(Data("0123456789".utf8))
+        expect(
+            replayBuffer.byteCount == 8,
+            "one oversized renderer handoff chunk must obey the replay byte cap"
+        )
+        expect(
+            replayBuffer.chunks.reduce(into: Data()) { $0.append($1) }
+                == Data("23456789".utf8),
+            "an oversized renderer handoff must preserve only its bounded tail"
+        )
+
+        replayBuffer.removeAll()
+        replayBuffer.append(Data("12345".utf8))
+        replayBuffer.append(Data("67890".utf8))
+        expect(
+            replayBuffer.byteCount == 8,
+            "multiple renderer replay chunks must obey the same byte cap"
+        )
+        expect(
+            replayBuffer.takeChunks().reduce(into: Data()) { $0.append($1) }
+                == Data("34567890".utf8),
+            "multi-chunk replay trimming must retain the newest exact byte tail"
+        )
+        expect(
+            replayBuffer.byteCount == 0 && replayBuffer.chunks.isEmpty,
+            "taking renderer replay chunks must atomically clear the buffer"
         )
     }
 
@@ -441,6 +510,34 @@ private enum TerminalRuntimeServiceTests {
             "an unintegrated idle login shell must not remain permanently unknown; "
                 + "PTY=\(handle.shellActivityState) "
                 + "surface=\(String(describing: surface.snapshot.metadata.activeTaskState))"
+        )
+
+        let semanticMarker = "alan_stale_osc_\(UUID().uuidString)"
+        expect(
+            surface.sendControlText(
+                "printf '\(semanticMarker)\\033]133;C\\a\\n'\n"
+            ).applied,
+            "the unintegrated shell must accept a command that emits an unmatched OSC start"
+        )
+        let semanticOutputDeadline = Date().addingTimeInterval(2)
+        while Date() < semanticOutputDeadline
+            && !handle.snapshot.transcriptLines.joined(separator: "\n").contains(semanticMarker)
+        {
+            try? await Task.sleep(nanoseconds: 20_000_000)
+        }
+        expect(
+            handle.snapshot.transcriptLines.joined(separator: "\n").contains(semanticMarker),
+            "the stale-OSC regression must observe its semantic command-start output"
+        )
+        let semanticIdleDeadline = Date().addingTimeInterval(2)
+        while Date() < semanticIdleDeadline
+            && surface.snapshot.metadata.activeTaskState != .inactive
+        {
+            try? await Task.sleep(nanoseconds: 20_000_000)
+        }
+        expect(
+            surface.snapshot.metadata.activeTaskState == .inactive,
+            "a known idle process group must clear an unmatched OSC command-start marker"
         )
 
         expect(

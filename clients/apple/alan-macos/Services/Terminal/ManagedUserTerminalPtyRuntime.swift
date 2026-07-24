@@ -148,7 +148,6 @@ final class AlanUnavailableManagedUserPtyHandle: AlanTerminalPtyHandle {
 
 @MainActor
 final class AlanHelperManagedUserPtyHandle: AlanTerminalPtyHandle {
-    private let maxPendingRendererReplayBytes = 1024 * 1024
     let contentID: String
     let bootRequest: AlanTerminalBootRequest
     let helperClient: AlanPrivilegedHelperClienting
@@ -168,8 +167,9 @@ final class AlanHelperManagedUserPtyHandle: AlanTerminalPtyHandle {
     private var outputPump: AlanHelperManagedUserPtyOutputPump?
     private var semanticShellActivityState: AlanTerminalPtyShellActivityState?
     private var processGroupShellActivityState: AlanTerminalPtyShellActivityState?
-    private var pendingRendererReplayChunks: [Data] = []
-    private var pendingRendererReplayBytes = 0
+    private var pendingRendererReplay = AlanTerminalPtyBoundedReplayBuffer(
+        maxBytes: 1024 * 1024
+    )
     private(set) var shellActivityState: AlanTerminalPtyShellActivityState = .unknown
     var onShellActivityStateChange: ((AlanTerminalPtyShellActivityState) -> Void)?
 
@@ -397,13 +397,12 @@ final class AlanHelperManagedUserPtyHandle: AlanTerminalPtyHandle {
         )
         let preparation = outputPump.attachRendererProxy(
             proxy,
-            replayChunks: pendingRendererReplayChunks,
+            replayChunks: pendingRendererReplay.chunks,
             maxBytes: 4096
         )
         if preparation.attached {
             rendererProxy = proxy
-            pendingRendererReplayChunks.removeAll()
-            pendingRendererReplayBytes = 0
+            pendingRendererReplay.removeAll()
         }
         applyOutputUpdates(preparation.updates)
         guard preparation.attached,
@@ -503,14 +502,7 @@ final class AlanHelperManagedUserPtyHandle: AlanTerminalPtyHandle {
     }
 
     private func appendPendingRendererReplay(_ data: Data) {
-        guard !data.isEmpty else { return }
-        pendingRendererReplayChunks.append(data)
-        pendingRendererReplayBytes += data.count
-        while pendingRendererReplayBytes > maxPendingRendererReplayBytes,
-              pendingRendererReplayChunks.count > 1
-        {
-            pendingRendererReplayBytes -= pendingRendererReplayChunks.removeFirst().count
-        }
+        pendingRendererReplay.append(data)
     }
 
     fileprivate func applyPendingOutput(
@@ -604,19 +596,13 @@ final class AlanHelperManagedUserPtyHandle: AlanTerminalPtyHandle {
     }
 
     private func reconcileShellActivityState() {
-        let state: AlanTerminalPtyShellActivityState
-        if semanticShellActivityState == .foregroundCommand
-            || processGroupShellActivityState == .foregroundCommand
-        {
-            state = .foregroundCommand
-        } else if semanticShellActivityState == .shellInput
-            || processGroupShellActivityState == .shellInput
-        {
-            state = .shellInput
-        } else {
-            state = .unknown
-        }
-        recordShellActivityState(state)
+        recordShellActivityState(
+            AlanTerminalPtyShellActivityResolver.resolve(
+                launchesInteractiveShell: bootRequest.strategy.launchesInteractiveShell,
+                semanticState: semanticShellActivityState,
+                processGroupState: processGroupShellActivityState
+            )
+        )
     }
 
     private func recordShellActivityState(_ state: AlanTerminalPtyShellActivityState) {

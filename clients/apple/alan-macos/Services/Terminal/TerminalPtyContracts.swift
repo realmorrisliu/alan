@@ -77,6 +77,68 @@ enum AlanTerminalPtyShellActivityState: Equatable {
     case foregroundCommand
 }
 
+enum AlanTerminalPtyShellActivityResolver {
+    static func resolve(
+        launchesInteractiveShell: Bool,
+        semanticState: AlanTerminalPtyShellActivityState?,
+        processGroupState: AlanTerminalPtyShellActivityState?
+    ) -> AlanTerminalPtyShellActivityState {
+        guard launchesInteractiveShell else {
+            return semanticState ?? .foregroundCommand
+        }
+        return processGroupState ?? semanticState ?? .unknown
+    }
+}
+
+struct AlanTerminalPtyBoundedReplayBuffer {
+    let maxBytes: Int
+    private(set) var chunks: [Data] = []
+    private(set) var byteCount = 0
+
+    init(maxBytes: Int) {
+        precondition(maxBytes > 0)
+        self.maxBytes = maxBytes
+    }
+
+    mutating func append(_ data: Data) {
+        guard !data.isEmpty else { return }
+        if data.count >= maxBytes {
+            chunks = [Data(data.suffix(maxBytes))]
+            byteCount = maxBytes
+            return
+        }
+
+        chunks.append(data)
+        byteCount += data.count
+        trimOldestBytes(byteCount - maxBytes)
+    }
+
+    mutating func removeAll() {
+        chunks.removeAll()
+        byteCount = 0
+    }
+
+    mutating func takeChunks() -> [Data] {
+        let result = chunks
+        removeAll()
+        return result
+    }
+
+    private mutating func trimOldestBytes(_ requestedByteCount: Int) {
+        var remainingByteCount = max(0, requestedByteCount)
+        while remainingByteCount > 0, let firstChunk = chunks.first {
+            let removedByteCount = min(remainingByteCount, firstChunk.count)
+            if removedByteCount == firstChunk.count {
+                chunks.removeFirst()
+            } else {
+                chunks[0] = Data(firstChunk.dropFirst(removedByteCount))
+            }
+            byteCount -= removedByteCount
+            remainingByteCount -= removedByteCount
+        }
+    }
+}
+
 extension AlanLaunchStrategy {
     var launchesInteractiveShell: Bool {
         switch self {
