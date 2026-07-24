@@ -216,6 +216,16 @@ struct AlanTerminalPtyRuntimeSnapshot: Equatable {
     let lastSignal: AlanTerminalPtySignal?
     let exitStatus: AlanTerminalProcessExitStatus?
     let transcriptLines: [String]
+
+    var hasLiveChildProcess: Bool {
+        guard exitStatus == nil else { return false }
+        switch phase {
+        case .running, .inputClosed:
+            return true
+        case .pending, .exited, .failed:
+            return false
+        }
+    }
 }
 
 @MainActor

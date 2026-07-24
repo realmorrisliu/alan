@@ -447,13 +447,17 @@ final class AlanGhosttySurfaceHandle: AlanTerminalSurfaceHandle {
         if metadata.processExited {
             activeTaskState = .inactive
         } else if let ptyHandle {
-            switch ptyHandle.shellActivityState {
-            case .unknown:
-                activeTaskState = .unknown
-            case .shellInput:
+            if ptyHandle.snapshot.hasLiveChildProcess {
+                switch ptyHandle.shellActivityState {
+                case .unknown:
+                    activeTaskState = .unknown
+                case .shellInput:
+                    activeTaskState = .inactive
+                case .foregroundCommand:
+                    activeTaskState = .foregroundCommand
+                }
+            } else {
                 activeTaskState = .inactive
-            case .foregroundCommand:
-                activeTaskState = .foregroundCommand
             }
         } else {
             return metadata

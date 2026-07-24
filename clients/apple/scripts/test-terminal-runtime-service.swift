@@ -16,6 +16,7 @@ private enum TerminalRuntimeServiceTests {
         verifiesControlSequenceResponderAnswersPrimaryDeviceAttributes()
         verifiesControlSequenceResponderReportsShellActivity()
         verifiesShellActivityResolverPrioritizesKnownProcessGroup()
+        verifiesPtySnapshotClassifiesOnlyLiveChildPhases()
         verifiesIdleProcessGroupTrackerRebasesOnlyForInteractiveWrappers()
         verifiesBoundedReplayBufferTrimsOversizedHandoffChunks()
         verifiesGhosttyTerminfoEnvironmentProjection()
@@ -23,6 +24,7 @@ private enum TerminalRuntimeServiceTests {
         verifiesManagedUserLaunchResolutionUsesHelperIdentityWithoutSudo()
         verifiesFakePtyRuntimeCapturesLaunchAndLifecycle()
         verifiesManagedUserPtyRuntimeFailsClosedWithoutSudoFallback()
+        verifiesFailedPtyDoesNotProjectActiveWork()
         verifiesManagedUserPtyRuntimeUsesHelperProviderWhenAvailable()
         verifiesWindowRuntimeDefaultPtyRuntimeWiresHelperProvider()
         verifiesManagedUserSurfaceRoutesHelperPtyLifecycleControls()
@@ -168,6 +170,43 @@ private enum TerminalRuntimeServiceTests {
             "non-query OSC sequences must continue to Ghostty unchanged"
         )
         expect(response.ptyResponse.isEmpty, "non-query OSC sequences must not emit PTY responses")
+    }
+
+    private static func verifiesPtySnapshotClassifiesOnlyLiveChildPhases() {
+        let request = sampleBootProfile(workingDirectory: "/tmp").bootRequest
+        let cases: [
+            (
+                phase: AlanTerminalPtyRuntimePhase,
+                exitStatus: AlanTerminalProcessExitStatus?,
+                expectsLiveChild: Bool
+            )
+        ] = [
+            (.pending, nil, false),
+            (.running, nil, true),
+            (.inputClosed, nil, true),
+            (.exited, .exitCode(0), false),
+            (.failed, .unknown, false),
+            (.running, .signal(SIGTERM), false),
+        ]
+
+        for item in cases {
+            let snapshot = AlanTerminalPtyRuntimeSnapshot(
+                contentID: "content_terminal_lifecycle_\(item.phase.rawValue)",
+                bootRequest: request,
+                phase: item.phase,
+                dimensions: nil,
+                acceptedInputBytes: 0,
+                inputClosed: item.phase == .inputClosed,
+                lastSignal: nil,
+                exitStatus: item.exitStatus,
+                transcriptLines: []
+            )
+            expect(
+                snapshot.hasLiveChildProcess == item.expectsLiveChild,
+                "PTY phase \(item.phase.rawValue) with exit \(String(describing: item.exitStatus)) "
+                    + "must classify live-child ownership precisely"
+            )
+        }
     }
 
     private static func verifiesControlSequenceResponderReportsShellActivity() {
@@ -991,6 +1030,58 @@ private enum TerminalRuntimeServiceTests {
                 "unavailable managed_user renderer attachment must be rejected with helper diagnostics"
             )
         }
+    }
+
+    private static func verifiesFailedPtyDoesNotProjectActiveWork() {
+        let contentID = "content_terminal_managed_user_failed_activity"
+        let command = AlanCommandResolution(
+            strategy: .terminalProfileManagedUser,
+            executablePath: nil,
+            launchPath: "",
+            arguments: [],
+            bootCommand: "managed_user 'lab'",
+            surfaceCommand: nil,
+            summary: "Managed User lab",
+            detail: nil,
+            repoRoot: nil,
+            candidates: [],
+            managedUserAccountName: "lab"
+        )
+        let profile = sampleBootProfile(
+            workingDirectory: "/Users/lab",
+            command: command,
+            environment: [
+                "ALAN_SHELL_CONTENT_ID": contentID,
+                "ALAN_MANAGED_USER_ACCOUNT": "lab",
+            ]
+        )
+        let runtime = AlanDarwinTerminalPtyRuntime()
+        let surface = AlanGhosttySurfaceHandle(
+            contentID: contentID,
+            paneID: "pane_managed_user_failed_activity",
+            bootstrap: FakeAlanGhosttyProcessBootstrap(),
+            ptyRuntime: runtime
+        )
+
+        surface.configure(
+            mountedAtPaneID: "pane_managed_user_failed_activity",
+            bootProfile: profile
+        )
+
+        let handle = runtime.existingHandle(forTerminalContentID: contentID)
+        expect(
+            handle?.snapshot.phase == .failed
+                && handle?.snapshot.exitStatus == .unknown,
+            "the unavailable Managed User fixture must represent a failed PTY with no live child"
+        )
+        expect(
+            handle?.shellActivityState == .unknown,
+            "failed PTY activity must remain unknown rather than pretending a prompt was observed"
+        )
+        expect(
+            surface.snapshot.metadata.activeTaskState == .inactive,
+            "a failed PTY with no live child must not be projected as active work"
+        )
     }
 
     private static func verifiesManagedUserPtyRuntimeUsesHelperProviderWhenAvailable() {
