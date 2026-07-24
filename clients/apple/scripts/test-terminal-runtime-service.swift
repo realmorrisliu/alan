@@ -16,6 +16,7 @@ private enum TerminalRuntimeServiceTests {
         verifiesControlSequenceResponderAnswersPrimaryDeviceAttributes()
         verifiesControlSequenceResponderReportsShellActivity()
         verifiesShellActivityResolverPrioritizesKnownProcessGroup()
+        verifiesIdleProcessGroupTrackerRebasesOnlyForInteractiveWrappers()
         verifiesBoundedReplayBufferTrimsOversizedHandoffChunks()
         verifiesGhosttyTerminfoEnvironmentProjection()
         verifiesBootProfileExposesStructuredBootRequest()
@@ -258,6 +259,68 @@ private enum TerminalRuntimeServiceTests {
                 processGroupState: .shellInput
             ) == .foregroundCommand,
             "a custom command must remain foreground from launch"
+        )
+    }
+
+    private static func verifiesIdleProcessGroupTrackerRebasesOnlyForInteractiveWrappers() {
+        var directShellTracker = AlanTerminalPtyIdleProcessGroupTracker(
+            initialIdleProcessGroupID: 10,
+            allowsIdleProcessGroupRebase: false
+        )
+        expect(
+            directShellTracker.observe(
+                foregroundProcessGroupID: 10,
+                semanticState: nil
+            ) == .shellInput,
+            "a direct interactive shell process group must be the idle baseline"
+        )
+        expect(
+            directShellTracker.observe(
+                foregroundProcessGroupID: 11,
+                semanticState: nil
+            ) == .foregroundCommand,
+            "a direct interactive shell must not rebase to a foreground command"
+        )
+
+        var wrapperTracker = AlanTerminalPtyIdleProcessGroupTracker(
+            initialIdleProcessGroupID: 20,
+            allowsIdleProcessGroupRebase: true
+        )
+        expect(
+            wrapperTracker.observe(
+                foregroundProcessGroupID: 21,
+                semanticState: .foregroundCommand
+            ) == .foregroundCommand,
+            "a wrapper must not rebase to a process group known to be a foreground command"
+        )
+        expect(
+            wrapperTracker.idleProcessGroupID == 20,
+            "a rejected foreground candidate must leave the wrapper baseline unchanged"
+        )
+        expect(
+            wrapperTracker.observe(
+                foregroundProcessGroupID: 22,
+                semanticState: .shellInput
+            ) == .shellInput,
+            "a sudo wrapper must rebase once to the actual interactive shell process group"
+        )
+        expect(
+            wrapperTracker.idleProcessGroupID == 22,
+            "the actual interactive shell process group must become the durable idle baseline"
+        )
+        expect(
+            wrapperTracker.observe(
+                foregroundProcessGroupID: 23,
+                semanticState: nil
+            ) == .foregroundCommand,
+            "a rebased sudo shell must classify later process groups as foreground commands"
+        )
+        expect(
+            wrapperTracker.observe(
+                foregroundProcessGroupID: 22,
+                semanticState: nil
+            ) == .shellInput,
+            "the rebased sudo shell process group must remain the idle baseline"
         )
     }
 

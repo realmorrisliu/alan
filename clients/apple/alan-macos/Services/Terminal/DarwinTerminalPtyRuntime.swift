@@ -42,6 +42,7 @@ final class AlanDarwinTerminalPtyHandle: AlanTerminalPtyHandle {
     private var processGroupTimer: DispatchSourceTimer?
     private var semanticShellActivityState: AlanTerminalPtyShellActivityState?
     private var processGroupShellActivityState: AlanTerminalPtyShellActivityState?
+    private var idleProcessGroupTracker: AlanTerminalPtyIdleProcessGroupTracker?
     private var pendingRendererReplay = AlanTerminalPtyBoundedReplayBuffer(
         maxBytes: 1024 * 1024
     )
@@ -479,13 +480,14 @@ final class AlanDarwinTerminalPtyHandle: AlanTerminalPtyHandle {
     }
 
     private func observeForegroundProcessGroup() {
-        guard masterFileDescriptor >= 0, let processGroupID else { return }
+        guard masterFileDescriptor >= 0, var idleProcessGroupTracker else { return }
         guard let foregroundProcessGroupID = currentForegroundProcessGroupID() else { return }
-        recordProcessGroupShellActivityState(
-            foregroundProcessGroupID == processGroupID
-                ? .shellInput
-                : .foregroundCommand
+        let state = idleProcessGroupTracker.observe(
+            foregroundProcessGroupID: foregroundProcessGroupID,
+            semanticState: semanticShellActivityState
         )
+        self.idleProcessGroupTracker = idleProcessGroupTracker
+        recordProcessGroupShellActivityState(state)
     }
 
     private func currentForegroundProcessGroupID() -> pid_t? {
@@ -592,6 +594,11 @@ final class AlanDarwinTerminalPtyHandle: AlanTerminalPtyHandle {
         setNonBlocking(master)
         processID = spawnedPid
         processGroupID = spawnedPid
+        idleProcessGroupTracker = AlanTerminalPtyIdleProcessGroupTracker(
+            initialIdleProcessGroupID: spawnedPid,
+            allowsIdleProcessGroupRebase:
+                bootRequest.strategy.allowsInteractiveShellProcessGroupRebase
+        )
         masterFileDescriptor = master
         preseedFishPrimaryDeviceAttributesResponseIfNeeded()
         phase = .running

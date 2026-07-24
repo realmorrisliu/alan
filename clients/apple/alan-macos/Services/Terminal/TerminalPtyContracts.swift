@@ -90,6 +90,36 @@ enum AlanTerminalPtyShellActivityResolver {
     }
 }
 
+struct AlanTerminalPtyIdleProcessGroupTracker {
+    private(set) var idleProcessGroupID: Int32
+    private var allowsIdleProcessGroupRebase: Bool
+
+    init(
+        initialIdleProcessGroupID: Int32,
+        allowsIdleProcessGroupRebase: Bool
+    ) {
+        self.idleProcessGroupID = initialIdleProcessGroupID
+        self.allowsIdleProcessGroupRebase = allowsIdleProcessGroupRebase
+    }
+
+    mutating func observe(
+        foregroundProcessGroupID: Int32,
+        semanticState: AlanTerminalPtyShellActivityState?
+    ) -> AlanTerminalPtyShellActivityState {
+        if foregroundProcessGroupID == idleProcessGroupID {
+            return .shellInput
+        }
+        if allowsIdleProcessGroupRebase,
+           semanticState != .foregroundCommand
+        {
+            idleProcessGroupID = foregroundProcessGroupID
+            allowsIdleProcessGroupRebase = false
+            return .shellInput
+        }
+        return .foregroundCommand
+    }
+}
+
 struct AlanTerminalPtyBoundedReplayBuffer {
     let maxBytes: Int
     private(set) var chunks: [Data] = []
@@ -150,6 +180,21 @@ extension AlanLaunchStrategy {
              .terminalProfileManagedUser:
             return true
         case .shellCommandEnv,
+             .terminalProfileCustomCommand:
+            return false
+        }
+    }
+
+    var allowsInteractiveShellProcessGroupRebase: Bool {
+        switch self {
+        case .terminalProfileSudoUser,
+             .terminalProfileSudoRoot:
+            return true
+        case .shellCommandEnv,
+             .loginShellOverride,
+             .loginShellEnv,
+             .loginShellFallback,
+             .terminalProfileManagedUser,
              .terminalProfileCustomCommand:
             return false
         }
