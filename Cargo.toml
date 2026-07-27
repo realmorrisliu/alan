@@ -76,7 +76,7 @@ libc = "0.2"
 # URL encoding
 urlencoding = "2.1"
 url = "2.5"
-base64 = "0.22"
+base64 = "0.23"
 
 # Web framework
 axum = "0.8"
