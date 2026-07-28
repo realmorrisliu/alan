@@ -669,8 +669,8 @@ require_pattern \
 
 require_pattern \
     "clients/apple/alan-macos/Services/Shell/AlanPrivilegedHelperXPC.swift" \
-    "static let currentVersion = 3" \
-    "managed terminal account diagnosis schema changes must advance the helper protocol"
+    "static let currentVersion = 5" \
+    "managed-user shell-integration schema changes must advance the helper protocol"
 
 require_pattern \
     "clients/apple/alan-macos/Services/Shell/ShellCoreFFIManagedTerminalAccountAdapter.swift" \
@@ -791,6 +791,36 @@ require_pattern \
     "clients/apple/alan-macos/Services/Shell/AlanPrivilegedHelperPTYSessionStore.swift" \
     "session\\.pendingInput\\.append\\(eof\\)" \
     "managed_user helper EOF must use the pending input queue"
+
+require_pattern \
+    "clients/apple/alan-macos/Services/Shell/AlanPrivilegedHelperPTYSessionStore.swift" \
+    "tcgetpgrp\\(session\\.masterFileDescriptor\\)" \
+    "managed_user shell activity must come from the helper-owned PTY foreground process group"
+
+require_pattern \
+    "clients/apple/alan-macos/Services/Shell/AlanPrivilegedHelperPTYSessionStore.swift" \
+    "let targetProcessGroupID = foregroundProcessGroupID \\?\\? session\\.processID" \
+    "managed_user PTY signals must target the helper-owned foreground process group"
+
+require_pattern \
+    "clients/apple/alan-macos/Services/Terminal/DarwinTerminalPtyRuntime.swift" \
+    "tcgetpgrp\\(masterFileDescriptor\\)" \
+    "local shell activity must come from the Alan-owned PTY foreground process group"
+
+require_pattern \
+    "clients/apple/alan-macos/Services/Terminal/DarwinTerminalPtyRuntime.swift" \
+    "let targetProcessGroupID = foregroundProcessGroupID \\?\\? processGroupID" \
+    "local PTY signals must target the Alan-owned foreground process group"
+
+require_pattern \
+    "clients/apple/scripts/test-terminal-runtime-service.swift" \
+    "verifiesDarwinPtyTracksIntegratedShellBuiltinsWithoutRenderer" \
+    "terminal runtime tests must cover rendererless shell builtins without manual OSC markers"
+
+require_pattern \
+    "clients/apple/scripts/test-terminal-runtime-service.swift" \
+    "verifiesManagedUserProcessGroupActivityWithoutRenderer" \
+    "managed_user tests must cover rendererless helper foreground-process activity"
 
 require_pattern \
     "clients/apple/scripts/test-terminal-runtime-service.swift" \
@@ -1253,49 +1283,29 @@ require_pattern \
     "terminal.send_text must resolve PaneSlot targets before terminal delivery"
 
 require_pattern \
-    "clients/apple/alan-macos/GhosttyLiveHost.swift" \
-    "let isCommandSubmission = isCommandSubmissionText\\(text\\)" \
-    "text-delivered terminal commands must start foreground command duration tracking"
+    "clients/apple/alan-macos/Services/Terminal/TerminalPtyControlSequenceResponder.swift" \
+    "case UInt8\\(ascii: \"C\"\\):" \
+    "Alan-owned PTY output must recognize the OSC 133 foreground-command transition"
 
 require_pattern \
-    "clients/apple/alan-macos/GhosttyLiveHost.swift" \
-    "private func isCommandSubmissionText\\(_ text: String\\)" \
-    "foreground command detection must include pasted/control text submissions"
+    "clients/apple/alan-macos/Services/Terminal/GhosttyTerminalSurfaceHandle.swift" \
+    "case \\.foregroundCommand:" \
+    "terminal active-task projection must use Alan-owned PTY shell activity"
 
 require_pattern \
-    "clients/apple/alan-macos/GhosttyLiveHost.swift" \
-    "if foregroundCommandStartedAt == nil" \
-    "foreground command duration tracking must preserve the original command start time"
+    "clients/apple/alan-macos/Services/Terminal/DarwinTerminalPtyRuntime.swift" \
+    "private let outputProcessor = AlanTerminalPtyControlSequenceProcessor\\(\\)" \
+    "Darwin PTY direct and renderer drains must share one control-sequence processor"
 
 require_pattern \
-    "clients/apple/alan-macos/GhosttyLiveHost.swift" \
-    "queuesWhileActive: true" \
-    "text-delivered queued commands must extend foreground command duration tracking while another command is active"
+    "clients/apple/alan-macos/Services/Terminal/ManagedUserTerminalPtyRuntime.swift" \
+    "private let outputProcessor = AlanTerminalPtyControlSequenceProcessor\\(\\)" \
+    "Managed User PTY direct and renderer drains must share one control-sequence processor"
 
-require_pattern \
-    "clients/apple/alan-macos/GhosttyLiveHost.swift" \
-    "queuedForegroundCommandSubmissions \\+= commandCount" \
-    "foreground command duration tracking must preserve split-submission queued command counts"
-
-require_pattern \
-    "clients/apple/alan-macos/GhosttyLiveHost.swift" \
-    "private var queuedForegroundCommandSubmissions = 0" \
-    "foreground command duration tracking must retain queued pasted command submissions"
-
-require_pattern \
-    "clients/apple/alan-macos/GhosttyLiveHost.swift" \
-    "private func commandSubmissionCount\\(in text: String\\)" \
-    "foreground command duration tracking must count newline-delimited pasted commands"
-
-require_pattern \
-    "clients/apple/alan-macos/GhosttyLiveHost.swift" \
-    "advanceForegroundCommandTracking" \
-    "foreground command duration tracking must re-arm after queued command completion"
-
-require_pattern \
-    "clients/apple/alan-macos/GhosttyLiveHost.swift" \
-    "hasQueuedForegroundCommand \\? \\.foregroundCommand : \\.inactive" \
-    "queued pasted commands must keep tab activity protected until the final completion"
+reject_pattern \
+    "clients/apple/alan-macos" \
+    "queuedForegroundCommandSubmissions|commandSubmissionCount|queuesWhileActive|advanceForegroundCommandTracking|isCommandSubmissionText|recordProgrammaticCommandSubmission|foregroundCommandStartedAt" \
+    "terminal active-task tracking must not infer shell execution from input text"
 
 require_pattern \
     "clients/apple/alan-macos/Views/Shell/Terminal/ShellTerminalLeafView.swift" \
@@ -2891,6 +2901,11 @@ require_pattern \
     "clients/apple/scripts/test-terminal-runtime-service.swift" \
     "verifiesManagedUserRendererAttachmentBridgesHelperSession" \
     "terminal runtime tests must prove managed_user renderer attachment bridges helper PTY sessions"
+
+require_pattern \
+    "clients/apple/scripts/test-terminal-runtime-service.swift" \
+    "verifiesManagedUserDirectDrainReportsShellActivity" \
+    "terminal runtime tests must prove managed_user direct drains publish PTY shell activity"
 
 require_pattern \
     "clients/apple/scripts/test-shell-ui-smoke.sh" \

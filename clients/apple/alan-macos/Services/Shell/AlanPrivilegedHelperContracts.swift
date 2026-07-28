@@ -265,6 +265,7 @@ struct AlanManagedUserPTYStartRequest: Codable, Equatable {
     let contentID: String
     let columns: Int
     let rows: Int
+    let shellIntegrationResourcesPath: String?
 }
 
 struct AlanManagedUserPTYSession: Codable, Equatable {
@@ -298,10 +299,17 @@ struct AlanManagedUserPTYReadRequest: Codable, Equatable {
     let maxBytes: Int
 }
 
+enum AlanManagedUserPTYForegroundProcessGroupState: String, Codable, Equatable {
+    case shell
+    case foreground
+    case unavailable
+}
+
 struct AlanManagedUserPTYOutputChunk: Codable, Equatable {
     let sessionID: String
     let data: Data
     let final: Bool
+    let foregroundProcessGroupState: AlanManagedUserPTYForegroundProcessGroupState
     let sanitizedMessage: String?
 }
 

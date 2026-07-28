@@ -595,6 +595,11 @@ control_terminal_send_return() {
 }"
 }
 
+control_terminal_send_eof() {
+    local pane_slot_id="$1"
+    control_terminal_send_text_payload "$pane_slot_id" "\\u0004" "terminal-eof"
+}
+
 control_tab_open_cwd() {
     local cwd="$1"
     local request_id
@@ -831,12 +836,14 @@ on run argv
             end repeat
             if foundClearTerminal and not clickedClearTerminal then error "clear terminal menu item disabled"
             if not clickedClearTerminal then keystroke "k" using command down
+        else if actionName is "quit" then
+            keystroke "q" using command down
         else if actionName is "quit-confirm" then
-            keystroke "q" using {command down, option down}
+            keystroke "q" using command down
             set closeDeadline to (current date) + timeoutSeconds
             repeat
                 set matches to every process whose unix id is targetPID
-                if (count of matches) = 0 then return
+                if (count of matches) = 0 then error "alan process exited before close confirmation appeared"
                 set targetProcess to item 1 of matches
                 try
                     set frontmost of targetProcess to true
@@ -854,13 +861,12 @@ on run argv
                     end repeat
                 on error
                     set matches to every process whose unix id is targetPID
-                    if (count of matches) = 0 then return
+                    if (count of matches) = 0 then error "alan process exited before close confirmation appeared"
                     error "close confirmation lookup failed"
                 end try
-                key code 36
                 delay 0.25
                 set matches to every process whose unix id is targetPID
-                if (count of matches) = 0 then return
+                if (count of matches) = 0 then error "alan process exited before close confirmation appeared"
                 if (current date) > closeDeadline then error "close confirmation did not appear"
                 delay 0.25
             end repeat
@@ -900,7 +906,8 @@ run_ui_step() {
 }
 
 quit_smoke_app_for_restart() {
-    if run_ui_step quit-confirm; then
+    local action="${1:-quit}"
+    if run_ui_step "$action"; then
         return 0
     fi
     if ! kill -0 "$APP_PID" 2>/dev/null; then
@@ -926,6 +933,8 @@ run_restart_restore_step() {
     local restored_pane_id
     local cwd_result
     local clear_deadline
+    local stdin_token
+    local stdin_json
 
     manifest_path=$(workspace_manifest_path)
     tab_result=$(control_tab_open_cwd "$RESTART_RESTORE_CWD")
@@ -936,7 +945,7 @@ run_restart_restore_step() {
 
     cwd_json=$(json_escape_fragment "$RESTART_RESTORE_CWD")
     before_json=$(json_escape_fragment "$before_token")
-    printf -v terminal_payload 'cd \\"%s\\"; echo %s; sleep 30\\n' \
+    printf -v terminal_payload 'cd \\"%s\\"\\necho %s\\nsleep 30\\n' \
         "$cwd_json" "$before_json"
     if ! terminal_result=$(send_terminal_payload_until_applied \
         "$pane_id" \
@@ -956,7 +965,7 @@ run_restart_restore_step() {
     sleep 1
     capture_step restart-before-quit
 
-    quit_smoke_app_for_restart
+    quit_smoke_app_for_restart quit-confirm
     wait_for_app_exit "restart restore confirmed quit"
 
     wait_for_file "$manifest_path" "workspace manifest after restart restore quit"
@@ -1012,8 +1021,36 @@ run_restart_restore_step() {
     sleep 1
     capture_step restart-clear
 
+    stdin_token="alan-ui-smoke-stdin-$$"
+    stdin_json=$(json_escape_fragment "$stdin_token")
+    if ! terminal_result=$(send_terminal_payload_until_applied \
+        "$restored_pane_id" \
+        "cat\\n" \
+        "restart-stdin-cat")
+    then
+        require_control_applied "$terminal_result" "restart stdin cat command"
+    fi
+    require_control_applied "$terminal_result" "restart stdin cat command"
+    sleep 0.5
+
+    printf -v terminal_payload '%s\\n' "$stdin_json"
+    if ! terminal_result=$(send_terminal_payload_until_applied \
+        "$restored_pane_id" \
+        "$terminal_payload" \
+        "restart-stdin-line")
+    then
+        require_control_applied "$terminal_result" "restart stdin line"
+    fi
+    require_control_applied "$terminal_result" "restart stdin line"
+    sleep 0.5
+
+    terminal_result=$(control_terminal_send_eof "$restored_pane_id")
+    require_control_applied "$terminal_result" "restart stdin EOF"
+    append_manifest "restart_stdin_eof_token=$stdin_token"
+    sleep 1
+
     quit_smoke_app_for_restart
-    wait_for_app_exit "restart restore post-clear confirmed quit"
+    wait_for_app_exit "restart restore post-stdin quit"
 
     info "relaunching alan smoke app after restored transcript clear"
     if [[ "$LAUNCH_MODE" == "direct" ]]; then

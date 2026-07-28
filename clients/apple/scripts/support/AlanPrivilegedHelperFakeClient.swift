@@ -4,17 +4,82 @@ import Foundation
 final class AlanPrivilegedHelperFakeClient: AlanPrivilegedHelperClienting {
     var helperStatus: AlanPrivilegedHelperStatus
     var diagnosesByAccount: [String: AlanManagedUserDiagnosis]
-    var deniedOperation: AlanPrivilegedHelperOperation?
+    private let ptyStateLock = NSLock()
+    private var storedDeniedOperation: AlanPrivilegedHelperOperation?
+    var deniedOperation: AlanPrivilegedHelperOperation? {
+        get {
+            ptyStateLock.lock()
+            defer { ptyStateLock.unlock() }
+            return storedDeniedOperation
+        }
+        set {
+            ptyStateLock.lock()
+            storedDeniedOperation = newValue
+            ptyStateLock.unlock()
+        }
+    }
     var appliedPlans: [AlanManagedUserHelperPlan] = []
     var startedPTYRequests: [AlanManagedUserPTYStartRequest] = []
-    var readPTYRequests: [AlanManagedUserPTYReadRequest] = []
-    var writtenPTYInputRequests: [AlanManagedUserPTYInputRequest] = []
+    private var storedReadPTYRequests: [AlanManagedUserPTYReadRequest] = []
+    var readPTYRequests: [AlanManagedUserPTYReadRequest] {
+        ptyStateLock.lock()
+        defer { ptyStateLock.unlock() }
+        return storedReadPTYRequests
+    }
+    private var storedWrittenPTYInputRequests: [AlanManagedUserPTYInputRequest] = []
+    var writtenPTYInputRequests: [AlanManagedUserPTYInputRequest] {
+        ptyStateLock.lock()
+        defer { ptyStateLock.unlock() }
+        return storedWrittenPTYInputRequests
+    }
     var resizedPTYRequests: [AlanManagedUserPTYResizeRequest] = []
     var closedPTYInputSessionIDs: [String] = []
     var signaledPTYRequests: [AlanManagedUserPTYSignalRequest] = []
     var terminatedPTYSessionIDs: [String] = []
-    var exitObservationsBySessionID: [String: AlanManagedUserPTYExitObservation] = [:]
-    var outputChunksBySessionID: [String: [Data]] = [:]
+    private var storedExitObservationsBySessionID:
+        [String: AlanManagedUserPTYExitObservation] = [:]
+    var exitObservationsBySessionID: [String: AlanManagedUserPTYExitObservation] {
+        get {
+            ptyStateLock.lock()
+            defer { ptyStateLock.unlock() }
+            return storedExitObservationsBySessionID
+        }
+        set {
+            ptyStateLock.lock()
+            storedExitObservationsBySessionID = newValue
+            ptyStateLock.unlock()
+        }
+    }
+    private var storedOutputChunksBySessionID: [String: [Data]] = [:]
+    private var storedFinalPTYReadSessionIDs: Set<String> = []
+    var outputChunksBySessionID: [String: [Data]] {
+        get {
+            ptyStateLock.lock()
+            defer { ptyStateLock.unlock() }
+            return storedOutputChunksBySessionID
+        }
+        set {
+            ptyStateLock.lock()
+            storedOutputChunksBySessionID = newValue
+            ptyStateLock.unlock()
+        }
+    }
+
+    func enqueueOutputChunks(_ chunks: [Data], sessionID: String) {
+        ptyStateLock.lock()
+        storedOutputChunksBySessionID[sessionID, default: []].append(contentsOf: chunks)
+        ptyStateLock.unlock()
+    }
+
+    func markNextEmptyPTYReadFinal(sessionID: String) {
+        ptyStateLock.lock()
+        storedFinalPTYReadSessionIDs.insert(sessionID)
+        ptyStateLock.unlock()
+    }
+
+    private var foregroundProcessGroupStatesBySessionID:
+        [String: [AlanManagedUserPTYForegroundProcessGroupState]] = [:]
+    private let foregroundProcessGroupStateLock = NSLock()
     private var startedPTYSessionAccounts: [String: String] = [:]
 
     init(
@@ -107,7 +172,9 @@ final class AlanPrivilegedHelperFakeClient: AlanPrivilegedHelperClienting {
     func readManagedUserPTY(
         _ request: AlanManagedUserPTYReadRequest
     ) -> Result<AlanManagedUserPTYOutputChunk, AlanPrivilegedHelperDiagnostic> {
-        readPTYRequests.append(request)
+        ptyStateLock.lock()
+        storedReadPTYRequests.append(request)
+        ptyStateLock.unlock()
         guard helperStatus.isHealthy, deniedOperation != .readManagedUserPTY else {
             return .failure(
                 diagnostic(
@@ -118,18 +185,34 @@ final class AlanPrivilegedHelperFakeClient: AlanPrivilegedHelperClienting {
                 )
             )
         }
-        var queued = outputChunksBySessionID[request.sessionID] ?? []
-        let data = queued.isEmpty ? Data() : queued.removeFirst()
-        outputChunksBySessionID[request.sessionID] = queued
-        let final = data.isEmpty && exitObservationsBySessionID[request.sessionID]?.final == true
+        let data = nextOutputChunk(sessionID: request.sessionID)
+        let foregroundProcessGroupState = nextForegroundProcessGroupState(
+            sessionID: request.sessionID
+        )
+        let final = data.isEmpty
+            && (
+                consumeFinalPTYRead(sessionID: request.sessionID)
+                    || exitObservationsBySessionID[request.sessionID]?.final == true
+            )
         return .success(
             AlanManagedUserPTYOutputChunk(
                 sessionID: request.sessionID,
                 data: data,
                 final: final,
+                foregroundProcessGroupState: foregroundProcessGroupState,
                 sanitizedMessage: data.isEmpty ? nil : "Privileged helper returned PTY output."
             )
         )
+    }
+
+    func enqueueForegroundProcessGroupStates(
+        _ states: [AlanManagedUserPTYForegroundProcessGroupState],
+        sessionID: String
+    ) {
+        foregroundProcessGroupStateLock.lock()
+        foregroundProcessGroupStatesBySessionID[sessionID, default: []]
+            .append(contentsOf: states)
+        foregroundProcessGroupStateLock.unlock()
     }
 
     func writeManagedUserPTY(_ request: AlanManagedUserPTYInputRequest) -> AlanManagedUserPTYControlResult {
@@ -139,7 +222,9 @@ final class AlanPrivilegedHelperFakeClient: AlanPrivilegedHelperClienting {
             successMessage: "Privileged helper accepted PTY input."
         )
         if result.accepted {
-            writtenPTYInputRequests.append(request)
+            ptyStateLock.lock()
+            storedWrittenPTYInputRequests.append(request)
+            ptyStateLock.unlock()
         }
         return result
     }
@@ -235,6 +320,40 @@ final class AlanPrivilegedHelperFakeClient: AlanPrivilegedHelperClienting {
             accountName: accountName,
             message: successMessage
         )
+    }
+
+    private func nextForegroundProcessGroupState(
+        sessionID: String
+    ) -> AlanManagedUserPTYForegroundProcessGroupState {
+        foregroundProcessGroupStateLock.lock()
+        defer { foregroundProcessGroupStateLock.unlock() }
+        guard var states = foregroundProcessGroupStatesBySessionID[sessionID],
+              !states.isEmpty
+        else {
+            return .unavailable
+        }
+        let state = states.removeFirst()
+        foregroundProcessGroupStatesBySessionID[sessionID] = states
+        return state
+    }
+
+    private func nextOutputChunk(sessionID: String) -> Data {
+        ptyStateLock.lock()
+        defer { ptyStateLock.unlock() }
+        guard var chunks = storedOutputChunksBySessionID[sessionID],
+              !chunks.isEmpty
+        else {
+            return Data()
+        }
+        let chunk = chunks.removeFirst()
+        storedOutputChunksBySessionID[sessionID] = chunks
+        return chunk
+    }
+
+    private func consumeFinalPTYRead(sessionID: String) -> Bool {
+        ptyStateLock.lock()
+        defer { ptyStateLock.unlock() }
+        return storedFinalPTYReadSessionIDs.remove(sessionID) != nil
     }
 
     private func diagnostic(

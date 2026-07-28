@@ -63,9 +63,159 @@ struct AlanTerminalPtyRendererAttachment: Equatable {
 struct AlanTerminalPtyControlSequenceResponse: Equatable {
     let rendererOutput: Data
     let ptyResponse: Data
+    let semanticShellStateTransition: AlanTerminalPtySemanticShellState?
 
     var didRespond: Bool {
         !ptyResponse.isEmpty
+    }
+}
+
+enum AlanTerminalPtySemanticShellState: Equatable {
+    case commandStarted
+    case commandFinished
+    case shellInput
+}
+
+enum AlanTerminalPtyShellActivityState: Equatable {
+    /// No semantic or process-group evidence is available; consumers preserve this conservatively.
+    case unknown
+    case shellInput
+    case foregroundCommand
+}
+
+enum AlanTerminalPtyShellActivityResolver {
+    static func resolve(
+        launchesInteractiveShell: Bool,
+        semanticState: AlanTerminalPtySemanticShellState?,
+        processGroupState: AlanTerminalPtyShellActivityState?
+    ) -> AlanTerminalPtyShellActivityState {
+        guard launchesInteractiveShell else {
+            return .foregroundCommand
+        }
+        if processGroupState == .foregroundCommand {
+            return .foregroundCommand
+        }
+        switch semanticState {
+        case .commandStarted:
+            return .foregroundCommand
+        case .commandFinished:
+            return processGroupState == .shellInput ? .shellInput : .foregroundCommand
+        case .shellInput:
+            return .shellInput
+        case nil:
+            return processGroupState == .foregroundCommand ? .foregroundCommand : .unknown
+        }
+    }
+}
+
+struct AlanTerminalPtyIdleProcessGroupTracker {
+    private(set) var idleProcessGroupID: Int32
+    private var allowsIdleProcessGroupRebase: Bool
+
+    init(
+        initialIdleProcessGroupID: Int32,
+        allowsIdleProcessGroupRebase: Bool
+    ) {
+        self.idleProcessGroupID = initialIdleProcessGroupID
+        self.allowsIdleProcessGroupRebase = allowsIdleProcessGroupRebase
+    }
+
+    mutating func observe(
+        foregroundProcessGroupID: Int32,
+        semanticState: AlanTerminalPtySemanticShellState?
+    ) -> AlanTerminalPtyShellActivityState {
+        if foregroundProcessGroupID == idleProcessGroupID {
+            return .shellInput
+        }
+        if allowsIdleProcessGroupRebase,
+           semanticState != .commandStarted
+        {
+            idleProcessGroupID = foregroundProcessGroupID
+            allowsIdleProcessGroupRebase = false
+            return .shellInput
+        }
+        return .foregroundCommand
+    }
+}
+
+struct AlanTerminalPtyBoundedReplayBuffer {
+    let maxBytes: Int
+    private(set) var chunks: [Data] = []
+    private(set) var byteCount = 0
+
+    init(maxBytes: Int) {
+        precondition(maxBytes > 0)
+        self.maxBytes = maxBytes
+    }
+
+    mutating func append(_ data: Data) {
+        guard !data.isEmpty else { return }
+        if data.count >= maxBytes {
+            chunks = [Data(data.suffix(maxBytes))]
+            byteCount = maxBytes
+            return
+        }
+
+        chunks.append(data)
+        byteCount += data.count
+        trimOldestBytes(byteCount - maxBytes)
+    }
+
+    mutating func removeAll() {
+        chunks.removeAll()
+        byteCount = 0
+    }
+
+    mutating func takeChunks() -> [Data] {
+        let result = chunks
+        removeAll()
+        return result
+    }
+
+    private mutating func trimOldestBytes(_ requestedByteCount: Int) {
+        var remainingByteCount = max(0, requestedByteCount)
+        while remainingByteCount > 0, let firstChunk = chunks.first {
+            let removedByteCount = min(remainingByteCount, firstChunk.count)
+            if removedByteCount == firstChunk.count {
+                chunks.removeFirst()
+            } else {
+                chunks[0] = Data(firstChunk.dropFirst(removedByteCount))
+            }
+            byteCount -= removedByteCount
+            remainingByteCount -= removedByteCount
+        }
+    }
+}
+
+extension AlanLaunchStrategy {
+    var launchesInteractiveShell: Bool {
+        switch self {
+        case .loginShellOverride,
+             .loginShellEnv,
+             .loginShellFallback,
+             .terminalProfileSudoUser,
+             .terminalProfileSudoRoot,
+             .terminalProfileManagedUser:
+            return true
+        case .shellCommandEnv,
+             .terminalProfileCustomCommand:
+            return false
+        }
+    }
+
+    var allowsInteractiveShellProcessGroupRebase: Bool {
+        switch self {
+        case .terminalProfileSudoUser,
+             .terminalProfileSudoRoot:
+            return true
+        case .shellCommandEnv,
+             .loginShellOverride,
+             .loginShellEnv,
+             .loginShellFallback,
+             .terminalProfileManagedUser,
+             .terminalProfileCustomCommand:
+            return false
+        }
     }
 }
 
@@ -84,6 +234,16 @@ struct AlanTerminalPtyRuntimeSnapshot: Equatable {
     let lastSignal: AlanTerminalPtySignal?
     let exitStatus: AlanTerminalProcessExitStatus?
     let transcriptLines: [String]
+
+    var hasLiveChildProcess: Bool {
+        guard exitStatus == nil else { return false }
+        switch phase {
+        case .running, .inputClosed:
+            return true
+        case .pending, .exited, .failed:
+            return false
+        }
+    }
 }
 
 @MainActor
@@ -92,6 +252,8 @@ protocol AlanTerminalPtyHandle: AnyObject {
     var bootRequest: AlanTerminalBootRequest { get }
     var snapshot: AlanTerminalPtyRuntimeSnapshot { get }
     var isInputReady: Bool { get }
+    var shellActivityState: AlanTerminalPtyShellActivityState { get }
+    var onShellActivityStateChange: ((AlanTerminalPtyShellActivityState) -> Void)? { get set }
 
     func writeInput(_ text: String) -> TerminalRuntimeDeliveryResult
     func resize(columns: Int, rows: Int) -> AlanTerminalPtyOperationResult

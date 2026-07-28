@@ -25,13 +25,20 @@ final class AlanPrivilegedHelperPTYSessionStore {
         case .success(let account):
             var master: Int32 = -1
             var pid: pid_t = 0
-            let shellName = URL(fileURLWithPath: request.shell).lastPathComponent
-            let argvValues = ["-\(shellName)"]
-            let envValues = AlanPrivilegedHelperPTYSupport.environment(
-                accountName: request.accountName,
-                home: request.homeDirectory,
-                shell: request.shell
+            let shellLaunch = AlanTerminalShellLaunch.integratingGhostty(
+                executablePath: request.shell,
+                arguments: ["-l"],
+                environment: AlanPrivilegedHelperPTYSupport.environment(
+                    accountName: request.accountName,
+                    home: request.homeDirectory,
+                    shell: request.shell
+                ),
+                resourcesPath: request.shellIntegrationResourcesPath
             )
+            let argvValues = [shellLaunch.argumentZero] + shellLaunch.arguments
+            let envValues = shellLaunch.environment.map {
+                "\($0.key)=\($0.value)"
+            }.sorted()
             let workingDirectory = request.workingDirectory.isEmpty
                 ? request.homeDirectory
                 : request.workingDirectory
@@ -120,6 +127,7 @@ final class AlanPrivilegedHelperPTYSessionStore {
         }
 
         let maxBytes = max(1, min(request.maxBytes, 64 * 1024))
+        let foregroundProcessGroupState = foregroundProcessGroupState(for: session)
         var buffer = [UInt8](repeating: 0, count: maxBytes)
         let count = Darwin.read(session.masterFileDescriptor, &buffer, maxBytes)
         if count > 0 {
@@ -128,6 +136,7 @@ final class AlanPrivilegedHelperPTYSessionStore {
                     sessionID: request.sessionID,
                     data: Data(buffer.prefix(count)),
                     final: false,
+                    foregroundProcessGroupState: foregroundProcessGroupState,
                     sanitizedMessage: "Privileged helper read Managed User PTY output."
                 )
             )
@@ -138,6 +147,7 @@ final class AlanPrivilegedHelperPTYSessionStore {
                     sessionID: request.sessionID,
                     data: Data(),
                     final: true,
+                    foregroundProcessGroupState: foregroundProcessGroupState,
                     sanitizedMessage: "Managed User PTY output stream ended."
                 )
             )
@@ -148,6 +158,7 @@ final class AlanPrivilegedHelperPTYSessionStore {
                     sessionID: request.sessionID,
                     data: Data(),
                     final: false,
+                    foregroundProcessGroupState: foregroundProcessGroupState,
                     sanitizedMessage: nil
                 )
             )
@@ -226,8 +237,22 @@ final class AlanPrivilegedHelperPTYSessionStore {
         case .kill:
             signalNumber = SIGKILL
         }
-        if kill(-session.processID, signalNumber) != 0 {
-            _ = kill(session.processID, signalNumber)
+        let foregroundProcessGroupID = foregroundProcessGroupID(for: session)
+        let targetProcessGroupID = foregroundProcessGroupID ?? session.processID
+        var result = kill(-targetProcessGroupID, signalNumber)
+        if result != 0, targetProcessGroupID != session.processID {
+            result = kill(-session.processID, signalNumber)
+        }
+        if result != 0 {
+            result = kill(session.processID, signalNumber)
+        }
+        guard result == 0 else {
+            return rejected(
+                .signalManagedUserPTY,
+                sessionID: request.sessionID,
+                accountName: session.accountName,
+                message: "Managed User PTY signal delivery failed."
+            )
         }
         return accepted(.signalManagedUserPTY, session: session, message: "Privileged helper signaled PTY session.")
     }
@@ -255,6 +280,11 @@ final class AlanPrivilegedHelperPTYSessionStore {
                 code: nil,
                 message: "Managed User PTY session was already absent."
             )
+        }
+        if let foregroundProcessGroupID = foregroundProcessGroupID(for: session),
+           foregroundProcessGroupID != session.processID
+        {
+            _ = kill(-foregroundProcessGroupID, SIGTERM)
         }
         _ = kill(-session.processID, SIGTERM)
         _ = kill(session.processID, SIGTERM)
@@ -288,6 +318,22 @@ final class AlanPrivilegedHelperPTYSessionStore {
             close(session.masterFileDescriptor)
             session.masterFileDescriptor = -1
         }
+    }
+
+    private func foregroundProcessGroupState(
+        for session: AlanPrivilegedHelperPTYSession
+    ) -> AlanXPCManagedUserPTYForegroundProcessGroupState {
+        guard let foregroundProcessGroupID = foregroundProcessGroupID(for: session) else {
+            return .unavailable
+        }
+        return foregroundProcessGroupID == session.processID ? .shell : .foreground
+    }
+
+    private func foregroundProcessGroupID(
+        for session: AlanPrivilegedHelperPTYSession
+    ) -> pid_t? {
+        let foregroundProcessGroupID = tcgetpgrp(session.masterFileDescriptor)
+        return foregroundProcessGroupID > 0 ? foregroundProcessGroupID : nil
     }
 
     private func setNonBlocking(_ fileDescriptor: Int32) {

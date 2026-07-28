@@ -25,6 +25,7 @@ final class AlanGhosttySurfaceHandle: AlanTerminalSurfaceHandle {
     private var latestHostRuntime: TerminalHostRuntimeSnapshot?
     private var lastAppliedPtyGrid: AlanTerminalPtyDimensions?
     private var transcriptRingBufferLines: [String] = []
+    private var metadataObserver: ((TerminalPaneMetadataSnapshot) -> Void)?
     private(set) var seededTranscriptSnapshot: TerminalTranscriptSnapshot?
 #if canImport(GhosttyKit)
     private let liveHost = AlanGhosttyLiveHost()
@@ -82,16 +83,22 @@ final class AlanGhosttySurfaceHandle: AlanTerminalSurfaceHandle {
         self.paneID = paneID
         self.bootProfile = bootProfile
         if let bootProfile {
-            ptyHandle = ptyRuntime.handle(
+            ptyHandle?.onShellActivityStateChange = nil
+            let ptyHandle = ptyRuntime.handle(
                 forTerminalContentID: contentID,
                 bootRequest: bootProfile.bootRequest
             )
+            self.ptyHandle = ptyHandle
+            ptyHandle.onShellActivityStateChange = { [weak self] _ in
+                self?.publishPtyShellActivity()
+            }
             lastAppliedPtyGrid = nil
         }
         guard currentSnapshot.teardownStatus != .completed else { return }
+        let metadata = metadataApplyingPtyShellActivity(metadataWithBootProfile(bootProfile))
         updateSnapshot(
             lifecyclePhase: bootProfile == nil ? .pending : .attachable,
-            metadata: metadataWithBootProfile(bootProfile)
+            metadata: metadata
         )
     }
 
@@ -122,6 +129,7 @@ final class AlanGhosttySurfaceHandle: AlanTerminalSurfaceHandle {
             onMetadataChange(currentSnapshot.metadata)
             return
         }
+        metadataObserver = onMetadataChange
 
         updateSnapshot(lifecyclePhase: .bootstrapping, attachedViewCount: 1)
         let diagnostics = bootstrap.ensureReady()
@@ -165,6 +173,7 @@ final class AlanGhosttySurfaceHandle: AlanTerminalSurfaceHandle {
         }
         liveHost.onMetadataChange = { [weak self] metadata in
             guard let self else { return }
+            let metadata = metadataApplyingPtyShellActivity(metadata)
             updateSnapshot(metadata: metadata)
             onMetadataChange(metadata)
         }
@@ -192,7 +201,7 @@ final class AlanGhosttySurfaceHandle: AlanTerminalSurfaceHandle {
         resizePtyToRendererGridIfAvailable()
         updateSnapshot(
             lifecyclePhase: liveHost.isSurfaceReady ? .attached : .attachable,
-            metadata: liveHost.latestMetadata
+            metadata: metadataApplyingPtyShellActivity(liveHost.latestMetadata)
         )
 #else
         let renderer = TerminalRendererSnapshot(
@@ -362,8 +371,10 @@ final class AlanGhosttySurfaceHandle: AlanTerminalSurfaceHandle {
 #if canImport(GhosttyKit)
         liveHost.teardown()
 #endif
+        ptyHandle?.onShellActivityStateChange = nil
         _ = ptyHandle?.terminateForCleanup()
         ptyHandle = nil
+        metadataObserver = nil
         updateSnapshot(
             lifecyclePhase: .closed,
             metadata: .placeholder,
@@ -418,6 +429,53 @@ final class AlanGhosttySurfaceHandle: AlanTerminalSurfaceHandle {
         }
 #endif
         return nil
+    }
+
+    private func publishPtyShellActivity() {
+        let metadata = metadataApplyingPtyShellActivity(currentSnapshot.metadata)
+        guard metadata.activeTaskState != currentSnapshot.metadata.activeTaskState else {
+            return
+        }
+        updateSnapshot(metadata: metadata)
+        metadataObserver?(metadata)
+    }
+
+    private func metadataApplyingPtyShellActivity(
+        _ metadata: TerminalPaneMetadataSnapshot
+    ) -> TerminalPaneMetadataSnapshot {
+        let activeTaskState: ShellTabActiveTaskState
+        if metadata.processExited {
+            activeTaskState = .inactive
+        } else if let ptyHandle {
+            if ptyHandle.snapshot.hasLiveChildProcess {
+                switch ptyHandle.shellActivityState {
+                case .unknown:
+                    activeTaskState = .unknown
+                case .shellInput:
+                    activeTaskState = .inactive
+                case .foregroundCommand:
+                    activeTaskState = .foregroundCommand
+                }
+            } else {
+                activeTaskState = .inactive
+            }
+        } else {
+            return metadata
+        }
+
+        guard metadata.activeTaskState != activeTaskState else { return metadata }
+        return TerminalPaneMetadataSnapshot(
+            title: metadata.title,
+            workingDirectory: metadata.workingDirectory,
+            summary: metadata.summary,
+            attention: metadata.attention,
+            processExited: metadata.processExited,
+            lastCommandExitCode: metadata.lastCommandExitCode,
+            lastUpdatedAt: metadata.lastUpdatedAt,
+            activeTaskState: activeTaskState,
+            activity: metadata.activity,
+            clearsActivity: metadata.clearsActivity
+        )
     }
 
     private func updateSnapshot(

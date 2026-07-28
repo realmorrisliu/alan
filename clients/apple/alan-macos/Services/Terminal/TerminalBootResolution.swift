@@ -195,10 +195,38 @@ struct AlanCommandResolution: Equatable {
         )
     }
 
-    private static let sudoLoginShellCommand = "exec \"${SHELL:-/bin/zsh}\" -l"
+    private static let sudoLoginShellCommand = """
+    shell="${SHELL:-/bin/zsh}"
+    case "${shell##*/}" in
+      zsh)
+        integration="$GHOSTTY_RESOURCES_DIR/shell-integration/zsh"
+        if [ -r "$integration/.zshenv" ]; then
+          if [ "${ZDOTDIR+x}" = x ]; then
+            export GHOSTTY_ZSH_ZDOTDIR="$ZDOTDIR"
+          fi
+          export ZDOTDIR="$integration"
+        fi
+        ;;
+      bash)
+        integration="$GHOSTTY_RESOURCES_DIR/shell-integration/bash/ghostty.bash"
+        if [ -r "$integration" ]; then
+          export GHOSTTY_BASH_INJECT="1 --noprofile"
+          exec -a -bash "$shell" --rcfile "$integration"
+        fi
+        ;;
+      fish)
+        integration="$GHOSTTY_RESOURCES_DIR/shell-integration"
+        if [ -r "$integration/fish/vendor_conf.d/ghostty-shell-integration.fish" ]; then
+          export XDG_DATA_DIRS="$integration${XDG_DATA_DIRS:+:$XDG_DATA_DIRS}"
+        fi
+        ;;
+    esac
+    exec "$shell" -l
+    """
 
     private static let sudoReinjectedEnvironmentAllowlist: Set<String> = [
         "COLORTERM",
+        "GHOSTTY_RESOURCES_DIR",
         "TERMINFO",
         "TERM_PROGRAM",
     ]
@@ -894,6 +922,9 @@ struct AlanShellBootProfile: Equatable {
 
         if let terminfoPath = ghostty.terminfoPath {
             environment["TERMINFO"] = terminfoPath
+        }
+        if let resourcesPath = ghostty.resourcesPath {
+            environment["GHOSTTY_RESOURCES_DIR"] = resourcesPath
         }
         if environment["TERM"]?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false {
             environment["TERM"] = "xterm-256color"

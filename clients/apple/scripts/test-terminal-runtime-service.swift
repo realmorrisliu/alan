@@ -5,29 +5,41 @@ import Foundation
 @main
 struct TerminalRuntimeServiceTestRunner {
     static func main() async {
-        await MainActor.run {
-            TerminalRuntimeServiceTests.run()
-        }
+        await TerminalRuntimeServiceTests.run()
     }
 }
 
 @MainActor
 private enum TerminalRuntimeServiceTests {
-    static func run() {
+    static func run() async {
         verifiesSourceTreeRepositoryRootInference()
         verifiesControlSequenceResponderAnswersPrimaryDeviceAttributes()
+        verifiesControlSequenceResponderReportsShellActivity()
+        verifiesShellActivityResolverCombinesSemanticAndProcessEvidence()
+        verifiesPtySnapshotClassifiesOnlyLiveChildPhases()
+        verifiesIdleProcessGroupTrackerRebasesOnlyForInteractiveWrappers()
+        verifiesBoundedReplayBufferTrimsOversizedHandoffChunks()
+        verifiesGhosttyShellIntegrationLaunchContract()
         verifiesGhosttyTerminfoEnvironmentProjection()
         verifiesBootProfileExposesStructuredBootRequest()
         verifiesManagedUserLaunchResolutionUsesHelperIdentityWithoutSudo()
         verifiesFakePtyRuntimeCapturesLaunchAndLifecycle()
         verifiesManagedUserPtyRuntimeFailsClosedWithoutSudoFallback()
+        verifiesFailedPtyDoesNotProjectActiveWork()
         verifiesManagedUserPtyRuntimeUsesHelperProviderWhenAvailable()
+        verifiesManagedUserOutputPumpBackpressuresBeforeMainActorDrain()
+        verifiesManagedUserExitDrainsPendingOutputAndPublishesIdle()
+        verifiesManagedUserFinalChunkPublishesIdle()
         verifiesWindowRuntimeDefaultPtyRuntimeWiresHelperProvider()
         verifiesManagedUserSurfaceRoutesHelperPtyLifecycleControls()
+        verifiesManagedUserDirectDrainReportsShellActivity()
+        await verifiesManagedUserProcessGroupActivityWithoutRenderer()
         verifiesManagedUserRendererAttachmentBridgesHelperSession()
         verifiesAlanGhosttySurfaceDeliveryUsesPtyRuntimeWithoutRenderer()
         verifiesDarwinPtyBackendLaunchesLocalShell()
         verifiesDarwinPtyBackendKeepsLoginShellAlive()
+        await verifiesDarwinPtyTracksIntegratedShellBuiltinsWithoutRenderer()
+        await verifiesDarwinPtyReplaysRendererlessOutputOnAttachment()
         verifiesRuntimeCwdDoesNotRequireSurfaceRecreation()
         verifiesInstallDiscoveryChangesDoNotRequireSurfaceRecreation()
         verifiesDevChannelPropagatesInstallChannelEnvironment()
@@ -164,6 +176,321 @@ private enum TerminalRuntimeServiceTests {
         expect(response.ptyResponse.isEmpty, "non-query OSC sequences must not emit PTY responses")
     }
 
+    private static func verifiesPtySnapshotClassifiesOnlyLiveChildPhases() {
+        let request = sampleBootProfile(workingDirectory: "/tmp").bootRequest
+        let cases: [
+            (
+                phase: AlanTerminalPtyRuntimePhase,
+                exitStatus: AlanTerminalProcessExitStatus?,
+                expectsLiveChild: Bool
+            )
+        ] = [
+            (.pending, nil, false),
+            (.running, nil, true),
+            (.inputClosed, nil, true),
+            (.exited, .exitCode(0), false),
+            (.failed, .unknown, false),
+            (.running, .signal(SIGTERM), false),
+        ]
+
+        for item in cases {
+            let snapshot = AlanTerminalPtyRuntimeSnapshot(
+                contentID: "content_terminal_lifecycle_\(item.phase.rawValue)",
+                bootRequest: request,
+                phase: item.phase,
+                dimensions: nil,
+                acceptedInputBytes: 0,
+                inputClosed: item.phase == .inputClosed,
+                lastSignal: nil,
+                exitStatus: item.exitStatus,
+                transcriptLines: []
+            )
+            expect(
+                snapshot.hasLiveChildProcess == item.expectsLiveChild,
+                "PTY phase \(item.phase.rawValue) with exit \(String(describing: item.exitStatus)) "
+                    + "must classify live-child ownership precisely"
+            )
+        }
+    }
+
+    private static func verifiesControlSequenceResponderReportsShellActivity() {
+        var responder = AlanTerminalPtyControlSequenceResponder()
+
+        var response = responder.process(Data("\u{1B}]133;C\u{7}".utf8))
+        expect(
+            response.semanticShellStateTransition == .commandStarted,
+            "OSC 133 C must report foreground command activity"
+        )
+        expect(
+            response.rendererOutput == Data("\u{1B}]133;C\u{7}".utf8),
+            "shell activity markers must continue to Ghostty unchanged"
+        )
+
+        response = responder.process(Data("stdin line\n".utf8))
+        expect(
+            response.semanticShellStateTransition == nil,
+            "ordinary newline-delimited PTY input or output must not be treated as a command"
+        )
+
+        response = responder.process(Data("\u{1B}]133;D;0\u{7}".utf8))
+        expect(
+            response.semanticShellStateTransition == .commandFinished,
+            "OSC 133 D must preserve command completion as distinct semantic evidence"
+        )
+
+        response = responder.process(Data("\u{1B}]133;A;cl=line\u{7}".utf8))
+        expect(
+            response.semanticShellStateTransition == .shellInput,
+            "OSC 133 prompt start must report shell input readiness"
+        )
+
+        response = responder.process(Data("\u{1B}]133;Cextra\u{7}".utf8))
+        expect(
+            response.semanticShellStateTransition == nil,
+            "malformed OSC 133 command markers must not change shell activity"
+        )
+
+        response = responder.process(
+            Data("\u{1B}]133;A\u{7}\u{1B}]133;C;aid=next\u{1B}\\".utf8)
+        )
+        expect(
+            response.semanticShellStateTransition == .commandStarted,
+            "the last semantic transition in one PTY chunk must win"
+        )
+
+        response = responder.process(Data("\u{1B}]133;".utf8))
+        expect(
+            response.semanticShellStateTransition == nil,
+            "partial shell integration markers must be buffered across PTY chunks"
+        )
+        response = responder.process(Data("B\u{7}".utf8))
+        expect(
+            response.semanticShellStateTransition == .shellInput,
+            "split OSC 133 prompt markers must preserve semantic state"
+        )
+    }
+
+    private static func verifiesShellActivityResolverCombinesSemanticAndProcessEvidence() {
+        expect(
+            AlanTerminalPtyShellActivityResolver.resolve(
+                launchesInteractiveShell: true,
+                semanticState: .commandStarted,
+                processGroupState: .shellInput
+            ) == .foregroundCommand,
+            "semantic command start must protect same-process-group builtins and exec"
+        )
+        expect(
+            AlanTerminalPtyShellActivityResolver.resolve(
+                launchesInteractiveShell: true,
+                semanticState: .commandFinished,
+                processGroupState: .shellInput
+            ) == .shellInput,
+            "semantic completion plus the idle shell process group must clear foreground activity"
+        )
+        expect(
+            AlanTerminalPtyShellActivityResolver.resolve(
+                launchesInteractiveShell: true,
+                semanticState: .commandFinished,
+                processGroupState: nil
+            ) == .foregroundCommand,
+            "semantic completion without process-group or prompt evidence must remain protected"
+        )
+        expect(
+            AlanTerminalPtyShellActivityResolver.resolve(
+                launchesInteractiveShell: true,
+                semanticState: .shellInput,
+                processGroupState: .foregroundCommand
+            ) == .foregroundCommand,
+            "a known foreground process group must override stale semantic prompt activity"
+        )
+        expect(
+            AlanTerminalPtyShellActivityResolver.resolve(
+                launchesInteractiveShell: true,
+                semanticState: .commandStarted,
+                processGroupState: nil
+            ) == .foregroundCommand,
+            "semantic activity must remain the fallback when process-group state is unavailable"
+        )
+        expect(
+            AlanTerminalPtyShellActivityResolver.resolve(
+                launchesInteractiveShell: true,
+                semanticState: nil,
+                processGroupState: .shellInput
+            ) == .unknown,
+            "a matching shell process group without prompt semantics must remain protected"
+        )
+        expect(
+            AlanTerminalPtyShellActivityResolver.resolve(
+                launchesInteractiveShell: false,
+                semanticState: nil,
+                processGroupState: .shellInput
+            ) == .foregroundCommand,
+            "a custom command must remain foreground from launch"
+        )
+    }
+
+    private static func verifiesIdleProcessGroupTrackerRebasesOnlyForInteractiveWrappers() {
+        var directShellTracker = AlanTerminalPtyIdleProcessGroupTracker(
+            initialIdleProcessGroupID: 10,
+            allowsIdleProcessGroupRebase: false
+        )
+        expect(
+            directShellTracker.observe(
+                foregroundProcessGroupID: 10,
+                semanticState: nil
+            ) == .shellInput,
+            "a direct interactive shell process group must be the idle baseline"
+        )
+        expect(
+            directShellTracker.observe(
+                foregroundProcessGroupID: 11,
+                semanticState: nil
+            ) == .foregroundCommand,
+            "a direct interactive shell must not rebase to a foreground command"
+        )
+
+        var wrapperTracker = AlanTerminalPtyIdleProcessGroupTracker(
+            initialIdleProcessGroupID: 20,
+            allowsIdleProcessGroupRebase: true
+        )
+        expect(
+            wrapperTracker.observe(
+                foregroundProcessGroupID: 21,
+                semanticState: .commandStarted
+            ) == .foregroundCommand,
+            "a wrapper must not rebase to a process group known to be a foreground command"
+        )
+        expect(
+            wrapperTracker.idleProcessGroupID == 20,
+            "a rejected foreground candidate must leave the wrapper baseline unchanged"
+        )
+        expect(
+            wrapperTracker.observe(
+                foregroundProcessGroupID: 22,
+                semanticState: .shellInput
+            ) == .shellInput,
+            "a sudo wrapper must rebase once to the actual interactive shell process group"
+        )
+        expect(
+            wrapperTracker.idleProcessGroupID == 22,
+            "the actual interactive shell process group must become the durable idle baseline"
+        )
+        expect(
+            wrapperTracker.observe(
+                foregroundProcessGroupID: 23,
+                semanticState: nil
+            ) == .foregroundCommand,
+            "a rebased sudo shell must classify later process groups as foreground commands"
+        )
+        expect(
+            wrapperTracker.observe(
+                foregroundProcessGroupID: 22,
+                semanticState: nil
+            ) == .shellInput,
+            "the rebased sudo shell process group must remain the idle baseline"
+        )
+    }
+
+    private static func verifiesBoundedReplayBufferTrimsOversizedHandoffChunks() {
+        var replayBuffer = AlanTerminalPtyBoundedReplayBuffer(maxBytes: 8)
+        replayBuffer.append(Data("old".utf8))
+        replayBuffer.append(Data("0123456789".utf8))
+        expect(
+            replayBuffer.byteCount == 8,
+            "one oversized renderer handoff chunk must obey the replay byte cap"
+        )
+        expect(
+            replayBuffer.chunks.reduce(into: Data()) { $0.append($1) }
+                == Data("23456789".utf8),
+            "an oversized renderer handoff must preserve only its bounded tail"
+        )
+
+        replayBuffer.removeAll()
+        replayBuffer.append(Data("12345".utf8))
+        replayBuffer.append(Data("67890".utf8))
+        expect(
+            replayBuffer.byteCount == 8,
+            "multiple renderer replay chunks must obey the same byte cap"
+        )
+        expect(
+            replayBuffer.takeChunks().reduce(into: Data()) { $0.append($1) }
+                == Data("34567890".utf8),
+            "multi-chunk replay trimming must retain the newest exact byte tail"
+        )
+        expect(
+            replayBuffer.byteCount == 0 && replayBuffer.chunks.isEmpty,
+            "taking renderer replay chunks must atomically clear the buffer"
+        )
+    }
+
+    private static func verifiesGhosttyShellIntegrationLaunchContract() {
+        guard let repoRoot = inferredAlanRepoRoot() else {
+            fail("terminal runtime tests must resolve the Alan repository root")
+        }
+        let resourcesPath = "\(repoRoot)/clients/apple/ghostty-resources"
+        let zsh = AlanTerminalShellLaunch.integratingGhostty(
+            executablePath: "/bin/zsh",
+            arguments: ["-l"],
+            environment: ["ZDOTDIR": "/tmp/user-zdotdir"],
+            resourcesPath: resourcesPath
+        )
+        expect(
+            zsh.arguments == ["-l"]
+                && zsh.environment["ZDOTDIR"]
+                    == "\(resourcesPath)/shell-integration/zsh"
+                && zsh.environment["GHOSTTY_ZSH_ZDOTDIR"]
+                    == "/tmp/user-zdotdir",
+            "zsh integration must preserve the user ZDOTDIR behind Ghostty startup injection"
+        )
+
+        let bash = AlanTerminalShellLaunch.integratingGhostty(
+            executablePath: "/bin/bash",
+            arguments: ["--noprofile", "--norc"],
+            environment: ["HOME": "/Users/test", "ENV": "/tmp/user-env"],
+            resourcesPath: resourcesPath
+        )
+        expect(
+            bash.argumentZero == "/bin/bash"
+                && bash.arguments
+                    == [
+                        "--noprofile",
+                        "--rcfile",
+                        "\(resourcesPath)/shell-integration/bash/ghostty.bash",
+                    ]
+                && bash.environment["GHOSTTY_BASH_INJECT"]
+                    == "1 --noprofile --norc",
+            "bash integration must use the native rcfile startup contract"
+        )
+
+        let nonInteractive = AlanTerminalShellLaunch.integratingGhostty(
+            executablePath: "/bin/bash",
+            arguments: ["-lc", "echo hi"],
+            environment: [:],
+            resourcesPath: resourcesPath
+        )
+        expect(
+            nonInteractive
+                == AlanTerminalShellLaunch(
+                    argumentZero: "/bin/bash",
+                    arguments: ["-lc", "echo hi"],
+                    environment: [:]
+                ),
+            "bash integration must not rewrite non-interactive commands"
+        )
+
+        let fish = AlanTerminalShellLaunch.integratingGhostty(
+            executablePath: "/opt/homebrew/bin/fish",
+            arguments: ["-l"],
+            environment: ["XDG_DATA_DIRS": "/usr/local/share:/usr/share"],
+            resourcesPath: resourcesPath
+        )
+        expect(
+            fish.environment["XDG_DATA_DIRS"]
+                == "\(resourcesPath)/shell-integration:/usr/local/share:/usr/share",
+            "fish integration must prepend the bundled vendor configuration root"
+        )
+    }
+
     private static func verifiesGhosttyTerminfoEnvironmentProjection() {
         let tempDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("alan-ghostty-terminfo-\(UUID().uuidString)", isDirectory: true)
@@ -239,6 +566,10 @@ private enum TerminalRuntimeServiceTests {
         )
         expect(handle.snapshot.phase == .running, "Darwin PTY runtime must start running")
         expect(handle.isInputReady, "Darwin PTY runtime must start input-ready")
+        expect(
+            handle.shellActivityState == .foregroundCommand,
+            "custom-command PTY runtimes must remain active from launch until completion"
+        )
         expect(
             waitForDarwinPtyOutput(handle, contains: "ready"),
             "Darwin PTY runtime must capture child output"
@@ -318,6 +649,234 @@ private enum TerminalRuntimeServiceTests {
         expect(
             waitForDarwinPtyOutput(handle, contains: marker, timeout: 4),
             "login shell PTY runtime must execute input over the PTY"
+        )
+    }
+
+    private static func verifiesDarwinPtyTracksIntegratedShellBuiltinsWithoutRenderer() async {
+        guard let repoRoot = inferredAlanRepoRoot() else {
+            fail("shell integration regression must resolve the Alan repository root")
+        }
+        let command = AlanCommandResolution(
+            strategy: .loginShellFallback,
+            executablePath: "/bin/bash",
+            launchPath: "/bin/bash",
+            arguments: ["--noprofile", "--norc"],
+            bootCommand: "/bin/bash --noprofile --norc",
+            surfaceCommand: nil,
+            summary: "Automatically integrated login shell",
+            detail: nil,
+            repoRoot: nil,
+            candidates: []
+        )
+        let contentID = "content_terminal_integrated_shell_activity"
+        let profile = sampleBootProfile(
+            workingDirectory: "/tmp",
+            command: command,
+            environment: [
+                "ALAN_SHELL_CONTENT_ID": contentID,
+                "GHOSTTY_RESOURCES_DIR": "\(repoRoot)/clients/apple/ghostty-resources",
+                "HOME": FileManager.default.homeDirectoryForCurrentUser.path,
+                "TERM": "xterm-256color",
+            ]
+        )
+        let runtime = AlanDarwinTerminalPtyRuntime()
+        let surface = AlanGhosttySurfaceHandle(
+            contentID: contentID,
+            paneID: "pane_integrated_shell_activity",
+            bootstrap: FakeAlanGhosttyProcessBootstrap(),
+            ptyRuntime: runtime
+        )
+        surface.configure(
+            mountedAtPaneID: "pane_integrated_shell_activity",
+            bootProfile: profile
+        )
+        let handle = runtime.existingHandle(forTerminalContentID: contentID)
+            as! AlanDarwinTerminalPtyHandle
+        defer {
+            if handle.snapshot.exitStatus == nil {
+                _ = handle.writeInput("exit\n")
+                if waitForDarwinPtyExit(handle, timeout: 1) == nil {
+                    _ = handle.sendSignal(.kill)
+                    _ = waitForDarwinPtyExit(handle)
+                }
+            }
+        }
+
+        let idleDeadline = Date().addingTimeInterval(3)
+        while Date() < idleDeadline
+            && surface.snapshot.metadata.activeTaskState != .inactive
+        {
+            try? await Task.sleep(nanoseconds: 20_000_000)
+        }
+        expect(
+            surface.snapshot.metadata.activeTaskState == .inactive,
+            "an automatically integrated idle login shell must publish prompt state; "
+                + "PTY=\(handle.shellActivityState) "
+                + "surface=\(String(describing: surface.snapshot.metadata.activeTaskState))"
+        )
+
+        let semanticMarker = "alan_builtin_\(UUID().uuidString)"
+        expect(
+            surface.sendControlText(
+                "printf '%s\\n' '\(semanticMarker)'; read -r\n"
+            ).applied,
+            "the integrated shell must accept a long-running builtin without manual OSC markers"
+        )
+        let semanticOutputDeadline = Date().addingTimeInterval(2)
+        while Date() < semanticOutputDeadline
+            && !handle.snapshot.transcriptLines.joined(separator: "\n").contains(semanticMarker)
+        {
+            try? await Task.sleep(nanoseconds: 20_000_000)
+        }
+        expect(
+            handle.snapshot.transcriptLines.joined(separator: "\n").contains(semanticMarker),
+            "the builtin regression must observe command output without manual OSC markers"
+        )
+        let semanticForegroundDeadline = Date().addingTimeInterval(2)
+        while Date() < semanticForegroundDeadline
+            && surface.snapshot.metadata.activeTaskState != .foregroundCommand
+        {
+            try? await Task.sleep(nanoseconds: 20_000_000)
+        }
+        expect(
+            surface.snapshot.metadata.activeTaskState == .foregroundCommand,
+            "automatic shell integration must protect a builtin running in the shell process group; "
+                + "PTY=\(handle.shellActivityState) "
+                + "surface=\(String(describing: surface.snapshot.metadata.activeTaskState)) "
+                + "transcript=\(handle.snapshot.transcriptLines.joined(separator: "|"))"
+        )
+
+        expect(
+            surface.sendControlText("builtin input\n").applied,
+            "rendererless input must unblock the same-process-group builtin"
+        )
+        let semanticIdleDeadline = Date().addingTimeInterval(2)
+        while Date() < semanticIdleDeadline
+            && surface.snapshot.metadata.activeTaskState != .inactive
+        {
+            try? await Task.sleep(nanoseconds: 20_000_000)
+        }
+        expect(
+            surface.snapshot.metadata.activeTaskState == .inactive,
+            "automatic shell completion must clear builtin activity"
+        )
+
+        expect(
+            surface.sendControlText("sleep 30\n").applied,
+            "rendererless control delivery must reach the integrated login shell"
+        )
+        let foregroundDeadline = Date().addingTimeInterval(1)
+        while Date() < foregroundDeadline
+            && surface.snapshot.metadata.activeTaskState != .foregroundCommand
+        {
+            try? await Task.sleep(nanoseconds: 20_000_000)
+        }
+        expect(
+            surface.snapshot.metadata.activeTaskState == .foregroundCommand,
+            "rendererless PTY process-group activity must protect a foreground command"
+        )
+
+        expect(
+            handle.sendSignal(.interrupt).accepted,
+            "graceful shutdown must signal the actual foreground process group"
+        )
+        let returnedDeadline = Date().addingTimeInterval(3)
+        while Date() < returnedDeadline
+            && surface.snapshot.metadata.activeTaskState != .inactive
+        {
+            try? await Task.sleep(nanoseconds: 20_000_000)
+        }
+        expect(
+            surface.snapshot.metadata.activeTaskState == .inactive,
+            "the shell must return to idle after foreground-process-group interruption"
+        )
+    }
+
+    private static func verifiesDarwinPtyReplaysRendererlessOutputOnAttachment() async {
+        let replayMarker = "alan_renderer_replay_\(UUID().uuidString)"
+        let liveMarker = "alan_renderer_live_\(UUID().uuidString)"
+        let command =
+            "$| = 1; print \"\(replayMarker)\\n\"; "
+            + "scalar <STDIN>; print \"\(liveMarker)\\n\"; while (1) { sleep 1; }"
+        let request = AlanTerminalBootRequest(
+            strategy: .terminalProfileCustomCommand,
+            executablePath: "/usr/bin/perl",
+            arguments: ["-e", command],
+            workingDirectory: "/tmp",
+            environment: ["TERM": "xterm-256color"],
+            bootCommand: command,
+            rendererCompatibilityCommand: nil,
+            managedUserAccountName: nil,
+            terminalProfile: nil
+        )
+        let runtime = AlanDarwinTerminalPtyRuntime()
+        let handle = runtime.handle(
+            forTerminalContentID: "content_terminal_renderer_replay",
+            bootRequest: request
+        ) as! AlanDarwinTerminalPtyHandle
+        defer {
+            if handle.snapshot.exitStatus == nil {
+                _ = handle.sendSignal(.kill)
+                _ = waitForDarwinPtyExit(handle)
+            }
+        }
+
+        let outputDeadline = Date().addingTimeInterval(2)
+        while Date() < outputDeadline
+            && !handle.snapshot.transcriptLines.joined(separator: "\n").contains(replayMarker)
+        {
+            try? await Task.sleep(nanoseconds: 20_000_000)
+        }
+        expect(
+            handle.snapshot.transcriptLines.joined(separator: "\n").contains(replayMarker),
+            "rendererless PTY output must be captured before renderer attachment"
+        )
+
+        let rendererFileDescriptor: Int32
+        switch handle.makeRendererAttachment() {
+        case .attached(let attachment):
+            rendererFileDescriptor = attachment.readFileDescriptor
+        case .rejected(let rejection):
+            fail("renderer replay requires a PTY attachment: \(rejection.code)")
+        }
+        defer { close(rendererFileDescriptor) }
+
+        let continueInput = Data("continue\n".utf8)
+        let writtenBytes = continueInput.withUnsafeBytes { rawBuffer -> Int in
+            guard let baseAddress = rawBuffer.baseAddress else { return -1 }
+            return Darwin.write(rendererFileDescriptor, baseAddress, rawBuffer.count)
+        }
+        expect(
+            writtenBytes == continueInput.count,
+            "renderer ordering test must deliver post-attachment PTY input"
+        )
+
+        var rendererOutput = Data()
+        var buffer = [UInt8](repeating: 0, count: 4096)
+        let replayDeadline = Date().addingTimeInterval(1)
+        while Date() < replayDeadline
+            && !String(decoding: rendererOutput, as: UTF8.self).contains(liveMarker)
+        {
+            let count = Darwin.read(rendererFileDescriptor, &buffer, buffer.count)
+            if count > 0 {
+                rendererOutput.append(buffer, count: count)
+            } else {
+                try? await Task.sleep(nanoseconds: 20_000_000)
+            }
+        }
+        let renderedText = String(decoding: rendererOutput, as: UTF8.self)
+        expect(
+            renderedText.contains(replayMarker),
+            "renderer attachment must replay output consumed while no renderer was present"
+        )
+        guard let replayRange = renderedText.range(of: replayMarker),
+              let liveRange = renderedText.range(of: liveMarker)
+        else {
+            fail("renderer attachment must deliver both replayed and live PTY output")
+        }
+        expect(
+            replayRange.lowerBound < liveRange.lowerBound,
+            "renderer attachment must deliver replayed output before post-attachment PTY output"
         )
     }
 
@@ -592,6 +1151,58 @@ private enum TerminalRuntimeServiceTests {
         }
     }
 
+    private static func verifiesFailedPtyDoesNotProjectActiveWork() {
+        let contentID = "content_terminal_managed_user_failed_activity"
+        let command = AlanCommandResolution(
+            strategy: .terminalProfileManagedUser,
+            executablePath: nil,
+            launchPath: "",
+            arguments: [],
+            bootCommand: "managed_user 'lab'",
+            surfaceCommand: nil,
+            summary: "Managed User lab",
+            detail: nil,
+            repoRoot: nil,
+            candidates: [],
+            managedUserAccountName: "lab"
+        )
+        let profile = sampleBootProfile(
+            workingDirectory: "/Users/lab",
+            command: command,
+            environment: [
+                "ALAN_SHELL_CONTENT_ID": contentID,
+                "ALAN_MANAGED_USER_ACCOUNT": "lab",
+            ]
+        )
+        let runtime = AlanDarwinTerminalPtyRuntime()
+        let surface = AlanGhosttySurfaceHandle(
+            contentID: contentID,
+            paneID: "pane_managed_user_failed_activity",
+            bootstrap: FakeAlanGhosttyProcessBootstrap(),
+            ptyRuntime: runtime
+        )
+
+        surface.configure(
+            mountedAtPaneID: "pane_managed_user_failed_activity",
+            bootProfile: profile
+        )
+
+        let handle = runtime.existingHandle(forTerminalContentID: contentID)
+        expect(
+            handle?.snapshot.phase == .failed
+                && handle?.snapshot.exitStatus == .unknown,
+            "the unavailable Managed User fixture must represent a failed PTY with no live child"
+        )
+        expect(
+            handle?.shellActivityState == .unknown,
+            "failed PTY activity must remain unknown rather than pretending a prompt was observed"
+        )
+        expect(
+            surface.snapshot.metadata.activeTaskState == .inactive,
+            "a failed PTY with no live child must not be projected as active work"
+        )
+    }
+
     private static func verifiesManagedUserPtyRuntimeUsesHelperProviderWhenAvailable() {
         let request = AlanTerminalBootRequest(
             strategy: .terminalProfileManagedUser,
@@ -772,6 +1383,181 @@ private enum TerminalRuntimeServiceTests {
         expect(
             helper.startedPTYRequests.first?.accountName == "lab",
             "window runtime default PTY runtime must issue helper startManagedUserPTY requests"
+        )
+    }
+
+    private static func verifiesManagedUserOutputPumpBackpressuresBeforeMainActorDrain() {
+        let contentID = "content_terminal_managed_user_bounded_output"
+        let sessionID = "fake-\(contentID)"
+        let request = AlanTerminalBootRequest(
+            strategy: .terminalProfileManagedUser,
+            executablePath: "",
+            arguments: [],
+            workingDirectory: "/Users/lab",
+            environment: [
+                "ALAN_SHELL_CONTENT_ID": contentID,
+                "ALAN_MANAGED_USER_ACCOUNT": "lab",
+            ],
+            bootCommand: "managed_user 'lab'",
+            rendererCompatibilityCommand: nil,
+            managedUserAccountName: "lab",
+            terminalProfile: nil
+        )
+        let helper = AlanPrivilegedHelperFakeClient(channel: .dev)
+        helper.outputChunksBySessionID[sessionID] = Array(
+            repeating: Data(repeating: UInt8(ascii: "x"), count: 4096),
+            count: 400
+        )
+        let runtime = AlanDarwinTerminalPtyRuntime(
+            managedUserPtyProvider: AlanHelperManagedUserPtyProvider(helperClient: helper)
+        )
+        let handle = runtime.handle(
+            forTerminalContentID: contentID,
+            bootRequest: request
+        )
+
+        usleep(800_000)
+        let readsBeforeMainActorDrain = helper.readPTYRequests.count
+        expect(
+            readsBeforeMainActorDrain <= 256,
+            "managed_user output pumping must stop at its worker-side pending-output bound"
+        )
+        expect(
+            readsBeforeMainActorDrain < 400,
+            "managed_user output pumping must not drain an unbounded helper backlog while "
+                + "the main actor is blocked"
+        )
+
+        _ = handle.snapshot
+        RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        expect(
+            helper.readPTYRequests.count > readsBeforeMainActorDrain,
+            "managed_user output pumping must resume after the main actor drains pending updates"
+        )
+    }
+
+    private static func verifiesManagedUserExitDrainsPendingOutputAndPublishesIdle() {
+        let contentID = "content_terminal_managed_user_exit_drain"
+        let sessionID = "fake-\(contentID)"
+        let request = AlanTerminalBootRequest(
+            strategy: .terminalProfileManagedUser,
+            executablePath: "",
+            arguments: [],
+            workingDirectory: "/Users/lab",
+            environment: [
+                "ALAN_SHELL_CONTENT_ID": contentID,
+                "ALAN_MANAGED_USER_ACCOUNT": "lab",
+            ],
+            bootCommand: "managed_user 'lab'",
+            rendererCompatibilityCommand: nil,
+            managedUserAccountName: "lab",
+            terminalProfile: nil
+        )
+        let helper = AlanPrivilegedHelperFakeClient(channel: .dev)
+        let runtime = AlanDarwinTerminalPtyRuntime(
+            managedUserPtyProvider: AlanHelperManagedUserPtyProvider(helperClient: helper)
+        )
+        let handle = runtime.handle(
+            forTerminalContentID: contentID,
+            bootRequest: request
+        )
+        var observedShellActivity: [AlanTerminalPtyShellActivityState] = []
+        handle.onShellActivityStateChange = { observedShellActivity.append($0) }
+        helper.outputChunksBySessionID[sessionID] = [
+            Data("\u{1B}]133;C\u{7}managed-user-final-output\n".utf8)
+        ]
+
+        let workerDrainDeadline = Date().addingTimeInterval(1)
+        while Date() < workerDrainDeadline
+            && helper.outputChunksBySessionID[sessionID]?.isEmpty != true
+        {
+            usleep(10_000)
+        }
+        expect(
+            helper.outputChunksBySessionID[sessionID]?.isEmpty == true,
+            "managed_user exit race must begin after the worker has consumed final output"
+        )
+        helper.exitObservationsBySessionID[sessionID] = AlanManagedUserPTYExitObservation(
+            sessionID: sessionID,
+            final: true,
+            exitCode: 0,
+            terminatingSignal: nil,
+            sanitizedMessage: "Fake helper PTY session exited."
+        )
+        let rejectedWrite = handle.writeInput("too-late")
+        let snapshot = handle.snapshot
+
+        expect(
+            !rejectedWrite.applied && rejectedWrite.errorCode == "terminal_child_exited",
+            "managed_user controls must observe helper exit before accepting more input"
+        )
+        expect(
+            snapshot.transcriptLines.joined(separator: "\n")
+                .contains("managed-user-final-output"),
+            "managed_user exit observation must drain output already consumed by the worker"
+        )
+        expect(
+            snapshot.exitStatus?.diagnosticsValue == "exit:0"
+                && snapshot.phase == .exited,
+            "managed_user exit observation must preserve helper lifecycle truth"
+        )
+        expect(
+            handle.shellActivityState == .shellInput
+                && observedShellActivity == [.foregroundCommand, .shellInput],
+            "managed_user exit must publish an inactive transition after final output; "
+                + "observed \(observedShellActivity)"
+        )
+    }
+
+    private static func verifiesManagedUserFinalChunkPublishesIdle() {
+        let contentID = "content_terminal_managed_user_final_chunk"
+        let sessionID = "fake-\(contentID)"
+        let request = AlanTerminalBootRequest(
+            strategy: .terminalProfileManagedUser,
+            executablePath: "",
+            arguments: [],
+            workingDirectory: "/Users/lab",
+            environment: [
+                "ALAN_SHELL_CONTENT_ID": contentID,
+                "ALAN_MANAGED_USER_ACCOUNT": "lab",
+            ],
+            bootCommand: "managed_user 'lab'",
+            rendererCompatibilityCommand: nil,
+            managedUserAccountName: "lab",
+            terminalProfile: nil
+        )
+        let helper = AlanPrivilegedHelperFakeClient(channel: .dev)
+        let runtime = AlanDarwinTerminalPtyRuntime(
+            managedUserPtyProvider: AlanHelperManagedUserPtyProvider(helperClient: helper)
+        )
+        guard let handle = runtime.handle(
+            forTerminalContentID: contentID,
+            bootRequest: request
+        ) as? AlanHelperManagedUserPtyHandle else {
+            fail("managed_user final-chunk regression requires the helper-backed PTY handle")
+        }
+        var observedShellActivity: [AlanTerminalPtyShellActivityState] = []
+        handle.onShellActivityStateChange = { observedShellActivity.append($0) }
+        helper.outputChunksBySessionID[sessionID] = [
+            Data("\u{1B}]133;C\u{7}running-until-eof\n".utf8)
+        ]
+        _ = handle.snapshot
+        expect(
+            handle.shellActivityState == .foregroundCommand,
+            "managed_user final-chunk regression must begin with protected activity"
+        )
+
+        helper.markNextEmptyPTYReadFinal(sessionID: sessionID)
+        _ = handle.snapshot
+        expect(
+            handle.shellActivityState == .shellInput
+                && observedShellActivity == [.foregroundCommand, .shellInput],
+            "managed_user final EOF chunk must publish inactive activity; "
+                + "observed \(observedShellActivity)"
+        )
+        expect(
+            handle.snapshot.phase == .exited,
+            "managed_user final EOF chunk must publish exited lifecycle truth"
         )
     }
 
@@ -956,10 +1742,13 @@ private enum TerminalRuntimeServiceTests {
             forTerminalContentID: "content_terminal_managed_user_renderer",
             bootRequest: request
         )
+        var observedShellActivity: [AlanTerminalPtyShellActivityState] = []
+        handle.onShellActivityStateChange = { observedShellActivity.append($0) }
         helper.outputChunksBySessionID["fake-content_terminal_managed_user_renderer"] = [
-            Data("helper-output-a\n".utf8),
-            Data("helper-output-b\n".utf8),
+            Data("\u{1B}]133;C\u{7}helper-output-a\n".utf8),
+            Data("helper-output-b\n\u{1B}]133;D;0\u{7}\u{1B}]133;A\u{7}".utf8),
         ]
+        _ = handle.snapshot
 
         var rendererFileDescriptor: Int32?
         defer {
@@ -988,7 +1777,54 @@ private enum TerminalRuntimeServiceTests {
         guard let rendererFileDescriptor else {
             fail("managed_user renderer attachment must expose a renderer file descriptor")
         }
+        helper.enqueueOutputChunks(
+            [Data("helper-output-live\n".utf8)],
+            sessionID: "fake-content_terminal_managed_user_renderer"
+        )
+        var replayedRendererOutput = Data()
+        var rendererOutputBuffer = [UInt8](repeating: 0, count: 4096)
+        let replayDeadline = Date().addingTimeInterval(1)
+        while Date() < replayDeadline
+            && !String(decoding: replayedRendererOutput, as: UTF8.self)
+                .contains("helper-output-live")
+        {
+            let count = Darwin.read(
+                rendererFileDescriptor,
+                &rendererOutputBuffer,
+                rendererOutputBuffer.count
+            )
+            if count > 0 {
+                replayedRendererOutput.append(rendererOutputBuffer, count: count)
+            } else {
+                RunLoop.current.run(until: Date().addingTimeInterval(0.02))
+            }
+        }
+        let renderedText = String(decoding: replayedRendererOutput, as: UTF8.self)
+        expect(
+            renderedText.contains("helper-output-b"),
+            "managed_user renderer attachment must replay helper output drained before attachment"
+        )
+        guard let replayRange = renderedText.range(of: "helper-output-b"),
+              let liveRange = renderedText.range(of: "helper-output-live")
+        else {
+            fail("managed_user renderer attachment must deliver replayed and live helper output")
+        }
+        expect(
+            replayRange.lowerBound < liveRange.lowerBound,
+            "managed_user renderer attachment must deliver replayed output before live helper output"
+        )
         let transcriptObserved = waitForPtyOutput(handle, contains: "helper-output-b")
+        let helperReadDeadline = Date().addingTimeInterval(1)
+        while Date() < helperReadDeadline
+            && helper.readPTYRequests.filter({
+                $0 == AlanManagedUserPTYReadRequest(
+                    sessionID: "fake-content_terminal_managed_user_renderer",
+                    maxBytes: 4096
+                )
+            }).count < 3
+        {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.02))
+        }
         let snapshot = handle.snapshot
         let helperReadCount = helper.readPTYRequests.filter {
             $0 == AlanManagedUserPTYReadRequest(
@@ -1007,6 +1843,11 @@ private enum TerminalRuntimeServiceTests {
         expect(
             transcriptObserved,
             "managed_user renderer attachment must update the fallback transcript from helper output"
+        )
+        expect(
+            observedShellActivity == [.foregroundCommand, .shellInput],
+            "managed_user renderer output must publish OSC 133 activity through the PTY handle; "
+                + "observed \(observedShellActivity)"
         )
 
         let binaryRendererInput = Data([0xff, 0x00, 0x1b, 0x7f])
@@ -1052,6 +1893,238 @@ private enum TerminalRuntimeServiceTests {
         )
     }
 
+    private static func verifiesManagedUserDirectDrainReportsShellActivity() {
+        let contentID = "content_terminal_managed_user_direct_drain"
+        let request = AlanTerminalBootRequest(
+            strategy: .terminalProfileManagedUser,
+            executablePath: "",
+            arguments: [],
+            workingDirectory: "/Users/lab",
+            environment: [
+                "ALAN_SHELL_CONTENT_ID": contentID,
+                "ALAN_MANAGED_USER_ACCOUNT": "lab",
+            ],
+            bootCommand: "managed_user 'lab'",
+            rendererCompatibilityCommand: nil,
+            managedUserAccountName: "lab",
+            terminalProfile: nil
+        )
+        let helper = AlanPrivilegedHelperFakeClient(channel: .dev)
+        let runtime = AlanDarwinTerminalPtyRuntime(
+            managedUserPtyProvider: AlanHelperManagedUserPtyProvider(helperClient: helper)
+        )
+        let handle = runtime.handle(
+            forTerminalContentID: contentID,
+            bootRequest: request
+        )
+        var observedShellActivity: [AlanTerminalPtyShellActivityState] = []
+        handle.onShellActivityStateChange = { observedShellActivity.append($0) }
+        let sessionID = "fake-\(contentID)"
+        helper.outputChunksBySessionID[sessionID] = [
+            Data("\u{1B}]133;".utf8),
+            Data("C\u{7}running\n".utf8),
+        ]
+
+        _ = handle.snapshot
+        expect(
+            handle.shellActivityState == .foregroundCommand
+                && observedShellActivity == [.foregroundCommand],
+            "managed_user direct snapshot drains must publish split OSC 133 command-start activity; "
+                + "observed \(observedShellActivity)"
+        )
+
+        helper.outputChunksBySessionID[sessionID] = [
+            Data("\u{1B}]133;D;0\u{7}\u{1B}]133;A\u{7}".utf8)
+        ]
+        _ = handle.snapshot
+        expect(
+            handle.shellActivityState == .shellInput
+                && observedShellActivity == [.foregroundCommand, .shellInput],
+            "managed_user direct snapshot drains must publish prompt activity; "
+                + "observed \(observedShellActivity)"
+        )
+
+        helper.outputChunksBySessionID[sessionID] = [
+            Data("\u{1B}]133;".utf8)
+        ]
+        _ = handle.snapshot
+        expect(
+            handle.shellActivityState == .shellInput,
+            "an incomplete direct-drain OSC marker must not publish activity"
+        )
+
+        helper.outputChunksBySessionID[sessionID] = [
+            Data("C\u{7}renderer-running\n".utf8)
+        ]
+        let rendererFileDescriptor: Int32
+        switch handle.makeRendererAttachment() {
+        case .attached(let attachment):
+            rendererFileDescriptor = attachment.readFileDescriptor
+        case .rejected(let rejection):
+            fail("managed_user parser handoff requires a renderer attachment: \(rejection.code)")
+        }
+        let rendererDeadline = Date().addingTimeInterval(1)
+        while Date() < rendererDeadline
+            && handle.shellActivityState != .foregroundCommand
+        {
+            _ = handle.snapshot
+            RunLoop.current.run(until: Date().addingTimeInterval(0.02))
+        }
+        expect(
+            handle.shellActivityState == .foregroundCommand
+                && observedShellActivity
+                    == [.foregroundCommand, .shellInput, .foregroundCommand],
+            "managed_user renderer attachment must continue the direct drain parser state; "
+                + "observed \(observedShellActivity)"
+        )
+
+        close(rendererFileDescriptor)
+        let detachedOutputMarker = "helper-output-after-renderer-detach"
+        helper.enqueueOutputChunks(
+            [
+                Data(
+                    (
+                        "\(detachedOutputMarker)\n"
+                            + "\u{1B}]133;D;0\u{7}\u{1B}]133;A\u{7}"
+                    ).utf8
+                )
+            ],
+            sessionID: sessionID
+        )
+        let detachedDeadline = Date().addingTimeInterval(1)
+        while Date() < detachedDeadline
+            && handle.shellActivityState != .shellInput
+        {
+            _ = handle.snapshot
+            RunLoop.current.run(until: Date().addingTimeInterval(0.02))
+        }
+        expect(
+            handle.shellActivityState == .shellInput
+                && observedShellActivity
+                    == [.foregroundCommand, .shellInput, .foregroundCommand, .shellInput],
+            "managed_user direct drains must resume after renderer detachment; "
+                + "observed \(observedShellActivity)"
+        )
+
+        let reattachedFileDescriptor: Int32
+        switch handle.makeRendererAttachment() {
+        case .attached(let attachment):
+            reattachedFileDescriptor = attachment.readFileDescriptor
+        case .rejected(let rejection):
+            fail("managed_user detach replay requires reattachment: \(rejection.code)")
+        }
+        defer { close(reattachedFileDescriptor) }
+        var reattachedOutput = Data()
+        var reattachedBuffer = [UInt8](repeating: 0, count: 4096)
+        let reattachedDeadline = Date().addingTimeInterval(1)
+        while Date() < reattachedDeadline
+            && !String(decoding: reattachedOutput, as: UTF8.self)
+                .contains(detachedOutputMarker)
+        {
+            let count = Darwin.read(
+                reattachedFileDescriptor,
+                &reattachedBuffer,
+                reattachedBuffer.count
+            )
+            if count > 0 {
+                reattachedOutput.append(reattachedBuffer, count: count)
+            } else {
+                RunLoop.current.run(until: Date().addingTimeInterval(0.02))
+            }
+        }
+        expect(
+            String(decoding: reattachedOutput, as: UTF8.self)
+                .contains(detachedOutputMarker),
+            "managed_user renderer detachment must hand off unread output for reattachment"
+        )
+    }
+
+    private static func verifiesManagedUserProcessGroupActivityWithoutRenderer() async {
+        let contentID = "content_terminal_managed_user_process_group"
+        let command = AlanCommandResolution(
+            strategy: .terminalProfileManagedUser,
+            executablePath: nil,
+            launchPath: "",
+            arguments: [],
+            bootCommand: "managed_user 'lab'",
+            surfaceCommand: nil,
+            summary: "Managed User lab",
+            detail: nil,
+            repoRoot: nil,
+            candidates: [],
+            managedUserAccountName: "lab"
+        )
+        let profile = sampleBootProfile(
+            workingDirectory: "/Users/lab",
+            command: command,
+            environment: [
+                "ALAN_SHELL_CONTENT_ID": contentID,
+                "ALAN_MANAGED_USER_ACCOUNT": "lab",
+            ]
+        )
+        let helper = AlanPrivilegedHelperFakeClient(channel: .dev)
+        let runtime = AlanDarwinTerminalPtyRuntime(
+            managedUserPtyProvider: AlanHelperManagedUserPtyProvider(helperClient: helper)
+        )
+        let surface = AlanGhosttySurfaceHandle(
+            contentID: contentID,
+            paneID: "pane_managed_user_process_group",
+            bootstrap: FakeAlanGhosttyProcessBootstrap(),
+            ptyRuntime: runtime
+        )
+        surface.configure(
+            mountedAtPaneID: "pane_managed_user_process_group",
+            bootProfile: profile
+        )
+        let sessionID = "fake-\(contentID)"
+        helper.outputChunksBySessionID[sessionID] = [
+            Data("\u{1B}]133;A\u{7}".utf8)
+        ]
+        helper.enqueueForegroundProcessGroupStates([.shell], sessionID: sessionID)
+
+        let idleDeadline = Date().addingTimeInterval(1)
+        while Date() < idleDeadline
+            && surface.snapshot.metadata.activeTaskState != .inactive
+        {
+            try? await Task.sleep(nanoseconds: 20_000_000)
+        }
+        expect(
+            surface.snapshot.metadata.activeTaskState == .inactive,
+            "Managed User foreground-process observation must identify an idle helper shell"
+        )
+
+        helper.enqueueForegroundProcessGroupStates([.foreground], sessionID: sessionID)
+        expect(
+            surface.sendControlText("sleep 30\n").applied,
+            "Managed User rendererless input must continue through the helper"
+        )
+        let foregroundDeadline = Date().addingTimeInterval(1)
+        while Date() < foregroundDeadline
+            && surface.snapshot.metadata.activeTaskState != .foregroundCommand
+        {
+            try? await Task.sleep(nanoseconds: 20_000_000)
+        }
+        expect(
+            surface.snapshot.metadata.activeTaskState == .foregroundCommand,
+            "Managed User foreground-process observation must protect rendererless work"
+        )
+
+        helper.outputChunksBySessionID[sessionID] = [
+            Data("\u{1B}]133;D;0\u{7}\u{1B}]133;A\u{7}".utf8)
+        ]
+        helper.enqueueForegroundProcessGroupStates([.shell], sessionID: sessionID)
+        let returnedDeadline = Date().addingTimeInterval(1)
+        while Date() < returnedDeadline
+            && surface.snapshot.metadata.activeTaskState != .inactive
+        {
+            try? await Task.sleep(nanoseconds: 20_000_000)
+        }
+        expect(
+            surface.snapshot.metadata.activeTaskState == .inactive,
+            "Managed User foreground-process observation must return to idle"
+        )
+    }
+
     private static func verifiesAlanGhosttySurfaceDeliveryUsesPtyRuntimeWithoutRenderer() {
         let contentID = "content_terminal_surface_pty"
         let profile = sampleBootProfile(
@@ -1068,6 +2141,10 @@ private enum TerminalRuntimeServiceTests {
         surface.configure(mountedAtPaneID: "pane_surface_pty", bootProfile: profile)
 
         expect(!surface.isSurfaceReady, "renderer must not be required for PTY delivery readiness")
+        expect(
+            surface.snapshot.metadata.activeTaskState == .unknown,
+            "unknown PTY shell activity must fail closed before any input is delivered"
+        )
 
         let delivery = surface.sendControlText("pwd\n")
         let handle = runtime.existingHandle(forTerminalContentID: contentID)
@@ -1076,6 +2153,25 @@ private enum TerminalRuntimeServiceTests {
         expect(
             handle.deliveredText == ["pwd\n"],
             "surface delivery must write to the PTY handle rather than Ghostty renderer text"
+        )
+        expect(
+            handle.shellActivityState == .unknown,
+            "accepted newline text must not infer PTY shell activity"
+        )
+        expect(
+            surface.snapshot.metadata.activeTaskState == .unknown,
+            "unknown PTY shell activity must fail closed until a prompt marker is observed"
+        )
+
+        handle.recordShellActivityState(.foregroundCommand)
+        expect(
+            surface.snapshot.metadata.activeTaskState == .foregroundCommand,
+            "Alan-owned PTY shell activity must protect the terminal surface"
+        )
+        handle.recordShellActivityState(.shellInput)
+        expect(
+            surface.snapshot.metadata.activeTaskState == .inactive,
+            "returning to shell input must clear foreground command protection"
         )
 
         let shutdown = surface.requestGracefulShutdown(reason: .paneClose)
@@ -2154,7 +3250,7 @@ private enum TerminalRuntimeServiceTests {
             if transcript.contains(needle) {
                 return true
             }
-            usleep(50_000)
+            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
         }
         return false
     }
@@ -2185,7 +3281,7 @@ private enum TerminalRuntimeServiceTests {
                 _ = handle.drainAvailableOutput()
                 return status
             }
-            usleep(50_000)
+            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
         }
         return handle.refreshExitStatus()
     }

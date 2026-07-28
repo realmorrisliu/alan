@@ -105,6 +105,7 @@ CLANG_MODULE_CACHE_PATH="$MODULE_CACHE_DIR" swiftc \
     "$REPO_ROOT/clients/apple/alan-macos/Services/Terminal/TerminalPtyContracts.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Services/Terminal/TerminalPtyControlSequenceResponder.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Services/Terminal/TerminalPtyRuntime.swift" \
+    "$REPO_ROOT/clients/apple/alan-macos/Services/Terminal/TerminalShellIntegration.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Services/Terminal/ManagedUserTerminalPtyRuntime.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Services/Terminal/DarwinTerminalPtyRuntime.swift" \
     "$REPO_ROOT/clients/apple/alan-macos/Services/Terminal/GhosttyProcessBootstrap.swift" \
