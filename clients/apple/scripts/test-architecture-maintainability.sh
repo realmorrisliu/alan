@@ -35,6 +35,7 @@ git -C "$fixture" \
     commit --quiet --allow-empty -m head
 
 probe="$fixture/clients/apple/alan-macos/App/AlanMacUpdateController.swift"
+cd "$(dirname "$fixture")"
 cat >>"$probe" <<'SWIFT'
 
 #if os(macOS)
