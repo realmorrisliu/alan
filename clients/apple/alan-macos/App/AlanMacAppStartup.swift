@@ -189,7 +189,8 @@ enum AlanMacAppStartup {
             shell: request.shell,
             contentID: "privileged-helper-live-smoke-\(UUID().uuidString)",
             columns: 80,
-            rows: 24
+            rows: 24,
+            shellIntegrationResourcesPath: nil
         )
         switch client.startManagedUserPTY(startRequest) {
         case .success(let session):

@@ -265,6 +265,7 @@ struct AlanManagedUserPTYStartRequest: Codable, Equatable {
     let contentID: String
     let columns: Int
     let rows: Int
+    let shellIntegrationResourcesPath: String?
 }
 
 struct AlanManagedUserPTYSession: Codable, Equatable {

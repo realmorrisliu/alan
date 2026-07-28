@@ -25,13 +25,20 @@ final class AlanPrivilegedHelperPTYSessionStore {
         case .success(let account):
             var master: Int32 = -1
             var pid: pid_t = 0
-            let shellName = URL(fileURLWithPath: request.shell).lastPathComponent
-            let argvValues = ["-\(shellName)"]
-            let envValues = AlanPrivilegedHelperPTYSupport.environment(
-                accountName: request.accountName,
-                home: request.homeDirectory,
-                shell: request.shell
+            let shellLaunch = AlanTerminalShellLaunch.integratingGhostty(
+                executablePath: request.shell,
+                arguments: ["-l"],
+                environment: AlanPrivilegedHelperPTYSupport.environment(
+                    accountName: request.accountName,
+                    home: request.homeDirectory,
+                    shell: request.shell
+                ),
+                resourcesPath: request.shellIntegrationResourcesPath
             )
+            let argvValues = [shellLaunch.argumentZero] + shellLaunch.arguments
+            let envValues = shellLaunch.environment.map {
+                "\($0.key)=\($0.value)"
+            }.sorted()
             let workingDirectory = request.workingDirectory.isEmpty
                 ? request.homeDirectory
                 : request.workingDirectory

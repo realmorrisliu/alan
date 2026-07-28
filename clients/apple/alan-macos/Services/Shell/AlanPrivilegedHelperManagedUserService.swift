@@ -421,7 +421,7 @@ final class AlanPrivilegedHelperManagedUserService {
             accountName: request.accountName,
             home: request.homeDirectory,
             shell: request.shell
-        )
+        ).map { "\($0.key)=\($0.value)" }.sorted()
         let result = request.shell.withCString { executable in
             request.homeDirectory.withCString { workingDirectory in
                 request.accountName.withCString { accountName in

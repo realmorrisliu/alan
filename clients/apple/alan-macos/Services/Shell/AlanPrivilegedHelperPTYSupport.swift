@@ -21,14 +21,14 @@ enum AlanPrivilegedHelperPTYSupport {
         accountName: String,
         home: String,
         shell: String
-    ) -> [String] {
+    ) -> [String: String] {
         [
-            "HOME=\(home)",
-            "USER=\(accountName)",
-            "LOGNAME=\(accountName)",
-            "SHELL=\(shell)",
-            "TERM=xterm-256color",
-            "PATH=/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+            "HOME": home,
+            "USER": accountName,
+            "LOGNAME": accountName,
+            "SHELL": shell,
+            "TERM": "xterm-256color",
+            "PATH": "/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin",
         ]
     }
 

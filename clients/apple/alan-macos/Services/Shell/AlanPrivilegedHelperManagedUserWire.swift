@@ -88,6 +88,7 @@ struct AlanXPCManagedUserPTYStartRequest: Codable, Equatable {
     let contentID: String
     let columns: Int
     let rows: Int
+    let shellIntegrationResourcesPath: String?
 }
 
 struct AlanXPCManagedUserPTYSession: Codable, Equatable {

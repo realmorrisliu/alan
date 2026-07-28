@@ -62,6 +62,7 @@ Xcode target.
 | `Services/Terminal/ManagedUserTerminalPtyRuntime.swift` | 764 | Darwin, Foundation; macOS gates | Privileged-helper Managed User PTY provider, handle, renderer proxy, and raw-byte bridge | `Services/Terminal/` |
 | `Services/Terminal/TerminalPtyContracts.swift` | 125 | Foundation; macOS gates | PTY lifecycle, dimensions, exit, attachment, handle, runtime, and provider contracts | `Services/Terminal/` |
 | `Services/Terminal/TerminalPtyControlSequenceResponder.swift` | 223 | Foundation; macOS gates | Bounded PTY control-sequence parser and terminal query responses | `Services/Terminal/` |
+| `Services/Terminal/TerminalShellIntegration.swift` | 131 | Foundation | Shared zsh/Bash launch projection for bundled Ghostty shell integration | `Services/Terminal/` |
 | `Services/Terminal/TerminalPtyRuntime.swift` | 67 | Darwin, Foundation; macOS gates | Content-keyed PTY handle registry, local/Managed User dispatch, and shared socket setup | `Services/Terminal/` |
 | `Services/Terminal/TerminalRuntimeDelivery.swift` | 104 | Foundation; macOS gates | Stable terminal delivery codes and result construction | `Services/Terminal/` |
 | `Services/Terminal/TerminalSurfaceContracts.swift` | 263 | AppKit, Foundation, GhosttyKit; macOS/Ghostty gates | Surface lifecycle, teardown, transcript, event-surface, and runtime-service contracts | `Services/Terminal/` |

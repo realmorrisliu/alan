@@ -64,7 +64,10 @@ final class AlanHelperManagedUserPtyProvider: AlanManagedUserPtyProviding {
             shell: shell,
             contentID: contentID,
             columns: defaultDimensions.columns,
-            rows: defaultDimensions.rows
+            rows: defaultDimensions.rows,
+            shellIntegrationResourcesPath: bootRequest.environment[
+                "GHOSTTY_RESOURCES_DIR"
+            ]
         )
         switch helperClient.startManagedUserPTY(request) {
         case .success(let session):
@@ -677,6 +680,9 @@ private func readHelperManagedUserPtyProcessedOutput(
 }
 
 fileprivate final class AlanHelperManagedUserPtyOutputPump {
+    private let maxPendingOutputBytes = 1024 * 1024
+    private let maxPendingUpdateCount = 256
+
     private weak var ptyHandle: AlanHelperManagedUserPtyHandle?
     private let helperClient: AlanPrivilegedHelperClienting
     private let sessionID: String
@@ -684,6 +690,7 @@ fileprivate final class AlanHelperManagedUserPtyOutputPump {
     private let outputProcessor: AlanTerminalPtyControlSequenceProcessor
     private var timer: DispatchSourceTimer?
     private var pendingUpdates: [AlanHelperManagedUserPtyPendingOutputUpdate] = []
+    private var pendingOutputBytes = 0
     private var publishScheduled = false
     private var lastForegroundProcessGroupState:
         AlanManagedUserPTYForegroundProcessGroupState = .unavailable
@@ -796,6 +803,7 @@ fileprivate final class AlanHelperManagedUserPtyOutputPump {
             timer?.cancel()
             timer = nil
             pendingUpdates.removeAll()
+            pendingOutputBytes = 0
             publishScheduled = false
         }
     }
@@ -813,10 +821,16 @@ fileprivate final class AlanHelperManagedUserPtyOutputPump {
     private func pollOnQueue(maxBytes: Int) {
         var remainingBytes = 64 * 1024
         while remainingBytes > 0 {
+            guard pendingUpdates.count < maxPendingUpdateCount,
+                  pendingOutputBytes < maxPendingOutputBytes
+            else {
+                return
+            }
+            let pendingCapacity = maxPendingOutputBytes - pendingOutputBytes
             switch readHelperManagedUserPtyProcessedOutput(
                 helperClient: helperClient,
                 sessionID: sessionID,
-                maxBytes: min(max(1, maxBytes), remainingBytes),
+                maxBytes: min(max(1, maxBytes), remainingBytes, pendingCapacity),
                 outputProcessor: outputProcessor
             ) {
             case .success(let output):
@@ -853,6 +867,7 @@ fileprivate final class AlanHelperManagedUserPtyOutputPump {
                             routedToRenderer: routedToRenderer
                         )
                     )
+                    pendingOutputBytes += output.chunk.data.count
                 }
                 guard !output.chunk.data.isEmpty,
                       output.responseFailure == nil,
@@ -874,6 +889,7 @@ fileprivate final class AlanHelperManagedUserPtyOutputPump {
     private func takePendingUpdatesOnQueue() -> [AlanHelperManagedUserPtyPendingOutputUpdate] {
         let updates = pendingUpdates
         pendingUpdates.removeAll()
+        pendingOutputBytes = 0
         publishScheduled = false
         return updates
     }

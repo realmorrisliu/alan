@@ -669,8 +669,8 @@ require_pattern \
 
 require_pattern \
     "clients/apple/alan-macos/Services/Shell/AlanPrivilegedHelperXPC.swift" \
-    "static let currentVersion = 4" \
-    "managed-user foreground-process schema changes must advance the helper protocol"
+    "static let currentVersion = 5" \
+    "managed-user shell-integration schema changes must advance the helper protocol"
 
 require_pattern \
     "clients/apple/alan-macos/Services/Shell/ShellCoreFFIManagedTerminalAccountAdapter.swift" \
@@ -814,8 +814,8 @@ require_pattern \
 
 require_pattern \
     "clients/apple/scripts/test-terminal-runtime-service.swift" \
-    "verifiesDarwinPtyTracksUnintegratedShellActivityWithoutRenderer" \
-    "terminal runtime tests must cover rendererless shells without OSC integration"
+    "verifiesDarwinPtyTracksIntegratedShellBuiltinsWithoutRenderer" \
+    "terminal runtime tests must cover rendererless shell builtins without manual OSC markers"
 
 require_pattern \
     "clients/apple/scripts/test-terminal-runtime-service.swift" \

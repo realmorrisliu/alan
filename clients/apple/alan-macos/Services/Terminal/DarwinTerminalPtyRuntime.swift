@@ -550,15 +550,29 @@ final class AlanDarwinTerminalPtyHandle: AlanTerminalPtyHandle {
     private func launch() {
         var master: Int32 = -1
         var spawnedPid: pid_t = 0
-        let arguments = [bootRequest.executablePath] + bootRequest.arguments
         let environment = ProcessInfo.processInfo.environment.merging(bootRequest.environment) {
             _, newValue in newValue
         }
+        let shellLaunch = bootRequest.strategy.launchesInteractiveShell
+            ? AlanTerminalShellLaunch.integratingGhostty(
+                executablePath: bootRequest.executablePath,
+                arguments: bootRequest.arguments,
+                environment: environment,
+                resourcesPath: environment["GHOSTTY_RESOURCES_DIR"]
+            )
+            : AlanTerminalShellLaunch(
+                argumentZero: bootRequest.executablePath,
+                arguments: bootRequest.arguments,
+                environment: environment
+            )
+        let arguments = [shellLaunch.argumentZero] + shellLaunch.arguments
 
         let spawnResult = bootRequest.executablePath.withCString { executablePath in
             bootRequest.workingDirectory.withCString { workingDirectory in
                 withCStringArray(arguments) { argv in
-                    withCStringArray(environment.map { "\($0.key)=\($0.value)" }.sorted()) { envp in
+                    withCStringArray(shellLaunch.environment.map {
+                        "\($0.key)=\($0.value)"
+                    }.sorted()) { envp in
                         alanDarwinPtySpawn(
                             executablePath,
                             argv,

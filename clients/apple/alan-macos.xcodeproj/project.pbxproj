@@ -77,6 +77,8 @@
 		A12900000000000000000007 /* Services/Terminal/TerminalSelectionClipboardAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A12900000000000000000107 /* Services/Terminal/TerminalSelectionClipboardAdapter.swift */; };
 		A12900000000000000000008 /* Services/Terminal/TerminalSemanticCommands.swift in Sources */ = {isa = PBXBuildFile; fileRef = A12900000000000000000108 /* Services/Terminal/TerminalSemanticCommands.swift */; };
 		A12900000000000000000009 /* Services/Terminal/TerminalSurfaceState.swift in Sources */ = {isa = PBXBuildFile; fileRef = A12900000000000000000109 /* Services/Terminal/TerminalSurfaceState.swift */; };
+		A12A00000000000000000001 /* Services/Terminal/TerminalShellIntegration.swift in Sources */ = {isa = PBXBuildFile; fileRef = A12A00000000000000000101 /* Services/Terminal/TerminalShellIntegration.swift */; };
+		A12A00000000000000000002 /* Services/Terminal/TerminalShellIntegration.swift in Sources */ = {isa = PBXBuildFile; fileRef = A12A00000000000000000101 /* Services/Terminal/TerminalShellIntegration.swift */; };
 		AA1B2C3D4E5F6A7B8C9D0E1F /* Views/Shell/Controls/ShellFormControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB2C3D4E5F6A7B8C9D0E1F2A /* Views/Shell/Controls/ShellFormControls.swift */; };
 		0000000000000000000000F0 /* Views/Shell/ShellSpaceCreationForm.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0000000000000000000001F0 /* Views/Shell/ShellSpaceCreationForm.swift */; };
 		00000000000000000000001B /* Views/Shell/ShellWorkspaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000011B /* Views/Shell/ShellWorkspaceView.swift */; };
@@ -284,6 +286,7 @@
 		A12900000000000000000107 /* Services/Terminal/TerminalSelectionClipboardAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Terminal/TerminalSelectionClipboardAdapter.swift; sourceTree = "<group>"; };
 		A12900000000000000000108 /* Services/Terminal/TerminalSemanticCommands.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Terminal/TerminalSemanticCommands.swift; sourceTree = "<group>"; };
 		A12900000000000000000109 /* Services/Terminal/TerminalSurfaceState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Terminal/TerminalSurfaceState.swift; sourceTree = "<group>"; };
+		A12A00000000000000000101 /* Services/Terminal/TerminalShellIntegration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Terminal/TerminalShellIntegration.swift; sourceTree = "<group>"; };
 		BB2C3D4E5F6A7B8C9D0E1F2A /* Views/Shell/Controls/ShellFormControls.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Views/Shell/Controls/ShellFormControls.swift"; sourceTree = "<group>"; };
 		0000000000000000000001F0 /* Views/Shell/ShellSpaceCreationForm.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Shell/ShellSpaceCreationForm.swift; sourceTree = "<group>"; };
 		00000000000000000000011B /* Views/Shell/ShellWorkspaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Shell/ShellWorkspaceView.swift; sourceTree = "<group>"; };
@@ -648,6 +651,7 @@
 				A12800000000000000000105 /* Services/Terminal/TerminalPtyContracts.swift */,
 				A12800000000000000000106 /* Services/Terminal/TerminalPtyControlSequenceResponder.swift */,
 				A12800000000000000000107 /* Services/Terminal/TerminalPtyRuntime.swift */,
+				A12A00000000000000000101 /* Services/Terminal/TerminalShellIntegration.swift */,
 				A12800000000000000000108 /* Services/Terminal/TerminalRuntimeDelivery.swift */,
 				A12800000000000000000109 /* Services/Terminal/TerminalSurfaceContracts.swift */,
 				A1280000000000000000010A /* Services/Terminal/TerminalTranscriptCapture.swift */,
@@ -905,6 +909,7 @@
 				A12800000000000000000005 /* Services/Terminal/TerminalPtyContracts.swift in Sources */,
 				A12800000000000000000006 /* Services/Terminal/TerminalPtyControlSequenceResponder.swift in Sources */,
 				A12800000000000000000007 /* Services/Terminal/TerminalPtyRuntime.swift in Sources */,
+				A12A00000000000000000001 /* Services/Terminal/TerminalShellIntegration.swift in Sources */,
 				A12800000000000000000008 /* Services/Terminal/TerminalRuntimeDelivery.swift in Sources */,
 				A12800000000000000000009 /* Services/Terminal/TerminalSurfaceContracts.swift in Sources */,
 				A1280000000000000000000A /* Services/Terminal/TerminalTranscriptCapture.swift in Sources */,
@@ -1053,6 +1058,7 @@
 				A11000000000000000000014 /* Services/Shell/AlanPrivilegedHelperManagedUserService.swift in Sources */,
 				A11000000000000000000016 /* Services/Shell/AlanPrivilegedHelperPTYSessionStore.swift in Sources */,
 				A11000000000000000000018 /* Services/Shell/AlanPrivilegedHelperPTYSupport.swift in Sources */,
+				A12A00000000000000000002 /* Services/Terminal/TerminalShellIntegration.swift in Sources */,
 				A11000000000000000000006 /* AlanPrivilegedHelperPtySpawn.c in Sources */,
 				A11000000000000000000001 /* main.swift in Sources */,
 			);

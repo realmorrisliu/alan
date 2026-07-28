@@ -440,7 +440,8 @@ private func testPrivilegedHelperXPCBoundaryIsTypedAndChannelScoped() throws {
                     shell: "/bin/bash",
                     contentID: "content-invalid",
                     columns: 80,
-                    rows: 24
+                    rows: 24,
+                    shellIntegrationResourcesPath: nil
                 )
             ),
             operationID: "op-start-invalid"

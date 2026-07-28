@@ -102,7 +102,8 @@ struct PrivilegedHelperLiveSmoke {
             shell: request.shell,
             contentID: "privileged-helper-live-smoke-\(UUID().uuidString)",
             columns: 80,
-            rows: 24
+            rows: 24,
+            shellIntegrationResourcesPath: nil
         )
         let startResponse = xpcClient.perform(
             operation: .startManagedUserPTY,

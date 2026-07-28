@@ -895,6 +895,9 @@ struct AlanShellBootProfile: Equatable {
         if let terminfoPath = ghostty.terminfoPath {
             environment["TERMINFO"] = terminfoPath
         }
+        if let resourcesPath = ghostty.resourcesPath {
+            environment["GHOSTTY_RESOURCES_DIR"] = resourcesPath
+        }
         if environment["TERM"]?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false {
             environment["TERM"] = "xterm-256color"
         }

@@ -269,7 +269,7 @@ struct AlanPrivilegedHelperXPCApplyResultPayload: Codable, Equatable {
 }
 
 struct AlanPrivilegedHelperProtocolStatus: Codable, Equatable {
-    static let currentVersion = 4
+    static let currentVersion = 5
 
     let protocolVersion: Int
 }

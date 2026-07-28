@@ -19,6 +19,7 @@ private enum TerminalRuntimeServiceTests {
         verifiesPtySnapshotClassifiesOnlyLiveChildPhases()
         verifiesIdleProcessGroupTrackerRebasesOnlyForInteractiveWrappers()
         verifiesBoundedReplayBufferTrimsOversizedHandoffChunks()
+        verifiesGhosttyShellIntegrationLaunchContract()
         verifiesGhosttyTerminfoEnvironmentProjection()
         verifiesBootProfileExposesStructuredBootRequest()
         verifiesManagedUserLaunchResolutionUsesHelperIdentityWithoutSudo()
@@ -26,6 +27,7 @@ private enum TerminalRuntimeServiceTests {
         verifiesManagedUserPtyRuntimeFailsClosedWithoutSudoFallback()
         verifiesFailedPtyDoesNotProjectActiveWork()
         verifiesManagedUserPtyRuntimeUsesHelperProviderWhenAvailable()
+        verifiesManagedUserOutputPumpBackpressuresBeforeMainActorDrain()
         verifiesWindowRuntimeDefaultPtyRuntimeWiresHelperProvider()
         verifiesManagedUserSurfaceRoutesHelperPtyLifecycleControls()
         verifiesManagedUserDirectDrainReportsShellActivity()
@@ -34,7 +36,7 @@ private enum TerminalRuntimeServiceTests {
         verifiesAlanGhosttySurfaceDeliveryUsesPtyRuntimeWithoutRenderer()
         verifiesDarwinPtyBackendLaunchesLocalShell()
         verifiesDarwinPtyBackendKeepsLoginShellAlive()
-        await verifiesDarwinPtyTracksUnintegratedShellActivityWithoutRenderer()
+        await verifiesDarwinPtyTracksIntegratedShellBuiltinsWithoutRenderer()
         await verifiesDarwinPtyReplaysRendererlessOutputOnAttachment()
         verifiesRuntimeCwdDoesNotRequireSurfaceRecreation()
         verifiesInstallDiscoveryChangesDoNotRequireSurfaceRecreation()
@@ -419,6 +421,62 @@ private enum TerminalRuntimeServiceTests {
         )
     }
 
+    private static func verifiesGhosttyShellIntegrationLaunchContract() {
+        guard let repoRoot = inferredAlanRepoRoot() else {
+            fail("terminal runtime tests must resolve the Alan repository root")
+        }
+        let resourcesPath = "\(repoRoot)/clients/apple/ghostty-resources"
+        let zsh = AlanTerminalShellLaunch.integratingGhostty(
+            executablePath: "/bin/zsh",
+            arguments: ["-l"],
+            environment: ["ZDOTDIR": "/tmp/user-zdotdir"],
+            resourcesPath: resourcesPath
+        )
+        expect(
+            zsh.arguments == ["-l"]
+                && zsh.environment["ZDOTDIR"]
+                    == "\(resourcesPath)/shell-integration/zsh"
+                && zsh.environment["GHOSTTY_ZSH_ZDOTDIR"]
+                    == "/tmp/user-zdotdir",
+            "zsh integration must preserve the user ZDOTDIR behind Ghostty startup injection"
+        )
+
+        let bash = AlanTerminalShellLaunch.integratingGhostty(
+            executablePath: "/bin/bash",
+            arguments: ["--noprofile", "--norc"],
+            environment: ["HOME": "/Users/test", "ENV": "/tmp/user-env"],
+            resourcesPath: resourcesPath
+        )
+        expect(
+            bash.argumentZero == "/bin/bash"
+                && bash.arguments
+                    == [
+                        "--noprofile",
+                        "--rcfile",
+                        "\(resourcesPath)/shell-integration/bash/ghostty.bash",
+                    ]
+                && bash.environment["GHOSTTY_BASH_INJECT"]
+                    == "1 --noprofile --norc",
+            "bash integration must use the native rcfile startup contract"
+        )
+
+        let nonInteractive = AlanTerminalShellLaunch.integratingGhostty(
+            executablePath: "/bin/bash",
+            arguments: ["-lc", "echo hi"],
+            environment: [:],
+            resourcesPath: resourcesPath
+        )
+        expect(
+            nonInteractive
+                == AlanTerminalShellLaunch(
+                    argumentZero: "/bin/bash",
+                    arguments: ["-lc", "echo hi"],
+                    environment: [:]
+                ),
+            "bash integration must not rewrite non-interactive commands"
+        )
+    }
+
     private static func verifiesGhosttyTerminfoEnvironmentProjection() {
         let tempDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("alan-ghostty-terminfo-\(UUID().uuidString)", isDirectory: true)
@@ -580,7 +638,10 @@ private enum TerminalRuntimeServiceTests {
         )
     }
 
-    private static func verifiesDarwinPtyTracksUnintegratedShellActivityWithoutRenderer() async {
+    private static func verifiesDarwinPtyTracksIntegratedShellBuiltinsWithoutRenderer() async {
+        guard let repoRoot = inferredAlanRepoRoot() else {
+            fail("shell integration regression must resolve the Alan repository root")
+        }
         let command = AlanCommandResolution(
             strategy: .loginShellFallback,
             executablePath: "/bin/bash",
@@ -588,29 +649,31 @@ private enum TerminalRuntimeServiceTests {
             arguments: ["--noprofile", "--norc"],
             bootCommand: "/bin/bash --noprofile --norc",
             surfaceCommand: nil,
-            summary: "Unintegrated login shell",
+            summary: "Automatically integrated login shell",
             detail: nil,
             repoRoot: nil,
             candidates: []
         )
-        let contentID = "content_terminal_unintegrated_shell_activity"
+        let contentID = "content_terminal_integrated_shell_activity"
         let profile = sampleBootProfile(
             workingDirectory: "/tmp",
             command: command,
             environment: [
                 "ALAN_SHELL_CONTENT_ID": contentID,
+                "GHOSTTY_RESOURCES_DIR": "\(repoRoot)/clients/apple/ghostty-resources",
+                "HOME": FileManager.default.homeDirectoryForCurrentUser.path,
                 "TERM": "xterm-256color",
             ]
         )
         let runtime = AlanDarwinTerminalPtyRuntime()
         let surface = AlanGhosttySurfaceHandle(
             contentID: contentID,
-            paneID: "pane_unintegrated_shell_activity",
+            paneID: "pane_integrated_shell_activity",
             bootstrap: FakeAlanGhosttyProcessBootstrap(),
             ptyRuntime: runtime
         )
         surface.configure(
-            mountedAtPaneID: "pane_unintegrated_shell_activity",
+            mountedAtPaneID: "pane_integrated_shell_activity",
             bootProfile: profile
         )
         let handle = runtime.existingHandle(forTerminalContentID: contentID)
@@ -633,18 +696,17 @@ private enum TerminalRuntimeServiceTests {
         }
         expect(
             surface.snapshot.metadata.activeTaskState == .inactive,
-            "an unintegrated idle login shell must not remain permanently unknown; "
+            "an automatically integrated idle login shell must publish prompt state; "
                 + "PTY=\(handle.shellActivityState) "
                 + "surface=\(String(describing: surface.snapshot.metadata.activeTaskState))"
         )
 
-        let semanticMarker = "alan_same_pgrp_\(UUID().uuidString)"
+        let semanticMarker = "alan_builtin_\(UUID().uuidString)"
         expect(
             surface.sendControlText(
-                "printf '\(semanticMarker)\\033]133;C\\a\\n'; "
-                    + "read -r; printf '\\033]133;D;0\\a'\n"
+                "printf '%s\\n' '\(semanticMarker)'; read -r\n"
             ).applied,
-            "the unintegrated shell must accept a semantic long-running builtin command"
+            "the integrated shell must accept a long-running builtin without manual OSC markers"
         )
         let semanticOutputDeadline = Date().addingTimeInterval(2)
         while Date() < semanticOutputDeadline
@@ -654,7 +716,7 @@ private enum TerminalRuntimeServiceTests {
         }
         expect(
             handle.snapshot.transcriptLines.joined(separator: "\n").contains(semanticMarker),
-            "the same-process-group regression must observe its semantic command-start output"
+            "the builtin regression must observe command output without manual OSC markers"
         )
         let semanticForegroundDeadline = Date().addingTimeInterval(2)
         while Date() < semanticForegroundDeadline
@@ -664,7 +726,10 @@ private enum TerminalRuntimeServiceTests {
         }
         expect(
             surface.snapshot.metadata.activeTaskState == .foregroundCommand,
-            "semantic command start must protect a builtin running in the shell process group"
+            "automatic shell integration must protect a builtin running in the shell process group; "
+                + "PTY=\(handle.shellActivityState) "
+                + "surface=\(String(describing: surface.snapshot.metadata.activeTaskState)) "
+                + "transcript=\(handle.snapshot.transcriptLines.joined(separator: "|"))"
         )
 
         expect(
@@ -679,12 +744,12 @@ private enum TerminalRuntimeServiceTests {
         }
         expect(
             surface.snapshot.metadata.activeTaskState == .inactive,
-            "semantic completion plus the idle shell process group must clear builtin activity"
+            "automatic shell completion must clear builtin activity"
         )
 
         expect(
             surface.sendControlText("sleep 30\n").applied,
-            "rendererless control delivery must reach the unintegrated login shell"
+            "rendererless control delivery must reach the integrated login shell"
         )
         let foregroundDeadline = Date().addingTimeInterval(1)
         while Date() < foregroundDeadline
@@ -1304,6 +1369,56 @@ private enum TerminalRuntimeServiceTests {
         expect(
             helper.startedPTYRequests.first?.accountName == "lab",
             "window runtime default PTY runtime must issue helper startManagedUserPTY requests"
+        )
+    }
+
+    private static func verifiesManagedUserOutputPumpBackpressuresBeforeMainActorDrain() {
+        let contentID = "content_terminal_managed_user_bounded_output"
+        let sessionID = "fake-\(contentID)"
+        let request = AlanTerminalBootRequest(
+            strategy: .terminalProfileManagedUser,
+            executablePath: "",
+            arguments: [],
+            workingDirectory: "/Users/lab",
+            environment: [
+                "ALAN_SHELL_CONTENT_ID": contentID,
+                "ALAN_MANAGED_USER_ACCOUNT": "lab",
+            ],
+            bootCommand: "managed_user 'lab'",
+            rendererCompatibilityCommand: nil,
+            managedUserAccountName: "lab",
+            terminalProfile: nil
+        )
+        let helper = AlanPrivilegedHelperFakeClient(channel: .dev)
+        helper.outputChunksBySessionID[sessionID] = Array(
+            repeating: Data(repeating: UInt8(ascii: "x"), count: 4096),
+            count: 400
+        )
+        let runtime = AlanDarwinTerminalPtyRuntime(
+            managedUserPtyProvider: AlanHelperManagedUserPtyProvider(helperClient: helper)
+        )
+        let handle = runtime.handle(
+            forTerminalContentID: contentID,
+            bootRequest: request
+        )
+
+        usleep(800_000)
+        let readsBeforeMainActorDrain = helper.readPTYRequests.count
+        expect(
+            readsBeforeMainActorDrain <= 256,
+            "managed_user output pumping must stop at its worker-side pending-output bound"
+        )
+        expect(
+            readsBeforeMainActorDrain < 400,
+            "managed_user output pumping must not drain an unbounded helper backlog while "
+                + "the main actor is blocked"
+        )
+
+        _ = handle.snapshot
+        RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        expect(
+            helper.readPTYRequests.count > readsBeforeMainActorDrain,
+            "managed_user output pumping must resume after the main actor drains pending updates"
         )
     }
 
