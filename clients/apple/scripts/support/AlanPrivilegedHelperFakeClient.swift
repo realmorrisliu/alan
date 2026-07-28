@@ -51,6 +51,7 @@ final class AlanPrivilegedHelperFakeClient: AlanPrivilegedHelperClienting {
         }
     }
     private var storedOutputChunksBySessionID: [String: [Data]] = [:]
+    private var storedFinalPTYReadSessionIDs: Set<String> = []
     var outputChunksBySessionID: [String: [Data]] {
         get {
             ptyStateLock.lock()
@@ -67,6 +68,12 @@ final class AlanPrivilegedHelperFakeClient: AlanPrivilegedHelperClienting {
     func enqueueOutputChunks(_ chunks: [Data], sessionID: String) {
         ptyStateLock.lock()
         storedOutputChunksBySessionID[sessionID, default: []].append(contentsOf: chunks)
+        ptyStateLock.unlock()
+    }
+
+    func markNextEmptyPTYReadFinal(sessionID: String) {
+        ptyStateLock.lock()
+        storedFinalPTYReadSessionIDs.insert(sessionID)
         ptyStateLock.unlock()
     }
 
@@ -182,7 +189,11 @@ final class AlanPrivilegedHelperFakeClient: AlanPrivilegedHelperClienting {
         let foregroundProcessGroupState = nextForegroundProcessGroupState(
             sessionID: request.sessionID
         )
-        let final = data.isEmpty && exitObservationsBySessionID[request.sessionID]?.final == true
+        let final = data.isEmpty
+            && (
+                consumeFinalPTYRead(sessionID: request.sessionID)
+                    || exitObservationsBySessionID[request.sessionID]?.final == true
+            )
         return .success(
             AlanManagedUserPTYOutputChunk(
                 sessionID: request.sessionID,
@@ -337,6 +348,12 @@ final class AlanPrivilegedHelperFakeClient: AlanPrivilegedHelperClienting {
         let chunk = chunks.removeFirst()
         storedOutputChunksBySessionID[sessionID] = chunks
         return chunk
+    }
+
+    private func consumeFinalPTYRead(sessionID: String) -> Bool {
+        ptyStateLock.lock()
+        defer { ptyStateLock.unlock() }
+        return storedFinalPTYReadSessionIDs.remove(sessionID) != nil
     }
 
     private func diagnostic(

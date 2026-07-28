@@ -28,6 +28,8 @@ private enum TerminalRuntimeServiceTests {
         verifiesFailedPtyDoesNotProjectActiveWork()
         verifiesManagedUserPtyRuntimeUsesHelperProviderWhenAvailable()
         verifiesManagedUserOutputPumpBackpressuresBeforeMainActorDrain()
+        verifiesManagedUserExitDrainsPendingOutputAndPublishesIdle()
+        verifiesManagedUserFinalChunkPublishesIdle()
         verifiesWindowRuntimeDefaultPtyRuntimeWiresHelperProvider()
         verifiesManagedUserSurfaceRoutesHelperPtyLifecycleControls()
         verifiesManagedUserDirectDrainReportsShellActivity()
@@ -1419,6 +1421,131 @@ private enum TerminalRuntimeServiceTests {
         expect(
             helper.readPTYRequests.count > readsBeforeMainActorDrain,
             "managed_user output pumping must resume after the main actor drains pending updates"
+        )
+    }
+
+    private static func verifiesManagedUserExitDrainsPendingOutputAndPublishesIdle() {
+        let contentID = "content_terminal_managed_user_exit_drain"
+        let sessionID = "fake-\(contentID)"
+        let request = AlanTerminalBootRequest(
+            strategy: .terminalProfileManagedUser,
+            executablePath: "",
+            arguments: [],
+            workingDirectory: "/Users/lab",
+            environment: [
+                "ALAN_SHELL_CONTENT_ID": contentID,
+                "ALAN_MANAGED_USER_ACCOUNT": "lab",
+            ],
+            bootCommand: "managed_user 'lab'",
+            rendererCompatibilityCommand: nil,
+            managedUserAccountName: "lab",
+            terminalProfile: nil
+        )
+        let helper = AlanPrivilegedHelperFakeClient(channel: .dev)
+        let runtime = AlanDarwinTerminalPtyRuntime(
+            managedUserPtyProvider: AlanHelperManagedUserPtyProvider(helperClient: helper)
+        )
+        let handle = runtime.handle(
+            forTerminalContentID: contentID,
+            bootRequest: request
+        )
+        var observedShellActivity: [AlanTerminalPtyShellActivityState] = []
+        handle.onShellActivityStateChange = { observedShellActivity.append($0) }
+        helper.outputChunksBySessionID[sessionID] = [
+            Data("\u{1B}]133;C\u{7}managed-user-final-output\n".utf8)
+        ]
+
+        let workerDrainDeadline = Date().addingTimeInterval(1)
+        while Date() < workerDrainDeadline
+            && helper.outputChunksBySessionID[sessionID]?.isEmpty != true
+        {
+            usleep(10_000)
+        }
+        expect(
+            helper.outputChunksBySessionID[sessionID]?.isEmpty == true,
+            "managed_user exit race must begin after the worker has consumed final output"
+        )
+        helper.exitObservationsBySessionID[sessionID] = AlanManagedUserPTYExitObservation(
+            sessionID: sessionID,
+            final: true,
+            exitCode: 0,
+            terminatingSignal: nil,
+            sanitizedMessage: "Fake helper PTY session exited."
+        )
+        let rejectedWrite = handle.writeInput("too-late")
+        let snapshot = handle.snapshot
+
+        expect(
+            !rejectedWrite.applied && rejectedWrite.errorCode == "terminal_child_exited",
+            "managed_user controls must observe helper exit before accepting more input"
+        )
+        expect(
+            snapshot.transcriptLines.joined(separator: "\n")
+                .contains("managed-user-final-output"),
+            "managed_user exit observation must drain output already consumed by the worker"
+        )
+        expect(
+            snapshot.exitStatus?.diagnosticsValue == "exit:0"
+                && snapshot.phase == .exited,
+            "managed_user exit observation must preserve helper lifecycle truth"
+        )
+        expect(
+            handle.shellActivityState == .shellInput
+                && observedShellActivity == [.foregroundCommand, .shellInput],
+            "managed_user exit must publish an inactive transition after final output; "
+                + "observed \(observedShellActivity)"
+        )
+    }
+
+    private static func verifiesManagedUserFinalChunkPublishesIdle() {
+        let contentID = "content_terminal_managed_user_final_chunk"
+        let sessionID = "fake-\(contentID)"
+        let request = AlanTerminalBootRequest(
+            strategy: .terminalProfileManagedUser,
+            executablePath: "",
+            arguments: [],
+            workingDirectory: "/Users/lab",
+            environment: [
+                "ALAN_SHELL_CONTENT_ID": contentID,
+                "ALAN_MANAGED_USER_ACCOUNT": "lab",
+            ],
+            bootCommand: "managed_user 'lab'",
+            rendererCompatibilityCommand: nil,
+            managedUserAccountName: "lab",
+            terminalProfile: nil
+        )
+        let helper = AlanPrivilegedHelperFakeClient(channel: .dev)
+        let runtime = AlanDarwinTerminalPtyRuntime(
+            managedUserPtyProvider: AlanHelperManagedUserPtyProvider(helperClient: helper)
+        )
+        guard let handle = runtime.handle(
+            forTerminalContentID: contentID,
+            bootRequest: request
+        ) as? AlanHelperManagedUserPtyHandle else {
+            fail("managed_user final-chunk regression requires the helper-backed PTY handle")
+        }
+        var observedShellActivity: [AlanTerminalPtyShellActivityState] = []
+        handle.onShellActivityStateChange = { observedShellActivity.append($0) }
+        helper.outputChunksBySessionID[sessionID] = [
+            Data("\u{1B}]133;C\u{7}running-until-eof\n".utf8)
+        ]
+        _ = handle.snapshot
+        expect(
+            handle.shellActivityState == .foregroundCommand,
+            "managed_user final-chunk regression must begin with protected activity"
+        )
+
+        helper.markNextEmptyPTYReadFinal(sessionID: sessionID)
+        _ = handle.snapshot
+        expect(
+            handle.shellActivityState == .shellInput
+                && observedShellActivity == [.foregroundCommand, .shellInput],
+            "managed_user final EOF chunk must publish inactive activity; "
+                + "observed \(observedShellActivity)"
+        )
+        expect(
+            handle.snapshot.phase == .exited,
+            "managed_user final EOF chunk must publish exited lifecycle truth"
         )
     }
 

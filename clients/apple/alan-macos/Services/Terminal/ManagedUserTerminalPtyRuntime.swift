@@ -447,9 +447,7 @@ final class AlanHelperManagedUserPtyHandle: AlanTerminalPtyHandle {
         }
         refreshExitObservation()
         if exitStatus == nil {
-            inputClosed = true
-            phase = .exited
-            exitStatus = .unknown
+            transitionToExited(.unknown)
         }
         return .accepted("terminated")
     }
@@ -459,19 +457,29 @@ final class AlanHelperManagedUserPtyHandle: AlanTerminalPtyHandle {
         guard let observation = helperClient.observeManagedUserPTYExit(sessionID: session.sessionID) else {
             return
         }
+        let observedExitStatus: AlanTerminalProcessExitStatus?
         if let code = observation.exitCode {
-            exitStatus = .exitCode(code)
+            observedExitStatus = .exitCode(code)
         } else if let signal = observation.terminatingSignal {
-            exitStatus = .signal(signal)
+            observedExitStatus = .signal(signal)
         } else if observation.final {
-            exitStatus = .unknown
+            observedExitStatus = .unknown
+        } else {
+            observedExitStatus = nil
         }
-        if exitStatus != nil {
-            inputClosed = true
-            phase = .exited
-            outputPump?.invalidate()
-            invalidateRendererProxy()
+        guard let observedExitStatus else { return }
+        transitionToExited(observedExitStatus)
+    }
+
+    private func transitionToExited(_ observedExitStatus: AlanTerminalProcessExitStatus) {
+        if let outputPump {
+            applyOutputUpdates(outputPump.stopAndTakePendingUpdates())
         }
+        exitStatus = observedExitStatus
+        inputClosed = true
+        phase = .exited
+        recordShellActivityState(.shellInput)
+        invalidateRendererProxy()
     }
 
     @discardableResult
@@ -544,6 +552,9 @@ final class AlanHelperManagedUserPtyHandle: AlanTerminalPtyHandle {
         }
         if let responseFailure = output.responseFailure {
             applyHelperOutputFailure(responseFailure)
+        }
+        if output.chunk.final {
+            recordShellActivityState(.shellInput)
         }
     }
 
@@ -739,6 +750,13 @@ fileprivate final class AlanHelperManagedUserPtyOutputPump {
     func takePendingUpdates() -> [AlanHelperManagedUserPtyPendingOutputUpdate] {
         ioQueue.sync {
             takePendingUpdatesOnQueue()
+        }
+    }
+
+    func stopAndTakePendingUpdates() -> [AlanHelperManagedUserPtyPendingOutputUpdate] {
+        ioQueue.sync {
+            stopOnQueue()
+            return takePendingUpdatesOnQueue()
         }
     }
 
