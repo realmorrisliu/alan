@@ -63,15 +63,21 @@ struct AlanTerminalPtyRendererAttachment: Equatable {
 struct AlanTerminalPtyControlSequenceResponse: Equatable {
     let rendererOutput: Data
     let ptyResponse: Data
-    let shellActivityTransition: AlanTerminalPtyShellActivityState?
+    let semanticShellStateTransition: AlanTerminalPtySemanticShellState?
 
     var didRespond: Bool {
         !ptyResponse.isEmpty
     }
 }
 
+enum AlanTerminalPtySemanticShellState: Equatable {
+    case commandStarted
+    case commandFinished
+    case shellInput
+}
+
 enum AlanTerminalPtyShellActivityState: Equatable {
-    /// No prompt marker has been observed; consumers must preserve this uncertainty conservatively.
+    /// No semantic or process-group evidence is available; consumers preserve this conservatively.
     case unknown
     case shellInput
     case foregroundCommand
@@ -80,13 +86,25 @@ enum AlanTerminalPtyShellActivityState: Equatable {
 enum AlanTerminalPtyShellActivityResolver {
     static func resolve(
         launchesInteractiveShell: Bool,
-        semanticState: AlanTerminalPtyShellActivityState?,
+        semanticState: AlanTerminalPtySemanticShellState?,
         processGroupState: AlanTerminalPtyShellActivityState?
     ) -> AlanTerminalPtyShellActivityState {
         guard launchesInteractiveShell else {
-            return semanticState ?? .foregroundCommand
+            return .foregroundCommand
         }
-        return processGroupState ?? semanticState ?? .unknown
+        if processGroupState == .foregroundCommand {
+            return .foregroundCommand
+        }
+        switch semanticState {
+        case .commandStarted:
+            return .foregroundCommand
+        case .commandFinished:
+            return processGroupState == .shellInput ? .shellInput : .foregroundCommand
+        case .shellInput:
+            return .shellInput
+        case nil:
+            return processGroupState ?? .unknown
+        }
     }
 }
 
@@ -104,13 +122,13 @@ struct AlanTerminalPtyIdleProcessGroupTracker {
 
     mutating func observe(
         foregroundProcessGroupID: Int32,
-        semanticState: AlanTerminalPtyShellActivityState?
+        semanticState: AlanTerminalPtySemanticShellState?
     ) -> AlanTerminalPtyShellActivityState {
         if foregroundProcessGroupID == idleProcessGroupID {
             return .shellInput
         }
         if allowsIdleProcessGroupRebase,
-           semanticState != .foregroundCommand
+           semanticState != .commandStarted
         {
             idleProcessGroupID = foregroundProcessGroupID
             allowsIdleProcessGroupRebase = false

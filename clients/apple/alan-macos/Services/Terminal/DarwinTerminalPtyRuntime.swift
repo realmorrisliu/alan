@@ -40,7 +40,7 @@ final class AlanDarwinTerminalPtyHandle: AlanTerminalPtyHandle {
     private var directPtyInputWriteSource: DispatchSourceWrite?
     private var rendererlessOutputSource: DispatchSourceRead?
     private var processGroupTimer: DispatchSourceTimer?
-    private var semanticShellActivityState: AlanTerminalPtyShellActivityState?
+    private var semanticShellState: AlanTerminalPtySemanticShellState?
     private var processGroupShellActivityState: AlanTerminalPtyShellActivityState?
     private var idleProcessGroupTracker: AlanTerminalPtyIdleProcessGroupTracker?
     private var pendingRendererReplay = AlanTerminalPtyBoundedReplayBuffer(
@@ -306,8 +306,8 @@ final class AlanDarwinTerminalPtyHandle: AlanTerminalPtyHandle {
 
         guard !collected.isEmpty else { return [] }
         let response = outputProcessor.process(collected)
-        if let transition = response.shellActivityTransition {
-            recordSemanticShellActivityState(transition)
+        if let transition = response.semanticShellStateTransition {
+            recordSemanticShellState(transition)
         }
         if response.didRespond {
             _ = writePtyProtocolResponse(response.ptyResponse)
@@ -426,10 +426,10 @@ final class AlanDarwinTerminalPtyHandle: AlanTerminalPtyHandle {
         }
     }
 
-    fileprivate func recordSemanticShellActivityState(
-        _ state: AlanTerminalPtyShellActivityState
+    fileprivate func recordSemanticShellState(
+        _ state: AlanTerminalPtySemanticShellState
     ) {
-        semanticShellActivityState = state
+        semanticShellState = state
         reconcileShellActivityState()
     }
 
@@ -444,7 +444,7 @@ final class AlanDarwinTerminalPtyHandle: AlanTerminalPtyHandle {
         recordShellActivityState(
             AlanTerminalPtyShellActivityResolver.resolve(
                 launchesInteractiveShell: bootRequest.strategy.launchesInteractiveShell,
-                semanticState: semanticShellActivityState,
+                semanticState: semanticShellState,
                 processGroupState: processGroupShellActivityState
             )
         )
@@ -484,7 +484,7 @@ final class AlanDarwinTerminalPtyHandle: AlanTerminalPtyHandle {
         guard let foregroundProcessGroupID = currentForegroundProcessGroupID() else { return }
         let state = idleProcessGroupTracker.observe(
             foregroundProcessGroupID: foregroundProcessGroupID,
-            semanticState: semanticShellActivityState
+            semanticState: semanticShellState
         )
         self.idleProcessGroupTracker = idleProcessGroupTracker
         recordProcessGroupShellActivityState(state)
@@ -822,9 +822,9 @@ private final class AlanDarwinTerminalPtyRendererProxy {
 
         guard !collected.isEmpty else { return }
         let response = outputProcessor.process(collected)
-        if let transition = response.shellActivityTransition {
+        if let transition = response.semanticShellStateTransition {
             Task { @MainActor [weak self] in
-                self?.ptyHandle?.recordSemanticShellActivityState(transition)
+                self?.ptyHandle?.recordSemanticShellState(transition)
             }
         }
         if response.didRespond {

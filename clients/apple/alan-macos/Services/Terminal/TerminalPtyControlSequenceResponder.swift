@@ -45,7 +45,7 @@ struct AlanTerminalPtyControlSequenceResponder: Equatable {
     mutating func process(_ data: Data) -> AlanTerminalPtyControlSequenceResponse {
         var rendererOutput: [UInt8] = []
         var ptyResponse: [UInt8] = []
-        var shellActivityTransition: AlanTerminalPtyShellActivityState?
+        var semanticShellStateTransition: AlanTerminalPtySemanticShellState?
 
         for byte in data {
             switch state {
@@ -102,11 +102,11 @@ struct AlanTerminalPtyControlSequenceResponder: Equatable {
             case .osc:
                 pendingControlSequence.append(byte)
                 if byte == Self.bellByte {
-                    shellActivityTransition = Self.completeOSCSequence(
+                    semanticShellStateTransition = Self.completeOSCSequence(
                         pendingControlSequence,
                         rendererOutput: &rendererOutput,
                         ptyResponse: &ptyResponse
-                    ) ?? shellActivityTransition
+                    ) ?? semanticShellStateTransition
                     pendingControlSequence.removeAll(keepingCapacity: true)
                     state = .normal
                 } else if byte == Self.escapeByte {
@@ -120,11 +120,11 @@ struct AlanTerminalPtyControlSequenceResponder: Equatable {
             case .oscEscape:
                 pendingControlSequence.append(byte)
                 if byte == Self.backslashByte {
-                    shellActivityTransition = Self.completeOSCSequence(
+                    semanticShellStateTransition = Self.completeOSCSequence(
                         pendingControlSequence,
                         rendererOutput: &rendererOutput,
                         ptyResponse: &ptyResponse
-                    ) ?? shellActivityTransition
+                    ) ?? semanticShellStateTransition
                     pendingControlSequence.removeAll(keepingCapacity: true)
                     state = .normal
                 } else if pendingControlSequence.count > Self.maxBufferedControlSequenceBytes {
@@ -140,7 +140,7 @@ struct AlanTerminalPtyControlSequenceResponder: Equatable {
         return AlanTerminalPtyControlSequenceResponse(
             rendererOutput: Data(rendererOutput),
             ptyResponse: Data(ptyResponse),
-            shellActivityTransition: shellActivityTransition
+            semanticShellStateTransition: semanticShellStateTransition
         )
     }
 
@@ -188,13 +188,13 @@ struct AlanTerminalPtyControlSequenceResponder: Equatable {
         _ bytes: [UInt8],
         rendererOutput: inout [UInt8],
         ptyResponse: inout [UInt8]
-    ) -> AlanTerminalPtyShellActivityState? {
+    ) -> AlanTerminalPtySemanticShellState? {
         if isBackgroundColorQuery(bytes) {
             ptyResponse.append(contentsOf: backgroundColorResponse)
             return nil
         }
         rendererOutput.append(contentsOf: bytes)
-        return shellActivityTransition(in: bytes)
+        return semanticShellStateTransition(in: bytes)
     }
 
     private static func isBackgroundColorQuery(_ bytes: [UInt8]) -> Bool {
@@ -203,9 +203,9 @@ struct AlanTerminalPtyControlSequenceResponder: Equatable {
         return payload == "11;?"
     }
 
-    private static func shellActivityTransition(
+    private static func semanticShellStateTransition(
         in bytes: [UInt8]
-    ) -> AlanTerminalPtyShellActivityState? {
+    ) -> AlanTerminalPtySemanticShellState? {
         guard let payloadRange = oscPayloadRange(in: bytes) else { return nil }
         let payload = bytes[payloadRange]
         let prefix = Array("133;".utf8)
@@ -222,7 +222,9 @@ struct AlanTerminalPtyControlSequenceResponder: Equatable {
 
         switch action {
         case UInt8(ascii: "C"):
-            return .foregroundCommand
+            return .commandStarted
+        case UInt8(ascii: "D"):
+            return .commandFinished
         case UInt8(ascii: "A"),
              UInt8(ascii: "B"),
              UInt8(ascii: "I"),

@@ -15,7 +15,7 @@ private enum TerminalRuntimeServiceTests {
         verifiesSourceTreeRepositoryRootInference()
         verifiesControlSequenceResponderAnswersPrimaryDeviceAttributes()
         verifiesControlSequenceResponderReportsShellActivity()
-        verifiesShellActivityResolverPrioritizesKnownProcessGroup()
+        verifiesShellActivityResolverCombinesSemanticAndProcessEvidence()
         verifiesPtySnapshotClassifiesOnlyLiveChildPhases()
         verifiesIdleProcessGroupTrackerRebasesOnlyForInteractiveWrappers()
         verifiesBoundedReplayBufferTrimsOversizedHandoffChunks()
@@ -214,7 +214,7 @@ private enum TerminalRuntimeServiceTests {
 
         var response = responder.process(Data("\u{1B}]133;C\u{7}".utf8))
         expect(
-            response.shellActivityTransition == .foregroundCommand,
+            response.semanticShellStateTransition == .commandStarted,
             "OSC 133 C must report foreground command activity"
         )
         expect(
@@ -224,25 +224,25 @@ private enum TerminalRuntimeServiceTests {
 
         response = responder.process(Data("stdin line\n".utf8))
         expect(
-            response.shellActivityTransition == nil,
+            response.semanticShellStateTransition == nil,
             "ordinary newline-delimited PTY input or output must not be treated as a command"
         )
 
         response = responder.process(Data("\u{1B}]133;D;0\u{7}".utf8))
         expect(
-            response.shellActivityTransition == nil,
-            "command completion must remain active until shell integration returns to a prompt"
+            response.semanticShellStateTransition == .commandFinished,
+            "OSC 133 D must preserve command completion as distinct semantic evidence"
         )
 
         response = responder.process(Data("\u{1B}]133;A;cl=line\u{7}".utf8))
         expect(
-            response.shellActivityTransition == .shellInput,
+            response.semanticShellStateTransition == .shellInput,
             "OSC 133 prompt start must report shell input readiness"
         )
 
         response = responder.process(Data("\u{1B}]133;Cextra\u{7}".utf8))
         expect(
-            response.shellActivityTransition == nil,
+            response.semanticShellStateTransition == nil,
             "malformed OSC 133 command markers must not change shell activity"
         )
 
@@ -250,30 +250,46 @@ private enum TerminalRuntimeServiceTests {
             Data("\u{1B}]133;A\u{7}\u{1B}]133;C;aid=next\u{1B}\\".utf8)
         )
         expect(
-            response.shellActivityTransition == .foregroundCommand,
+            response.semanticShellStateTransition == .commandStarted,
             "the last semantic transition in one PTY chunk must win"
         )
 
         response = responder.process(Data("\u{1B}]133;".utf8))
         expect(
-            response.shellActivityTransition == nil,
+            response.semanticShellStateTransition == nil,
             "partial shell integration markers must be buffered across PTY chunks"
         )
         response = responder.process(Data("B\u{7}".utf8))
         expect(
-            response.shellActivityTransition == .shellInput,
+            response.semanticShellStateTransition == .shellInput,
             "split OSC 133 prompt markers must preserve semantic state"
         )
     }
 
-    private static func verifiesShellActivityResolverPrioritizesKnownProcessGroup() {
+    private static func verifiesShellActivityResolverCombinesSemanticAndProcessEvidence() {
         expect(
             AlanTerminalPtyShellActivityResolver.resolve(
                 launchesInteractiveShell: true,
-                semanticState: .foregroundCommand,
+                semanticState: .commandStarted,
+                processGroupState: .shellInput
+            ) == .foregroundCommand,
+            "semantic command start must protect same-process-group builtins and exec"
+        )
+        expect(
+            AlanTerminalPtyShellActivityResolver.resolve(
+                launchesInteractiveShell: true,
+                semanticState: .commandFinished,
                 processGroupState: .shellInput
             ) == .shellInput,
-            "a known idle process group must clear stale semantic foreground activity"
+            "semantic completion plus the idle shell process group must clear foreground activity"
+        )
+        expect(
+            AlanTerminalPtyShellActivityResolver.resolve(
+                launchesInteractiveShell: true,
+                semanticState: .commandFinished,
+                processGroupState: nil
+            ) == .foregroundCommand,
+            "semantic completion without process-group or prompt evidence must remain protected"
         )
         expect(
             AlanTerminalPtyShellActivityResolver.resolve(
@@ -286,10 +302,18 @@ private enum TerminalRuntimeServiceTests {
         expect(
             AlanTerminalPtyShellActivityResolver.resolve(
                 launchesInteractiveShell: true,
-                semanticState: .foregroundCommand,
+                semanticState: .commandStarted,
                 processGroupState: nil
             ) == .foregroundCommand,
             "semantic activity must remain the fallback when process-group state is unavailable"
+        )
+        expect(
+            AlanTerminalPtyShellActivityResolver.resolve(
+                launchesInteractiveShell: true,
+                semanticState: nil,
+                processGroupState: .shellInput
+            ) == .shellInput,
+            "an unintegrated shell must use its known idle process-group baseline"
         )
         expect(
             AlanTerminalPtyShellActivityResolver.resolve(
@@ -328,7 +352,7 @@ private enum TerminalRuntimeServiceTests {
         expect(
             wrapperTracker.observe(
                 foregroundProcessGroupID: 21,
-                semanticState: .foregroundCommand
+                semanticState: .commandStarted
             ) == .foregroundCommand,
             "a wrapper must not rebase to a process group known to be a foreground command"
         )
@@ -614,12 +638,13 @@ private enum TerminalRuntimeServiceTests {
                 + "surface=\(String(describing: surface.snapshot.metadata.activeTaskState))"
         )
 
-        let semanticMarker = "alan_stale_osc_\(UUID().uuidString)"
+        let semanticMarker = "alan_same_pgrp_\(UUID().uuidString)"
         expect(
             surface.sendControlText(
-                "printf '\(semanticMarker)\\033]133;C\\a\\n'\n"
+                "printf '\(semanticMarker)\\033]133;C\\a\\n'; "
+                    + "read -r; printf '\\033]133;D;0\\a'\n"
             ).applied,
-            "the unintegrated shell must accept a command that emits an unmatched OSC start"
+            "the unintegrated shell must accept a semantic long-running builtin command"
         )
         let semanticOutputDeadline = Date().addingTimeInterval(2)
         while Date() < semanticOutputDeadline
@@ -629,7 +654,22 @@ private enum TerminalRuntimeServiceTests {
         }
         expect(
             handle.snapshot.transcriptLines.joined(separator: "\n").contains(semanticMarker),
-            "the stale-OSC regression must observe its semantic command-start output"
+            "the same-process-group regression must observe its semantic command-start output"
+        )
+        let semanticForegroundDeadline = Date().addingTimeInterval(2)
+        while Date() < semanticForegroundDeadline
+            && surface.snapshot.metadata.activeTaskState != .foregroundCommand
+        {
+            try? await Task.sleep(nanoseconds: 20_000_000)
+        }
+        expect(
+            surface.snapshot.metadata.activeTaskState == .foregroundCommand,
+            "semantic command start must protect a builtin running in the shell process group"
+        )
+
+        expect(
+            surface.sendControlText("builtin input\n").applied,
+            "rendererless input must unblock the same-process-group builtin"
         )
         let semanticIdleDeadline = Date().addingTimeInterval(2)
         while Date() < semanticIdleDeadline
@@ -639,7 +679,7 @@ private enum TerminalRuntimeServiceTests {
         }
         expect(
             surface.snapshot.metadata.activeTaskState == .inactive,
-            "a known idle process group must clear an unmatched OSC command-start marker"
+            "semantic completion plus the idle shell process group must clear builtin activity"
         )
 
         expect(

@@ -165,7 +165,7 @@ final class AlanHelperManagedUserPtyHandle: AlanTerminalPtyHandle {
     private let helperQueue: DispatchQueue
     private let outputProcessor = AlanTerminalPtyControlSequenceProcessor()
     private var outputPump: AlanHelperManagedUserPtyOutputPump?
-    private var semanticShellActivityState: AlanTerminalPtyShellActivityState?
+    private var semanticShellState: AlanTerminalPtySemanticShellState?
     private var processGroupShellActivityState: AlanTerminalPtyShellActivityState?
     private var pendingRendererReplay = AlanTerminalPtyBoundedReplayBuffer(
         maxBytes: 1024 * 1024
@@ -528,8 +528,8 @@ final class AlanHelperManagedUserPtyHandle: AlanTerminalPtyHandle {
     @MainActor
     private func applyHelperOutput(_ output: AlanHelperManagedUserPtyProcessedOutput) {
         applyHelperOutputChunk(output.chunk, rendererOutput: output.rendererOutput)
-        if let transition = output.shellActivityTransition {
-            recordSemanticShellActivityState(transition)
+        if let transition = output.semanticShellStateTransition {
+            recordSemanticShellState(transition)
         }
         switch output.chunk.foregroundProcessGroupState {
         case .shell:
@@ -581,10 +581,10 @@ final class AlanHelperManagedUserPtyHandle: AlanTerminalPtyHandle {
         acceptedInputBytes += byteCount
     }
 
-    private func recordSemanticShellActivityState(
-        _ state: AlanTerminalPtyShellActivityState
+    private func recordSemanticShellState(
+        _ state: AlanTerminalPtySemanticShellState
     ) {
-        semanticShellActivityState = state
+        semanticShellState = state
         reconcileShellActivityState()
     }
 
@@ -599,7 +599,7 @@ final class AlanHelperManagedUserPtyHandle: AlanTerminalPtyHandle {
         recordShellActivityState(
             AlanTerminalPtyShellActivityResolver.resolve(
                 launchesInteractiveShell: bootRequest.strategy.launchesInteractiveShell,
-                semanticState: semanticShellActivityState,
+                semanticState: semanticShellState,
                 processGroupState: processGroupShellActivityState
             )
         )
@@ -625,7 +625,7 @@ final class AlanHelperManagedUserPtyHandle: AlanTerminalPtyHandle {
 fileprivate struct AlanHelperManagedUserPtyProcessedOutput {
     let chunk: AlanManagedUserPTYOutputChunk
     let rendererOutput: Data
-    let shellActivityTransition: AlanTerminalPtyShellActivityState?
+    let semanticShellStateTransition: AlanTerminalPtySemanticShellState?
     let responseFailure: AlanPrivilegedHelperDiagnostic?
 }
 
@@ -670,7 +670,7 @@ private func readHelperManagedUserPtyProcessedOutput(
         return AlanHelperManagedUserPtyProcessedOutput(
             chunk: chunk,
             rendererOutput: response.rendererOutput,
-            shellActivityTransition: response.shellActivityTransition,
+            semanticShellStateTransition: response.semanticShellStateTransition,
             responseFailure: responseFailure
         )
     }
