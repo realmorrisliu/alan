@@ -53,27 +53,27 @@
 
 ## 5. Verify And Deliver The Stack
 
-- [ ] 5.1 Run the affected focused Swift scripts,
+- [x] 5.1 Run the affected focused Swift scripts,
   `just apple-shell-focused-tests`, shell-core and shell-core-ffi tests, shell
   contract validation, and Apple architecture-maintainability validation.
-- [ ] 5.2 Build and install a fresh Alan Dev app, relaunch it, and run rendered
+- [x] 5.2 Build and install a fresh Alan Dev app, relaunch it, and run rendered
   smoke for touched selection, control, terminal, close, and persistence
   surfaces.
-- [ ] 5.3 Lower `clients/apple/ARCHITECTURE.md` and the executable warning ledger
+- [x] 5.3 Lower `clients/apple/ARCHITECTURE.md` and the executable warning ledger
   in every slice that removes debt; reject new warnings, fallback paths, and
   replacement stubs.
-- [ ] 5.4 Deliver focused stacked PRs in dependency order; each PR must move one
+- [x] 5.4 Deliver focused stacked PRs in dependency order; each PR must move one
   complete owner and delete the old path.
-- [ ] 5.5 For every PR, resolve all actionable Codex Review comments, rerun CI on
+- [x] 5.5 For every PR, resolve all actionable Codex Review comments, rerun CI on
   the current HEAD, wait through a follow-up review window, and merge only when
   no unresolved or new issue remains.
 
 ## 6. Sync And Archive
 
-- [ ] 6.1 After all implementation PRs merge, sync the delta requirements into
+- [x] 6.1 After all implementation PRs merge, sync the delta requirements into
   canonical `macos-app-architecture-maintainability` and run strict OpenSpec
   validation.
-- [ ] 6.2 Confirm UI, command protocol, persistence format, window interaction,
+- [x] 6.2 Confirm UI, command protocol, persistence format, window interaction,
   and terminal behavior remain unchanged and no duplicate owner has returned.
-- [ ] 6.3 Archive the change only after implementation, rendered verification,
+- [x] 6.3 Archive the change only after implementation, rendered verification,
   review, and canonical spec sync are complete.
