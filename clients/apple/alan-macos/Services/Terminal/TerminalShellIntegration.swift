@@ -50,6 +50,24 @@ struct AlanTerminalShellLaunch: Equatable {
                 resourcesPath: resourcesPath,
                 fileManager: fileManager
             )
+        case "fish":
+            let integrationRoot = "\(resourcesPath)/shell-integration"
+            guard fileManager.fileExists(
+                atPath: "\(integrationRoot)/fish/vendor_conf.d/ghostty-shell-integration.fish"
+            ) else {
+                return unchanged
+            }
+            var integratedEnvironment = environment
+            integratedEnvironment["GHOSTTY_RESOURCES_DIR"] = resourcesPath
+            integratedEnvironment["XDG_DATA_DIRS"] = [
+                integrationRoot,
+                environment["XDG_DATA_DIRS"],
+            ].compactMap { $0 }.joined(separator: ":")
+            return AlanTerminalShellLaunch(
+                argumentZero: executablePath,
+                arguments: arguments,
+                environment: integratedEnvironment
+            )
         default:
             return unchanged
         }

@@ -103,7 +103,7 @@ enum AlanTerminalPtyShellActivityResolver {
         case .shellInput:
             return .shellInput
         case nil:
-            return processGroupState ?? .unknown
+            return processGroupState == .foregroundCommand ? .foregroundCommand : .unknown
         }
     }
 }

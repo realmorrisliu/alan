@@ -316,8 +316,8 @@ private enum TerminalRuntimeServiceTests {
                 launchesInteractiveShell: true,
                 semanticState: nil,
                 processGroupState: .shellInput
-            ) == .shellInput,
-            "an unintegrated shell must use its known idle process-group baseline"
+            ) == .unknown,
+            "a matching shell process group without prompt semantics must remain protected"
         )
         expect(
             AlanTerminalPtyShellActivityResolver.resolve(
@@ -476,6 +476,18 @@ private enum TerminalRuntimeServiceTests {
                     environment: [:]
                 ),
             "bash integration must not rewrite non-interactive commands"
+        )
+
+        let fish = AlanTerminalShellLaunch.integratingGhostty(
+            executablePath: "/opt/homebrew/bin/fish",
+            arguments: ["-l"],
+            environment: ["XDG_DATA_DIRS": "/usr/local/share:/usr/share"],
+            resourcesPath: resourcesPath
+        )
+        expect(
+            fish.environment["XDG_DATA_DIRS"]
+                == "\(resourcesPath)/shell-integration:/usr/local/share:/usr/share",
+            "fish integration must prepend the bundled vendor configuration root"
         )
     }
 
@@ -2065,6 +2077,9 @@ private enum TerminalRuntimeServiceTests {
             bootProfile: profile
         )
         let sessionID = "fake-\(contentID)"
+        helper.outputChunksBySessionID[sessionID] = [
+            Data("\u{1B}]133;A\u{7}".utf8)
+        ]
         helper.enqueueForegroundProcessGroupStates([.shell], sessionID: sessionID)
 
         let idleDeadline = Date().addingTimeInterval(1)
@@ -2094,6 +2109,9 @@ private enum TerminalRuntimeServiceTests {
             "Managed User foreground-process observation must protect rendererless work"
         )
 
+        helper.outputChunksBySessionID[sessionID] = [
+            Data("\u{1B}]133;D;0\u{7}\u{1B}]133;A\u{7}".utf8)
+        ]
         helper.enqueueForegroundProcessGroupStates([.shell], sessionID: sessionID)
         let returnedDeadline = Date().addingTimeInterval(1)
         while Date() < returnedDeadline

@@ -8512,6 +8512,19 @@ private enum ShellRuntimeMetadataTests {
             boot.command.arguments.contains { $0.hasPrefix("ALAN_SHELL_BINDING_FILE=") },
             "sudo user boot command must preserve the shell binding file for the target shell"
         )
+        expect(
+            boot.command.arguments.contains { $0.hasPrefix("GHOSTTY_RESOURCES_DIR=") },
+            "sudo user boot command must preserve bundled shell integration resources"
+        )
+        expect(
+            boot.command.arguments.contains {
+                $0.contains("case \"${shell##*/}\"")
+                    && $0.contains("GHOSTTY_BASH_INJECT")
+                    && $0.contains("XDG_DATA_DIRS")
+                    && $0.contains("ZDOTDIR")
+            },
+            "sudo user boot command must inject prompt semantics for zsh, Bash, and fish"
+        )
 
         let rootPane = ShellPane(
             paneID: "pane_root_profile",
