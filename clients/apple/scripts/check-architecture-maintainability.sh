@@ -30,9 +30,9 @@ shell_architecture_current_inventory="$(mktemp)"
 shell_architecture_base_tree="$(mktemp -d)"
 trap 'rm -f "$warning_inventory" "$warning_inventory_sorted" "$warning_baseline_body" "$warning_baseline_sorted" "$base_warning_baseline" "$shell_architecture_base_inventory" "$shell_architecture_current_inventory"; rm -rf "$shell_architecture_base_tree"' EXIT
 
-git_command=(git)
+git_command=(git -C "$REPO_ROOT")
 if [[ -n "${ALAN_QUALITY_GIT_DIR:-}" ]]; then
-    git_command+=(--git-dir="$ALAN_QUALITY_GIT_DIR")
+    git_command=(git --git-dir="$ALAN_QUALITY_GIT_DIR")
 fi
 base_ref="${ALAN_QUALITY_BASE_REF:-HEAD}"
 
