@@ -217,6 +217,17 @@ inside a Process namespace. The raw Host OS path belongs to the host adapter and
 authorization evidence, not to Agent Process identity.
 _Avoid_: Workspace root, Project binding
 
+**Host Mount Request** — A Process-scoped request for a Host Mount at an Alan OS
+namespace path. It carries intent and access requirements but no raw Host OS
+path, and resolves to one terminal status. The `approved` status additionally
+references a Host Mount Grant.
+_Avoid_: Host path request, Workspace permission request
+
+**Host Mount Grant** — The Host Mount Service authorization record for a Host
+Mount. Its identifier carries no authority; access requires explicitly
+projecting the granted file-server handle or mount into a Process namespace.
+_Avoid_: Host path binding, Permission ID
+
 ## Current implementation names
 
 **Agent Execution Engine (`alan-agent-engine`)** — The current model-call,
