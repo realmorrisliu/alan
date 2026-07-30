@@ -2,7 +2,8 @@
 
 ### Requirement: Retained Rollouts are discoverable in the agent namespace
 Agent Runtime Service SHALL expose a read-only `/agent/rollouts` directory.
-Each retained Rollout SHALL be addressable at
+Each retained Rollout whose records and identifier pass discovery validation
+SHALL be addressable at
 `/agent/rollouts/<rollout-id>` as one JSONL file, where the path component is
 the Rollout's existing identifier. The file SHALL expose the Rollout's ordered
 records without a directory wrapper or parallel metadata projection. The
@@ -69,6 +70,15 @@ resolve the barrier exactly once with either a producing-Rollout context or an
 explicit no-producing-Rollout outcome; an absent or dropped resolution SHALL
 NOT be treated as no Rollout.
 
+System Process runner SHALL apply the same committed-namespace executable
+eligibility check during terminal preparation as it applies before dispatch in
+`run`. An invocation whose `/bin/alan-agent` executable is not mounted SHALL
+retain the generic no-op finalizer and SHALL NOT register an Agent terminal
+barrier. After a barrier is registered, every System Process runner return
+before Agent Runtime Service accepts ownership SHALL explicitly resolve it as
+no producing Rollout, including a return caused by an unavailable Agent Runtime
+Service.
+
 Immediately after Agent Machine creation succeeds, Agent Runtime Service SHALL
 resolve the producing-Rollout context with the existing Rollout metadata and a
 retained owning `RuntimeController` or equivalent runtime-task guard and
@@ -123,6 +133,21 @@ identity or terminal status model.
   creation succeeded, or with an explicit no-producing-Rollout outcome if it
   did not
 - **AND** finalization never infers no Rollout from a delivery race
+
+#### Scenario: Agent executable is rejected before service dispatch
+- **WHEN** a committed invocation names `/bin/alan-agent` but its namespace
+  does not contain that executable
+- **THEN** terminal preparation uses the generic no-op instead of registering
+  an Agent Runtime barrier
+- **AND** System Process runner may publish exit `127` without finalization
+  waiting for an Agent startup owner
+
+#### Scenario: Agent Runtime becomes unavailable before dispatch
+- **WHEN** terminal preparation registered an Agent barrier but System Process
+  runner cannot upgrade the Agent Runtime Service reference
+- **THEN** the pre-dispatch return explicitly resolves no producing Rollout
+- **AND** terminal finalization completes without waiting on an orphaned
+  barrier
 
 #### Scenario: Active transition is cancelled
 - **WHEN** control requests exit while the Agent Machine can still append
@@ -213,7 +238,15 @@ Agent Runtime Service SHALL apply the existing Rollout loader's validity rules
 during discovery. A torn trailing record MAY be ignored while earlier complete
 records remain discoverable. A Rollout with any other malformed record SHALL
 be omitted with a diagnostic and SHALL NOT prevent valid Rollouts from being
-listed. Discovery SHALL NOT delete or repair its backing file.
+listed.
+
+Because `rollout_id` becomes one file name, discovery SHALL additionally
+require it to be nonempty, neither `.` nor `..`, and free of `/` and NUL. It
+SHALL be unique among retained Rollouts in one listing. Discovery SHALL omit
+every Rollout participating in an identifier collision rather than select one
+or mint a replacement identity. Invalid or duplicate identifiers SHALL emit
+diagnostics and SHALL NOT block unrelated valid Rollouts. Discovery SHALL NOT
+delete or repair any backing file.
 
 #### Scenario: Rollout has a torn trailing record
 - **WHEN** a retained Rollout ends with an incomplete trailing JSON or UTF-8
@@ -226,6 +259,21 @@ listed. Discovery SHALL NOT delete or repair its backing file.
 - **THEN** Agent Runtime Service omits that Rollout and emits a diagnostic
 - **AND** other valid Rollouts remain discoverable
 - **AND** the malformed backing file is neither deleted nor repaired
+
+#### Scenario: Rollout identifier is not a safe child name
+- **WHEN** a retained Rollout has an empty identifier, `.` or `..`, or an
+  identifier containing `/` or NUL
+- **THEN** Agent Runtime Service omits it with a diagnostic
+- **AND** the identifier cannot escape, alias, or add levels beneath
+  `/agent/rollouts`
+
+#### Scenario: Retained Rollouts claim the same identifier
+- **WHEN** two or more retained Rollouts have the same otherwise-safe
+  `rollout_id`
+- **THEN** Agent Runtime Service omits every colliding Rollout with diagnostics
+- **AND** it neither chooses an arbitrary backing file nor creates another
+  identity
+- **AND** unrelated valid Rollouts remain discoverable
 
 ### Requirement: Durable background launch is acknowledged by its Rollout
 `SpawnRuntimeOverrides` SHALL accept an optional `durability_required` field.

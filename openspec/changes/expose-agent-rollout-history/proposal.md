@@ -26,6 +26,10 @@ restart even though the execution evidence already exists.
   awaits that barrier, and quiesces every Rollout writer before appending
   `process_exit`, so no producing Rollout is missed and no later record can
   follow the terminal record.
+- Apply the same executable-eligibility check during terminal preparation as
+  during System Process dispatch. If any pre-dispatch path returns after a
+  barrier was registered, resolve it explicitly as no producing Rollout so an
+  exit such as missing executable or unavailable Agent Runtime cannot hang.
 - Expose each retained Rollout as its existing JSONL record at the read-only
   `/agent/rollouts/<rollout-id>` file path. The surface remains available
   after Process exit and Host restart.
@@ -48,8 +52,10 @@ restart even though the execution evidence already exists.
   archive, delete, or garbage-collection control in this change.
 - Require consumers to refresh the directory when needed; add no change-event,
   watch, or subscription protocol.
-- Isolate malformed Rollouts during discovery without deleting or repairing
-  their backing files or blocking valid entries.
+- Require each discovered `rollout_id` to be a nonempty, unique, safe single
+  path component. Isolate malformed or colliding Rollouts with diagnostics
+  during discovery without deleting or repairing their backing files or
+  blocking valid entries.
 - Keep `/proc` authoritative for live Process lifecycle and each Rollout
   authoritative for its durable execution evidence.
 - Require authorized consumers to use the Alan OS file surface rather than

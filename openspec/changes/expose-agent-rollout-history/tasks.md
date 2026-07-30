@@ -57,7 +57,13 @@
   during the delivery window and failure after Rollout creation but before
   readiness still finalize correctly, without an Engine-to-Service dependency,
   file, Host API, durable identity, or absent-resolution fallback.
-- [ ] 2.5 Have System Process runner route Agent Executable finalization to
+- [ ] 2.5 Apply the same committed-namespace executable eligibility check in
+  System Process runner finalizer preparation as in `run`. Keep the generic
+  no-op when `/bin/alan-agent` is not mounted, and explicitly resolve no
+  producing Rollout on every pre-dispatch return after registration, including
+  an unavailable Agent Runtime Service. Prove missing-image exit `127` and
+  service-loss exit cannot wait on an orphaned barrier.
+- [ ] 2.6 Have System Process runner route Agent Executable finalization to
   Agent Runtime Service; first signal startup or runtime cancellation and
   await the terminal-context barrier. For a producing Rollout, request Agent
   Machine quiescence that cancels or drains both ordinary transitions and
@@ -73,7 +79,7 @@
   controller-drop regression, active-transition cancellation,
   `/proc/<pid>/ctl` exit during an active deferred action, deadlock-free barrier
   and fence completion, no post-exit append, and control exit code `130`.
-- [ ] 2.6 Preserve Rollouts without `process_exit` as unterminated evidence
+- [ ] 2.7 Preserve Rollouts without `process_exit` as unterminated evidence
   without fabricating a result.
 
 ## 3. Rollout Discovery
@@ -85,7 +91,10 @@
   one read-only `/agent/rollouts/<rollout-id>` JSONL file while preserving
   numeric PID entries and `/agent/root`.
 - [ ] 3.3 Isolate malformed Rollouts with diagnostics, accept recoverable torn
-  tails, and prove one bad file does not block valid entries.
+  tails, and validate that every `rollout_id` is nonempty, neither `.` nor
+  `..`, contains neither `/` nor NUL, and is unique in the listing. Omit every
+  entry in an ID collision rather than choosing one or minting a replacement;
+  prove invalid and duplicate IDs do not block unrelated valid entries.
 - [ ] 3.4 Test discovery of active, terminal, and unterminated Rollouts across
   Process exit and Agent Runtime Service restart.
 - [ ] 3.5 Test that `/agent` holders can read but not mutate Rollouts and that

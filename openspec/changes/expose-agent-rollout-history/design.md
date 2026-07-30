@@ -95,6 +95,16 @@ with a producing-Rollout context, or with an explicit no-producing-Rollout
 outcome. A drop guard or equivalent total-exit mechanism prevents channel
 closure from being misread as the latter.
 
+Preparation first applies the same committed-namespace executable eligibility
+check as `SystemProcessRunner::run`. An invocation whose `/bin/alan-agent`
+image is not mounted keeps the generic no-op finalizer and may return exit
+`127` without creating a barrier. Once preparation has registered a barrier,
+System Process runner owns its resolution until Agent Runtime Service accepts
+the invocation: every pre-dispatch return, including loss of the weak Agent
+Runtime Service reference, explicitly resolves no producing Rollout. This
+keeps the finalizer total even when dispatch is rejected before an Agent
+startup owner exists.
+
 Immediately after `initialize_agent_machine` succeeds, Agent Execution Engine
 publishes the existing `RuntimeStartupMetadata` through an early
 `RuntimeController` channel before initializing later UI surfaces or signaling
@@ -174,13 +184,22 @@ view and after lifecycle changes they already observe. Agent Runtime Service
 may add native change notification later only if measured refresh behavior is
 insufficient.
 
-### D9: Discovery reuses existing Rollout validation
+### D9: Discovery validates records and path-safe Rollout IDs
 
-Discovery uses the existing Rollout loader's validity rules. A torn trailing
-record is ignored while earlier complete records remain valid. Any other
-malformed record excludes that Rollout from `/agent/rollouts` and emits a
-diagnostic without blocking valid entries. Discovery neither deletes nor
-repairs the backing file and adds no quarantine or corruption-state model.
+Discovery first uses the existing Rollout loader's record-validity rules. A
+torn trailing record is ignored while earlier complete records remain valid.
+Any other malformed record excludes that Rollout from `/agent/rollouts`.
+
+The loader currently treats `rollout_id` as an unconstrained string, while the
+discovery surface must use it as one child name. Discovery therefore adds only
+the projection invariant required by that file surface: the ID must be
+nonempty, must be neither `.` nor `..`, and must contain neither `/` nor NUL.
+It must also be unique among the retained Rollouts in the same listing. If
+multiple backing Rollouts claim one ID, discovery omits every colliding entry
+rather than choosing an arbitrary authority or minting another identity.
+Invalid and duplicate IDs emit diagnostics without blocking unrelated valid
+entries. Discovery neither deletes nor repairs the backing files and adds no
+quarantine or corruption-state model.
 
 ### D10: A producing Rollout is the durable launch acknowledgment
 
