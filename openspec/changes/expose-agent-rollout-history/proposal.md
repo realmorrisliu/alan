@@ -7,10 +7,14 @@ restart even though the execution evidence already exists.
 
 ## What Changes
 
-- Append one `process_exit` record to the existing Rollout before clean runtime
-  cleanup. It carries the authoritative numeric exit code and, when available,
-  the existing `AgentExecutableResult`; it does not introduce another terminal
-  status model.
+- Attempt to append one `process_exit` record to the existing Rollout before
+  clean runtime cleanup. On success it carries the authoritative numeric exit
+  code and, when available, the existing `AgentExecutableResult`; it does not
+  introduce another terminal status model.
+- Bound the terminal append-and-flush attempt with an internal deadline. On a
+  persistence error or timeout, emit a structured diagnostic, preserve the
+  Rollout as unterminated or recoverably torn evidence, and release
+  finalization so `/proc` can still publish the authoritative Process exit.
 - Extend the generic Process runner bridge with a prepared terminal
   finalization hook. Alan Kernel asks the runner to prepare the per-Process
   hook before the committed Process becomes controllable, invokes it exactly
@@ -53,9 +57,10 @@ restart even though the execution evidence already exists.
 - Require consumers to refresh the directory when needed; add no change-event,
   watch, or subscription protocol.
 - Require each discovered `rollout_id` to be a nonempty, unique, safe single
-  path component. Isolate malformed or colliding Rollouts with diagnostics
-  during discovery without deleting or repairing their backing files or
-  blocking valid entries.
+  path component sourced from exactly one leading `AgentMachineMeta` record.
+  Isolate empty, misordered, repeated-metadata, malformed, or colliding
+  Rollouts with diagnostics during discovery without deleting or repairing
+  their backing files or blocking valid entries.
 - Keep `/proc` authoritative for live Process lifecycle and each Rollout
   authoritative for its durable execution evidence.
 - Require authorized consumers to use the Alan OS file surface rather than

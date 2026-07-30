@@ -55,9 +55,9 @@ an index may be added as a rebuildable cache, never as authority.
 
 ### D4: Terminal completion belongs in the existing Rollout
 
-For an Agent Process with a producing Rollout, clean completion SHALL append
-and flush one `process_exit` record to that Rollout before runtime cleanup.
-The record contains:
+For an Agent Process with a producing Rollout, clean completion SHALL attempt
+to append and flush one `process_exit` record to that Rollout before runtime
+cleanup. A successfully persisted record contains:
 
 - the authoritative numeric `/proc` exit code;
 - a completion timestamp; and
@@ -144,6 +144,19 @@ action cannot leave the finalizer waiting on a producer that never received
 cancellation. This context is bounded to the live Process and is neither
 exposed as a file or Host API nor promoted into another execution identity.
 
+The writer fence orders producers; it does not make storage infallible.
+Terminal append and flush therefore run as one cancellable attempt under a
+fixed internal deadline. The finalizer does not retry because an ambiguous
+flush result could otherwise duplicate `process_exit`. On an append error,
+flush error, or deadline expiry, Agent Runtime Service emits a structured
+diagnostic containing the PID, Rollout ID, intended exit code, and storage
+error or timeout. It closes the terminal writer, releases the runtime and
+cleanup owners, and returns control to Alan Kernel. The backing file remains
+valid unterminated evidence or a recoverably torn tail; `/proc` still publishes
+the authoritative Process exit. No later task may continue the timed-out write
+or append another Rollout record. This failure path adds no second status file
+or durable terminal model.
+
 ### D5: Read authority follows the existing `/agent` capability
 
 The history surface does not add per-interaction ACLs, renderer-only APIs, or
@@ -186,9 +199,15 @@ insufficient.
 
 ### D9: Discovery validates records and path-safe Rollout IDs
 
-Discovery first uses the existing Rollout loader's record-validity rules. A
-torn trailing record is ignored while earlier complete records remain valid.
-Any other malformed record excludes that Rollout from `/agent/rollouts`.
+Discovery first uses the existing Rollout loader's record-validity rules and
+then enforces the Rollout envelope required by existing writers and launch
+correlation. A nonempty Rollout must contain exactly one `AgentMachineMeta`, it
+must be the first complete record, and no later metadata record is permitted.
+The ID and `process_path` used by discovery and launch correlation come only
+from that leading record. An empty file, a non-metadata first record, missing
+metadata, or repeated metadata excludes the Rollout. A torn trailing record is
+ignored only when the earlier complete records satisfy this envelope. Any
+other malformed record excludes that Rollout from `/agent/rollouts`.
 
 The loader currently treats `rollout_id` as an unconstrained string, while the
 discovery surface must use it as one child name. Discovery therefore adds only

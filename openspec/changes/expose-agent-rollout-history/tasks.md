@@ -79,8 +79,15 @@
   controller-drop regression, active-transition cancellation,
   `/proc/<pid>/ctl` exit during an active deferred action, deadlock-free barrier
   and fence completion, no post-exit append, and control exit code `130`.
-- [ ] 2.7 Preserve Rollouts without `process_exit` as unterminated evidence
-  without fabricating a result.
+- [ ] 2.7 Bound terminal append and flush as one cancellable attempt under a
+  fixed internal deadline. On append error, flush error, or timeout, emit a
+  structured PID/Rollout/exit-code diagnostic, prevent any late writer from
+  continuing, release runtime and cleanup ownership, and let Kernel publish
+  the authoritative exit without retrying or fabricating terminal evidence.
+  Test disk-full/flush-error, timeout, ambiguous-flush no-retry, cleanup, and
+  Host-shutdown progress.
+- [ ] 2.8 Preserve Rollouts without `process_exit` as unterminated evidence
+  without fabricating a result, including terminal-persistence failures.
 
 ## 3. Rollout Discovery
 
@@ -91,10 +98,13 @@
   one read-only `/agent/rollouts/<rollout-id>` JSONL file while preserving
   numeric PID entries and `/agent/root`.
 - [ ] 3.3 Isolate malformed Rollouts with diagnostics, accept recoverable torn
-  tails, and validate that every `rollout_id` is nonempty, neither `.` nor
-  `..`, contains neither `/` nor NUL, and is unique in the listing. Omit every
-  entry in an ID collision rather than choosing one or minting a replacement;
-  prove invalid and duplicate IDs do not block unrelated valid entries.
+  tails only after earlier complete records pass envelope validation, and
+  require exactly one leading `AgentMachineMeta` with no later metadata record.
+  Validate that its `rollout_id` is nonempty, neither `.` nor `..`, contains
+  neither `/` nor NUL, and is unique in the listing. Omit every entry in an ID
+  collision rather than choosing one or minting a replacement; prove empty,
+  message-first, metadata-later, repeated-metadata, invalid-ID, and duplicate-ID
+  Rollouts do not block unrelated valid entries.
 - [ ] 3.4 Test discovery of active, terminal, and unterminated Rollouts across
   Process exit and Agent Runtime Service restart.
 - [ ] 3.5 Test that `/agent` holders can read but not mutate Rollouts and that

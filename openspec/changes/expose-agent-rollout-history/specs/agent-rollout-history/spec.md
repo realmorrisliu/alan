@@ -55,13 +55,14 @@ MUST NOT become discovery authority.
 - **AND** no completed Rollout is lost because a parallel index is absent
 
 ### Requirement: Process exit is recorded in the existing Rollout
-For an Agent Process with a producing Rollout, Alan SHALL append and flush one
-`process_exit` record through the Process terminal finalization hook before
-Alan Kernel publishes exit and before clean Agent Runtime Service cleanup. The
-record SHALL contain the authoritative numeric Process exit code, a completion
-timestamp, and the existing `AgentExecutableResult` when one is available. It
-SHALL NOT introduce a second terminal status enum or fabricate a Rollout for a
-best-effort execution that started without one.
+For an Agent Process with a producing Rollout, Alan SHALL attempt to append and
+flush one `process_exit` record through the Process terminal finalization hook
+before Alan Kernel publishes exit and before clean Agent Runtime Service
+cleanup. On successful persistence, the record SHALL contain the authoritative
+numeric Process exit code, a completion timestamp, and the existing
+`AgentExecutableResult` when one is available. It SHALL NOT introduce a second
+terminal status enum or fabricate a Rollout for a best-effort execution that
+started without one.
 
 Before an Agent Process becomes controllable, System Process runner SHALL
 register with Agent Runtime Service a pending Process-local terminal-context
@@ -93,10 +94,19 @@ request quiescence of both ordinary transitions and deferred runtime actions.
 Quiescence SHALL cancel or drain every such producer and await a writer fence
 proving that none can append another Rollout record before finalization appends
 `process_exit`; no Rollout record may be appended after `process_exit`.
+Terminal append and flush SHALL be one cancellable attempt bounded by a fixed
+internal deadline and SHALL NOT be retried after an ambiguous flush result. On
+append error, flush error, or timeout, Agent Runtime Service SHALL emit a
+structured diagnostic containing the PID, Rollout ID, intended exit code, and
+failure, prevent the timed-out operation or any other writer from appending
+later, and release terminal finalization so Alan Kernel can publish the
+authoritative Process exit. The Rollout SHALL remain unterminated or
+recoverably torn evidence; failure SHALL NOT fabricate terminal evidence.
 Finalization SHALL release the runtime-task owner and perform Process cleanup
-only after `process_exit` is flushed. The barrier and its outcomes SHALL remain
-internal, Process-local synchronization state and SHALL NOT create a durable
-identity or terminal status model.
+only after `process_exit` is flushed or this bounded persistence-failure path
+has closed the writer. The barrier and its outcomes SHALL remain internal,
+Process-local synchronization state and SHALL NOT create a durable identity or
+terminal status model.
 
 #### Scenario: Agent Executable completes with a terminal result
 - **WHEN** an Agent Process publishes an `AgentExecutableResult` and exits
@@ -171,6 +181,18 @@ identity or terminal status model.
 - **THEN** the Rollout remains readable as unterminated evidence
 - **AND** Agent Runtime Service does not fabricate a terminal result
 
+#### Scenario: Terminal persistence cannot flush
+- **WHEN** appending or flushing `process_exit` returns an I/O error or exceeds
+  the terminal persistence deadline
+- **THEN** Agent Runtime Service stops the write attempt without retrying an
+  ambiguous result and emits a structured diagnostic
+- **AND** no writer appends another Rollout record
+- **AND** runtime and Process cleanup complete
+- **AND** Alan Kernel publishes the authoritative exit instead of leaving the
+  Process running or blocking Host shutdown
+- **AND** the retained Rollout remains unterminated or recoverably torn
+  evidence
+
 ### Requirement: Rollout history follows the `/agent` namespace capability
 A Process whose namespace includes readable `/agent` SHALL be able to read
 `/agent/rollouts`. A Process without that mount SHALL have no Rollout-history
@@ -235,10 +257,16 @@ file, watch stream, or subscription protocol.
 
 ### Requirement: Malformed Rollouts are isolated during discovery
 Agent Runtime Service SHALL apply the existing Rollout loader's validity rules
-during discovery. A torn trailing record MAY be ignored while earlier complete
-records remain discoverable. A Rollout with any other malformed record SHALL
-be omitted with a diagnostic and SHALL NOT prevent valid Rollouts from being
-listed.
+during discovery and SHALL additionally validate the Rollout envelope. Every
+discoverable Rollout SHALL contain exactly one `AgentMachineMeta`; it SHALL be
+the first complete record, and no later record may be another
+`AgentMachineMeta`. Discovery SHALL derive the entry ID and launch-correlation
+`process_path` only from that leading record. An empty Rollout, a non-metadata
+first record, absent metadata, or repeated metadata SHALL be omitted with a
+diagnostic. A torn trailing record MAY be ignored only when its earlier
+complete records satisfy the envelope. A Rollout with any other malformed
+record SHALL be omitted with a diagnostic and SHALL NOT prevent valid Rollouts
+from being listed.
 
 Because `rollout_id` becomes one file name, discovery SHALL additionally
 require it to be nonempty, neither `.` nor `..`, and free of `/` and NUL. It
@@ -253,6 +281,13 @@ delete or repair any backing file.
   record
 - **THEN** discovery accepts its earlier complete records
 - **AND** the torn trailing record is not exposed as valid evidence
+
+#### Scenario: Rollout metadata is absent or misordered
+- **WHEN** a retained Rollout is empty, begins with a non-metadata record, or
+  contains another `AgentMachineMeta` after its leading metadata
+- **THEN** Agent Runtime Service omits it with a diagnostic
+- **AND** discovery does not infer an identifier or `process_path` from a
+  later or ambiguous record
 
 #### Scenario: One retained Rollout is malformed
 - **WHEN** a retained Rollout contains an invalid non-torn record
