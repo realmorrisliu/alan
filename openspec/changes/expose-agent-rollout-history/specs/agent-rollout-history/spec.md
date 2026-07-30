@@ -1,0 +1,160 @@
+## ADDED Requirements
+
+### Requirement: Retained Rollouts are discoverable in the agent namespace
+Agent Runtime Service SHALL expose a read-only `/agent/rollouts` directory.
+Each retained Rollout SHALL be addressable at
+`/agent/rollouts/<rollout-id>` as one JSONL file, where the path component is
+the Rollout's existing identifier. The file SHALL expose the Rollout's ordered
+records without a directory wrapper or parallel metadata projection. The
+surface SHALL remain reconstructible after Agent Process exit and Alan OS Host
+restart without exposing a raw System Store path.
+
+#### Scenario: Consumer lists Rollouts after Host restart
+- **WHEN** an authorized consumer lists `/agent/rollouts` after Alan OS Host
+  restart
+- **THEN** every valid retained Rollout appears by its existing `rollout_id`
+- **AND** discovery does not depend on a prior Process Reference, renderer
+  database, or Host filesystem scan
+
+#### Scenario: Consumer opens one retained Rollout
+- **WHEN** an authorized consumer opens `/agent/rollouts/<rollout-id>`
+- **THEN** it reads the existing ordered Rollout JSONL records from one file
+- **AND** it does not need to reconcile separate metadata, status, result, or
+  evidence files
+
+#### Scenario: Consumer attempts to mutate history
+- **WHEN** a consumer opens `/agent/rollouts` or one of its descendants for
+  writing
+- **THEN** Agent Runtime Service rejects the write
+- **AND** the discovery surface cannot become a second Rollout writer
+
+### Requirement: Rollout discovery introduces no second execution identity
+The Rollout history surface SHALL use `rollout_id` as its only entry identity
+and SHALL NOT create another durable execution or interaction identity. A
+history listing SHALL be a view over retained Rollouts, not a separately
+persisted record set or authority.
+
+#### Scenario: A recovered Agent Process creates a new Rollout
+- **WHEN** a new Agent Process recovers Agent Machine state from a prior
+  Rollout
+- **THEN** the new execution remains represented by its new Rollout
+- **AND** the prior Rollout remains source evidence rather than being merged
+  under a new cross-execution identity
+
+### Requirement: Retained Rollouts are the durable discovery authority
+Agent Runtime Service SHALL reconstruct `/agent/rollouts` from valid retained
+Rollouts in its own System Store subtree and SHALL NOT require a separately
+persisted history index. Any future cache MUST be rebuildable from Rollouts and
+MUST NOT become discovery authority.
+
+#### Scenario: Rebuild starts without cache state
+- **WHEN** Agent Runtime Service starts with retained Rollouts and no history
+  cache
+- **THEN** `/agent/rollouts` is reconstructed from those Rollouts
+- **AND** no completed Rollout is lost because a parallel index is absent
+
+### Requirement: Process exit is recorded in the existing Rollout
+Before clean Agent Runtime Service cleanup, Alan SHALL append and flush one
+`process_exit` record to the producing Rollout. The record SHALL contain the
+authoritative numeric Process exit code, a completion timestamp, and the
+existing `AgentExecutableResult` when one is available. It SHALL NOT introduce
+a second terminal status enum.
+
+#### Scenario: Agent Executable completes with a terminal result
+- **WHEN** an Agent Process publishes an `AgentExecutableResult` and exits
+- **THEN** its Rollout ends with a `process_exit` record carrying the Process
+  exit code and that existing result
+- **AND** the record is flushed before AgentFS runtime cleanup
+
+#### Scenario: Generic Process control stops execution
+- **WHEN** `cancel` or `interrupt` terminates the Process with exit code `130`
+- **THEN** `process_exit` preserves the numeric code `130`
+- **AND** it does not invent separate cancelled and interrupted states that
+  the Kernel does not distinguish
+
+#### Scenario: Host failure prevents terminal recording
+- **WHEN** an older Rollout or abrupt Host failure leaves no `process_exit`
+  record
+- **THEN** the Rollout remains readable as unterminated evidence
+- **AND** Agent Runtime Service does not fabricate a terminal result
+
+### Requirement: Rollout history follows the `/agent` namespace capability
+A Process whose namespace includes readable `/agent` SHALL be able to read
+`/agent/rollouts`. A Process without that mount SHALL have no Rollout-history
+authority. The surface SHALL NOT introduce per-interaction ACLs, renderer-only
+Host APIs, or raw System Store access, and its files SHALL remain read-only
+even when `/agent` is mounted read-write.
+
+#### Scenario: Agent Process receives the standard agent mount
+- **WHEN** a Process namespace includes readable `/agent`
+- **THEN** the Process can list and read `/agent/rollouts`
+- **AND** it cannot mutate a retained Rollout
+
+#### Scenario: Process has no agent mount
+- **WHEN** a Process namespace does not include `/agent`
+- **THEN** `/agent/rollouts` is unreachable
+- **AND** no Host-private fallback grants access
+
+### Requirement: Discovery follows Agent Runtime Service retention
+`/agent/rollouts` SHALL expose every valid Rollout currently retained by Agent
+Runtime Service. This change SHALL NOT add a retention duration, TTL, quota,
+pin, archive, delete, or garbage-collection control. If a future owning-service
+retention policy removes a Rollout, the discovery surface SHALL stop listing it
+and SHALL NOT rely on renderer state to preserve a ghost entry.
+
+#### Scenario: No Rollout retention policy is configured
+- **WHEN** Agent Runtime Service retains a valid Rollout
+- **THEN** `/agent/rollouts` exposes it across Process exit and Host restart
+- **AND** the discovery contract makes no permanent-storage guarantee
+
+#### Scenario: A future retention policy expires a Rollout
+- **WHEN** Agent Runtime Service no longer retains a Rollout
+- **THEN** `/agent/rollouts` no longer lists it
+- **AND** renderer state is not authoritative for keeping the entry visible
+
+### Requirement: Discovery includes active and unterminated Rollouts
+`/agent/rollouts` SHALL include active, terminal, and valid unterminated
+Rollouts. The presence of `process_exit` SHALL NOT be required for discovery.
+A renderer MAY prioritize terminal Rollouts or label an unterminated Rollout
+as unfinished, but SHALL NOT make its presentation state the discovery
+authority.
+
+#### Scenario: Active Rollout is retained
+- **WHEN** an Agent Process has an active valid Rollout
+- **THEN** the Rollout appears in `/agent/rollouts`
+- **AND** `/agent/<pid>` remains the live operational Process view
+
+#### Scenario: Unterminated Rollout survives a Host failure
+- **WHEN** Agent Runtime Service retains a valid Rollout without `process_exit`
+- **THEN** the Rollout remains discoverable as unfinished evidence
+- **AND** the discovery surface does not hide or fabricate its terminal state
+
+### Requirement: Discovery requires no notification protocol
+Consumers SHALL be able to refresh `/agent/rollouts` by listing the directory
+again. This change SHALL NOT require Agent Runtime Service to expose an event
+file, watch stream, or subscription protocol.
+
+#### Scenario: Consumer needs a current listing
+- **WHEN** a consumer opens or reactivates its history view
+- **THEN** it lists `/agent/rollouts` again
+- **AND** discovery does not depend on a retained notification cursor or
+  renderer-owned index
+
+### Requirement: Malformed Rollouts are isolated during discovery
+Agent Runtime Service SHALL apply the existing Rollout loader's validity rules
+during discovery. A torn trailing record MAY be ignored while earlier complete
+records remain discoverable. A Rollout with any other malformed record SHALL
+be omitted with a diagnostic and SHALL NOT prevent valid Rollouts from being
+listed. Discovery SHALL NOT delete or repair its backing file.
+
+#### Scenario: Rollout has a torn trailing record
+- **WHEN** a retained Rollout ends with an incomplete trailing JSON or UTF-8
+  record
+- **THEN** discovery accepts its earlier complete records
+- **AND** the torn trailing record is not exposed as valid evidence
+
+#### Scenario: One retained Rollout is malformed
+- **WHEN** a retained Rollout contains an invalid non-torn record
+- **THEN** Agent Runtime Service omits that Rollout and emits a diagnostic
+- **AND** other valid Rollouts remain discoverable
+- **AND** the malformed backing file is neither deleted nor repaired

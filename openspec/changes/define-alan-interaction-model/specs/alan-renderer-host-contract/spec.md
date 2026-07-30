@@ -39,10 +39,9 @@ remain reachable.
 ### Requirement: A mounted namespace is sufficient for local renderer launch
 
 A local renderer host SHALL start from a mounted Alan OS root. Launching an
-agent view additionally requires a concrete Agent Process path. Launching the
-workspace home or a `/srv` service view SHALL require only the mounted
-namespace and the corresponding service paths and SHALL NOT require or invent
-an Agent Process.
+agent view additionally requires a concrete Agent Process path. Launching a
+`/srv` service view SHALL require only the mounted namespace and the
+corresponding service path and SHALL NOT require or invent an Agent Process.
 
 #### Scenario: Renderer opens a root Agent Process
 
@@ -50,17 +49,9 @@ an Agent Process.
 - **THEN** it reads and tails AgentFS output and state files
 - **AND** it writes input and Process control through the corresponding files
 
-#### Scenario: Renderer opens the workspace home
-
-- **WHEN** the renderer starts from a mounted namespace root without an Agent
-  Process path
-- **THEN** it presents the workspace home surface from mounted agent and
-  service file state
-- **AND** it does not create, require, or invent an Agent Process to do so
-
 #### Scenario: Renderer opens a service view
 
-- **WHEN** the renderer opens an installed service from the workspace home
+- **WHEN** the renderer opens an installed service
 - **THEN** it renders the service interface from the service's mounted `/srv`
   file tree
 - **AND** no Agent Process path is required

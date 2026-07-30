@@ -92,27 +92,19 @@ never names. A single Permissions surface lists active grants by label and
 scope; revoking unmounts. Raw host paths never appear — only grant labels —
 which matches what Alan OS is allowed to see.
 
-### D5: Workspace-first entry, shell as a tab type
+### D5: The interaction model does not invent a universal home
 
-The macOS app opens into a workspace: active agents, recent work, installed
-services (`/srv` rendered as services/apps, each opening its own file-backed
-UI). Alan Shell remains an ordinary Process and the system entry per
-ADR-0039/0048/0049, but in the UX it is one tab type the user opens when
-wanted, not the first screen. The TUI remains the terminal-native host and
-naturally centers the shell; the interaction model still governs its agent
-surfaces.
+There is no Alan Home, `workspace_home`, or other product object that owns or
+aggregates agents, work, services, and permissions. The interaction model
+defines how concrete file-backed objects are presented when reached; it does
+not force every renderer into one start screen or change the current
+terminal-first macOS default. Shell Space, Tab, and pane state remains
+presentation structure, not Alan OS identity.
 
-Reconciliation with shell-first contracts: ADR-0039 governs the system-level
-entry of the `alan` CLI and Local Entry — the Shell Process still starts
-there, unchanged. What changes is only the renderer-presented default, so
-this change carries a MODIFIED delta to `macos-shell-workspace-persistence`:
-the default manifest's selected Tab becomes the workspace home surface and a
-default terminal Tab is no longer required. Because shell core owns default
-manifest semantics and content kinds, a matching
-`shell-workspace-core-contract` delta defines a platform-neutral workspace
-home content kind so no platform-private defaulting algorithm is
-reintroduced. This is a deliberate presentation change, not a contradiction
-of the boot order.
+A future unified entry surface may be specified only when implemented
+workflows establish its concrete contents and owning file surfaces. Until
+then, adding a home ContentKind or changing default manifest semantics would
+create presentation structure without an authoritative domain object.
 
 ### D6: The vocabulary rule
 
@@ -122,6 +114,23 @@ namespace, fid, descriptor, `/proc`, tape, rollout (as a word — the concept
 renders as "evidence" or "history"). OS vocabulary is allowed only in the
 Files layer, power-user surfaces, debugging views, and documentation. This
 rule is reviewable per screen and belongs in UI conformance checks.
+
+### D7: Completed work requires durable discovery
+
+Background-servant interaction is not complete if outcomes disappear with a
+Process or Alan OS Host boot. Completed Agent Process outcomes and their
+retained evidence references therefore remain discoverable from retained
+Rollouts after Process exit and Host restart.
+
+History is only a read-only discovery view over Rollouts, not another durable
+entity. It has no independent ID, record lifecycle, persistent index, or
+relationship identity. A renderer reads the Agent Runtime Service's Rollout
+history surface through its Alan OS attachment; it never scans System Store
+backing and never persists a private results database.
+
+Rollout terminal completion and namespace discovery belong to the prerequisite
+`expose-agent-rollout-history` change. This interaction-model change owns only
+the user-facing obligation to present that Rollout truth for review.
 
 ## Risks / Trade-offs
 
@@ -135,11 +144,13 @@ rule is reviewable per screen and belongs in UI conformance checks.
 - **Vocabulary rule can feel constraining to developer-users.** Accepted:
   advanced personal users are the audience; the Files layer preserves full
   fidelity for anyone who wants it.
+- **No unified start screen means renderers may emphasize different entry
+  paths.** Accepted: a speculative home would add a content kind and
+  persistence contract without owning any truth. Shared interaction rules
+  apply once a concrete agent, result, permission, service, or file surface is
+  opened.
 
 ## Open Questions
 
 - Exact name of the unified review surface (Inbox / Results / Activity) —
   copy-level, resolved in the macOS implementation change.
-- Whether the TUI adopts the Intent layer entry or stays shell-first — the
-  model permits host-specific entry emphasis as long as the three layers and
-  modes exist.

@@ -52,7 +52,11 @@ interaction as first-class modes. Conversation SHALL NOT be assumed as the
 entry or primary posture. Background-servant mode SHALL let
 agents run detached — closing a view detaches per ADR-0047 and never implies
 stopping execution — and SHALL present completed work for review rather than
-requiring the user to watch execution. Event-driven interaction — standing
+requiring the user to watch execution. Completed outcomes and their retained
+evidence references SHALL remain discoverable after Process exit and Alan OS
+Host restart through the Agent Runtime Service-owned read-only Rollout history
+surface; renderer hosts SHALL NOT scan System Store backing or persist a
+private results database. Event-driven interaction — standing
 rules that cause agents to act, with proactive reports — is the recorded
 third mode and the designated direction of this model; because no runtime or
 service contract yet owns rule storage and trigger semantics, renderer hosts
@@ -66,6 +70,13 @@ when it does.
   review surface with its evidence
 - **AND** no UI element required the user to keep a conversation or execution
   view open
+
+#### Scenario: The user reviews work after an Alan OS restart
+- **WHEN** an Agent Process completed before the current Alan OS Host boot
+- **THEN** its outcome and retained evidence references remain discoverable
+  from its retained Rollout through the Rollout history surface
+- **AND** the renderer reconstructs the review from mounted files without a
+  renderer-owned results database
 
 #### Scenario: Event-driven mode awaits its owning contract
 - **WHEN** no runtime or service contract yet owns event rules and triggers
@@ -104,31 +115,6 @@ projection paths MAY appear only in the Files layer and power-user surfaces.
 - **THEN** every active grant is listed by label, scope, and access
 - **AND** revoking a grant removes its projection without affecting authored
   content
-
-### Requirement: Workspace-first entry with shell as a tab type
-The Alan for macOS entry SHALL be a workspace of agents, recent work, and
-installed services — not a bare shell or terminal. Alan Shell SHALL be
-available as one tab type among others, launched as an ordinary Process per
-ADR-0048/0049. Services under `/srv` SHALL be presented as installed
-services/apps that open their own file-backed interfaces. This UX ordering
-governs renderer-presented defaults only: ADR-0039's system-level rule that
-the `alan` CLI and Local Entry start Alan Shell before agent views is
-unchanged, and this change carries the matching MODIFIED delta for the
-macOS default-manifest presentation contract.
-
-#### Scenario: The app opens
-- **WHEN** a user launches Alan for macOS
-- **THEN** the default presented view shows active agents, recent work, and
-  installed services
-- **AND** opening a shell is an explicit action that creates an ordinary
-  shell Process
-- **AND** the system-level Local Entry and Shell Process startup per
-  ADR-0039/0049 proceeds independently of which view is presented first
-
-#### Scenario: A service is opened from the workspace
-- **WHEN** a user opens an installed service from the workspace
-- **THEN** its interface renders from the service's mounted file tree
-- **AND** the user never walks `/srv` paths to reach it
 
 ### Requirement: OS vocabulary is quarantined from default UI copy
 Default UI copy in every renderer host SHALL name user objects and SHALL NOT

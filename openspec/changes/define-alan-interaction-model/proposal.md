@@ -34,13 +34,14 @@ their own answer, and OS vocabulary will leak into the default UI.
   events and proactively report) is recorded as the designated third mode,
   binding on renderer hosts only once a runtime or service contract owns rule
   storage and triggers.
+- Require background-servant outcomes to remain discoverable from retained
+  Rollouts after Process exit and Alan OS Host restart. Renderers consume the
+  Agent Runtime Service's read-only Rollout history surface and never scan
+  System Store backing or persist a private results database.
 - Make permission the UX of mounting: giving an agent access to a host folder
   is a grant flow (drag in, file picker, or approval sheet) through Host Mount
   Service per ADR-0050; mount/bind are side effects, and revocation lives in a
   single permissions surface. `mount` commands are confined to the Files layer.
-- Make the macOS entry a workspace of agents and services, not a shell: the
-  shell is one tab type among others; `/srv` services render as installed
-  services/apps; ADR-0039's system-level boot order is unchanged.
 - Define the vocabulary rule: default UI copy names user objects (agent,
   conversation, folder, permission, service, result); OS vocabulary (mount,
   namespace, fid, `/proc`, tape) is confined to the Files layer, power-user
@@ -51,37 +52,24 @@ their own answer, and OS vocabulary will leak into the default UI.
 ### New Capabilities
 
 - `alan-interaction-model`: The product-level interaction contract — disclosure
-  layers, interaction modes, grant-as-permission UX, workspace-first entry,
-  and the vocabulary rule for all renderer hosts.
+  layers, interaction modes, grant-as-permission UX, and the vocabulary rule
+  for all renderer hosts.
 
 ### Modified Capabilities
 
 - `alan-renderer-host-contract`: Renderer hosts SHALL render agent and service
   file surfaces as domain-native affordances, provide the three disclosure
   layers, and keep OS vocabulary out of the default UI.
-- `macos-shell-workspace-persistence`: The default workspace manifest's
-  selected Tab becomes the workspace home surface; a default terminal Tab is
-  no longer required, aligning the macOS default presentation with
-  workspace-first entry.
-- `shell-workspace-core-contract`: Shell core owns a platform-neutral
-  workspace home content kind and selects it in default manifest creation
-  instead of hard-coding a terminal Tab, so the macOS persistence delta has a
-  portable owner and no platform-private defaulting algorithm is
-  reintroduced.
-- `macos-shell-content-containers`: Define the serializable, restorable
-  `workspace_home` content kind with home-specific capabilities, so default
-  manifests and restore can materialize the workspace home surface without
-  substituting a terminal.
-- `macos-shell-ui-ux-conformance`: Replace terminal-first assertions in the
-  visual-review, smoke-evidence, and automation-chrome requirements with the
-  workspace home presentation as the default selected content.
-- `macos-shell-build-test-contract`: Update the launch smoke to verify the
-  workspace home content area instead of a terminal content area.
 
 ## Impact
 
-- Normative for Alan for macOS (`clients/apple`), the Rust TUI
-  (`crates/tui`), and future Alan Apps; no kernel, aP, or AgentFS changes.
+- Normative for Alan for macOS (`clients/apple`), the Rust TUI, and future
+  Alan Apps. It requires the Agent Runtime Service-owned Rollout history
+  surface before a durable review surface can be implemented; it does not
+  authorize renderer access to System Store backing.
+- This change does not define an Alan Home, `workspace_home`, or another
+  universal entry object. It leaves renderer defaults and the current
+  terminal-first macOS presentation unchanged.
 - No system-architecture change: ADR-0039 (shell before agent views),
   ADR-0045 (aP attachment), and ADR-0050 (Host Mount Service grants) remain
   the system truth; this change defines the UX layered on top of them.
