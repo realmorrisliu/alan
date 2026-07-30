@@ -120,9 +120,12 @@ rule is reviewable per screen and belongs in UI conformance checks.
 Background-servant interaction is not complete if outcomes disappear with a
 Process or Alan OS Host boot. A background dispatch therefore sets
 `runtime_overrides.durability_required` in the `AgentExecutableRequest`
-committed through Agent Runtime Service-owned `/agent/clone`. This path uses
-the current Root Agent Process as the ordinary parent; the attached Shell
-Process is not treated as an Agent parent. After reading
+committed through Agent Runtime Service-owned
+`/mnt/agent-runtime/clone`. Service Manager mounts this launch capability only
+in the Local Entry Login Namespace, so Agent Processes cannot regain
+capabilities through it. The path uses the current Root Agent Process as the
+ordinary parent; the attached Shell Process is not treated as an Agent parent.
+After reading
 `/proc/host/boot_id`, listing the current `rollout_id` values, and receiving
 the pending PID, the renderer acknowledges the dispatch only when
 `/agent/rollouts/<rollout-id>` exposes valid first-record metadata whose ID

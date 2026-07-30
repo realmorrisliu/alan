@@ -15,9 +15,10 @@
 ## 2. macOS Interaction Surfaces
 
 - [ ] 2.1 Launch background work through Agent Runtime Service-owned
-  `/agent/clone`, set `runtime_overrides.durability_required` in its
-  `AgentExecutableRequest`, pin `/proc/host/boot_id`, and snapshot discoverable
-  Rollout IDs before open; prove the resulting Process is parented by the
+  `/mnt/agent-runtime/clone`, set `runtime_overrides.durability_required` in
+  its `AgentExecutableRequest`, pin `/proc/host/boot_id`, and snapshot
+  discoverable Rollout IDs before open; prove the capability comes only from
+  the Local Entry Login Namespace and the resulting Process is parented by the
   current Root Agent Process rather than the attached Shell Process, then
   acknowledge only under the same boot a new Rollout whose first-record
   metadata matches the returned PID.
@@ -37,25 +38,41 @@
   exposes the raw namespace as an explicit mode without becoming a second
   authority.
 
-## 3. Conformance
+## 3. Rust TUI Interaction Surfaces
 
-- [ ] 3.1 Add a vocabulary-rule check (lint or review checklist) covering
-  default-UI copy in `clients/apple` for quarantined OS terms.
-- [ ] 3.2 Add renderer-host conformance tests proving Work-layer gestures
+- [ ] 3.1 Add Rust TUI background dispatch through the attached Login
+  Namespace's `/mnt/agent-runtime/clone`, including strict durability,
+  boot-ID pinning, pre-spawn Rollout listing, and exact PID-to-Rollout
+  correlation.
+- [ ] 3.2 Add the Rust TUI review surface over `/agent/rollouts`, reconstruct
+  it after Host restart, and keep only Process References, offsets, and display
+  state in the renderer.
+- [ ] 3.3 Render conversation, plan, approval, result, Stop, Permissions, and
+  Files-layer entry affordances from the same mounted files, with no copied
+  runtime state or default-UI OS vocabulary.
+- [ ] 3.4 Add focused `alan-terminal-ui` tests proving restricted Agent
+  Process namespaces cannot reach the top-level launch capability and TUI
+  background work remains reviewable after detach and Host restart.
+
+## 4. Conformance
+
+- [ ] 4.1 Add a vocabulary-rule check (lint or review checklist) covering
+  default-UI copy in `clients/apple` and `crates/tui` for quarantined OS terms.
+- [ ] 4.2 Add renderer-host conformance tests proving Work-layer gestures
   become file writes and `ctl` commands with no renderer-local state
   mutation.
-- [ ] 3.3 Verify the review and Permissions surfaces render exclusively from
-  mounted file state per ADR-0046.
+- [ ] 4.3 Verify the macOS and Rust TUI review and Permissions surfaces render
+  exclusively from mounted file state per ADR-0046.
 
-## 4. Verification And Archive Readiness
+## 5. Verification And Archive Readiness
 
-- [ ] 4.1 Run `just quality` and the macOS focused tests
-  (`just apple-shell-focused-tests`, `just apple-shell-ui-smoke`) with the new
-  surfaces covered.
-- [ ] 4.2 PR review confirms the implementation stays renderer-side: no
+- [ ] 5.1 Run `just quality`, `cargo test -p alan-terminal-ui`, and the macOS
+  focused tests (`just apple-shell-focused-tests`,
+  `just apple-shell-ui-smoke`) with the new surfaces covered.
+- [ ] 5.2 PR review confirms the implementation stays renderer-side: no
   kernel, aP, Rollout history schema, AgentFS, or runtime event machinery is
   introduced.
-- [ ] 4.3 Sync delta specs into `openspec/specs/` (new
+- [ ] 5.3 Sync delta specs into `openspec/specs/` (new
   `alan-interaction-model` and updated `alan-renderer-host-contract`) and move
   the change to
   `openspec/changes/archive/YYYY-MM-DD-define-alan-interaction-model/`.

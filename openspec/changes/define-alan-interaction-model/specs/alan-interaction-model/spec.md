@@ -54,11 +54,14 @@ agents run detached — closing a view detaches per ADR-0047 and never implies
 stopping execution — and SHALL present completed work for review rather than
 requiring the user to watch execution. A background dispatch SHALL request the
 strict-durability launch behavior in an `AgentExecutableRequest` committed
-through Agent Runtime Service-owned `/agent/clone`. The resulting ordinary
-Agent Process SHALL be parented by the current Root Agent Process, not by the
-renderer-attached Shell Process. Before opening `/agent/clone`, the renderer
-SHALL read `/proc/host/boot_id` and list the currently discoverable
-`rollout_id` values. The dispatch SHALL be acknowledged as accepted only after
+through Agent Runtime Service-owned `/mnt/agent-runtime/clone`. Service
+Manager SHALL mount this capability only in the Local Entry Login Namespace;
+Agent Process namespaces SHALL NOT inherit it. The resulting ordinary Agent
+Process SHALL be parented by the current Root Agent Process, not by the
+renderer-attached Shell Process. Before opening
+`/mnt/agent-runtime/clone`, the renderer SHALL read `/proc/host/boot_id` and
+list the currently discoverable `rollout_id` values. The dispatch SHALL be
+acknowledged as accepted only after
 `/agent/rollouts` exposes a valid producing Rollout whose ID was absent from
 that pre-spawn listing, whose first-record `process_path` matches the returned
 `/proc/<pid>`, and whose current `/proc/host/boot_id` still matches the pinned
@@ -82,8 +85,8 @@ when it does.
 
 #### Scenario: The user reviews instead of watching
 - **WHEN** the user closes the view of a strict-durability background dispatch
-  launched through `/agent/clone` and whose producing Rollout was correlated
-  through `/agent/rollouts`
+  launched through `/mnt/agent-runtime/clone` and whose producing Rollout was
+  correlated through `/agent/rollouts`
 - **THEN** the agent keeps running and the finished result appears in the
   review surface with its evidence
 - **AND** no UI element required the user to keep a conversation or execution
@@ -98,9 +101,9 @@ when it does.
   renderer-owned results database
 
 #### Scenario: Background dispatch cannot create a Rollout
-- **WHEN** a strict-durability Process launched through `/agent/clone` exits
-  before a matching producing Rollout absent from the pre-spawn listing
-  becomes discoverable
+- **WHEN** a strict-durability Process launched through
+  `/mnt/agent-runtime/clone` exits before a matching producing Rollout absent
+  from the pre-spawn listing becomes discoverable
 - **THEN** the background dispatch fails explicitly
 - **AND** no best-effort in-memory execution is acknowledged as reviewable
   background work

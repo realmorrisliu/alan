@@ -35,7 +35,7 @@ their own answer, and OS vocabulary will leak into the default UI.
   binding on renderer hosts only once a runtime or service contract owns rule
   storage and triggers.
 - Require background dispatch to use Agent Runtime Service-owned
-  `/agent/clone`, request strict durability in its existing
+  `/mnt/agent-runtime/clone`, request strict durability in its existing
   `AgentExecutableRequest`, and succeed only after `/agent/rollouts` exposes a
   newly discovered producing Rollout correlated to the returned PID under the
   same `/proc/host/boot_id`. A pre-spawn listing excludes retained Rollouts

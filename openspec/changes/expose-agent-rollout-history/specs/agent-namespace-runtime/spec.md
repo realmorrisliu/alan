@@ -11,16 +11,21 @@ Process namespace infrastructure. It MUST NOT receive an engine-owned Process
 launch context, child assembler, lifecycle callback, or live mount applicator.
 
 For a top-level Agent Process requested by a non-Agent Process, Agent Runtime
-Service SHALL expose clone-via-open `/agent/clone`. Opening the file SHALL pin
-the current `/agent/root` Process as parent, allocate an ordinary pending
-Process slot through that parent's `/proc/clone` context, and return the
-allocated PID. The caller SHALL write one existing `AgentExecutableRequest`
-and commit it on clunk. Agent Runtime Service SHALL derive the child from the
-Root Agent Process's registered runtime template and SHALL reject the commit
-if the Root Agent is unavailable, has been replaced since open, or the request
-would amplify the parent's capabilities. `/agent/clone` SHALL NOT create a
-second Process owner, launch identity, or lifecycle surface; `/proc/<pid>`
-remains authoritative.
+Service SHALL expose a dedicated clone-via-open launch capability tree. Service
+Manager SHALL bind that tree at `/mnt/agent-runtime` only in the Local Entry
+Login Namespace handed to an authorized local renderer. It MUST NOT publish
+the tree through `/srv`, add it to `/agent`, or retain it when assembling an
+Agent Process namespace.
+
+Opening `/mnt/agent-runtime/clone` SHALL pin the current `/agent/root` Process
+as parent, allocate an ordinary pending Process slot through that parent's
+`/proc/clone` context, and return the allocated PID. The caller SHALL write one
+existing `AgentExecutableRequest` and commit it on clunk. Agent Runtime Service
+SHALL derive the child from the Root Agent Process's registered runtime
+template and SHALL reject the commit if the Root Agent is unavailable, has
+been replaced since open, or the request would amplify the parent's
+capabilities. The launch capability SHALL NOT create a second Process owner,
+launch identity, or lifecycle surface; `/proc/<pid>` remains authoritative.
 
 #### Scenario: Agent Process starts
 - **WHEN** a Process executes `/bin/alan-agent` through `/proc/clone`
@@ -40,16 +45,23 @@ remains authoritative.
   callback
 
 #### Scenario: Non-Agent Process requests a top-level Agent Process
-- **WHEN** an authorized Shell or renderer Process opens `/agent/clone`
+- **WHEN** an authorized local Shell or renderer opens
+  `/mnt/agent-runtime/clone` through its Login Namespace
 - **THEN** Agent Runtime Service returns the PID of an ordinary Process whose
   parent is the current Root Agent Process
 - **AND** committing the `AgentExecutableRequest` launches it through the
   pinned Root Agent Process's `/proc/clone` context
 - **AND** the Shell or renderer Process is not treated as an Agent parent
 
+#### Scenario: Delegated Agent Process has a read-write agent mount
+- **WHEN** a delegated Agent Process receives read-write `/agent`
+- **THEN** its namespace still omits `/mnt/agent-runtime`
+- **AND** it cannot use the top-level launch capability to recover capabilities
+  withheld by its parent
+
 #### Scenario: Root Agent changes during top-level launch
 - **WHEN** `/agent/root` is unavailable or no longer identifies the Process
-  pinned when `/agent/clone` was opened
+  pinned when `/mnt/agent-runtime/clone` was opened
 - **THEN** Agent Runtime Service rejects the launch commit
 - **AND** it does not reparent the pending launch or fall back to the caller's
   Process context
