@@ -16,6 +16,10 @@ restart even though the execution evidence already exists.
   transition is published and, for control-driven exit, before aborting the
   runner. Agent Runtime Service uses the hook to flush `process_exit`; other
   Process images use the default no-op.
+- Register the existing Rollout metadata and a runtime quiescence fence as soon
+  as Agent Machine creation succeeds, before later startup readiness can fail.
+  Terminal finalization quiesces the Rollout writer before appending
+  `process_exit`, so no later record can follow the terminal record.
 - Expose each retained Rollout as its existing JSONL record at the read-only
   `/agent/rollouts/<rollout-id>` file path. The surface remains available
   after Process exit and Host restart.

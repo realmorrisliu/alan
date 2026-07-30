@@ -62,6 +62,13 @@ timestamp, and the existing `AgentExecutableResult` when one is available. It
 SHALL NOT introduce a second terminal status enum or fabricate a Rollout for a
 best-effort execution that started without one.
 
+Agent Runtime Service SHALL register the existing Rollout metadata and a
+retained `RuntimeHandle` immediately after Agent Machine creation succeeds,
+before later initialization or readiness signaling. Terminal finalization
+SHALL use that handle to request quiescence and await a writer fence before
+appending `process_exit`; no Rollout record may be appended after
+`process_exit`.
+
 #### Scenario: Agent Executable completes with a terminal result
 - **WHEN** an Agent Process publishes an `AgentExecutableResult` and exits
 - **THEN** its Rollout ends with a `process_exit` record carrying the Process
@@ -70,10 +77,26 @@ best-effort execution that started without one.
 
 #### Scenario: Generic Process control stops execution
 - **WHEN** `cancel` or `interrupt` terminates the Process with exit code `130`
-- **THEN** Alan Kernel invokes terminal finalization before aborting the runner
+- **THEN** terminal finalization quiesces the Agent Machine and Rollout writer
+- **AND** Alan Kernel waits for finalization before aborting the runner
 - **AND** `process_exit` preserves the numeric code `130`
 - **AND** it does not invent separate cancelled and interrupted states that
   the Kernel does not distinguish
+
+#### Scenario: Startup fails after Rollout creation
+- **WHEN** Agent Machine creation creates a producing Rollout and a later
+  startup step fails before runtime readiness
+- **THEN** the previously registered terminal context still identifies that
+  Rollout
+- **AND** finalization appends and flushes `process_exit` for the startup
+  failure
+
+#### Scenario: Active transition is cancelled
+- **WHEN** control requests exit while the Agent Machine can still append
+  Rollout records
+- **THEN** finalization waits for the writer fence before appending
+  `process_exit`
+- **AND** `process_exit` is the final Rollout record
 
 #### Scenario: Host failure prevents terminal recording
 - **WHEN** an older Rollout or abrupt Host failure leaves no `process_exit`

@@ -84,14 +84,24 @@ Agent Runtime Service owns the existing Rollout writer and optional
 `AgentExecutableResult`. The Kernel still owns the one terminal transition and
 numeric exit code.
 
-At Agent Machine readiness, Agent Runtime Service retains the existing internal
-`RuntimeStartupMetadata` in one Process-local terminal context rather than
-discarding it. If `/bin/alan-agent` produces an `AgentExecutableResult`, the
-same context records that existing result before `run` returns. The finalizer
-consumes the context exactly once, appends and flushes `process_exit` through
-the owning Rollout writer, and only then permits AgentFS/runtime cleanup. This
-context is bounded to the live Process and is neither exposed as a file or Host
-API nor promoted into another execution identity.
+Immediately after `initialize_agent_machine` succeeds, Agent Execution Engine
+publishes the existing `RuntimeStartupMetadata` through an early
+`RuntimeController` channel before initializing later UI surfaces or signaling
+readiness. Agent Runtime Service receives it through that caller-owned
+controller boundary and retains it with the existing `RuntimeHandle` in one
+Process-local terminal context rather than waiting for `wait_until_ready`.
+If a Rollout was created and a later startup step fails, finalization can
+therefore still terminate that Rollout. If `/bin/alan-agent` produces an
+`AgentExecutableResult`, the same context records that existing result before
+`run` returns.
+
+The finalizer uses the retained `RuntimeHandle` to request Agent Machine
+quiescence and waits for a writer fence proving that the transition loop and
+Rollout recorder can append no further records. It then consumes the terminal
+context exactly once, appends and flushes `process_exit` through the owning
+Rollout writer, and only then permits AgentFS/runtime cleanup or Kernel runner
+abort. This context is bounded to the live Process and is neither exposed as a
+file or Host API nor promoted into another execution identity.
 
 ### D5: Read authority follows the existing `/agent` capability
 

@@ -40,14 +40,21 @@
 - [ ] 2.3 Add the `process_exit` Rollout record using the existing numeric
   Process exit code, completion timestamp, and optional
   `AgentExecutableResult`, with serialization tests.
-- [ ] 2.4 Retain existing `RuntimeStartupMetadata` and any eventual
-  `AgentExecutableResult` in one internal Process-local terminal context until
-  finalization; do not expose it as a file, Host API, or durable identity.
+- [ ] 2.4 Immediately after Agent Machine creation succeeds, publish existing
+  `RuntimeStartupMetadata` through an early `RuntimeController` channel before
+  later initialization and readiness; have Agent Runtime Service retain it
+  with the existing `RuntimeHandle` and any eventual
+  `AgentExecutableResult` in one internal Process-local terminal context.
+  Prove failure after Rollout creation but before readiness still finalizes
+  the producing Rollout, without an Engine-to-Service dependency, file, Host
+  API, or durable identity.
 - [ ] 2.5 Have System Process runner route Agent Executable finalization to
-  Agent Runtime Service; consume the terminal context exactly once and, for a
-  producing Rollout, append and flush `process_exit` before AgentFS cleanup,
-  runner abort, and Kernel exit publication. Test normal result publication
-  and control exit code `130`.
+  Agent Runtime Service; first request Agent Machine quiescence and await a
+  writer fence, then consume the terminal context exactly once and, for a
+  producing Rollout, append and flush terminal `process_exit` before AgentFS
+  cleanup, runner abort, and Kernel exit publication. Test normal result
+  publication, active-transition cancellation, no post-exit append, and
+  control exit code `130`.
 - [ ] 2.6 Preserve Rollouts without `process_exit` as unterminated evidence
   without fabricating a result.
 
