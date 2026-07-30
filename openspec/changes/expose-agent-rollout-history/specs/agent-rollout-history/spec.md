@@ -62,14 +62,25 @@ timestamp, and the existing `AgentExecutableResult` when one is available. It
 SHALL NOT introduce a second terminal status enum or fabricate a Rollout for a
 best-effort execution that started without one.
 
-Agent Runtime Service SHALL register the existing Rollout metadata and a
-retained `RuntimeHandle` immediately after Agent Machine creation succeeds,
-before later initialization or readiness signaling. Terminal finalization
-SHALL use that handle to request quiescence of both ordinary transitions and
-deferred runtime actions. Quiescence SHALL cancel or drain every such producer
-and await a writer fence proving that none can append another Rollout record
-before finalization appends `process_exit`; no Rollout record may be appended
-after `process_exit`.
+Before an Agent Process becomes controllable, System Process runner SHALL
+register with Agent Runtime Service a pending Process-local terminal-context
+barrier and a startup cancellation path. Every Agent startup exit path SHALL
+resolve the barrier exactly once with either a producing-Rollout context or an
+explicit no-producing-Rollout outcome; an absent or dropped resolution SHALL
+NOT be treated as no Rollout.
+
+Immediately after Agent Machine creation succeeds, Agent Runtime Service SHALL
+resolve the producing-Rollout context with the existing Rollout metadata and a
+retained `RuntimeHandle`, before later initialization or readiness signaling.
+Terminal finalization SHALL first request startup or runtime cancellation and
+await the barrier. For a producing Rollout, it SHALL then use the retained
+handle to request quiescence of both ordinary transitions and deferred runtime
+actions. Quiescence SHALL cancel or drain every such producer and await a
+writer fence proving that none can append another Rollout record before
+finalization appends `process_exit`; no Rollout record may be appended after
+`process_exit`. The barrier and its outcomes SHALL remain internal,
+Process-local synchronization state and SHALL NOT create a durable identity or
+terminal status model.
 
 #### Scenario: Agent Executable completes with a terminal result
 - **WHEN** an Agent Process publishes an `AgentExecutableResult` and exits
@@ -88,10 +99,20 @@ after `process_exit`.
 #### Scenario: Startup fails after Rollout creation
 - **WHEN** Agent Machine creation creates a producing Rollout and a later
   startup step fails before runtime readiness
-- **THEN** the previously registered terminal context still identifies that
-  Rollout
+- **THEN** the pending barrier has already resolved to the producing-Rollout
+  context
 - **AND** finalization appends and flushes `process_exit` for the startup
   failure
+
+#### Scenario: Control arrives while terminal context is pending
+- **WHEN** `/proc/<pid>/ctl` requests exit after Process commit but before
+  Agent startup has reported whether it created a Rollout
+- **THEN** terminal finalization requests startup cancellation and awaits the
+  pending terminal-context barrier
+- **AND** startup resolves the barrier with the producing-Rollout context if
+  creation succeeded, or with an explicit no-producing-Rollout outcome if it
+  did not
+- **AND** finalization never infers no Rollout from a delivery race
 
 #### Scenario: Active transition is cancelled
 - **WHEN** control requests exit while the Agent Machine can still append

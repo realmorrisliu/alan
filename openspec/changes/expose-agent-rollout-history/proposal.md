@@ -11,15 +11,19 @@ restart even though the execution evidence already exists.
   cleanup. It carries the authoritative numeric exit code and, when available,
   the existing `AgentExecutableResult`; it does not introduce another terminal
   status model.
-- Extend the generic Process runner bridge with an optional terminal
-  finalization hook. Alan Kernel invokes it exactly once before any terminal
-  transition is published and, for control-driven exit, before aborting the
-  runner. Agent Runtime Service uses the hook to flush `process_exit`; other
-  Process images use the default no-op.
-- Register the existing Rollout metadata and a runtime quiescence fence as soon
-  as Agent Machine creation succeeds, before later startup readiness can fail.
-  Terminal finalization quiesces the Rollout writer before appending
-  `process_exit`, so no later record can follow the terminal record.
+- Extend the generic Process runner bridge with a prepared terminal
+  finalization hook. Alan Kernel asks the runner to prepare the per-Process
+  hook before the committed Process becomes controllable, invokes it exactly
+  once before any terminal transition is published, and, for control-driven
+  exit, awaits it before aborting the runner. Other Process images use the
+  default no-op.
+- For `/bin/alan-agent`, prepare a pending Process-local terminal-context
+  barrier before control becomes reachable. Resolve it on every startup path
+  with either the existing Rollout metadata plus runtime quiescence handle or
+  an explicit no-producing-Rollout outcome. Terminal finalization cancels
+  startup or execution, awaits that barrier, and quiesces every Rollout writer
+  before appending `process_exit`, so no producing Rollout is missed and no
+  later record can follow the terminal record.
 - Expose each retained Rollout as its existing JSONL record at the read-only
   `/agent/rollouts/<rollout-id>` file path. The surface remains available
   after Process exit and Host restart.

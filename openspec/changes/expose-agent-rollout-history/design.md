@@ -71,40 +71,56 @@ being appended, the Rollout remains valid unterminated evidence.
 
 The current Kernel control path aborts the runner before Agent Runtime Service
 can perform cleanup, so cleanup ordering alone cannot cover code `130`.
-`ProcessRunner` therefore gains a generic terminal finalization hook with a
-default no-op. For runner completion, `/proc/<pid>/ctl`, and Host
-`record_exit`, Alan Kernel serializes competing terminal paths, invokes the
-hook exactly once with the committed `ProcessInvocation` and intended numeric
-exit code, waits for it to finish, and only then publishes exit. A
-control-driven path aborts the runner only after finalization.
+`ProcessRunner` therefore gains generic terminal-finalizer preparation and
+execution hooks with default no-ops. Before the committed Process becomes
+visible as running or accepts `/proc/<pid>/ctl`, Alan Kernel asks the runner to
+prepare one per-Process finalizer from the committed `ProcessInvocation` and
+retains it with the runner task. For runner completion, `/proc/<pid>/ctl`, and
+Host `record_exit`, Alan Kernel serializes competing terminal paths, invokes
+that prepared finalizer exactly once with the intended numeric exit code,
+waits for it to finish, and only then publishes exit. A control-driven path
+aborts the runner only after finalization.
 
-This hook contains no Agent, Rollout, or storage semantics. System Process
-runner dispatches it to Agent Runtime Service only for `/bin/alan-agent`;
+These hooks contain no Agent, Rollout, or storage semantics. System Process
+runner dispatches them to Agent Runtime Service only for `/bin/alan-agent`;
 Agent Runtime Service owns the existing Rollout writer and optional
 `AgentExecutableResult`. The Kernel still owns the one terminal transition and
 numeric exit code.
+
+During generic finalizer preparation, System Process runner synchronously asks
+Agent Runtime Service to install a pending terminal-context barrier and startup
+cancellation path for that PID before Process control becomes reachable. The
+Agent startup owner must resolve the barrier exactly once on every exit path:
+with a producing-Rollout context, or with an explicit no-producing-Rollout
+outcome. A drop guard or equivalent total-exit mechanism prevents channel
+closure from being misread as the latter.
 
 Immediately after `initialize_agent_machine` succeeds, Agent Execution Engine
 publishes the existing `RuntimeStartupMetadata` through an early
 `RuntimeController` channel before initializing later UI surfaces or signaling
 readiness. Agent Runtime Service receives it through that caller-owned
-controller boundary and retains it with the existing `RuntimeHandle` in one
-Process-local terminal context rather than waiting for `wait_until_ready`.
-If a Rollout was created and a later startup step fails, finalization can
-therefore still terminate that Rollout. If `/bin/alan-agent` produces an
+controller boundary, combines it with the existing `RuntimeHandle`, and
+resolves the pending barrier to the producing-Rollout context rather than
+waiting for `wait_until_ready`. If startup exits before creating a Rollout, it
+resolves the barrier explicitly as no producing Rollout. If a Rollout was
+created and a later startup step fails, finalization can therefore still
+terminate that Rollout. If `/bin/alan-agent` produces an
 `AgentExecutableResult`, the same context records that existing result before
 `run` returns.
 
-The finalizer uses the retained `RuntimeHandle` to request Agent Machine
-quiescence. That operation cancels or drains both ordinary transitions and
-deferred runtime actions before completing a writer fence that covers every
-Rollout producer. The finalizer waits for that fence, consumes the terminal
-context exactly once, appends and flushes `process_exit` through the owning
-Rollout writer, and only then permits AgentFS/runtime cleanup or Kernel runner
-abort. In particular, a `/proc/<pid>/ctl` exit while a deferred action is
-active cannot leave the finalizer waiting on a producer that never received
-cancellation. This context is bounded to the live Process and is neither
-exposed as a file or Host API nor promoted into another execution identity.
+The finalizer first signals startup or runtime cancellation and waits for the
+terminal-context barrier. For a producing Rollout, it uses the retained
+`RuntimeHandle` to request Agent Machine quiescence. That operation cancels or
+drains both ordinary transitions and deferred runtime actions before
+completing a writer fence that covers every Rollout producer. The finalizer
+waits for that fence, consumes the terminal context exactly once, appends and
+flushes `process_exit` through the owning Rollout writer, and only then permits
+AgentFS/runtime cleanup or Kernel runner abort. In particular, control
+immediately after commit cannot outrun terminal registration, and control
+during a deferred action cannot leave the finalizer waiting on a producer that
+never received cancellation. This context is bounded to the live Process and
+is neither exposed as a file or Host API nor promoted into another execution
+identity.
 
 ### D5: Read authority follows the existing `/agent` capability
 

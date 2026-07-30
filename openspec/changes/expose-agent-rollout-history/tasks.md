@@ -30,34 +30,43 @@
 
 ## 2. Terminal Rollout Evidence
 
-- [ ] 2.1 Extend the generic `ProcessRunner` bridge with a default no-op
-  terminal finalization hook that receives the committed invocation and
-  intended numeric exit code.
+- [ ] 2.1 Extend the generic `ProcessRunner` bridge with default no-op
+  terminal-finalizer preparation and execution hooks. Prepare one
+  per-Process finalizer from the committed invocation before the Process is
+  visible as running or accepts `ctl`, and invoke it with the intended numeric
+  exit code.
 - [ ] 2.2 Serialize runner completion, `/proc/<pid>/ctl`, and Host
-  `record_exit` through one per-Process terminal claim; invoke and await the
-  hook exactly once before publishing exit and before aborting a controlled
-  runner, with race and generic no-op tests.
+  `record_exit` through one per-Process terminal claim; retain, invoke, and
+  await the prepared finalizer exactly once before publishing exit and before
+  aborting a controlled runner, with immediate-control, completion/control
+  race, and generic no-op tests.
 - [ ] 2.3 Add the `process_exit` Rollout record using the existing numeric
   Process exit code, completion timestamp, and optional
   `AgentExecutableResult`, with serialization tests.
 - [ ] 2.4 Immediately after Agent Machine creation succeeds, publish existing
   `RuntimeStartupMetadata` through an early `RuntimeController` channel before
-  later initialization and readiness; have Agent Runtime Service retain it
-  with the existing `RuntimeHandle` and any eventual
-  `AgentExecutableResult` in one internal Process-local terminal context.
-  Prove failure after Rollout creation but before readiness still finalizes
-  the producing Rollout, without an Engine-to-Service dependency, file, Host
-  API, or durable identity.
+  later initialization and readiness. During generic finalizer preparation,
+  have System Process runner synchronously register a pending terminal-context
+  barrier and startup cancellation path with Agent Runtime Service before
+  Process control is reachable. Resolve the barrier exactly once on every
+  startup exit with either the existing metadata plus `RuntimeHandle`, or an
+  explicit no-producing-Rollout outcome; retain any eventual
+  `AgentExecutableResult` in that internal Process-local context. Prove
+  control during the delivery window and failure after Rollout creation but
+  before readiness still finalize correctly, without an Engine-to-Service
+  dependency, file, Host API, durable identity, or absent-resolution fallback.
 - [ ] 2.5 Have System Process runner route Agent Executable finalization to
-  Agent Runtime Service; first request Agent Machine quiescence that cancels or
-  drains both ordinary transitions and deferred runtime actions, then await a
-  writer fence covering every Rollout producer. Consume the terminal context
-  exactly once and, for a producing Rollout, append and flush terminal
-  `process_exit` before AgentFS cleanup, runner abort, and Kernel exit
-  publication. Test normal result publication, active-transition
+  Agent Runtime Service; first signal startup or runtime cancellation and
+  await the terminal-context barrier. For a producing Rollout, request Agent
+  Machine quiescence that cancels or drains both ordinary transitions and
+  deferred runtime actions, then await a writer fence covering every Rollout
+  producer. Consume the terminal context exactly once and append and flush
+  terminal `process_exit` before AgentFS cleanup, runner abort, and Kernel exit
+  publication. Test immediate control before metadata delivery, explicit
+  no-Rollout startup, normal result publication, active-transition
   cancellation, `/proc/<pid>/ctl` exit during an active deferred action,
-  deadlock-free fence completion, no post-exit append, and control exit code
-  `130`.
+  deadlock-free barrier and fence completion, no post-exit append, and control
+  exit code `130`.
 - [ ] 2.6 Preserve Rollouts without `process_exit` as unterminated evidence
   without fabricating a result.
 
