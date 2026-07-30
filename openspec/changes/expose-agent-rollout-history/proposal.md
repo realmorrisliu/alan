@@ -19,11 +19,13 @@ restart even though the execution evidence already exists.
   default no-op.
 - For `/bin/alan-agent`, prepare a pending Process-local terminal-context
   barrier before control becomes reachable. Resolve it on every startup path
-  with either the existing Rollout metadata plus runtime quiescence handle or
-  an explicit no-producing-Rollout outcome. Terminal finalization cancels
-  startup or execution, awaits that barrier, and quiesces every Rollout writer
-  before appending `process_exit`, so no producing Rollout is missed and no
-  later record can follow the terminal record.
+  with either the existing Rollout metadata plus ownership of the runtime task
+  and cleanup guard, or an explicit no-producing-Rollout outcome. The ordinary
+  run path hands that ownership to terminal finalization instead of shutting
+  down or dropping it. Terminal finalization cancels startup or execution,
+  awaits that barrier, and quiesces every Rollout writer before appending
+  `process_exit`, so no producing Rollout is missed and no later record can
+  follow the terminal record.
 - Expose each retained Rollout as its existing JSONL record at the read-only
   `/agent/rollouts/<rollout-id>` file path. The surface remains available
   after Process exit and Host restart.

@@ -99,28 +99,40 @@ Immediately after `initialize_agent_machine` succeeds, Agent Execution Engine
 publishes the existing `RuntimeStartupMetadata` through an early
 `RuntimeController` channel before initializing later UI surfaces or signaling
 readiness. Agent Runtime Service receives it through that caller-owned
-controller boundary, combines it with the existing `RuntimeHandle`, and
-resolves the pending barrier to the producing-Rollout context rather than
-waiting for `wait_until_ready`. If startup exits before creating a Rollout, it
-resolves the barrier explicitly as no producing Rollout. If a Rollout was
-created and a later startup step fails, finalization can therefore still
-terminate that Rollout. If `/bin/alan-agent` produces an
-`AgentExecutableResult`, the same context records that existing result before
-`run` returns.
+controller boundary. The Agent Runtime Service terminal context takes
+ownership of the live `RuntimeController` (or an equivalent owning runtime-task
+guard), the Process cleanup guard, and the existing metadata rather than
+retaining only a cloned `RuntimeHandle`; it then resolves the pending barrier
+to the producing-Rollout context without waiting for `wait_until_ready`. The
+ordinary Agent Executable run path may use a borrowed handle to await readiness
+and produce its `ProcessOutcome`, but it must hand off ownership immediately
+after constructing the controller, before awaiting runtime readiness. Control
+may already be pending at that point and therefore awaits the pre-registered
+barrier. The run path must not call `RuntimeController::shutdown`, drop its
+runtime task owner, or perform Process cleanup before terminal finalization. If
+startup exits before creating a Rollout, it resolves the barrier explicitly as
+no producing Rollout. If a Rollout was created and a later startup step fails,
+finalization can therefore still terminate that Rollout. If `/bin/alan-agent`
+produces an `AgentExecutableResult`, the same context records that existing
+result before `run` returns.
 
 The finalizer first signals startup or runtime cancellation and waits for the
-terminal-context barrier. For a producing Rollout, it uses the retained
-`RuntimeHandle` to request Agent Machine quiescence. That operation cancels or
+terminal-context barrier. For a producing Rollout, it uses the retained live
+runtime owner to request Agent Machine quiescence. That operation cancels or
 drains both ordinary transitions and deferred runtime actions before
-completing a writer fence that covers every Rollout producer. The finalizer
-waits for that fence, consumes the terminal context exactly once, appends and
-flushes `process_exit` through the owning Rollout writer, and only then permits
-AgentFS/runtime cleanup or Kernel runner abort. In particular, control
-immediately after commit cannot outrun terminal registration, and control
-during a deferred action cannot leave the finalizer waiting on a producer that
-never received cancellation. This context is bounded to the live Process and
-is neither exposed as a file or Host API nor promoted into another execution
-identity.
+completing a writer fence that covers every Rollout producer. Normal runner
+completion does not shut down the controller before this step: it publishes
+its result, returns its `ProcessOutcome`, and leaves the runtime task and
+cleanup guard owned by the terminal context. The finalizer waits for the
+writer fence, appends and flushes `process_exit` through the owning Rollout
+writer, then shuts down and releases the runtime task and performs Process
+cleanup before consuming the terminal context exactly once. Only after that
+may Kernel publish exit or abort the runner. In particular, control immediately
+after commit cannot outrun terminal registration, normal completion cannot
+leave the finalizer with a stopped runtime, and control during a deferred
+action cannot leave the finalizer waiting on a producer that never received
+cancellation. This context is bounded to the live Process and is neither
+exposed as a file or Host API nor promoted into another execution identity.
 
 ### D5: Read authority follows the existing `/agent` capability
 

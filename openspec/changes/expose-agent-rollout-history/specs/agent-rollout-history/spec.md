@@ -71,22 +71,32 @@ NOT be treated as no Rollout.
 
 Immediately after Agent Machine creation succeeds, Agent Runtime Service SHALL
 resolve the producing-Rollout context with the existing Rollout metadata and a
-retained `RuntimeHandle`, before later initialization or readiness signaling.
-Terminal finalization SHALL first request startup or runtime cancellation and
-await the barrier. For a producing Rollout, it SHALL then use the retained
-handle to request quiescence of both ordinary transitions and deferred runtime
-actions. Quiescence SHALL cancel or drain every such producer and await a
-writer fence proving that none can append another Rollout record before
-finalization appends `process_exit`; no Rollout record may be appended after
-`process_exit`. The barrier and its outcomes SHALL remain internal,
-Process-local synchronization state and SHALL NOT create a durable identity or
-terminal status model.
+retained owning `RuntimeController` or equivalent runtime-task guard and
+Process cleanup guard, before later initialization or readiness signaling. A
+cloned `RuntimeHandle` alone SHALL NOT satisfy this ownership requirement. The
+ordinary Agent Executable run path MAY borrow the handle to await and produce
+its `ProcessOutcome`, but SHALL NOT shut down or drop the runtime-task owner or
+perform Process cleanup before terminal finalization. Terminal finalization
+SHALL first request startup or runtime cancellation and await the barrier. For
+a producing Rollout, it SHALL then use the retained live runtime owner to
+request quiescence of both ordinary transitions and deferred runtime actions.
+Quiescence SHALL cancel or drain every such producer and await a writer fence
+proving that none can append another Rollout record before finalization appends
+`process_exit`; no Rollout record may be appended after `process_exit`.
+Finalization SHALL release the runtime-task owner and perform Process cleanup
+only after `process_exit` is flushed. The barrier and its outcomes SHALL remain
+internal, Process-local synchronization state and SHALL NOT create a durable
+identity or terminal status model.
 
 #### Scenario: Agent Executable completes with a terminal result
 - **WHEN** an Agent Process publishes an `AgentExecutableResult` and exits
-- **THEN** its Rollout ends with a `process_exit` record carrying the Process
+- **THEN** the ordinary run path transfers or retains the live runtime-task
+  owner and Process cleanup guard in the terminal context instead of shutting
+  down or dropping them
+- **AND** its Rollout ends with a `process_exit` record carrying the Process
   exit code and that existing result
 - **AND** the record is flushed before AgentFS runtime cleanup
+- **AND** only then does finalization shut down and release the runtime task
 
 #### Scenario: Generic Process control stops execution
 - **WHEN** `cancel` or `interrupt` terminates the Process with exit code `130`

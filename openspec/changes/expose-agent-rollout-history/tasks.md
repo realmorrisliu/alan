@@ -49,24 +49,30 @@
   have System Process runner synchronously register a pending terminal-context
   barrier and startup cancellation path with Agent Runtime Service before
   Process control is reachable. Resolve the barrier exactly once on every
-  startup exit with either the existing metadata plus `RuntimeHandle`, or an
-  explicit no-producing-Rollout outcome; retain any eventual
-  `AgentExecutableResult` in that internal Process-local context. Prove
-  control during the delivery window and failure after Rollout creation but
-  before readiness still finalize correctly, without an Engine-to-Service
-  dependency, file, Host API, durable identity, or absent-resolution fallback.
+  startup exit with either the existing metadata plus ownership of the live
+  `RuntimeController` (or equivalent runtime-task guard) and Process cleanup
+  guard, or an explicit no-producing-Rollout outcome; a cloned
+  `RuntimeHandle` alone is insufficient. Retain any eventual
+  `AgentExecutableResult` in that internal Process-local context. Prove control
+  during the delivery window and failure after Rollout creation but before
+  readiness still finalize correctly, without an Engine-to-Service dependency,
+  file, Host API, durable identity, or absent-resolution fallback.
 - [ ] 2.5 Have System Process runner route Agent Executable finalization to
   Agent Runtime Service; first signal startup or runtime cancellation and
   await the terminal-context barrier. For a producing Rollout, request Agent
   Machine quiescence that cancels or drains both ordinary transitions and
   deferred runtime actions, then await a writer fence covering every Rollout
-  producer. Consume the terminal context exactly once and append and flush
-  terminal `process_exit` before AgentFS cleanup, runner abort, and Kernel exit
-  publication. Test immediate control before metadata delivery, explicit
-  no-Rollout startup, normal result publication, active-transition
-  cancellation, `/proc/<pid>/ctl` exit during an active deferred action,
-  deadlock-free barrier and fence completion, no post-exit append, and control
-  exit code `130`.
+  producer. The normal run path SHALL hand off its live runtime and cleanup
+  ownership instead of calling `RuntimeController::shutdown`, dropping the
+  task owner, or cleaning up before finalization. Append and flush terminal
+  `process_exit`, then shut down and release the runtime task, perform AgentFS
+  and Process cleanup, and consume the terminal context exactly once before
+  runner abort or Kernel exit publication. Test immediate control before
+  metadata delivery, explicit no-Rollout startup, normal result publication
+  followed by successful finalization while the runtime remains live,
+  controller-drop regression, active-transition cancellation,
+  `/proc/<pid>/ctl` exit during an active deferred action, deadlock-free barrier
+  and fence completion, no post-exit append, and control exit code `130`.
 - [ ] 2.6 Preserve Rollouts without `process_exit` as unterminated evidence
   without fabricating a result.
 
