@@ -20,7 +20,8 @@ act on triggers and report outcomes.
 ## Goals
 
 - One interaction model that every renderer host (macOS, TUI, future Alan
-  Apps) implements, so users learn it once.
+  Apps) implements, with mode availability following the capabilities of its
+  attachment, so users learn the same objects and layers once.
 - The file-native architecture remains fully reachable and scriptable — the
   model adds layers over the truth, never a parallel truth.
 - OS vocabulary is quarantined: default UI copy passes a "user object" test.
@@ -35,6 +36,8 @@ act on triggers and report outcomes.
   `macos-shell-ui-ux-conformance`.
 - Onboarding flows, empty states, and first-run copy: a later change.
 - TUI-specific keybindings and macOS-specific layout details.
+- Remote Entry launch authority, revocation, and background dispatch; those
+  require a separate remote-access contract.
 
 ## Decisions
 
@@ -71,7 +74,10 @@ there is nothing to synchronize.
 - **Background servant**: the user dispatches work; agents run detached
   (closing a view detaches per ADR-0047); the user primarily reviews finished
   work — results, diffs, evidence — in an inbox-style surface rather than
-  watching execution.
+  watching execution. This mode is required for local renderers whose Local
+  Entry Login Namespace contains `/mnt/agent-runtime/clone`. A Remote Entry
+  renderer is not required to expose it until a separate contract grants and
+  revokes remote launch authority.
 - **Event-driven**: standing rules (triggers, schedules, watched folders,
   service notices) cause agents to act; proactive reports arrive in the same
   review surface. The user manages the rule set and the outcome stream, not
@@ -117,14 +123,15 @@ rule is reviewable per screen and belongs in UI conformance checks.
 
 ### D7: Completed work requires durable discovery
 
-Background-servant interaction is not complete if outcomes disappear with a
-Process or Alan OS Host boot. A background dispatch therefore sets
+Local background-servant interaction is not complete if outcomes disappear
+with a Process or Alan OS Host boot. A local background dispatch therefore sets
 `runtime_overrides.durability_required` in the `AgentExecutableRequest`
 committed through Agent Runtime Service-owned
 `/mnt/agent-runtime/clone`. Service Manager mounts this launch capability only
-in the Local Entry Login Namespace, so Agent Processes cannot regain
-capabilities through it. The path uses the current Root Agent Process as the
-ordinary parent; the attached Shell Process is not treated as an Agent parent.
+in the Local Entry Login Namespace, so Remote Entry and Agent Process
+namespaces cannot regain capabilities through it. The path uses the current
+Root Agent Process as the ordinary parent; the attached Shell Process is not
+treated as an Agent parent.
 After reading
 `/proc/host/boot_id`, listing the current `rollout_id` values, and receiving
 the pending PID, the renderer acknowledges the dispatch only when
@@ -153,7 +160,9 @@ Rollout terminal completion and namespace discovery belong to the prerequisite
 Agent Runtime Service-owned top-level launch path, file-visible
 strict-durability request, and Rollout correlation handshake. This
 interaction-model change owns only the user-facing obligation to dispatch and
-present work through those files.
+present local background work through those files. Remote background dispatch
+remains deferred until Remote Access Service or another owning contract
+defines its revocable capability.
 
 ## Risks / Trade-offs
 
@@ -175,6 +184,9 @@ present work through those files.
 - **Strict durability can reject background dispatch when its Rollout cannot
   be created.** Accepted: explicit failure is preferable to acknowledging work
   whose promised outcome cannot be reviewed.
+- **Remote renderers do not yet expose background-servant dispatch.**
+  Accepted: granting remote launch authority requires explicit revocation and
+  trust semantics that do not belong in this local interaction slice.
 
 ## Open Questions
 

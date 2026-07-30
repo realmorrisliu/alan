@@ -47,18 +47,20 @@ SHALL own copied runtime state.
   service truth
 
 ### Requirement: Conversation is one of three interaction modes
-Alan renderer hosts SHALL support conversation and background-servant
-interaction as first-class modes. Conversation SHALL NOT be assumed as the
-entry or primary posture. Background-servant mode SHALL let
-agents run detached — closing a view detaches per ADR-0047 and never implies
-stopping execution — and SHALL present completed work for review rather than
-requiring the user to watch execution. A background dispatch SHALL request the
-strict-durability launch behavior in an `AgentExecutableRequest` committed
-through Agent Runtime Service-owned `/mnt/agent-runtime/clone`. Service
-Manager SHALL mount this capability only in the Local Entry Login Namespace;
-Agent Process namespaces SHALL NOT inherit it. The resulting ordinary Agent
-Process SHALL be parented by the current Root Agent Process, not by the
-renderer-attached Shell Process. Before opening
+Alan renderer hosts SHALL support conversation. A local renderer host attached
+through the Local Entry Login Namespace SHALL additionally support
+background-servant interaction as a first-class mode. Conversation SHALL NOT
+be assumed as the entry or primary posture for such a local renderer.
+Background-servant mode SHALL let agents run detached — closing a view detaches
+per ADR-0047 and never implies stopping execution — and SHALL present completed
+work for review rather than requiring the user to watch execution. A local
+background dispatch SHALL request the strict-durability launch behavior in an
+`AgentExecutableRequest` committed through Agent Runtime Service-owned
+`/mnt/agent-runtime/clone`. Service Manager SHALL mount this capability only in
+the Local Entry Login Namespace; Remote Entry and Agent Process namespaces
+SHALL NOT inherit it. The resulting ordinary Agent Process SHALL be parented
+by the current Root Agent Process, not by the renderer-attached Shell Process.
+Before opening
 `/mnt/agent-runtime/clone`, the renderer SHALL read `/proc/host/boot_id` and
 list the currently discoverable `rollout_id` values. The dispatch SHALL be
 acknowledged as accepted only after
@@ -69,12 +71,15 @@ value. If the boot identity changes or the Process exits before that new
 Rollout is discoverable, the dispatch SHALL fail rather than continue as
 untracked background work.
 
-Completed outcomes from accepted background dispatches and their retained
-evidence references SHALL remain discoverable after Process exit and Alan OS
-Host restart through the Agent Runtime Service-owned read-only Rollout history
-surface. Best-effort foreground conversation without a Rollout SHALL NOT carry
-this durable-review guarantee. Renderer hosts SHALL NOT scan System Store
-backing or persist a private results database. Event-driven interaction —
+Completed outcomes from accepted local background dispatches and their
+retained evidence references SHALL remain discoverable after Process exit and
+Alan OS Host restart through the Agent Runtime Service-owned read-only Rollout
+history surface. Best-effort foreground conversation without a Rollout SHALL
+NOT carry this durable-review guarantee. Renderer hosts SHALL NOT scan System
+Store backing or persist a private results database. This change SHALL NOT
+require a Remote Entry renderer to offer background dispatch and SHALL NOT
+grant it `/mnt/agent-runtime/clone`; remote launch authority and revocation
+require a separate owning contract. Event-driven interaction —
 standing
 rules that cause agents to act, with proactive reports — is the recorded
 third mode and the designated direction of this model; because no runtime or
@@ -84,9 +89,9 @@ the review surface unified so event-driven outcomes join user-dispatched work
 when it does.
 
 #### Scenario: The user reviews instead of watching
-- **WHEN** the user closes the view of a strict-durability background dispatch
-  launched through `/mnt/agent-runtime/clone` and whose producing Rollout was
-  correlated through `/agent/rollouts`
+- **WHEN** a local renderer user closes the view of a strict-durability
+  background dispatch launched through `/mnt/agent-runtime/clone` and whose
+  producing Rollout was correlated through `/agent/rollouts`
 - **THEN** the agent keeps running and the finished result appears in the
   review surface with its evidence
 - **AND** no UI element required the user to keep a conversation or execution
@@ -113,6 +118,14 @@ when it does.
   acknowledged
 - **THEN** the background dispatch fails explicitly
 - **AND** no Rollout from the new boot is associated with the prior request
+
+#### Scenario: A renderer attaches through Remote Entry
+- **WHEN** a renderer receives a Remote Entry namespace without
+  `/mnt/agent-runtime/clone`
+- **THEN** it remains conformant by providing conversation and the disclosure
+  layers reachable through that namespace
+- **AND** this change does not require background dispatch or synthesize a
+  remote launch path
 
 #### Scenario: Event-driven mode awaits its owning contract
 - **WHEN** no runtime or service contract yet owns event rules and triggers

@@ -60,7 +60,9 @@
   default-UI copy in `clients/apple` and `crates/tui` for quarantined OS terms.
 - [ ] 4.2 Add renderer-host conformance tests proving Work-layer gestures
   become file writes and `ctl` commands with no renderer-local state
-  mutation.
+  mutation, local attachments expose background-servant mode through
+  `/mnt/agent-runtime/clone`, and Remote Entry attachments remain conformant
+  without that mode or launch capability.
 - [ ] 4.3 Verify the macOS and Rust TUI review and Permissions surfaces render
   exclusively from mounted file state per ADR-0046.
 

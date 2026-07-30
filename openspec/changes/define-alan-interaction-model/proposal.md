@@ -30,11 +30,13 @@ their own answer, and OS vocabulary will leak into the default UI.
   no layer owns copied state.
 - Establish the interaction modes: **conversation** and **background
   servant** (agents run detached; the user primarily reviews completed work
-  and evidence) are first-class obligations; **event-driven** (agents act on
-  events and proactively report) is recorded as the designated third mode,
-  binding on renderer hosts only once a runtime or service contract owns rule
-  storage and triggers.
-- Require background dispatch to use Agent Runtime Service-owned
+  and evidence) are first-class for local renderer hosts; Remote Entry
+  renderers require only conversation until a separate remote-launch contract
+  owns revocable authority. **Event-driven** (agents act on events and
+  proactively report) is recorded as the designated third mode, binding on
+  renderer hosts only once a runtime or service contract owns rule storage and
+  triggers.
+- Require local background dispatch to use Agent Runtime Service-owned
   `/mnt/agent-runtime/clone`, request strict durability in its existing
   `AgentExecutableRequest`, and succeed only after `/agent/rollouts` exposes a
   newly discovered producing Rollout correlated to the returned PID under the
@@ -57,7 +59,8 @@ their own answer, and OS vocabulary will leak into the default UI.
 
 - `alan-interaction-model`: The product-level interaction contract — disclosure
   layers, interaction modes, grant-as-permission UX, and the vocabulary rule
-  for all renderer hosts.
+  for renderer hosts, with background-servant dispatch required only for Local
+  Entry attachments.
 
 ### Modified Capabilities
 
@@ -71,6 +74,9 @@ their own answer, and OS vocabulary will leak into the default UI.
   Alan Apps. It requires the Agent Runtime Service-owned Rollout history
   surface before a durable review surface can be implemented; it does not
   authorize renderer access to System Store backing.
+- Remote Entry background dispatch and its revocable launch authority remain
+  out of scope; this change neither binds `/mnt/agent-runtime/clone` into a
+  Remote Entry namespace nor requires remote renderers to expose that mode.
 - This change does not define an Alan Home, `workspace_home`, or another
   universal entry object. It leaves renderer defaults and the current
   terminal-first macOS presentation unchanged.
