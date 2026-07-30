@@ -39,8 +39,9 @@
 - [ ] 2.2 Serialize runner completion, `/proc/<pid>/ctl`, and Host
   `record_exit` through one per-Process terminal claim; retain, invoke, and
   await the prepared finalizer exactly once before publishing exit and before
-  aborting a controlled runner, with immediate-control, completion/control
-  race, and generic no-op tests.
+  aborting a controlled runner. Carry Process outcome only for a winning runner
+  completion; control and Host winners carry none. Test result/control races,
+  Host omission, immediate control, and generic no-op behavior.
 - [ ] 2.3 Add the `process_exit` Rollout record using the existing numeric
   Process exit code, completion timestamp, and optional
   `AgentExecutableResult`, with serialization tests.
@@ -53,8 +54,8 @@
   startup exit with either the existing metadata plus ownership of the live
   `RuntimeController` (or equivalent runtime-task guard) and Process cleanup
   guard, or an explicit no-producing-Rollout outcome; a cloned
-  `RuntimeHandle` alone is insufficient. Retain any eventual
-  `AgentExecutableResult` in that internal Process-local context. Prove control
+  `RuntimeHandle` alone is insufficient. Keep any eventual
+  `AgentExecutableResult` only in the candidate runner outcome. Prove control
   during the delivery window and failure after Rollout creation but before
   readiness still finalize correctly, without an Engine-to-Service dependency,
   file, Host API, durable identity, or absent-resolution fallback.
@@ -84,11 +85,13 @@
   quiescence, writer fence, and terminal append/flush—under one fixed internal
   deadline. On error or timeout at any stage, emit a structured
   PID/Rollout/exit-code/stage diagnostic, forcibly abort and close writer and
-  runtime owners, perform bounded cleanup, and let Kernel publish the
-  authoritative exit without retrying or fabricating terminal evidence. Test
+  runtime owners, atomically quarantine the backing inode before Kernel may
+  publish exit, and perform bounded cleanup. Recover only after ownership ends
+  and validation succeeds under the same Rollout ID. Test
   an earlier stuck writer blocking the fence, disk-full/flush-error, timeout,
   ambiguous-flush no-retry, a complete record surviving an error, absent/torn
-  outcomes, no surviving late writer, cleanup, and Host-shutdown progress.
+  outcomes, stale I/O affecting only quarantine, containment failure as
+  Host-fatal, cleanup, and Host-shutdown progress.
 - [ ] 2.8 Preserve Rollouts without `process_exit` as unterminated evidence
   without fabricating a result. Treat any discovered complete valid
   `process_exit` as authoritative even when its original flush reported an

@@ -14,11 +14,13 @@ Preparation and finalization SHALL default to a no-op. Alan Kernel SHALL retain
 the prepared finalizer and serialize runner completion, `/proc/<pid>/ctl`, and
 Host `record_exit` through one per-Process terminal transition claim. Before
 publishing any terminal transition, it SHALL invoke the claimed finalizer
-exactly once with the intended numeric exit code. It SHALL await finalization
+exactly once with the winning claim source and intended numeric exit code. Only
+a runner-completion winner SHALL carry its `ProcessOutcome`; control and Host
+winners SHALL carry none. It SHALL await finalization
 before publishing exit and, for control- or Host-driven termination, before
 aborting the runner. The preparation and finalizer SHALL NOT change the exit
-code, create another lifecycle state, or add executable-specific semantics to
-Alan Kernel.
+code or add executable-specific semantics to Alan Kernel. Claim source SHALL
+remain transition-local and SHALL NOT become another lifecycle state.
 
 #### Scenario: A process is inspected
 - **WHEN** a consumer opens `/proc/<pid>`
@@ -45,6 +47,8 @@ Alan Kernel.
 - **WHEN** runner completion and Process control race to terminate one Process
 - **THEN** exactly one path claims terminal finalization
 - **AND** the hook runs once and `/proc/<pid>` publishes one authoritative exit
+- **AND** runner outcome reaches the hook only when runner completion wins
+- **AND** a control winner supplies no losing runner outcome
 
 #### Scenario: Process image needs no terminal finalization
 - **WHEN** a Process runner uses the default terminal preparation and hook

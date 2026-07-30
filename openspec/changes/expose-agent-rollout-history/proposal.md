@@ -14,16 +14,16 @@ restart even though the execution evidence already exists.
 - Bound the entire Agent terminal finalization—including the context barrier,
   quiescence, writer fence, and terminal append-and-flush—with one internal
   deadline. On persistence error or timeout, force-close the writer and runtime
-  owners, emit a structured diagnostic, and release finalization so `/proc`
-  can still publish the authoritative Process exit. Later discovery treats a
-  complete valid `process_exit` as authoritative even after an ambiguous flush
-  result; only absence or a torn tail is incomplete.
+  owners and atomically quarantine the backing inode before releasing
+  finalization, so stale Host I/O cannot later mutate the discoverable tree.
+  Recovery may republish only after ownership ends and validation succeeds.
 - Extend the generic Process runner bridge with a prepared terminal
   finalization hook. Alan Kernel asks the runner to prepare the per-Process
   hook before the committed Process becomes controllable, invokes it exactly
-  once before any terminal transition is published, and, for control-driven
-  exit, awaits it before aborting the runner. Other Process images use the
-  default no-op.
+  once with the winning terminal claim before any transition is published, and
+  awaits it before aborting the runner. Only runner completion carries its
+  Process outcome; control and Host winners carry none. Other Process images
+  use the default no-op.
 - For `/bin/alan-agent`, prepare a pending Process-local terminal-context
   barrier before control becomes reachable. Resolve it on every startup path
   with either the existing Rollout metadata plus ownership of the runtime task

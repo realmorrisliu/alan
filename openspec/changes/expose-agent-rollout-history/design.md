@@ -76,16 +76,20 @@ execution hooks with default no-ops. Before the committed Process becomes
 visible as running or accepts `/proc/<pid>/ctl`, Alan Kernel asks the runner to
 prepare one per-Process finalizer from the committed `ProcessInvocation` and
 retains it with the runner task. For runner completion, `/proc/<pid>/ctl`, and
-Host `record_exit`, Alan Kernel serializes competing terminal paths, invokes
-that prepared finalizer exactly once with the intended numeric exit code,
-waits for it to finish, and only then publishes exit. A control-driven path
-aborts the runner only after finalization.
+Host `record_exit`, Alan Kernel serializes competing terminal paths and invokes
+the prepared finalizer exactly once with the winning claim source and numeric
+exit code. Only a runner-completion winner carries its `ProcessOutcome`;
+control and Host winners carry none. Kernel waits for finalization before
+publishing exit, and a control path aborts the runner only afterward.
 
 These hooks contain no Agent, Rollout, or storage semantics. System Process
 runner dispatches them to Agent Runtime Service only for `/bin/alan-agent`;
-Agent Runtime Service owns the existing Rollout writer and optional
-`AgentExecutableResult`. The Kernel still owns the one terminal transition and
-numeric exit code.
+Agent Runtime Service owns the existing Rollout writer. System Process runner
+derives the optional `AgentExecutableResult` only from a winning runner
+outcome. Control and Host claims omit the losing candidate result, so code
+`130` cannot be persisted beside a contradictory completed result. Claim source
+is transition-local synchronization, not a durable lifecycle state. Kernel
+still owns the one terminal transition and numeric exit code.
 
 During generic finalizer preparation, System Process runner synchronously asks
 Agent Runtime Service to install a pending terminal-context barrier and startup
@@ -123,8 +127,8 @@ runtime task owner, or perform Process cleanup before terminal finalization. If
 startup exits before creating a Rollout, it resolves the barrier explicitly as
 no producing Rollout. If a Rollout was created and a later startup step fails,
 finalization can therefore still terminate that Rollout. If `/bin/alan-agent`
-produces an `AgentExecutableResult`, the same context records that existing
-result before `run` returns.
+produces an `AgentExecutableResult`, it remains in the candidate runner outcome
+and reaches finalization only if runner completion wins the terminal claim.
 
 The finalizer first signals startup or runtime cancellation and waits for the
 terminal-context barrier. For a producing Rollout, it uses the retained live
@@ -153,14 +157,14 @@ an ambiguous flush result could otherwise duplicate `process_exit`. On an
 append error, flush error, or deadline expiry at any stage, Agent Runtime
 Service emits a structured diagnostic containing the PID, available Rollout
 ID, intended exit code, failed stage, and storage error or timeout. It forcibly
-aborts and closes the writer and runtime owners, performs bounded cleanup, and
-returns control to Alan Kernel; `/proc` still publishes the authoritative
-Process exit. Closing the writer cannot prove that an ambiguous flush wrote no
-bytes. Later discovery therefore treats a complete valid `process_exit` as
-authoritative regardless of the finalizer's error, while an absent or torn
-terminal record remains incomplete evidence. No timed-out task or writer may
-survive to append another Rollout record. This failure path adds no second
-status file or durable terminal model.
+aborts and closes the writer and runtime owners and atomically renames the
+current backing inode out of the discoverable subtree before returning control
+to Kernel. Already-submitted Host I/O retains only the quarantined inode.
+Quarantine has no user-visible identity or status and is not listed. Recovery
+waits until no writer owner remains, revalidates the complete envelope, and may
+atomically republish the same Rollout ID. Failure to contain the inode is a
+Host-fatal storage-integrity failure, not permission to publish exit with a
+discoverable stale writer. This adds no second execution identity.
 
 ### D5: Read authority follows the existing `/agent` capability
 
@@ -226,8 +230,9 @@ It must also be unique among the retained Rollouts in the same listing. If
 multiple backing Rollouts claim one ID, discovery omits every colliding entry
 rather than choosing an arbitrary authority or minting another identity.
 Invalid and duplicate IDs emit diagnostics without blocking unrelated valid
-entries. Discovery neither deletes nor repairs the backing files and adds no
-quarantine or corruption-state model.
+entries. Discovery neither deletes nor repairs backing files. Internal
+stale-writer quarantine is exceptional service-owned containment, not a
+discoverable Rollout, status, or execution identity.
 
 ### D10: A producing Rollout is the durable launch acknowledgment
 

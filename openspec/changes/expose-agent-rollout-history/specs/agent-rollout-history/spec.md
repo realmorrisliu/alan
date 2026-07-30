@@ -107,6 +107,14 @@ the file SHALL remain authoritative even if the append or flush result was
 ambiguous. If no complete terminal record is discoverable, the Rollout SHALL
 remain unterminated or recoverably torn evidence; failure SHALL NOT fabricate
 terminal evidence.
+Before releasing finalization after a deadline, Agent Runtime Service SHALL
+atomically move the current backing inode out of the discoverable subtree into
+internal quarantine. Already-submitted Host I/O SHALL retain only that
+quarantined inode. Recovery SHALL wait until no writer owner remains, validate
+the complete Rollout envelope, and MAY atomically republish the same Rollout
+ID. Quarantine SHALL NOT be exposed as a Rollout, status, or execution identity.
+Failure to contain the inode SHALL be Host-fatal rather than allow Kernel to
+publish exit while a stale writer can mutate a discoverable Rollout.
 Finalization SHALL release the runtime-task owner and perform Process cleanup
 only after `process_exit` is flushed or this bounded persistence-failure path
 has closed the writer. The barrier and its outcomes SHALL remain internal,
@@ -122,6 +130,12 @@ terminal status model.
   exit code and that existing result
 - **AND** the record is flushed before AgentFS runtime cleanup
 - **AND** only then does finalization shut down and release the runtime task
+
+#### Scenario: Control wins after a runner result is produced
+- **WHEN** runner completion has a candidate `AgentExecutableResult` but
+  control wins the serialized terminal claim with exit code `130`
+- **THEN** finalization receives no losing runner outcome
+- **AND** `process_exit` contains code `130` without the contradictory result
 
 #### Scenario: Generic Process control stops execution
 - **WHEN** `cancel` or `interrupt` terminates the Process with exit code `130`
@@ -205,7 +219,8 @@ terminal status model.
 - **THEN** the whole-finalization deadline expires without waiting forever
 - **AND** Agent Runtime Service forcibly aborts and closes the writer and
   runtime owners
-- **AND** no timed-out writer later appends a Rollout record
+- **AND** it atomically quarantines the backing inode before releasing Kernel
+- **AND** stale Host I/O can modify only the quarantined inode
 - **AND** Alan Kernel can publish exit and Host shutdown can progress
 
 ### Requirement: Rollout history follows the `/agent` namespace capability
@@ -296,8 +311,8 @@ diagnostics and SHALL NOT block unrelated valid Rollouts. Discovery SHALL NOT
 delete or repair any backing file.
 
 #### Scenario: Rollout has a torn trailing record
-- **WHEN** a retained Rollout ends with an incomplete trailing JSON or UTF-8
-  record
+- **WHEN** a retained Rollout whose earlier complete records contain no
+  `process_exit` ends with an incomplete trailing JSON or UTF-8 record
 - **THEN** discovery accepts its earlier complete records
 - **AND** the torn trailing record is not exposed as valid evidence
 
