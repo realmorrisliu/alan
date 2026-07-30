@@ -14,9 +14,9 @@
 
 ## 2. macOS Interaction Surfaces
 
-- [ ] 2.1 Route background dispatch through the existing strict-durability
-  launch path, acknowledge it only after startup reports `durable: true` and
-  a producing `rollout_id`, and surface Rollout-creation failure explicitly.
+- [ ] 2.1 Set `runtime_overrides.durability_required` in the `/proc/clone`
+  document for background dispatch, and acknowledge it only after
+  `/agent/rollouts` exposes first-record metadata matching the returned PID.
 - [ ] 2.2 Add the review surface (results inbox) that lists completed
   Rollout-backed work with evidence links, shared by dispatched and
   event-driven outcomes; start only after `expose-agent-rollout-history`

@@ -16,6 +16,9 @@ restart even though the execution evidence already exists.
   after Process exit and Host restart.
 - Include active, terminal, and valid unterminated Rollouts; presentation may
   prioritize terminal entries but discovery does not hide retained evidence.
+- Add `durability_required` to Agent Process runtime spawn overrides and use
+  the active Rollout's existing `process_path` metadata as the file-visible
+  acknowledgment for background dispatch.
 - Reconstruct the discovery view by enumerating retained Rollouts; do not add a
   separate durable history record or persistent index.
 - Follow Agent Runtime Service's existing retention; add no TTL, quota, pin,
@@ -51,6 +54,7 @@ None.
   renderer-owned state.
 - Adds no new retention or deletion policy.
 - Adds no namespace notification protocol.
+- Adds no startup side API or duplicate runtime-metadata file.
 - Does not change Alan Kernel Process lifecycle, aP, or rollout evidence
   ownership.
 - Must land before `define-alan-interaction-model` implements its durable

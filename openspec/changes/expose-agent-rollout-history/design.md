@@ -117,6 +117,19 @@ malformed record excludes that Rollout from `/agent/rollouts` and emits a
 diagnostic without blocking valid entries. Discovery neither deletes nor
 repairs the backing file and adds no quarantine or corruption-state model.
 
+### D10: A producing Rollout is the durable launch acknowledgment
+
+`SpawnRuntimeOverrides` gains the optional `durability_required` field and
+Service Manager applies it to the existing Agent Runtime strict-durability
+setting. A caller requesting durable background work reads the PID allocated
+by `/proc/clone`, then waits until `/agent/rollouts/<rollout-id>` exposes valid
+first-record `AgentMachineMeta` whose `process_path` is `/proc/<pid>`.
+
+That existing Rollout metadata is the file-visible acknowledgment: no Host
+rollout path, internal `RuntimeStartupMetadata`, startup side API, or duplicate
+AgentFS metadata file is exposed. If the Process exits before a matching
+Rollout is discoverable, launch did not establish durable background work.
+
 ## Risks / Trade-offs
 
 - **Startup or listing cost grows linearly with retained Rollouts.** → Start
@@ -133,3 +146,6 @@ repairs the backing file and adds no quarantine or corruption-state model.
 - **Current retention is unbounded.** → Keep this change policy-neutral and add
   an owning-service retention policy only when measured storage needs justify
   one.
+- **`/proc/clone` allocates a PID before runtime readiness.** → Correlate that
+  PID to the active Rollout's already-durable first record before acknowledging
+  background dispatch.

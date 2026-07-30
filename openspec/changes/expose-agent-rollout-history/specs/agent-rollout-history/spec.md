@@ -159,3 +159,29 @@ listed. Discovery SHALL NOT delete or repair its backing file.
 - **THEN** Agent Runtime Service omits that Rollout and emits a diagnostic
 - **AND** other valid Rollouts remain discoverable
 - **AND** the malformed backing file is neither deleted nor repaired
+
+### Requirement: Durable background launch is acknowledged by its Rollout
+`SpawnRuntimeOverrides` SHALL accept an optional `durability_required` field.
+When it is `true`, Service Manager SHALL apply the existing strict-durability
+Agent Runtime setting and SHALL NOT fall back to an in-memory Agent Machine.
+After `/proc/clone` returns a PID, a caller SHALL treat durable background
+launch as accepted only after `/agent/rollouts/<rollout-id>` exposes valid
+first-record `AgentMachineMeta` whose `process_path` equals `/proc/<pid>`.
+
+This acknowledgment SHALL NOT expose a Host rollout path, require internal
+`RuntimeStartupMetadata`, or add a startup side API or duplicate AgentFS
+metadata file.
+
+#### Scenario: Strict-durability launch creates its Rollout
+- **WHEN** `/proc/clone` allocates a PID for a spawn document whose
+  `runtime_overrides.durability_required` is `true`
+- **AND** Agent Runtime Service creates and flushes the producing Rollout
+- **THEN** `/agent/rollouts/<rollout-id>` exposes first-record metadata whose
+  `process_path` identifies that PID
+- **AND** the caller may acknowledge durable background launch
+
+#### Scenario: Strict-durability launch cannot create a Rollout
+- **WHEN** the Process exits before `/agent/rollouts` exposes a valid Rollout
+  whose `process_path` matches its PID
+- **THEN** the caller reports launch failure
+- **AND** no in-memory Agent Machine is accepted as durable background work

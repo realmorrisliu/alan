@@ -118,11 +118,13 @@ rule is reviewable per screen and belongs in UI conformance checks.
 ### D7: Completed work requires durable discovery
 
 Background-servant interaction is not complete if outcomes disappear with a
-Process or Alan OS Host boot. A background dispatch therefore uses the
-existing strict-durability launch path and is acknowledged only after runtime
-startup reports `durable: true` and a producing `rollout_id`. If Rollout
-creation fails, the dispatch fails instead of silently continuing with an
-in-memory Agent Machine.
+Process or Alan OS Host boot. A background dispatch therefore sets
+`runtime_overrides.durability_required` in its `/proc/clone` document. After
+receiving the pending PID, the renderer acknowledges the dispatch only when
+`/agent/rollouts/<rollout-id>` exposes valid first-record metadata whose
+`process_path` is `/proc/<pid>`. If the Process exits before that evidence is
+discoverable, the dispatch fails instead of silently accepting an in-memory
+Agent Machine.
 
 Completed outcomes from accepted background dispatches and their retained
 evidence references remain discoverable from retained Rollouts after Process
@@ -136,8 +138,10 @@ history surface through its Alan OS attachment; it never scans System Store
 backing and never persists a private results database.
 
 Rollout terminal completion and namespace discovery belong to the prerequisite
-`expose-agent-rollout-history` change. This interaction-model change owns only
-the user-facing obligation to present that Rollout truth for review.
+`expose-agent-rollout-history` change. That prerequisite also owns the
+file-visible strict-durability request and Rollout correlation handshake. This
+interaction-model change owns only the user-facing obligation to dispatch and
+present work through those files.
 
 ## Risks / Trade-offs
 
