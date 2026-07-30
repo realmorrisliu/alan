@@ -75,11 +75,12 @@ Strict durability SHALL guarantee that an accepted dispatch established its
 producing Rollout; it SHALL NOT guarantee that a later terminal storage write
 cannot fail. Completed outcomes from accepted local background dispatches
 SHALL remain discoverable after Process exit and Alan OS Host restart only
-when their terminal `process_exit` was successfully persisted. Retained
-evidence references SHALL remain discoverable independently. A Rollout whose
-terminal persistence failed SHALL appear only as unterminated or incomplete
-evidence, and a renderer SHALL NOT infer completion or fabricate its missing
-`AgentExecutableResult`. Best-effort foreground conversation without a Rollout
+when discovery finds a complete valid terminal `process_exit`, including after
+an ambiguous append or flush error. Retained evidence references SHALL remain
+discoverable independently. A Rollout whose terminal record is missing or torn
+SHALL appear only as unterminated or incomplete evidence, and a renderer SHALL
+NOT infer completion or fabricate its missing `AgentExecutableResult`.
+Best-effort foreground conversation without a Rollout
 SHALL NOT carry this durable-evidence guarantee. Renderer hosts SHALL NOT scan
 System Store backing or persist a private results database. This change SHALL
 NOT require a Remote Entry renderer to offer background dispatch and SHALL NOT
@@ -111,13 +112,15 @@ when it does.
 - **AND** the renderer reconstructs the review from mounted files without a
   renderer-owned results database
 
-#### Scenario: Terminal outcome cannot be persisted
-- **WHEN** an accepted strict-durability background dispatch exits but its
-  terminal `process_exit` cannot be appended or flushed
-- **THEN** its retained Rollout remains discoverable as unterminated or
-  incomplete evidence
+#### Scenario: Terminal flush result is ambiguous
+- **WHEN** an accepted strict-durability background dispatch exits and its
+  terminal append or flush reports an error or timeout
+- **THEN** a complete valid `process_exit` found by discovery remains
+  authoritative and its completed outcome is reviewable
+- **AND** if no complete terminal record is discoverable, the retained Rollout
+  appears only as unterminated or incomplete evidence
 - **AND** the renderer does not label it completed or fabricate the missing
-  `AgentExecutableResult`
+  `AgentExecutableResult` when the record is absent or torn
 - **AND** strict durability remains satisfied only in its launch-time promise
   that the producing Rollout was established
 

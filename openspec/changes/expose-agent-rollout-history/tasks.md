@@ -85,10 +85,13 @@
   structured PID/Rollout/exit-code diagnostic, prevent any late writer from
   continuing, release runtime and cleanup ownership, and let Kernel publish
   the authoritative exit without retrying or fabricating terminal evidence.
-  Test disk-full/flush-error, timeout, ambiguous-flush no-retry, cleanup, and
-  Host-shutdown progress.
+  Test disk-full/flush-error, timeout, ambiguous-flush no-retry, a complete
+  record surviving an error, absent/torn outcomes, cleanup, and Host-shutdown
+  progress.
 - [ ] 2.8 Preserve Rollouts without `process_exit` as unterminated evidence
-  without fabricating a result, including terminal-persistence failures.
+  without fabricating a result. Treat any discovered complete valid
+  `process_exit` as authoritative even when its original flush reported an
+  error.
 
 ## 3. Rollout Discovery
 

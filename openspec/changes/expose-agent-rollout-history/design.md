@@ -151,11 +151,13 @@ flush result could otherwise duplicate `process_exit`. On an append error,
 flush error, or deadline expiry, Agent Runtime Service emits a structured
 diagnostic containing the PID, Rollout ID, intended exit code, and storage
 error or timeout. It closes the terminal writer, releases the runtime and
-cleanup owners, and returns control to Alan Kernel. The backing file remains
-valid unterminated evidence or a recoverably torn tail; `/proc` still publishes
-the authoritative Process exit. No later task may continue the timed-out write
-or append another Rollout record. This failure path adds no second status file
-or durable terminal model.
+cleanup owners, and returns control to Alan Kernel; `/proc` still publishes the
+authoritative Process exit. Closing the writer cannot prove that an ambiguous
+flush wrote no bytes. Later discovery therefore treats a complete valid
+`process_exit` as authoritative regardless of the finalizer's error, while an
+absent or torn terminal record remains incomplete evidence. No later task may
+continue the timed-out write or append another Rollout record. This failure
+path adds no second status file or durable terminal model.
 
 ### D5: Read authority follows the existing `/agent` capability
 
@@ -266,9 +268,10 @@ rejects a Host restart during the handshake.
 
 This acknowledgment guarantees that durable execution evidence has begun. It
 does not promise that a later terminal append cannot fail. Only a successfully
-persisted `process_exit` makes the completed outcome reconstructible after
-Process exit or Host restart; otherwise the same retained Rollout remains
-unterminated or incomplete evidence.
+discovered complete `process_exit` makes the completed outcome reconstructible
+after Process exit or Host restart. An append or flush error does not override
+a complete record that reached storage; only a missing or torn terminal record
+leaves the retained Rollout unterminated or incomplete.
 
 ## Risks / Trade-offs
 

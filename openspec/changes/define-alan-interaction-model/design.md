@@ -146,12 +146,13 @@ Agent Machine.
 
 Strict durability is this launch-time guarantee that a producing Rollout
 exists; it does not make later storage writes infallible. Completed outcomes
-from accepted background dispatches whose terminal `process_exit` was
-successfully persisted, together with their retained evidence references,
-remain discoverable after Process exit and Host restart. If bounded terminal
-persistence fails, the retained Rollout remains discoverable only as
-unterminated or incomplete evidence. A renderer must not infer completion or
-fabricate the unavailable `AgentExecutableResult`. Best-effort foreground
+from accepted background dispatches whose terminal `process_exit` is
+discovered as a complete valid record, together with their retained evidence
+references, remain discoverable after Process exit and Host restart. An
+ambiguous append or flush error does not override such a record. If the
+terminal record is absent or torn, the retained Rollout remains discoverable
+only as unterminated or incomplete evidence; a renderer must not infer
+completion or fabricate the unavailable `AgentExecutableResult`. Best-effort foreground
 conversation may continue without a Rollout, but receives no durable-evidence
 guarantee.
 

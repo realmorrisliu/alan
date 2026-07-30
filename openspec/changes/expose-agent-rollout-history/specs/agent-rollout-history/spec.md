@@ -100,8 +100,11 @@ append error, flush error, or timeout, Agent Runtime Service SHALL emit a
 structured diagnostic containing the PID, Rollout ID, intended exit code, and
 failure, prevent the timed-out operation or any other writer from appending
 later, and release terminal finalization so Alan Kernel can publish the
-authoritative Process exit. The Rollout SHALL remain unterminated or
-recoverably torn evidence; failure SHALL NOT fabricate terminal evidence.
+authoritative Process exit. A complete valid `process_exit` that reached the
+file SHALL remain authoritative even if the append or flush result was
+ambiguous. If no complete terminal record is discoverable, the Rollout SHALL
+remain unterminated or recoverably torn evidence; failure SHALL NOT fabricate
+terminal evidence.
 Finalization SHALL release the runtime-task owner and perform Process cleanup
 only after `process_exit` is flushed or this bounded persistence-failure path
 has closed the writer. The barrier and its outcomes SHALL remain internal,
@@ -190,8 +193,9 @@ terminal status model.
 - **AND** runtime and Process cleanup complete
 - **AND** Alan Kernel publishes the authoritative exit instead of leaving the
   Process running or blocking Host shutdown
-- **AND** the retained Rollout remains unterminated or recoverably torn
-  evidence
+- **AND** discovery treats a complete valid `process_exit` that reached the
+  file as authoritative despite the ambiguous error
+- **AND** only an absent or torn terminal record remains incomplete evidence
 
 ### Requirement: Rollout history follows the `/agent` namespace capability
 A Process whose namespace includes readable `/agent` SHALL be able to read
@@ -317,8 +321,9 @@ Agent Runtime setting and SHALL NOT fall back to an in-memory Agent Machine.
 Strict durability SHALL guarantee creation of the producing Rollout, not
 infallibility of later terminal persistence. A completed outcome SHALL be
 reconstructible after Process exit or Host restart only when `process_exit`
-was successfully persisted; otherwise the retained Rollout SHALL remain
-unterminated or incomplete evidence without a fabricated result.
+is discovered as a complete valid record, including after an ambiguous flush
+error; otherwise the retained Rollout SHALL remain unterminated or incomplete
+evidence without a fabricated result.
 Before opening `/mnt/agent-runtime/clone`, a caller SHALL read
 `/proc/host/boot_id` and list the currently discoverable `rollout_id` values.
 After `/mnt/agent-runtime/clone` returns its ordinary Process PID and commits

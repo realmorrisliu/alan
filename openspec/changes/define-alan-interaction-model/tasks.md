@@ -56,8 +56,9 @@
   runtime state or default-UI OS vocabulary.
 - [ ] 3.4 Add focused `alan-terminal-ui` tests proving restricted Agent
   Process namespaces cannot reach the top-level launch capability and TUI
-  background evidence remains reviewable after detach and Host restart, while
-  a terminal-persistence failure never appears as a completed outcome.
+  background evidence remains reviewable after detach and Host restart. Treat
+  a complete valid `process_exit` as completed even after an ambiguous flush
+  error, while a missing or torn record never appears as a completed outcome.
 
 ## 4. Conformance
 

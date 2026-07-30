@@ -12,9 +12,10 @@ restart even though the execution evidence already exists.
   code and, when available, the existing `AgentExecutableResult`; it does not
   introduce another terminal status model.
 - Bound the terminal append-and-flush attempt with an internal deadline. On a
-  persistence error or timeout, emit a structured diagnostic, preserve the
-  Rollout as unterminated or recoverably torn evidence, and release
+  persistence error or timeout, emit a structured diagnostic and release
   finalization so `/proc` can still publish the authoritative Process exit.
+  Later discovery treats a complete valid `process_exit` as authoritative even
+  after an ambiguous flush result; only absence or a torn tail is incomplete.
 - Extend the generic Process runner bridge with a prepared terminal
   finalization hook. Alan Kernel asks the runner to prepare the per-Process
   hook before the committed Process becomes controllable, invokes it exactly
