@@ -65,9 +65,11 @@ best-effort execution that started without one.
 Agent Runtime Service SHALL register the existing Rollout metadata and a
 retained `RuntimeHandle` immediately after Agent Machine creation succeeds,
 before later initialization or readiness signaling. Terminal finalization
-SHALL use that handle to request quiescence and await a writer fence before
-appending `process_exit`; no Rollout record may be appended after
-`process_exit`.
+SHALL use that handle to request quiescence of both ordinary transitions and
+deferred runtime actions. Quiescence SHALL cancel or drain every such producer
+and await a writer fence proving that none can append another Rollout record
+before finalization appends `process_exit`; no Rollout record may be appended
+after `process_exit`.
 
 #### Scenario: Agent Executable completes with a terminal result
 - **WHEN** an Agent Process publishes an `AgentExecutableResult` and exits
@@ -96,6 +98,15 @@ appending `process_exit`; no Rollout record may be appended after
   Rollout records
 - **THEN** finalization waits for the writer fence before appending
   `process_exit`
+- **AND** `process_exit` is the final Rollout record
+
+#### Scenario: Control exits during a deferred runtime action
+- **WHEN** `/proc/<pid>/ctl` requests exit while a deferred runtime action is
+  active
+- **THEN** Agent Machine quiescence cancels or drains that deferred action
+- **AND** finalization waits until the deferred action and its Rollout writer
+  have crossed the writer fence
+- **AND** Kernel runner abort cannot deadlock behind the fence
 - **AND** `process_exit` is the final Rollout record
 
 #### Scenario: Host failure prevents terminal recording

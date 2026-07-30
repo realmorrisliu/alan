@@ -49,12 +49,15 @@
   the producing Rollout, without an Engine-to-Service dependency, file, Host
   API, or durable identity.
 - [ ] 2.5 Have System Process runner route Agent Executable finalization to
-  Agent Runtime Service; first request Agent Machine quiescence and await a
-  writer fence, then consume the terminal context exactly once and, for a
-  producing Rollout, append and flush terminal `process_exit` before AgentFS
-  cleanup, runner abort, and Kernel exit publication. Test normal result
-  publication, active-transition cancellation, no post-exit append, and
-  control exit code `130`.
+  Agent Runtime Service; first request Agent Machine quiescence that cancels or
+  drains both ordinary transitions and deferred runtime actions, then await a
+  writer fence covering every Rollout producer. Consume the terminal context
+  exactly once and, for a producing Rollout, append and flush terminal
+  `process_exit` before AgentFS cleanup, runner abort, and Kernel exit
+  publication. Test normal result publication, active-transition
+  cancellation, `/proc/<pid>/ctl` exit during an active deferred action,
+  deadlock-free fence completion, no post-exit append, and control exit code
+  `130`.
 - [ ] 2.6 Preserve Rollouts without `process_exit` as unterminated evidence
   without fabricating a result.
 

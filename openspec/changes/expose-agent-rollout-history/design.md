@@ -96,12 +96,15 @@ therefore still terminate that Rollout. If `/bin/alan-agent` produces an
 `run` returns.
 
 The finalizer uses the retained `RuntimeHandle` to request Agent Machine
-quiescence and waits for a writer fence proving that the transition loop and
-Rollout recorder can append no further records. It then consumes the terminal
+quiescence. That operation cancels or drains both ordinary transitions and
+deferred runtime actions before completing a writer fence that covers every
+Rollout producer. The finalizer waits for that fence, consumes the terminal
 context exactly once, appends and flushes `process_exit` through the owning
 Rollout writer, and only then permits AgentFS/runtime cleanup or Kernel runner
-abort. This context is bounded to the live Process and is neither exposed as a
-file or Host API nor promoted into another execution identity.
+abort. In particular, a `/proc/<pid>/ctl` exit while a deferred action is
+active cannot leave the finalizer waiting on a producer that never received
+cancellation. This context is bounded to the live Process and is neither
+exposed as a file or Host API nor promoted into another execution identity.
 
 ### D5: Read authority follows the existing `/agent` capability
 
