@@ -7,8 +7,10 @@
   strict-durability setting and prove Rollout creation failure does not fall
   back to an in-memory Agent Machine.
 - [ ] 1.3 Prove a strict-durability spawn can be acknowledged through the
-  active Rollout's first-record `process_path`, with no Host path or internal
-  runtime metadata exposed.
+  newly discovered active Rollout's ID and first-record `process_path`, with no
+  Host path or internal runtime metadata exposed.
+- [ ] 1.4 Prove a retained Rollout with the same PID path from a prior Host
+  boot is excluded by the pre-spawn Rollout-ID listing.
 
 ## 2. Terminal Rollout Evidence
 

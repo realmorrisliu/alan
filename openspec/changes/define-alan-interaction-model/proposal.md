@@ -35,11 +35,11 @@ their own answer, and OS vocabulary will leak into the default UI.
   binding on renderer hosts only once a runtime or service contract owns rule
   storage and triggers.
 - Require background dispatch to request strict durability through
-  `/proc/clone` and succeed only after `/agent/rollouts` exposes a producing
-  Rollout correlated to the returned PID. Those outcomes remain discoverable
-  after Process exit and Alan OS Host restart. Renderers never use internal
-  runtime metadata, scan System Store backing, or persist a private results
-  database.
+  `/proc/clone` and succeed only after `/agent/rollouts` exposes a newly
+  discovered producing Rollout correlated to the returned PID. A pre-spawn
+  listing excludes retained Rollouts whose Process path was reused after Host
+  restart. Renderers never use internal runtime metadata, scan System Store
+  backing, or persist a private results database.
 - Make permission the UX of mounting: giving an agent access to a host folder
   is a grant flow (drag in, file picker, or approval sheet) through Host Mount
   Service per ADR-0050; mount/bind are side effects, and revocation lives in a

@@ -15,8 +15,9 @@
 ## 2. macOS Interaction Surfaces
 
 - [ ] 2.1 Set `runtime_overrides.durability_required` in the `/proc/clone`
-  document for background dispatch, and acknowledge it only after
-  `/agent/rollouts` exposes first-record metadata matching the returned PID.
+  document for background dispatch; snapshot discoverable Rollout IDs before
+  spawn and acknowledge only a new Rollout whose first-record metadata matches
+  the returned PID.
 - [ ] 2.2 Add the review surface (results inbox) that lists completed
   Rollout-backed work with evidence links, shared by dispatched and
   event-driven outcomes; start only after `expose-agent-rollout-history`

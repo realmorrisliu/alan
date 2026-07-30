@@ -164,24 +164,35 @@ listed. Discovery SHALL NOT delete or repair its backing file.
 `SpawnRuntimeOverrides` SHALL accept an optional `durability_required` field.
 When it is `true`, Service Manager SHALL apply the existing strict-durability
 Agent Runtime setting and SHALL NOT fall back to an in-memory Agent Machine.
-After `/proc/clone` returns a PID, a caller SHALL treat durable background
-launch as accepted only after `/agent/rollouts/<rollout-id>` exposes valid
-first-record `AgentMachineMeta` whose `process_path` equals `/proc/<pid>`.
+Before writing `/proc/clone`, a caller SHALL list the currently discoverable
+`rollout_id` values. After `/proc/clone` returns a PID, the caller SHALL treat
+durable background launch as accepted only after
+`/agent/rollouts/<rollout-id>` exposes valid first-record `AgentMachineMeta`
+whose ID was absent from the pre-spawn listing and whose `process_path` equals
+`/proc/<pid>`.
 
 This acknowledgment SHALL NOT expose a Host rollout path, require internal
 `RuntimeStartupMetadata`, or add a startup side API or duplicate AgentFS
 metadata file.
 
 #### Scenario: Strict-durability launch creates its Rollout
-- **WHEN** `/proc/clone` allocates a PID for a spawn document whose
+- **WHEN** a caller lists current Rollout IDs and `/proc/clone` allocates a PID
+  for a spawn document whose
   `runtime_overrides.durability_required` is `true`
 - **AND** Agent Runtime Service creates and flushes the producing Rollout
-- **THEN** `/agent/rollouts/<rollout-id>` exposes first-record metadata whose
-  `process_path` identifies that PID
+- **THEN** `/agent/rollouts/<rollout-id>` exposes a new ID with first-record
+  metadata whose `process_path` identifies that PID
 - **AND** the caller may acknowledge durable background launch
 
 #### Scenario: Strict-durability launch cannot create a Rollout
-- **WHEN** the Process exits before `/agent/rollouts` exposes a valid Rollout
-  whose `process_path` matches its PID
+- **WHEN** the Process exits before `/agent/rollouts` exposes a valid new
+  Rollout absent from the pre-spawn listing whose `process_path` matches its
+  PID
 - **THEN** the caller reports launch failure
 - **AND** no in-memory Agent Machine is accepted as durable background work
+
+#### Scenario: Host restart reuses a prior PID
+- **WHEN** the pre-spawn listing contains an older retained Rollout whose
+  `process_path` matches the newly allocated PID
+- **THEN** the caller excludes that Rollout because its ID was already present
+- **AND** it acknowledges only a matching Rollout created after the listing

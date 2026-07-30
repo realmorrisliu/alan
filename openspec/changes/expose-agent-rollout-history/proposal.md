@@ -17,8 +17,9 @@ restart even though the execution evidence already exists.
 - Include active, terminal, and valid unterminated Rollouts; presentation may
   prioritize terminal entries but discovery does not hide retained evidence.
 - Add `durability_required` to Agent Process runtime spawn overrides and use
-  the active Rollout's existing `process_path` metadata as the file-visible
-  acknowledgment for background dispatch.
+  the active Rollout's existing ID and `process_path` metadata as the
+  file-visible acknowledgment for background dispatch, excluding IDs visible
+  before spawn.
 - Reconstruct the discovery view by enumerating retained Rollouts; do not add a
   separate durable history record or persistent index.
 - Follow Agent Runtime Service's existing retention; add no TTL, quota, pin,

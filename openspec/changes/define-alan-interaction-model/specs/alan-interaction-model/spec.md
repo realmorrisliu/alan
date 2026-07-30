@@ -53,11 +53,13 @@ entry or primary posture. Background-servant mode SHALL let
 agents run detached — closing a view detaches per ADR-0047 and never implies
 stopping execution — and SHALL present completed work for review rather than
 requiring the user to watch execution. A background dispatch SHALL request the
-strict-durability launch behavior through `/proc/clone` and SHALL be
-acknowledged as accepted only after `/agent/rollouts` exposes a valid producing
-Rollout whose first-record `process_path` matches the returned `/proc/<pid>`.
-If the Process exits before that Rollout is discoverable, the dispatch SHALL
-fail rather than continue as untracked background work.
+strict-durability launch behavior through `/proc/clone`. Before spawning, it
+SHALL list the currently discoverable `rollout_id` values. The dispatch SHALL
+be acknowledged as accepted only after `/agent/rollouts` exposes a valid
+producing Rollout whose ID was absent from that pre-spawn listing and whose
+first-record `process_path` matches the returned `/proc/<pid>`. If the Process
+exits before that new Rollout is discoverable, the dispatch SHALL fail rather
+than continue as untracked background work.
 
 Completed outcomes from accepted background dispatches and their retained
 evidence references SHALL remain discoverable after Process exit and Alan OS
@@ -91,7 +93,7 @@ when it does.
 
 #### Scenario: Background dispatch cannot create a Rollout
 - **WHEN** a strict-durability Process exits before a matching producing
-  Rollout becomes discoverable
+  Rollout absent from the pre-spawn listing becomes discoverable
 - **THEN** the background dispatch fails explicitly
 - **AND** no best-effort in-memory execution is acknowledged as reviewable
   background work
