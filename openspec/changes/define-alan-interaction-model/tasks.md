@@ -14,19 +14,22 @@
 
 ## 2. macOS Interaction Surfaces
 
-- [ ] 2.1 Add the review surface (results inbox) that lists completed agent
-  work with evidence links, shared by dispatched and event-driven outcomes;
-  start only after `expose-agent-rollout-history` lands, source data from its
-  mounted files and retained rollout/checkpoint evidence, and never add
-  renderer-copied state.
-- [ ] 2.2 Add the Permissions surface listing active host grants by label,
+- [ ] 2.1 Route background dispatch through the existing strict-durability
+  launch path, acknowledge it only after startup reports `durable: true` and
+  a producing `rollout_id`, and surface Rollout-creation failure explicitly.
+- [ ] 2.2 Add the review surface (results inbox) that lists completed
+  Rollout-backed work with evidence links, shared by dispatched and
+  event-driven outcomes; start only after `expose-agent-rollout-history`
+  lands, source data from its mounted files and retained rollout/checkpoint
+  evidence, and never add renderer-copied state.
+- [ ] 2.3 Add the Permissions surface listing active host grants by label,
   scope, and access, with revocation; wire grant creation to drag-in, file
   picker, and agent-request approval sheet through Host Mount Service.
-- [ ] 2.3 Render existing agent Work-layer affordances (conversation, plan
+- [ ] 2.4 Render existing agent Work-layer affordances (conversation, plan
   card, approval sheet, Stop via `/proc/<pid>/ctl`) from their file
   surfaces and remove any raw-file or OS-vocabulary presentation from the
   default UI.
-- [ ] 2.4 Add the Files-layer entry point ("view as files" inspector) that
+- [ ] 2.5 Add the Files-layer entry point ("view as files" inspector) that
   exposes the raw namespace as an explicit mode without becoming a second
   authority.
 

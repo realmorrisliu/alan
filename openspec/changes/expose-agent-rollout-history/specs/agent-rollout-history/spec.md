@@ -54,11 +54,12 @@ MUST NOT become discovery authority.
 - **AND** no completed Rollout is lost because a parallel index is absent
 
 ### Requirement: Process exit is recorded in the existing Rollout
-Before clean Agent Runtime Service cleanup, Alan SHALL append and flush one
-`process_exit` record to the producing Rollout. The record SHALL contain the
-authoritative numeric Process exit code, a completion timestamp, and the
-existing `AgentExecutableResult` when one is available. It SHALL NOT introduce
-a second terminal status enum.
+For an Agent Process with a producing Rollout, Alan SHALL append and flush one
+`process_exit` record before clean Agent Runtime Service cleanup. The record
+SHALL contain the authoritative numeric Process exit code, a completion
+timestamp, and the existing `AgentExecutableResult` when one is available. It
+SHALL NOT introduce a second terminal status enum or fabricate a Rollout for a
+best-effort execution that started without one.
 
 #### Scenario: Agent Executable completes with a terminal result
 - **WHEN** an Agent Process publishes an `AgentExecutableResult` and exits

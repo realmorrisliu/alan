@@ -55,8 +55,9 @@ an index may be added as a rebuildable cache, never as authority.
 
 ### D4: Terminal completion belongs in the existing Rollout
 
-Clean completion SHALL append and flush one `process_exit` record to the same
-Rollout before runtime cleanup. The record contains:
+For an Agent Process with a producing Rollout, clean completion SHALL append
+and flush one `process_exit` record to that Rollout before runtime cleanup.
+The record contains:
 
 - the authoritative numeric `/proc` exit code;
 - a completion timestamp; and

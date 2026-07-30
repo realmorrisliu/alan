@@ -52,11 +52,19 @@ interaction as first-class modes. Conversation SHALL NOT be assumed as the
 entry or primary posture. Background-servant mode SHALL let
 agents run detached — closing a view detaches per ADR-0047 and never implies
 stopping execution — and SHALL present completed work for review rather than
-requiring the user to watch execution. Completed outcomes and their retained
+requiring the user to watch execution. A background dispatch SHALL request the
+existing strict-durability launch behavior and SHALL be acknowledged as
+accepted only after runtime startup reports a durable Agent Machine and its
+producing `rollout_id`. If Rollout creation fails, the dispatch SHALL fail
+rather than continue as untracked background work.
+
+Completed outcomes from accepted background dispatches and their retained
 evidence references SHALL remain discoverable after Process exit and Alan OS
 Host restart through the Agent Runtime Service-owned read-only Rollout history
-surface; renderer hosts SHALL NOT scan System Store backing or persist a
-private results database. Event-driven interaction — standing
+surface. Best-effort foreground conversation without a Rollout SHALL NOT carry
+this durable-review guarantee. Renderer hosts SHALL NOT scan System Store
+backing or persist a private results database. Event-driven interaction —
+standing
 rules that cause agents to act, with proactive reports — is the recorded
 third mode and the designated direction of this model; because no runtime or
 service contract yet owns rule storage and trigger semantics, renderer hosts
@@ -65,18 +73,26 @@ the review surface unified so event-driven outcomes join user-dispatched work
 when it does.
 
 #### Scenario: The user reviews instead of watching
-- **WHEN** a user dispatches work and closes its view
+- **WHEN** the user closes the view of a strict-durability background dispatch
+  whose runtime startup reported its producing Rollout
 - **THEN** the agent keeps running and the finished result appears in the
   review surface with its evidence
 - **AND** no UI element required the user to keep a conversation or execution
   view open
 
 #### Scenario: The user reviews work after an Alan OS restart
-- **WHEN** an Agent Process completed before the current Alan OS Host boot
+- **WHEN** a Rollout-backed background Agent Process completed before the
+  current Alan OS Host boot
 - **THEN** its outcome and retained evidence references remain discoverable
   from its retained Rollout through the Rollout history surface
 - **AND** the renderer reconstructs the review from mounted files without a
   renderer-owned results database
+
+#### Scenario: Background dispatch cannot create a Rollout
+- **WHEN** strict-durability runtime startup cannot create a producing Rollout
+- **THEN** the background dispatch fails explicitly
+- **AND** no best-effort in-memory execution is acknowledged as reviewable
+  background work
 
 #### Scenario: Event-driven mode awaits its owning contract
 - **WHEN** no runtime or service contract yet owns event rules and triggers

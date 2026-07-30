@@ -118,9 +118,16 @@ rule is reviewable per screen and belongs in UI conformance checks.
 ### D7: Completed work requires durable discovery
 
 Background-servant interaction is not complete if outcomes disappear with a
-Process or Alan OS Host boot. Completed Agent Process outcomes and their
-retained evidence references therefore remain discoverable from retained
-Rollouts after Process exit and Host restart.
+Process or Alan OS Host boot. A background dispatch therefore uses the
+existing strict-durability launch path and is acknowledged only after runtime
+startup reports `durable: true` and a producing `rollout_id`. If Rollout
+creation fails, the dispatch fails instead of silently continuing with an
+in-memory Agent Machine.
+
+Completed outcomes from accepted background dispatches and their retained
+evidence references remain discoverable from retained Rollouts after Process
+exit and Host restart. Best-effort foreground conversation may continue
+without a Rollout, but receives no durable-review guarantee.
 
 History is only a read-only discovery view over Rollouts, not another durable
 entity. It has no independent ID, record lifecycle, persistent index, or
@@ -149,6 +156,9 @@ the user-facing obligation to present that Rollout truth for review.
   persistence contract without owning any truth. Shared interaction rules
   apply once a concrete agent, result, permission, service, or file surface is
   opened.
+- **Strict durability can reject background dispatch when its Rollout cannot
+  be created.** Accepted: explicit failure is preferable to acknowledging work
+  whose promised outcome cannot be reviewed.
 
 ## Open Questions
 

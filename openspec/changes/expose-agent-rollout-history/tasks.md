@@ -3,8 +3,9 @@
 - [ ] 1.1 Add the `process_exit` Rollout record using the existing numeric
   Process exit code, completion timestamp, and optional
   `AgentExecutableResult`, with serialization tests.
-- [ ] 1.2 Append and flush `process_exit` before clean Agent Runtime Service
-  cleanup, and test normal result publication plus generic exit code `130`.
+- [ ] 1.2 For Agent Processes with a producing Rollout, append and flush
+  `process_exit` before clean Agent Runtime Service cleanup, and test normal
+  result publication plus generic exit code `130`.
 - [ ] 1.3 Preserve Rollouts without `process_exit` as unterminated evidence
   without fabricating a result.
 

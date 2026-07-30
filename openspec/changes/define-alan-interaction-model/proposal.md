@@ -34,10 +34,12 @@ their own answer, and OS vocabulary will leak into the default UI.
   events and proactively report) is recorded as the designated third mode,
   binding on renderer hosts only once a runtime or service contract owns rule
   storage and triggers.
-- Require background-servant outcomes to remain discoverable from retained
-  Rollouts after Process exit and Alan OS Host restart. Renderers consume the
-  Agent Runtime Service's read-only Rollout history surface and never scan
-  System Store backing or persist a private results database.
+- Require background dispatch to use the existing strict-durability launch
+  path and succeed only after runtime startup reports a producing Rollout.
+  Those outcomes remain discoverable after Process exit and Alan OS Host
+  restart. Renderers consume the Agent Runtime Service's read-only Rollout
+  history surface and never scan System Store backing or persist a private
+  results database.
 - Make permission the UX of mounting: giving an agent access to a host folder
   is a grant flow (drag in, file picker, or approval sheet) through Host Mount
   Service per ADR-0050; mount/bind are side effects, and revocation lives in a
