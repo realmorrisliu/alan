@@ -55,8 +55,9 @@ MUST NOT become discovery authority.
 
 ### Requirement: Process exit is recorded in the existing Rollout
 For an Agent Process with a producing Rollout, Alan SHALL append and flush one
-`process_exit` record before clean Agent Runtime Service cleanup. The record
-SHALL contain the authoritative numeric Process exit code, a completion
+`process_exit` record through the Process terminal finalization hook before
+Alan Kernel publishes exit and before clean Agent Runtime Service cleanup. The
+record SHALL contain the authoritative numeric Process exit code, a completion
 timestamp, and the existing `AgentExecutableResult` when one is available. It
 SHALL NOT introduce a second terminal status enum or fabricate a Rollout for a
 best-effort execution that started without one.
@@ -69,7 +70,8 @@ best-effort execution that started without one.
 
 #### Scenario: Generic Process control stops execution
 - **WHEN** `cancel` or `interrupt` terminates the Process with exit code `130`
-- **THEN** `process_exit` preserves the numeric code `130`
+- **THEN** Alan Kernel invokes terminal finalization before aborting the runner
+- **AND** `process_exit` preserves the numeric code `130`
 - **AND** it does not invent separate cancelled and interrupted states that
   the Kernel does not distinguish
 

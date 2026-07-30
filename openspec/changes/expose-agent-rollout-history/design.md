@@ -69,6 +69,30 @@ owns `completed`, `paused`, and `failed`. Kernel control currently maps both
 without inventing a distinction. If Host failure prevents `process_exit` from
 being appended, the Rollout remains valid unterminated evidence.
 
+The current Kernel control path aborts the runner before Agent Runtime Service
+can perform cleanup, so cleanup ordering alone cannot cover code `130`.
+`ProcessRunner` therefore gains a generic terminal finalization hook with a
+default no-op. For runner completion, `/proc/<pid>/ctl`, and Host
+`record_exit`, Alan Kernel serializes competing terminal paths, invokes the
+hook exactly once with the committed `ProcessInvocation` and intended numeric
+exit code, waits for it to finish, and only then publishes exit. A
+control-driven path aborts the runner only after finalization.
+
+This hook contains no Agent, Rollout, or storage semantics. System Process
+runner dispatches it to Agent Runtime Service only for `/bin/alan-agent`;
+Agent Runtime Service owns the existing Rollout writer and optional
+`AgentExecutableResult`. The Kernel still owns the one terminal transition and
+numeric exit code.
+
+At Agent Machine readiness, Agent Runtime Service retains the existing internal
+`RuntimeStartupMetadata` in one Process-local terminal context rather than
+discarding it. If `/bin/alan-agent` produces an `AgentExecutableResult`, the
+same context records that existing result before `run` returns. The finalizer
+consumes the context exactly once, appends and flushes `process_exit` through
+the owning Rollout writer, and only then permits AgentFS/runtime cleanup. This
+context is bounded to the live Process and is neither exposed as a file or Host
+API nor promoted into another execution identity.
+
 ### D5: Read authority follows the existing `/agent` capability
 
 The history surface does not add per-interaction ACLs, renderer-only APIs, or

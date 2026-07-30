@@ -11,6 +11,11 @@ restart even though the execution evidence already exists.
   cleanup. It carries the authoritative numeric exit code and, when available,
   the existing `AgentExecutableResult`; it does not introduce another terminal
   status model.
+- Extend the generic Process runner bridge with an optional terminal
+  finalization hook. Alan Kernel invokes it exactly once before any terminal
+  transition is published and, for control-driven exit, before aborting the
+  runner. Agent Runtime Service uses the hook to flush `process_exit`; other
+  Process images use the default no-op.
 - Expose each retained Rollout as its existing JSONL record at the read-only
   `/agent/rollouts/<rollout-id>` file path. The surface remains available
   after Process exit and Host restart.
@@ -56,6 +61,9 @@ restart even though the execution evidence already exists.
   Agent Process launch path for callers such as Alan Shell renderer hosts.
 - `local-entry-service`: Bind the top-level Agent Process launch capability
   only into the Login Namespace handed to an authorized local renderer.
+- `plan9-kernel-substrate`: Serialize terminal Process transitions through a
+  generic pre-exit runner finalization hook without adding agent semantics to
+  Alan Kernel.
 
 ## Impact
 
@@ -66,7 +74,7 @@ restart even though the execution evidence already exists.
 - Adds no new retention or deletion policy.
 - Adds no namespace notification protocol.
 - Adds no Host-private startup API or duplicate runtime-metadata file.
-- Does not change Alan Kernel Process lifecycle, aP, or rollout evidence
-  ownership.
+- Does not change Alan Kernel lifecycle authority, the aP wire surface, or
+  Rollout evidence ownership.
 - Must land before `define-alan-interaction-model` implements its durable
   review surface.

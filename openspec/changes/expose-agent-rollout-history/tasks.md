@@ -30,13 +30,25 @@
 
 ## 2. Terminal Rollout Evidence
 
-- [ ] 2.1 Add the `process_exit` Rollout record using the existing numeric
+- [ ] 2.1 Extend the generic `ProcessRunner` bridge with a default no-op
+  terminal finalization hook that receives the committed invocation and
+  intended numeric exit code.
+- [ ] 2.2 Serialize runner completion, `/proc/<pid>/ctl`, and Host
+  `record_exit` through one per-Process terminal claim; invoke and await the
+  hook exactly once before publishing exit and before aborting a controlled
+  runner, with race and generic no-op tests.
+- [ ] 2.3 Add the `process_exit` Rollout record using the existing numeric
   Process exit code, completion timestamp, and optional
   `AgentExecutableResult`, with serialization tests.
-- [ ] 2.2 For Agent Processes with a producing Rollout, append and flush
-  `process_exit` before clean Agent Runtime Service cleanup, and test normal
-  result publication plus generic exit code `130`.
-- [ ] 2.3 Preserve Rollouts without `process_exit` as unterminated evidence
+- [ ] 2.4 Retain existing `RuntimeStartupMetadata` and any eventual
+  `AgentExecutableResult` in one internal Process-local terminal context until
+  finalization; do not expose it as a file, Host API, or durable identity.
+- [ ] 2.5 Have System Process runner route Agent Executable finalization to
+  Agent Runtime Service; consume the terminal context exactly once and, for a
+  producing Rollout, append and flush `process_exit` before AgentFS cleanup,
+  runner abort, and Kernel exit publication. Test normal result publication
+  and control exit code `130`.
+- [ ] 2.6 Preserve Rollouts without `process_exit` as unterminated evidence
   without fabricating a result.
 
 ## 3. Rollout Discovery
