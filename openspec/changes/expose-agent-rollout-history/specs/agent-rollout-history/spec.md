@@ -164,24 +164,26 @@ listed. Discovery SHALL NOT delete or repair its backing file.
 `SpawnRuntimeOverrides` SHALL accept an optional `durability_required` field.
 When it is `true`, Service Manager SHALL apply the existing strict-durability
 Agent Runtime setting and SHALL NOT fall back to an in-memory Agent Machine.
-Before writing `/proc/clone`, a caller SHALL list the currently discoverable
-`rollout_id` values. After `/proc/clone` returns a PID, the caller SHALL treat
-durable background launch as accepted only after
+Before writing `/proc/clone`, a caller SHALL read `/proc/host/boot_id` and list
+the currently discoverable `rollout_id` values. After `/proc/clone` returns a
+PID, the caller SHALL treat durable background launch as accepted only after
 `/agent/rollouts/<rollout-id>` exposes valid first-record `AgentMachineMeta`
 whose ID was absent from the pre-spawn listing and whose `process_path` equals
-`/proc/<pid>`.
+`/proc/<pid>`, and after a fresh read confirms `/proc/host/boot_id` is
+unchanged.
 
 This acknowledgment SHALL NOT expose a Host rollout path, require internal
 `RuntimeStartupMetadata`, or add a startup side API or duplicate AgentFS
 metadata file.
 
 #### Scenario: Strict-durability launch creates its Rollout
-- **WHEN** a caller lists current Rollout IDs and `/proc/clone` allocates a PID
-  for a spawn document whose
+- **WHEN** a caller pins the current boot identity, lists current Rollout IDs,
+  and `/proc/clone` allocates a PID for a spawn document whose
   `runtime_overrides.durability_required` is `true`
 - **AND** Agent Runtime Service creates and flushes the producing Rollout
 - **THEN** `/agent/rollouts/<rollout-id>` exposes a new ID with first-record
   metadata whose `process_path` identifies that PID
+- **AND** `/proc/host/boot_id` still matches the pinned value
 - **AND** the caller may acknowledge durable background launch
 
 #### Scenario: Strict-durability launch cannot create a Rollout
@@ -196,3 +198,10 @@ metadata file.
   `process_path` matches the newly allocated PID
 - **THEN** the caller excludes that Rollout because its ID was already present
 - **AND** it acknowledges only a matching Rollout created after the listing
+
+#### Scenario: Host restarts during launch correlation
+- **WHEN** `/proc/host/boot_id` differs from the value pinned before
+  `/proc/clone`
+- **THEN** the caller rejects the launch acknowledgment
+- **AND** it does not associate any Rollout from the new boot with the prior
+  dispatch

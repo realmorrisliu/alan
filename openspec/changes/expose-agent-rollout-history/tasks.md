@@ -11,6 +11,8 @@
   Host path or internal runtime metadata exposed.
 - [ ] 1.4 Prove a retained Rollout with the same PID path from a prior Host
   boot is excluded by the pre-spawn Rollout-ID listing.
+- [ ] 1.5 Pin and revalidate `/proc/host/boot_id`, and prove a Host restart
+  during correlation rejects the launch acknowledgment.
 
 ## 2. Terminal Rollout Evidence
 

@@ -121,11 +121,13 @@ repairs the backing file and adds no quarantine or corruption-state model.
 
 `SpawnRuntimeOverrides` gains the optional `durability_required` field and
 Service Manager applies it to the existing Agent Runtime strict-durability
-setting. A caller requesting durable background work first lists the currently
-discoverable `rollout_id` values, reads the PID allocated by `/proc/clone`,
-then waits until `/agent/rollouts/<rollout-id>` exposes valid first-record
-`AgentMachineMeta` whose ID was absent from the pre-spawn listing and whose
-`process_path` is `/proc/<pid>`.
+setting. A caller requesting durable background work first reads
+`/proc/host/boot_id` and lists the currently discoverable `rollout_id` values,
+reads the PID allocated by `/proc/clone`, then waits until
+`/agent/rollouts/<rollout-id>` exposes valid first-record `AgentMachineMeta`
+whose ID was absent from the pre-spawn listing and whose `process_path` is
+`/proc/<pid>`. Before acknowledgment, it reads `/proc/host/boot_id` again and
+requires the same value.
 
 That existing Rollout metadata is the file-visible acknowledgment: no Host
 rollout path, internal `RuntimeStartupMetadata`, startup side API, or duplicate
@@ -133,7 +135,8 @@ AgentFS metadata file is exposed. If the Process exits before a matching
 Rollout is discoverable, launch did not establish durable background work.
 The pre-spawn listing is transition-local comparison state, not a durable
 index or identity; it prevents a PID reused after Host restart from matching an
-older retained Rollout.
+older retained Rollout. Revalidating the existing boot identity rejects a Host
+restart during the handshake.
 
 ## Risks / Trade-offs
 
@@ -153,4 +156,4 @@ older retained Rollout.
   one.
 - **`/proc/clone` allocates a PID before runtime readiness.** → Correlate that
   PID to a newly discovered active Rollout's already-durable first record
-  before acknowledging background dispatch.
+  under one unchanged boot identity before acknowledging background dispatch.

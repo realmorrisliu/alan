@@ -19,7 +19,7 @@ restart even though the execution evidence already exists.
 - Add `durability_required` to Agent Process runtime spawn overrides and use
   the active Rollout's existing ID and `process_path` metadata as the
   file-visible acknowledgment for background dispatch, excluding IDs visible
-  before spawn.
+  before spawn and rejecting any `/proc/host/boot_id` change.
 - Reconstruct the discovery view by enumerating retained Rollouts; do not add a
   separate durable history record or persistent index.
 - Follow Agent Runtime Service's existing retention; add no TTL, quota, pin,

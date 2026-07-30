@@ -120,14 +120,16 @@ rule is reviewable per screen and belongs in UI conformance checks.
 Background-servant interaction is not complete if outcomes disappear with a
 Process or Alan OS Host boot. A background dispatch therefore sets
 `runtime_overrides.durability_required` in its `/proc/clone` document. After
-listing the current `rollout_id` values and receiving the pending PID, the
-renderer acknowledges the dispatch only when
+reading `/proc/host/boot_id`, listing the current `rollout_id` values, and
+receiving the pending PID, the renderer acknowledges the dispatch only when
 `/agent/rollouts/<rollout-id>` exposes valid first-record metadata whose ID
 was absent from the pre-spawn listing and whose `process_path` is
-`/proc/<pid>`. The listing excludes an older retained Rollout whose PID path
-was reused after Host restart without introducing a Boot identity. If the
-Process exits before matching new evidence is discoverable, the dispatch fails
-instead of silently accepting an in-memory Agent Machine.
+`/proc/<pid>`, and a fresh read of `/proc/host/boot_id` still matches. The
+listing excludes an older retained Rollout whose PID path was reused after
+Host restart; the boot check rejects a restart during the handshake. If the
+boot identity changes or the Process exits before matching new evidence is
+discoverable, the dispatch fails instead of silently accepting an in-memory
+Agent Machine.
 
 Completed outcomes from accepted background dispatches and their retained
 evidence references remain discoverable from retained Rollouts after Process
