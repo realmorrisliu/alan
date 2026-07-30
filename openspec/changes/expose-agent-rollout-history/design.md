@@ -121,22 +121,38 @@ repairs the backing file and adds no quarantine or corruption-state model.
 
 `SpawnRuntimeOverrides` gains the optional `durability_required` field and
 Service Manager applies it to the existing Agent Runtime strict-durability
-setting. A caller requesting durable background work first reads
+setting.
+
+A renderer-attached Shell Process is not an Agent Process and therefore cannot
+be the parent of `/bin/alan-agent` through its own `/proc/clone` view: Agent
+Runtime Service has no parent runtime template to inherit from it. Agent
+Runtime Service therefore exposes `/agent/clone` as the top-level
+clone-via-open launch path. Opening it pins the current `/agent/root` Process
+as parent, allocates the ordinary pending Process slot through `/proc/clone`,
+and returns that PID. The caller writes one existing
+`AgentExecutableRequest`; clunk commits the request. Agent Runtime Service
+derives the launch from the Root Agent Process's registered runtime template
+and rejects the commit if that parent is no longer current or the request
+would amplify its capabilities. Agent Processes continue to launch their own
+children directly through their Process-bound `/proc/clone`.
+
+A caller requesting durable background work first reads
 `/proc/host/boot_id` and lists the currently discoverable `rollout_id` values,
-reads the PID allocated by `/proc/clone`, then waits until
+then opens `/agent/clone`, reads its allocated PID, writes a request whose
+`runtime_overrides.durability_required` is true, and waits until
 `/agent/rollouts/<rollout-id>` exposes valid first-record `AgentMachineMeta`
 whose ID was absent from the pre-spawn listing and whose `process_path` is
 `/proc/<pid>`. Before acknowledgment, it reads `/proc/host/boot_id` again and
 requires the same value.
 
 That existing Rollout metadata is the file-visible acknowledgment: no Host
-rollout path, internal `RuntimeStartupMetadata`, startup side API, or duplicate
-AgentFS metadata file is exposed. If the Process exits before a matching
-Rollout is discoverable, launch did not establish durable background work.
-The pre-spawn listing is transition-local comparison state, not a durable
-index or identity; it prevents a PID reused after Host restart from matching an
-older retained Rollout. Revalidating the existing boot identity rejects a Host
-restart during the handshake.
+rollout path, internal `RuntimeStartupMetadata`, acknowledgment side API, or
+duplicate AgentFS metadata file is exposed. If the Process exits before a
+matching Rollout is discoverable, launch did not establish durable background
+work. The pre-spawn listing is transition-local comparison state, not a
+durable index or identity; it prevents a PID reused after Host restart from
+matching an older retained Rollout. Revalidating the existing boot identity
+rejects a Host restart during the handshake.
 
 ## Risks / Trade-offs
 
@@ -146,14 +162,15 @@ restart during the handshake.
   them as unterminated evidence; absence of `process_exit` is the fact and no
   successful result is fabricated.
 - **Adding a reserved `/agent` child changes root dispatch.** → Reserve only
-  the non-numeric name `rollouts`; keep PID entries numeric and test collision
-  behavior.
+  the non-numeric names `clone` and `rollouts`; keep PID entries numeric and
+  test collision behavior.
 - **Every current `/agent` holder can read retained Rollouts.** → Treat this as
   the existing system-wide `/agent` capability boundary; address future
   inter-Agent confidentiality by narrowing the whole mount.
 - **Current retention is unbounded.** → Keep this change policy-neutral and add
   an owning-service retention policy only when measured storage needs justify
   one.
-- **`/proc/clone` allocates a PID before runtime readiness.** → Correlate that
-  PID to a newly discovered active Rollout's already-durable first record
-  under one unchanged boot identity before acknowledging background dispatch.
+- **`/agent/clone` allocates an ordinary `/proc` PID before runtime
+  readiness.** → Correlate that PID to a newly discovered active Rollout's
+  already-durable first record under one unchanged boot identity before
+  acknowledging background dispatch.

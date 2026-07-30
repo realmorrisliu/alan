@@ -1,17 +1,25 @@
 ## 1. Durable Background Launch
 
-- [ ] 1.1 Add optional `durability_required` to
+- [ ] 1.1 Add clone-via-open `/agent/clone` to Agent Runtime Service. Pin the
+  current `/agent/root` Process as the parent, allocate the pending Process
+  through its `/proc/clone` context, accept one `AgentExecutableRequest`, and
+  return the ordinary PID without adding another launch identity.
+- [ ] 1.2 Reject `/agent/clone` commit when Root Agent is unavailable,
+  replaced after open, or the request would amplify its capabilities; prove a
+  renderer-attached Shell Process can launch through `/agent/clone` but cannot
+  launch `/bin/alan-agent` through its own Process-bound `/proc/clone`.
+- [ ] 1.3 Add optional `durability_required` to
   `SpawnRuntimeOverrides`, preserve default best-effort behavior, and add wire
   round-trip and unknown-field tests.
-- [ ] 1.2 Apply the spawn override to the existing Agent Runtime
+- [ ] 1.4 Apply the spawn override to the existing Agent Runtime
   strict-durability setting and prove Rollout creation failure does not fall
   back to an in-memory Agent Machine.
-- [ ] 1.3 Prove a strict-durability spawn can be acknowledged through the
-  newly discovered active Rollout's ID and first-record `process_path`, with no
-  Host path or internal runtime metadata exposed.
-- [ ] 1.4 Prove a retained Rollout with the same PID path from a prior Host
+- [ ] 1.5 Prove a strict-durability `/agent/clone` spawn can be acknowledged
+  through the newly discovered active Rollout's ID and first-record
+  `process_path`, with no Host path or internal runtime metadata exposed.
+- [ ] 1.6 Prove a retained Rollout with the same PID path from a prior Host
   boot is excluded by the pre-spawn Rollout-ID listing.
-- [ ] 1.5 Pin and revalidate `/proc/host/boot_id`, and prove a Host restart
+- [ ] 1.7 Pin and revalidate `/proc/host/boot_id`, and prove a Host restart
   during correlation rejects the launch acknowledgment.
 
 ## 2. Terminal Rollout Evidence
@@ -30,9 +38,9 @@
 - [ ] 3.1 Enumerate retained Rollouts from Agent Runtime Service's existing
   System Store subtree using the existing Rollout loader, with no persistent
   history index.
-- [ ] 3.2 Reserve `/agent/rollouts` and expose each valid retained Rollout as
-  one read-only `/agent/rollouts/<rollout-id>` JSONL file while preserving
-  numeric PID entries and `/agent/root`.
+- [ ] 3.2 Reserve `/agent/clone` and `/agent/rollouts`, and expose each valid
+  retained Rollout as one read-only `/agent/rollouts/<rollout-id>` JSONL file
+  while preserving numeric PID entries and `/agent/root`.
 - [ ] 3.3 Isolate malformed Rollouts with diagnostics, accept recoverable torn
   tails, and prove one bad file does not block valid entries.
 - [ ] 3.4 Test discovery of active, terminal, and unterminated Rollouts across

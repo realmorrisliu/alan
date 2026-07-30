@@ -16,6 +16,10 @@ restart even though the execution evidence already exists.
   after Process exit and Host restart.
 - Include active, terminal, and valid unterminated Rollouts; presentation may
   prioritize terminal entries but discovery does not hide retained evidence.
+- Add Agent Runtime Service-owned `/agent/clone` as the clone-via-open path for
+  a non-Agent Process to request a top-level Agent Process. It uses the current
+  Root Agent Process as the ordinary Process parent and crosses `/proc/clone`;
+  it does not create another Process owner or launch identity.
 - Add `durability_required` to Agent Process runtime spawn overrides and use
   the active Rollout's existing ID and `process_path` metadata as the
   file-visible acknowledgment for background dispatch, excluding IDs visible
@@ -45,7 +49,8 @@ restart even though the execution evidence already exists.
 
 ### Modified Capabilities
 
-None.
+- `agent-namespace-runtime`: Define the Agent Runtime Service-owned top-level
+  Agent Process launch path for callers such as Alan Shell renderer hosts.
 
 ## Impact
 
@@ -55,7 +60,7 @@ None.
   renderer-owned state.
 - Adds no new retention or deletion policy.
 - Adds no namespace notification protocol.
-- Adds no startup side API or duplicate runtime-metadata file.
+- Adds no Host-private startup API or duplicate runtime-metadata file.
 - Does not change Alan Kernel Process lifecycle, aP, or rollout evidence
   ownership.
 - Must land before `define-alan-interaction-model` implements its durable
