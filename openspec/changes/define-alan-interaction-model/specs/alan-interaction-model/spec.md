@@ -71,13 +71,18 @@ value. If the boot identity changes or the Process exits before that new
 Rollout is discoverable, the dispatch SHALL fail rather than continue as
 untracked background work.
 
-Completed outcomes from accepted local background dispatches and their
-retained evidence references SHALL remain discoverable after Process exit and
-Alan OS Host restart through the Agent Runtime Service-owned read-only Rollout
-history surface. Best-effort foreground conversation without a Rollout SHALL
-NOT carry this durable-review guarantee. Renderer hosts SHALL NOT scan System
-Store backing or persist a private results database. This change SHALL NOT
-require a Remote Entry renderer to offer background dispatch and SHALL NOT
+Strict durability SHALL guarantee that an accepted dispatch established its
+producing Rollout; it SHALL NOT guarantee that a later terminal storage write
+cannot fail. Completed outcomes from accepted local background dispatches
+SHALL remain discoverable after Process exit and Alan OS Host restart only
+when their terminal `process_exit` was successfully persisted. Retained
+evidence references SHALL remain discoverable independently. A Rollout whose
+terminal persistence failed SHALL appear only as unterminated or incomplete
+evidence, and a renderer SHALL NOT infer completion or fabricate its missing
+`AgentExecutableResult`. Best-effort foreground conversation without a Rollout
+SHALL NOT carry this durable-evidence guarantee. Renderer hosts SHALL NOT scan
+System Store backing or persist a private results database. This change SHALL
+NOT require a Remote Entry renderer to offer background dispatch and SHALL NOT
 grant it `/mnt/agent-runtime/clone`; remote launch authority and revocation
 require a separate owning contract. Event-driven interaction —
 standing
@@ -91,19 +96,30 @@ when it does.
 #### Scenario: The user reviews instead of watching
 - **WHEN** a local renderer user closes the view of a strict-durability
   background dispatch launched through `/mnt/agent-runtime/clone` and whose
-  producing Rollout was correlated through `/agent/rollouts`
+  producing Rollout was correlated through `/agent/rollouts`, and terminal
+  `process_exit` later persists successfully
 - **THEN** the agent keeps running and the finished result appears in the
   review surface with its evidence
 - **AND** no UI element required the user to keep a conversation or execution
   view open
 
 #### Scenario: The user reviews work after an Alan OS restart
-- **WHEN** a Rollout-backed background Agent Process completed before the
-  current Alan OS Host boot
+- **WHEN** a Rollout-backed background Agent Process persisted its terminal
+  `process_exit` before the current Alan OS Host boot
 - **THEN** its outcome and retained evidence references remain discoverable
   from its retained Rollout through the Rollout history surface
 - **AND** the renderer reconstructs the review from mounted files without a
   renderer-owned results database
+
+#### Scenario: Terminal outcome cannot be persisted
+- **WHEN** an accepted strict-durability background dispatch exits but its
+  terminal `process_exit` cannot be appended or flushed
+- **THEN** its retained Rollout remains discoverable as unterminated or
+  incomplete evidence
+- **AND** the renderer does not label it completed or fabricate the missing
+  `AgentExecutableResult`
+- **AND** strict durability remains satisfied only in its launch-time promise
+  that the producing Rollout was established
 
 #### Scenario: Background dispatch cannot create a Rollout
 - **WHEN** a strict-durability Process launched through

@@ -264,6 +264,12 @@ durable index or identity; it prevents a PID reused after Host restart from
 matching an older retained Rollout. Revalidating the existing boot identity
 rejects a Host restart during the handshake.
 
+This acknowledgment guarantees that durable execution evidence has begun. It
+does not promise that a later terminal append cannot fail. Only a successfully
+persisted `process_exit` makes the completed outcome reconstructible after
+Process exit or Host restart; otherwise the same retained Rollout remains
+unterminated or incomplete evidence.
+
 ## Risks / Trade-offs
 
 - **Startup or listing cost grows linearly with retained Rollouts.** → Start

@@ -22,7 +22,8 @@
 - [ ] 1.6 Prove a strict-durability `/mnt/agent-runtime/clone` spawn can be
   acknowledged through the newly discovered active Rollout's ID and
   first-record `process_path`, with no Host path or internal runtime metadata
-  exposed.
+  exposed. Prove this acknowledgment guarantees Rollout creation but does not
+  claim terminal outcome persistence.
 - [ ] 1.7 Prove a retained Rollout with the same PID path from a prior Host
   boot is excluded by the pre-spawn Rollout-ID listing.
 - [ ] 1.8 Pin and revalidate `/proc/host/boot_id`, and prove a Host restart

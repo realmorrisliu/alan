@@ -123,10 +123,10 @@ rule is reviewable per screen and belongs in UI conformance checks.
 
 ### D7: Completed work requires durable discovery
 
-Local background-servant interaction is not complete if outcomes disappear
-with a Process or Alan OS Host boot. A local background dispatch therefore sets
-`runtime_overrides.durability_required` in the `AgentExecutableRequest`
-committed through Agent Runtime Service-owned
+Local background-servant interaction requires execution evidence to begin
+durably rather than disappearing with a Process or Alan OS Host boot. A local
+background dispatch therefore sets `runtime_overrides.durability_required` in
+the `AgentExecutableRequest` committed through Agent Runtime Service-owned
 `/mnt/agent-runtime/clone`. Service Manager mounts this launch capability only
 in the Local Entry Login Namespace, so Remote Entry and Agent Process
 namespaces cannot regain capabilities through it. The path uses the current
@@ -144,10 +144,16 @@ boot identity changes or the Process exits before matching new evidence is
 discoverable, the dispatch fails instead of silently accepting an in-memory
 Agent Machine.
 
-Completed outcomes from accepted background dispatches and their retained
-evidence references remain discoverable from retained Rollouts after Process
-exit and Host restart. Best-effort foreground conversation may continue
-without a Rollout, but receives no durable-review guarantee.
+Strict durability is this launch-time guarantee that a producing Rollout
+exists; it does not make later storage writes infallible. Completed outcomes
+from accepted background dispatches whose terminal `process_exit` was
+successfully persisted, together with their retained evidence references,
+remain discoverable after Process exit and Host restart. If bounded terminal
+persistence fails, the retained Rollout remains discoverable only as
+unterminated or incomplete evidence. A renderer must not infer completion or
+fabricate the unavailable `AgentExecutableResult`. Best-effort foreground
+conversation may continue without a Rollout, but receives no durable-evidence
+guarantee.
 
 History is only a read-only discovery view over Rollouts, not another durable
 entity. It has no independent ID, record lifecycle, persistent index, or

@@ -314,6 +314,11 @@ delete or repair any backing file.
 `SpawnRuntimeOverrides` SHALL accept an optional `durability_required` field.
 When it is `true`, Service Manager SHALL apply the existing strict-durability
 Agent Runtime setting and SHALL NOT fall back to an in-memory Agent Machine.
+Strict durability SHALL guarantee creation of the producing Rollout, not
+infallibility of later terminal persistence. A completed outcome SHALL be
+reconstructible after Process exit or Host restart only when `process_exit`
+was successfully persisted; otherwise the retained Rollout SHALL remain
+unterminated or incomplete evidence without a fabricated result.
 Before opening `/mnt/agent-runtime/clone`, a caller SHALL read
 `/proc/host/boot_id` and list the currently discoverable `rollout_id` values.
 After `/mnt/agent-runtime/clone` returns its ordinary Process PID and commits

@@ -23,10 +23,12 @@
   acknowledge only under the same boot a new Rollout whose first-record
   metadata matches the returned PID.
 - [ ] 2.2 Add the review surface (results inbox) that lists completed
-  Rollout-backed work with evidence links, shared by dispatched and
-  event-driven outcomes; start only after `expose-agent-rollout-history`
-  lands, source data from its mounted files and retained rollout/checkpoint
-  evidence, and never add renderer-copied state.
+  Rollout-backed work only when a persisted `process_exit` supplies its
+  outcome, and presents retained Rollouts without terminal evidence as
+  unfinished or incomplete without fabricating a result. Share the surface
+  between dispatched and event-driven outcomes; start only after
+  `expose-agent-rollout-history` lands, source data from its mounted files and
+  retained rollout/checkpoint evidence, and never add renderer-copied state.
 - [ ] 2.3 Add the Permissions surface listing active host grants by label,
   scope, and access, with revocation; wire grant creation to drag-in, file
   picker, and agent-request approval sheet through Host Mount Service.
@@ -45,14 +47,17 @@
   boot-ID pinning, pre-spawn Rollout listing, and exact PID-to-Rollout
   correlation.
 - [ ] 3.2 Add the Rust TUI review surface over `/agent/rollouts`, reconstruct
-  it after Host restart, and keep only Process References, offsets, and display
-  state in the renderer.
+  it after Host restart, render completed outcomes only from persisted
+  `process_exit`, preserve missing terminal evidence as unfinished or
+  incomplete, and keep only Process References, offsets, and display state in
+  the renderer.
 - [ ] 3.3 Render conversation, plan, approval, result, Stop, Permissions, and
   Files-layer entry affordances from the same mounted files, with no copied
   runtime state or default-UI OS vocabulary.
 - [ ] 3.4 Add focused `alan-terminal-ui` tests proving restricted Agent
   Process namespaces cannot reach the top-level launch capability and TUI
-  background work remains reviewable after detach and Host restart.
+  background evidence remains reviewable after detach and Host restart, while
+  a terminal-persistence failure never appears as a completed outcome.
 
 ## 4. Conformance
 
