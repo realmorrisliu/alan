@@ -80,14 +80,15 @@
   controller-drop regression, active-transition cancellation,
   `/proc/<pid>/ctl` exit during an active deferred action, deadlock-free barrier
   and fence completion, no post-exit append, and control exit code `130`.
-- [ ] 2.7 Bound terminal append and flush as one cancellable attempt under a
-  fixed internal deadline. On append error, flush error, or timeout, emit a
-  structured PID/Rollout/exit-code diagnostic, prevent any late writer from
-  continuing, release runtime and cleanup ownership, and let Kernel publish
-  the authoritative exit without retrying or fabricating terminal evidence.
-  Test disk-full/flush-error, timeout, ambiguous-flush no-retry, a complete
-  record surviving an error, absent/torn outcomes, cleanup, and Host-shutdown
-  progress.
+- [ ] 2.7 Bound the entire Agent terminal finalization—context barrier,
+  quiescence, writer fence, and terminal append/flush—under one fixed internal
+  deadline. On error or timeout at any stage, emit a structured
+  PID/Rollout/exit-code/stage diagnostic, forcibly abort and close writer and
+  runtime owners, perform bounded cleanup, and let Kernel publish the
+  authoritative exit without retrying or fabricating terminal evidence. Test
+  an earlier stuck writer blocking the fence, disk-full/flush-error, timeout,
+  ambiguous-flush no-retry, a complete record surviving an error, absent/torn
+  outcomes, no surviving late writer, cleanup, and Host-shutdown progress.
 - [ ] 2.8 Preserve Rollouts without `process_exit` as unterminated evidence
   without fabricating a result. Treat any discovered complete valid
   `process_exit` as authoritative even when its original flush reported an
@@ -104,6 +105,9 @@
 - [ ] 3.3 Isolate malformed Rollouts with diagnostics, accept recoverable torn
   tails only after earlier complete records pass envelope validation, and
   require exactly one leading `AgentMachineMeta` with no later metadata record.
+  Permit at most one `process_exit`, require it to be the final record with no
+  later complete or torn bytes, and reject conflicting exits or post-exit
+  records.
   Validate that its `rollout_id` is nonempty, neither `.` nor `..`, contains
   neither `/` nor NUL, and is unique in the listing. Omit every entry in an ID
   collision rather than choosing one or minting a replacement; prove empty,

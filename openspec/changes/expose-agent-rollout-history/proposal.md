@@ -11,11 +11,13 @@ restart even though the execution evidence already exists.
   clean runtime cleanup. On success it carries the authoritative numeric exit
   code and, when available, the existing `AgentExecutableResult`; it does not
   introduce another terminal status model.
-- Bound the terminal append-and-flush attempt with an internal deadline. On a
-  persistence error or timeout, emit a structured diagnostic and release
-  finalization so `/proc` can still publish the authoritative Process exit.
-  Later discovery treats a complete valid `process_exit` as authoritative even
-  after an ambiguous flush result; only absence or a torn tail is incomplete.
+- Bound the entire Agent terminal finalization—including the context barrier,
+  quiescence, writer fence, and terminal append-and-flush—with one internal
+  deadline. On persistence error or timeout, force-close the writer and runtime
+  owners, emit a structured diagnostic, and release finalization so `/proc`
+  can still publish the authoritative Process exit. Later discovery treats a
+  complete valid `process_exit` as authoritative even after an ambiguous flush
+  result; only absence or a torn tail is incomplete.
 - Extend the generic Process runner bridge with a prepared terminal
   finalization hook. Alan Kernel asks the runner to prepare the per-Process
   hook before the committed Process becomes controllable, invokes it exactly
@@ -59,9 +61,10 @@ restart even though the execution evidence already exists.
   watch, or subscription protocol.
 - Require each discovered `rollout_id` to be a nonempty, unique, safe single
   path component sourced from exactly one leading `AgentMachineMeta` record.
-  Isolate empty, misordered, repeated-metadata, malformed, or colliding
-  Rollouts with diagnostics during discovery without deleting or repairing
-  their backing files or blocking valid entries.
+  Require at most one `process_exit`, as the final record with no trailing
+  record bytes. Isolate empty, misordered, repeated-metadata, conflicting-exit,
+  post-exit, malformed, or colliding Rollouts with diagnostics during discovery
+  without deleting or repairing their backing files or blocking valid entries.
 - Keep `/proc` authoritative for live Process lifecycle and each Rollout
   authoritative for its durable execution evidence.
 - Require authorized consumers to use the Alan OS file surface rather than

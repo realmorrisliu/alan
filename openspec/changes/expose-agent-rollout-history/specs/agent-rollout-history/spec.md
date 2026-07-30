@@ -93,15 +93,17 @@ a producing Rollout, it SHALL then use the retained live runtime owner to
 request quiescence of both ordinary transitions and deferred runtime actions.
 Quiescence SHALL cancel or drain every such producer and await a writer fence
 proving that none can append another Rollout record before finalization appends
-`process_exit`; no Rollout record may be appended after `process_exit`.
-Terminal append and flush SHALL be one cancellable attempt bounded by a fixed
-internal deadline and SHALL NOT be retried after an ambiguous flush result. On
-append error, flush error, or timeout, Agent Runtime Service SHALL emit a
-structured diagnostic containing the PID, Rollout ID, intended exit code, and
-failure, prevent the timed-out operation or any other writer from appending
-later, and release terminal finalization so Alan Kernel can publish the
-authoritative Process exit. A complete valid `process_exit` that reached the
-file SHALL remain authoritative even if the append or flush result was
+`process_exit`; no Rollout record may be appended after `process_exit`. One
+fixed internal deadline SHALL bound the entire Agent terminal finalization,
+including context-barrier wait, quiescence, writer fence, and the single
+terminal append-and-flush attempt. The attempt SHALL NOT be retried after an
+ambiguous flush result. On error or timeout at any stage, Agent Runtime Service
+SHALL emit a structured diagnostic containing the PID, available Rollout ID,
+intended exit code, failed stage, and failure; forcibly abort and close the
+writer and runtime owners so no timed-out operation can append later; perform
+bounded cleanup; and release terminal finalization so Alan Kernel can publish
+the authoritative Process exit. A complete valid `process_exit` that reached
+the file SHALL remain authoritative even if the append or flush result was
 ambiguous. If no complete terminal record is discoverable, the Rollout SHALL
 remain unterminated or recoverably torn evidence; failure SHALL NOT fabricate
 terminal evidence.
@@ -197,6 +199,15 @@ terminal status model.
   file as authoritative despite the ambiguous error
 - **AND** only an absent or torn terminal record remains incomplete evidence
 
+#### Scenario: An earlier writer blocks the terminal fence
+- **WHEN** a prior Rollout write or flush remains stuck in storage I/O while
+  terminal finalization waits for its writer fence
+- **THEN** the whole-finalization deadline expires without waiting forever
+- **AND** Agent Runtime Service forcibly aborts and closes the writer and
+  runtime owners
+- **AND** no timed-out writer later appends a Rollout record
+- **AND** Alan Kernel can publish exit and Host shutdown can progress
+
 ### Requirement: Rollout history follows the `/agent` namespace capability
 A Process whose namespace includes readable `/agent` SHALL be able to read
 `/agent/rollouts`. A Process without that mount SHALL have no Rollout-history
@@ -267,8 +278,12 @@ the first complete record, and no later record may be another
 `AgentMachineMeta`. Discovery SHALL derive the entry ID and launch-correlation
 `process_path` only from that leading record. An empty Rollout, a non-metadata
 first record, absent metadata, or repeated metadata SHALL be omitted with a
-diagnostic. A torn trailing record MAY be ignored only when its earlier
-complete records satisfy the envelope. A Rollout with any other malformed
+diagnostic. A discoverable Rollout SHALL contain at most one `process_exit`; if
+present, it SHALL be the final complete record and no later complete or torn
+record bytes may follow it. Conflicting `process_exit` records or any
+post-terminal bytes SHALL cause omission rather than outcome selection. A torn
+trailing record MAY be ignored only when its earlier complete records satisfy
+the envelope and contain no `process_exit`. A Rollout with any other malformed
 record SHALL be omitted with a diagnostic and SHALL NOT prevent valid Rollouts
 from being listed.
 
@@ -292,6 +307,13 @@ delete or repair any backing file.
 - **THEN** Agent Runtime Service omits it with a diagnostic
 - **AND** discovery does not infer an identifier or `process_path` from a
   later or ambiguous record
+
+#### Scenario: Rollout terminal records conflict or are not final
+- **WHEN** a retained Rollout contains multiple `process_exit` records or any
+  complete or torn record bytes after `process_exit`
+- **THEN** Agent Runtime Service omits it with a diagnostic
+- **AND** discovery does not choose between conflicting outcomes or expose
+  post-terminal evidence
 
 #### Scenario: One retained Rollout is malformed
 - **WHEN** a retained Rollout contains an invalid non-torn record

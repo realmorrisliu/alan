@@ -144,20 +144,23 @@ action cannot leave the finalizer waiting on a producer that never received
 cancellation. This context is bounded to the live Process and is neither
 exposed as a file or Host API nor promoted into another execution identity.
 
-The writer fence orders producers; it does not make storage infallible.
-Terminal append and flush therefore run as one cancellable attempt under a
-fixed internal deadline. The finalizer does not retry because an ambiguous
-flush result could otherwise duplicate `process_exit`. On an append error,
-flush error, or deadline expiry, Agent Runtime Service emits a structured
-diagnostic containing the PID, Rollout ID, intended exit code, and storage
-error or timeout. It closes the terminal writer, releases the runtime and
-cleanup owners, and returns control to Alan Kernel; `/proc` still publishes the
-authoritative Process exit. Closing the writer cannot prove that an ambiguous
-flush wrote no bytes. Later discovery therefore treats a complete valid
-`process_exit` as authoritative regardless of the finalizer's error, while an
-absent or torn terminal record remains incomplete evidence. No later task may
-continue the timed-out write or append another Rollout record. This failure
-path adds no second status file or durable terminal model.
+The writer fence orders producers; it does not make storage infallible, and it
+cannot overtake an earlier writer operation stuck in storage I/O. One fixed
+internal deadline therefore bounds the entire Agent terminal finalization from
+startup/context-barrier cancellation through quiescence, writer fence, and the
+single terminal append-and-flush attempt. The finalizer does not retry because
+an ambiguous flush result could otherwise duplicate `process_exit`. On an
+append error, flush error, or deadline expiry at any stage, Agent Runtime
+Service emits a structured diagnostic containing the PID, available Rollout
+ID, intended exit code, failed stage, and storage error or timeout. It forcibly
+aborts and closes the writer and runtime owners, performs bounded cleanup, and
+returns control to Alan Kernel; `/proc` still publishes the authoritative
+Process exit. Closing the writer cannot prove that an ambiguous flush wrote no
+bytes. Later discovery therefore treats a complete valid `process_exit` as
+authoritative regardless of the finalizer's error, while an absent or torn
+terminal record remains incomplete evidence. No timed-out task or writer may
+survive to append another Rollout record. This failure path adds no second
+status file or durable terminal model.
 
 ### D5: Read authority follows the existing `/agent` capability
 
@@ -207,9 +210,13 @@ correlation. A nonempty Rollout must contain exactly one `AgentMachineMeta`, it
 must be the first complete record, and no later metadata record is permitted.
 The ID and `process_path` used by discovery and launch correlation come only
 from that leading record. An empty file, a non-metadata first record, missing
-metadata, or repeated metadata excludes the Rollout. A torn trailing record is
-ignored only when the earlier complete records satisfy this envelope. Any
-other malformed record excludes that Rollout from `/agent/rollouts`.
+metadata, or repeated metadata excludes the Rollout. The envelope permits at
+most one `process_exit`; when present it must be the final complete record and
+no complete or torn record bytes may follow it. Conflicting terminal records or
+any post-terminal bytes exclude the Rollout rather than forcing discovery to
+choose an outcome. A torn trailing record is ignored only when the earlier
+complete records satisfy this envelope and contain no `process_exit`. Any other
+malformed record excludes that Rollout from `/agent/rollouts`.
 
 The loader currently treats `rollout_id` as an unconstrained string, while the
 discovery surface must use it as one child name. Discovery therefore adds only
