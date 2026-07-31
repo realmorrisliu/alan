@@ -147,15 +147,17 @@ identity changes, the Process exits, the attachment is lost, or correlation
 otherwise ends before matching evidence is observed, the renderer presents an
 indeterminate launch outcome and never automatically retries it.
 
-Strict durability is this launch-time guarantee that a producing Rollout
-exists; it does not make later storage writes infallible. Completed outcomes
-from accepted background dispatches whose terminal `process_exit` is
-discovered as a complete valid record, together with their retained evidence
-references, remain discoverable after Process exit and Host restart. An
-ambiguous append or flush error does not override such a record. If the
-terminal record is absent or torn, the retained Rollout remains discoverable
-only as unterminated or incomplete evidence; a renderer must not infer
-completion or fabricate the unavailable `AgentExecutableResult`. Best-effort foreground
+Strict durability is the launch-time guarantee that a producing Rollout has
+crossed its file-sync, atomic-rename, and durable-directory publication barrier
+before Agent Machine side effects, discovery, or acknowledgment. It does not
+make later storage writes infallible. Completed outcomes from accepted
+background dispatches whose terminal `process_exit` is discovered as a
+complete valid record, together with their retained evidence references,
+remain discoverable after Process exit and Host restart. An ambiguous append
+or durable-sync error does not override such a record. If the terminal record
+is absent or torn, the retained Rollout remains discoverable only as
+unterminated or incomplete evidence; a renderer must not infer completion or
+fabricate the unavailable `AgentExecutableResult`. Best-effort foreground
 conversation may continue without a Rollout, but receives no durable-evidence
 guarantee.
 

@@ -162,13 +162,14 @@ MUST NOT become discovery authority.
 
 ### Requirement: Process exit is recorded in the existing Rollout
 For an Agent Process with a producing Rollout, Alan SHALL attempt to append and
-flush one `process_exit` record through the Process terminal finalization hook
-before Alan Kernel publishes exit and before clean Agent Runtime Service
-cleanup. On successful persistence, the record SHALL contain the authoritative
-numeric Process exit code, a completion timestamp, and the existing
-`AgentExecutableResult` when one is available. It SHALL NOT introduce a second
-terminal status enum or fabricate a Rollout for a best-effort execution that
-started without one.
+durably sync one `process_exit` record through the Process terminal
+finalization hook before Alan Kernel publishes exit and before clean Agent
+Runtime Service cleanup. On successful persistence, the record SHALL contain
+the authoritative numeric Process exit code, a completion timestamp, and the
+existing `AgentExecutableResult` when one is available. Plain buffered or
+async-writer flush SHALL NOT count as successful persistence. Alan SHALL NOT
+introduce a second terminal status enum or fabricate a Rollout for a
+best-effort execution that started without one.
 
 Before an Agent Process becomes controllable, System Process runner SHALL
 register with Agent Runtime Service a pending Process-local terminal-context
@@ -185,8 +186,17 @@ staging-creation pool, create a Rollout at an internal staging path, and
 register an independently cancellable cleanup lease before awaiting the Host
 open. Host open completion SHALL be delivered to that lease even after Process
 startup cancellation. Agent Runtime Service SHALL register writer containment
-before the initial `AgentMachineMeta` flush and SHALL atomically publish the
-inode into the discoverable subtree only after that flush succeeds.
+before writing the initial `AgentMachineMeta`.
+
+Initial publication SHALL write the complete metadata record, durably sync the
+file data and metadata, atomically rename the same inode into the discoverable
+subtree, and durably commit every affected directory entry, or use a durable
+store transaction with equivalent crash semantics. Plain buffered or
+async-writer flush SHALL NOT satisfy this barrier. Only after the complete
+barrier succeeds SHALL Agent Runtime Service insert the source into its
+discovery table, resolve a producing-Rollout terminal context, release the
+staging slot, or permit the Agent Machine to run a transition, spawn a Tool, or
+cause another external side effect.
 
 Cancellation or deadline expiry before publication SHALL irrevocably revoke
 publication and switch the lease to reclaim-only mode. A late-created staging
@@ -199,9 +209,10 @@ Service SHALL sweep abandoned staging entries. Sweep failure SHALL prevent
 service readiness. Staging entries and cleanup leases SHALL NOT be
 discoverable evidence or durable execution identities.
 
-Every prepublication completion, including a late initial flush, SHALL recheck
-publish permission under the same lock used to revoke it. After reclaim-only
-mode wins, no completion SHALL rename the inode into discovery.
+Every prepublication completion, including a late file-sync, rename, or
+directory-commit result, SHALL recheck publish permission under the same lock
+used to revoke it. After reclaim-only mode wins, no completion SHALL insert the
+source into discovery or complete durable publication.
 
 System Process runner SHALL apply the same committed-namespace executable
 eligibility check during terminal preparation as it applies before dispatch in
@@ -232,9 +243,9 @@ record before finalization appends `process_exit`; no Rollout record may be
 appended after `process_exit`. One
 fixed internal absolute deadline SHALL bound Agent terminal finalization and
 SHALL reserve a fixed final interval for containment. Context-barrier wait,
-quiescence, writer fence, the single terminal append-and-flush attempt, and
-pre-exit runtime shutdown SHALL stop at the earlier containment cutoff. The
-attempt SHALL NOT be retried after an ambiguous flush result.
+quiescence, writer fence, the single terminal append-and-durable-sync attempt,
+and pre-exit runtime shutdown SHALL stop at the earlier containment cutoff.
+The attempt SHALL NOT be retried after an ambiguous durable-sync result.
 
 On error or containment-cutoff expiry at any pre-exit stage, Agent Runtime
 Service SHALL emit a structured diagnostic containing the PID, available
@@ -248,7 +259,7 @@ the current backing inode out of the discoverable subtree into internal
 quarantine during the reserved interval. For an unpublished pending-open or
 staging outcome, it SHALL revoke publication and transfer the charged cleanup
 lease to the bounded service reaper; this SHALL be successful non-storage
-containment without awaiting Host open, flush, or unlink. For an explicit
+containment without awaiting Host open, prepublication I/O, or unlink. For an explicit
 no-producing-Rollout outcome with no creation lease or backing inode, closing
 admission and force-aborting any live runtime owner SHALL be successful
 non-storage containment; Agent Runtime Service SHALL NOT remove a discovery
@@ -275,11 +286,13 @@ or aborts after internal signaling failure. Agent terminal finalization SHALL
 never return to Kernel on this path, so Kernel SHALL NOT publish the Process
 exit or continue the Host while a stale writer can mutate a discoverable
 Rollout. A complete valid `process_exit` that reached the file SHALL remain
-authoritative even if the append or flush result was ambiguous. If no complete
-terminal record is discoverable, the Rollout SHALL remain unterminated or
+authoritative even if the append or durable-sync result was ambiguous. If no
+complete terminal record is discoverable, the Rollout SHALL remain
+unterminated or
 recoverably torn evidence; failure SHALL NOT fabricate terminal evidence.
 Finalization SHALL release the runtime-task owner only after `process_exit` is
-flushed or the applicable storage or non-storage containment branch succeeds.
+durably synced or the applicable storage or non-storage containment branch
+succeeds.
 It SHALL return the deferred AgentFS cleanup action to Alan Kernel. Kernel
 SHALL publish the terminal `/proc` state before invoking that action; only then
 may Agent Runtime Service unbind
@@ -294,8 +307,8 @@ SHALL NOT create a durable identity or terminal status model.
   shutting down or dropping them
 - **AND** its Rollout ends with a `process_exit` record carrying the Process
   exit code and that existing result
-- **AND** the record is flushed before finalization shuts down and releases the
-  runtime task
+- **AND** the record is durably synced before finalization shuts down and
+  releases the runtime task
 - **AND** `/proc/<pid>` publishes terminal state before the returned cleanup
   action unbinds AgentFS
 
@@ -386,9 +399,9 @@ SHALL NOT create a durable identity or terminal status model.
 - **THEN** the Rollout remains readable as unterminated evidence
 - **AND** Agent Runtime Service does not fabricate a terminal result
 
-#### Scenario: Terminal persistence cannot flush
-- **WHEN** appending or flushing `process_exit` returns an I/O error or exceeds
-  the containment cutoff that reserves time for containment
+#### Scenario: Terminal persistence cannot durably sync
+- **WHEN** appending or durably syncing `process_exit` returns an I/O error or
+  exceeds the containment cutoff that reserves time for containment
 - **THEN** Agent Runtime Service stops the write attempt without retrying an
   ambiguous result and emits a structured diagnostic
 - **AND** no writer appends another Rollout record
@@ -403,7 +416,7 @@ SHALL NOT create a durable identity or terminal status model.
 - **AND** only an absent or torn terminal record remains incomplete evidence
 
 #### Scenario: An earlier writer blocks the terminal fence
-- **WHEN** a prior Rollout write or flush remains stuck in storage I/O while
+- **WHEN** a prior Rollout write or durable sync remains stuck in storage I/O while
   terminal finalization waits for its writer fence
 - **THEN** the containment cutoff expires while containment time remains
 - **AND** Agent Runtime Service cancels the logical writer and runtime owners
@@ -564,10 +577,14 @@ delete or repair any backing file.
 `SpawnRuntimeOverrides` SHALL accept an optional `durability_required` field.
 When it is `true`, Service Manager SHALL apply the existing strict-durability
 Agent Runtime setting and SHALL NOT fall back to an in-memory Agent Machine.
-Strict durability SHALL guarantee creation of the producing Rollout, not
-infallibility of later terminal persistence. A completed outcome SHALL be
-reconstructible after Process exit or Host restart only when `process_exit`
-is discovered as a complete valid record, including after an ambiguous flush
+Strict durability SHALL guarantee crash-stable publication of the producing
+Rollout: file data and metadata sync, atomic rename, and durable directory
+commit SHALL all succeed before discovery or acknowledgment. The Agent Machine
+MUST NOT run a transition, spawn a Tool, or cause another external side effect
+before that barrier succeeds. Strict durability SHALL NOT make later terminal
+persistence infallible. A completed outcome SHALL be reconstructible after
+Process exit or Host restart only when `process_exit` is discovered as a
+complete valid record, including after an ambiguous append or durable-sync
 error; otherwise the retained Rollout SHALL remain unterminated or incomplete
 evidence without a fabricated result.
 Before opening `/mnt/agent-runtime/clone`, a caller SHALL read
@@ -604,18 +621,29 @@ republish Rollouts while launch handshakes are possible.
   and `/mnt/agent-runtime/clone` allocates a PID for an
   `AgentExecutableRequest` whose `runtime_overrides.durability_required` is
   `true`
-- **AND** Agent Runtime Service creates and flushes the producing Rollout
+- **AND** Agent Runtime Service completes the producing Rollout's file sync,
+  atomic publication rename, and durable directory commit
 - **THEN** `/agent/rollouts/<rollout-id>` exposes a new ID with first-record
   metadata whose `process_path` identifies that PID
 - **AND** `/proc/host/boot_id` still matches the pinned value
 - **AND** the caller may acknowledge durable background launch
 
-#### Scenario: Initial metadata flush stalls
+#### Scenario: Power fails after durable launch acknowledgment
+- **WHEN** the Host loses power immediately after the caller acknowledges a
+  strict-durability launch
+- **THEN** the producing Rollout's initial metadata and discoverable directory
+  entry survive restart
+- **AND** Agent Runtime Service reconstructs the same Rollout from System Store
+  backing
+
+#### Scenario: Initial durable publication stalls
 - **WHEN** control or the terminal deadline fires after Rollout file creation
-  but before the initial metadata flush completes
+  but before file sync, publication rename, and durable directory commit all
+  complete
 - **THEN** Agent Runtime Service irrevocably revokes publication and transfers
   the charged staging cleanup lease to its reaper
-- **AND** late flush completion cannot publish the inode
+- **AND** a late file-sync, rename, or directory-commit result cannot publish
+  the inode or permit Agent Machine side effects
 - **AND** Kernel may publish exit because the inode was never discoverable
 
 #### Scenario: Backing-file creation outlives cancellation

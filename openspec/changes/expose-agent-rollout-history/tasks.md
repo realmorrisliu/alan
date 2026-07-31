@@ -21,14 +21,17 @@
   round-trip and unknown-field tests.
 - [ ] 1.5 Apply the spawn override to the existing Agent Runtime
   strict-durability setting and prove Rollout creation failure does not fall
-  back to an in-memory Agent Machine.
+  back to an in-memory Agent Machine. Gate every Agent Machine transition,
+  Tool spawn, and external side effect on successful durable publication.
 - [ ] 1.6 Prove a strict-durability `/mnt/agent-runtime/clone` spawn can be
   acknowledged through the newly discovered active Rollout's ID and
   first-record `process_path`, with no Host path or internal runtime metadata
-  exposed. Prove this acknowledgment guarantees Rollout creation but does not
-  claim terminal outcome persistence. Prove a request rejected before commit
-  is a definite failure, while missing correlation after a successful or
-  ambiguous commit is reported as indeterminate and never automatically
+  exposed. Prove discovery and acknowledgment occur only after file sync,
+  atomic rename, and durable directory commit, so a power loss after
+  acknowledgment preserves the producing metadata. This launch acknowledgment
+  does not claim terminal outcome persistence. Prove a request rejected before
+  commit is a definite failure, while missing correlation after a successful
+  or ambiguous commit is reported as indeterminate and never automatically
   retried.
 - [ ] 1.7 Prove a retained Rollout with the same PID path from a prior Host
   boot is excluded by the pre-spawn Rollout-ID listing.
@@ -74,15 +77,24 @@
   Deliver late Host open completion to that lease; after cancellation, revoke
   publication and have the service reaper close and unlink any late file.
   Make every prepublication completion recheck publish permission under the
-  same lock used for revocation so a late flush cannot publish afterward.
+  same lock used for revocation so a late durable-store step cannot publish
+  afterward.
   Release the slot only after publication or successful unlink, retain it on
   cleanup failure, reject creation when the pool is full, and sweep abandoned
-  staging before service readiness. Register writer containment before the
-  initial metadata flush and atomically publish only after that flush succeeds.
-  Test cancellation during open, late completion, unlink failure, pool
-  exhaustion, startup sweep failure, and control or deadline expiry while the
-  initial flush stalls, without an Engine-to-Service dependency, file, Host
-  API, durable identity, or absent-resolution fallback.
+  staging before service readiness. Register writer containment before initial
+  metadata. Publish only through a Host-backed durable-store barrier: sync file
+  data and metadata, atomically rename the inode, then durably commit every
+  affected directory entry. Extend the owning storage adapter with these
+  operations; keep Host-specific sync details out of Agent Execution Engine and
+  do not treat `RolloutRecorder::flush_writer` or async-writer flush as
+  durability.
+  Insert discovery, resolve the producing context, release the staging slot,
+  and permit Agent Machine effects only after the whole barrier succeeds. Test
+  cancellation during open, each late barrier stage, unlink failure, pool
+  exhaustion, startup sweep failure, power loss after acknowledgment, and
+  control or deadline expiry while publication stalls, without an
+  Engine-to-Service dependency, file, Host API, durable identity, or
+  absent-resolution fallback.
 - [ ] 2.5 Apply the same committed-namespace executable eligibility check in
   System Process runner finalizer preparation as in `run`. Keep the generic
   no-op when `/bin/alan-agent` is not mounted, and explicitly resolve no
@@ -98,23 +110,25 @@
   await a writer fence covering every Rollout producer. The normal run path
   SHALL hand off its live runtime and cleanup ownership instead of calling
   `RuntimeController::shutdown`, dropping the task owner, or cleaning up before
-  finalization. When a Rollout exists, append and flush terminal
+  finalization. When a Rollout exists, append and durably sync terminal
   `process_exit`; then shut down and release any runtime task and return the
   deferred AgentFS cleanup action while consuming the terminal context exactly
   once. Have Kernel publish terminal `/proc` state before invoking that action
   to unbind `/agent/<pid>` and release Process-scoped AgentFS backing. Test
   immediate control before metadata delivery, explicit no-Rollout startup
   retaining AgentFS until exit publication, normal result publication followed
-  by successful finalization while the runtime remains live,
+  by successful durable sync while the runtime remains live, power loss after
+  successful terminal sync preserving `process_exit`,
   controller-drop regression, active-transition cancellation,
   `/proc/<pid>/ctl` exit during an active deferred action, deadlock-free barrier
   and fence completion, no post-exit append, and control exit code `130`.
 - [ ] 2.7 Bound Agent terminal finalization under one fixed absolute deadline
   while reserving its final interval for containment. Stop context barrier,
-  quiescence, writer fence, terminal append/flush, and pre-exit runtime shutdown
-  work at the earlier containment cutoff. On error or timeout, emit a structured
-  PID/Rollout/exit-code/stage diagnostic, close work admission, and force-abort
-  logical owners without awaiting stuck work. For a published Rollout, remove
+  quiescence, writer fence, terminal append/durable-sync, and pre-exit runtime
+  shutdown work at the earlier containment cutoff. On error or timeout, emit a
+  structured PID/Rollout/exit-code/stage diagnostic, close work admission, and
+  force-abort logical owners without awaiting stuck work. For a published
+  Rollout, remove
   discovery under the lock used by open and atomically quarantine its inode in
   the reserved interval; only failure of this branch calls the synchronously
   non-returning Host lifecycle adapter. For unpublished pending-open or staging
@@ -123,14 +137,14 @@
   containment without discovery lookup or rename. Test an in-memory runtime
   missing quiescence, a pre-dispatch no-owner outcome, pending open and staging
   cutoff, an earlier published writer blocking the fence,
-  disk-full/flush-error, timeout, ambiguous-flush no-retry, a complete record
-  surviving an error, absent/torn outcomes, stale I/O affecting only
+  disk-full/sync-error, timeout, ambiguous-sync no-retry, a complete record
+  surviving an ambiguous error, absent/torn outcomes, stale I/O affecting only
   quarantine, published containment failure as bounded Host-fatal termination,
   cleanup, and Host-shutdown progress.
 - [ ] 2.8 Preserve Rollouts without `process_exit` as unterminated evidence
   without fabricating a result. Treat any discovered complete valid
-  `process_exit` as authoritative even when its original flush reported an
-  error.
+  `process_exit` as authoritative even when its original durable-sync result
+  was ambiguous.
 - [ ] 2.9 Add an internal fatal-transition adapter owned by `alan-os-host`.
   Inject its synchronously non-returning call into Agent Runtime Service during
   Host boot. On invocation, atomically close in-memory readiness, attachment

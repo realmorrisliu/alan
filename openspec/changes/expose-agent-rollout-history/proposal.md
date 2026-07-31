@@ -7,11 +7,11 @@ restart even though the execution evidence already exists.
 
 ## What Changes
 
-- Attempt to append one `process_exit` record to the existing Rollout before
-  clean runtime shutdown and Process exit publication. On success it carries
-  the authoritative numeric exit code and, when available, the existing
-  `AgentExecutableResult`; AgentFS unbinding follows exit publication, and no
-  second terminal status model is introduced.
+- Attempt to append and durably sync one `process_exit` record to the existing
+  Rollout before clean runtime shutdown and Process exit publication. On
+  success it carries the authoritative numeric exit code and, when available,
+  the existing `AgentExecutableResult`; AgentFS unbinding follows exit
+  publication, and no second terminal status model is introduced.
 - Bound Agent terminal finalization with one internal absolute deadline while
   reserving its final interval for containment. Context-barrier, quiescence,
   writer-fence, terminal-persistence, and pre-exit runtime-shutdown work stops
@@ -48,11 +48,13 @@ restart even though the execution evidence already exists.
   during System Process dispatch. If any pre-dispatch path returns after a
   barrier was registered, resolve it explicitly as no producing Rollout so an
   exit such as missing executable or unavailable Agent Runtime cannot hang.
-- Create Rollouts under fixed-capacity internal staging, publish only after the
-  initial metadata flush, and retain a cleanup lease until publication or
-  successful unlink. A cancelled late Host open is reaped on completion;
-  startup sweeps abandoned staging before exposing discovery or clone
-  capability.
+- Create Rollouts under fixed-capacity internal staging. Durably sync initial
+  metadata, atomically rename the inode, and durably commit affected directory
+  entries before publishing it into discovery, resolving a producing context,
+  or allowing Agent Machine side effects. Retain a cleanup lease until this
+  barrier or successful unlink. A cancelled late Host operation is reaped on
+  completion; startup sweeps abandoned staging before exposing discovery or
+  clone capability.
 - Expose each retained Rollout at the read-only
   `/agent/rollouts/<rollout-id>` file path. Agent Runtime Service validates
   retained prefixes once while rebuilding discovery and advances active

@@ -109,8 +109,8 @@ authority.
 ### D4: Terminal completion belongs in the existing Rollout
 
 For an Agent Process with a producing Rollout, clean completion SHALL attempt
-to append and flush one `process_exit` record to that Rollout before runtime
-cleanup. A successfully persisted record contains:
+to append and durably sync one `process_exit` record to that Rollout before
+runtime cleanup. A successfully persisted record contains:
 
 - the authoritative numeric `/proc` exit code;
 - a completion timestamp; and
@@ -160,9 +160,17 @@ reserves a slot from a fixed service-wide staging-creation pool and registers
 the intended path plus an independently cancellable cleanup lease. The Host
 open completion is delivered to that lease even after Process startup is
 cancelled. After creation, the writer owner enters the pending terminal context
-before the initial `AgentMachineMeta` flush. Only a successful initial flush
-atomically renames the same inode into the discoverable subtree and releases
-the staging slot.
+before the initial `AgentMachineMeta` write.
+
+Publication is one Host-backed durable-store barrier: write the complete
+initial metadata, durably sync file data and metadata, atomically rename the
+same inode into the discoverable subtree, then durably commit every affected
+directory entry (or use a store transaction with equivalent crash semantics).
+Only after that barrier succeeds may Agent Runtime Service insert the source
+into its discovery table, resolve the producing-Rollout terminal context,
+release the staging slot, or allow the Agent Machine to run a transition,
+spawn a Tool, or cause another external side effect. `AsyncWriteExt::flush`
+alone does not satisfy this barrier.
 
 Cancellation before publication irrevocably switches the lease to reclaim-only
 mode. A late Host open completion is closed and unlinked from staging; the slot
@@ -174,9 +182,10 @@ abandoned staging entries before exposing discovery or clone capability. A
 failed sweep prevents service readiness. No staging name or cleanup lease is a
 Rollout identity or discoverable evidence.
 
-Every prepublication completion, including a late initial flush, rechecks the
-lease's publish permission under the same lock that revokes it. Once
-reclaim-only wins, no completion can rename the inode into discovery.
+Every prepublication completion, including a late durable-store step, rechecks
+the lease's publish permission under the same lock that revokes it. Once
+reclaim-only wins, no completion can insert the source into discovery or
+complete durable publication.
 
 Preparation first applies the same committed-namespace executable eligibility
 check as `SystemProcessRunner::run`. An invocation whose `/bin/alan-agent`
@@ -238,9 +247,10 @@ cannot overtake an earlier writer operation stuck in storage I/O. One fixed
 internal absolute deadline bounds Agent terminal finalization, but persistence
 does not own that whole budget. A fixed final interval is reserved for
 containment, so startup/context-barrier cancellation, quiescence, the writer
-fence, the single terminal append-and-flush attempt, and pre-exit runtime
-shutdown share an earlier containment cutoff. The finalizer does not retry
-because an ambiguous flush result could otherwise duplicate `process_exit`.
+fence, the single terminal append-and-durable-sync attempt, and pre-exit
+runtime shutdown share an earlier containment cutoff. The finalizer does not
+retry because an ambiguous durable-sync result could otherwise duplicate
+`process_exit`.
 
 On an error or containment-cutoff expiry at any pre-exit stage, Agent Runtime
 Service emits a structured diagnostic containing the PID, available Rollout
@@ -257,7 +267,7 @@ Containment then follows the terminal context's owned storage state:
 - For an unpublished pending-open or staging outcome, it irrevocably revokes
   publication and transfers the charged cleanup lease to the bounded staging
   reaper. This is successful non-storage containment and does not wait for the
-  Host open, flush, or unlink before Kernel may publish exit.
+  Host open, prepublication I/O, or unlink before Kernel may publish exit.
 - For an explicit no-producing-Rollout outcome with no creation lease or
   backing inode, closing admission and force-aborting any live runtime owner is
   successful non-storage containment. It neither removes a discovery entry nor
@@ -360,7 +370,9 @@ discoverable Rollout, status, or execution identity.
 
 `SpawnRuntimeOverrides` gains the optional `durability_required` field and
 Service Manager applies it to the existing Agent Runtime strict-durability
-setting.
+setting. Strict durability uses the publication barrier above: successful
+file sync, atomic rename, and durable directory commit precede discovery,
+producing-context resolution, Agent Machine transitions, and acknowledgment.
 
 A renderer-attached Shell Process is not an Agent Process and therefore cannot
 be the parent of `/bin/alan-agent` through its own `/proc/clone` view: Agent
@@ -419,9 +431,10 @@ cannot prove non-execution after commit.
 This acknowledgment guarantees that durable execution evidence has begun. It
 does not promise that a later terminal append cannot fail. Only a successfully
 discovered complete `process_exit` makes the completed outcome reconstructible
-after Process exit or Host restart. An append or flush error does not override
-a complete record that reached storage; only a missing or torn terminal record
-leaves the retained Rollout unterminated or incomplete.
+after Process exit or Host restart. A successful terminal durable sync makes
+that record crash-stable. An ambiguous append or sync error does not override a
+complete record later found by discovery; only a missing or torn terminal
+record leaves the retained Rollout unterminated or incomplete.
 
 ## Risks / Trade-offs
 

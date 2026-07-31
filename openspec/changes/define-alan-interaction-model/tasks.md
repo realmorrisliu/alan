@@ -24,7 +24,9 @@
   the same boot a new Rollout whose first-record metadata matches the returned
   PID. Present pre-commit rejection as definite failure and any missing
   correlation after successful or ambiguous commit as indeterminate without
-  automatic retry.
+  automatic retry. Prove acknowledgment and every Agent Machine side effect
+  follow successful file sync, atomic publication rename, and durable
+  directory commit, including a power-loss-after-acknowledgment case.
 - [ ] 2.2 Add the review surface (results inbox) that lists completed
   Rollout-backed work only when a persisted `process_exit` supplies its
   outcome, and presents retained Rollouts without terminal evidence as
@@ -61,8 +63,9 @@
 - [ ] 3.4 Add focused `alan-terminal-ui` tests proving restricted Agent
   Process namespaces cannot reach the top-level launch capability and TUI
   background evidence remains reviewable after detach and Host restart. Treat
-  a complete valid `process_exit` as completed even after an ambiguous flush
-  error, while a missing or torn record never appears as a completed outcome.
+  a complete valid `process_exit` as completed even after an ambiguous append
+  or durable-sync error, while a missing or torn record never appears as a
+  completed outcome.
 
 ## 4. Conformance
 

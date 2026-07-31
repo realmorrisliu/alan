@@ -78,11 +78,13 @@ renderer SHALL present the outcome as indeterminate, MUST NOT claim
 non-execution, and MUST NOT automatically retry.
 
 Strict durability SHALL guarantee that an accepted dispatch established its
-producing Rollout; it SHALL NOT guarantee that a later terminal storage write
+producing Rollout through successful file sync, atomic publication rename, and
+durable directory commit before any Agent Machine side effect, discovery, or
+acknowledgment. It SHALL NOT guarantee that a later terminal storage write
 cannot fail. Completed outcomes from accepted local background dispatches
 SHALL remain discoverable after Process exit and Alan OS Host restart only
 when discovery finds a complete valid terminal `process_exit`, including after
-an ambiguous append or flush error. Retained evidence references SHALL remain
+an ambiguous append or durable-sync error. Retained evidence references SHALL remain
 discoverable independently. A Rollout whose terminal record is missing or torn
 SHALL appear only as unterminated or incomplete evidence, and a renderer SHALL
 NOT infer completion or fabricate its missing `AgentExecutableResult`.
@@ -118,9 +120,9 @@ when it does.
 - **AND** the renderer reconstructs the review from mounted files without a
   renderer-owned results database
 
-#### Scenario: Terminal flush result is ambiguous
+#### Scenario: Terminal durable-sync result is ambiguous
 - **WHEN** an accepted strict-durability background dispatch exits and its
-  terminal append or flush reports an error or timeout
+  terminal append or durable sync reports an error or timeout
 - **THEN** a complete valid `process_exit` found by discovery remains
   authoritative and its completed outcome is reviewable
 - **AND** if no complete terminal record is discoverable, the retained Rollout
@@ -128,7 +130,14 @@ when it does.
 - **AND** the renderer does not label it completed or fabricate the missing
   `AgentExecutableResult` when the record is absent or torn
 - **AND** strict durability remains satisfied only in its launch-time promise
-  that the producing Rollout was established
+  that the producing Rollout was durably published before side effects
+
+#### Scenario: Host loses power after launch acknowledgment
+- **WHEN** a local renderer acknowledges a strict-durability background
+  dispatch and the Host immediately loses power
+- **THEN** the producing Rollout's initial metadata and publication survive
+  restart
+- **AND** the renderer can rediscover the same Rollout without private state
 
 #### Scenario: Background dispatch is rejected before commit
 - **WHEN** Agent Runtime Service rejects a strict-durability request before
