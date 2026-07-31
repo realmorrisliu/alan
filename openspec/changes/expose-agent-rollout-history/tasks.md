@@ -194,16 +194,22 @@
 ## 3. Rollout Discovery
 
 - [ ] 3.1 Enumerate retained Rollouts from Agent Runtime Service's existing
-  System Store subtree using the existing Rollout loader, with no persistent
-  history index.
+  System Store subtree with no persistent history index. Do not use the
+  existing whole-file `load_history` path. Add a bounded streaming scanner that
+  reads fixed-size chunks, frames one record through a buffer capped by
+  `MAX_ROLLOUT_RECORD_BYTES`, validates and discards it, and retains only fixed
+  envelope state plus source identity and approved prefix length.
 - [ ] 3.2 Reserve `/agent/rollouts` and expose each valid retained Rollout as
   one read-only `/agent/rollouts/<rollout-id>` JSONL file while preserving
   numeric PID entries and `/agent/root`. Enforce append-only published Rollout
   backing: writers and the Host adapter may append but never overwrite or
-  truncate a published prefix. Serialize append admission behind writer health;
-  on every failed, timed-out, or ambiguous append, atomically poison the writer,
-  close admission before the caller or writer loop can accept another command,
-  keep approved length unchanged, and enter published-storage containment.
+  truncate a published prefix. Add a capped serializer that enforces fixed
+  `MAX_ROLLOUT_RECORD_BYTES` for every record before storage submission and
+  stops without allocating a complete oversized payload. Serialize append
+  admission behind writer health; on every failed, timed-out, or ambiguous
+  submitted append, atomically poison the writer, close admission before the
+  caller or writer loop can accept another command, keep approved length
+  unchanged, and enter published-storage containment.
   Fence a still-running append before quarantine and never submit a later
   ordinary record or `process_exit` through a poisoned writer. Build an
   in-memory discovery table by validating each retained source once at startup;
@@ -230,7 +236,10 @@
   proportional to that range.
   Ignore later appends and fail if the descriptor is unreadable. Impose no
   Rollout-size limit or full-file allocation. Prove large valid Rollouts remain
-  fully readable without whole-prefix work per range read, later active or
+  fully readable and startup scanning memory remains bounded independently of
+  file length, without whole-prefix work per range read. Prove the whole-file
+  loader is not called, over-cap writer records are rejected before storage,
+  retained over-cap records are diagnosed and omitted, later active or
   quarantined appends are not exposed, reopen can observe later complete
   records, partial and ambiguous nonterminal append failures cannot be followed
   by another record, tiny and out-of-range reads do not trigger a complete-
@@ -244,9 +253,10 @@
 - [ ] 3.3 Isolate malformed Rollouts with diagnostics, accept recoverable torn
   tails only after earlier complete records pass envelope validation, and
   require exactly one leading `AgentMachineMeta` with no later metadata record.
-  Permit at most one `process_exit`, require it to be the final record with no
-  later complete or torn bytes, and reject conflicting exits or post-exit
-  records.
+  Omit a retained Rollout whose streaming scanner encounters a record larger
+  than `MAX_ROLLOUT_RECORD_BYTES`. Permit at most one `process_exit`, require it
+  to be the final record with no later complete or torn bytes, and reject
+  conflicting exits or post-exit records.
   Validate that its `rollout_id` is nonempty, neither `.` nor `..`, contains
   neither `/`, NUL, carriage return, nor line feed, and is unique in the
   listing. Omit every entry in an ID collision rather than choosing one or

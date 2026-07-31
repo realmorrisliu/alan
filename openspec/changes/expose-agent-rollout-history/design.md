@@ -55,15 +55,18 @@ owning writer advances that length under the discovery lock only after a
 complete owned append passes envelope validation. This table is cache, not
 durable authority or another execution identity.
 
-Append admission is serialized behind the writer's health state. Any failed,
-timed-out, or ambiguous append poisons the writer and closes admission before
-the caller or writer loop can submit a later command, even if the failure may
-have happened before any bytes reached storage. The approved length remains
-unchanged, and published-storage containment fences the possibly running append
-before quarantine. A poisoned writer never attempts another ordinary record or
-`process_exit`, so a partial append stays a recoverable torn tail rather than
-becoming interior corruption. A complete record discovered during later
-recovery may still validate, but failure to fence or quarantine is Host-fatal.
+Append admission is serialized behind the writer's health state. A capped
+serializer enforces fixed `MAX_ROLLOUT_RECORD_BYTES` for every record before
+storage submission; it stops without allocating the complete oversized payload
+when the cap is crossed. Any failed, timed-out, or ambiguous submitted append
+poisons the writer and closes admission before the caller or writer loop can
+submit a later command, even if the failure may have happened before any bytes
+reached storage. The approved length remains unchanged, and published-storage
+containment fences the possibly running append before quarantine. A poisoned
+writer never attempts another ordinary record or `process_exit`, so a partial
+append stays a recoverable torn tail rather than becoming interior corruption.
+A complete record discovered during later recovery may still validate, but
+failure to fence or quarantine is Host-fatal.
 
 Opening a Rollout file reserves its open slots and, under the discovery lock,
 captures a pinned read-only source descriptor plus the current approved length
@@ -109,10 +112,17 @@ size without a history-read snapshot store, lease, generation, revocation
 protocol, full-file buffer, or caller identity inside Agent Runtime Service.
 This read-path constraint is separate from the bounded Process-local
 publication generation used by terminal containment. The quota account belongs
-to the mounted capability handle and is not durable state. Startup rebuild pays
-one O(prefix length) scan per retained source; active writers validate new
+to the mounted capability handle and is not durable state.
+
+Startup validation does not reuse the current whole-file `load_history` path.
+It reads fixed-size chunks, frames at most one line in a buffer capped by
+`MAX_ROLLOUT_RECORD_BYTES`, validates and discards each record, and retains only
+fixed envelope state plus source identity and approved length. A record that
+crosses the cap invalidates that retained Rollout with a diagnostic. Startup
+therefore pays one O(prefix length) scan per source while memory remains bounded
+by the fixed chunk, record cap, and envelope state; active writers validate new
 records once; opens are constant-work captures; and reads are proportional to
-their requested ranges.
+their requested ranges. The total Rollout has no file-size limit.
 
 ### D3: Retained Rollouts remain the only durable discovery source
 

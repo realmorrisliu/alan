@@ -71,11 +71,15 @@ restart even though the execution evidence already exists.
   `/agent/rollouts/<rollout-id>` file path. Agent Runtime Service validates
   retained prefixes once while rebuilding discovery and advances active
   prefixes incrementally after owned appends. Serialize append admission and
-  poison the writer on any failed or ambiguous append before accepting another
-  command; a poisoned writer enters containment and cannot append a later
-  record or `process_exit`. Each open captures the approved length on a pinned
-  read-only source descriptor. Because the owning Rollout writer may only
-  append and never overwrite or truncate a published prefix,
+  enforce a fixed per-record cap through a capped serializer before storage
+  submission. Poison the writer on any failed or ambiguous submitted append
+  before accepting another command; a poisoned writer enters containment and
+  cannot append a later record or `process_exit`. Rebuild discovery with a
+  fixed-chunk, single-record streaming scanner rather than the whole-file
+  loader or item vector, bounding startup memory independently of total Rollout
+  size. Each open captures the approved length on a pinned read-only source
+  descriptor. Because the owning Rollout writer may only append and never
+  overwrite or truncate a published prefix,
   reads fetch only the requested range within that fixed length; later or
   quarantined appends are never exposed. A fixed service-side maximum rejects
   oversized read counts on in-process and imported paths before allocation or

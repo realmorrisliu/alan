@@ -20,6 +20,12 @@ only after a complete owned append passes envelope validation. The table SHALL
 NOT be durable authority or another execution identity.
 
 The owning writer SHALL serialize append admission and track a poisoned state.
+Before storage submission, it SHALL serialize each record through a capped sink
+with a fixed service-owned `MAX_ROLLOUT_RECORD_BYTES`; exceeding that cap SHALL
+reject the record without allocating or submitting the complete oversized
+payload and without poisoning the writer. The cap SHALL apply to every record
+kind, including `AgentMachineMeta` and `process_exit`.
+
 Before any failed, timed-out, or ambiguous append returns control to its caller
 or the writer loop can accept another command, Agent Runtime Service SHALL
 atomically poison the writer, close append admission, leave the approved length
@@ -74,9 +80,15 @@ one fid. One holder SHALL NOT exhaust its corresponding pool.
 
 Alan SHALL NOT impose a Rollout-size limit or retain a full-file buffer. This
 representation SHALL keep all valid Rollouts readable with memory bounded
-independently of Rollout size and SHALL NOT introduce a history-read snapshot
-store, lease, generation, revocation protocol, or caller identity inside Agent
-Runtime Service. This constraint does not prohibit the bounded Process-local
+independently of Rollout size. Startup discovery SHALL scan each source in
+fixed-size chunks, frame at most one record through a buffer bounded by
+`MAX_ROLLOUT_RECORD_BYTES`, validate and discard that record, and retain only
+fixed envelope state plus the source identity and approved prefix length. It
+SHALL NOT call a whole-file loader, retain a byte buffer or item vector
+proportional to the Rollout, or permit an over-cap record to remain valid.
+This representation SHALL NOT introduce a history-read snapshot store, lease,
+generation, revocation protocol, or caller identity inside Agent Runtime
+Service. This constraint does not prohibit the bounded Process-local
 publication generation required by terminal containment below. Quota accounts
 SHALL belong to mounted capability handles and SHALL NOT be durable state.
 
@@ -163,9 +175,22 @@ SHALL belong to mounted capability handles and SHALL NOT be durable state.
 #### Scenario: A valid Rollout is larger than memory policy
 - **WHEN** a valid retained Rollout is larger than any bounded read scratch
   buffer
-- **THEN** startup can validate its complete prefix once and the history fid
-  can expose it over protocol-bounded range reads
-- **AND** Agent Runtime Service does not require a full-file allocation
+- **THEN** startup validates its complete prefix with a fixed-chunk,
+  single-record scanner and the history fid exposes it over capped range reads
+- **AND** validation memory is bounded by the chunk size,
+  `MAX_ROLLOUT_RECORD_BYTES`, and fixed envelope state rather than file length
+- **AND** Agent Runtime Service does not call the whole-file Rollout loader or
+  retain the complete item vector
+
+#### Scenario: A Rollout record exceeds the owning cap
+- **WHEN** a writer attempts a record larger than
+  `MAX_ROLLOUT_RECORD_BYTES`
+- **THEN** capped serialization rejects it before storage submission without
+  allocating the complete oversized payload
+- **AND** a retained source containing such a record is omitted with a
+  diagnostic during streaming startup validation
+- **AND** the total Rollout may still grow without a file-size limit through
+  any number of individually valid records
 
 #### Scenario: Consumer reads a large Rollout in small ranges
 - **WHEN** a consumer reads an approved Rollout prefix through sequential small
