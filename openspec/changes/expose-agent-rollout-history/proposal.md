@@ -74,13 +74,15 @@ restart even though the execution evidence already exists.
   length on a pinned read-only source descriptor. Because the owning Rollout
   writer may only append and never overwrite or truncate a published prefix,
   reads fetch only the requested range within that fixed length; later or
-  quarantined appends are never exposed. A fixed
-  global and per-namespace-handle open-fid policy plus non-queuing read permits
-  bounds memory and validation bandwidth without making large valid Rollouts
-  unreadable. Ordinary Process handles cannot consume the authorized renderer
-  attachment reserve, and inherited handles share one account rather than
-  multiplying capacity. Reopening observes a later validated prefix. The
-  surface remains available after Process exit and Host restart.
+  quarantined appends are never exposed. A fixed service-side maximum rejects
+  oversized read counts on in-process and imported paths before allocation or
+  I/O. A fixed global and per-namespace-handle open-fid policy plus non-queuing
+  read permits bounds memory and validation bandwidth without making large
+  valid Rollouts unreadable. Ordinary Process handles cannot consume the
+  authorized renderer attachment reserve, and inherited handles share one
+  account rather than multiplying capacity. Reopening observes a later
+  validated prefix. The surface remains available after Process exit and Host
+  restart.
 - Include active, terminal, and valid unterminated Rollouts; presentation may
   prioritize terminal entries but discovery does not hide retained evidence.
 - Add Agent Runtime Service-owned `/mnt/agent-runtime/clone` as the
@@ -104,11 +106,12 @@ restart even though the execution evidence already exists.
 - Require consumers to refresh the directory when needed; add no change-event,
   watch, or subscription protocol.
 - Require each discovered `rollout_id` to be a nonempty, unique, safe single
-  path component sourced from exactly one leading `AgentMachineMeta` record.
-  Require at most one `process_exit`, as the final record with no trailing
-  record bytes. Isolate empty, misordered, repeated-metadata, conflicting-exit,
-  post-exit, malformed, or colliding Rollouts with diagnostics during discovery
-  without deleting or repairing their backing files or blocking valid entries.
+  path component without NUL or CR/LF listing delimiters, sourced from exactly
+  one leading `AgentMachineMeta` record. Require at most one `process_exit`, as
+  the final record with no trailing record bytes. Isolate empty, misordered,
+  repeated-metadata, conflicting-exit, post-exit, malformed, or colliding
+  Rollouts with diagnostics during discovery without deleting or repairing
+  their backing files or blocking valid entries.
 - Keep `/proc` authoritative for live Process lifecycle and each Rollout
   authoritative for its durable execution evidence.
 - Require authorized consumers to use the Alan OS file surface rather than

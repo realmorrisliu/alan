@@ -24,12 +24,19 @@ the current approved length. It SHALL reserve its handle and pool open slots
 and capture both values from the discovery table under the same lock used for
 containment removal; it SHALL NOT rescan the complete prefix. Failed open or
 clunk SHALL release the slots.
-Each read SHALL fetch only the protocol-bounded requested range from the pinned
-descriptor and MUST NOT read beyond the approved length. Storage work and
-scratch/result memory SHALL be proportional to the requested range rather than
-the Rollout length. An unreadable descriptor SHALL return an error. Appends
-beyond the captured length SHALL remain invisible, while reopening MAY capture
-a later complete prefix.
+Agent Runtime Service SHALL enforce a fixed service-owned
+`MAX_HISTORY_READ_BYTES` no greater than the aP wire payload limit on every
+history read, including in-process calls. It SHALL reject a requested `count`
+above that cap before permit acquisition, offset arithmetic, scratch or result
+allocation, or storage I/O; it SHALL NOT rely on an importer or caller to
+clamp the request. Accepted offset and count arithmetic SHALL be checked for
+overflow. Each read SHALL fetch at most that accepted requested range from the
+pinned descriptor and MUST NOT read beyond the approved length. The storage
+adapter's returned data SHALL also be rejected if it exceeds the accepted
+count. Storage work and scratch/result memory SHALL be proportional to the
+capped requested range rather than the Rollout length. An unreadable
+descriptor SHALL return an error. Appends beyond the captured length SHALL
+remain invisible, while reopening MAY capture a later complete prefix.
 
 Agent Runtime Service SHALL issue quota-scoped `/agent` FileServer handles for
 namespace assembly. Each handle SHALL have a fixed open-history cap, and
@@ -102,6 +109,19 @@ SHALL belong to mounted capability handles and SHALL NOT be durable state.
 - **AND** they do not queue or allocate scratch or result storage
 - **AND** every acquired permit is released after either a successful or
   failed range read
+
+#### Scenario: In-process caller requests an oversized history read
+- **WHEN** an in-process namespace handle requests a history read whose count
+  exceeds `MAX_HISTORY_READ_BYTES`, including `u32::MAX`
+- **THEN** Agent Runtime Service rejects it before permit acquisition,
+  allocation, offset arithmetic, or storage I/O
+- **AND** it does not depend on `ImportedFileServer` to clamp the count
+
+#### Scenario: History read reaches the service cap
+- **WHEN** a caller requests exactly `MAX_HISTORY_READ_BYTES`
+- **THEN** Agent Runtime Service may accept the read subject to permits,
+  checked offset arithmetic, and the approved prefix length
+- **AND** the returned data cannot exceed that cap or the accepted count
 
 #### Scenario: Shell child inherits its Process namespace
 - **WHEN** the Local Entry Shell launches an ordinary child from the namespace
@@ -594,8 +614,9 @@ the envelope and contain no `process_exit`. A Rollout with any other malformed
 record SHALL be omitted with a diagnostic and SHALL NOT prevent valid Rollouts
 from being listed.
 
-Because `rollout_id` becomes one file name, discovery SHALL additionally
-require it to be nonempty, neither `.` nor `..`, and free of `/` and NUL. It
+Because `rollout_id` becomes one file name and directory listings delimit names
+with line endings, discovery SHALL additionally require it to be nonempty,
+neither `.` nor `..`, and free of `/`, NUL, carriage return, and line feed. It
 SHALL be unique among retained Rollouts in one listing. Discovery SHALL omit
 every Rollout participating in an identifier collision rather than select one
 or mint a replacement identity. Invalid or duplicate identifiers SHALL emit
@@ -630,10 +651,10 @@ delete or repair any backing file.
 
 #### Scenario: Rollout identifier is not a safe child name
 - **WHEN** a retained Rollout has an empty identifier, `.` or `..`, or an
-  identifier containing `/` or NUL
+  identifier containing `/`, NUL, carriage return, or line feed
 - **THEN** Agent Runtime Service omits it with a diagnostic
-- **AND** the identifier cannot escape, alias, or add levels beneath
-  `/agent/rollouts`
+- **AND** the identifier cannot escape, alias, add levels beneath
+  `/agent/rollouts`, or split a directory listing into apparent child names
 
 #### Scenario: Retained Rollouts claim the same identifier
 - **WHEN** two or more retained Rollouts have the same otherwise-safe

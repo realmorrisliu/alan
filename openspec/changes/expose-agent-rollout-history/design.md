@@ -62,9 +62,14 @@ whole-prefix scan. Containment removes the entry under the same lock, so an
 open either captures the pre-removal prefix or fails after removal. Failed open
 or clunk releases its slots.
 
-Each read fetches only the protocol-bounded requested range from the pinned
-descriptor and never reads beyond the approved length. Its storage work and
-scratch/result memory are proportional to that requested range, not to the
+Every history read first passes a fixed Agent Runtime Service-owned
+`MAX_HISTORY_READ_BYTES` check no greater than the aP wire payload limit,
+including through an in-process handle. An oversized count is rejected before
+permit acquisition, checked offset arithmetic, allocation, or storage I/O; an
+importer clamp is not trusted. Each accepted read fetches at most the capped
+requested range from the pinned descriptor and never reads beyond the approved
+length. The adapter may not return more than the accepted count. Storage work
+and scratch/result memory are proportional to that capped range, not to the
 Rollout length. Bytes appended beyond the captured length are ignored, and an
 unreadable descriptor returns an error. Reopening may capture a later validated
 prefix. Agent Runtime Service issues
@@ -410,12 +415,14 @@ malformed record excludes that Rollout from `/agent/rollouts`.
 The loader currently treats `rollout_id` as an unconstrained string, while the
 discovery surface must use it as one child name. Discovery therefore adds only
 the projection invariant required by that file surface: the ID must be
-nonempty, must be neither `.` nor `..`, and must contain neither `/` nor NUL.
-It must also be unique among the retained Rollouts in the same listing. If
-multiple backing Rollouts claim one ID, discovery omits every colliding entry
-rather than choosing an arbitrary authority or minting another identity.
-Invalid and duplicate IDs emit diagnostics without blocking unrelated valid
-entries. Discovery neither deletes nor repairs backing files. Internal
+nonempty, must be neither `.` nor `..`, and must contain neither `/`, NUL,
+carriage return, nor line feed. Rejecting line delimiters is required because
+directory listings join and parse child names by lines. The ID must also be
+unique among the retained Rollouts in the same listing. If multiple backing
+Rollouts claim one ID, discovery omits every colliding entry rather than
+choosing an arbitrary authority or minting another identity. Invalid and
+duplicate IDs emit diagnostics without blocking unrelated valid entries.
+Discovery neither deletes nor repairs backing files. Internal
 stale-writer quarantine is exceptional service-owned containment, not a
 discoverable Rollout, status, or execution identity.
 

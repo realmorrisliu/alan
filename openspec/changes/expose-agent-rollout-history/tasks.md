@@ -210,18 +210,25 @@
   read scratch or result storage, non-blockingly acquire per-handle and
   corresponding-pool in-flight read permits; reject immediately rather than
   queue when either limit is reached, and release permits on success or error.
-  On every permitted read, fetch only the protocol-bounded requested range
-  through the pinned descriptor and never read beyond the approved length.
-  Make storage work and scratch/result memory proportional to that range.
+  Before permit acquisition, offset arithmetic, allocation, or storage I/O,
+  enforce a fixed service-side `MAX_HISTORY_READ_BYTES` no greater than the aP
+  wire payload limit on both in-process and imported calls; reject rather than
+  clamp oversized counts, use checked offset arithmetic, and reject adapter
+  results larger than the accepted count. On every permitted read, fetch only
+  that capped requested range through the pinned descriptor and never read
+  beyond the approved length. Make storage work and scratch/result memory
+  proportional to that range.
   Ignore later appends and fail if the descriptor is unreadable. Impose no
   Rollout-size limit or full-file allocation. Prove large valid Rollouts remain
   fully readable without whole-prefix work per range read, later active or
   quarantined appends are not exposed, reopen can observe later complete
   records, tiny and out-of-range reads do not trigger a complete-prefix scan,
-  concurrent reads through one fid remain bounded, ordinary Processes cannot
-  exhaust renderer capacity, ordinary Shell children inherit neither the
-  reserve nor `/mnt/agent-runtime`, and excess opens or reads fail with
-  resource exhaustion without changing evidence.
+  exact-cap reads succeed, cap-plus-one and `u32::MAX` in-process reads fail
+  before allocation or I/O, overflow is rejected, concurrent reads through one
+  fid remain bounded, ordinary Processes cannot exhaust renderer capacity,
+  ordinary Shell children inherit neither the reserve nor
+  `/mnt/agent-runtime`, and excess opens or reads fail with resource exhaustion
+  without changing evidence.
 - [ ] 3.3 Isolate malformed Rollouts with diagnostics, accept recoverable torn
   tails only after earlier complete records pass envelope validation, and
   require exactly one leading `AgentMachineMeta` with no later metadata record.
@@ -229,10 +236,11 @@
   later complete or torn bytes, and reject conflicting exits or post-exit
   records.
   Validate that its `rollout_id` is nonempty, neither `.` nor `..`, contains
-  neither `/` nor NUL, and is unique in the listing. Omit every entry in an ID
-  collision rather than choosing one or minting a replacement; prove empty,
-  message-first, metadata-later, repeated-metadata, invalid-ID, and duplicate-ID
-  Rollouts do not block unrelated valid entries.
+  neither `/`, NUL, carriage return, nor line feed, and is unique in the
+  listing. Omit every entry in an ID collision rather than choosing one or
+  minting a replacement; prove empty, line-delimited, message-first,
+  metadata-later, repeated-metadata, invalid-ID, and duplicate-ID Rollouts do
+  not block unrelated valid entries.
 - [ ] 3.4 Test discovery of active, terminal, and unterminated Rollouts across
   Process exit and Agent Runtime Service restart.
 - [ ] 3.5 Complete the abandoned-staging sweep and quarantine recovery before
