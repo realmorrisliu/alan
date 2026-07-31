@@ -18,6 +18,13 @@ observe later complete records. Agent Runtime Service SHALL order snapshot
 creation and removal from discovery under the same lock, without introducing a
 lease, generation, or revocation protocol.
 
+Snapshots with identical approved prefixes SHALL share one immutable buffer.
+Agent Runtime Service SHALL enforce fixed limits for one snapshot's bytes,
+total open history fids, and aggregate unique snapshot bytes. It SHALL reserve
+count and byte budget before materialization, release them on clunk, reject an
+open with resource exhaustion when any limit would be exceeded, and publish no
+fid when materialization fails.
+
 #### Scenario: Consumer lists Rollouts after Host restart
 - **WHEN** an authorized consumer lists `/agent/rollouts` after Alan OS Host
   restart
@@ -36,6 +43,13 @@ lease, generation, or revocation protocol.
   its history file
 - **THEN** the existing fid remains an immutable snapshot
 - **AND** reopening the path may expose the later complete record
+
+#### Scenario: Retained snapshots reach a service limit
+- **WHEN** another history open would exceed the per-snapshot byte, open-fid,
+  or aggregate unique-snapshot-byte limit
+- **THEN** Agent Runtime Service rejects that open with resource exhaustion
+- **AND** existing fids and Rollout evidence remain unchanged
+- **AND** clunk releases the corresponding count and byte budget
 
 #### Scenario: Consumer attempts to mutate history
 - **WHEN** a consumer opens `/agent/rollouts` or one of its descendants for
@@ -83,7 +97,9 @@ register with Agent Runtime Service a pending Process-local terminal-context
 barrier and a startup cancellation path. Every Agent startup exit path SHALL
 resolve the barrier exactly once with either a producing-Rollout context or an
 explicit no-producing-Rollout outcome; an absent or dropped resolution SHALL
-NOT be treated as no Rollout.
+NOT be treated as no Rollout. Either outcome SHALL carry deferred cleanup for
+any AgentFS already bound; a pre-dispatch outcome before Agent Runtime Service
+accepts ownership MAY carry none.
 
 Agent Runtime Service SHALL create a Rollout at an internal staging path and
 register an independently cancellable creation owner before awaiting the Host
@@ -104,61 +120,69 @@ Service.
 Immediately after Agent Machine creation succeeds, Agent Runtime Service SHALL
 resolve the producing-Rollout context with the existing Rollout metadata and a
 retained owning `RuntimeController` or equivalent runtime-task guard and
-Process cleanup guard, before later initialization or readiness signaling. A
-cloned `RuntimeHandle` alone SHALL NOT satisfy this ownership requirement. The
-ordinary Agent Executable run path MAY borrow the handle to await and produce
-its `ProcessOutcome`, but SHALL NOT shut down or drop the runtime-task owner or
-perform Process cleanup before terminal finalization. Terminal finalization
-SHALL first request startup or runtime cancellation and await the barrier. For
-a producing Rollout, it SHALL then use the retained live runtime owner to
+deferred AgentFS cleanup action, before later initialization or readiness
+signaling. A cloned `RuntimeHandle` alone SHALL NOT satisfy this ownership
+requirement. The ordinary Agent Executable run path MAY borrow the handle to
+await and produce its `ProcessOutcome`, but SHALL NOT shut down or drop the
+runtime-task owner or perform AgentFS cleanup before terminal finalization.
+Terminal finalization SHALL first request startup or runtime cancellation and
+await the barrier. For a producing Rollout, it SHALL then use the retained live
+runtime owner to
 request quiescence of both ordinary transitions and deferred runtime actions.
 Quiescence SHALL cancel or drain every such producer and await a writer fence
 proving that none can append another Rollout record before finalization appends
 `process_exit`; no Rollout record may be appended after `process_exit`. One
 fixed internal absolute deadline SHALL bound Agent terminal finalization and
 SHALL reserve a fixed final interval for containment. Context-barrier wait,
-quiescence, writer fence, and the single terminal append-and-flush attempt
-SHALL stop at the earlier persistence cutoff. The attempt SHALL NOT be retried
-after an ambiguous flush result.
+quiescence, writer fence, the single terminal append-and-flush attempt, and
+pre-exit runtime shutdown SHALL stop at the earlier containment cutoff. The
+attempt SHALL NOT be retried after an ambiguous flush result.
 
-On error or persistence-cutoff expiry at any stage, Agent Runtime Service SHALL
-emit a structured diagnostic containing the PID, available Rollout ID,
-intended exit code, failed stage, and failure; cancel the logical writer and
-runtime owners without awaiting stuck Host I/O; remove the entry from discovery
-under the snapshot-open lock; and atomically move the current backing inode out
-of the discoverable subtree into internal quarantine during the reserved
-interval. Only after successful containment SHALL it perform bounded cleanup
-and release terminal finalization so Alan Kernel can publish the authoritative
-Process exit. Already-submitted Host I/O SHALL retain only the quarantined
-inode; every existing history fid SHALL retain only its immutable pre-removal
-snapshot. Recovery SHALL wait until no writer owner remains, validate the
-complete Rollout envelope, and MAY atomically republish the same Rollout ID.
-Quarantine SHALL NOT be exposed as a Rollout, status, or execution identity.
+On error or containment-cutoff expiry at any pre-exit stage, Agent Runtime
+Service SHALL emit a structured diagnostic containing the PID, available
+Rollout ID, intended exit code, failed stage, and failure; cancel the logical
+writer and runtime owners without awaiting stuck Host I/O; remove the entry
+from discovery under the snapshot-open lock; and atomically move the current
+backing inode out of the discoverable subtree into internal quarantine during
+the reserved interval. Only after successful containment SHALL it complete
+non-blocking logical-owner release and release terminal finalization so Alan
+Kernel can publish the authoritative Process exit. Already-submitted Host I/O
+SHALL retain only the quarantined inode; every existing history fid SHALL
+retain only its immutable pre-removal snapshot. Recovery SHALL wait until no
+writer owner remains, validate the complete Rollout envelope, and MAY
+atomically republish the same Rollout ID. Quarantine SHALL NOT be exposed as a
+Rollout, status, or execution identity.
 
 If containment returns an error or has not returned when the absolute deadline
-expires, the Host SHALL enter a fatal storage-integrity transition, stop
-accepting work, and terminate without awaiting the containment operation.
-Kernel SHALL NOT publish the Process exit or continue the Host while a stale
-writer can mutate a discoverable Rollout. A complete valid `process_exit` that
-reached the file SHALL remain authoritative even if the append or flush result
-was ambiguous. If no complete terminal record is discoverable, the Rollout
-SHALL remain unterminated or recoverably torn evidence; failure SHALL NOT
-fabricate terminal evidence.
-Finalization SHALL release the runtime-task owner and perform Process cleanup
-only after `process_exit` is flushed or this bounded persistence-failure path
-has cancelled the writer and successfully contained its backing inode. The
-barrier and its outcomes SHALL remain internal, Process-local synchronization
-state and SHALL NOT create a durable identity or terminal status model.
+expires, Agent Runtime Service SHALL signal the injected Alan OS Host lifecycle
+adapter without awaiting the containment operation. The Host owner SHALL commit
+the fatal storage-integrity transition or abort the Host process if the signal
+cannot be accepted. Kernel SHALL NOT publish the Process exit or continue the
+Host while a stale writer can mutate a discoverable Rollout. A complete valid
+`process_exit` that reached the file SHALL remain authoritative even if the
+append or flush result was ambiguous. If no complete terminal record is
+discoverable, the Rollout SHALL remain unterminated or recoverably torn
+evidence; failure SHALL NOT fabricate terminal evidence.
+Finalization SHALL release the runtime-task owner only after `process_exit` is
+flushed or this bounded persistence-failure path has cancelled the writer and
+successfully contained its backing inode. It SHALL return the deferred AgentFS
+cleanup action to Alan Kernel. Kernel SHALL publish the terminal `/proc` state
+before invoking that action; only then may Agent Runtime Service unbind
+`/agent/<pid>` and release Process-scoped AgentFS backing. The barrier, action,
+and outcomes SHALL remain internal, Process-local synchronization state and
+SHALL NOT create a durable identity or terminal status model.
 
 #### Scenario: Agent Executable completes with a terminal result
 - **WHEN** an Agent Process publishes an `AgentExecutableResult` and exits
 - **THEN** the ordinary run path transfers or retains the live runtime-task
-  owner and Process cleanup guard in the terminal context instead of shutting
-  down or dropping them
+  owner and deferred AgentFS cleanup action in the terminal context instead of
+  shutting down or dropping them
 - **AND** its Rollout ends with a `process_exit` record carrying the Process
   exit code and that existing result
-- **AND** the record is flushed before AgentFS runtime cleanup
-- **AND** only then does finalization shut down and release the runtime task
+- **AND** the record is flushed before finalization shuts down and releases the
+  runtime task
+- **AND** `/proc/<pid>` publishes terminal state before the returned cleanup
+  action unbinds AgentFS
 
 #### Scenario: Control wins after a runner result is produced
 - **WHEN** runner completion has a candidate `AgentExecutableResult` but
@@ -231,14 +255,16 @@ state and SHALL NOT create a durable identity or terminal status model.
 
 #### Scenario: Terminal persistence cannot flush
 - **WHEN** appending or flushing `process_exit` returns an I/O error or exceeds
-  the persistence cutoff that reserves time for containment
+  the containment cutoff that reserves time for containment
 - **THEN** Agent Runtime Service stops the write attempt without retrying an
   ambiguous result and emits a structured diagnostic
 - **AND** no writer appends another Rollout record
 - **AND** it uses the reserved interval to quarantine the backing inode
-- **AND** after successful containment, runtime and Process cleanup complete
+- **AND** after successful containment, logical runtime ownership is released
+  without awaiting stuck Host I/O
 - **AND** Alan Kernel publishes the authoritative exit instead of leaving the
   Process running or blocking Host shutdown
+- **AND** AgentFS cleanup begins only after that exit is published
 - **AND** discovery treats a complete valid `process_exit` that reached the
   file as authoritative despite the ambiguous error
 - **AND** only an absent or torn terminal record remains incomplete evidence
@@ -246,7 +272,7 @@ state and SHALL NOT create a durable identity or terminal status model.
 #### Scenario: An earlier writer blocks the terminal fence
 - **WHEN** a prior Rollout write or flush remains stuck in storage I/O while
   terminal finalization waits for its writer fence
-- **THEN** the persistence cutoff expires while containment time remains
+- **THEN** the containment cutoff expires while containment time remains
 - **AND** Agent Runtime Service cancels the logical writer and runtime owners
   without awaiting the stuck Host I/O
 - **AND** it atomically quarantines the backing inode before releasing Kernel
@@ -255,9 +281,11 @@ state and SHALL NOT create a durable identity or terminal status model.
 
 #### Scenario: Quarantine blocks in failing storage
 - **WHEN** containment has not returned by the absolute finalization deadline
-- **THEN** the Host enters a fatal storage-integrity transition without
-  awaiting the stuck quarantine operation
-- **AND** it stops accepting work and terminates
+- **THEN** Agent Runtime Service signals the injected Host lifecycle adapter
+  without awaiting the stuck quarantine operation
+- **AND** the Host owner stops attachment and new-work admission and terminates
+- **AND** an unavailable adapter causes fail-stop process abort, not continued
+  operation
 - **AND** Kernel does not publish the Process exit or continue the Host with a
   discoverable stale writer
 

@@ -8,19 +8,22 @@ restart even though the execution evidence already exists.
 ## What Changes
 
 - Attempt to append one `process_exit` record to the existing Rollout before
-  clean runtime cleanup. On success it carries the authoritative numeric exit
-  code and, when available, the existing `AgentExecutableResult`; it does not
-  introduce another terminal status model.
+  clean runtime shutdown and Process exit publication. On success it carries
+  the authoritative numeric exit code and, when available, the existing
+  `AgentExecutableResult`; AgentFS unbinding follows exit publication, and no
+  second terminal status model is introduced.
 - Bound Agent terminal finalization with one internal absolute deadline while
   reserving its final interval for containment. Context-barrier, quiescence,
-  writer-fence, and terminal-persistence work stops at the earlier persistence
-  cutoff. On error or timeout, cancel the logical writer and runtime owners
-  without awaiting stuck Host I/O and use the reserved interval to atomically
-  quarantine the backing inode before releasing finalization. If containment
-  itself does not return
-  by the absolute deadline, enter a Host-fatal storage-integrity transition
-  without awaiting the stuck operation or continuing the Host. Recovery may
-  republish only after ownership ends and validation succeeds.
+  writer-fence, terminal-persistence, and pre-exit runtime-shutdown work stops
+  at the earlier containment cutoff. On error or timeout, cancel the logical
+  writer and runtime owners without awaiting stuck Host I/O and use the
+  reserved interval to atomically quarantine the backing inode before
+  releasing finalization. If containment itself does not return by the
+  absolute deadline, report the failure through the Alan OS Host lifecycle
+  adapter. The Host owner stops attachment and work admission and terminates
+  without awaiting the stuck operation; Agent Runtime Service does not own
+  whole-Host shutdown. Recovery may republish only after ownership ends and
+  validation succeeds.
 - Extend the generic Process runner bridge with a prepared terminal
   finalization hook. Alan Kernel asks the runner to prepare the per-Process
   hook before the committed Process becomes controllable, invokes it exactly
@@ -31,12 +34,14 @@ restart even though the execution evidence already exists.
 - For `/bin/alan-agent`, prepare a pending Process-local terminal-context
   barrier before control becomes reachable. Resolve it on every startup path
   with either the existing Rollout metadata plus ownership of the runtime task
-  and cleanup guard, or an explicit no-producing-Rollout outcome. The ordinary
-  run path hands that ownership to terminal finalization instead of shutting
-  down or dropping it. Terminal finalization cancels startup or execution,
-  awaits that barrier, and quiesces every Rollout writer before appending
+  and deferred AgentFS cleanup, or an explicit no-producing-Rollout outcome
+  that still carries cleanup for any AgentFS already bound. The ordinary run
+  path hands that ownership to terminal finalization instead of shutting down
+  or dropping it. Terminal finalization cancels startup or execution, awaits
+  that barrier, and quiesces every Rollout writer before appending
   `process_exit`, so no producing Rollout is missed and no later record can
-  follow the terminal record.
+  follow the terminal record. Alan Kernel publishes exit before invoking the
+  returned AgentFS cleanup action.
 - Apply the same executable-eligibility check during terminal preparation as
   during System Process dispatch. If any pre-dispatch path returns after a
   barrier was registered, resolve it explicitly as no producing Rollout so an
@@ -47,8 +52,10 @@ restart even though the execution evidence already exists.
 - Expose each retained Rollout at the read-only
   `/agent/rollouts/<rollout-id>` file path. Each open receives a service-owned
   immutable snapshot of the existing JSONL records rather than a Host backing
-  handle; reopening observes later records. The surface remains available
-  after Process exit and Host restart.
+  handle; reopening observes later records. Identical snapshots share storage,
+  and fixed per-fid, open-fid-count, and aggregate-byte limits reject excess
+  opens instead of allowing unbounded memory retention. The surface remains
+  available after Process exit and Host restart.
 - Include active, terminal, and valid unterminated Rollouts; presentation may
   prioritize terminal entries but discovery does not hide retained evidence.
 - Add Agent Runtime Service-owned `/mnt/agent-runtime/clone` as the
@@ -98,6 +105,8 @@ restart even though the execution evidence already exists.
 - `plan9-kernel-substrate`: Serialize terminal Process transitions through a
   generic pre-exit runner finalization hook without adding agent semantics to
   Alan Kernel.
+- `alan-os-host-lifecycle`: Own fatal storage-integrity admission closure and
+  fail-stop Host termination requested through an injected adapter.
 
 ## Impact
 
@@ -108,7 +117,9 @@ restart even though the execution evidence already exists.
 - Adds no new retention or deletion policy.
 - Adds no namespace notification protocol.
 - Adds no Host-private startup API or duplicate runtime-metadata file.
-- Does not change Alan Kernel lifecycle authority, the aP wire surface, or
-  Rollout evidence ownership.
+- Adds one internal Agent Runtime Service-to-Host fatal-transition adapter; it
+  does not add a Host command or file surface.
+- Does not change Alan Kernel Process lifecycle authority, the aP wire surface,
+  or Rollout evidence ownership.
 - Must land before `define-alan-interaction-model` implements its durable
   review surface.

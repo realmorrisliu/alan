@@ -21,6 +21,11 @@ before publishing exit and, for control- or Host-driven termination, before
 aborting the runner. The preparation and finalizer SHALL NOT change the exit
 code or add executable-specific semantics to Alan Kernel. Claim source SHALL
 remain transition-local and SHALL NOT become another lifecycle state.
+The finalizer MAY return one opaque post-exit cleanup action. Alan Kernel SHALL
+publish the winning terminal state before invoking that action, and SHALL NOT
+interpret its executable-specific contents. The action SHALL default to absent
+and SHALL remain transition-local rather than becoming a Process owner or
+lifecycle state.
 
 #### Scenario: A process is inspected
 - **WHEN** a consumer opens `/proc/<pid>`
@@ -36,6 +41,7 @@ remain transition-local and SHALL NOT become another lifecycle state.
   finalizer prepared before control became reachable with exit code `130`
 - **AND** the runner is aborted and exit `130` is published only after that
   finalizer finishes
+- **AND** any returned cleanup action runs only after exit `130` is published
 
 #### Scenario: Control arrives immediately after Process commit
 - **WHEN** a consumer opens `/proc/<pid>/ctl` as soon as the Process becomes
@@ -54,3 +60,9 @@ remain transition-local and SHALL NOT become another lifecycle state.
 - **WHEN** a Process runner uses the default terminal preparation and hook
 - **THEN** both are no-ops
 - **AND** generic Process completion retains its existing lifecycle behavior
+
+#### Scenario: Finalizer returns post-exit cleanup
+- **WHEN** a winning finalizer returns an opaque cleanup action
+- **THEN** Alan Kernel first publishes the terminal `/proc/<pid>` state
+- **AND** it then invokes the action without interpreting AgentFS or storage
+  semantics

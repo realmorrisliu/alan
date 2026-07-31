@@ -35,7 +35,8 @@
   terminal-finalizer preparation and execution hooks. Prepare one
   per-Process finalizer from the committed invocation before the Process is
   visible as running or accepts `ctl`, and invoke it with the intended numeric
-  exit code.
+  exit code. Allow the finalizer to return one opaque, default-absent post-exit
+  cleanup action.
 - [ ] 2.2 Serialize runner completion, `/proc/<pid>/ctl`, and Host
   `record_exit` through one per-Process terminal claim; retain, invoke, and
   await the prepared finalizer exactly once before publishing exit and before
@@ -52,9 +53,10 @@
   barrier and startup cancellation path with Agent Runtime Service before
   Process control is reachable. Resolve the barrier exactly once on every
   startup exit with either the existing metadata plus ownership of the live
-  `RuntimeController` (or equivalent runtime-task guard) and Process cleanup
-  guard, or an explicit no-producing-Rollout outcome; a cloned
-  `RuntimeHandle` alone is insufficient. Keep any eventual
+  `RuntimeController` (or equivalent runtime-task guard) and deferred AgentFS
+  cleanup action, or an explicit no-producing-Rollout outcome that still
+  carries cleanup for any AgentFS already bound; a pre-dispatch outcome carries
+  none, and a cloned `RuntimeHandle` alone is insufficient. Keep any eventual
   `AgentExecutableResult` only in the candidate runner outcome. Prove control
   during the delivery window and failure after Rollout creation but before
   readiness still finalize correctly. Create at an internal staging path,
@@ -78,26 +80,29 @@
   producer. The normal run path SHALL hand off its live runtime and cleanup
   ownership instead of calling `RuntimeController::shutdown`, dropping the
   task owner, or cleaning up before finalization. Append and flush terminal
-  `process_exit`, then shut down and release the runtime task, perform AgentFS
-  and Process cleanup, and consume the terminal context exactly once before
-  runner abort or Kernel exit publication. Test immediate control before
-  metadata delivery, explicit no-Rollout startup, normal result publication
-  followed by successful finalization while the runtime remains live,
+  `process_exit`, then shut down and release the runtime task and return the
+  deferred AgentFS cleanup action while consuming the terminal context exactly
+  once. Have Kernel publish terminal `/proc` state before invoking that action
+  to unbind `/agent/<pid>` and release Process-scoped AgentFS backing. Test
+  immediate control before
+  metadata delivery, explicit no-Rollout startup retaining AgentFS until exit
+  publication, normal result publication followed by successful finalization
+  while the runtime remains live,
   controller-drop regression, active-transition cancellation,
   `/proc/<pid>/ctl` exit during an active deferred action, deadlock-free barrier
   and fence completion, no post-exit append, and control exit code `130`.
 - [ ] 2.7 Bound Agent terminal finalization under one fixed absolute deadline
   while reserving its final interval for containment. Stop context barrier,
-  quiescence, writer fence, and terminal append/flush work at the earlier
-  persistence cutoff. On error or timeout, emit a structured
+  quiescence, writer fence, terminal append/flush, and pre-exit runtime shutdown
+  work at the earlier containment cutoff. On error or timeout, emit a structured
   PID/Rollout/exit-code/stage diagnostic, cancel logical writer and runtime
   owners without awaiting stuck Host I/O, remove the entry under the
   snapshot-open lock, atomically quarantine the backing inode within the
-  reserved interval before Kernel may publish exit, and perform bounded
-  cleanup. If containment errors or reaches the absolute
-  deadline, stop accepting work and enter Host-fatal termination without
-  awaiting the stuck operation or publishing Process exit. Recover only after
-  ownership ends and validation succeeds under the same Rollout ID. Test
+  reserved interval before Kernel may publish exit, and finish non-blocking
+  logical-owner release. If containment errors or reaches the absolute
+  deadline, signal the injected Alan OS Host lifecycle adapter without awaiting
+  the stuck operation or publishing Process exit. Recover only after ownership
+  ends and validation succeeds under the same Rollout ID. Test
   an earlier stuck writer blocking the fence, disk-full/flush-error, timeout,
   ambiguous-flush no-retry, a complete record surviving an error, absent/torn
   outcomes, stale I/O affecting only quarantine, containment failure as
@@ -106,6 +111,14 @@
   without fabricating a result. Treat any discovered complete valid
   `process_exit` as authoritative even when its original flush reported an
   error.
+- [ ] 2.9 Add an internal fatal-transition adapter owned by `alan-os-host`.
+  Inject it into Agent Runtime Service during Host boot. On acceptance,
+  atomically close in-memory readiness, attachment admission, and Service
+  Manager new-work admission, request Service Manager shutdown, and commit
+  Host process termination without awaiting storage or shutdown completion.
+  Abort the Host process if the signal cannot be delivered. Prove existing and
+  new attachments cannot submit work after acceptance and that no Host command,
+  aP file, or renderer API exposes the adapter.
 
 ## 3. Rollout Discovery
 
@@ -116,10 +129,14 @@
   one read-only `/agent/rollouts/<rollout-id>` JSONL file while preserving
   numeric PID entries and `/agent/root`. Materialize each open as a
   service-owned immutable snapshot of the validation-approved complete prefix;
-  never retain the Host backing inode in an aP fid. Order snapshot open and
-  discovery removal under one lock, and prove an existing fid cannot observe
-  later active writes or quarantined stale I/O while reopen can observe later
-  complete records.
+  never retain the Host backing inode in an aP fid. Share identical prefixes
+  and define named fixed limits for per-snapshot bytes, total open-fid count,
+  and aggregate unique-snapshot bytes, with reservation before materialization
+  and release on clunk. Order snapshot open and discovery removal under one
+  lock, and prove an existing fid cannot observe later active writes or
+  quarantined stale I/O while reopen can observe later complete records. Add
+  exact-boundary tests and prove excess opens fail with resource exhaustion
+  without changing existing fids or evidence.
 - [ ] 3.3 Isolate malformed Rollouts with diagnostics, accept recoverable torn
   tails only after earlier complete records pass envelope validation, and
   require exactly one leading `AgentMachineMeta` with no later metadata record.
@@ -142,8 +159,8 @@
 
 ## 4. Verification And Archive Readiness
 
-- [ ] 4.1 Run focused Agent Runtime Service, AgentFS, Rollout, and namespace
-  tests, then run `just quality`.
+- [ ] 4.1 Run focused Alan OS Host lifecycle, Agent Runtime Service, AgentFS,
+  Rollout, and namespace tests, then run `just quality`.
 - [ ] 4.2 PR review confirms there is no new execution identity, persistent
   index, retention policy, notification protocol, Host API, or renderer-owned
   state.

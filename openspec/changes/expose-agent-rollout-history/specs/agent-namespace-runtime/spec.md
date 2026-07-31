@@ -72,6 +72,13 @@ launch identity, or lifecycle surface; `/proc/<pid>` remains authoritative.
   backing
 - **AND** `/proc/<pid>` remains the lifecycle source of truth
 
+#### Scenario: Agent Process is still pre-exit
+- **WHEN** terminal Rollout finalization has completed but `/proc/<pid>` has not
+  yet published its terminal state
+- **THEN** `/agent/<pid>` remains bound and continues to identify the Process
+  as an Agent Process
+- **AND** AgentFS cleanup begins only after `/proc/<pid>` becomes terminal
+
 #### Scenario: Dependency validation runs
 - **WHEN** repository validation inspects `alan-agent-engine` normal dependencies
 - **THEN** `alan-kernel` and displaced system-composition dependencies are absent

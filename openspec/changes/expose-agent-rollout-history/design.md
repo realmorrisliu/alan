@@ -56,6 +56,15 @@ before removal or fails after removal, while an already-open fid remains
 isolated from subsequent Host I/O. This uses ordinary file-open semantics and
 adds no lease, generation, or revocation protocol.
 
+Snapshots with the same approved prefix share one immutable buffer. Agent
+Runtime Service enforces fixed policy limits for bytes in one snapshot, total
+open history fids, and aggregate unique snapshot bytes. It reserves both count
+and byte budget before materialization, releases them on clunk, and rejects an
+open with resource exhaustion when any limit would be exceeded. Snapshot
+materialization failure publishes no fid. These limits bound retained memory
+even when a consumer repeatedly reopens a growing Rollout while retaining old
+fids; they are service resource policy, not durable history state.
+
 ### D3: Retained Rollouts remain the only durable discovery source
 
 Agent Runtime Service reconstructs `/agent/rollouts` by enumerating and
@@ -106,8 +115,9 @@ Agent Runtime Service to install a pending terminal-context barrier and startup
 cancellation path for that PID before Process control becomes reachable. The
 Agent startup owner must resolve the barrier exactly once on every exit path:
 with a producing-Rollout context, or with an explicit no-producing-Rollout
-outcome. A drop guard or equivalent total-exit mechanism prevents channel
-closure from being misread as the latter.
+outcome. Either outcome carries deferred cleanup for any AgentFS already bound;
+a pre-dispatch outcome carries none. A drop guard or equivalent total-exit
+mechanism prevents channel closure from being misread as the latter.
 
 Rollout creation starts at an internal quarantine/staging path, never at the
 discoverable path. The intended path and independently cancellable creation
@@ -133,20 +143,22 @@ publishes the existing `RuntimeStartupMetadata` through an early
 readiness. Agent Runtime Service receives it through that caller-owned
 controller boundary. The Agent Runtime Service terminal context takes
 ownership of the live `RuntimeController` (or an equivalent owning runtime-task
-guard), the Process cleanup guard, and the existing metadata rather than
-retaining only a cloned `RuntimeHandle`; it then resolves the pending barrier
-to the producing-Rollout context without waiting for `wait_until_ready`. The
-ordinary Agent Executable run path may use a borrowed handle to await readiness
-and produce its `ProcessOutcome`, but it must hand off ownership immediately
-after constructing the controller, before awaiting runtime readiness. Control
-may already be pending at that point and therefore awaits the pre-registered
-barrier. The run path must not call `RuntimeController::shutdown`, drop its
-runtime task owner, or perform Process cleanup before terminal finalization. If
+guard), a deferred AgentFS cleanup action, and the existing metadata rather
+than retaining only a cloned `RuntimeHandle`; it then resolves the pending
+barrier to the producing-Rollout context without waiting for
+`wait_until_ready`. The ordinary Agent Executable run path may use a borrowed
+handle to await readiness and produce its `ProcessOutcome`, but it must hand
+off ownership immediately after constructing the controller, before awaiting
+runtime readiness. Control may already be pending at that point and therefore
+awaits the pre-registered barrier. The run path must not call
+`RuntimeController::shutdown`, drop its runtime task owner, or perform AgentFS
+cleanup before terminal finalization. If
 startup exits before creating a Rollout, it resolves the barrier explicitly as
-no producing Rollout. If a Rollout was created and a later startup step fails,
-finalization can therefore still terminate that Rollout. If `/bin/alan-agent`
-produces an `AgentExecutableResult`, it remains in the candidate runner outcome
-and reaches finalization only if runner completion wins the terminal claim.
+no producing Rollout while retaining deferred cleanup for AgentFS already
+bound. If a Rollout was created and a later startup step fails, finalization
+can therefore still terminate that Rollout. If `/bin/alan-agent` produces an
+`AgentExecutableResult`, it remains in the candidate runner outcome and
+reaches finalization only if runner completion wins the terminal claim.
 
 The finalizer first signals startup or runtime cancellation and waits for the
 terminal-context barrier. For a producing Rollout, it uses the retained live
@@ -155,11 +167,13 @@ drains both ordinary transitions and deferred runtime actions before
 completing a writer fence that covers every Rollout producer. Normal runner
 completion does not shut down the controller before this step: it publishes
 its result, returns its `ProcessOutcome`, and leaves the runtime task and
-cleanup guard owned by the terminal context. The finalizer waits for the
-writer fence, appends and flushes `process_exit` through the owning Rollout
-writer, then shuts down and releases the runtime task and performs Process
-cleanup before consuming the terminal context exactly once. Only after that
-may Kernel publish exit or abort the runner. In particular, control immediately
+deferred cleanup action owned by the terminal context. The finalizer waits for
+the writer fence, appends and flushes `process_exit` through the owning Rollout
+writer, then shuts down and releases the runtime task. It returns the deferred
+AgentFS cleanup action while consuming the terminal context exactly once.
+Kernel publishes the terminal `/proc` state before invoking that action; only
+then may Agent Runtime Service unbind `/agent/<pid>` and release Process-scoped
+AgentFS backing. In particular, control immediately
 after commit cannot outrun terminal registration, normal completion cannot
 leave the finalizer with a stopped runtime, and control during a deferred
 action cannot leave the finalizer waiting on a producer that never received
@@ -171,11 +185,11 @@ cannot overtake an earlier writer operation stuck in storage I/O. One fixed
 internal absolute deadline bounds Agent terminal finalization, but persistence
 does not own that whole budget. A fixed final interval is reserved for
 containment, so startup/context-barrier cancellation, quiescence, the writer
-fence, and the single terminal append-and-flush attempt share an earlier
-persistence cutoff. The finalizer does not retry because an ambiguous flush
-result could otherwise duplicate `process_exit`.
+fence, the single terminal append-and-flush attempt, and pre-exit runtime
+shutdown share an earlier containment cutoff. The finalizer does not retry
+because an ambiguous flush result could otherwise duplicate `process_exit`.
 
-On an append error, flush error, or persistence-cutoff expiry at any stage,
+On an error or containment-cutoff expiry at any pre-exit stage,
 Agent Runtime Service emits a structured diagnostic containing the PID,
 available Rollout ID, intended exit code, failed stage, and storage error or
 timeout. It cancels the logical writer and runtime owners without awaiting
@@ -189,13 +203,19 @@ waits until no writer owner remains, revalidates the complete envelope, and may
 atomically republish the same Rollout ID.
 
 If the containment operation errors or has not returned when the absolute
-deadline expires, the Host commits a fatal storage-integrity transition: it
-stops accepting work and terminates without awaiting the stuck operation.
-Kernel does not publish that Process exit and the Host does not continue with
-a discoverable stale writer. Thus the ordinary successful-containment path
-can publish exit and complete bounded cleanup, while containment failure has a
-separately bounded Host-fatal outcome rather than an unbounded rename. This
-adds no second execution identity.
+deadline expires, Agent Runtime Service reports a fatal storage-integrity
+failure through an injected Alan OS Host lifecycle adapter and does not wait
+for the rename. The Host owner atomically closes readiness, attachment
+admission, and new-work admission, requests Service Manager shutdown, and
+terminates the Host. Acceptance by the adapter commits the fail-stop
+transition; it does not await service or storage cleanup. If the adapter cannot
+accept its internal signal, the Host-owned adapter aborts the process rather
+than returning. Kernel does not publish that Process exit and the Host does not
+continue with a discoverable stale writer. Thus the ordinary
+successful-containment path can publish exit and later complete bounded AgentFS
+cleanup, while containment failure has a Host-owned bounded fatal outcome
+rather than an unbounded rename. This adds no second execution identity or
+Host command surface.
 
 ### D5: Read authority follows the existing `/agent` capability
 
