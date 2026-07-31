@@ -18,10 +18,13 @@
   `/mnt/agent-runtime/clone`, set `runtime_overrides.durability_required` in
   its `AgentExecutableRequest`, pin `/proc/host/boot_id`, and snapshot
   discoverable Rollout IDs before open; prove the capability comes only from
-  the Local Entry Login Namespace and the resulting Process is parented by the
-  current Root Agent Process rather than the attached Shell Process, then
-  acknowledge only under the same boot a new Rollout whose first-record
-  metadata matches the returned PID.
+  the authorized renderer attachment view and not the underlying Shell Process
+  namespace. Prove the resulting Process is parented by the current Root Agent
+  Process rather than the attached Shell Process, then acknowledge only under
+  the same boot a new Rollout whose first-record metadata matches the returned
+  PID. Present pre-commit rejection as definite failure and any missing
+  correlation after successful or ambiguous commit as indeterminate without
+  automatic retry.
 - [ ] 2.2 Add the review surface (results inbox) that lists completed
   Rollout-backed work only when a persisted `process_exit` supplies its
   outcome, and presents retained Rollouts without terminal evidence as
@@ -42,10 +45,11 @@
 
 ## 3. Rust TUI Interaction Surfaces
 
-- [ ] 3.1 Add Rust TUI background dispatch through the attached Login
-  Namespace's `/mnt/agent-runtime/clone`, including strict durability,
-  boot-ID pinning, pre-spawn Rollout listing, and exact PID-to-Rollout
-  correlation.
+- [ ] 3.1 Add Rust TUI background dispatch through the authorized renderer
+  attachment view's `/mnt/agent-runtime/clone`, including strict durability,
+  boot-ID pinning, pre-spawn Rollout listing, exact PID-to-Rollout correlation,
+  and distinct definite-failure versus post-commit-indeterminate presentation
+  with no automatic retry.
 - [ ] 3.2 Add the Rust TUI review surface over `/agent/rollouts`, reconstruct
   it after Host restart, render completed outcomes only from persisted
   `process_exit`, preserve missing terminal evidence as unfinished or

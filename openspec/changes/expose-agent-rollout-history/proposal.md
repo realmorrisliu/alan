@@ -52,10 +52,13 @@ restart even though the execution evidence already exists.
   metadata flush, and recover quarantine only at service startup before
   exposing discovery or clone capability.
 - Expose each retained Rollout at the read-only
-  `/agent/rollouts/<rollout-id>` file path. Each open captures a validated
-  complete-prefix length and SHA-256 digest. Reads stream that exact prefix
-  through bounded scratch space and return data only after the digest
-  revalidates, so later or quarantined writes are never exposed. A fixed
+  `/agent/rollouts/<rollout-id>` file path. Agent Runtime Service validates
+  retained prefixes once while rebuilding discovery and advances active
+  prefixes incrementally after owned appends. Each open captures that approved
+  length on a pinned read-only source descriptor. Because the owning Rollout
+  writer may only append and never overwrite or truncate a published prefix,
+  reads fetch only the requested range within that fixed length; later or
+  quarantined appends are never exposed. A fixed
   global and per-namespace-handle open-fid policy plus non-queuing read permits
   bounds memory and validation bandwidth without making large valid Rollouts
   unreadable. Ordinary Process handles cannot consume the authorized renderer
@@ -75,7 +78,9 @@ restart even though the execution evidence already exists.
 - Add `durability_required` to Agent Process runtime spawn overrides and use
   the active Rollout's existing ID and `process_path` metadata as the
   file-visible acknowledgment for background dispatch, excluding IDs visible
-  before spawn and rejecting any `/proc/host/boot_id` change.
+  before spawn. A request rejected before clone commit is a definite failure;
+  after commit, a missing correlation or `/proc/host/boot_id` change is
+  indeterminate and MUST NOT trigger automatic retry.
 - Reconstruct the discovery view by enumerating retained Rollouts; do not add a
   separate durable history record or persistent index.
 - Follow Agent Runtime Service's existing retention; add no TTL, quota, pin,

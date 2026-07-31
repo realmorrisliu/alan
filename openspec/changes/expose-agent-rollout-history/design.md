@@ -46,21 +46,28 @@ Process views, and `/agent/root` remains the Root Agent Process alias.
 `/srv/agent-runtime` remains only the service-handle rendezvous and does not
 become a state tree.
 
-Opening a Rollout file streams and validates its complete JSONL prefix, then
-stores only a read-only source handle, the approved prefix length, and its
-SHA-256 digest in the fid. Open first reserves an open-history slot and pins the
-source identity under the discovery lock, then validates outside the lock. The
-short commit step reacquires that lock and succeeds only if the same source is
-still discoverable. Any failed validation or commit releases the slot.
-Containment removes the entry under that lock, so an open either commits before
-removal or fails after it.
+Published Rollout backing is append-only: its owning writer and Host backing
+adapter may append, but may never overwrite or truncate an existing published
+prefix. On service startup, Agent Runtime Service validates each retained
+source once and records its source identity plus approved complete-prefix
+length in a rebuildable in-memory discovery table. For a live Rollout, the
+owning writer advances that length under the discovery lock only after a
+complete owned append passes envelope validation. This table is cache, not
+durable authority or another execution identity.
 
-Each read streams exactly the approved prefix through a fixed-size scratch
-buffer, captures at most the protocol-bounded requested range, and returns
-those bytes only after the whole-prefix SHA-256 digest matches. Bytes appended
-beyond the captured length are ignored. A changed or unreadable approved
-prefix invalidates the fid and returns an error without exposing bytes.
-Reopening captures a later validated prefix. Agent Runtime Service issues
+Opening a Rollout file reserves its open slots and, under the discovery lock,
+captures a pinned read-only source descriptor plus the current approved length
+from that table. It stores only those two values in the fid and performs no
+whole-prefix scan. Containment removes the entry under the same lock, so an
+open either captures the pre-removal prefix or fails after removal. Failed open
+or clunk releases its slots.
+
+Each read fetches only the protocol-bounded requested range from the pinned
+descriptor and never reads beyond the approved length. Its storage work and
+scratch/result memory are proportional to that requested range, not to the
+Rollout length. Bytes appended beyond the captured length are ignored, and an
+unreadable descriptor returns an error. Reopening may capture a later validated
+prefix. Agent Runtime Service issues
 quota-scoped `/agent` FileServer handles for namespace assembly. Agent Runtime
 Service binds an ordinary handle into every Process namespace, including Agent
 Processes and the Local Entry Shell Process. The Host hands the authorized
@@ -69,8 +76,8 @@ overlays `/agent` with a reserved handle. Each handle has a fixed cap, and
 inherited delegation shares that account rather than minting more capacity.
 Ordinary handles draw from a fixed ordinary pool. Renderer attachment handles
 draw from a separate reserved pool whose capacity exceeds one handle's cap;
-ordinary handles cannot consume it. Open slots are reserved before validation
-and released on failure or clunk.
+ordinary handles cannot consume it. Open slots are reserved before the
+discovery-table capture and released on failure or clunk.
 
 Before allocating read scratch or result storage, every history read must
 non-blockingly acquire both a per-handle in-flight read permit and a permit
@@ -78,22 +85,26 @@ from the handle's ordinary or renderer-reserved pool. If either permit is
 unavailable, the read fails immediately with resource exhaustion rather than
 queuing inside Agent Runtime Service. Both permits are released on success or
 error. Fixed open-slot and read-permit totals therefore bound retained
-descriptor memory, simultaneous scratch and result memory, and whole-prefix
-validation bandwidth even when tagged aP requests concurrently read one fid.
-Per-handle limits prevent one holder from exhausting its corresponding pool.
+descriptor memory, simultaneous scratch and result memory, and range-read
+bandwidth even when tagged aP requests concurrently read one fid. Per-handle
+limits prevent one holder from exhausting its corresponding pool.
 
 This representation keeps every valid Rollout readable independently of its
 size without a snapshot store, lease, generation, revocation protocol,
 full-file buffer, or caller identity inside Agent Runtime Service. The quota
-account belongs to the mounted capability handle and is not durable state. The
-accepted tradeoff is an O(prefix length) validation scan per read.
+account belongs to the mounted capability handle and is not durable state.
+Startup rebuild pays one O(prefix length) scan per retained source; active
+writers validate new records once; opens are constant-work captures; and reads
+are proportional to their requested ranges.
 
 ### D3: Retained Rollouts remain the only durable discovery source
 
 Agent Runtime Service reconstructs `/agent/rollouts` by enumerating and
-validating its retained Rollout backing at startup. It does not persist a
-parallel history index. If enumeration later becomes measurably too expensive,
-an index may be added as a rebuildable cache, never as authority.
+validating its retained Rollout backing at startup. The rebuildable in-memory
+table used by listing and open records source identity and current approved
+prefix length but is not persisted. If enumeration later becomes measurably
+too expensive, a durable index may be added as a rebuildable cache, never as
+authority.
 
 ### D4: Terminal completion belongs in the existing Rollout
 
@@ -219,12 +230,14 @@ On an error or containment-cutoff expiry at any pre-exit stage,
 Agent Runtime Service emits a structured diagnostic containing the PID,
 available Rollout ID, intended exit code, failed stage, and storage error or
 timeout. It cancels the logical writer and runtime owners without awaiting
-stuck Host I/O, removes the entry from discovery under the history-open commit
-lock, then uses the reserved interval to atomically rename the current backing
-inode out of the discoverable subtree before returning control to Kernel.
-Already-submitted Host I/O retains only the quarantined inode, while existing
-history fids retain only their fixed prefix length and digest. They return
-bytes only if that prefix still revalidates.
+stuck Host I/O, removes the entry from discovery under the discovery-table lock
+used by open, then uses the reserved interval to atomically rename the current
+backing inode out of the discoverable subtree before returning control to
+Kernel.
+Already-submitted Host I/O retains only the quarantined inode and may append
+only beyond its prior published prefix. Existing history fids retain their
+pinned read-only descriptor and fixed prefix length, so those later appends
+remain outside their readable range.
 Quarantine has no user-visible identity or status and is not listed. Recovery
 waits until no writer owner remains, revalidates the complete envelope, and may
 atomically republish the same Rollout ID.
@@ -362,12 +375,14 @@ field or acknowledgment protocol.
 
 That existing Rollout metadata is the file-visible acknowledgment: no Host
 rollout path, internal `RuntimeStartupMetadata`, acknowledgment side API, or
-duplicate AgentFS metadata file is exposed. If the Process exits before a
-matching Rollout is discoverable, launch did not establish durable background
-work. The pre-spawn listing is transition-local comparison state, not a
-durable index or identity; it prevents a PID reused after Host restart from
-matching an older retained Rollout. Revalidating the existing boot identity
-rejects a Host restart during the handshake.
+duplicate AgentFS metadata file is exposed. A clone request rejected before
+commit is a definite failure because no Process starts. Once commit succeeds,
+the Process may execute; if the matching Rollout is not observed, the Process
+exits first, or boot identity changes, the caller reports an indeterminate
+launch outcome and MUST NOT automatically retry. The pre-spawn listing is
+transition-local comparison state, not a durable index or identity; it prevents
+a PID reused after Host restart from matching an older retained Rollout but
+cannot prove non-execution after commit.
 
 This acknowledgment guarantees that durable execution evidence has begun. It
 does not promise that a later terminal append cannot fail. Only a successfully
@@ -395,4 +410,6 @@ leaves the retained Rollout unterminated or incomplete.
 - **`/mnt/agent-runtime/clone` allocates an ordinary `/proc` PID before
   runtime readiness.** → Correlate that PID to a newly discovered active
   Rollout's already-durable first record under one unchanged boot identity
-  before acknowledging background dispatch.
+  before acknowledging background dispatch. After commit, missing correlation
+  is indeterminate and must not trigger automatic retry because execution may
+  already have produced side effects.

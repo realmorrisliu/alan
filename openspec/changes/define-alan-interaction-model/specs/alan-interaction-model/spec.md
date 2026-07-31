@@ -48,18 +48,21 @@ SHALL own copied runtime state.
 
 ### Requirement: Conversation is one of three interaction modes
 Alan renderer hosts SHALL support conversation. A local renderer host attached
-through the Local Entry Login Namespace SHALL additionally support
-background-servant interaction as a first-class mode. Conversation SHALL NOT
-be assumed as the entry or primary posture for such a local renderer.
+through an authorized attachment view over a Local Entry Shell Process
+namespace SHALL additionally support background-servant interaction as a
+first-class mode. Conversation SHALL NOT be assumed as the entry or primary
+posture for such a local renderer.
 Background-servant mode SHALL let agents run detached — closing a view detaches
 per ADR-0047 and never implies stopping execution — and SHALL present completed
 work for review rather than requiring the user to watch execution. A local
 background dispatch SHALL request the strict-durability launch behavior in an
 `AgentExecutableRequest` committed through Agent Runtime Service-owned
 `/mnt/agent-runtime/clone`. Service Manager SHALL mount this capability only in
-the Local Entry Login Namespace; Remote Entry and Agent Process namespaces
-SHALL NOT inherit it. The resulting ordinary Agent Process SHALL be parented
-by the current Root Agent Process, not by the renderer-attached Shell Process.
+the authorized renderer attachment view. The underlying Shell Process
+namespace, its ordinary child namespaces, Remote Entry, and Agent Process
+namespaces SHALL NOT inherit it. The resulting ordinary Agent Process SHALL be
+parented by the current Root Agent Process, not by the renderer-attached Shell
+Process.
 Before opening
 `/mnt/agent-runtime/clone`, the renderer SHALL read `/proc/host/boot_id` and
 list the currently discoverable `rollout_id` values. The dispatch SHALL be
@@ -67,9 +70,12 @@ acknowledged as accepted only after
 `/agent/rollouts` exposes a valid producing Rollout whose ID was absent from
 that pre-spawn listing, whose first-record `process_path` matches the returned
 `/proc/<pid>`, and whose current `/proc/host/boot_id` still matches the pinned
-value. If the boot identity changes or the Process exits before that new
-Rollout is discoverable, the dispatch SHALL fail rather than continue as
-untracked background work.
+value. A request rejected before commit SHALL be presented as a definite
+failure. Once commit succeeds or becomes ambiguous, the Agent Process may
+execute. If the boot identity changes, the Process exits, the attachment is
+lost, or correlation otherwise ends before that new Rollout is observed, the
+renderer SHALL present the outcome as indeterminate, MUST NOT claim
+non-execution, and MUST NOT automatically retry.
 
 Strict durability SHALL guarantee that an accepted dispatch established its
 producing Rollout; it SHALL NOT guarantee that a later terminal storage write
@@ -124,19 +130,27 @@ when it does.
 - **AND** strict durability remains satisfied only in its launch-time promise
   that the producing Rollout was established
 
-#### Scenario: Background dispatch cannot create a Rollout
-- **WHEN** a strict-durability Process launched through
-  `/mnt/agent-runtime/clone` exits before a matching producing Rollout absent
-  from the pre-spawn listing becomes discoverable
-- **THEN** the background dispatch fails explicitly
+#### Scenario: Background dispatch is rejected before commit
+- **WHEN** Agent Runtime Service rejects a strict-durability request before
+  committing its pending Process
+- **THEN** the background dispatch fails explicitly and no Agent Process begins
+  execution
 - **AND** no best-effort in-memory execution is acknowledged as reviewable
   background work
+
+#### Scenario: Producing Rollout is not correlated after commit
+- **WHEN** the strict-durability request commit succeeds or is ambiguous but a
+  matching producing Rollout is not observed
+- **THEN** the renderer presents an indeterminate launch outcome
+- **AND** it does not claim the request produced no external side effects
+- **AND** it does not automatically retry
 
 #### Scenario: Alan OS Host restarts during background dispatch
 - **WHEN** `/proc/host/boot_id` changes before the producing Rollout is
   acknowledged
-- **THEN** the background dispatch fails explicitly
+- **THEN** the renderer presents the committed launch as indeterminate
 - **AND** no Rollout from the new boot is associated with the prior request
+- **AND** the renderer does not automatically retry
 
 #### Scenario: A renderer attaches through Remote Entry
 - **WHEN** a renderer receives a Remote Entry namespace without

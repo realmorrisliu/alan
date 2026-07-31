@@ -41,9 +41,12 @@ their own answer, and OS vocabulary will leak into the default UI.
   `AgentExecutableRequest`, and succeed only after `/agent/rollouts` exposes a
   newly discovered producing Rollout correlated to the returned PID under the
   same `/proc/host/boot_id`. A pre-spawn listing excludes retained Rollouts
-  whose Process path was reused after Host restart. Renderers never use
-  internal runtime metadata, scan System Store backing, or persist a private
-  results database.
+  whose Process path was reused after Host restart. The launch capability
+  exists only in the authorized renderer attachment view, not the underlying
+  Shell Process namespace. A pre-commit rejection is a definite failure;
+  missing correlation after commit is indeterminate and never automatically
+  retried. Renderers never use internal runtime metadata, scan System Store
+  backing, or persist a private results database.
 - Define strict durability as a launch guarantee that a producing Rollout
   exists, not an infallible terminal-write guarantee. Completed outcomes are
   reconstructible whenever discovery finds a complete valid `process_exit`,

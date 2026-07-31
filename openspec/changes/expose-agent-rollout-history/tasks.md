@@ -26,11 +26,15 @@
   acknowledged through the newly discovered active Rollout's ID and
   first-record `process_path`, with no Host path or internal runtime metadata
   exposed. Prove this acknowledgment guarantees Rollout creation but does not
-  claim terminal outcome persistence.
+  claim terminal outcome persistence. Prove a request rejected before commit
+  is a definite failure, while missing correlation after a successful or
+  ambiguous commit is reported as indeterminate and never automatically
+  retried.
 - [ ] 1.7 Prove a retained Rollout with the same PID path from a prior Host
   boot is excluded by the pre-spawn Rollout-ID listing.
 - [ ] 1.8 Pin and revalidate `/proc/host/boot_id`, and prove a Host restart
-  during correlation rejects the launch acknowledgment.
+  during post-commit correlation produces an indeterminate launch outcome,
+  does not match a new-boot Rollout, and does not automatically retry.
 
 ## 2. Terminal Rollout Evidence
 
@@ -102,12 +106,12 @@
   work at the earlier containment cutoff. On error or timeout, emit a structured
   PID/Rollout/exit-code/stage diagnostic, cancel logical writer and runtime
   owners without awaiting stuck Host I/O, remove the entry under the
-  history-open commit lock, atomically quarantine the backing inode within the
-  reserved interval before Kernel may publish exit, and finish non-blocking
-  logical-owner release. If containment errors or reaches the absolute
-  deadline, call the synchronously non-returning Alan OS Host lifecycle adapter
-  without awaiting the stuck operation. Recover only after ownership ends and
-  validation succeeds under the same Rollout ID. Test
+  discovery-table lock used by open, atomically quarantine the backing inode
+  within the reserved interval before Kernel may publish exit, and finish
+  non-blocking logical-owner release. If containment errors or reaches the
+  absolute deadline, call the synchronously non-returning Alan OS Host
+  lifecycle adapter without awaiting the stuck operation. Recover only after
+  ownership ends and validation succeeds under the same Rollout ID. Test
   an earlier stuck writer blocking the fence, disk-full/flush-error, timeout,
   ambiguous-flush no-retry, a complete record surviving an error, absent/torn
   outcomes, stale I/O affecting only quarantine, containment failure as
@@ -133,29 +137,34 @@
   history index.
 - [ ] 3.2 Reserve `/agent/rollouts` and expose each valid retained Rollout as
   one read-only `/agent/rollouts/<rollout-id>` JSONL file while preserving
-  numeric PID entries and `/agent/root`. On open, stream and validate the
-  complete prefix, then retain only a read-only source handle, approved length,
-  and SHA-256 digest. Bind quota-scoped `/agent` handles with named fixed
+  numeric PID entries and `/agent/root`. Enforce append-only published Rollout
+  backing: writers and the Host adapter may append but never overwrite or
+  truncate a published prefix. Build an in-memory discovery table by validating
+  each retained source once at startup; advance a live source's approved length
+  only after an owned complete append passes envelope validation. On open,
+  capture its pinned read-only descriptor and approved length from that table
+  without rescanning. Bind quota-scoped `/agent` handles with named fixed
   per-handle caps, a fixed ordinary pool for every Process namespace, and a
   separate authorized-renderer attachment pool whose capacity exceeds one
   handle cap. Make inherited delegation share its account. Reserve handle and
-  pool slots and pin source identity under the discovery lock before
-  validation, validate outside the lock, and commit only if the same source
-  remains discoverable. Release slots on failure or clunk. Before allocating
+  pool slots, then capture source identity and approved length under the same
+  discovery lock used by containment removal. Release slots on failure or
+  clunk. Before allocating
   read scratch or result storage, non-blockingly acquire per-handle and
   corresponding-pool in-flight read permits; reject immediately rather than
   queue when either limit is reached, and release permits on success or error.
-  On every permitted read, stream exactly that prefix through fixed scratch
-  space, capture at most the protocol-bounded requested range, and return it
-  only after the SHA-256 digest matches. Ignore later bytes and fail without
-  exposure when the approved prefix changes or becomes unreadable. Impose no
+  On every permitted read, fetch only the protocol-bounded requested range
+  through the pinned descriptor and never read beyond the approved length.
+  Make storage work and scratch/result memory proportional to that range.
+  Ignore later appends and fail if the descriptor is unreadable. Impose no
   Rollout-size limit or full-file allocation. Prove large valid Rollouts remain
-  fully readable, later active or quarantined writes are not exposed, reopen
-  can observe later complete records, concurrent reads through one fid remain
-  bounded, ordinary Processes cannot exhaust renderer capacity, ordinary
-  Shell children inherit neither the reserve nor `/mnt/agent-runtime`, and
-  excess opens or reads fail with resource exhaustion without changing
-  evidence.
+  fully readable without whole-prefix work per range read, later active or
+  quarantined appends are not exposed, reopen can observe later complete
+  records, tiny and out-of-range reads do not trigger a complete-prefix scan,
+  concurrent reads through one fid remain bounded, ordinary Processes cannot
+  exhaust renderer capacity, ordinary Shell children inherit neither the
+  reserve nor `/mnt/agent-runtime`, and excess opens or reads fail with
+  resource exhaustion without changing evidence.
 - [ ] 3.3 Isolate malformed Rollouts with diagnostics, accept recoverable torn
   tails only after earlier complete records pass envelope validation, and
   require exactly one leading `AgentMachineMeta` with no later metadata record.

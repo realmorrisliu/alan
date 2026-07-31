@@ -128,10 +128,11 @@ durably rather than disappearing with a Process or Alan OS Host boot. A local
 background dispatch therefore sets `runtime_overrides.durability_required` in
 the `AgentExecutableRequest` committed through Agent Runtime Service-owned
 `/mnt/agent-runtime/clone`. Service Manager mounts this launch capability only
-in the Local Entry Login Namespace, so Remote Entry and Agent Process
-namespaces cannot regain capabilities through it. The path uses the current
-Root Agent Process as the ordinary parent; the attached Shell Process is not
-treated as an Agent parent.
+in the authorized renderer attachment view over a Local Entry Shell Process
+namespace. The underlying Shell Process namespace, its ordinary children,
+Remote Entry, and Agent Process namespaces cannot regain capabilities through
+it. The path uses the current Root Agent Process as the ordinary parent; the
+attached Shell Process is not treated as an Agent parent.
 After reading
 `/proc/host/boot_id`, listing the current `rollout_id` values, and receiving
 the pending PID, the renderer acknowledges the dispatch only when
@@ -139,10 +140,12 @@ the pending PID, the renderer acknowledges the dispatch only when
 was absent from the pre-spawn listing and whose `process_path` is
 `/proc/<pid>`, and a fresh read of `/proc/host/boot_id` still matches. The
 listing excludes an older retained Rollout whose PID path was reused after
-Host restart; the boot check rejects a restart during the handshake. If the
-boot identity changes or the Process exits before matching new evidence is
-discoverable, the dispatch fails instead of silently accepting an in-memory
-Agent Machine.
+Host restart; the boot check prevents a new-boot Rollout from being associated
+with the prior request. A request rejected before commit is a definite failure.
+After commit succeeds or becomes ambiguous, the Process may execute. If boot
+identity changes, the Process exits, the attachment is lost, or correlation
+otherwise ends before matching evidence is observed, the renderer presents an
+indeterminate launch outcome and never automatically retries it.
 
 Strict durability is this launch-time guarantee that a producing Rollout
 exists; it does not make later storage writes infallible. Completed outcomes
@@ -188,9 +191,10 @@ defines its revocable capability.
   persistence contract without owning any truth. Shared interaction rules
   apply once a concrete agent, result, permission, service, or file surface is
   opened.
-- **Strict durability can reject background dispatch when its Rollout cannot
-  be created.** Accepted: explicit failure is preferable to acknowledging work
-  whose promised outcome cannot be reviewed.
+- **Strict durability can reject background dispatch before commit.**
+  Accepted: that is a definite failure. Once commit may have executed, missing
+  evidence is indeterminate and cannot safely be retried without a durable
+  idempotency contract.
 - **Remote renderers do not yet expose background-servant dispatch.**
   Accepted: granting remote launch authority requires explicit revocation and
   trust semantics that do not belong in this local interaction slice.

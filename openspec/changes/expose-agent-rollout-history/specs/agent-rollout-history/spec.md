@@ -10,18 +10,26 @@ records without a directory wrapper or parallel metadata projection. The
 surface SHALL remain reconstructible after Agent Process exit and Alan OS Host
 restart without exposing a raw System Store path.
 
-Each successful open SHALL retain only a read-only source handle, the length of
-the validation-approved complete JSONL prefix, and its SHA-256 digest. Open
-SHALL first reserve an open-history slot and pin the source identity under the
-discovery lock, then validate outside that lock. A short commit step SHALL
-reacquire the lock and succeed only while the same source remains discoverable.
-Failed validation or commit SHALL release the slot. Each read SHALL stream
-exactly that prefix through fixed-size scratch space, capture at most the
-protocol-bounded requested range, and return those bytes only after the
-whole-prefix SHA-256 digest matches. A changed or unreadable prefix SHALL
-invalidate the fid and return an error without exposing bytes. Appends beyond
-the captured length SHALL remain invisible, while reopening MAY capture a
-later complete prefix.
+The Rollout owner and Host backing adapter SHALL enforce append-only published
+backing: they MAY append but MUST NOT overwrite or truncate any byte in an
+existing published prefix. At service startup, Agent Runtime Service SHALL
+validate each retained source once and record its source identity and approved
+complete-prefix length in a rebuildable in-memory discovery table. For a live
+Rollout, its owning writer SHALL advance that length under the discovery lock
+only after a complete owned append passes envelope validation. The table SHALL
+NOT be durable authority or another execution identity.
+
+Each successful open SHALL retain only a pinned read-only source descriptor and
+the current approved length. It SHALL reserve its handle and pool open slots
+and capture both values from the discovery table under the same lock used for
+containment removal; it SHALL NOT rescan the complete prefix. Failed open or
+clunk SHALL release the slots.
+Each read SHALL fetch only the protocol-bounded requested range from the pinned
+descriptor and MUST NOT read beyond the approved length. Storage work and
+scratch/result memory SHALL be proportional to the requested range rather than
+the Rollout length. An unreadable descriptor SHALL return an error. Appends
+beyond the captured length SHALL remain invisible, while reopening MAY capture
+a later complete prefix.
 
 Agent Runtime Service SHALL issue quota-scoped `/agent` FileServer handles for
 namespace assembly. Each handle SHALL have a fixed open-history cap, and
@@ -32,7 +40,7 @@ Only an authorized renderer attachment view over that Shell Process namespace
 SHALL overlay `/agent` with a handle backed by a separate reserved pool whose
 capacity exceeds one handle's cap. Ordinary handles SHALL NOT consume that
 reserve. Agent Runtime Service SHALL reserve a handle and pool open slot before
-validation and release both on failure or clunk.
+capturing the discovery entry and release both on failure or clunk.
 
 Before allocating scratch or result storage for a history read, Agent Runtime
 Service SHALL non-blockingly acquire both a per-handle in-flight read permit
@@ -41,7 +49,7 @@ permit is unavailable, the read SHALL fail immediately with resource
 exhaustion and SHALL NOT queue inside the service. Both permits SHALL be
 released on success or error. Fixed open-slot and read-permit totals SHALL
 bound retained descriptor memory, concurrent scratch and result memory, and
-whole-prefix validation bandwidth, including concurrent tagged reads through
+range-read bandwidth, including concurrent tagged reads through
 one fid. One holder SHALL NOT exhaust its corresponding pool.
 
 Alan SHALL NOT impose a Rollout-size limit or retain a full-file buffer. This
@@ -63,11 +71,12 @@ NOT be durable state.
 - **THEN** it reads the existing ordered Rollout JSONL records from one file
 - **AND** it does not need to reconcile separate metadata, status, result, or
   evidence files
+- **AND** open captures the already-approved prefix without rescanning it
 
 #### Scenario: Active Rollout grows after open
 - **WHEN** an active Rollout appends a complete record after a consumer opens
   its history file
-- **THEN** the existing fid continues to validate and expose only its captured
+- **THEN** the existing fid continues to expose only its captured immutable
   complete prefix
 - **AND** reopening the path may expose the later complete record
 
@@ -90,8 +99,8 @@ NOT be durable state.
   handle or backing pool's in-flight read limit
 - **THEN** excess reads fail immediately with resource exhaustion
 - **AND** they do not queue or allocate scratch or result storage
-- **AND** every acquired permit is released after either successful or failed
-  validation
+- **AND** every acquired permit is released after either a successful or
+  failed range read
 
 #### Scenario: Shell child inherits its Process namespace
 - **WHEN** the Local Entry Shell launches an ordinary child from the namespace
@@ -109,9 +118,16 @@ NOT be durable state.
 #### Scenario: A valid Rollout is larger than memory policy
 - **WHEN** a valid retained Rollout is larger than any bounded read scratch
   buffer
-- **THEN** a history fid can still stream, validate, and expose the entire
-  approved prefix over protocol-bounded reads
+- **THEN** startup can validate its complete prefix once and the history fid
+  can expose it over protocol-bounded range reads
 - **AND** Agent Runtime Service does not require a full-file allocation
+
+#### Scenario: Consumer reads a large Rollout in small ranges
+- **WHEN** a consumer reads an approved Rollout prefix through sequential small
+  protocol-bounded ranges
+- **THEN** each read fetches only its requested range
+- **AND** Agent Runtime Service does not rescan or rehash the complete prefix
+  for that read
 
 #### Scenario: Consumer attempts to mutate history
 - **WHEN** a consumer opens `/agent/rollouts` or one of its descendants for
@@ -208,13 +224,16 @@ On error or containment-cutoff expiry at any pre-exit stage, Agent Runtime
 Service SHALL emit a structured diagnostic containing the PID, available
 Rollout ID, intended exit code, failed stage, and failure; cancel the logical
 writer and runtime owners without awaiting stuck Host I/O; remove the entry
-from discovery under the history-open commit lock; and atomically move the
-current backing inode out of the discoverable subtree into internal quarantine
-during the reserved interval. Only after successful containment SHALL it
-complete non-blocking logical-owner release and release terminal finalization
-so Alan Kernel can publish the authoritative Process exit. Already-submitted
-Host I/O SHALL retain only the quarantined inode. Every existing history fid
-SHALL continue to expose bytes only after its fixed prefix revalidates.
+from discovery under the discovery-table lock used by open; and atomically move
+the current backing inode out of the discoverable subtree into internal
+quarantine during the reserved interval. Only after successful containment
+SHALL it complete non-blocking logical-owner release and release terminal
+finalization so Alan Kernel can publish the authoritative Process exit.
+Already-submitted
+Host I/O SHALL retain only the quarantined inode and MUST NOT overwrite or
+truncate its prior published prefix. Every existing history fid SHALL retain
+its pinned read-only descriptor and SHALL NOT read beyond its fixed prefix
+length.
 Recovery SHALL wait until no writer owner remains, validate the complete
 Rollout envelope, and MAY atomically republish the same Rollout ID. Quarantine
 SHALL NOT be exposed as a Rollout, status, or execution identity.
@@ -350,7 +369,8 @@ SHALL NOT create a durable identity or terminal status model.
 - **AND** Agent Runtime Service cancels the logical writer and runtime owners
   without awaiting the stuck Host I/O
 - **AND** it atomically quarantines the backing inode before releasing Kernel
-- **AND** stale Host I/O can modify only the quarantined inode
+- **AND** stale Host I/O can only append to the quarantined inode and cannot
+  overwrite or truncate its prior published prefix
 - **AND** Alan Kernel can publish exit and Host shutdown can progress
 
 #### Scenario: Quarantine blocks in failing storage
@@ -368,9 +388,8 @@ SHALL NOT create a durable identity or terminal status model.
 - **WHEN** a consumer opened a Rollout history file before terminal containment
 - **THEN** containment removes the entry from discovery before releasing Kernel
 - **AND** the existing fid ignores bytes beyond its captured prefix length
-- **AND** it returns captured-range bytes only after the whole prefix SHA-256
-  digest revalidates
-- **AND** changed or unreadable prefix data returns an error without exposure
+- **AND** stale Host I/O cannot overwrite or truncate that immutable prefix
+- **AND** each read fetches only its requested range from the pinned descriptor
 
 ### Requirement: Rollout history follows the `/agent` namespace capability
 A Process whose namespace includes readable `/agent` SHALL be able to read
@@ -520,6 +539,15 @@ whose ID was absent from the pre-spawn listing and whose `process_path` equals
 `/proc/<pid>`, and after a fresh read confirms `/proc/host/boot_id` is
 unchanged.
 
+A request rejected before commit SHALL be reported as a definite failure
+because Agent Runtime Service has not started the Process. Once commit succeeds
+or its result becomes ambiguous, the Process may execute. If the caller cannot
+observe the matching Rollout, observes Process exit first, loses the
+attachment, reaches its correlation deadline, or observes a changed boot
+identity, it SHALL report the launch outcome as indeterminate and MUST NOT
+automatically retry. Missing correlation after commit SHALL NOT be interpreted
+as proof that no Tool or other external side effect occurred.
+
 This acknowledgment SHALL NOT expose a Host rollout path, require internal
 `RuntimeStartupMetadata`, or add a startup side API or duplicate AgentFS
 metadata file.
@@ -560,12 +588,20 @@ SHALL NOT republish Rollouts while launch handshakes are possible.
   listing and launch acknowledgment
 - **AND** current-boot quarantine waits for the next service start
 
-#### Scenario: Strict-durability launch cannot create a Rollout
-- **WHEN** the Process exits before `/agent/rollouts` exposes a valid new
-  Rollout absent from the pre-spawn listing whose `process_path` matches its
-  PID
-- **THEN** the caller reports launch failure
-- **AND** no in-memory Agent Machine is accepted as durable background work
+#### Scenario: Launch is rejected before commit
+- **WHEN** Agent Runtime Service rejects the clone request before committing
+  the pending Process
+- **THEN** the caller reports a definite launch failure
+- **AND** no Agent Process begins execution
+
+#### Scenario: Correlation is missing after commit
+- **WHEN** commit succeeded or was ambiguous but the caller does not observe a
+  valid new Rollout absent from the pre-spawn listing whose `process_path`
+  matches the allocated PID
+- **THEN** the caller reports an indeterminate launch outcome
+- **AND** it does not automatically retry the request
+- **AND** Agent Runtime Service still does not accept an in-memory Agent
+  Machine as durable background work
 
 #### Scenario: Host restart reuses a prior PID
 - **WHEN** the pre-spawn listing contains an older retained Rollout whose
@@ -576,6 +612,7 @@ SHALL NOT republish Rollouts while launch handshakes are possible.
 #### Scenario: Host restarts during launch correlation
 - **WHEN** `/proc/host/boot_id` differs from the value pinned before
   `/mnt/agent-runtime/clone`
-- **THEN** the caller rejects the launch acknowledgment
+- **THEN** the caller reports the committed launch outcome as indeterminate
 - **AND** it does not associate any Rollout from the new boot with the prior
   dispatch
+- **AND** it does not automatically retry the request

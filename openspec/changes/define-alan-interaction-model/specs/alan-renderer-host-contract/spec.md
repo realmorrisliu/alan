@@ -21,19 +21,21 @@ Renderer hosts SHALL provide the Intent, Work, and Files disclosure layers
 defined by `alan-interaction-model`, present conversation, treat event-driven
 interaction as the recorded dependent mode per `alan-interaction-model`, and
 keep OS vocabulary out of default UI copy. A renderer attached through the
-Local Entry Login Namespace SHALL also present background-servant mode through
-its mounted `/mnt/agent-runtime/clone` capability. A Remote Entry renderer
-SHALL NOT be required to present that mode until a separate remote-launch
-contract grants it an appropriately revocable capability. Hosts MAY differ in
-entry emphasis — a terminal-native host may center the shell — provided the
-layers and modes required by its attachment remain reachable.
+authorized attachment view over a Local Entry Shell Process namespace SHALL
+also present background-servant mode through its mounted
+`/mnt/agent-runtime/clone` capability. The underlying Shell Process namespace
+SHALL NOT gain that mount. A Remote Entry renderer SHALL NOT be required to
+present that mode until a separate remote-launch contract grants it an
+appropriately revocable capability. Hosts MAY differ in entry emphasis — a
+terminal-native host may center the shell — provided the layers and modes
+required by its attachment remain reachable.
 
 #### Scenario: A renderer host is reviewed for interaction-model conformance
 - **WHEN** a renderer host's default UI is reviewed
 - **THEN** all three disclosure layers are reachable, conversation is
   supported, and default copy passes the vocabulary rule
 - **AND** background-servant mode is supported when the host is attached
-  through the Local Entry Login Namespace
+  through the authorized Local Entry renderer attachment view
 - **AND** any host-specific entry emphasis does not remove a layer or mode
 - **AND** event-driven surfaces are required only once their owning runtime
   or service contract exists
