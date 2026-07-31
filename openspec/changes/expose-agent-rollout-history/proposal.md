@@ -15,16 +15,15 @@ restart even though the execution evidence already exists.
 - Bound Agent terminal finalization with one internal absolute deadline while
   reserving its final interval for containment. Context-barrier, quiescence,
   writer-fence, terminal-persistence, and pre-exit runtime-shutdown work stops
-  at the earlier containment cutoff. On error or timeout, cancel the logical
-  writer and runtime owners without awaiting stuck Host I/O and use the
-  reserved interval to atomically quarantine the backing inode before
-  releasing finalization. If containment itself does not return by the
-  absolute deadline, report the failure through the Alan OS Host lifecycle
-  adapter. Calling that Host-owned adapter is synchronously non-returning: it
-  stops attachment and work admission and enters fail-stop termination without
-  awaiting the stuck operation. Agent Runtime Service does not own whole-Host
-  shutdown. Recovery may republish only after ownership ends and validation
-  succeeds.
+  at the earlier containment cutoff. On error or timeout, cancel logical owners
+  without awaiting stuck Host I/O. A published Rollout requires atomic inode
+  quarantine in the reserved interval; failure invokes the synchronously
+  non-returning Alan OS Host lifecycle adapter. An explicit no-Rollout outcome
+  instead force-aborts its runtime owner and completes without a storage
+  operation. An unpublished staging creation revokes publication and transfers
+  its cleanup lease to a bounded service reaper. Agent Runtime Service does not
+  own whole-Host shutdown. Recovery may republish only after ownership ends and
+  validation succeeds.
 - Extend the generic Process runner bridge with a prepared terminal
   finalization hook. Alan Kernel asks the runner to prepare the per-Process
   hook before the committed Process becomes controllable, invokes it exactly
@@ -36,9 +35,10 @@ restart even though the execution evidence already exists.
   barrier before control becomes reachable. Resolve it on every startup path
   with either the existing Rollout metadata plus ownership of the runtime task
   and deferred AgentFS cleanup, or an explicit no-producing-Rollout outcome
-  that still carries any live runtime owner and cleanup for AgentFS already
-  bound. The ordinary run path hands that ownership to terminal finalization
-  instead of shutting down or dropping it. Terminal finalization cancels
+  that still carries any live runtime owner, charged prepublication cleanup
+  lease, and cleanup for AgentFS already bound. The ordinary run path hands
+  that ownership to terminal finalization instead of shutting down or dropping
+  it. Terminal finalization cancels
   startup or execution, awaits that barrier, quiesces every live Agent Machine,
   and, when a Rollout exists, fences its writers before appending
   `process_exit`. Thus no live runtime leaks, no producing Rollout is missed,
@@ -48,9 +48,11 @@ restart even though the execution evidence already exists.
   during System Process dispatch. If any pre-dispatch path returns after a
   barrier was registered, resolve it explicitly as no producing Rollout so an
   exit such as missing executable or unavailable Agent Runtime cannot hang.
-- Create Rollouts under internal staging, publish only after the initial
-  metadata flush, and recover quarantine only at service startup before
-  exposing discovery or clone capability.
+- Create Rollouts under fixed-capacity internal staging, publish only after the
+  initial metadata flush, and retain a cleanup lease until publication or
+  successful unlink. A cancelled late Host open is reaped on completion;
+  startup sweeps abandoned staging before exposing discovery or clone
+  capability.
 - Expose each retained Rollout at the read-only
   `/agent/rollouts/<rollout-id>` file path. Agent Runtime Service validates
   retained prefixes once while rebuilding discovery and advances active

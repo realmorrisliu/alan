@@ -62,25 +62,34 @@
   startup exit with either the existing metadata plus ownership of the live
   `RuntimeController` (or equivalent runtime-task guard) and deferred AgentFS
   cleanup action, or an explicit no-producing-Rollout outcome that still
-  carries any live runtime owner and cleanup for AgentFS already bound; a
-  pre-dispatch outcome carries neither, and a cloned `RuntimeHandle` alone is
-  insufficient. Keep any eventual `AgentExecutableResult` only in the
+  carries any live runtime owner, charged prepublication cleanup lease, and
+  cleanup for AgentFS already bound; a pre-dispatch outcome carries none, and a
+  cloned `RuntimeHandle` alone is insufficient. Keep any eventual
+  `AgentExecutableResult` only in the
   candidate runner outcome. Prove control during the delivery window, a
   best-effort in-memory runtime after Rollout creation failure, and failure
-  after Rollout creation but before readiness all finalize correctly. Create
-  at an internal staging path,
-  register an independently cancellable creation owner before awaiting open,
-  register writer containment before the initial metadata flush, and atomically
-  publish only after that flush succeeds. Test cancellation during open and
-  control or deadline expiry while the initial flush stalls,
-  without an Engine-to-Service dependency, file, Host API, durable identity, or
-  absent-resolution fallback.
+  after Rollout creation but before readiness all finalize correctly. Reserve a
+  fixed service-wide staging-creation slot, create at an internal staging path,
+  and register an independently cancellable cleanup lease before awaiting open.
+  Deliver late Host open completion to that lease; after cancellation, revoke
+  publication and have the service reaper close and unlink any late file.
+  Make every prepublication completion recheck publish permission under the
+  same lock used for revocation so a late flush cannot publish afterward.
+  Release the slot only after publication or successful unlink, retain it on
+  cleanup failure, reject creation when the pool is full, and sweep abandoned
+  staging before service readiness. Register writer containment before the
+  initial metadata flush and atomically publish only after that flush succeeds.
+  Test cancellation during open, late completion, unlink failure, pool
+  exhaustion, startup sweep failure, and control or deadline expiry while the
+  initial flush stalls, without an Engine-to-Service dependency, file, Host
+  API, durable identity, or absent-resolution fallback.
 - [ ] 2.5 Apply the same committed-namespace executable eligibility check in
   System Process runner finalizer preparation as in `run`. Keep the generic
   no-op when `/bin/alan-agent` is not mounted, and explicitly resolve no
   producing Rollout on every pre-dispatch return after registration, including
   an unavailable Agent Runtime Service. Prove missing-image exit `127` and
-  service-loss exit cannot wait on an orphaned barrier.
+  service-loss exit cannot wait on an orphaned barrier or attempt storage
+  containment without a creation lease or backing inode.
 - [ ] 2.6 Have System Process runner route Agent Executable finalization to
   Agent Runtime Service; first signal startup or runtime cancellation and
   await the terminal-context barrier. For every outcome with a live runtime
@@ -104,18 +113,20 @@
   while reserving its final interval for containment. Stop context barrier,
   quiescence, writer fence, terminal append/flush, and pre-exit runtime shutdown
   work at the earlier containment cutoff. On error or timeout, emit a structured
-  PID/Rollout/exit-code/stage diagnostic, cancel logical writer and runtime
-  owners without awaiting stuck Host I/O, remove the entry under the
-  discovery-table lock used by open, atomically quarantine the backing inode
-  within the reserved interval before Kernel may publish exit, and finish
-  non-blocking logical-owner release. If containment errors or reaches the
-  absolute deadline, call the synchronously non-returning Alan OS Host
-  lifecycle adapter without awaiting the stuck operation. Recover only after
-  ownership ends and validation succeeds under the same Rollout ID. Test
-  an earlier stuck writer blocking the fence, disk-full/flush-error, timeout,
-  ambiguous-flush no-retry, a complete record surviving an error, absent/torn
-  outcomes, stale I/O affecting only quarantine, containment failure as
-  bounded Host-fatal termination, cleanup, and Host-shutdown progress.
+  PID/Rollout/exit-code/stage diagnostic, close work admission, and force-abort
+  logical owners without awaiting stuck work. For a published Rollout, remove
+  discovery under the lock used by open and atomically quarantine its inode in
+  the reserved interval; only failure of this branch calls the synchronously
+  non-returning Host lifecycle adapter. For unpublished pending-open or staging
+  state, revoke publication and transfer the charged lease to the bounded
+  reaper. For an explicit no-Rollout/no-creation outcome, complete non-storage
+  containment without discovery lookup or rename. Test an in-memory runtime
+  missing quiescence, a pre-dispatch no-owner outcome, pending open and staging
+  cutoff, an earlier published writer blocking the fence,
+  disk-full/flush-error, timeout, ambiguous-flush no-retry, a complete record
+  surviving an error, absent/torn outcomes, stale I/O affecting only
+  quarantine, published containment failure as bounded Host-fatal termination,
+  cleanup, and Host-shutdown progress.
 - [ ] 2.8 Preserve Rollouts without `process_exit` as unterminated evidence
   without fabricating a result. Treat any discovered complete valid
   `process_exit` as authoritative even when its original flush reported an
@@ -178,10 +189,11 @@
   Rollouts do not block unrelated valid entries.
 - [ ] 3.4 Test discovery of active, terminal, and unterminated Rollouts across
   Process exit and Agent Runtime Service restart.
-- [ ] 3.5 Complete quarantine recovery before exposing `/agent/rollouts` or
-  `/mnt/agent-runtime/clone`; defer current-boot quarantine recovery until the
-  next service start, and prove no recovered Rollout can appear during a
-  launch-correlation handshake.
+- [ ] 3.5 Complete the abandoned-staging sweep and quarantine recovery before
+  exposing `/agent/rollouts` or `/mnt/agent-runtime/clone`; fail service
+  readiness when staging cleanup fails, defer current-boot quarantine recovery
+  until the next service start, and prove no recovered Rollout can appear
+  during a launch-correlation handshake.
 - [ ] 3.6 Test that `/agent` holders can read but not mutate Rollouts and that
   Processes without the `/agent` mount have no fallback access.
 

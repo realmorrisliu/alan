@@ -176,16 +176,32 @@ barrier and a startup cancellation path. Every Agent startup exit path SHALL
 resolve the barrier exactly once with either a producing-Rollout context or an
 explicit no-producing-Rollout outcome; an absent or dropped resolution SHALL
 NOT be treated as no Rollout. Either outcome SHALL carry deferred cleanup for
-any AgentFS already bound and an owning runtime guard for any live Agent
-Machine; a pre-dispatch outcome before Agent Runtime Service accepts ownership
-MAY carry neither.
+any AgentFS already bound, an owning runtime guard for any live Agent Machine,
+and any charged prepublication cleanup lease. A pre-dispatch outcome before
+Agent Runtime Service accepts ownership MAY carry none.
 
-Agent Runtime Service SHALL create a Rollout at an internal staging path and
-register an independently cancellable creation owner before awaiting the Host
-open. It SHALL register writer containment before the initial
-`AgentMachineMeta` flush and SHALL atomically publish the inode into the
-discoverable subtree only after that flush succeeds. Cancellation or deadline
-expiry before publication SHALL leave no discoverable backing file.
+Agent Runtime Service SHALL reserve a slot from a fixed service-wide
+staging-creation pool, create a Rollout at an internal staging path, and
+register an independently cancellable cleanup lease before awaiting the Host
+open. Host open completion SHALL be delivered to that lease even after Process
+startup cancellation. Agent Runtime Service SHALL register writer containment
+before the initial `AgentMachineMeta` flush and SHALL atomically publish the
+inode into the discoverable subtree only after that flush succeeds.
+
+Cancellation or deadline expiry before publication SHALL irrevocably revoke
+publication and switch the lease to reclaim-only mode. A late-created staging
+file SHALL be closed and unlinked by the service reaper. The staging slot SHALL
+remain charged until publication or successful unlink; an unlink failure SHALL
+emit a diagnostic and MUST NOT release the slot. Exhausting the pool SHALL
+reject later creation with resource exhaustion. Before exposing
+`/agent/rollouts` or `/mnt/agent-runtime/clone` at startup, Agent Runtime
+Service SHALL sweep abandoned staging entries. Sweep failure SHALL prevent
+service readiness. Staging entries and cleanup leases SHALL NOT be
+discoverable evidence or durable execution identities.
+
+Every prepublication completion, including a late initial flush, SHALL recheck
+publish permission under the same lock used to revoke it. After reclaim-only
+mode wins, no completion SHALL rename the inode into discovery.
 
 System Process runner SHALL apply the same committed-namespace executable
 eligibility check during terminal preparation as it applies before dispatch in
@@ -222,23 +238,36 @@ attempt SHALL NOT be retried after an ambiguous flush result.
 
 On error or containment-cutoff expiry at any pre-exit stage, Agent Runtime
 Service SHALL emit a structured diagnostic containing the PID, available
-Rollout ID, intended exit code, failed stage, and failure; cancel the logical
-writer and runtime owners without awaiting stuck Host I/O; remove the entry
-from discovery under the discovery-table lock used by open; and atomically move
+Rollout ID, intended exit code, failed stage, and failure; close runtime and
+writer admission; and force-abort their logical owners without awaiting stuck
+work.
+
+For a published producing Rollout, Agent Runtime Service SHALL remove the entry
+from discovery under the discovery-table lock used by open and atomically move
 the current backing inode out of the discoverable subtree into internal
-quarantine during the reserved interval. Only after successful containment
-SHALL it complete non-blocking logical-owner release and release terminal
+quarantine during the reserved interval. For an unpublished pending-open or
+staging outcome, it SHALL revoke publication and transfer the charged cleanup
+lease to the bounded service reaper; this SHALL be successful non-storage
+containment without awaiting Host open, flush, or unlink. For an explicit
+no-producing-Rollout outcome with no creation lease or backing inode, closing
+admission and force-aborting any live runtime owner SHALL be successful
+non-storage containment; Agent Runtime Service SHALL NOT remove a discovery
+entry or attempt an inode rename. A pre-dispatch outcome with no live owner
+SHALL complete immediately.
+
+Only after the applicable containment branch succeeds SHALL Agent Runtime
+Service complete non-blocking logical-owner release and release terminal
 finalization so Alan Kernel can publish the authoritative Process exit.
-Already-submitted
-Host I/O SHALL retain only the quarantined inode and MUST NOT overwrite or
-truncate its prior published prefix. Every existing history fid SHALL retain
-its pinned read-only descriptor and SHALL NOT read beyond its fixed prefix
-length.
+Already-submitted published Rollout I/O SHALL retain only the quarantined inode
+and MUST NOT overwrite or truncate its prior published prefix. Every existing
+history fid SHALL retain its pinned read-only descriptor and SHALL NOT read
+beyond its fixed prefix length.
 Recovery SHALL wait until no writer owner remains, validate the complete
 Rollout envelope, and MAY atomically republish the same Rollout ID. Quarantine
 SHALL NOT be exposed as a Rollout, status, or execution identity.
 
-If containment returns an error or has not returned when the absolute deadline
+Only published-Rollout inode containment SHALL use the fatal path. If that
+containment returns an error or has not returned when the absolute deadline
 expires, Agent Runtime Service SHALL signal the injected Alan OS Host lifecycle
 adapter without awaiting the containment operation. That Host-owned call SHALL
 be synchronously non-returning whether it enters normal fail-stop termination
@@ -250,10 +279,10 @@ authoritative even if the append or flush result was ambiguous. If no complete
 terminal record is discoverable, the Rollout SHALL remain unterminated or
 recoverably torn evidence; failure SHALL NOT fabricate terminal evidence.
 Finalization SHALL release the runtime-task owner only after `process_exit` is
-flushed or this bounded persistence-failure path has cancelled the writer and
-successfully contained its backing inode. It SHALL return the deferred AgentFS
-cleanup action to Alan Kernel. Kernel SHALL publish the terminal `/proc` state
-before invoking that action; only then may Agent Runtime Service unbind
+flushed or the applicable storage or non-storage containment branch succeeds.
+It SHALL return the deferred AgentFS cleanup action to Alan Kernel. Kernel
+SHALL publish the terminal `/proc` state before invoking that action; only then
+may Agent Runtime Service unbind
 `/agent/<pid>` and release Process-scoped AgentFS backing. The barrier, action,
 and outcomes SHALL remain internal, Process-local synchronization state and
 SHALL NOT create a durable identity or terminal status model.
@@ -309,6 +338,16 @@ SHALL NOT create a durable identity or terminal status model.
 - **AND** terminal finalization cancels, quiesces, and shuts down that runtime
 - **AND** no terminal Rollout record is fabricated
 
+#### Scenario: In-memory Agent Machine misses the containment cutoff
+- **WHEN** an explicit no-producing-Rollout outcome has a live runtime owner
+  whose quiescence or shutdown reaches the containment cutoff
+- **THEN** Agent Runtime Service closes runtime work admission and force-aborts
+  the runtime owner
+- **AND** it completes successful non-storage containment without looking up a
+  discovery entry or renaming an inode
+- **AND** Alan Kernel may publish the controlled Process exit without invoking
+  the Host-fatal storage path
+
 #### Scenario: Agent executable is rejected before service dispatch
 - **WHEN** a committed invocation names `/bin/alan-agent` but its namespace
   does not contain that executable
@@ -323,6 +362,7 @@ SHALL NOT create a durable identity or terminal status model.
 - **THEN** the pre-dispatch return explicitly resolves no producing Rollout
 - **AND** terminal finalization completes without waiting on an orphaned
   barrier
+- **AND** its no-owner outcome performs no storage containment operation
 
 #### Scenario: Active transition is cancelled
 - **WHEN** control requests exit while the Agent Machine can still append
@@ -374,7 +414,8 @@ SHALL NOT create a durable identity or terminal status model.
 - **AND** Alan Kernel can publish exit and Host shutdown can progress
 
 #### Scenario: Quarantine blocks in failing storage
-- **WHEN** containment has not returned by the absolute finalization deadline
+- **WHEN** containment of a published Rollout inode has not returned by the
+  absolute finalization deadline
 - **THEN** Agent Runtime Service signals the injected Host lifecycle adapter
   without awaiting the stuck quarantine operation
 - **AND** the Host owner stops attachment and new-work admission and enters
@@ -552,10 +593,11 @@ This acknowledgment SHALL NOT expose a Host rollout path, require internal
 `RuntimeStartupMetadata`, or add a startup side API or duplicate AgentFS
 metadata file.
 
-Agent Runtime Service SHALL complete quarantine recovery before exposing
-`/agent/rollouts` or `/mnt/agent-runtime/clone`. A Rollout quarantined during
-the current boot SHALL remain hidden until the next service start; recovery
-SHALL NOT republish Rollouts while launch handshakes are possible.
+Agent Runtime Service SHALL complete the abandoned-staging sweep and quarantine
+recovery before exposing `/agent/rollouts` or `/mnt/agent-runtime/clone`.
+Sweep failure SHALL prevent readiness. A Rollout quarantined during the current
+boot SHALL remain hidden until the next service start; recovery SHALL NOT
+republish Rollouts while launch handshakes are possible.
 
 #### Scenario: Strict-durability launch creates its Rollout
 - **WHEN** a caller pins the current boot identity, lists current Rollout IDs,
@@ -571,19 +613,40 @@ SHALL NOT republish Rollouts while launch handshakes are possible.
 #### Scenario: Initial metadata flush stalls
 - **WHEN** control or the terminal deadline fires after Rollout file creation
   but before the initial metadata flush completes
-- **THEN** the pre-registered containment owner closes and quarantines the
-  backing inode
-- **AND** Kernel does not release a discoverable stale writer
+- **THEN** Agent Runtime Service irrevocably revokes publication and transfers
+  the charged staging cleanup lease to its reaper
+- **AND** late flush completion cannot publish the inode
+- **AND** Kernel may publish exit because the inode was never discoverable
 
 #### Scenario: Backing-file creation outlives cancellation
 - **WHEN** cancellation or the deadline fires while Host file creation is
   still pending and the open later completes
-- **THEN** the file exists only under the internal staging path
+- **THEN** the reclaim-only completion owner closes and unlinks the staging file
+- **AND** it releases the staging slot only after successful unlink
 - **AND** no empty orphan appears in the discoverable Rollout subtree
 
+#### Scenario: Staging reclamation cannot complete
+- **WHEN** a late staging unlink fails
+- **THEN** Agent Runtime Service emits a diagnostic and keeps its fixed-pool
+  slot charged
+- **AND** additional creation is rejected with resource exhaustion when the
+  pool is full
+- **AND** the next service startup sweeps the abandoned staging entry before
+  exposing discovery or clone capability
+
+#### Scenario: Startup staging sweep fails
+- **WHEN** Agent Runtime Service cannot remove an abandoned staging entry
+  during startup
+- **THEN** it does not expose `/agent/rollouts` or
+  `/mnt/agent-runtime/clone`
+- **AND** another boot cannot accumulate new staging entries through this
+  service instance
+
 #### Scenario: Recovery precedes launch correlation
-- **WHEN** Agent Runtime Service starts with quarantined Rollouts
-- **THEN** it finishes recovery before exposing discovery or clone capability
+- **WHEN** Agent Runtime Service starts with quarantined Rollouts or abandoned
+  staging entries
+- **THEN** it finishes quarantine recovery and the staging sweep before
+  exposing discovery or clone capability
 - **AND** no recovered prior-boot Rollout can appear between a pre-spawn
   listing and launch acknowledgment
 - **AND** current-boot quarantine waits for the next service start

@@ -149,18 +149,34 @@ Agent Runtime Service to install a pending terminal-context barrier and startup
 cancellation path for that PID before Process control becomes reachable. The
 Agent startup owner must resolve the barrier exactly once on every exit path:
 with a producing-Rollout context, or with an explicit no-producing-Rollout
-outcome. Either outcome carries any live runtime owner and deferred cleanup for
-AgentFS already bound; a pre-dispatch outcome carries neither. A drop guard or
-equivalent total-exit mechanism prevents channel closure from being misread as
-the latter.
+outcome. Either outcome carries any live runtime owner, charged
+prepublication cleanup lease, and deferred cleanup for AgentFS already bound;
+a pre-dispatch outcome carries none. A drop guard or equivalent total-exit
+mechanism prevents channel closure from being misread as the latter.
 
 Rollout creation starts at an internal quarantine/staging path, never at the
-discoverable path. The intended path and independently cancellable creation
-owner are registered before awaiting Host file creation. After creation, the
-writer owner enters the pending terminal context before the initial
-`AgentMachineMeta` flush. Only a successful initial flush atomically renames
-the same inode into the discoverable subtree. Cancellation or deadline expiry
-at any earlier point can leave bytes only under quarantine.
+discoverable path. Before awaiting Host file creation, Agent Runtime Service
+reserves a slot from a fixed service-wide staging-creation pool and registers
+the intended path plus an independently cancellable cleanup lease. The Host
+open completion is delivered to that lease even after Process startup is
+cancelled. After creation, the writer owner enters the pending terminal context
+before the initial `AgentMachineMeta` flush. Only a successful initial flush
+atomically renames the same inode into the discoverable subtree and releases
+the staging slot.
+
+Cancellation before publication irrevocably switches the lease to reclaim-only
+mode. A late Host open completion is closed and unlinked from staging; the slot
+is released only after publication or successful unlink. A failed unlink keeps
+the slot charged and emits a diagnostic, so repeated failures cannot create
+unbounded same-boot staging work. Exhausting the fixed pool rejects later
+creation with resource exhaustion. On startup, Agent Runtime Service sweeps all
+abandoned staging entries before exposing discovery or clone capability. A
+failed sweep prevents service readiness. No staging name or cleanup lease is a
+Rollout identity or discoverable evidence.
+
+Every prepublication completion, including a late initial flush, rechecks the
+lease's publish permission under the same lock that revokes it. Once
+reclaim-only wins, no completion can rename the inode into discovery.
 
 Preparation first applies the same committed-namespace executable eligibility
 check as `SystemProcessRunner::run`. An invocation whose `/bin/alan-agent`
@@ -226,26 +242,41 @@ fence, the single terminal append-and-flush attempt, and pre-exit runtime
 shutdown share an earlier containment cutoff. The finalizer does not retry
 because an ambiguous flush result could otherwise duplicate `process_exit`.
 
-On an error or containment-cutoff expiry at any pre-exit stage,
-Agent Runtime Service emits a structured diagnostic containing the PID,
-available Rollout ID, intended exit code, failed stage, and storage error or
-timeout. It cancels the logical writer and runtime owners without awaiting
-stuck Host I/O, removes the entry from discovery under the discovery-table lock
-used by open, then uses the reserved interval to atomically rename the current
-backing inode out of the discoverable subtree before returning control to
-Kernel.
-Already-submitted Host I/O retains only the quarantined inode and may append
-only beyond its prior published prefix. Existing history fids retain their
-pinned read-only descriptor and fixed prefix length, so those later appends
-remain outside their readable range.
-Quarantine has no user-visible identity or status and is not listed. Recovery
-waits until no writer owner remains, revalidates the complete envelope, and may
-atomically republish the same Rollout ID.
+On an error or containment-cutoff expiry at any pre-exit stage, Agent Runtime
+Service emits a structured diagnostic containing the PID, available Rollout
+ID, intended exit code, failed stage, and error or timeout. It closes runtime
+and writer admission and force-aborts their logical owners without awaiting
+stuck work.
 
-If the containment operation errors or has not returned when the absolute
-deadline expires, Agent Runtime Service reports a fatal storage-integrity
-failure through an injected Alan OS Host lifecycle adapter and does not wait
-for the rename. The Host owner atomically closes readiness, attachment
+Containment then follows the terminal context's owned storage state:
+
+- For a published producing Rollout, it removes the entry from discovery under
+  the discovery-table lock used by open, then uses the reserved interval to
+  atomically rename the current backing inode out of the discoverable subtree
+  before returning control to Kernel.
+- For an unpublished pending-open or staging outcome, it irrevocably revokes
+  publication and transfers the charged cleanup lease to the bounded staging
+  reaper. This is successful non-storage containment and does not wait for the
+  Host open, flush, or unlink before Kernel may publish exit.
+- For an explicit no-producing-Rollout outcome with no creation lease or
+  backing inode, closing admission and force-aborting any live runtime owner is
+  successful non-storage containment. It neither removes a discovery entry nor
+  attempts a rename. A pre-dispatch outcome with no runtime owner completes
+  immediately.
+
+Already-submitted published Rollout I/O retains only the quarantined inode and
+may append only beyond its prior published prefix. Existing history fids retain
+their pinned read-only descriptor and fixed prefix length, so those later
+appends remain outside their readable range. Quarantine has no user-visible
+identity or status and is not listed. Recovery waits until no writer owner
+remains, revalidates the complete envelope, and may atomically republish the
+same Rollout ID.
+
+Only published-Rollout inode containment can invoke the fatal path. If that
+operation errors or has not returned when the absolute deadline expires, Agent
+Runtime Service reports a fatal storage-integrity failure through an injected
+Alan OS Host lifecycle adapter and does not wait for the rename. The Host owner
+atomically closes readiness, attachment
 admission, and new-work admission, requests Service Manager shutdown, and
 enters immediate fail-stop Host termination. The adapter call is synchronously
 non-returning whether its internal shutdown signal succeeds or it must abort
@@ -366,12 +397,13 @@ whose ID was absent from the pre-spawn listing and whose `process_path` is
 `/proc/<pid>`. Before acknowledgment, it reads `/proc/host/boot_id` again and
 requires the same value.
 
-Agent Runtime Service completes prior-boot quarantine recovery before exposing
-either `/agent/rollouts` or `/mnt/agent-runtime/clone`. A Rollout quarantined
-during the current boot is not republished online; it waits for the next
-service start. Recovery therefore never inserts a hidden Rollout during a
-launch handshake. This exceptional delay is preferred to another generation
-field or acknowledgment protocol.
+Agent Runtime Service completes the abandoned-staging sweep and prior-boot
+quarantine recovery before exposing either `/agent/rollouts` or
+`/mnt/agent-runtime/clone`. A failed staging sweep prevents readiness. A
+Rollout quarantined during the current boot is not republished online; it waits
+for the next service start. Recovery therefore never inserts a hidden Rollout
+during a launch handshake. This exceptional delay is preferred to another
+generation field or acknowledgment protocol.
 
 That existing Rollout metadata is the file-visible acknowledgment: no Host
 rollout path, internal `RuntimeStartupMetadata`, acknowledgment side API, or
@@ -407,6 +439,9 @@ leaves the retained Rollout unterminated or incomplete.
 - **Current retention is unbounded.** → Keep this change policy-neutral and add
   an owning-service retention policy only when measured storage needs justify
   one.
+- **Stuck Host creation or failed staging unlink can exhaust the fixed creation
+  pool.** → Reject later creation instead of accumulating unbounded pending
+  work or files; the completion reaper and startup sweep reclaim capacity.
 - **`/mnt/agent-runtime/clone` allocates an ordinary `/proc` PID before
   runtime readiness.** → Correlate that PID to a newly discovered active
   Rollout's already-durable first record under one unchanged boot identity
