@@ -170,9 +170,11 @@ same inode into the discoverable subtree, then durably commit every affected
 directory entry (or use a store transaction with equivalent crash semantics).
 Only after that barrier succeeds may Agent Runtime Service insert the source
 into its discovery table, resolve the producing-Rollout terminal context,
-release the staging slot, or allow the Agent Machine to run a transition,
-spawn a Tool, or cause another external side effect. `AsyncWriteExt::flush`
-alone does not satisfy this barrier.
+or allow the Agent Machine to run a transition, spawn a Tool, or cause another
+external side effect. The staging slot is released after successful
+publication, successful staging unlink, or successful destination-claimed
+containment; failed cleanup retains the charge. `AsyncWriteExt::flush` alone
+does not satisfy the publication barrier.
 
 Immediately before rename, the publisher claims a non-cancellable publication
 critical section and captures its transition-local generation under the same
@@ -288,6 +290,15 @@ fence, the single terminal append-and-durable-sync attempt, and pre-exit
 runtime shutdown share an earlier containment cutoff. The finalizer does not
 retry because an ambiguous durable-sync result could otherwise duplicate
 `process_exit`.
+
+Clean completion with an explicit no-producing-Rollout outcome is a normal
+non-storage disposition. After successful quiescence, the finalizer shuts down
+and releases any live runtime owner. If the outcome owns a pending-open or
+staging lease, it first revokes publication and transfers the charged lease to
+the bounded reaper without awaiting Host I/O or unlink; with no lease or
+backing inode, it performs no storage action. It then returns deferred AgentFS
+cleanup so Kernel can publish exit. This path neither fabricates a Rollout nor
+depends on entering error containment.
 
 On an error or containment-cutoff expiry at any pre-exit stage, Agent Runtime
 Service emits a structured diagnostic containing the PID, available Rollout

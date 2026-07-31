@@ -195,9 +195,12 @@ subtree, and durably commit every affected directory entry, or use a durable
 store transaction with equivalent crash semantics. Plain buffered or
 async-writer flush SHALL NOT satisfy this barrier. Only after the complete
 barrier succeeds SHALL Agent Runtime Service insert the source into its
-discovery table, resolve a producing-Rollout terminal context, release the
-staging slot, or permit the Agent Machine to run a transition, spawn a Tool, or
-cause another external side effect.
+discovery table, resolve a producing-Rollout terminal context, or permit the
+Agent Machine to run a transition, spawn a Tool, or cause another external side
+effect. The staging slot SHALL be released only after this barrier succeeds,
+the staging inode is successfully unlinked, or destination-claimed containment
+successfully fences its owner and durably quarantines or removes every possible
+destination and stale staging alias.
 
 Before issuing the publication rename, Agent Runtime Service SHALL atomically
 claim a non-cancellable publication critical section under the same lock used
@@ -212,10 +215,10 @@ then service pending ordinary cancellation; no Agent Machine side effect may
 occur in between.
 
 A late-created staging file SHALL be closed and unlinked by the service reaper.
-The staging slot SHALL remain charged until publication or successful unlink;
-an unlink failure SHALL emit a diagnostic and MUST NOT release the slot.
-Exhausting the pool SHALL reject later creation with resource exhaustion.
-Before exposing
+The staging slot SHALL remain charged until successful publication, staging
+unlink, or destination-claimed containment; a failed unlink or containment
+SHALL emit a diagnostic and MUST NOT release the slot. Exhausting the pool
+SHALL reject later creation with resource exhaustion. Before exposing
 `/agent/rollouts` or `/mnt/agent-runtime/clone` at startup, Agent Runtime
 Service SHALL sweep abandoned staging entries. Sweep failure SHALL prevent
 service readiness. Staging entries and cleanup leases SHALL NOT be
@@ -293,6 +296,17 @@ quiescence, writer fence, the single terminal append-and-durable-sync attempt,
 and pre-exit runtime shutdown SHALL stop at the earlier containment cutoff.
 The attempt SHALL NOT be retried after an ambiguous durable-sync result.
 
+For a clean no-producing-Rollout outcome, successful quiescence and shutdown of
+any live runtime owner SHALL be a normal non-storage completion. If that
+outcome owns a pending-open or staging cleanup lease, Agent Runtime Service
+SHALL first revoke publication and transfer the charged lease to the bounded
+service reaper; it SHALL NOT wait for Host open, prepublication I/O, or unlink.
+If it owns no creation lease or backing inode, no storage action is required.
+After this disposition succeeds, finalization SHALL release the runtime owner
+and may return the deferred AgentFS cleanup action so Kernel can publish exit.
+It SHALL NOT require a `process_exit`, fabricate a Rollout, or route clean
+no-Rollout completion through an error-only containment branch.
+
 On error or containment-cutoff expiry at any pre-exit stage, Agent Runtime
 Service SHALL emit a structured diagnostic containing the PID, available
 Rollout ID, intended exit code, failed stage, and failure; close runtime and
@@ -342,8 +356,8 @@ was ambiguous. If no complete terminal record is discoverable, the Rollout
 SHALL remain unterminated or
 recoverably torn evidence; failure SHALL NOT fabricate terminal evidence.
 Finalization SHALL release the runtime-task owner only after `process_exit` is
-durably synced or the applicable storage or non-storage containment branch
-succeeds.
+durably synced, clean no-producing-Rollout non-storage completion succeeds, or
+the applicable error-containment branch succeeds.
 It SHALL return the deferred AgentFS cleanup action to Alan Kernel. Kernel
 SHALL publish the terminal `/proc` state before invoking that action; only then
 may Agent Runtime Service unbind
@@ -397,9 +411,14 @@ SHALL NOT create a durable identity or terminal status model.
 
 #### Scenario: Best-effort fallback starts an in-memory Agent Machine
 - **WHEN** Rollout creation fails but best-effort policy starts a live in-memory
-  Agent Machine
+  Agent Machine and later completes cleanly
 - **THEN** the no-producing-Rollout outcome retains the owning runtime guard
-- **AND** terminal finalization cancels, quiesces, and shuts down that runtime
+- **AND** terminal finalization quiesces and shuts down that runtime as a
+  successful non-storage completion
+- **AND** it revokes and transfers any charged pending-open or staging cleanup
+  lease to the bounded reaper before releasing the runtime owner
+- **AND** it returns deferred AgentFS cleanup so Kernel can publish Process
+  exit
 - **AND** no terminal Rollout record is fabricated
 
 #### Scenario: In-memory Agent Machine misses the containment cutoff
@@ -713,6 +732,8 @@ while launch handshakes are possible.
 - **AND** containment fences the superseded publication owner before it
   excludes and durably quarantines every possible destination plus stale
   staging aliases
+- **AND** successful durable destination containment releases the charged
+  staging slot
 - **AND** failure of that containment invokes the synchronously non-returning
   Host-fatal path
 

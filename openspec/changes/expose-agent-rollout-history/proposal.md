@@ -24,6 +24,10 @@ restart even though the execution evidence already exists.
   its cleanup lease to a bounded service reaper. Agent Runtime Service does not
   own whole-Host shutdown. Recovery may republish only after ownership ends and
   validation succeeds.
+- Treat clean no-Rollout completion as an ordinary non-storage disposition:
+  quiesce and shut down its runtime owner, transfer any charged pending-open or
+  staging lease to the bounded reaper, and return deferred AgentFS cleanup so
+  Kernel can publish exit without fabricating terminal evidence.
 - Extend the generic Process runner bridge with a prepared terminal
   finalization hook. Alan Kernel asks the runner to prepare the per-Process
   hook before the committed Process becomes controllable, invokes it exactly

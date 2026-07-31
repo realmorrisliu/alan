@@ -81,10 +81,11 @@
   publication critical section and capture its transition-local generation
   under that lock; ordinary cancellation that loses this race remains pending
   until the barrier resolves and cannot reclassify the inode as staging.
-  Release the slot only after publication or successful unlink, retain it on
-  cleanup failure, reject creation when the pool is full, and sweep abandoned
-  staging before service readiness. Register writer containment before initial
-  metadata. Publish only through a Host-backed durable-store barrier: sync file
+  Release the slot only after successful publication, staging unlink, or
+  destination-claimed containment; retain it on cleanup failure, reject
+  creation when the pool is full, and sweep abandoned staging before service
+  readiness. Register writer containment before initial metadata. Publish only
+  through a Host-backed durable-store barrier: sync file
   data and metadata, atomically rename the inode, then durably commit every
   affected directory entry. Extend the owning storage adapter with these
   operations; keep Host-specific sync details out of Agent Execution Engine and
@@ -104,8 +105,10 @@
   effects. Fence the superseded publication owner before quarantine; failure
   to fence it within the absolute deadline is Host-fatal and cannot release
   Kernel.
-  Insert discovery, resolve the producing context, release the staging slot,
-  and permit Agent Machine effects only after the whole barrier succeeds. Test
+  Insert discovery, resolve the producing context, and permit Agent Machine
+  effects only after the whole barrier succeeds. Release the staging slot only
+  after that success or a successful staging-unlink or destination-containment
+  disposition. Test
   cancellation before and after the publication claim, cancellation after
   rename but before directory commit, every late barrier stage, ambiguous
   rename and directory commit, late completion after generation invalidation,
@@ -131,14 +134,19 @@
   SHALL hand off its live runtime and cleanup ownership instead of calling
   `RuntimeController::shutdown`, dropping the task owner, or cleaning up before
   finalization. When a Rollout exists, append and durably sync terminal
-  `process_exit`; then shut down and release any runtime task and return the
-  deferred AgentFS cleanup action while consuming the terminal context exactly
-  once. Have Kernel publish terminal `/proc` state before invoking that action
-  to unbind `/agent/<pid>` and release Process-scoped AgentFS backing. Test
-  immediate control before metadata delivery, explicit no-Rollout startup
-  retaining AgentFS until exit publication, normal result publication followed
-  by successful durable sync while the runtime remains live, power loss after
-  successful terminal sync preserving `process_exit`,
+  `process_exit`. For clean no-producing-Rollout completion, treat successful
+  runtime quiescence and shutdown as a normal non-storage disposition; first
+  revoke and transfer any pending-open or staging lease to the bounded reaper,
+  without requiring error containment or fabricating a Rollout. Then shut down
+  and release any runtime task and return the deferred AgentFS cleanup action
+  while consuming the terminal context exactly once. Have Kernel publish
+  terminal `/proc` state before invoking that action to unbind `/agent/<pid>`
+  and release Process-scoped AgentFS backing. Test immediate control before
+  metadata delivery, explicit no-Rollout startup retaining AgentFS until exit
+  publication, clean in-memory completion with and without a charged cleanup
+  lease, normal result publication followed by successful durable sync while
+  the runtime remains live, power loss after successful terminal sync
+  preserving `process_exit`,
   controller-drop regression, active-transition cancellation,
   `/proc/<pid>/ctl` exit during an active deferred action, deadlock-free barrier
   and fence completion, no post-exit append, and control exit code `130`.
