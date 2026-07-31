@@ -137,13 +137,20 @@
   `process_exit` only while its serialized writer remains healthy; a poisoned
   writer skips terminal append and proceeds directly to published-storage
   containment with the original failure. Give the Process-scoped
-  `RuntimeController` a single-assignment failure latch registered before
-  Process control is reachable. Have the Agent Executable run future select it
-  against readiness and normal completion; writer poison returns the existing
-  nonzero runner failure so Kernel's ordinary runner-completion path submits
-  the terminal claim. Require proof of an existing terminal claim if the latch
-  receiver is closed; otherwise invoke Host-fatal rather than leave the Process
-  running. For clean no-producing-Rollout
+  `RuntimeController` a shared single-assignment failure cell registered in the
+  pending terminal context before Process control is reachable. Have the
+  writer and terminal context retain ownership while the Agent Executable run
+  future only borrows a subscription and selects it against readiness and
+  normal completion; returning from `run` or dropping that subscription does
+  not close the cell. Writer poison wakes a live run future with the existing
+  nonzero runner failure. If normal completion returns first, have System
+  Process runner atomically recheck the cell during runner-result-to-terminal-
+  claim handoff and replace the candidate success/result with the existing
+  nonzero failure before Kernel's ordinary runner-completion path submits the
+  claim. Transfer and retain the cell with the winning terminal context through
+  finalization. Treat only invariant loss of that terminal context and cell
+  without an existing claim as Host-fatal; a borrowed subscription ending is
+  harmless. For clean no-producing-Rollout
   completion, treat successful
   runtime quiescence and shutdown as a normal non-storage disposition; first
   revoke and transfer any pending-open or staging lease to the bounded reaper,
@@ -159,8 +166,11 @@
   preserving `process_exit`,
   controller-drop regression, active-transition cancellation,
   oversized and partial-append poison waking a runner blocked on readiness or
-  normal completion, poison racing control and Host exit through one terminal
-  claim, closed-receiver proof/fatal behavior,
+  normal completion, normal completion winning the select followed by append
+  failure in the return-to-claim gap, candidate result conversion to the
+  existing failure, harmless borrowed-subscription drop, failure-cell retention
+  through finalization, poison racing control and Host exit through one
+  terminal claim, terminal-context/cell invariant-loss fatal behavior,
   `/proc/<pid>/ctl` exit during an active deferred action, deadlock-free barrier
   and fence completion, no post-exit append, and control exit code `130`.
 - [ ] 2.7 Bound Agent terminal finalization under one fixed absolute deadline

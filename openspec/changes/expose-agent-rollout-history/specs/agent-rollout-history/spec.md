@@ -39,23 +39,36 @@ not authorize another append. No later ordinary record or `process_exit` SHALL
 be submitted through a poisoned writer.
 
 Before the Agent Process becomes controllable, the owning `RuntimeController`
-SHALL provide one Process-scoped, single-assignment failure latch to both the
-writer and Agent Executable run future. The run future SHALL select that latch
-against readiness and normal completion. On writer poison it SHALL promptly
-return the existing nonzero runner-failure outcome, causing Kernel's ordinary
-runner-completion path to compete for the one Process terminal claim. A
-simultaneous control or Host exit MAY win that same claim; no second Process
-state or Agent-specific Kernel transition SHALL be introduced.
+SHALL register one shared Process-local, single-assignment failure cell in the
+pending terminal context. The writer and terminal context SHALL retain
+ownership; the Agent Executable run future SHALL only borrow a subscription and
+select it against readiness and normal completion. Returning from `run` or
+dropping that subscription SHALL NOT close, consume, or imply absence of the
+failure cell.
+
+On writer poison, a live run future SHALL promptly return the existing nonzero
+runner-failure outcome. If normal completion returned first, System Process
+runner SHALL atomically inspect the shared cell during the runner result to
+terminal-claim handoff; poison observed before claim submission SHALL replace
+the candidate success/result with the existing nonzero failure outcome. Kernel's
+ordinary runner-completion path SHALL then compete for the one Process terminal
+claim. A simultaneous control or Host exit MAY win that same claim.
+
+The winning terminal claim SHALL transfer the shared failure cell with the
+terminal context to finalization and retain it through quiescence, writer fence,
+and containment. A later poison SHALL therefore remain visible to finalization
+even after the run future returned. No second Process state or Agent-specific
+Kernel transition SHALL be introduced.
 
 Storage containment SHALL be adopted by the winning terminal finalizer and
 SHALL NOT independently report success, release the runtime owner, or leave the
 Process running before a terminal claim exists. The finalizer SHALL fence any
 still-running append before quarantine; containment failure SHALL use the
-synchronously non-returning Host-fatal path. If the failure latch receiver has
-already closed, Agent Runtime Service SHALL require proof that a terminal claim
-already exists; otherwise it SHALL invoke the Host-fatal path rather than leave
-a poisoned Process running. A complete record later found during recovery MAY
-be validated as retained evidence, but no new bytes may be placed after a
+synchronously non-returning Host-fatal path. A borrowed subscription closing
+SHALL NOT invoke Host-fatal. Only loss of the pre-registered terminal context
+and its shared failure cell without an existing terminal claim is an invariant
+failure eligible for that path. A complete record later found during recovery
+MAY be validated as retained evidence, but no new bytes may be placed after a
 possibly torn append.
 
 Each successful open SHALL retain only a pinned read-only source descriptor and
@@ -157,6 +170,19 @@ SHALL belong to mounted capability handles and SHALL NOT be durable state.
 - **AND** the winning finalizer adopts containment, fences the append owner, and
   quarantines the inode before releasing Kernel, or enters the non-returning
   Host-fatal path
+
+#### Scenario: Normal completion returns before a late append failure
+- **WHEN** the Agent Executable run future returns a candidate success while an
+  admitted append is still in flight, and that append poisons the writer before
+  Kernel submits the runner-completion terminal claim
+- **THEN** dropping the run future's subscription does not close the shared
+  failure cell
+- **AND** System Process runner observes poison during claim handoff and
+  replaces the candidate success/result with the existing nonzero failure
+- **AND** the winning finalizer retains the failure cell through writer fence
+  and containment
+- **AND** Alan OS Host is not terminated merely because the borrowed run
+  subscription ended
 
 #### Scenario: History opens reach the service limit
 - **WHEN** another in-flight or retained history open would exceed its handle

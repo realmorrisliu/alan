@@ -73,22 +73,31 @@ A poisoned writer never attempts another ordinary record or `process_exit`, so
 missing or partial evidence cannot be followed by a misleading terminal
 envelope.
 
-The existing Process-scoped `RuntimeController` owns a single-assignment
-failure latch registered before the Process becomes controllable. The writer
-holds its sender, while the Agent Executable run future selects its receiver
-against readiness and normal completion. Poison wakes that future and makes it
-return the existing nonzero runner failure, so Kernel's ordinary runner-
-completion path submits the terminal claim. Control or Host exit can still win
-the same serialized claim. This introduces no second Process status or durable
-identity.
+The existing Process-scoped `RuntimeController` registers a shared single-
+assignment failure cell in the pending terminal context before the Process
+becomes controllable. The writer and terminal context own it; the Agent
+Executable run future only borrows a subscription and selects it against
+readiness and normal completion. Returning from `run` or dropping that
+subscription does not close the cell.
+
+Poison wakes a live run future and makes it return the existing nonzero runner
+failure. If normal completion returned first, System Process runner atomically
+checks the cell while handing the result to Kernel's runner-completion terminal
+claim and replaces a candidate success/result with that failure when poison is
+already recorded. The winning claim transfers the cell with the terminal
+context and retains it through quiescence, writer fence, and containment, so
+poison during the return-to-claim gap or finalization stays visible. Control or
+Host exit can still win the same serialized claim. This introduces no second
+Process status or durable identity.
 
 Containment is then adopted by the winning terminal finalizer; the poison path
 cannot report successful quarantine, release the runtime owner, or leave the
 Process logically running before a terminal claim exists. The finalizer fences
-the possibly running append before quarantine. If the latch receiver is gone,
-Agent Runtime Service must observe that a terminal claim already exists or
-enter the Host-fatal path. A complete record discovered during later recovery
-may still validate, but failure to fence or quarantine is Host-fatal.
+the possibly running append before quarantine. A borrowed subscription ending
+does not trigger Host-fatal; only invariant loss of the pre-registered terminal
+context and shared cell without an existing claim can do so. A complete record
+discovered during later recovery may still validate, but failure to fence or
+quarantine is Host-fatal.
 
 Opening a Rollout file reserves its open slots and, under the discovery lock,
 captures a pinned read-only source descriptor plus the current approved length

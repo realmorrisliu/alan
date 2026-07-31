@@ -75,10 +75,13 @@ restart even though the execution evidence already exists.
   submission. An over-cap record poisons the writer and closes execution-effect
   admission rather than silently dropping evidence. Poison the writer on any
   failed or ambiguous submitted append before accepting another command. Route
-  poison through a Process-scoped `RuntimeController` failure latch so the Agent
-  Executable runner returns a nonzero outcome and Kernel owns the terminal
-  claim before finalizer-driven containment; a poisoned writer cannot append a
-  later record or `process_exit`. Rebuild discovery with a fixed-chunk
+  poison through a shared Process-scoped `RuntimeController` failure cell owned
+  by the terminal context. The run future borrows a subscription; normal return
+  cannot close the cell, and System Process runner rechecks it during
+  result-to-terminal-claim handoff so a late poison replaces candidate success
+  with the nonzero failure. The winning claim retains the cell through
+  finalizer-driven containment; a poisoned writer cannot append a later record
+  or `process_exit`. Rebuild discovery with a fixed-chunk
   incremental JSON/SAX scanner rather than the whole-file loader or item
   vector, bounding startup memory independently of total Rollout and record
   size. Apply the writer cap prospectively: stream and preserve existing
