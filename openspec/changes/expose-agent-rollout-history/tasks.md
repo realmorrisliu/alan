@@ -76,9 +76,11 @@
   and register an independently cancellable cleanup lease before awaiting open.
   Deliver late Host open completion to that lease; after cancellation, revoke
   publication and have the service reaper close and unlink any late file.
-  Make every prepublication completion recheck publish permission under the
-  same lock used for revocation so a late durable-store step cannot publish
-  afterward.
+  Make each completion before rename recheck publish permission under the same
+  lock used for revocation. Immediately before rename, claim a non-cancellable
+  publication critical section under that lock; cancellation that loses this
+  race remains pending until the barrier resolves and cannot reclassify the
+  inode as staging.
   Release the slot only after publication or successful unlink, retain it on
   cleanup failure, reject creation when the pool is full, and sweep abandoned
   staging before service readiness. Register writer containment before initial
@@ -88,13 +90,21 @@
   operations; keep Host-specific sync details out of Agent Execution Engine and
   do not treat `RolloutRecorder::flush_writer` or async-writer flush as
   durability.
+  Once rename is issued, classify the lease as destination-claimed. On any
+  post-rename failure, timeout, or ambiguous result, exclude the final path
+  from discovery and durably quarantine or remove every possible destination
+  plus stale staging alias under the published-storage containment deadline;
+  invoke the non-returning Host-fatal adapter if that containment fails.
   Insert discovery, resolve the producing context, release the staging slot,
   and permit Agent Machine effects only after the whole barrier succeeds. Test
-  cancellation during open, each late barrier stage, unlink failure, pool
-  exhaustion, startup sweep failure, power loss after acknowledgment, and
-  control or deadline expiry while publication stalls, without an
-  Engine-to-Service dependency, file, Host API, durable identity, or
-  absent-resolution fallback.
+  cancellation before and after the publication claim, cancellation after
+  rename but before directory commit, every late barrier stage, ambiguous
+  rename and directory commit, destination quarantine failure, unlink failure,
+  pool exhaustion, startup recovery of a surviving valid final entry and
+  duplicate staging alias, startup quarantine of a torn final entry, startup
+  sweep failure, power loss after acknowledgment, and control or deadline
+  expiry while publication stalls, without an Engine-to-Service dependency,
+  file, Host API, durable identity, or absent-resolution fallback.
 - [ ] 2.5 Apply the same committed-namespace executable eligibility check in
   System Process runner finalizer preparation as in `run`. Keep the generic
   no-op when `/bin/alan-agent` is not mounted, and explicitly resolve no
@@ -128,12 +138,14 @@
   shutdown work at the earlier containment cutoff. On error or timeout, emit a
   structured PID/Rollout/exit-code/stage diagnostic, close work admission, and
   force-abort logical owners without awaiting stuck work. For a published
-  Rollout, remove
-  discovery under the lock used by open and atomically quarantine its inode in
-  the reserved interval; only failure of this branch calls the synchronously
-  non-returning Host lifecycle adapter. For unpublished pending-open or staging
-  state, revoke publication and transfer the charged lease to the bounded
-  reaper. For an explicit no-Rollout/no-creation outcome, complete non-storage
+  Rollout or destination-claimed publication, remove or exclude discovery
+  under the lock used by open, atomically quarantine every possible
+  destination inode in the reserved interval, durably commit affected
+  directories, and remove any stale staging alias; only failure of this branch
+  calls the synchronously non-returning Host lifecycle adapter. For unpublished
+  pending-open or staging state that never claimed publication, revoke
+  publication and transfer the charged lease to the bounded reaper. For an
+  explicit no-Rollout/no-creation outcome, complete non-storage
   containment without discovery lookup or rename. Test an in-memory runtime
   missing quiescence, a pre-dispatch no-owner outcome, pending open and staging
   cutoff, an earlier published writer blocking the fence,

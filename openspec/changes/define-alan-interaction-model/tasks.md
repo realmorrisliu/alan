@@ -26,7 +26,11 @@
   correlation after successful or ambiguous commit as indeterminate without
   automatic retry. Prove acknowledgment and every Agent Machine side effect
   follow successful file sync, atomic publication rename, and durable
-  directory commit, including a power-loss-after-acknowledgment case.
+  directory commit. Prove cancellation can win only before the prerequisite's
+  non-cancellable publication claim and that post-claim cancellation waits for
+  the barrier rather than treating the destination as staging, including
+  cancellation between rename and directory commit and a power-loss-after-
+  acknowledgment case.
 - [ ] 2.2 Add the review surface (results inbox) that lists completed
   Rollout-backed work only when a persisted `process_exit` supplies its
   outcome, and presents retained Rollouts without terminal evidence as

@@ -51,10 +51,14 @@ restart even though the execution evidence already exists.
 - Create Rollouts under fixed-capacity internal staging. Durably sync initial
   metadata, atomically rename the inode, and durably commit affected directory
   entries before publishing it into discovery, resolving a producing context,
-  or allowing Agent Machine side effects. Retain a cleanup lease until this
-  barrier or successful unlink. A cancelled late Host operation is reaped on
-  completion; startup sweeps abandoned staging before exposing discovery or
-  clone capability.
+  or allowing Agent Machine side effects. Claim a non-cancellable publication
+  critical section before rename so cancellation can win only while the inode
+  is still staging. After rename, treat failed or ambiguous publication as
+  destination-claimed storage and durably quarantine every possible
+  destination instead of using staging cleanup. Retain the cleanup lease until
+  the complete barrier, successful staging unlink, or successful destination
+  quarantine. Startup reconciles staging aliases and surviving final entries
+  before exposing discovery or clone capability.
 - Expose each retained Rollout at the read-only
   `/agent/rollouts/<rollout-id>` file path. Agent Runtime Service validates
   retained prefixes once while rebuilding discovery and advances active

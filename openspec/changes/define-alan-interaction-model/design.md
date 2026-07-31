@@ -150,9 +150,12 @@ indeterminate launch outcome and never automatically retries it.
 Strict durability is the launch-time guarantee that a producing Rollout has
 crossed its file-sync, atomic-rename, and durable-directory publication barrier
 before Agent Machine side effects, discovery, or acknowledgment. It does not
-make later storage writes infallible. Completed outcomes from accepted
-background dispatches whose terminal `process_exit` is discovered as a
-complete valid record, together with their retained evidence references,
+make later storage writes infallible. Publication claims a non-cancellable
+rename-and-directory-commit critical section, so cancellation can revoke only
+while the inode is staging; a post-claim cancellation waits and cannot leave a
+destination inode governed by staging cleanup. Completed outcomes from
+accepted background dispatches whose terminal `process_exit` is discovered as
+a complete valid record, together with their retained evidence references,
 remain discoverable after Process exit and Host restart. An ambiguous append
 or durable-sync error does not override such a record. If the terminal record
 is absent or torn, the retained Rollout remains discoverable only as

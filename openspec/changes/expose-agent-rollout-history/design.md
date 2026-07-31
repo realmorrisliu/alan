@@ -172,20 +172,37 @@ release the staging slot, or allow the Agent Machine to run a transition,
 spawn a Tool, or cause another external side effect. `AsyncWriteExt::flush`
 alone does not satisfy this barrier.
 
-Cancellation before publication irrevocably switches the lease to reclaim-only
-mode. A late Host open completion is closed and unlinked from staging; the slot
-is released only after publication or successful unlink. A failed unlink keeps
-the slot charged and emits a diagnostic, so repeated failures cannot create
-unbounded same-boot staging work. Exhausting the fixed pool rejects later
-creation with resource exhaustion. On startup, Agent Runtime Service sweeps all
-abandoned staging entries before exposing discovery or clone capability. A
-failed sweep prevents service readiness. No staging name or cleanup lease is a
-Rollout identity or discoverable evidence.
+Immediately before rename, the publisher claims a non-cancellable publication
+critical section under the same lock used by cancellation. Cancellation that
+wins before the claim irrevocably switches the lease to staging reclaim-only
+mode, and no later completion may issue rename. Once the claim wins,
+cancellation remains pending until rename and durable directory commit resolve;
+it cannot reclassify a destination inode as staging. On success the producing
+context is resolved before the pending cancellation is serviced, with no Agent
+Machine effect in between.
 
-Every prepublication completion, including a late durable-store step, rechecks
-the lease's publish permission under the same lock that revokes it. Once
-reclaim-only wins, no completion can insert the source into discovery or
-complete durable publication.
+After rename is issued, the lease is destination-claimed even if the Host
+result is late or ambiguous. A failed or ambiguous remainder of the barrier
+uses published-storage containment: exclude the final path from discovery,
+durably quarantine or remove every possible destination, remove any stale
+staging alias, and retain the slot until that work succeeds. Containment
+failure takes the bounded Host-fatal path. This closes the rename-to-directory-
+commit cancellation window instead of asking a staging reaper to unlink the
+wrong directory.
+
+A late Host open that lost before the publication claim is still closed and
+unlinked from staging. A failed staging unlink keeps the slot charged and emits
+a diagnostic, so repeated failures cannot create unbounded same-boot staging
+work. Exhausting the fixed pool rejects later creation with resource
+exhaustion. On startup, Agent Runtime Service sweeps abandoned staging entries,
+removes duplicate staging aliases for valid final entries, recovers each
+complete valid surviving final entry as a committed retained Rollout, and
+quarantines invalid or torn final entries before exposing discovery or clone
+capability. A failed recovery prevents service readiness. A recovered committed
+Rollout may be unterminated evidence of the Host interruption. This is safe
+because cancellation cannot win after the publication claim; a cancelled
+pre-claim staging entry can never become discoverable. No staging name or
+cleanup lease is a Rollout identity or discoverable evidence.
 
 Preparation first applies the same committed-namespace executable eligibility
 check as `SystemProcessRunner::run`. An invocation whose `/bin/alan-agent`
@@ -260,14 +277,16 @@ stuck work.
 
 Containment then follows the terminal context's owned storage state:
 
-- For a published producing Rollout, it removes the entry from discovery under
-  the discovery-table lock used by open, then uses the reserved interval to
-  atomically rename the current backing inode out of the discoverable subtree
-  before returning control to Kernel.
-- For an unpublished pending-open or staging outcome, it irrevocably revokes
-  publication and transfers the charged cleanup lease to the bounded staging
-  reaper. This is successful non-storage containment and does not wait for the
-  Host open, prepublication I/O, or unlink before Kernel may publish exit.
+- For a published producing Rollout or destination-claimed publication, it
+  excludes the entry from discovery under the discovery-table lock used by
+  open, then uses the reserved interval to atomically move every possible
+  destination inode out of the discoverable subtree, durably commits the
+  affected directory entries, and removes any stale staging alias.
+- For an unpublished pending-open or staging outcome that never claimed
+  publication, it irrevocably revokes publication and transfers the charged
+  cleanup lease to the bounded staging reaper. This is successful non-storage
+  containment and does not wait for the Host open, prepublication I/O, or
+  unlink before Kernel may publish exit.
 - For an explicit no-producing-Rollout outcome with no creation lease or
   backing inode, closing admission and force-aborting any live runtime owner is
   successful non-storage containment. It neither removes a discovery entry nor
@@ -282,10 +301,11 @@ identity or status and is not listed. Recovery waits until no writer owner
 remains, revalidates the complete envelope, and may atomically republish the
 same Rollout ID.
 
-Only published-Rollout inode containment can invoke the fatal path. If that
-operation errors or has not returned when the absolute deadline expires, Agent
-Runtime Service reports a fatal storage-integrity failure through an injected
-Alan OS Host lifecycle adapter and does not wait for the rename. The Host owner
+Only published-Rollout or destination-claimed inode containment can invoke the
+fatal path. If quarantine or its durable directory commit errors or has not
+returned when the absolute deadline expires, Agent Runtime Service reports a
+fatal storage-integrity failure through an injected Alan OS Host lifecycle
+adapter and does not wait for the storage operation. The Host owner
 atomically closes readiness, attachment
 admission, and new-work admission, requests Service Manager shutdown, and
 enters immediate fail-stop Host termination. The adapter call is synchronously

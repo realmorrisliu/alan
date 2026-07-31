@@ -198,21 +198,45 @@ discovery table, resolve a producing-Rollout terminal context, release the
 staging slot, or permit the Agent Machine to run a transition, spawn a Tool, or
 cause another external side effect.
 
-Cancellation or deadline expiry before publication SHALL irrevocably revoke
-publication and switch the lease to reclaim-only mode. A late-created staging
-file SHALL be closed and unlinked by the service reaper. The staging slot SHALL
-remain charged until publication or successful unlink; an unlink failure SHALL
-emit a diagnostic and MUST NOT release the slot. Exhausting the pool SHALL
-reject later creation with resource exhaustion. Before exposing
+Before issuing the publication rename, Agent Runtime Service SHALL atomically
+claim a non-cancellable publication critical section under the same lock used
+for cancellation. Cancellation or deadline expiry that wins before this claim
+SHALL irrevocably revoke publication and switch the lease to staging
+reclaim-only mode. Once the claim wins, cancellation SHALL remain pending and
+MUST NOT reclassify the inode as staging or interrupt rename and directory
+commit. After the barrier succeeds, Agent Runtime Service SHALL resolve the
+producing-Rollout context before servicing the pending cancellation; no Agent
+Machine side effect may occur in between.
+
+A late-created staging file SHALL be closed and unlinked by the service reaper.
+The staging slot SHALL remain charged until publication or successful unlink;
+an unlink failure SHALL emit a diagnostic and MUST NOT release the slot.
+Exhausting the pool SHALL reject later creation with resource exhaustion.
+Before exposing
 `/agent/rollouts` or `/mnt/agent-runtime/clone` at startup, Agent Runtime
 Service SHALL sweep abandoned staging entries. Sweep failure SHALL prevent
 service readiness. Staging entries and cleanup leases SHALL NOT be
 discoverable evidence or durable execution identities.
 
-Every prepublication completion, including a late file-sync, rename, or
-directory-commit result, SHALL recheck publish permission under the same lock
-used to revoke it. After reclaim-only mode wins, no completion SHALL insert the
-source into discovery or complete durable publication.
+Every completion before the publication claim, including a late Host open,
+write, or file-sync result, SHALL recheck publish permission under the same
+lock used to revoke it. After staging reclaim-only mode wins, no operation
+SHALL issue the publication rename. Once rename has been issued or its result
+is ambiguous, the lease SHALL enter destination-claimed state. A failed,
+timed-out, or ambiguous post-rename barrier SHALL synchronously exclude the
+destination from discovery and durably quarantine or remove every possible
+destination and stale staging alias before releasing the slot or terminal
+finalization. This SHALL use the published-storage containment and Host-fatal
+failure rules, not staging reclaim.
+
+After a Host restart, a complete valid final-name entry that survived the
+atomic rename SHALL be recovered as a committed retained Rollout; any duplicate
+staging alias to that inode SHALL be durably removed before readiness. An
+invalid or torn final-name entry SHALL be quarantined before readiness. This
+recovery rule is safe because cancellation cannot win after the publication
+claim. A recovered committed Rollout MAY be unterminated evidence of the Host
+interruption, but a cancelled pre-claim staging entry MUST NOT become
+discoverable.
 
 System Process runner SHALL apply the same committed-namespace executable
 eligibility check during terminal preparation as it applies before dispatch in
@@ -253,13 +277,16 @@ Rollout ID, intended exit code, failed stage, and failure; close runtime and
 writer admission; and force-abort their logical owners without awaiting stuck
 work.
 
-For a published producing Rollout, Agent Runtime Service SHALL remove the entry
-from discovery under the discovery-table lock used by open and atomically move
-the current backing inode out of the discoverable subtree into internal
-quarantine during the reserved interval. For an unpublished pending-open or
-staging outcome, it SHALL revoke publication and transfer the charged cleanup
-lease to the bounded service reaper; this SHALL be successful non-storage
-containment without awaiting Host open, prepublication I/O, or unlink. For an explicit
+For a published producing Rollout or destination-claimed publication, Agent
+Runtime Service SHALL remove or exclude the entry from discovery under the
+discovery-table lock used by open and atomically move every possible current
+backing inode out of the discoverable subtree into internal quarantine during
+the reserved interval. It SHALL durably commit the affected directory entries
+and remove any stale staging alias before reporting containment success. For
+an unpublished pending-open or staging outcome that never claimed publication,
+it SHALL revoke publication and transfer the charged cleanup lease to the
+bounded service reaper; this SHALL be successful non-storage containment
+without awaiting Host open, prepublication I/O, or unlink. For an explicit
 no-producing-Rollout outcome with no creation lease or backing inode, closing
 admission and force-aborting any live runtime owner SHALL be successful
 non-storage containment; Agent Runtime Service SHALL NOT remove a discovery
@@ -277,18 +304,18 @@ Recovery SHALL wait until no writer owner remains, validate the complete
 Rollout envelope, and MAY atomically republish the same Rollout ID. Quarantine
 SHALL NOT be exposed as a Rollout, status, or execution identity.
 
-Only published-Rollout inode containment SHALL use the fatal path. If that
-containment returns an error or has not returned when the absolute deadline
-expires, Agent Runtime Service SHALL signal the injected Alan OS Host lifecycle
-adapter without awaiting the containment operation. That Host-owned call SHALL
-be synchronously non-returning whether it enters normal fail-stop termination
-or aborts after internal signaling failure. Agent terminal finalization SHALL
-never return to Kernel on this path, so Kernel SHALL NOT publish the Process
-exit or continue the Host while a stale writer can mutate a discoverable
-Rollout. A complete valid `process_exit` that reached the file SHALL remain
-authoritative even if the append or durable-sync result was ambiguous. If no
-complete terminal record is discoverable, the Rollout SHALL remain
-unterminated or
+Only published-Rollout or destination-claimed inode containment SHALL use the
+fatal path. If that containment returns an error or has not returned when the
+absolute deadline expires, Agent Runtime Service SHALL signal the injected
+Alan OS Host lifecycle adapter without awaiting the containment operation.
+That Host-owned call SHALL be synchronously non-returning whether it enters
+normal fail-stop termination or aborts after internal signaling failure. Agent
+terminal finalization SHALL never return to Kernel on this path, so Kernel
+SHALL NOT publish the Process exit or continue the Host while a stale writer
+can mutate a discoverable Rollout. A complete valid `process_exit` that reached
+the file SHALL remain authoritative even if the append or durable-sync result
+was ambiguous. If no complete terminal record is discoverable, the Rollout
+SHALL remain unterminated or
 recoverably torn evidence; failure SHALL NOT fabricate terminal evidence.
 Finalization SHALL release the runtime-task owner only after `process_exit` is
 durably synced or the applicable storage or non-storage containment branch
@@ -612,9 +639,12 @@ metadata file.
 
 Agent Runtime Service SHALL complete the abandoned-staging sweep and quarantine
 recovery before exposing `/agent/rollouts` or `/mnt/agent-runtime/clone`.
-Sweep failure SHALL prevent readiness. A Rollout quarantined during the current
-boot SHALL remain hidden until the next service start; recovery SHALL NOT
-republish Rollouts while launch handshakes are possible.
+Recovery SHALL reconcile duplicate staging aliases, complete valid final
+entries that survived publication, and invalid or torn final entries according
+to the publication recovery rules above. Sweep or recovery failure SHALL
+prevent readiness. A Rollout quarantined during the current boot SHALL remain
+hidden until the next service start; recovery SHALL NOT republish Rollouts
+while launch handshakes are possible.
 
 #### Scenario: Strict-durability launch creates its Rollout
 - **WHEN** a caller pins the current boot identity, lists current Rollout IDs,
@@ -636,15 +666,36 @@ republish Rollouts while launch handshakes are possible.
 - **AND** Agent Runtime Service reconstructs the same Rollout from System Store
   backing
 
-#### Scenario: Initial durable publication stalls
+#### Scenario: Cancellation wins before publication claim
 - **WHEN** control or the terminal deadline fires after Rollout file creation
-  but before file sync, publication rename, and durable directory commit all
-  complete
+  but before the publisher claims its non-cancellable publication critical
+  section
 - **THEN** Agent Runtime Service irrevocably revokes publication and transfers
   the charged staging cleanup lease to its reaper
-- **AND** a late file-sync, rename, or directory-commit result cannot publish
-  the inode or permit Agent Machine side effects
+- **AND** a late Host open, write, or file-sync result cannot issue the
+  publication rename or permit Agent Machine side effects
 - **AND** Kernel may publish exit because the inode was never discoverable
+
+#### Scenario: Cancellation arrives after publication rename
+- **WHEN** publication has claimed its critical section and issued rename but
+  cancellation arrives before durable directory commit completes
+- **THEN** cancellation remains pending while the publication barrier resolves
+- **AND** a successful barrier resolves the producing-Rollout context before
+  cancellation is serviced, without an intervening Agent Machine side effect
+- **AND** a failed, timed-out, or ambiguous barrier excludes and durably
+  quarantines every possible destination plus stale staging aliases through
+  published-storage containment
+- **AND** failure of that containment invokes the synchronously non-returning
+  Host-fatal path
+
+#### Scenario: Host restarts during the publication critical section
+- **WHEN** the Host restarts after rename may have occurred but before the
+  running service observes durable directory-commit success
+- **THEN** startup recovery treats a complete valid surviving final entry as a
+  committed retained Rollout and durably removes any duplicate staging alias
+- **AND** it quarantines an invalid or torn final entry before readiness
+- **AND** the recovered valid Rollout may appear as unterminated evidence of
+  the Host interruption
 
 #### Scenario: Backing-file creation outlives cancellation
 - **WHEN** cancellation or the deadline fires while Host file creation is
