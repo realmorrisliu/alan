@@ -102,9 +102,9 @@
   history-open commit lock, atomically quarantine the backing inode within the
   reserved interval before Kernel may publish exit, and finish non-blocking
   logical-owner release. If containment errors or reaches the absolute
-  deadline, signal the injected Alan OS Host lifecycle adapter without awaiting
-  the stuck operation or publishing Process exit. Recover only after ownership
-  ends and validation succeeds under the same Rollout ID. Test
+  deadline, call the synchronously non-returning Alan OS Host lifecycle adapter
+  without awaiting the stuck operation. Recover only after ownership ends and
+  validation succeeds under the same Rollout ID. Test
   an earlier stuck writer blocking the fence, disk-full/flush-error, timeout,
   ambiguous-flush no-retry, a complete record surviving an error, absent/torn
   outcomes, stale I/O affecting only quarantine, containment failure as
@@ -114,13 +114,14 @@
   `process_exit` as authoritative even when its original flush reported an
   error.
 - [ ] 2.9 Add an internal fatal-transition adapter owned by `alan-os-host`.
-  Inject it into Agent Runtime Service during Host boot. On acceptance,
-  atomically close in-memory readiness, attachment admission, and Service
-  Manager new-work admission, request Service Manager shutdown, and commit
-  Host process termination without awaiting storage or shutdown completion.
-  Abort the Host process if the signal cannot be delivered. Prove existing and
-  new attachments cannot submit work after acceptance and that no Host command,
-  aP file, or renderer API exposes the adapter.
+  Inject its synchronously non-returning call into Agent Runtime Service during
+  Host boot. On invocation, atomically close in-memory readiness, attachment
+  admission, and Service Manager new-work admission, request Service Manager
+  shutdown, and enter immediate fail-stop termination without awaiting storage
+  or shutdown completion. Abort within the adapter if its internal signal
+  cannot be delivered. Prove the call never returns to terminal finalization or
+  Kernel, existing and new attachments cannot submit more work, and no Host
+  command, aP file, or renderer API exposes the adapter.
 
 ## 3. Rollout Discovery
 
@@ -131,18 +132,22 @@
   one read-only `/agent/rollouts/<rollout-id>` JSONL file while preserving
   numeric PID entries and `/agent/root`. On open, stream and validate the
   complete prefix, then retain only a read-only source handle, approved length,
-  and SHA-256 digest. Define a named fixed open-history-fid limit; reserve a
-  slot and pin source identity under the discovery lock before validation,
-  validate outside the lock, and commit only if the same source remains
-  discoverable. Release the slot on failure or clunk. On every read, stream
+  and SHA-256 digest. Bind quota-scoped `/agent` handles with named fixed
+  per-handle caps, a fixed ordinary pool, and a separate Local Entry reserved
+  pool whose capacity exceeds one handle cap. Make inherited delegation share
+  its account. Reserve handle and pool slots and pin source identity under the
+  discovery lock before validation, validate outside the lock, and commit only
+  if the same source remains discoverable. Release slots on failure or clunk.
+  On every read, stream
   exactly that prefix through fixed scratch space, capture at most the
   protocol-bounded requested range, and return it only after the SHA-256 digest
   matches. Ignore later bytes and fail without exposure when the approved
   prefix changes or becomes unreadable. Impose no Rollout-size limit or
   full-file allocation. Prove large valid Rollouts remain fully readable,
   later active or quarantined writes are not exposed, reopen can observe later
-  complete records, and excess in-flight or retained opens fail with resource
-  exhaustion without changing evidence.
+  complete records, one Agent Process cannot exhaust Local Entry capacity, and
+  excess in-flight or retained opens fail with resource exhaustion without
+  changing evidence.
 - [ ] 3.3 Isolate malformed Rollouts with diagnostics, accept recoverable torn
   tails only after earlier complete records pass envelope validation, and
   require exactly one leading `AgentMachineMeta` with no later metadata record.

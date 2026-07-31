@@ -7,6 +7,9 @@ parentage, then hand its namespace to an authorized local renderer. Service
 Manager SHALL bind the Agent Runtime Service top-level launch capability at
 `/mnt/agent-runtime` in that Login Namespace. It MUST NOT publish the capability
 through `/srv` or include it in Agent Process namespace templates.
+Service Manager SHALL bind `/agent` into the Login Namespace through a
+quota-scoped handle backed by the Local Entry reserved history-fid pool.
+Ordinary Agent Process handles SHALL NOT consume that reserve.
 
 #### Scenario: macOS requests local entry
 - **WHEN** Host transport has authorized the peer
@@ -14,6 +17,8 @@ through `/srv` or include it in Agent Process namespace templates.
 - **AND** commands launched by the Shell become child Processes
 - **AND** the handed-off Login Namespace can open
   `/mnt/agent-runtime/clone`
+- **AND** its `/agent` history opens retain reserved capacity when an ordinary
+  Agent Process exhausts its own quota
 
 #### Scenario: Agent Process namespace is assembled
 - **WHEN** Agent Runtime Service creates a child Agent Process

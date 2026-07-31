@@ -23,12 +23,22 @@ invalidate the fid and return an error without exposing bytes. Appends beyond
 the captured length SHALL remain invisible, while reopening MAY capture a
 later complete prefix.
 
-Agent Runtime Service SHALL enforce a fixed open-history-fid limit and release
-the reserved slot on failure or clunk. It SHALL NOT impose a Rollout-size limit
-or retain a full-file buffer. This representation SHALL keep all valid Rollouts
-readable with in-flight and retained memory bounded independently of Rollout
-size and SHALL NOT introduce a snapshot store, lease, generation, or revocation
-protocol.
+Agent Runtime Service SHALL issue quota-scoped `/agent` FileServer handles for
+namespace assembly. Each handle SHALL have a fixed open-history cap, and
+inherited delegation SHALL share that account rather than minting more
+capacity. Ordinary handles SHALL draw from a fixed ordinary pool. Local Entry
+Login Namespace handles SHALL draw from a separate reserved pool whose
+capacity exceeds one handle's cap; ordinary handles SHALL NOT consume it. Agent
+Runtime Service SHALL reserve a handle and pool slot before validation and
+release both on failure or clunk. Fixed pool totals SHALL bound system-wide
+in-flight and retained memory, while one holder SHALL NOT exhaust its pool.
+
+Alan SHALL NOT impose a Rollout-size limit or retain a full-file buffer. This
+representation SHALL keep all valid Rollouts readable with memory bounded
+independently of Rollout size and SHALL NOT introduce a snapshot store, lease,
+generation, revocation protocol, or caller identity inside Agent Runtime
+Service. Quota accounts SHALL belong to mounted capability handles and SHALL
+NOT be durable state.
 
 #### Scenario: Consumer lists Rollouts after Host restart
 - **WHEN** an authorized consumer lists `/agent/rollouts` after Alan OS Host
@@ -51,11 +61,24 @@ protocol.
 - **AND** reopening the path may expose the later complete record
 
 #### Scenario: History opens reach the service limit
-- **WHEN** another in-flight or retained history open would exceed the fixed
-  open-fid limit
+- **WHEN** another in-flight or retained history open would exceed its handle
+  cap or backing pool
 - **THEN** Agent Runtime Service rejects that open with resource exhaustion
 - **AND** existing fids and Rollout evidence remain unchanged
-- **AND** clunk releases one slot
+- **AND** failure or clunk releases the reserved handle and pool slots
+
+#### Scenario: Agent Process exhausts its history account
+- **WHEN** one Agent Process retains its quota-scoped handle's maximum history
+  fids
+- **THEN** another open through that handle is rejected
+- **AND** a Local Entry Login Namespace handle can still consume its reserved
+  pool
+
+#### Scenario: Agent Process delegates its agent mount
+- **WHEN** an Agent Process delegates the same `/agent` capability handle to a
+  child
+- **THEN** parent and child share one history quota account
+- **AND** delegation does not multiply their open capacity
 
 #### Scenario: A valid Rollout is larger than memory policy
 - **WHEN** a valid retained Rollout is larger than any bounded read scratch
@@ -172,14 +195,15 @@ SHALL NOT be exposed as a Rollout, status, or execution identity.
 
 If containment returns an error or has not returned when the absolute deadline
 expires, Agent Runtime Service SHALL signal the injected Alan OS Host lifecycle
-adapter without awaiting the containment operation. The Host owner SHALL commit
-the fatal storage-integrity transition or abort the Host process if the signal
-cannot be accepted. Kernel SHALL NOT publish the Process exit or continue the
-Host while a stale writer can mutate a discoverable Rollout. A complete valid
-`process_exit` that reached the file SHALL remain authoritative even if the
-append or flush result was ambiguous. If no complete terminal record is
-discoverable, the Rollout SHALL remain unterminated or recoverably torn
-evidence; failure SHALL NOT fabricate terminal evidence.
+adapter without awaiting the containment operation. That Host-owned call SHALL
+be synchronously non-returning whether it enters normal fail-stop termination
+or aborts after internal signaling failure. Agent terminal finalization SHALL
+never return to Kernel on this path, so Kernel SHALL NOT publish the Process
+exit or continue the Host while a stale writer can mutate a discoverable
+Rollout. A complete valid `process_exit` that reached the file SHALL remain
+authoritative even if the append or flush result was ambiguous. If no complete
+terminal record is discoverable, the Rollout SHALL remain unterminated or
+recoverably torn evidence; failure SHALL NOT fabricate terminal evidence.
 Finalization SHALL release the runtime-task owner only after `process_exit` is
 flushed or this bounded persistence-failure path has cancelled the writer and
 successfully contained its backing inode. It SHALL return the deferred AgentFS
@@ -307,9 +331,10 @@ SHALL NOT create a durable identity or terminal status model.
 - **WHEN** containment has not returned by the absolute finalization deadline
 - **THEN** Agent Runtime Service signals the injected Host lifecycle adapter
   without awaiting the stuck quarantine operation
-- **AND** the Host owner stops attachment and new-work admission and terminates
-- **AND** an unavailable adapter causes fail-stop process abort, not continued
-  operation
+- **AND** the Host owner stops attachment and new-work admission and enters
+  fail-stop termination
+- **AND** the adapter call never returns to Agent terminal finalization
+- **AND** internal signaling failure aborts the Host process without returning
 - **AND** Kernel does not publish the Process exit or continue the Host with a
   discoverable stale writer
 

@@ -60,12 +60,23 @@ buffer, captures at most the protocol-bounded requested range, and returns
 those bytes only after the whole-prefix SHA-256 digest matches. Bytes appended
 beyond the captured length are ignored. A changed or unreadable approved
 prefix invalidates the fid and returns an error without exposing bytes.
-Reopening captures a later validated prefix. A fixed open-history-fid limit,
-reserved before validation and released on failure or clunk, bounds both
-in-flight and retained memory independently of Rollout size. This
-representation keeps every valid Rollout readable without a snapshot store,
-lease, generation, revocation protocol, or full-file buffer; the accepted
-tradeoff is an O(prefix length) validation scan per read.
+Reopening captures a later validated prefix. Agent Runtime Service issues
+quota-scoped `/agent` FileServer handles for namespace assembly. Agent Runtime
+Service binds an ordinary handle when it assembles an Agent Process; Local
+Entry Service binds a reserved handle into a Login Namespace. Each handle has a
+fixed cap, and inherited delegation shares that account rather than minting
+more capacity. Ordinary handles draw from a fixed ordinary pool. Local Entry
+handles draw from a separate reserved pool whose capacity exceeds one handle's
+cap; ordinary handles cannot consume it. Fixed pool totals bound system-wide
+in-flight and retained memory, while per-handle caps prevent one holder from
+exhausting either pool. Slots are reserved before validation and released on
+failure or clunk.
+
+This representation keeps every valid Rollout readable independently of its
+size without a snapshot store, lease, generation, revocation protocol,
+full-file buffer, or caller identity inside Agent Runtime Service. The quota
+account belongs to the mounted capability handle and is not durable state. The
+accepted tradeoff is an O(prefix length) validation scan per read.
 
 ### D3: Retained Rollouts remain the only durable discovery source
 
@@ -213,11 +224,11 @@ deadline expires, Agent Runtime Service reports a fatal storage-integrity
 failure through an injected Alan OS Host lifecycle adapter and does not wait
 for the rename. The Host owner atomically closes readiness, attachment
 admission, and new-work admission, requests Service Manager shutdown, and
-terminates the Host. Acceptance by the adapter commits the fail-stop
-transition; it does not await service or storage cleanup. If the adapter cannot
-accept its internal signal, the Host-owned adapter aborts the process rather
-than returning. Kernel does not publish that Process exit and the Host does not
-continue with a discoverable stale writer. Thus the ordinary
+enters immediate fail-stop Host termination. The adapter call is synchronously
+non-returning whether its internal shutdown signal succeeds or it must abort
+the process; it never yields control back to Agent terminal finalization,
+Kernel, or the caller. Kernel therefore cannot publish that Process exit and
+the Host cannot continue with a discoverable stale writer. Thus the ordinary
 successful-containment path can publish exit and later complete bounded AgentFS
 cleanup, while containment failure has a Host-owned bounded fatal outcome
 rather than an unbounded rename. This adds no second execution identity or

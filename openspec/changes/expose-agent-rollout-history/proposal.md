@@ -20,10 +20,11 @@ restart even though the execution evidence already exists.
   reserved interval to atomically quarantine the backing inode before
   releasing finalization. If containment itself does not return by the
   absolute deadline, report the failure through the Alan OS Host lifecycle
-  adapter. The Host owner stops attachment and work admission and terminates
-  without awaiting the stuck operation; Agent Runtime Service does not own
-  whole-Host shutdown. Recovery may republish only after ownership ends and
-  validation succeeds.
+  adapter. Calling that Host-owned adapter is synchronously non-returning: it
+  stops attachment and work admission and enters fail-stop termination without
+  awaiting the stuck operation. Agent Runtime Service does not own whole-Host
+  shutdown. Recovery may republish only after ownership ends and validation
+  succeeds.
 - Extend the generic Process runner bridge with a prepared terminal
   finalization hook. Alan Kernel asks the runner to prepare the per-Process
   hook before the committed Process becomes controllable, invokes it exactly
@@ -55,9 +56,12 @@ restart even though the execution evidence already exists.
   complete-prefix length and SHA-256 digest. Reads stream that exact prefix
   through bounded scratch space and return data only after the digest
   revalidates, so later or quarantined writes are never exposed. A fixed
-  open-fid limit bounds memory without making large valid Rollouts unreadable;
-  reopening observes a later validated prefix. The surface remains available
-  after Process exit and Host restart.
+  global and per-namespace-handle open-fid policy bounds memory without making
+  large valid Rollouts unreadable. Ordinary Agent Process handles cannot consume
+  the Local Entry Login Namespace reserve, and inherited handles share one
+  account rather than multiplying capacity. Reopening observes a later
+  validated prefix. The surface remains available after Process exit and Host
+  restart.
 - Include active, terminal, and valid unterminated Rollouts; presentation may
   prioritize terminal entries but discovery does not hide retained evidence.
 - Add Agent Runtime Service-owned `/mnt/agent-runtime/clone` as the

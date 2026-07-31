@@ -27,6 +27,12 @@ been replaced since open, or the request would amplify the parent's
 capabilities. The launch capability SHALL NOT create a second Process owner,
 launch identity, or lifecycle surface; `/proc/<pid>` remains authoritative.
 
+When assembling an Agent Process namespace, Agent Runtime Service SHALL bind
+`/agent` through an ordinary quota-scoped handle. Delegation of that mounted
+handle SHALL share its history-fid quota account rather than minting another
+account. The account SHALL remain capability-local resource policy, not
+Process identity or durable state.
+
 #### Scenario: Agent Process starts
 - **WHEN** a Process executes `/bin/alan-agent` through `/proc/clone`
 - **THEN** Agent Runtime Service binds AgentFS, resolves the mounted connection,
@@ -58,6 +64,7 @@ launch identity, or lifecycle surface; `/proc/<pid>` remains authoritative.
 - **THEN** its namespace still omits `/mnt/agent-runtime`
 - **AND** it cannot use the top-level launch capability to recover capabilities
   withheld by its parent
+- **AND** its inherited `/agent` handle shares the parent's history-fid quota
 
 #### Scenario: Root Agent changes during top-level launch
 - **WHEN** `/agent/root` is unavailable or no longer identifies the Process
