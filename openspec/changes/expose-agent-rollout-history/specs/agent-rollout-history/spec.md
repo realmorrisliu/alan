@@ -26,12 +26,23 @@ later complete prefix.
 Agent Runtime Service SHALL issue quota-scoped `/agent` FileServer handles for
 namespace assembly. Each handle SHALL have a fixed open-history cap, and
 inherited delegation SHALL share that account rather than minting more
-capacity. Ordinary handles SHALL draw from a fixed ordinary pool. Local Entry
-Login Namespace handles SHALL draw from a separate reserved pool whose
-capacity exceeds one handle's cap; ordinary handles SHALL NOT consume it. Agent
-Runtime Service SHALL reserve a handle and pool slot before validation and
-release both on failure or clunk. Fixed pool totals SHALL bound system-wide
-in-flight and retained memory, while one holder SHALL NOT exhaust its pool.
+capacity. Every Process namespace, including a Local Entry Shell Process
+namespace, SHALL receive an ordinary handle backed by a fixed ordinary pool.
+Only an authorized renderer attachment view over that Shell Process namespace
+SHALL overlay `/agent` with a handle backed by a separate reserved pool whose
+capacity exceeds one handle's cap. Ordinary handles SHALL NOT consume that
+reserve. Agent Runtime Service SHALL reserve a handle and pool open slot before
+validation and release both on failure or clunk.
+
+Before allocating scratch or result storage for a history read, Agent Runtime
+Service SHALL non-blockingly acquire both a per-handle in-flight read permit
+and a permit from that handle's ordinary or renderer-reserved pool. If either
+permit is unavailable, the read SHALL fail immediately with resource
+exhaustion and SHALL NOT queue inside the service. Both permits SHALL be
+released on success or error. Fixed open-slot and read-permit totals SHALL
+bound retained descriptor memory, concurrent scratch and result memory, and
+whole-prefix validation bandwidth, including concurrent tagged reads through
+one fid. One holder SHALL NOT exhaust its corresponding pool.
 
 Alan SHALL NOT impose a Rollout-size limit or retain a full-file buffer. This
 representation SHALL keep all valid Rollouts readable with memory bounded
@@ -71,8 +82,23 @@ NOT be durable state.
 - **WHEN** one Agent Process retains its quota-scoped handle's maximum history
   fids
 - **THEN** another open through that handle is rejected
-- **AND** a Local Entry Login Namespace handle can still consume its reserved
-  pool
+- **AND** an authorized renderer attachment handle can still consume its
+  reserved pool
+
+#### Scenario: Concurrent reads reuse one fid
+- **WHEN** tagged aP requests concurrently read one history fid beyond its
+  handle or backing pool's in-flight read limit
+- **THEN** excess reads fail immediately with resource exhaustion
+- **AND** they do not queue or allocate scratch or result storage
+- **AND** every acquired permit is released after either successful or failed
+  validation
+
+#### Scenario: Shell child inherits its Process namespace
+- **WHEN** the Local Entry Shell launches an ordinary child from the namespace
+  described by `/proc/self/namespace`
+- **THEN** the child receives an ordinary `/agent` quota handle
+- **AND** it does not inherit the authorized renderer attachment's reserved
+  quota account
 
 #### Scenario: Agent Process delegates its agent mount
 - **WHEN** an Agent Process delegates the same `/agent` capability handle to a

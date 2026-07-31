@@ -62,15 +62,25 @@ beyond the captured length are ignored. A changed or unreadable approved
 prefix invalidates the fid and returns an error without exposing bytes.
 Reopening captures a later validated prefix. Agent Runtime Service issues
 quota-scoped `/agent` FileServer handles for namespace assembly. Agent Runtime
-Service binds an ordinary handle when it assembles an Agent Process; Local
-Entry Service binds a reserved handle into a Login Namespace. Each handle has a
-fixed cap, and inherited delegation shares that account rather than minting
-more capacity. Ordinary handles draw from a fixed ordinary pool. Local Entry
-handles draw from a separate reserved pool whose capacity exceeds one handle's
-cap; ordinary handles cannot consume it. Fixed pool totals bound system-wide
-in-flight and retained memory, while per-handle caps prevent one holder from
-exhausting either pool. Slots are reserved before validation and released on
-failure or clunk.
+Service binds an ordinary handle into every Process namespace, including Agent
+Processes and the Local Entry Shell Process. The Host hands the authorized
+renderer a separate attachment view over the Shell Process namespace which
+overlays `/agent` with a reserved handle. Each handle has a fixed cap, and
+inherited delegation shares that account rather than minting more capacity.
+Ordinary handles draw from a fixed ordinary pool. Renderer attachment handles
+draw from a separate reserved pool whose capacity exceeds one handle's cap;
+ordinary handles cannot consume it. Open slots are reserved before validation
+and released on failure or clunk.
+
+Before allocating read scratch or result storage, every history read must
+non-blockingly acquire both a per-handle in-flight read permit and a permit
+from the handle's ordinary or renderer-reserved pool. If either permit is
+unavailable, the read fails immediately with resource exhaustion rather than
+queuing inside Agent Runtime Service. Both permits are released on success or
+error. Fixed open-slot and read-permit totals therefore bound retained
+descriptor memory, simultaneous scratch and result memory, and whole-prefix
+validation bandwidth even when tagged aP requests concurrently read one fid.
+Per-handle limits prevent one holder from exhausting its corresponding pool.
 
 This representation keeps every valid Rollout readable independently of its
 size without a snapshot store, lease, generation, revocation protocol,
@@ -312,11 +322,17 @@ A renderer-attached Shell Process is not an Agent Process and therefore cannot
 be the parent of `/bin/alan-agent` through its own `/proc/clone` view: Agent
 Runtime Service has no parent runtime template to inherit from it. Agent
 Runtime Service therefore exposes a dedicated clone-via-open launch capability
-tree. Service Manager binds that tree only into the Local Entry Login Namespace
-at `/mnt/agent-runtime`; it does not publish the tree in `/srv`, add it to
-`/agent`, or retain it while assembling Agent Process namespaces. Reachability
-of `/mnt/agent-runtime/clone` is the authority, so the aP FileServer needs no
-caller identity and a restricted Agent Process cannot acquire Root Agent
+tree. The Local Entry Shell Process receives an ordinary `/agent` handle and
+does not receive this launch tree. The Host hands the authorized renderer an
+attachment view over that Process namespace which overlays `/agent` with the
+reserved renderer handle and adds the launch tree at `/mnt/agent-runtime`.
+This overlay does not alter the Shell Process namespace described by
+`/proc/self/namespace`. Commands spawned by the Shell therefore inherit the
+ordinary `/agent` handle and cannot inherit `/mnt/agent-runtime`. Service
+Manager does not publish the launch tree in `/srv`, add it to `/agent`, or
+retain it while assembling any child Process namespace. Reachability of
+`/mnt/agent-runtime/clone` is the authority, so the aP FileServer needs no
+caller identity and a restricted Process cannot acquire Root Agent
 capabilities through this path.
 
 Opening `/mnt/agent-runtime/clone` pins the current `/agent/root` Process as

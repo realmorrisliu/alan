@@ -56,21 +56,22 @@ restart even though the execution evidence already exists.
   complete-prefix length and SHA-256 digest. Reads stream that exact prefix
   through bounded scratch space and return data only after the digest
   revalidates, so later or quarantined writes are never exposed. A fixed
-  global and per-namespace-handle open-fid policy bounds memory without making
-  large valid Rollouts unreadable. Ordinary Agent Process handles cannot consume
-  the Local Entry Login Namespace reserve, and inherited handles share one
-  account rather than multiplying capacity. Reopening observes a later
-  validated prefix. The surface remains available after Process exit and Host
-  restart.
+  global and per-namespace-handle open-fid policy plus non-queuing read permits
+  bounds memory and validation bandwidth without making large valid Rollouts
+  unreadable. Ordinary Process handles cannot consume the authorized renderer
+  attachment reserve, and inherited handles share one account rather than
+  multiplying capacity. Reopening observes a later validated prefix. The
+  surface remains available after Process exit and Host restart.
 - Include active, terminal, and valid unterminated Rollouts; presentation may
   prioritize terminal entries but discovery does not hide retained evidence.
 - Add Agent Runtime Service-owned `/mnt/agent-runtime/clone` as the
   clone-via-open path for an attached local Shell or renderer to request a
   top-level Agent Process. Service Manager binds this capability only into the
-  Local Entry Login Namespace; it is not published in `/srv` or retained by
-  Agent Process namespaces. It uses the current Root Agent Process as the
-  ordinary Process parent and crosses `/proc/clone`; it does not create another
-  Process owner or launch identity.
+  authorized renderer's attachment view over a Local Entry Shell Process
+  namespace; it is absent from the underlying Shell Process namespace, not
+  published in `/srv`, and not retained by child Process namespaces. It uses
+  the current Root Agent Process as the ordinary Process parent and crosses
+  `/proc/clone`; it does not create another Process owner or launch identity.
 - Add `durability_required` to Agent Process runtime spawn overrides and use
   the active Rollout's existing ID and `process_path` metadata as the
   file-visible acknowledgment for background dispatch, excluding IDs visible
@@ -106,8 +107,8 @@ restart even though the execution evidence already exists.
 
 - `agent-namespace-runtime`: Define the Agent Runtime Service-owned top-level
   Agent Process launch path for callers such as Alan Shell renderer hosts.
-- `local-entry-service`: Bind the top-level Agent Process launch capability
-  only into the Login Namespace handed to an authorized local renderer.
+- `local-entry-service`: Keep renderer-only mounts out of the Shell Process
+  namespace and bind them only into its authorized renderer attachment view.
 - `plan9-kernel-substrate`: Serialize terminal Process transitions through a
   generic pre-exit runner finalization hook without adding agent semantics to
   Alan Kernel.

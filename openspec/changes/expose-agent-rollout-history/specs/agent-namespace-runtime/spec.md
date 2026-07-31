@@ -12,10 +12,12 @@ launch context, child assembler, lifecycle callback, or live mount applicator.
 
 For a top-level Agent Process requested by a non-Agent Process, Agent Runtime
 Service SHALL expose a dedicated clone-via-open launch capability tree. Service
-Manager SHALL bind that tree at `/mnt/agent-runtime` only in the Local Entry
-Login Namespace handed to an authorized local renderer. It MUST NOT publish
-the tree through `/srv`, add it to `/agent`, or retain it when assembling an
-Agent Process namespace.
+Manager SHALL bind that tree at `/mnt/agent-runtime` only in the authorized
+renderer attachment view over a Local Entry Shell Process namespace. The
+underlying Shell Process namespace SHALL omit the tree, and the attachment
+overlay SHALL NOT change `/proc/self/namespace`. Service Manager MUST NOT
+publish the tree through `/srv`, add it to `/agent`, or retain it when
+assembling any child Process namespace.
 
 Opening `/mnt/agent-runtime/clone` SHALL pin the current `/agent/root` Process
 as parent, allocate an ordinary pending Process slot through that parent's
@@ -51,13 +53,20 @@ Process identity or durable state.
   callback
 
 #### Scenario: Non-Agent Process requests a top-level Agent Process
-- **WHEN** an authorized local Shell or renderer opens
-  `/mnt/agent-runtime/clone` through its Login Namespace
+- **WHEN** an authorized local renderer opens `/mnt/agent-runtime/clone`
+  through its attachment view
 - **THEN** Agent Runtime Service returns the PID of an ordinary Process whose
   parent is the current Root Agent Process
 - **AND** committing the `AgentExecutableRequest` launches it through the
   pinned Root Agent Process's `/proc/clone` context
-- **AND** the Shell or renderer Process is not treated as an Agent parent
+- **AND** the Shell Process is not treated as an Agent parent
+
+#### Scenario: Shell launches an ordinary child
+- **WHEN** the Shell copies the namespace described by
+  `/proc/self/namespace` into a child Process manifest
+- **THEN** `/mnt/agent-runtime` is absent from that manifest
+- **AND** the child cannot exercise the renderer-only top-level launch
+  capability
 
 #### Scenario: Delegated Agent Process has a read-write agent mount
 - **WHEN** a delegated Agent Process receives read-write `/agent`

@@ -5,10 +5,13 @@
   pending Process through its `/proc/clone` context, accept one
   `AgentExecutableRequest`, and return the ordinary PID without adding another
   launch identity.
-- [ ] 1.2 Bind the launch capability only into Local Entry Login Namespaces;
-  do not publish it in `/srv`, add it to `/agent`, or retain it in Agent Process
-  namespaces. Prove an attached Shell/renderer can reach it and a delegated
-  Agent Process with read-write `/agent` cannot.
+- [ ] 1.2 Give the Local Entry Shell Process an ordinary `/agent` handle and
+  no `/mnt/agent-runtime`, then give the authorized renderer a distinct
+  attachment view which overlays reserved `/agent` capacity and adds the
+  launch capability. Keep `/proc/self/namespace` tied to the underlying Shell
+  Process namespace; do not publish the capability in `/srv`, add it to
+  `/agent`, or retain it in any child Process namespace. Prove the renderer can
+  reach it while ordinary Shell children and delegated Agent Processes cannot.
 - [ ] 1.3 Reject `/mnt/agent-runtime/clone` commit when Root Agent is
   unavailable, replaced after open, or the request would amplify its
   capabilities; prove the Shell Process cannot launch `/bin/alan-agent`
@@ -133,21 +136,26 @@
   numeric PID entries and `/agent/root`. On open, stream and validate the
   complete prefix, then retain only a read-only source handle, approved length,
   and SHA-256 digest. Bind quota-scoped `/agent` handles with named fixed
-  per-handle caps, a fixed ordinary pool, and a separate Local Entry reserved
-  pool whose capacity exceeds one handle cap. Make inherited delegation share
-  its account. Reserve handle and pool slots and pin source identity under the
-  discovery lock before validation, validate outside the lock, and commit only
-  if the same source remains discoverable. Release slots on failure or clunk.
-  On every read, stream
-  exactly that prefix through fixed scratch space, capture at most the
-  protocol-bounded requested range, and return it only after the SHA-256 digest
-  matches. Ignore later bytes and fail without exposure when the approved
-  prefix changes or becomes unreadable. Impose no Rollout-size limit or
-  full-file allocation. Prove large valid Rollouts remain fully readable,
-  later active or quarantined writes are not exposed, reopen can observe later
-  complete records, one Agent Process cannot exhaust Local Entry capacity, and
-  excess in-flight or retained opens fail with resource exhaustion without
-  changing evidence.
+  per-handle caps, a fixed ordinary pool for every Process namespace, and a
+  separate authorized-renderer attachment pool whose capacity exceeds one
+  handle cap. Make inherited delegation share its account. Reserve handle and
+  pool slots and pin source identity under the discovery lock before
+  validation, validate outside the lock, and commit only if the same source
+  remains discoverable. Release slots on failure or clunk. Before allocating
+  read scratch or result storage, non-blockingly acquire per-handle and
+  corresponding-pool in-flight read permits; reject immediately rather than
+  queue when either limit is reached, and release permits on success or error.
+  On every permitted read, stream exactly that prefix through fixed scratch
+  space, capture at most the protocol-bounded requested range, and return it
+  only after the SHA-256 digest matches. Ignore later bytes and fail without
+  exposure when the approved prefix changes or becomes unreadable. Impose no
+  Rollout-size limit or full-file allocation. Prove large valid Rollouts remain
+  fully readable, later active or quarantined writes are not exposed, reopen
+  can observe later complete records, concurrent reads through one fid remain
+  bounded, ordinary Processes cannot exhaust renderer capacity, ordinary
+  Shell children inherit neither the reserve nor `/mnt/agent-runtime`, and
+  excess opens or reads fail with resource exhaustion without changing
+  evidence.
 - [ ] 3.3 Isolate malformed Rollouts with diagnostics, accept recoverable torn
   tails only after earlier complete records pass envelope validation, and
   require exactly one leading `AgentMachineMeta` with no later metadata record.
