@@ -54,10 +54,11 @@ one fid. One holder SHALL NOT exhaust its corresponding pool.
 
 Alan SHALL NOT impose a Rollout-size limit or retain a full-file buffer. This
 representation SHALL keep all valid Rollouts readable with memory bounded
-independently of Rollout size and SHALL NOT introduce a snapshot store, lease,
-generation, revocation protocol, or caller identity inside Agent Runtime
-Service. Quota accounts SHALL belong to mounted capability handles and SHALL
-NOT be durable state.
+independently of Rollout size and SHALL NOT introduce a history-read snapshot
+store, lease, generation, revocation protocol, or caller identity inside Agent
+Runtime Service. This constraint does not prohibit the bounded Process-local
+publication generation required by terminal containment below. Quota accounts
+SHALL belong to mounted capability handles and SHALL NOT be durable state.
 
 #### Scenario: Consumer lists Rollouts after Host restart
 - **WHEN** an authorized consumer lists `/agent/rollouts` after Alan OS Host

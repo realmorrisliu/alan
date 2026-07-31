@@ -90,12 +90,14 @@ bandwidth even when tagged aP requests concurrently read one fid. Per-handle
 limits prevent one holder from exhausting its corresponding pool.
 
 This representation keeps every valid Rollout readable independently of its
-size without a snapshot store, lease, generation, revocation protocol,
-full-file buffer, or caller identity inside Agent Runtime Service. The quota
-account belongs to the mounted capability handle and is not durable state.
-Startup rebuild pays one O(prefix length) scan per retained source; active
-writers validate new records once; opens are constant-work captures; and reads
-are proportional to their requested ranges.
+size without a history-read snapshot store, lease, generation, revocation
+protocol, full-file buffer, or caller identity inside Agent Runtime Service.
+This read-path constraint is separate from the bounded Process-local
+publication generation used by terminal containment. The quota account belongs
+to the mounted capability handle and is not durable state. Startup rebuild pays
+one O(prefix length) scan per retained source; active writers validate new
+records once; opens are constant-work captures; and reads are proportional to
+their requested ranges.
 
 ### D3: Retained Rollouts remain the only durable discovery source
 
