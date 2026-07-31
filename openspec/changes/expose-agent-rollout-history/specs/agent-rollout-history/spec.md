@@ -10,20 +10,25 @@ records without a directory wrapper or parallel metadata projection. The
 surface SHALL remain reconstructible after Agent Process exit and Alan OS Host
 restart without exposing a raw System Store path.
 
-Each successful open SHALL receive a service-owned immutable snapshot of the
-validation-approved complete JSONL prefix. An open fid SHALL NOT retain or
-forward reads to the Host backing inode. The snapshot SHALL remain unchanged
-while the fid is open; reopening the path SHALL create a new snapshot and MAY
-observe later complete records. Agent Runtime Service SHALL order snapshot
-creation and removal from discovery under the same lock, without introducing a
-lease, generation, or revocation protocol.
+Each successful open SHALL retain only a read-only source handle, the length of
+the validation-approved complete JSONL prefix, and its SHA-256 digest. Open
+SHALL first reserve an open-history slot and pin the source identity under the
+discovery lock, then validate outside that lock. A short commit step SHALL
+reacquire the lock and succeed only while the same source remains discoverable.
+Failed validation or commit SHALL release the slot. Each read SHALL stream
+exactly that prefix through fixed-size scratch space, capture at most the
+protocol-bounded requested range, and return those bytes only after the
+whole-prefix SHA-256 digest matches. A changed or unreadable prefix SHALL
+invalidate the fid and return an error without exposing bytes. Appends beyond
+the captured length SHALL remain invisible, while reopening MAY capture a
+later complete prefix.
 
-Snapshots with identical approved prefixes SHALL share one immutable buffer.
-Agent Runtime Service SHALL enforce fixed limits for one snapshot's bytes,
-total open history fids, and aggregate unique snapshot bytes. It SHALL reserve
-count and byte budget before materialization, release them on clunk, reject an
-open with resource exhaustion when any limit would be exceeded, and publish no
-fid when materialization fails.
+Agent Runtime Service SHALL enforce a fixed open-history-fid limit and release
+the reserved slot on failure or clunk. It SHALL NOT impose a Rollout-size limit
+or retain a full-file buffer. This representation SHALL keep all valid Rollouts
+readable with in-flight and retained memory bounded independently of Rollout
+size and SHALL NOT introduce a snapshot store, lease, generation, or revocation
+protocol.
 
 #### Scenario: Consumer lists Rollouts after Host restart
 - **WHEN** an authorized consumer lists `/agent/rollouts` after Alan OS Host
@@ -41,15 +46,23 @@ fid when materialization fails.
 #### Scenario: Active Rollout grows after open
 - **WHEN** an active Rollout appends a complete record after a consumer opens
   its history file
-- **THEN** the existing fid remains an immutable snapshot
+- **THEN** the existing fid continues to validate and expose only its captured
+  complete prefix
 - **AND** reopening the path may expose the later complete record
 
-#### Scenario: Retained snapshots reach a service limit
-- **WHEN** another history open would exceed the per-snapshot byte, open-fid,
-  or aggregate unique-snapshot-byte limit
+#### Scenario: History opens reach the service limit
+- **WHEN** another in-flight or retained history open would exceed the fixed
+  open-fid limit
 - **THEN** Agent Runtime Service rejects that open with resource exhaustion
 - **AND** existing fids and Rollout evidence remain unchanged
-- **AND** clunk releases the corresponding count and byte budget
+- **AND** clunk releases one slot
+
+#### Scenario: A valid Rollout is larger than memory policy
+- **WHEN** a valid retained Rollout is larger than any bounded read scratch
+  buffer
+- **THEN** a history fid can still stream, validate, and expose the entire
+  approved prefix over protocol-bounded reads
+- **AND** Agent Runtime Service does not require a full-file allocation
 
 #### Scenario: Consumer attempts to mutate history
 - **WHEN** a consumer opens `/agent/rollouts` or one of its descendants for
@@ -98,8 +111,9 @@ barrier and a startup cancellation path. Every Agent startup exit path SHALL
 resolve the barrier exactly once with either a producing-Rollout context or an
 explicit no-producing-Rollout outcome; an absent or dropped resolution SHALL
 NOT be treated as no Rollout. Either outcome SHALL carry deferred cleanup for
-any AgentFS already bound; a pre-dispatch outcome before Agent Runtime Service
-accepts ownership MAY carry none.
+any AgentFS already bound and an owning runtime guard for any live Agent
+Machine; a pre-dispatch outcome before Agent Runtime Service accepts ownership
+MAY carry neither.
 
 Agent Runtime Service SHALL create a Rollout at an internal staging path and
 register an independently cancellable creation owner before awaiting the Host
@@ -118,20 +132,23 @@ no producing Rollout, including a return caused by an unavailable Agent Runtime
 Service.
 
 Immediately after Agent Machine creation succeeds, Agent Runtime Service SHALL
-resolve the producing-Rollout context with the existing Rollout metadata and a
-retained owning `RuntimeController` or equivalent runtime-task guard and
-deferred AgentFS cleanup action, before later initialization or readiness
-signaling. A cloned `RuntimeHandle` alone SHALL NOT satisfy this ownership
-requirement. The ordinary Agent Executable run path MAY borrow the handle to
-await and produce its `ProcessOutcome`, but SHALL NOT shut down or drop the
-runtime-task owner or perform AgentFS cleanup before terminal finalization.
+resolve the terminal context with any existing Rollout metadata, a retained
+owning `RuntimeController` or equivalent runtime-task guard, and the deferred
+AgentFS cleanup action, before later initialization or readiness signaling. A
+no-producing-Rollout outcome with a live in-memory Agent Machine SHALL retain
+the runtime owner too. A cloned `RuntimeHandle` alone SHALL NOT satisfy this
+ownership requirement. The ordinary Agent Executable run path MAY borrow the
+handle to await and produce its `ProcessOutcome`, but SHALL NOT shut down or
+drop the runtime-task owner or perform AgentFS cleanup before terminal
+finalization.
+
 Terminal finalization SHALL first request startup or runtime cancellation and
-await the barrier. For a producing Rollout, it SHALL then use the retained live
-runtime owner to
+await the barrier. Whenever the outcome has a live runtime owner, it SHALL
 request quiescence of both ordinary transitions and deferred runtime actions.
-Quiescence SHALL cancel or drain every such producer and await a writer fence
-proving that none can append another Rollout record before finalization appends
-`process_exit`; no Rollout record may be appended after `process_exit`. One
+Quiescence SHALL cancel or drain every such producer. For a producing Rollout,
+it SHALL then await a writer fence proving that none can append another Rollout
+record before finalization appends `process_exit`; no Rollout record may be
+appended after `process_exit`. One
 fixed internal absolute deadline SHALL bound Agent terminal finalization and
 SHALL reserve a fixed final interval for containment. Context-barrier wait,
 quiescence, writer fence, the single terminal append-and-flush attempt, and
@@ -142,16 +159,16 @@ On error or containment-cutoff expiry at any pre-exit stage, Agent Runtime
 Service SHALL emit a structured diagnostic containing the PID, available
 Rollout ID, intended exit code, failed stage, and failure; cancel the logical
 writer and runtime owners without awaiting stuck Host I/O; remove the entry
-from discovery under the snapshot-open lock; and atomically move the current
-backing inode out of the discoverable subtree into internal quarantine during
-the reserved interval. Only after successful containment SHALL it complete
-non-blocking logical-owner release and release terminal finalization so Alan
-Kernel can publish the authoritative Process exit. Already-submitted Host I/O
-SHALL retain only the quarantined inode; every existing history fid SHALL
-retain only its immutable pre-removal snapshot. Recovery SHALL wait until no
-writer owner remains, validate the complete Rollout envelope, and MAY
-atomically republish the same Rollout ID. Quarantine SHALL NOT be exposed as a
-Rollout, status, or execution identity.
+from discovery under the history-open commit lock; and atomically move the
+current backing inode out of the discoverable subtree into internal quarantine
+during the reserved interval. Only after successful containment SHALL it
+complete non-blocking logical-owner release and release terminal finalization
+so Alan Kernel can publish the authoritative Process exit. Already-submitted
+Host I/O SHALL retain only the quarantined inode. Every existing history fid
+SHALL continue to expose bytes only after its fixed prefix revalidates.
+Recovery SHALL wait until no writer owner remains, validate the complete
+Rollout envelope, and MAY atomically republish the same Rollout ID. Quarantine
+SHALL NOT be exposed as a Rollout, status, or execution identity.
 
 If containment returns an error or has not returned when the absolute deadline
 expires, Agent Runtime Service SHALL signal the injected Alan OS Host lifecycle
@@ -215,6 +232,13 @@ SHALL NOT create a durable identity or terminal status model.
   creation succeeded, or with an explicit no-producing-Rollout outcome if it
   did not
 - **AND** finalization never infers no Rollout from a delivery race
+
+#### Scenario: Best-effort fallback starts an in-memory Agent Machine
+- **WHEN** Rollout creation fails but best-effort policy starts a live in-memory
+  Agent Machine
+- **THEN** the no-producing-Rollout outcome retains the owning runtime guard
+- **AND** terminal finalization cancels, quiesces, and shuts down that runtime
+- **AND** no terminal Rollout record is fabricated
 
 #### Scenario: Agent executable is rejected before service dispatch
 - **WHEN** a committed invocation names `/bin/alan-agent` but its namespace
@@ -292,10 +316,10 @@ SHALL NOT create a durable identity or terminal status model.
 #### Scenario: History fid remains open during quarantine
 - **WHEN** a consumer opened a Rollout history file before terminal containment
 - **THEN** containment removes the entry from discovery before releasing Kernel
-- **AND** the existing fid continues reading only its immutable pre-removal
-  snapshot
-- **AND** stale Host I/O against the quarantined inode is not visible through
-  that fid
+- **AND** the existing fid ignores bytes beyond its captured prefix length
+- **AND** it returns captured-range bytes only after the whole prefix SHA-256
+  digest revalidates
+- **AND** changed or unreadable prefix data returns an error without exposure
 
 ### Requirement: Rollout history follows the `/agent` namespace capability
 A Process whose namespace includes readable `/agent` SHALL be able to read

@@ -46,24 +46,26 @@ Process views, and `/agent/root` remains the Root Agent Process alias.
 `/srv/agent-runtime` remains only the service-handle rendezvous and does not
 become a state tree.
 
-Opening a Rollout file copies its validation-approved complete JSONL prefix
-into a service-owned immutable read buffer. The resulting aP fid never retains
-the Host backing inode and does not change as the active Rollout grows; a
-consumer reopens the path to observe later records. Snapshot creation and
-removal of an entry from discovery are ordered by the same Agent Runtime
-Service lock. An open therefore either captures the last approved prefix
-before removal or fails after removal, while an already-open fid remains
-isolated from subsequent Host I/O. This uses ordinary file-open semantics and
-adds no lease, generation, or revocation protocol.
+Opening a Rollout file streams and validates its complete JSONL prefix, then
+stores only a read-only source handle, the approved prefix length, and its
+SHA-256 digest in the fid. Open first reserves an open-history slot and pins the
+source identity under the discovery lock, then validates outside the lock. The
+short commit step reacquires that lock and succeeds only if the same source is
+still discoverable. Any failed validation or commit releases the slot.
+Containment removes the entry under that lock, so an open either commits before
+removal or fails after it.
 
-Snapshots with the same approved prefix share one immutable buffer. Agent
-Runtime Service enforces fixed policy limits for bytes in one snapshot, total
-open history fids, and aggregate unique snapshot bytes. It reserves both count
-and byte budget before materialization, releases them on clunk, and rejects an
-open with resource exhaustion when any limit would be exceeded. Snapshot
-materialization failure publishes no fid. These limits bound retained memory
-even when a consumer repeatedly reopens a growing Rollout while retaining old
-fids; they are service resource policy, not durable history state.
+Each read streams exactly the approved prefix through a fixed-size scratch
+buffer, captures at most the protocol-bounded requested range, and returns
+those bytes only after the whole-prefix SHA-256 digest matches. Bytes appended
+beyond the captured length are ignored. A changed or unreadable approved
+prefix invalidates the fid and returns an error without exposing bytes.
+Reopening captures a later validated prefix. A fixed open-history-fid limit,
+reserved before validation and released on failure or clunk, bounds both
+in-flight and retained memory independently of Rollout size. This
+representation keeps every valid Rollout readable without a snapshot store,
+lease, generation, revocation protocol, or full-file buffer; the accepted
+tradeoff is an O(prefix length) validation scan per read.
 
 ### D3: Retained Rollouts remain the only durable discovery source
 
@@ -115,9 +117,10 @@ Agent Runtime Service to install a pending terminal-context barrier and startup
 cancellation path for that PID before Process control becomes reachable. The
 Agent startup owner must resolve the barrier exactly once on every exit path:
 with a producing-Rollout context, or with an explicit no-producing-Rollout
-outcome. Either outcome carries deferred cleanup for any AgentFS already bound;
-a pre-dispatch outcome carries none. A drop guard or equivalent total-exit
-mechanism prevents channel closure from being misread as the latter.
+outcome. Either outcome carries any live runtime owner and deferred cleanup for
+AgentFS already bound; a pre-dispatch outcome carries neither. A drop guard or
+equivalent total-exit mechanism prevents channel closure from being misread as
+the latter.
 
 Rollout creation starts at an internal quarantine/staging path, never at the
 discoverable path. The intended path and independently cancellable creation
@@ -152,19 +155,21 @@ off ownership immediately after constructing the controller, before awaiting
 runtime readiness. Control may already be pending at that point and therefore
 awaits the pre-registered barrier. The run path must not call
 `RuntimeController::shutdown`, drop its runtime task owner, or perform AgentFS
-cleanup before terminal finalization. If
-startup exits before creating a Rollout, it resolves the barrier explicitly as
-no producing Rollout while retaining deferred cleanup for AgentFS already
-bound. If a Rollout was created and a later startup step fails, finalization
-can therefore still terminate that Rollout. If `/bin/alan-agent` produces an
-`AgentExecutableResult`, it remains in the candidate runner outcome and
-reaches finalization only if runner completion wins the terminal claim.
+cleanup before terminal finalization. If startup exits before creating a
+Rollout, it resolves the barrier explicitly as no producing Rollout while
+retaining any live runtime owner and deferred cleanup for AgentFS already
+bound. This includes best-effort fallback to an in-memory Agent Machine after
+Rollout creation fails. If a Rollout was created and a later startup step
+fails, finalization can therefore still terminate that Rollout. If
+`/bin/alan-agent` produces an `AgentExecutableResult`, it remains in the
+candidate runner outcome and reaches finalization only if runner completion
+wins the terminal claim.
 
 The finalizer first signals startup or runtime cancellation and waits for the
-terminal-context barrier. For a producing Rollout, it uses the retained live
-runtime owner to request Agent Machine quiescence. That operation cancels or
-drains both ordinary transitions and deferred runtime actions before
-completing a writer fence that covers every Rollout producer. Normal runner
+terminal-context barrier. Whenever the outcome has a live runtime owner, it
+requests Agent Machine quiescence. That operation cancels or drains both
+ordinary transitions and deferred runtime actions. For a producing Rollout it
+then completes a writer fence that covers every Rollout producer. Normal runner
 completion does not shut down the controller before this step: it publishes
 its result, returns its `ProcessOutcome`, and leaves the runtime task and
 deferred cleanup action owned by the terminal context. The finalizer waits for
@@ -193,11 +198,12 @@ On an error or containment-cutoff expiry at any pre-exit stage,
 Agent Runtime Service emits a structured diagnostic containing the PID,
 available Rollout ID, intended exit code, failed stage, and storage error or
 timeout. It cancels the logical writer and runtime owners without awaiting
-stuck Host I/O, removes the entry from discovery under the snapshot-open lock,
-then uses the reserved interval to atomically rename the current backing inode
-out of the discoverable subtree before returning control to Kernel.
+stuck Host I/O, removes the entry from discovery under the history-open commit
+lock, then uses the reserved interval to atomically rename the current backing
+inode out of the discoverable subtree before returning control to Kernel.
 Already-submitted Host I/O retains only the quarantined inode, while existing
-history fids retain only their immutable pre-removal snapshots.
+history fids retain only their fixed prefix length and digest. They return
+bytes only if that prefix still revalidates.
 Quarantine has no user-visible identity or status and is not listed. Recovery
 waits until no writer owner remains, revalidates the complete envelope, and may
 atomically republish the same Rollout ID.

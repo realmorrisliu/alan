@@ -35,13 +35,14 @@ restart even though the execution evidence already exists.
   barrier before control becomes reachable. Resolve it on every startup path
   with either the existing Rollout metadata plus ownership of the runtime task
   and deferred AgentFS cleanup, or an explicit no-producing-Rollout outcome
-  that still carries cleanup for any AgentFS already bound. The ordinary run
-  path hands that ownership to terminal finalization instead of shutting down
-  or dropping it. Terminal finalization cancels startup or execution, awaits
-  that barrier, and quiesces every Rollout writer before appending
-  `process_exit`, so no producing Rollout is missed and no later record can
-  follow the terminal record. Alan Kernel publishes exit before invoking the
-  returned AgentFS cleanup action.
+  that still carries any live runtime owner and cleanup for AgentFS already
+  bound. The ordinary run path hands that ownership to terminal finalization
+  instead of shutting down or dropping it. Terminal finalization cancels
+  startup or execution, awaits that barrier, quiesces every live Agent Machine,
+  and, when a Rollout exists, fences its writers before appending
+  `process_exit`. Thus no live runtime leaks, no producing Rollout is missed,
+  and no later record can follow the terminal record. Alan Kernel publishes
+  exit before invoking the returned AgentFS cleanup action.
 - Apply the same executable-eligibility check during terminal preparation as
   during System Process dispatch. If any pre-dispatch path returns after a
   barrier was registered, resolve it explicitly as no producing Rollout so an
@@ -50,12 +51,13 @@ restart even though the execution evidence already exists.
   metadata flush, and recover quarantine only at service startup before
   exposing discovery or clone capability.
 - Expose each retained Rollout at the read-only
-  `/agent/rollouts/<rollout-id>` file path. Each open receives a service-owned
-  immutable snapshot of the existing JSONL records rather than a Host backing
-  handle; reopening observes later records. Identical snapshots share storage,
-  and fixed per-fid, open-fid-count, and aggregate-byte limits reject excess
-  opens instead of allowing unbounded memory retention. The surface remains
-  available after Process exit and Host restart.
+  `/agent/rollouts/<rollout-id>` file path. Each open captures a validated
+  complete-prefix length and SHA-256 digest. Reads stream that exact prefix
+  through bounded scratch space and return data only after the digest
+  revalidates, so later or quarantined writes are never exposed. A fixed
+  open-fid limit bounds memory without making large valid Rollouts unreadable;
+  reopening observes a later validated prefix. The surface remains available
+  after Process exit and Host restart.
 - Include active, terminal, and valid unterminated Rollouts; presentation may
   prioritize terminal entries but discovery does not hide retained evidence.
 - Add Agent Runtime Service-owned `/mnt/agent-runtime/clone` as the
