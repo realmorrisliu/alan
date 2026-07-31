@@ -200,13 +200,15 @@ cause another external side effect.
 
 Before issuing the publication rename, Agent Runtime Service SHALL atomically
 claim a non-cancellable publication critical section under the same lock used
-for cancellation. Cancellation or deadline expiry that wins before this claim
-SHALL irrevocably revoke publication and switch the lease to staging
-reclaim-only mode. Once the claim wins, cancellation SHALL remain pending and
-MUST NOT reclassify the inode as staging or interrupt rename and directory
-commit. After the barrier succeeds, Agent Runtime Service SHALL resolve the
-producing-Rollout context before servicing the pending cancellation; no Agent
-Machine side effect may occur in between.
+for cancellation and capture its current transition-local publication
+generation. Cancellation or deadline expiry that wins before this claim SHALL
+irrevocably revoke publication and switch the lease to staging reclaim-only
+mode. Once the claim wins, ordinary cancellation SHALL remain pending and MUST
+NOT reclassify the inode as staging or interrupt rename and directory commit.
+After the barrier succeeds, Agent Runtime Service SHALL revalidate the
+generation under that lock, resolve the producing-Rollout context, and only
+then service pending ordinary cancellation; no Agent Machine side effect may
+occur in between.
 
 A late-created staging file SHALL be closed and unlinked by the service reaper.
 The staging slot SHALL remain charged until publication or successful unlink;
@@ -228,6 +230,25 @@ destination from discovery and durably quarantine or remove every possible
 destination and stale staging alias before releasing the slot or terminal
 finalization. This SHALL use the published-storage containment and Host-fatal
 failure rules, not staging reclaim.
+
+When terminal containment must supersede a publication critical section, Agent
+Runtime Service SHALL atomically advance the transition-local publication
+generation, close publication and Agent Machine effect admission, and resolve
+the pending terminal barrier to a destination-claimed non-producing outcome
+that owns the publication task and cleanup lease. Every Host completion SHALL
+revalidate its captured generation before resolving a producing context,
+inserting discovery, releasing the slot, or enabling Agent Machine work. A
+generation mismatch SHALL suppress all of those actions and only signal that
+the superseded publication owner has ended.
+
+Destination-claimed containment SHALL obtain that publication-owner fence
+before it inspects and quarantines possible destination and staging names. It
+SHALL NOT report containment success or release Kernel while an older Host
+operation can still create or recreate the destination. If the fence,
+quarantine, or durable directory commit cannot complete within the absolute
+terminal deadline, containment SHALL invoke the synchronously non-returning
+Host-fatal path. The generation and fence SHALL be bounded Process-local
+synchronization, not a durable identity or lifecycle model.
 
 After a Host restart, a complete valid final-name entry that survived the
 atomic rename SHALL be recovered as a committed retained Rollout; any duplicate
@@ -279,11 +300,13 @@ work.
 
 For a published producing Rollout or destination-claimed publication, Agent
 Runtime Service SHALL remove or exclude the entry from discovery under the
-discovery-table lock used by open and atomically move every possible current
-backing inode out of the discoverable subtree into internal quarantine during
-the reserved interval. It SHALL durably commit the affected directory entries
-and remove any stale staging alias before reporting containment success. For
-an unpublished pending-open or staging outcome that never claimed publication,
+discovery-table lock used by open. For destination-claimed publication it SHALL
+first fence the superseded publication owner. It SHALL then atomically move
+every possible current backing inode out of the discoverable subtree into
+internal quarantine during the reserved interval, durably commit the affected
+directory entries, and remove any stale staging alias before reporting
+containment success. For an unpublished pending-open or staging outcome that
+never claimed publication,
 it SHALL revoke publication and transfer the charged cleanup lease to the
 bounded service reaper; this SHALL be successful non-storage containment
 without awaiting Host open, prepublication I/O, or unlink. For an explicit
@@ -682,11 +705,23 @@ while launch handshakes are possible.
 - **THEN** cancellation remains pending while the publication barrier resolves
 - **AND** a successful barrier resolves the producing-Rollout context before
   cancellation is serviced, without an intervening Agent Machine side effect
-- **AND** a failed, timed-out, or ambiguous barrier excludes and durably
-  quarantines every possible destination plus stale staging aliases through
-  published-storage containment
+- **AND** if terminal containment supersedes the stalled barrier, it advances
+  the publication generation and every late completion suppresses producing-
+  context resolution, discovery insertion, slot release, and Agent Machine
+  effects
+- **AND** containment fences the superseded publication owner before it
+  excludes and durably quarantines every possible destination plus stale
+  staging aliases
 - **AND** failure of that containment invokes the synchronously non-returning
   Host-fatal path
+
+#### Scenario: Publication owner outlives the containment cutoff
+- **WHEN** terminal containment cannot fence a superseded publication owner
+  before the absolute deadline
+- **THEN** it does not report successful quarantine or release Kernel
+- **AND** it invokes the synchronously non-returning Host-fatal path
+- **AND** a late publication completion cannot reinsert discovery or start
+  Agent Machine work after Process exit
 
 #### Scenario: Host restarts during the publication critical section
 - **WHEN** the Host restarts after rename may have occurred but before the

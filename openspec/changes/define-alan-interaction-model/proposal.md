@@ -52,10 +52,13 @@ their own answer, and OS vocabulary will leak into the default UI.
   barrier before execution side effects or acknowledgment, not an infallible
   terminal-write guarantee. Cancellation can revoke only before the
   non-cancellable rename-and-directory-commit critical section; post-rename
-  uncertainty is contained as destination storage, never staging. Completed
-  outcomes are reconstructible whenever discovery finds a complete valid
-  `process_exit`, even after an ambiguous append or durable-sync error; only a
-  missing or torn terminal record remains unfinished or incomplete evidence.
+  uncertainty is contained as destination storage, never staging. Terminal
+  containment invalidates a transition-local publication generation and fences
+  the old owner before quarantine or Process exit, so late completion cannot
+  publish. Completed outcomes are reconstructible whenever discovery finds a
+  complete valid `process_exit`, even after an ambiguous append or durable-sync
+  error; only a missing or torn terminal record remains unfinished or
+  incomplete evidence.
 - Make permission the UX of mounting: giving an agent access to a host folder
   is a grant flow (drag in, file picker, or approval sheet) through Host Mount
   Service per ADR-0050; mount/bind are side effects, and revocation lives in a

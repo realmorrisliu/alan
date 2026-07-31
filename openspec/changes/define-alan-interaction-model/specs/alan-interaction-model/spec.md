@@ -84,8 +84,12 @@ acknowledgment. Cancellation SHALL be able to revoke publication only before
 the Agent Runtime Service claims its non-cancellable rename-and-directory-
 commit critical section; a cancellation that arrives after that claim SHALL
 wait for publication to resolve and SHALL NOT turn a destination inode back
-into staging. It SHALL NOT guarantee that a later terminal storage write cannot
-fail. Completed outcomes from accepted local background dispatches
+into staging. If terminal containment supersedes a stalled publication, it
+SHALL invalidate the transition-local publication generation and fence the
+publication owner before successful quarantine or Process exit; a late
+completion SHALL NOT publish or enable Agent Machine work. It SHALL NOT
+guarantee that a later terminal storage write cannot fail. Completed outcomes
+from accepted local background dispatches
 SHALL remain discoverable after Process exit and Alan OS Host restart only
 when discovery finds a complete valid terminal `process_exit`, including after
 an ambiguous append or durable-sync error. Retained evidence references SHALL remain

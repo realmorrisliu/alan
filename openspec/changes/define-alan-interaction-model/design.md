@@ -153,7 +153,10 @@ before Agent Machine side effects, discovery, or acknowledgment. It does not
 make later storage writes infallible. Publication claims a non-cancellable
 rename-and-directory-commit critical section, so cancellation can revoke only
 while the inode is staging; a post-claim cancellation waits and cannot leave a
-destination inode governed by staging cleanup. Completed outcomes from
+destination inode governed by staging cleanup. Terminal containment that
+supersedes a stalled publication invalidates its transition-local generation
+and fences the publication owner before quarantine or Process exit, preventing
+late discovery insertion or Agent Machine work. Completed outcomes from
 accepted background dispatches whose terminal `process_exit` is discovered as
 a complete valid record, together with their retained evidence references,
 remain discoverable after Process exit and Host restart. An ambiguous append

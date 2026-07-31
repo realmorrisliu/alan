@@ -78,9 +78,9 @@
   publication and have the service reaper close and unlink any late file.
   Make each completion before rename recheck publish permission under the same
   lock used for revocation. Immediately before rename, claim a non-cancellable
-  publication critical section under that lock; cancellation that loses this
-  race remains pending until the barrier resolves and cannot reclassify the
-  inode as staging.
+  publication critical section and capture its transition-local generation
+  under that lock; ordinary cancellation that loses this race remains pending
+  until the barrier resolves and cannot reclassify the inode as staging.
   Release the slot only after publication or successful unlink, retain it on
   cleanup failure, reject creation when the pool is full, and sweep abandoned
   staging before service readiness. Register writer containment before initial
@@ -95,16 +95,26 @@
   from discovery and durably quarantine or remove every possible destination
   plus stale staging alias under the published-storage containment deadline;
   invoke the non-returning Host-fatal adapter if that containment fails.
+  Let terminal containment supersede a stalled publication by atomically
+  advancing the publication generation, closing publication and Agent Machine
+  effect admission, and resolving the terminal barrier to a destination-
+  claimed non-producing outcome that owns the task and cleanup lease. Require
+  every Host completion to revalidate its captured generation before producing-
+  context resolution, discovery insertion, slot release, or Agent Machine
+  effects. Fence the superseded publication owner before quarantine; failure
+  to fence it within the absolute deadline is Host-fatal and cannot release
+  Kernel.
   Insert discovery, resolve the producing context, release the staging slot,
   and permit Agent Machine effects only after the whole barrier succeeds. Test
   cancellation before and after the publication claim, cancellation after
   rename but before directory commit, every late barrier stage, ambiguous
-  rename and directory commit, destination quarantine failure, unlink failure,
-  pool exhaustion, startup recovery of a surviving valid final entry and
-  duplicate staging alias, startup quarantine of a torn final entry, startup
-  sweep failure, power loss after acknowledgment, and control or deadline
-  expiry while publication stalls, without an Engine-to-Service dependency,
-  file, Host API, durable identity, or absent-resolution fallback.
+  rename and directory commit, late completion after generation invalidation,
+  publication-owner fence success and timeout, destination quarantine failure,
+  unlink failure, pool exhaustion, startup recovery of a surviving valid final
+  entry and duplicate staging alias, startup quarantine of a torn final entry,
+  startup sweep failure, power loss after acknowledgment, and control or
+  deadline expiry while publication stalls, without an Engine-to-Service
+  dependency, file, Host API, durable identity, or absent-resolution fallback.
 - [ ] 2.5 Apply the same committed-namespace executable eligibility check in
   System Process runner finalizer preparation as in `run`. Keep the generic
   no-op when `/bin/alan-agent` is not mounted, and explicitly resolve no
@@ -141,8 +151,10 @@
   Rollout or destination-claimed publication, remove or exclude discovery
   under the lock used by open, atomically quarantine every possible
   destination inode in the reserved interval, durably commit affected
-  directories, and remove any stale staging alias; only failure of this branch
-  calls the synchronously non-returning Host lifecycle adapter. For unpublished
+  directories, and remove any stale staging alias. For destination-claimed
+  state, first invalidate the publication generation and fence its owner so no
+  late completion can recreate or republish the destination; only failure of
+  this branch calls the synchronously non-returning Host lifecycle adapter. For unpublished
   pending-open or staging state that never claimed publication, revoke
   publication and transfer the charged lease to the bounded reaper. For an
   explicit no-Rollout/no-creation outcome, complete non-storage

@@ -173,13 +173,14 @@ spawn a Tool, or cause another external side effect. `AsyncWriteExt::flush`
 alone does not satisfy this barrier.
 
 Immediately before rename, the publisher claims a non-cancellable publication
-critical section under the same lock used by cancellation. Cancellation that
-wins before the claim irrevocably switches the lease to staging reclaim-only
-mode, and no later completion may issue rename. Once the claim wins,
-cancellation remains pending until rename and durable directory commit resolve;
-it cannot reclassify a destination inode as staging. On success the producing
-context is resolved before the pending cancellation is serviced, with no Agent
-Machine effect in between.
+critical section and captures its transition-local generation under the same
+lock used by cancellation. Cancellation that wins before the claim irrevocably
+switches the lease to staging reclaim-only mode, and no later completion may
+issue rename. Once the claim wins, ordinary cancellation remains pending until
+rename and durable directory commit resolve; it cannot reclassify a destination
+inode as staging. On success the publisher revalidates its generation and
+resolves the producing context before the pending cancellation is serviced,
+with no Agent Machine effect in between.
 
 After rename is issued, the lease is destination-claimed even if the Host
 result is late or ambiguous. A failed or ambiguous remainder of the barrier
@@ -189,6 +190,23 @@ staging alias, and retain the slot until that work succeeds. Containment
 failure takes the bounded Host-fatal path. This closes the rename-to-directory-
 commit cancellation window instead of asking a staging reaper to unlink the
 wrong directory.
+
+Terminal containment can supersede a stalled publication critical section. It
+does so atomically under the publication lock: advance the transient
+generation, close publication and Agent Machine effect admission, and resolve
+the terminal barrier to a destination-claimed non-producing outcome that owns
+the publication task and cleanup lease. Every late Host completion revalidates
+its captured generation before resolving a producing context, inserting
+discovery, releasing the slot, or enabling Agent Machine work. On mismatch it
+does none of those things and only completes the owner fence.
+
+Containment must obtain that fence before inspecting and quarantining possible
+destination or staging names. It cannot report success while the superseded
+owner can still create the destination after quarantine. If the owner cannot
+be fenced, or quarantine and its durable directory commit cannot finish,
+within the absolute terminal deadline, the synchronously non-returning
+Host-fatal path runs and Kernel is never released. The generation and fence are
+bounded Process-local synchronization, not a durable entity.
 
 A late Host open that lost before the publication claim is still closed and
 unlinked from staging. A failed staging unlink keeps the slot charged and emits
@@ -279,7 +297,8 @@ Containment then follows the terminal context's owned storage state:
 
 - For a published producing Rollout or destination-claimed publication, it
   excludes the entry from discovery under the discovery-table lock used by
-  open, then uses the reserved interval to atomically move every possible
+  open. A destination-claimed branch first fences its superseded publication
+  owner. It then uses the reserved interval to atomically move every possible
   destination inode out of the discoverable subtree, durably commits the
   affected directory entries, and removes any stale staging alias.
 - For an unpublished pending-open or staging outcome that never claimed
@@ -302,10 +321,11 @@ remains, revalidates the complete envelope, and may atomically republish the
 same Rollout ID.
 
 Only published-Rollout or destination-claimed inode containment can invoke the
-fatal path. If quarantine or its durable directory commit errors or has not
-returned when the absolute deadline expires, Agent Runtime Service reports a
-fatal storage-integrity failure through an injected Alan OS Host lifecycle
-adapter and does not wait for the storage operation. The Host owner
+fatal path. If the publication-owner fence, quarantine, or its durable
+directory commit errors or has not returned when the absolute deadline
+expires, Agent Runtime Service reports a fatal storage-integrity failure
+through an injected Alan OS Host lifecycle adapter and does not wait for the
+storage operation. The Host owner
 atomically closes readiness, attachment
 admission, and new-work admission, requests Service Manager shutdown, and
 enters immediate fail-stop Host termination. The adapter call is synchronously

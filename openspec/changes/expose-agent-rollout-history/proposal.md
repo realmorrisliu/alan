@@ -55,10 +55,14 @@ restart even though the execution evidence already exists.
   critical section before rename so cancellation can win only while the inode
   is still staging. After rename, treat failed or ambiguous publication as
   destination-claimed storage and durably quarantine every possible
-  destination instead of using staging cleanup. Retain the cleanup lease until
-  the complete barrier, successful staging unlink, or successful destination
-  quarantine. Startup reconciles staging aliases and surviving final entries
-  before exposing discovery or clone capability.
+  destination instead of using staging cleanup. Terminal containment advances
+  a transition-local publication generation so late completions cannot publish,
+  then fences the superseded publication owner before quarantine; failure to
+  fence by the absolute deadline is Host-fatal and never releases Kernel.
+  Retain the cleanup lease until the complete barrier, successful staging
+  unlink, or successful destination quarantine. Startup reconciles staging
+  aliases and surviving final entries before exposing discovery or clone
+  capability.
 - Expose each retained Rollout at the read-only
   `/agent/rollouts/<rollout-id>` file path. Agent Runtime Service validates
   retained prefixes once while rebuilding discovery and advances active
