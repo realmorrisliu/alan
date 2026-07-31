@@ -20,7 +20,8 @@ act on triggers and report outcomes.
 ## Goals
 
 - One interaction model that every renderer host (macOS, TUI, future Alan
-  Apps) implements, so users learn it once.
+  Apps) implements, with mode availability following the capabilities of its
+  attachment, so users learn the same objects and layers once.
 - The file-native architecture remains fully reachable and scriptable — the
   model adds layers over the truth, never a parallel truth.
 - OS vocabulary is quarantined: default UI copy passes a "user object" test.
@@ -35,6 +36,8 @@ act on triggers and report outcomes.
   `macos-shell-ui-ux-conformance`.
 - Onboarding flows, empty states, and first-run copy: a later change.
 - TUI-specific keybindings and macOS-specific layout details.
+- Remote Entry launch authority, revocation, and background dispatch; those
+  require a separate remote-access contract.
 
 ## Decisions
 
@@ -71,7 +74,10 @@ there is nothing to synchronize.
 - **Background servant**: the user dispatches work; agents run detached
   (closing a view detaches per ADR-0047); the user primarily reviews finished
   work — results, diffs, evidence — in an inbox-style surface rather than
-  watching execution.
+  watching execution. This mode is required for local renderers whose Local
+  Entry Login Namespace contains `/mnt/agent-runtime/clone`. A Remote Entry
+  renderer is not required to expose it until a separate contract grants and
+  revokes remote launch authority.
 - **Event-driven**: standing rules (triggers, schedules, watched folders,
   service notices) cause agents to act; proactive reports arrive in the same
   review surface. The user manages the rule set and the outcome stream, not
@@ -92,27 +98,19 @@ never names. A single Permissions surface lists active grants by label and
 scope; revoking unmounts. Raw host paths never appear — only grant labels —
 which matches what Alan OS is allowed to see.
 
-### D5: Workspace-first entry, shell as a tab type
+### D5: The interaction model does not invent a universal home
 
-The macOS app opens into a workspace: active agents, recent work, installed
-services (`/srv` rendered as services/apps, each opening its own file-backed
-UI). Alan Shell remains an ordinary Process and the system entry per
-ADR-0039/0048/0049, but in the UX it is one tab type the user opens when
-wanted, not the first screen. The TUI remains the terminal-native host and
-naturally centers the shell; the interaction model still governs its agent
-surfaces.
+There is no Alan Home, `workspace_home`, or other product object that owns or
+aggregates agents, work, services, and permissions. The interaction model
+defines how concrete file-backed objects are presented when reached; it does
+not force every renderer into one start screen or change the current
+terminal-first macOS default. Shell Space, Tab, and pane state remains
+presentation structure, not Alan OS identity.
 
-Reconciliation with shell-first contracts: ADR-0039 governs the system-level
-entry of the `alan` CLI and Local Entry — the Shell Process still starts
-there, unchanged. What changes is only the renderer-presented default, so
-this change carries a MODIFIED delta to `macos-shell-workspace-persistence`:
-the default manifest's selected Tab becomes the workspace home surface and a
-default terminal Tab is no longer required. Because shell core owns default
-manifest semantics and content kinds, a matching
-`shell-workspace-core-contract` delta defines a platform-neutral workspace
-home content kind so no platform-private defaulting algorithm is
-reintroduced. This is a deliberate presentation change, not a contradiction
-of the boot order.
+A future unified entry surface may be specified only when implemented
+workflows establish its concrete contents and owning file surfaces. Until
+then, adding a home ContentKind or changing default manifest semantics would
+create presentation structure without an authoritative domain object.
 
 ### D6: The vocabulary rule
 
@@ -122,6 +120,67 @@ namespace, fid, descriptor, `/proc`, tape, rollout (as a word — the concept
 renders as "evidence" or "history"). OS vocabulary is allowed only in the
 Files layer, power-user surfaces, debugging views, and documentation. This
 rule is reviewable per screen and belongs in UI conformance checks.
+
+### D7: Completed work requires durable discovery
+
+Local background-servant interaction requires execution evidence to begin
+durably rather than disappearing with a Process or Alan OS Host boot. A local
+background dispatch therefore sets `runtime_overrides.durability_required` in
+the `AgentExecutableRequest` committed through Agent Runtime Service-owned
+`/mnt/agent-runtime/clone`. Service Manager mounts this launch capability only
+in the authorized renderer attachment view over a Local Entry Shell Process
+namespace. The underlying Shell Process namespace, its ordinary children,
+Remote Entry, and Agent Process namespaces cannot regain capabilities through
+it. The path uses the current Root Agent Process as the ordinary parent; the
+attached Shell Process is not treated as an Agent parent.
+After reading
+`/proc/host/boot_id`, listing the current `rollout_id` values, and receiving
+the pending PID, the renderer acknowledges the dispatch only when
+`/agent/rollouts/<rollout-id>` exposes valid first-record metadata whose ID
+was absent from the pre-spawn listing and whose `process_path` is
+`/proc/<pid>`, and a fresh read of `/proc/host/boot_id` still matches. The
+listing excludes an older retained Rollout whose PID path was reused after
+Host restart; the boot check prevents a new-boot Rollout from being associated
+with the prior request. A request rejected before commit is a definite failure.
+After commit succeeds or becomes ambiguous, the Process may execute. If boot
+identity changes, the Process exits, the attachment is lost, or correlation
+otherwise ends before matching evidence is observed, the renderer presents an
+indeterminate launch outcome and never automatically retries it.
+
+Strict durability is the launch-time guarantee that a producing Rollout has
+crossed its file-sync, atomic-rename, and durable-directory publication barrier
+before Agent Machine side effects, discovery, or acknowledgment. It does not
+make later storage writes infallible. Publication claims a non-cancellable
+rename-and-directory-commit critical section, so cancellation can revoke only
+while the inode is staging; a post-claim cancellation waits and cannot leave a
+destination inode governed by staging cleanup. Terminal containment that
+supersedes a stalled publication invalidates its transition-local generation
+and fences the publication owner before quarantine or Process exit, preventing
+late discovery insertion or Agent Machine work. Completed outcomes from
+accepted background dispatches whose terminal `process_exit` is discovered as
+a complete valid record, together with their retained evidence references,
+remain discoverable after Process exit and Host restart. An ambiguous append
+or durable-sync error does not override such a record. If the terminal record
+is absent or torn, the retained Rollout remains discoverable only as
+unterminated or incomplete evidence; a renderer must not infer completion or
+fabricate the unavailable `AgentExecutableResult`. Best-effort foreground
+conversation may continue without a Rollout, but receives no durable-evidence
+guarantee.
+
+History is only a read-only discovery view over Rollouts, not another durable
+entity. It has no independent ID, record lifecycle, persistent index, or
+relationship identity. A renderer reads the Agent Runtime Service's Rollout
+history surface through its Alan OS attachment; it never scans System Store
+backing and never persists a private results database.
+
+Rollout terminal completion and namespace discovery belong to the prerequisite
+`expose-agent-rollout-history` change. That prerequisite also owns the
+Agent Runtime Service-owned top-level launch path, file-visible
+strict-durability request, and Rollout correlation handshake. This
+interaction-model change owns only the user-facing obligation to dispatch and
+present local background work through those files. Remote background dispatch
+remains deferred until Remote Access Service or another owning contract
+defines its revocable capability.
 
 ## Risks / Trade-offs
 
@@ -135,11 +194,20 @@ rule is reviewable per screen and belongs in UI conformance checks.
 - **Vocabulary rule can feel constraining to developer-users.** Accepted:
   advanced personal users are the audience; the Files layer preserves full
   fidelity for anyone who wants it.
+- **No unified start screen means renderers may emphasize different entry
+  paths.** Accepted: a speculative home would add a content kind and
+  persistence contract without owning any truth. Shared interaction rules
+  apply once a concrete agent, result, permission, service, or file surface is
+  opened.
+- **Strict durability can reject background dispatch before commit.**
+  Accepted: that is a definite failure. Once commit may have executed, missing
+  evidence is indeterminate and cannot safely be retried without a durable
+  idempotency contract.
+- **Remote renderers do not yet expose background-servant dispatch.**
+  Accepted: granting remote launch authority requires explicit revocation and
+  trust semantics that do not belong in this local interaction slice.
 
 ## Open Questions
 
 - Exact name of the unified review surface (Inbox / Results / Activity) —
   copy-level, resolved in the macOS implementation change.
-- Whether the TUI adopts the Intent layer entry or stays shell-first — the
-  model permits host-specific entry emphasis as long as the three layers and
-  modes exist.

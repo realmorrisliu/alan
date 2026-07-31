@@ -18,18 +18,24 @@ Machine contracts have not defined.
 
 ### Requirement: Renderer hosts implement the Alan Interaction Model layers
 Renderer hosts SHALL provide the Intent, Work, and Files disclosure layers
-defined by `alan-interaction-model`, present the conversation and
-background-servant modes, treat event-driven interaction as the recorded
-dependent mode per `alan-interaction-model`, and keep OS vocabulary out of
-default UI copy. Hosts MAY differ in entry emphasis — a terminal-native host
-may center the shell — provided all three layers and both required modes
-remain reachable.
+defined by `alan-interaction-model`, present conversation, treat event-driven
+interaction as the recorded dependent mode per `alan-interaction-model`, and
+keep OS vocabulary out of default UI copy. A renderer attached through the
+authorized attachment view over a Local Entry Shell Process namespace SHALL
+also present background-servant mode through its mounted
+`/mnt/agent-runtime/clone` capability. The underlying Shell Process namespace
+SHALL NOT gain that mount. A Remote Entry renderer SHALL NOT be required to
+present that mode until a separate remote-launch contract grants it an
+appropriately revocable capability. Hosts MAY differ in entry emphasis — a
+terminal-native host may center the shell — provided the layers and modes
+required by its attachment remain reachable.
 
 #### Scenario: A renderer host is reviewed for interaction-model conformance
 - **WHEN** a renderer host's default UI is reviewed
-- **THEN** all three disclosure layers are reachable, conversation and
-  background-servant modes are supported, and default copy passes the
-  vocabulary rule
+- **THEN** all three disclosure layers are reachable, conversation is
+  supported, and default copy passes the vocabulary rule
+- **AND** background-servant mode is supported when the host is attached
+  through the authorized Local Entry renderer attachment view
 - **AND** any host-specific entry emphasis does not remove a layer or mode
 - **AND** event-driven surfaces are required only once their owning runtime
   or service contract exists
@@ -39,10 +45,9 @@ remain reachable.
 ### Requirement: A mounted namespace is sufficient for local renderer launch
 
 A local renderer host SHALL start from a mounted Alan OS root. Launching an
-agent view additionally requires a concrete Agent Process path. Launching the
-workspace home or a `/srv` service view SHALL require only the mounted
-namespace and the corresponding service paths and SHALL NOT require or invent
-an Agent Process.
+agent view additionally requires a concrete Agent Process path. Launching a
+`/srv` service view SHALL require only the mounted namespace and the
+corresponding service path and SHALL NOT require or invent an Agent Process.
 
 #### Scenario: Renderer opens a root Agent Process
 
@@ -50,17 +55,9 @@ an Agent Process.
 - **THEN** it reads and tails AgentFS output and state files
 - **AND** it writes input and Process control through the corresponding files
 
-#### Scenario: Renderer opens the workspace home
-
-- **WHEN** the renderer starts from a mounted namespace root without an Agent
-  Process path
-- **THEN** it presents the workspace home surface from mounted agent and
-  service file state
-- **AND** it does not create, require, or invent an Agent Process to do so
-
 #### Scenario: Renderer opens a service view
 
-- **WHEN** the renderer opens an installed service from the workspace home
+- **WHEN** the renderer opens an installed service
 - **THEN** it renders the service interface from the service's mounted `/srv`
   file tree
 - **AND** no Agent Process path is required

@@ -30,17 +30,39 @@ their own answer, and OS vocabulary will leak into the default UI.
   no layer owns copied state.
 - Establish the interaction modes: **conversation** and **background
   servant** (agents run detached; the user primarily reviews completed work
-  and evidence) are first-class obligations; **event-driven** (agents act on
-  events and proactively report) is recorded as the designated third mode,
-  binding on renderer hosts only once a runtime or service contract owns rule
-  storage and triggers.
+  and evidence) are first-class for local renderer hosts; Remote Entry
+  renderers require only conversation until a separate remote-launch contract
+  owns revocable authority. **Event-driven** (agents act on events and
+  proactively report) is recorded as the designated third mode, binding on
+  renderer hosts only once a runtime or service contract owns rule storage and
+  triggers.
+- Require local background dispatch to use Agent Runtime Service-owned
+  `/mnt/agent-runtime/clone`, request strict durability in its existing
+  `AgentExecutableRequest`, and succeed only after `/agent/rollouts` exposes a
+  newly discovered producing Rollout correlated to the returned PID under the
+  same `/proc/host/boot_id`. A pre-spawn listing excludes retained Rollouts
+  whose Process path was reused after Host restart. The launch capability
+  exists only in the authorized renderer attachment view, not the underlying
+  Shell Process namespace. A pre-commit rejection is a definite failure;
+  missing correlation after commit is indeterminate and never automatically
+  retried. Renderers never use internal runtime metadata, scan System Store
+  backing, or persist a private results database.
+- Define strict durability as a launch guarantee that a producing Rollout
+  has crossed its file-sync, atomic-rename, and durable-directory publication
+  barrier before execution side effects or acknowledgment, not an infallible
+  terminal-write guarantee. Cancellation can revoke only before the
+  non-cancellable rename-and-directory-commit critical section; post-rename
+  uncertainty is contained as destination storage, never staging. Terminal
+  containment invalidates a transition-local publication generation and fences
+  the old owner before quarantine or Process exit, so late completion cannot
+  publish. Completed outcomes are reconstructible whenever discovery finds a
+  complete valid `process_exit`, even after an ambiguous append or durable-sync
+  error; only a missing or torn terminal record remains unfinished or
+  incomplete evidence.
 - Make permission the UX of mounting: giving an agent access to a host folder
   is a grant flow (drag in, file picker, or approval sheet) through Host Mount
   Service per ADR-0050; mount/bind are side effects, and revocation lives in a
   single permissions surface. `mount` commands are confined to the Files layer.
-- Make the macOS entry a workspace of agents and services, not a shell: the
-  shell is one tab type among others; `/srv` services render as installed
-  services/apps; ADR-0039's system-level boot order is unchanged.
 - Define the vocabulary rule: default UI copy names user objects (agent,
   conversation, folder, permission, service, result); OS vocabulary (mount,
   namespace, fid, `/proc`, tape) is confined to the Files layer, power-user
@@ -51,37 +73,28 @@ their own answer, and OS vocabulary will leak into the default UI.
 ### New Capabilities
 
 - `alan-interaction-model`: The product-level interaction contract — disclosure
-  layers, interaction modes, grant-as-permission UX, workspace-first entry,
-  and the vocabulary rule for all renderer hosts.
+  layers, interaction modes, grant-as-permission UX, and the vocabulary rule
+  for renderer hosts, with background-servant dispatch required only for Local
+  Entry attachments.
 
 ### Modified Capabilities
 
 - `alan-renderer-host-contract`: Renderer hosts SHALL render agent and service
   file surfaces as domain-native affordances, provide the three disclosure
   layers, and keep OS vocabulary out of the default UI.
-- `macos-shell-workspace-persistence`: The default workspace manifest's
-  selected Tab becomes the workspace home surface; a default terminal Tab is
-  no longer required, aligning the macOS default presentation with
-  workspace-first entry.
-- `shell-workspace-core-contract`: Shell core owns a platform-neutral
-  workspace home content kind and selects it in default manifest creation
-  instead of hard-coding a terminal Tab, so the macOS persistence delta has a
-  portable owner and no platform-private defaulting algorithm is
-  reintroduced.
-- `macos-shell-content-containers`: Define the serializable, restorable
-  `workspace_home` content kind with home-specific capabilities, so default
-  manifests and restore can materialize the workspace home surface without
-  substituting a terminal.
-- `macos-shell-ui-ux-conformance`: Replace terminal-first assertions in the
-  visual-review, smoke-evidence, and automation-chrome requirements with the
-  workspace home presentation as the default selected content.
-- `macos-shell-build-test-contract`: Update the launch smoke to verify the
-  workspace home content area instead of a terminal content area.
 
 ## Impact
 
-- Normative for Alan for macOS (`clients/apple`), the Rust TUI
-  (`crates/tui`), and future Alan Apps; no kernel, aP, or AgentFS changes.
+- Normative for Alan for macOS (`clients/apple`), the Rust TUI, and future
+  Alan Apps. It requires the Agent Runtime Service-owned Rollout history
+  surface before a durable review surface can be implemented; it does not
+  authorize renderer access to System Store backing.
+- Remote Entry background dispatch and its revocable launch authority remain
+  out of scope; this change neither binds `/mnt/agent-runtime/clone` into a
+  Remote Entry namespace nor requires remote renderers to expose that mode.
+- This change does not define an Alan Home, `workspace_home`, or another
+  universal entry object. It leaves renderer defaults and the current
+  terminal-first macOS presentation unchanged.
 - No system-architecture change: ADR-0039 (shell before agent views),
   ADR-0045 (aP attachment), and ADR-0050 (Host Mount Service grants) remain
   the system truth; this change defines the UX layered on top of them.
