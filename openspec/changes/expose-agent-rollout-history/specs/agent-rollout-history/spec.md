@@ -71,6 +71,11 @@ resolve the barrier exactly once with either a producing-Rollout context or an
 explicit no-producing-Rollout outcome; an absent or dropped resolution SHALL
 NOT be treated as no Rollout.
 
+Immediately after creating a Rollout backing file and writer, and before the
+initial `AgentMachineMeta` flush, Agent Runtime Service SHALL register their
+containment owner in the pending terminal context. Control or deadline expiry
+during that initial flush SHALL be able to close and quarantine the inode.
+
 System Process runner SHALL apply the same committed-namespace executable
 eligibility check during terminal preparation as it applies before dispatch in
 `run`. An invocation whose `/bin/alan-agent` executable is not mounted SHALL
@@ -375,6 +380,10 @@ This acknowledgment SHALL NOT expose a Host rollout path, require internal
 `RuntimeStartupMetadata`, or add a startup side API or duplicate AgentFS
 metadata file.
 
+Agent Runtime Service SHALL complete quarantine recovery before exposing
+`/agent/rollouts` or `/mnt/agent-runtime/clone` and SHALL NOT republish
+recovered Rollouts while launch handshakes are possible.
+
 #### Scenario: Strict-durability launch creates its Rollout
 - **WHEN** a caller pins the current boot identity, lists current Rollout IDs,
   and `/mnt/agent-runtime/clone` allocates a PID for an
@@ -385,6 +394,19 @@ metadata file.
   metadata whose `process_path` identifies that PID
 - **AND** `/proc/host/boot_id` still matches the pinned value
 - **AND** the caller may acknowledge durable background launch
+
+#### Scenario: Initial metadata flush stalls
+- **WHEN** control or the terminal deadline fires after Rollout file creation
+  but before the initial metadata flush completes
+- **THEN** the pre-registered containment owner closes and quarantines the
+  backing inode
+- **AND** Kernel does not release a discoverable stale writer
+
+#### Scenario: Recovery precedes launch correlation
+- **WHEN** Agent Runtime Service starts with quarantined Rollouts
+- **THEN** it finishes recovery before exposing discovery or clone capability
+- **AND** no recovered prior-boot Rollout can appear between a pre-spawn
+  listing and launch acknowledgment
 
 #### Scenario: Strict-durability launch cannot create a Rollout
 - **WHEN** the Process exits before `/agent/rollouts` exposes a valid new

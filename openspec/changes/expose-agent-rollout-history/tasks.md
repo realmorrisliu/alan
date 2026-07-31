@@ -57,8 +57,11 @@
   `RuntimeHandle` alone is insufficient. Keep any eventual
   `AgentExecutableResult` only in the candidate runner outcome. Prove control
   during the delivery window and failure after Rollout creation but before
-  readiness still finalize correctly, without an Engine-to-Service dependency,
-  file, Host API, durable identity, or absent-resolution fallback.
+  readiness still finalize correctly. Register backing-inode and writer
+  containment ownership immediately after file creation and before the initial
+  metadata flush; test control and deadline expiry while that flush stalls,
+  without an Engine-to-Service dependency, file, Host API, durable identity, or
+  absent-resolution fallback.
 - [ ] 2.5 Apply the same committed-namespace executable eligibility check in
   System Process runner finalizer preparation as in `run`. Keep the generic
   no-op when `/bin/alan-agent` is not mounted, and explicitly resolve no
@@ -118,7 +121,10 @@
   Rollouts do not block unrelated valid entries.
 - [ ] 3.4 Test discovery of active, terminal, and unterminated Rollouts across
   Process exit and Agent Runtime Service restart.
-- [ ] 3.5 Test that `/agent` holders can read but not mutate Rollouts and that
+- [ ] 3.5 Complete quarantine recovery before exposing `/agent/rollouts` or
+  `/mnt/agent-runtime/clone`; prove recovered prior-boot Rollouts cannot appear
+  during a launch-correlation handshake.
+- [ ] 3.6 Test that `/agent` holders can read but not mutate Rollouts and that
   Processes without the `/agent` mount have no fallback access.
 
 ## 4. Verification And Archive Readiness

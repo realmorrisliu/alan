@@ -37,6 +37,8 @@ restart even though the execution evidence already exists.
   during System Process dispatch. If any pre-dispatch path returns after a
   barrier was registered, resolve it explicitly as no producing Rollout so an
   exit such as missing executable or unavailable Agent Runtime cannot hang.
+- Register backing-file containment before the initial metadata flush, and
+  finish quarantine recovery before exposing discovery or clone capability.
 - Expose each retained Rollout as its existing JSONL record at the read-only
   `/agent/rollouts/<rollout-id>` file path. The surface remains available
   after Process exit and Host restart.
