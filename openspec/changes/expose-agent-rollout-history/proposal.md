@@ -70,9 +70,12 @@ restart even though the execution evidence already exists.
 - Expose each retained Rollout at the read-only
   `/agent/rollouts/<rollout-id>` file path. Agent Runtime Service validates
   retained prefixes once while rebuilding discovery and advances active
-  prefixes incrementally after owned appends. Each open captures that approved
-  length on a pinned read-only source descriptor. Because the owning Rollout
-  writer may only append and never overwrite or truncate a published prefix,
+  prefixes incrementally after owned appends. Serialize append admission and
+  poison the writer on any failed or ambiguous append before accepting another
+  command; a poisoned writer enters containment and cannot append a later
+  record or `process_exit`. Each open captures the approved length on a pinned
+  read-only source descriptor. Because the owning Rollout writer may only
+  append and never overwrite or truncate a published prefix,
   reads fetch only the requested range within that fixed length; later or
   quarantined appends are never exposed. A fixed service-side maximum rejects
   oversized read counts on in-process and imported paths before allocation or

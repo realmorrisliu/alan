@@ -55,6 +55,16 @@ owning writer advances that length under the discovery lock only after a
 complete owned append passes envelope validation. This table is cache, not
 durable authority or another execution identity.
 
+Append admission is serialized behind the writer's health state. Any failed,
+timed-out, or ambiguous append poisons the writer and closes admission before
+the caller or writer loop can submit a later command, even if the failure may
+have happened before any bytes reached storage. The approved length remains
+unchanged, and published-storage containment fences the possibly running append
+before quarantine. A poisoned writer never attempts another ordinary record or
+`process_exit`, so a partial append stays a recoverable torn tail rather than
+becoming interior corruption. A complete record discovered during later
+recovery may still validate, but failure to fence or quarantine is Host-fatal.
+
 Opening a Rollout file reserves its open slots and, under the discovery lock,
 captures a pinned read-only source descriptor plus the current approved length
 from that table. It stores only those two values in the fid and performs no
@@ -274,9 +284,12 @@ then completes a writer fence that covers every Rollout producer. Normal runner
 completion does not shut down the controller before this step: it publishes
 its result, returns its `ProcessOutcome`, and leaves the runtime task and
 deferred cleanup action owned by the terminal context. The finalizer waits for
-the writer fence, appends and flushes `process_exit` through the owning Rollout
-writer, then shuts down and releases the runtime task. It returns the deferred
-AgentFS cleanup action while consuming the terminal context exactly once.
+the writer fence. If the writer is healthy, it appends and durably syncs
+`process_exit` through the owning Rollout writer. If the writer is poisoned, it
+skips terminal append and enters published-storage containment with the
+original failure. It then shuts down and releases the runtime task and returns
+the deferred AgentFS cleanup action while consuming the terminal context
+exactly once.
 Kernel publishes the terminal `/proc` state before invoking that action; only
 then may Agent Runtime Service unbind `/agent/<pid>` and release Process-scoped
 AgentFS backing. In particular, control immediately

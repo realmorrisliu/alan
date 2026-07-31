@@ -134,7 +134,10 @@
   SHALL hand off its live runtime and cleanup ownership instead of calling
   `RuntimeController::shutdown`, dropping the task owner, or cleaning up before
   finalization. When a Rollout exists, append and durably sync terminal
-  `process_exit`. For clean no-producing-Rollout completion, treat successful
+  `process_exit` only while its serialized writer remains healthy; a poisoned
+  writer skips terminal append and proceeds directly to published-storage
+  containment with the original failure. For clean no-producing-Rollout
+  completion, treat successful
   runtime quiescence and shutdown as a normal non-storage disposition; first
   revoke and transfer any pending-open or staging lease to the bounded reaper,
   without requiring error containment or fabricating a Rollout. Then shut down
@@ -170,9 +173,10 @@
   missing quiescence, a pre-dispatch no-owner outcome, pending open and staging
   cutoff, an earlier published writer blocking the fence,
   disk-full/sync-error, timeout, ambiguous-sync no-retry, a complete record
-  surviving an ambiguous error, absent/torn outcomes, stale I/O affecting only
-  quarantine, published containment failure as bounded Host-fatal termination,
-  cleanup, and Host-shutdown progress.
+  surviving an ambiguous error, a partial nonterminal append poisoning the
+  writer before the next queued command, absent/torn outcomes, stale I/O
+  affecting only quarantine, published containment failure as bounded
+  Host-fatal termination, cleanup, and Host-shutdown progress.
 - [ ] 2.8 Preserve Rollouts without `process_exit` as unterminated evidence
   without fabricating a result. Treat any discovered complete valid
   `process_exit` as authoritative even when its original durable-sync result
@@ -196,9 +200,15 @@
   one read-only `/agent/rollouts/<rollout-id>` JSONL file while preserving
   numeric PID entries and `/agent/root`. Enforce append-only published Rollout
   backing: writers and the Host adapter may append but never overwrite or
-  truncate a published prefix. Build an in-memory discovery table by validating
-  each retained source once at startup; advance a live source's approved length
-  only after an owned complete append passes envelope validation. On open,
+  truncate a published prefix. Serialize append admission behind writer health;
+  on every failed, timed-out, or ambiguous append, atomically poison the writer,
+  close admission before the caller or writer loop can accept another command,
+  keep approved length unchanged, and enter published-storage containment.
+  Fence a still-running append before quarantine and never submit a later
+  ordinary record or `process_exit` through a poisoned writer. Build an
+  in-memory discovery table by validating each retained source once at startup;
+  advance a live source's approved length only after an owned complete append
+  passes envelope validation. On open,
   capture its pinned read-only descriptor and approved length from that table
   without rescanning. Bind quota-scoped `/agent` handles with named fixed
   per-handle caps, a fixed ordinary pool for every Process namespace, and a
@@ -222,7 +232,9 @@
   Rollout-size limit or full-file allocation. Prove large valid Rollouts remain
   fully readable without whole-prefix work per range read, later active or
   quarantined appends are not exposed, reopen can observe later complete
-  records, tiny and out-of-range reads do not trigger a complete-prefix scan,
+  records, partial and ambiguous nonterminal append failures cannot be followed
+  by another record, tiny and out-of-range reads do not trigger a complete-
+  prefix scan,
   exact-cap reads succeed, cap-plus-one and `u32::MAX` in-process reads fail
   before allocation or I/O, overflow is rejected, concurrent reads through one
   fid remain bounded, ordinary Processes cannot exhaust renderer capacity,

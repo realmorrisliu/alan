@@ -19,6 +19,19 @@ Rollout, its owning writer SHALL advance that length under the discovery lock
 only after a complete owned append passes envelope validation. The table SHALL
 NOT be durable authority or another execution identity.
 
+The owning writer SHALL serialize append admission and track a poisoned state.
+Before any failed, timed-out, or ambiguous append returns control to its caller
+or the writer loop can accept another command, Agent Runtime Service SHALL
+atomically poison the writer, close append admission, leave the approved length
+unchanged, and begin published-storage containment. This applies even when the
+failure may have occurred before writing bytes, because the Host result does
+not authorize another append. No later ordinary record or `process_exit` SHALL
+be submitted through a poisoned writer. Containment SHALL fence any
+still-running append before quarantine; containment failure SHALL use the
+synchronously non-returning Host-fatal path. A complete record later found
+during recovery MAY be validated as retained evidence, but no new bytes may be
+placed after a possibly torn append.
+
 Each successful open SHALL retain only a pinned read-only source descriptor and
 the current approved length. It SHALL reserve its handle and pool open slots
 and capture both values from the discovery table under the same lock used for
@@ -87,6 +100,17 @@ SHALL belong to mounted capability handles and SHALL NOT be durable state.
 - **THEN** the existing fid continues to expose only its captured immutable
   complete prefix
 - **AND** reopening the path may expose the later complete record
+
+#### Scenario: Nonterminal append fails after a partial write
+- **WHEN** an ordinary Rollout append partially reaches storage and then
+  returns an error, timeout, or ambiguous result
+- **THEN** the writer is poisoned and append admission closes before the writer
+  loop can accept another command
+- **AND** the approved length does not advance
+- **AND** no later ordinary record or `process_exit` is appended after the
+  possibly torn bytes
+- **AND** containment fences the append owner and quarantines the inode before
+  releasing Kernel, or enters the non-returning Host-fatal path
 
 #### Scenario: History opens reach the service limit
 - **WHEN** another in-flight or retained history open would exceed its handle
@@ -309,7 +333,10 @@ request quiescence of both ordinary transitions and deferred runtime actions.
 Quiescence SHALL cancel or drain every such producer. For a producing Rollout,
 it SHALL then await a writer fence proving that none can append another Rollout
 record before finalization appends `process_exit`; no Rollout record may be
-appended after `process_exit`. One
+appended after `process_exit`. If the writer is poisoned, finalization SHALL
+NOT attempt `process_exit`; it SHALL proceed directly to published-storage
+containment while preserving the original append failure in its diagnostic.
+One
 fixed internal absolute deadline SHALL bound Agent terminal finalization and
 SHALL reserve a fixed final interval for containment. Context-barrier wait,
 quiescence, writer fence, the single terminal append-and-durable-sync attempt,
