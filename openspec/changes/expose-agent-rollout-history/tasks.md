@@ -195,21 +195,26 @@
 
 - [ ] 3.1 Enumerate retained Rollouts from Agent Runtime Service's existing
   System Store subtree with no persistent history index. Do not use the
-  existing whole-file `load_history` path. Add a bounded streaming scanner that
-  reads fixed-size chunks, frames one record through a buffer capped by
-  `MAX_ROLLOUT_RECORD_BYTES`, validates and discards it, and retains only fixed
-  envelope state plus source identity and approved prefix length.
+  existing whole-file `load_history` path. Add a bounded incremental JSON/SAX
+  scanner that reads fixed-size chunks, applies the existing loader's syntax
+  and nesting limits, streams and discards payload strings, records complete
+  line boundaries, and retains only fixed envelope state plus bounded
+  projection fields, source identity, and approved prefix length. It must not
+  buffer a complete record.
 - [ ] 3.2 Reserve `/agent/rollouts` and expose each valid retained Rollout as
   one read-only `/agent/rollouts/<rollout-id>` JSONL file while preserving
   numeric PID entries and `/agent/root`. Enforce append-only published Rollout
   backing: writers and the Host adapter may append but never overwrite or
   truncate a published prefix. Add a capped serializer that enforces fixed
   `MAX_ROLLOUT_RECORD_BYTES` for every record before storage submission and
-  stops without allocating a complete oversized payload. Serialize append
-  admission behind writer health; on every failed, timed-out, or ambiguous
-  submitted append, atomically poison the writer, close admission before the
-  caller or writer loop can accept another command, keep approved length
-  unchanged, and enter published-storage containment.
+  stops without allocating a complete oversized payload. Treat an over-cap
+  record as evidence-admission failure: poison the writer, close Agent Machine
+  effect admission, and enter staging or published-storage containment before
+  the caller can continue. Serialize append admission behind writer health; on
+  every failed, timed-out, or ambiguous submitted append, atomically poison the
+  writer, close admission before the caller or writer loop can accept another
+  command, keep approved length unchanged, and enter published-storage
+  containment.
   Fence a still-running append before quarantine and never submit a later
   ordinary record or `process_exit` through a poisoned writer. Build an
   in-memory discovery table by validating each retained source once at startup;
@@ -238,12 +243,12 @@
   Rollout-size limit or full-file allocation. Prove large valid Rollouts remain
   fully readable and startup scanning memory remains bounded independently of
   file length, without whole-prefix work per range read. Prove the whole-file
-  loader is not called, over-cap writer records are rejected before storage,
-  retained over-cap records are diagnosed and omitted, later active or
-  quarantined appends are not exposed, reopen can observe later complete
-  records, partial and ambiguous nonterminal append failures cannot be followed
-  by another record, tiny and out-of-range reads do not trigger a complete-
-  prefix scan,
+  loader is not called, over-cap writer records poison execution before later
+  Tool effects, and pre-cap loader-valid records larger than the writer cap are
+  streamed and preserved without rewrite. Prove later active or quarantined
+  appends are not exposed, reopen can observe later complete records, partial
+  and ambiguous nonterminal append failures cannot be followed by another
+  record, tiny and out-of-range reads do not trigger a complete-prefix scan,
   exact-cap reads succeed, cap-plus-one and `u32::MAX` in-process reads fail
   before allocation or I/O, overflow is rejected, concurrent reads through one
   fid remain bounded, ordinary Processes cannot exhaust renderer capacity,
@@ -253,10 +258,11 @@
 - [ ] 3.3 Isolate malformed Rollouts with diagnostics, accept recoverable torn
   tails only after earlier complete records pass envelope validation, and
   require exactly one leading `AgentMachineMeta` with no later metadata record.
-  Omit a retained Rollout whose streaming scanner encounters a record larger
-  than `MAX_ROLLOUT_RECORD_BYTES`. Permit at most one `process_exit`, require it
-  to be the final record with no later complete or torn bytes, and reject
-  conflicting exits or post-exit records.
+  Apply the writer record cap prospectively: accept a pre-cap over-limit record
+  when incremental validation proves it satisfied the former loader contract,
+  without rewriting or hiding it solely for migration. Permit at most one
+  `process_exit`, require it to be the final record with no later complete or
+  torn bytes, and reject conflicting exits or post-exit records.
   Validate that its `rollout_id` is nonempty, neither `.` nor `..`, contains
   neither `/`, NUL, carriage return, nor line feed, and is unique in the
   listing. Omit every entry in an ID collision rather than choosing one or

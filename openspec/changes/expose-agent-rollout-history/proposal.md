@@ -72,14 +72,17 @@ restart even though the execution evidence already exists.
   retained prefixes once while rebuilding discovery and advances active
   prefixes incrementally after owned appends. Serialize append admission and
   enforce a fixed per-record cap through a capped serializer before storage
-  submission. Poison the writer on any failed or ambiguous submitted append
-  before accepting another command; a poisoned writer enters containment and
-  cannot append a later record or `process_exit`. Rebuild discovery with a
-  fixed-chunk, single-record streaming scanner rather than the whole-file
-  loader or item vector, bounding startup memory independently of total Rollout
-  size. Each open captures the approved length on a pinned read-only source
-  descriptor. Because the owning Rollout writer may only append and never
-  overwrite or truncate a published prefix,
+  submission. An over-cap record poisons the writer and closes execution-effect
+  admission rather than silently dropping evidence. Poison the writer on any
+  failed or ambiguous submitted append before accepting another command; a
+  poisoned writer enters containment and cannot append a later record or
+  `process_exit`. Rebuild discovery with a fixed-chunk incremental JSON/SAX
+  scanner rather than the whole-file loader or item vector, bounding startup
+  memory independently of total Rollout and record size. Apply the writer cap
+  prospectively: stream and preserve existing pre-cap loader-valid large
+  records without rewriting them. Each open captures the approved length on a
+  pinned read-only source descriptor. Because the owning Rollout writer may
+  only append and never overwrite or truncate a published prefix,
   reads fetch only the requested range within that fixed length; later or
   quarantined appends are never exposed. A fixed service-side maximum rejects
   oversized read counts on in-process and imported paths before allocation or

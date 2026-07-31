@@ -58,14 +58,19 @@ durable authority or another execution identity.
 Append admission is serialized behind the writer's health state. A capped
 serializer enforces fixed `MAX_ROLLOUT_RECORD_BYTES` for every record before
 storage submission; it stops without allocating the complete oversized payload
-when the cap is crossed. Any failed, timed-out, or ambiguous submitted append
-poisons the writer and closes admission before the caller or writer loop can
-submit a later command, even if the failure may have happened before any bytes
-reached storage. The approved length remains unchanged, and published-storage
+when the cap is crossed. Crossing the cap is an evidence-admission failure: it
+poisons the writer, closes Agent Machine effect admission, and enters staging
+or published-storage containment before the caller or writer loop can continue.
+It cannot be logged and ignored while later Tool effects run.
+
+Any failed, timed-out, or ambiguous submitted append likewise poisons the
+writer and closes admission before the caller or writer loop can submit a later
+command, even if the failure may have happened before any bytes reached
+storage. The approved length remains unchanged, and published-storage
 containment fences the possibly running append before quarantine. A poisoned
-writer never attempts another ordinary record or `process_exit`, so a partial
-append stays a recoverable torn tail rather than becoming interior corruption.
-A complete record discovered during later recovery may still validate, but
+writer never attempts another ordinary record or `process_exit`, so missing or
+partial evidence cannot be followed by a misleading terminal envelope. A
+complete record discovered during later recovery may still validate, but
 failure to fence or quarantine is Host-fatal.
 
 Opening a Rollout file reserves its open slots and, under the discovery lock,
@@ -114,15 +119,20 @@ This read-path constraint is separate from the bounded Process-local
 publication generation used by terminal containment. The quota account belongs
 to the mounted capability handle and is not durable state.
 
-Startup validation does not reuse the current whole-file `load_history` path.
-It reads fixed-size chunks, frames at most one line in a buffer capped by
-`MAX_ROLLOUT_RECORD_BYTES`, validates and discards each record, and retains only
-fixed envelope state plus source identity and approved length. A record that
-crosses the cap invalidates that retained Rollout with a diagnostic. Startup
-therefore pays one O(prefix length) scan per source while memory remains bounded
-by the fixed chunk, record cap, and envelope state; active writers validate new
-records once; opens are constant-work captures; and reads are proportional to
-their requested ranges. The total Rollout has no file-size limit.
+Startup validation does not reuse the current whole-file `load_history` path
+and does not apply the new writer cap retroactively. It reads fixed-size chunks
+through an incremental JSON/SAX validator with the existing loader's syntax
+and nesting limits. The scanner streams and discards large payload strings,
+retains only fixed envelope state plus bounded projection fields needed for the
+entry ID, Process path, and terminal classification, and records complete line
+boundaries without buffering a complete record. Existing pre-cap records larger
+than `MAX_ROLLOUT_RECORD_BYTES` therefore remain discoverable when they satisfy
+the former loader contract; the service neither rewrites nor hides them merely
+to migrate the cap. Startup pays one O(prefix length) scan per source while
+memory remains bounded by the fixed chunk, parser state, and bounded projection
+fields; active writers validate new records once; opens are constant-work
+captures; and reads are proportional to their requested ranges. The total
+Rollout has no file-size limit.
 
 ### D3: Retained Rollouts remain the only durable discovery source
 

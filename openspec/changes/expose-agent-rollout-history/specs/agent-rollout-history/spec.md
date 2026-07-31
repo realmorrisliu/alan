@@ -23,8 +23,11 @@ The owning writer SHALL serialize append admission and track a poisoned state.
 Before storage submission, it SHALL serialize each record through a capped sink
 with a fixed service-owned `MAX_ROLLOUT_RECORD_BYTES`; exceeding that cap SHALL
 reject the record without allocating or submitting the complete oversized
-payload and without poisoning the writer. The cap SHALL apply to every record
-kind, including `AgentMachineMeta` and `process_exit`.
+payload, atomically poison the writer, close Agent Machine effect admission,
+and begin the applicable staging or published-storage containment before the
+caller or writer loop can continue. The cap SHALL apply to every record kind,
+including `AgentMachineMeta` and `process_exit`. An over-cap evidence record
+MUST NOT be logged and ignored while Tool or other external effects continue.
 
 Before any failed, timed-out, or ambiguous append returns control to its caller
 or the writer loop can accept another command, Agent Runtime Service SHALL
@@ -81,11 +84,22 @@ one fid. One holder SHALL NOT exhaust its corresponding pool.
 Alan SHALL NOT impose a Rollout-size limit or retain a full-file buffer. This
 representation SHALL keep all valid Rollouts readable with memory bounded
 independently of Rollout size. Startup discovery SHALL scan each source in
-fixed-size chunks, frame at most one record through a buffer bounded by
-`MAX_ROLLOUT_RECORD_BYTES`, validate and discard that record, and retain only
-fixed envelope state plus the source identity and approved prefix length. It
-SHALL NOT call a whole-file loader, retain a byte buffer or item vector
-proportional to the Rollout, or permit an over-cap record to remain valid.
+fixed-size chunks through an incremental JSON/SAX validator. The validator
+SHALL apply the existing loader's syntax and nesting limits, stream and discard
+unbounded payload strings, retain only fixed envelope state and bounded
+projection fields required for `rollout_id`, `process_path`, and terminal
+classification, and record each complete line boundary as an approved prefix.
+It SHALL NOT call a whole-file loader or retain a byte buffer, complete record,
+or item vector proportional to the Rollout or record length.
+
+`MAX_ROLLOUT_RECORD_BYTES` SHALL govern new writer admission only. Startup
+discovery SHALL continue to accept an existing record larger than that cap
+when the incremental validator proves it would have been valid under the
+pre-cap loader contract. Required projected metadata fields SHALL retain their
+existing safe-name and bounded service-field rules, but large message,
+turn-context, prompt, result, or other evidence payloads SHALL NOT be omitted
+merely because the new writer would reject creating them. Discovery SHALL NOT
+rewrite the retained Rollout or hide it solely to migrate the cap.
 This representation SHALL NOT introduce a history-read snapshot store, lease,
 generation, revocation protocol, or caller identity inside Agent Runtime
 Service. This constraint does not prohibit the bounded Process-local
@@ -176,9 +190,10 @@ SHALL belong to mounted capability handles and SHALL NOT be durable state.
 - **WHEN** a valid retained Rollout is larger than any bounded read scratch
   buffer
 - **THEN** startup validates its complete prefix with a fixed-chunk,
-  single-record scanner and the history fid exposes it over capped range reads
-- **AND** validation memory is bounded by the chunk size,
-  `MAX_ROLLOUT_RECORD_BYTES`, and fixed envelope state rather than file length
+  incremental JSON/SAX scanner and the history fid exposes it over capped range
+  reads
+- **AND** validation memory is bounded by chunk, parser, and bounded projection
+  state rather than record or file length
 - **AND** Agent Runtime Service does not call the whole-file Rollout loader or
   retain the complete item vector
 
@@ -187,10 +202,20 @@ SHALL belong to mounted capability handles and SHALL NOT be durable state.
   `MAX_ROLLOUT_RECORD_BYTES`
 - **THEN** capped serialization rejects it before storage submission without
   allocating the complete oversized payload
-- **AND** a retained source containing such a record is omitted with a
-  diagnostic during streaming startup validation
-- **AND** the total Rollout may still grow without a file-size limit through
-  any number of individually valid records
+- **AND** it poisons the writer, closes Agent Machine effect admission, and
+  enters containment before Tool or other external effects can continue
+- **AND** no later record or `process_exit` can create a terminal envelope that
+  silently omits the rejected evidence
+
+#### Scenario: A pre-cap Rollout contains a large valid record
+- **WHEN** startup scans an existing loader-valid record larger than
+  `MAX_ROLLOUT_RECORD_BYTES`
+- **THEN** incremental validation streams its payload without retaining the
+  complete record and preserves the Rollout in discovery
+- **AND** the new writer cap does not retroactively invalidate, rewrite, or
+  hide that evidence
+- **AND** the total Rollout may remain unlimited through any number of valid
+  records
 
 #### Scenario: Consumer reads a large Rollout in small ranges
 - **WHEN** a consumer reads an approved Rollout prefix through sequential small
