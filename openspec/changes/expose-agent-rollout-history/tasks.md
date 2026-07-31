@@ -136,7 +136,14 @@
   finalization. When a Rollout exists, append and durably sync terminal
   `process_exit` only while its serialized writer remains healthy; a poisoned
   writer skips terminal append and proceeds directly to published-storage
-  containment with the original failure. For clean no-producing-Rollout
+  containment with the original failure. Give the Process-scoped
+  `RuntimeController` a single-assignment failure latch registered before
+  Process control is reachable. Have the Agent Executable run future select it
+  against readiness and normal completion; writer poison returns the existing
+  nonzero runner failure so Kernel's ordinary runner-completion path submits
+  the terminal claim. Require proof of an existing terminal claim if the latch
+  receiver is closed; otherwise invoke Host-fatal rather than leave the Process
+  running. For clean no-producing-Rollout
   completion, treat successful
   runtime quiescence and shutdown as a normal non-storage disposition; first
   revoke and transfer any pending-open or staging lease to the bounded reaper,
@@ -151,6 +158,9 @@
   the runtime remains live, power loss after successful terminal sync
   preserving `process_exit`,
   controller-drop regression, active-transition cancellation,
+  oversized and partial-append poison waking a runner blocked on readiness or
+  normal completion, poison racing control and Host exit through one terminal
+  claim, closed-receiver proof/fatal behavior,
   `/proc/<pid>/ctl` exit during an active deferred action, deadlock-free barrier
   and fence completion, no post-exit append, and control exit code `130`.
 - [ ] 2.7 Bound Agent terminal finalization under one fixed absolute deadline
@@ -209,12 +219,12 @@
   `MAX_ROLLOUT_RECORD_BYTES` for every record before storage submission and
   stops without allocating a complete oversized payload. Treat an over-cap
   record as evidence-admission failure: poison the writer, close Agent Machine
-  effect admission, and enter staging or published-storage containment before
-  the caller can continue. Serialize append admission behind writer health; on
-  every failed, timed-out, or ambiguous submitted append, atomically poison the
-  writer, close admission before the caller or writer loop can accept another
-  command, keep approved length unchanged, and enter published-storage
-  containment.
+  effect admission, cancel in-flight actions, and signal the runtime failure
+  latch before the caller can continue. Serialize append admission behind
+  writer health; on every failed, timed-out, or ambiguous submitted append,
+  atomically poison the writer, close admission before the caller or writer loop
+  can accept another command, keep approved length unchanged, cancel in-flight
+  actions, and signal the same latch.
   Fence a still-running append before quarantine and never submit a later
   ordinary record or `process_exit` through a poisoned writer. Build an
   in-memory discovery table by validating each retained source once at startup;
@@ -243,9 +253,11 @@
   Rollout-size limit or full-file allocation. Prove large valid Rollouts remain
   fully readable and startup scanning memory remains bounded independently of
   file length, without whole-prefix work per range read. Prove the whole-file
-  loader is not called, over-cap writer records poison execution before later
-  Tool effects, and pre-cap loader-valid records larger than the writer cap are
-  streamed and preserved without rewrite. Prove later active or quarantined
+  loader is not called, over-cap writer records poison execution and make the
+  runner submit a terminal outcome before later Tool effects, and pre-cap
+  loader-valid records larger than the writer cap are streamed and preserved
+  without rewrite. Prove containment is finalizer-owned rather than completing
+  while `/proc/<pid>` stays running. Prove later active or quarantined
   appends are not exposed, reopen can observe later complete records, partial
   and ambiguous nonterminal append failures cannot be followed by another
   record, tiny and out-of-range reads do not trigger a complete-prefix scan,

@@ -59,19 +59,36 @@ Append admission is serialized behind the writer's health state. A capped
 serializer enforces fixed `MAX_ROLLOUT_RECORD_BYTES` for every record before
 storage submission; it stops without allocating the complete oversized payload
 when the cap is crossed. Crossing the cap is an evidence-admission failure: it
-poisons the writer, closes Agent Machine effect admission, and enters staging
-or published-storage containment before the caller or writer loop can continue.
-It cannot be logged and ignored while later Tool effects run.
+poisons the writer, closes Agent Machine effect admission, cancels in-flight
+runtime actions, and signals the Process-scoped runtime failure latch before
+the caller or writer loop can continue. It cannot be logged and ignored while
+later Tool effects run.
 
 Any failed, timed-out, or ambiguous submitted append likewise poisons the
 writer and closes admission before the caller or writer loop can submit a later
 command, even if the failure may have happened before any bytes reached
-storage. The approved length remains unchanged, and published-storage
-containment fences the possibly running append before quarantine. A poisoned
-writer never attempts another ordinary record or `process_exit`, so missing or
-partial evidence cannot be followed by a misleading terminal envelope. A
-complete record discovered during later recovery may still validate, but
-failure to fence or quarantine is Host-fatal.
+storage. The approved length remains unchanged; transition and Tool admission
+close, in-flight runtime actions are cancelled, and the same latch is signaled.
+A poisoned writer never attempts another ordinary record or `process_exit`, so
+missing or partial evidence cannot be followed by a misleading terminal
+envelope.
+
+The existing Process-scoped `RuntimeController` owns a single-assignment
+failure latch registered before the Process becomes controllable. The writer
+holds its sender, while the Agent Executable run future selects its receiver
+against readiness and normal completion. Poison wakes that future and makes it
+return the existing nonzero runner failure, so Kernel's ordinary runner-
+completion path submits the terminal claim. Control or Host exit can still win
+the same serialized claim. This introduces no second Process status or durable
+identity.
+
+Containment is then adopted by the winning terminal finalizer; the poison path
+cannot report successful quarantine, release the runtime owner, or leave the
+Process logically running before a terminal claim exists. The finalizer fences
+the possibly running append before quarantine. If the latch receiver is gone,
+Agent Runtime Service must observe that a terminal claim already exists or
+enter the Host-fatal path. A complete record discovered during later recovery
+may still validate, but failure to fence or quarantine is Host-fatal.
 
 Opening a Rollout file reserves its open slots and, under the discovery lock,
 captures a pinned read-only source descriptor plus the current approved length

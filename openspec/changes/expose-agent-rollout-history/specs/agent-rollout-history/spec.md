@@ -24,22 +24,39 @@ Before storage submission, it SHALL serialize each record through a capped sink
 with a fixed service-owned `MAX_ROLLOUT_RECORD_BYTES`; exceeding that cap SHALL
 reject the record without allocating or submitting the complete oversized
 payload, atomically poison the writer, close Agent Machine effect admission,
-and begin the applicable staging or published-storage containment before the
-caller or writer loop can continue. The cap SHALL apply to every record kind,
-including `AgentMachineMeta` and `process_exit`. An over-cap evidence record
-MUST NOT be logged and ignored while Tool or other external effects continue.
+and signal the Process-scoped runtime failure latch before the caller or writer
+loop can continue. The cap SHALL apply to every record kind, including
+`AgentMachineMeta` and `process_exit`. An over-cap evidence record MUST NOT be
+logged and ignored while Tool or other external effects continue.
 
 Before any failed, timed-out, or ambiguous append returns control to its caller
 or the writer loop can accept another command, Agent Runtime Service SHALL
 atomically poison the writer, close append admission, leave the approved length
-unchanged, and begin published-storage containment. This applies even when the
+unchanged, close Agent Machine transition and Tool admission, cancel in-flight
+runtime actions, and signal the same failure latch. This applies even when the
 failure may have occurred before writing bytes, because the Host result does
 not authorize another append. No later ordinary record or `process_exit` SHALL
-be submitted through a poisoned writer. Containment SHALL fence any
+be submitted through a poisoned writer.
+
+Before the Agent Process becomes controllable, the owning `RuntimeController`
+SHALL provide one Process-scoped, single-assignment failure latch to both the
+writer and Agent Executable run future. The run future SHALL select that latch
+against readiness and normal completion. On writer poison it SHALL promptly
+return the existing nonzero runner-failure outcome, causing Kernel's ordinary
+runner-completion path to compete for the one Process terminal claim. A
+simultaneous control or Host exit MAY win that same claim; no second Process
+state or Agent-specific Kernel transition SHALL be introduced.
+
+Storage containment SHALL be adopted by the winning terminal finalizer and
+SHALL NOT independently report success, release the runtime owner, or leave the
+Process running before a terminal claim exists. The finalizer SHALL fence any
 still-running append before quarantine; containment failure SHALL use the
-synchronously non-returning Host-fatal path. A complete record later found
-during recovery MAY be validated as retained evidence, but no new bytes may be
-placed after a possibly torn append.
+synchronously non-returning Host-fatal path. If the failure latch receiver has
+already closed, Agent Runtime Service SHALL require proof that a terminal claim
+already exists; otherwise it SHALL invoke the Host-fatal path rather than leave
+a poisoned Process running. A complete record later found during recovery MAY
+be validated as retained evidence, but no new bytes may be placed after a
+possibly torn append.
 
 Each successful open SHALL retain only a pinned read-only source descriptor and
 the current approved length. It SHALL reserve its handle and pool open slots
@@ -135,8 +152,11 @@ SHALL belong to mounted capability handles and SHALL NOT be durable state.
 - **AND** the approved length does not advance
 - **AND** no later ordinary record or `process_exit` is appended after the
   possibly torn bytes
-- **AND** containment fences the append owner and quarantines the inode before
-  releasing Kernel, or enters the non-returning Host-fatal path
+- **AND** the failure latch wakes the Agent Executable run future, whose
+  nonzero return enters Kernel's ordinary terminal-claim path
+- **AND** the winning finalizer adopts containment, fences the append owner, and
+  quarantines the inode before releasing Kernel, or enters the non-returning
+  Host-fatal path
 
 #### Scenario: History opens reach the service limit
 - **WHEN** another in-flight or retained history open would exceed its handle
@@ -203,7 +223,10 @@ SHALL belong to mounted capability handles and SHALL NOT be durable state.
 - **THEN** capped serialization rejects it before storage submission without
   allocating the complete oversized payload
 - **AND** it poisons the writer, closes Agent Machine effect admission, and
-  enters containment before Tool or other external effects can continue
+  signals the runtime failure latch before Tool or other external effects can
+  continue
+- **AND** the Agent Executable runner returns a nonzero failure so Kernel owns
+  the terminal transition and finalizer-driven containment
 - **AND** no later record or `process_exit` can create a terminal envelope that
   silently omits the rejected evidence
 
