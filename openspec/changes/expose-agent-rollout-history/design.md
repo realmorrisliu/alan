@@ -99,11 +99,13 @@ with a producing-Rollout context, or with an explicit no-producing-Rollout
 outcome. A drop guard or equivalent total-exit mechanism prevents channel
 closure from being misread as the latter.
 
-Rollout creation transfers the backing inode and writer containment owner into
-that pending context immediately after file creation and before the initial
-`AgentMachineMeta` flush. Metadata and runtime ownership resolve later, but
-control or deadline expiry during the first flush can already close and
-quarantine the inode.
+Rollout creation starts at an internal quarantine/staging path, never at the
+discoverable path. The intended path and independently cancellable creation
+owner are registered before awaiting Host file creation. After creation, the
+writer owner enters the pending terminal context before the initial
+`AgentMachineMeta` flush. Only a successful initial flush atomically renames
+the same inode into the discoverable subtree. Cancellation or deadline expiry
+at any earlier point can leave bytes only under quarantine.
 
 Preparation first applies the same committed-namespace executable eligibility
 check as `SystemProcessRunner::run`. An invocation whose `/bin/alan-agent`
@@ -275,10 +277,12 @@ whose ID was absent from the pre-spawn listing and whose `process_path` is
 `/proc/<pid>`. Before acknowledgment, it reads `/proc/host/boot_id` again and
 requires the same value.
 
-Agent Runtime Service completes quarantine recovery before exposing either
-`/agent/rollouts` or `/mnt/agent-runtime/clone`. It does not republish recovered
-Rollouts while launch handshakes are possible, so a hidden prior-boot Rollout
-cannot appear between the pre-spawn snapshot and acknowledgment.
+Agent Runtime Service completes prior-boot quarantine recovery before exposing
+either `/agent/rollouts` or `/mnt/agent-runtime/clone`. A Rollout quarantined
+during the current boot is not republished online; it waits for the next
+service start. Recovery therefore never inserts a hidden Rollout during a
+launch handshake. This exceptional delay is preferred to another generation
+field or acknowledgment protocol.
 
 That existing Rollout metadata is the file-visible acknowledgment: no Host
 rollout path, internal `RuntimeStartupMetadata`, acknowledgment side API, or

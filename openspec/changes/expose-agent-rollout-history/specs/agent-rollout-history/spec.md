@@ -71,10 +71,12 @@ resolve the barrier exactly once with either a producing-Rollout context or an
 explicit no-producing-Rollout outcome; an absent or dropped resolution SHALL
 NOT be treated as no Rollout.
 
-Immediately after creating a Rollout backing file and writer, and before the
-initial `AgentMachineMeta` flush, Agent Runtime Service SHALL register their
-containment owner in the pending terminal context. Control or deadline expiry
-during that initial flush SHALL be able to close and quarantine the inode.
+Agent Runtime Service SHALL create a Rollout at an internal staging path and
+register an independently cancellable creation owner before awaiting the Host
+open. It SHALL register writer containment before the initial
+`AgentMachineMeta` flush and SHALL atomically publish the inode into the
+discoverable subtree only after that flush succeeds. Cancellation or deadline
+expiry before publication SHALL leave no discoverable backing file.
 
 System Process runner SHALL apply the same committed-namespace executable
 eligibility check during terminal preparation as it applies before dispatch in
@@ -381,8 +383,9 @@ This acknowledgment SHALL NOT expose a Host rollout path, require internal
 metadata file.
 
 Agent Runtime Service SHALL complete quarantine recovery before exposing
-`/agent/rollouts` or `/mnt/agent-runtime/clone` and SHALL NOT republish
-recovered Rollouts while launch handshakes are possible.
+`/agent/rollouts` or `/mnt/agent-runtime/clone`. A Rollout quarantined during
+the current boot SHALL remain hidden until the next service start; recovery
+SHALL NOT republish Rollouts while launch handshakes are possible.
 
 #### Scenario: Strict-durability launch creates its Rollout
 - **WHEN** a caller pins the current boot identity, lists current Rollout IDs,
@@ -402,11 +405,18 @@ recovered Rollouts while launch handshakes are possible.
   backing inode
 - **AND** Kernel does not release a discoverable stale writer
 
+#### Scenario: Backing-file creation outlives cancellation
+- **WHEN** cancellation or the deadline fires while Host file creation is
+  still pending and the open later completes
+- **THEN** the file exists only under the internal staging path
+- **AND** no empty orphan appears in the discoverable Rollout subtree
+
 #### Scenario: Recovery precedes launch correlation
 - **WHEN** Agent Runtime Service starts with quarantined Rollouts
 - **THEN** it finishes recovery before exposing discovery or clone capability
 - **AND** no recovered prior-boot Rollout can appear between a pre-spawn
   listing and launch acknowledgment
+- **AND** current-boot quarantine waits for the next service start
 
 #### Scenario: Strict-durability launch cannot create a Rollout
 - **WHEN** the Process exits before `/agent/rollouts` exposes a valid new

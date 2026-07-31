@@ -57,9 +57,11 @@
   `RuntimeHandle` alone is insufficient. Keep any eventual
   `AgentExecutableResult` only in the candidate runner outcome. Prove control
   during the delivery window and failure after Rollout creation but before
-  readiness still finalize correctly. Register backing-inode and writer
-  containment ownership immediately after file creation and before the initial
-  metadata flush; test control and deadline expiry while that flush stalls,
+  readiness still finalize correctly. Create at an internal staging path,
+  register an independently cancellable creation owner before awaiting open,
+  register writer containment before the initial metadata flush, and atomically
+  publish only after that flush succeeds. Test cancellation during open and
+  control or deadline expiry while the initial flush stalls,
   without an Engine-to-Service dependency, file, Host API, durable identity, or
   absent-resolution fallback.
 - [ ] 2.5 Apply the same committed-namespace executable eligibility check in
@@ -122,8 +124,9 @@
 - [ ] 3.4 Test discovery of active, terminal, and unterminated Rollouts across
   Process exit and Agent Runtime Service restart.
 - [ ] 3.5 Complete quarantine recovery before exposing `/agent/rollouts` or
-  `/mnt/agent-runtime/clone`; prove recovered prior-boot Rollouts cannot appear
-  during a launch-correlation handshake.
+  `/mnt/agent-runtime/clone`; defer current-boot quarantine recovery until the
+  next service start, and prove no recovered Rollout can appear during a
+  launch-correlation handshake.
 - [ ] 3.6 Test that `/agent` holders can read but not mutate Rollouts and that
   Processes without the `/agent` mount have no fallback access.
 
