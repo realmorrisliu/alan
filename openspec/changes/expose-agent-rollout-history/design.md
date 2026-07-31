@@ -46,6 +46,16 @@ Process views, and `/agent/root` remains the Root Agent Process alias.
 `/srv/agent-runtime` remains only the service-handle rendezvous and does not
 become a state tree.
 
+Opening a Rollout file copies its validation-approved complete JSONL prefix
+into a service-owned immutable read buffer. The resulting aP fid never retains
+the Host backing inode and does not change as the active Rollout grows; a
+consumer reopens the path to observe later records. Snapshot creation and
+removal of an entry from discovery are ordered by the same Agent Runtime
+Service lock. An open therefore either captures the last approved prefix
+before removal or fails after removal, while an already-open fid remains
+isolated from subsequent Host I/O. This uses ordinary file-open semantics and
+adds no lease, generation, or revocation protocol.
+
 ### D3: Retained Rollouts remain the only durable discovery source
 
 Agent Runtime Service reconstructs `/agent/rollouts` by enumerating and
@@ -169,9 +179,11 @@ On an append error, flush error, or persistence-cutoff expiry at any stage,
 Agent Runtime Service emits a structured diagnostic containing the PID,
 available Rollout ID, intended exit code, failed stage, and storage error or
 timeout. It cancels the logical writer and runtime owners without awaiting
-stuck Host I/O, then uses the reserved interval to atomically rename the
-current backing inode out of the discoverable subtree before returning control
-to Kernel. Already-submitted Host I/O retains only the quarantined inode.
+stuck Host I/O, removes the entry from discovery under the snapshot-open lock,
+then uses the reserved interval to atomically rename the current backing inode
+out of the discoverable subtree before returning control to Kernel.
+Already-submitted Host I/O retains only the quarantined inode, while existing
+history fids retain only their immutable pre-removal snapshots.
 Quarantine has no user-visible identity or status and is not listed. Recovery
 waits until no writer owner remains, revalidates the complete envelope, and may
 atomically republish the same Rollout ID.

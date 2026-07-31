@@ -44,8 +44,10 @@ restart even though the execution evidence already exists.
 - Create Rollouts under internal staging, publish only after the initial
   metadata flush, and recover quarantine only at service startup before
   exposing discovery or clone capability.
-- Expose each retained Rollout as its existing JSONL record at the read-only
-  `/agent/rollouts/<rollout-id>` file path. The surface remains available
+- Expose each retained Rollout at the read-only
+  `/agent/rollouts/<rollout-id>` file path. Each open receives a service-owned
+  immutable snapshot of the existing JSONL records rather than a Host backing
+  handle; reopening observes later records. The surface remains available
   after Process exit and Host restart.
 - Include active, terminal, and valid unterminated Rollouts; presentation may
   prioritize terminal entries but discovery does not hide retained evidence.

@@ -91,9 +91,10 @@
   quiescence, writer fence, and terminal append/flush work at the earlier
   persistence cutoff. On error or timeout, emit a structured
   PID/Rollout/exit-code/stage diagnostic, cancel logical writer and runtime
-  owners without awaiting stuck Host I/O, atomically quarantine the backing
-  inode within the reserved interval before Kernel may publish exit, and
-  perform bounded cleanup. If containment errors or reaches the absolute
+  owners without awaiting stuck Host I/O, remove the entry under the
+  snapshot-open lock, atomically quarantine the backing inode within the
+  reserved interval before Kernel may publish exit, and perform bounded
+  cleanup. If containment errors or reaches the absolute
   deadline, stop accepting work and enter Host-fatal termination without
   awaiting the stuck operation or publishing Process exit. Recover only after
   ownership ends and validation succeeds under the same Rollout ID. Test
@@ -113,7 +114,12 @@
   history index.
 - [ ] 3.2 Reserve `/agent/rollouts` and expose each valid retained Rollout as
   one read-only `/agent/rollouts/<rollout-id>` JSONL file while preserving
-  numeric PID entries and `/agent/root`.
+  numeric PID entries and `/agent/root`. Materialize each open as a
+  service-owned immutable snapshot of the validation-approved complete prefix;
+  never retain the Host backing inode in an aP fid. Order snapshot open and
+  discovery removal under one lock, and prove an existing fid cannot observe
+  later active writes or quarantined stale I/O while reopen can observe later
+  complete records.
 - [ ] 3.3 Isolate malformed Rollouts with diagnostics, accept recoverable torn
   tails only after earlier complete records pass envelope validation, and
   require exactly one leading `AgentMachineMeta` with no later metadata record.

@@ -10,6 +10,14 @@ records without a directory wrapper or parallel metadata projection. The
 surface SHALL remain reconstructible after Agent Process exit and Alan OS Host
 restart without exposing a raw System Store path.
 
+Each successful open SHALL receive a service-owned immutable snapshot of the
+validation-approved complete JSONL prefix. An open fid SHALL NOT retain or
+forward reads to the Host backing inode. The snapshot SHALL remain unchanged
+while the fid is open; reopening the path SHALL create a new snapshot and MAY
+observe later complete records. Agent Runtime Service SHALL order snapshot
+creation and removal from discovery under the same lock, without introducing a
+lease, generation, or revocation protocol.
+
 #### Scenario: Consumer lists Rollouts after Host restart
 - **WHEN** an authorized consumer lists `/agent/rollouts` after Alan OS Host
   restart
@@ -22,6 +30,12 @@ restart without exposing a raw System Store path.
 - **THEN** it reads the existing ordered Rollout JSONL records from one file
 - **AND** it does not need to reconcile separate metadata, status, result, or
   evidence files
+
+#### Scenario: Active Rollout grows after open
+- **WHEN** an active Rollout appends a complete record after a consumer opens
+  its history file
+- **THEN** the existing fid remains an immutable snapshot
+- **AND** reopening the path may expose the later complete record
 
 #### Scenario: Consumer attempts to mutate history
 - **WHEN** a consumer opens `/agent/rollouts` or one of its descendants for
@@ -110,15 +124,16 @@ after an ambiguous flush result.
 On error or persistence-cutoff expiry at any stage, Agent Runtime Service SHALL
 emit a structured diagnostic containing the PID, available Rollout ID,
 intended exit code, failed stage, and failure; cancel the logical writer and
-runtime owners without awaiting stuck Host I/O; and atomically move the current
-backing inode out of the discoverable subtree into internal quarantine during
-the reserved interval. Only after successful containment SHALL it perform
-bounded cleanup and release terminal finalization so Alan Kernel can publish
-the authoritative Process exit. Already-submitted Host I/O SHALL retain only
-the quarantined inode. Recovery SHALL wait until no writer owner remains,
-validate the complete Rollout envelope, and MAY atomically republish the same
-Rollout ID. Quarantine SHALL NOT be exposed as a Rollout, status, or execution
-identity.
+runtime owners without awaiting stuck Host I/O; remove the entry from discovery
+under the snapshot-open lock; and atomically move the current backing inode out
+of the discoverable subtree into internal quarantine during the reserved
+interval. Only after successful containment SHALL it perform bounded cleanup
+and release terminal finalization so Alan Kernel can publish the authoritative
+Process exit. Already-submitted Host I/O SHALL retain only the quarantined
+inode; every existing history fid SHALL retain only its immutable pre-removal
+snapshot. Recovery SHALL wait until no writer owner remains, validate the
+complete Rollout envelope, and MAY atomically republish the same Rollout ID.
+Quarantine SHALL NOT be exposed as a Rollout, status, or execution identity.
 
 If containment returns an error or has not returned when the absolute deadline
 expires, the Host SHALL enter a fatal storage-integrity transition, stop
@@ -245,6 +260,14 @@ state and SHALL NOT create a durable identity or terminal status model.
 - **AND** it stops accepting work and terminates
 - **AND** Kernel does not publish the Process exit or continue the Host with a
   discoverable stale writer
+
+#### Scenario: History fid remains open during quarantine
+- **WHEN** a consumer opened a Rollout history file before terminal containment
+- **THEN** containment removes the entry from discovery before releasing Kernel
+- **AND** the existing fid continues reading only its immutable pre-removal
+  snapshot
+- **AND** stale Host I/O against the quarantined inode is not visible through
+  that fid
 
 ### Requirement: Rollout history follows the `/agent` namespace capability
 A Process whose namespace includes readable `/agent` SHALL be able to read
