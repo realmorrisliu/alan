@@ -158,21 +158,32 @@ exposed as a file or Host API nor promoted into another execution identity.
 
 The writer fence orders producers; it does not make storage infallible, and it
 cannot overtake an earlier writer operation stuck in storage I/O. One fixed
-internal deadline therefore bounds the entire Agent terminal finalization from
-startup/context-barrier cancellation through quiescence, writer fence, and the
-single terminal append-and-flush attempt. The finalizer does not retry because
-an ambiguous flush result could otherwise duplicate `process_exit`. On an
-append error, flush error, or deadline expiry at any stage, Agent Runtime
-Service emits a structured diagnostic containing the PID, available Rollout
-ID, intended exit code, failed stage, and storage error or timeout. It forcibly
-aborts and closes the writer and runtime owners and atomically renames the
+internal absolute deadline bounds Agent terminal finalization, but persistence
+does not own that whole budget. A fixed final interval is reserved for
+containment, so startup/context-barrier cancellation, quiescence, the writer
+fence, and the single terminal append-and-flush attempt share an earlier
+persistence cutoff. The finalizer does not retry because an ambiguous flush
+result could otherwise duplicate `process_exit`.
+
+On an append error, flush error, or persistence-cutoff expiry at any stage,
+Agent Runtime Service emits a structured diagnostic containing the PID,
+available Rollout ID, intended exit code, failed stage, and storage error or
+timeout. It cancels the logical writer and runtime owners without awaiting
+stuck Host I/O, then uses the reserved interval to atomically rename the
 current backing inode out of the discoverable subtree before returning control
 to Kernel. Already-submitted Host I/O retains only the quarantined inode.
 Quarantine has no user-visible identity or status and is not listed. Recovery
 waits until no writer owner remains, revalidates the complete envelope, and may
-atomically republish the same Rollout ID. Failure to contain the inode is a
-Host-fatal storage-integrity failure, not permission to publish exit with a
-discoverable stale writer. This adds no second execution identity.
+atomically republish the same Rollout ID.
+
+If the containment operation errors or has not returned when the absolute
+deadline expires, the Host commits a fatal storage-integrity transition: it
+stops accepting work and terminates without awaiting the stuck operation.
+Kernel does not publish that Process exit and the Host does not continue with
+a discoverable stale writer. Thus the ordinary successful-containment path
+can publish exit and complete bounded cleanup, while containment failure has a
+separately bounded Host-fatal outcome rather than an unbounded rename. This
+adds no second execution identity.
 
 ### D5: Read authority follows the existing `/agent` capability
 

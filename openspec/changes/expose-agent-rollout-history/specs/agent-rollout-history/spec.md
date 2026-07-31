@@ -101,32 +101,39 @@ request quiescence of both ordinary transitions and deferred runtime actions.
 Quiescence SHALL cancel or drain every such producer and await a writer fence
 proving that none can append another Rollout record before finalization appends
 `process_exit`; no Rollout record may be appended after `process_exit`. One
-fixed internal deadline SHALL bound the entire Agent terminal finalization,
-including context-barrier wait, quiescence, writer fence, and the single
-terminal append-and-flush attempt. The attempt SHALL NOT be retried after an
-ambiguous flush result. On error or timeout at any stage, Agent Runtime Service
-SHALL emit a structured diagnostic containing the PID, available Rollout ID,
-intended exit code, failed stage, and failure; forcibly abort and close the
-writer and runtime owners so no timed-out operation can append later; perform
-bounded cleanup; and release terminal finalization so Alan Kernel can publish
-the authoritative Process exit. A complete valid `process_exit` that reached
-the file SHALL remain authoritative even if the append or flush result was
-ambiguous. If no complete terminal record is discoverable, the Rollout SHALL
-remain unterminated or recoverably torn evidence; failure SHALL NOT fabricate
-terminal evidence.
-Before releasing finalization after a deadline, Agent Runtime Service SHALL
-atomically move the current backing inode out of the discoverable subtree into
-internal quarantine. Already-submitted Host I/O SHALL retain only that
-quarantined inode. Recovery SHALL wait until no writer owner remains, validate
-the complete Rollout envelope, and MAY atomically republish the same Rollout
-ID. Quarantine SHALL NOT be exposed as a Rollout, status, or execution identity.
-Failure to contain the inode SHALL be Host-fatal rather than allow Kernel to
-publish exit while a stale writer can mutate a discoverable Rollout.
+fixed internal absolute deadline SHALL bound Agent terminal finalization and
+SHALL reserve a fixed final interval for containment. Context-barrier wait,
+quiescence, writer fence, and the single terminal append-and-flush attempt
+SHALL stop at the earlier persistence cutoff. The attempt SHALL NOT be retried
+after an ambiguous flush result.
+
+On error or persistence-cutoff expiry at any stage, Agent Runtime Service SHALL
+emit a structured diagnostic containing the PID, available Rollout ID,
+intended exit code, failed stage, and failure; cancel the logical writer and
+runtime owners without awaiting stuck Host I/O; and atomically move the current
+backing inode out of the discoverable subtree into internal quarantine during
+the reserved interval. Only after successful containment SHALL it perform
+bounded cleanup and release terminal finalization so Alan Kernel can publish
+the authoritative Process exit. Already-submitted Host I/O SHALL retain only
+the quarantined inode. Recovery SHALL wait until no writer owner remains,
+validate the complete Rollout envelope, and MAY atomically republish the same
+Rollout ID. Quarantine SHALL NOT be exposed as a Rollout, status, or execution
+identity.
+
+If containment returns an error or has not returned when the absolute deadline
+expires, the Host SHALL enter a fatal storage-integrity transition, stop
+accepting work, and terminate without awaiting the containment operation.
+Kernel SHALL NOT publish the Process exit or continue the Host while a stale
+writer can mutate a discoverable Rollout. A complete valid `process_exit` that
+reached the file SHALL remain authoritative even if the append or flush result
+was ambiguous. If no complete terminal record is discoverable, the Rollout
+SHALL remain unterminated or recoverably torn evidence; failure SHALL NOT
+fabricate terminal evidence.
 Finalization SHALL release the runtime-task owner and perform Process cleanup
 only after `process_exit` is flushed or this bounded persistence-failure path
-has closed the writer. The barrier and its outcomes SHALL remain internal,
-Process-local synchronization state and SHALL NOT create a durable identity or
-terminal status model.
+has cancelled the writer and successfully contained its backing inode. The
+barrier and its outcomes SHALL remain internal, Process-local synchronization
+state and SHALL NOT create a durable identity or terminal status model.
 
 #### Scenario: Agent Executable completes with a terminal result
 - **WHEN** an Agent Process publishes an `AgentExecutableResult` and exits
@@ -209,11 +216,12 @@ terminal status model.
 
 #### Scenario: Terminal persistence cannot flush
 - **WHEN** appending or flushing `process_exit` returns an I/O error or exceeds
-  the terminal persistence deadline
+  the persistence cutoff that reserves time for containment
 - **THEN** Agent Runtime Service stops the write attempt without retrying an
   ambiguous result and emits a structured diagnostic
 - **AND** no writer appends another Rollout record
-- **AND** runtime and Process cleanup complete
+- **AND** it uses the reserved interval to quarantine the backing inode
+- **AND** after successful containment, runtime and Process cleanup complete
 - **AND** Alan Kernel publishes the authoritative exit instead of leaving the
   Process running or blocking Host shutdown
 - **AND** discovery treats a complete valid `process_exit` that reached the
@@ -223,12 +231,20 @@ terminal status model.
 #### Scenario: An earlier writer blocks the terminal fence
 - **WHEN** a prior Rollout write or flush remains stuck in storage I/O while
   terminal finalization waits for its writer fence
-- **THEN** the whole-finalization deadline expires without waiting forever
-- **AND** Agent Runtime Service forcibly aborts and closes the writer and
-  runtime owners
+- **THEN** the persistence cutoff expires while containment time remains
+- **AND** Agent Runtime Service cancels the logical writer and runtime owners
+  without awaiting the stuck Host I/O
 - **AND** it atomically quarantines the backing inode before releasing Kernel
 - **AND** stale Host I/O can modify only the quarantined inode
 - **AND** Alan Kernel can publish exit and Host shutdown can progress
+
+#### Scenario: Quarantine blocks in failing storage
+- **WHEN** containment has not returned by the absolute finalization deadline
+- **THEN** the Host enters a fatal storage-integrity transition without
+  awaiting the stuck quarantine operation
+- **AND** it stops accepting work and terminates
+- **AND** Kernel does not publish the Process exit or continue the Host with a
+  discoverable stale writer
 
 ### Requirement: Rollout history follows the `/agent` namespace capability
 A Process whose namespace includes readable `/agent` SHALL be able to read

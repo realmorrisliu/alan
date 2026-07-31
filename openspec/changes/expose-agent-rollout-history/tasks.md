@@ -86,17 +86,21 @@
   controller-drop regression, active-transition cancellation,
   `/proc/<pid>/ctl` exit during an active deferred action, deadlock-free barrier
   and fence completion, no post-exit append, and control exit code `130`.
-- [ ] 2.7 Bound the entire Agent terminal finalization—context barrier,
-  quiescence, writer fence, and terminal append/flush—under one fixed internal
-  deadline. On error or timeout at any stage, emit a structured
-  PID/Rollout/exit-code/stage diagnostic, forcibly abort and close writer and
-  runtime owners, atomically quarantine the backing inode before Kernel may
-  publish exit, and perform bounded cleanup. Recover only after ownership ends
-  and validation succeeds under the same Rollout ID. Test
+- [ ] 2.7 Bound Agent terminal finalization under one fixed absolute deadline
+  while reserving its final interval for containment. Stop context barrier,
+  quiescence, writer fence, and terminal append/flush work at the earlier
+  persistence cutoff. On error or timeout, emit a structured
+  PID/Rollout/exit-code/stage diagnostic, cancel logical writer and runtime
+  owners without awaiting stuck Host I/O, atomically quarantine the backing
+  inode within the reserved interval before Kernel may publish exit, and
+  perform bounded cleanup. If containment errors or reaches the absolute
+  deadline, stop accepting work and enter Host-fatal termination without
+  awaiting the stuck operation or publishing Process exit. Recover only after
+  ownership ends and validation succeeds under the same Rollout ID. Test
   an earlier stuck writer blocking the fence, disk-full/flush-error, timeout,
   ambiguous-flush no-retry, a complete record surviving an error, absent/torn
   outcomes, stale I/O affecting only quarantine, containment failure as
-  Host-fatal, cleanup, and Host-shutdown progress.
+  bounded Host-fatal termination, cleanup, and Host-shutdown progress.
 - [ ] 2.8 Preserve Rollouts without `process_exit` as unterminated evidence
   without fabricating a result. Treat any discovered complete valid
   `process_exit` as authoritative even when its original flush reported an

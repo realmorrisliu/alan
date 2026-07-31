@@ -11,12 +11,16 @@ restart even though the execution evidence already exists.
   clean runtime cleanup. On success it carries the authoritative numeric exit
   code and, when available, the existing `AgentExecutableResult`; it does not
   introduce another terminal status model.
-- Bound the entire Agent terminal finalization—including the context barrier,
-  quiescence, writer fence, and terminal append-and-flush—with one internal
-  deadline. On persistence error or timeout, force-close the writer and runtime
-  owners and atomically quarantine the backing inode before releasing
-  finalization, so stale Host I/O cannot later mutate the discoverable tree.
-  Recovery may republish only after ownership ends and validation succeeds.
+- Bound Agent terminal finalization with one internal absolute deadline while
+  reserving its final interval for containment. Context-barrier, quiescence,
+  writer-fence, and terminal-persistence work stops at the earlier persistence
+  cutoff. On error or timeout, cancel the logical writer and runtime owners
+  without awaiting stuck Host I/O and use the reserved interval to atomically
+  quarantine the backing inode before releasing finalization. If containment
+  itself does not return
+  by the absolute deadline, enter a Host-fatal storage-integrity transition
+  without awaiting the stuck operation or continuing the Host. Recovery may
+  republish only after ownership ends and validation succeeds.
 - Extend the generic Process runner bridge with a prepared terminal
   finalization hook. Alan Kernel asks the runner to prepare the per-Process
   hook before the committed Process becomes controllable, invokes it exactly
