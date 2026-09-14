@@ -85,7 +85,7 @@ axum = "0.8"
 chrono = { version = "0.4", features = ["serde"] }
 
 # Home directory detection
-dirs = "6.0"
+dirs = "7.0"
 
 # Terminal utilities
 textwrap = "0.16"
