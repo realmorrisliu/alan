@@ -13,7 +13,8 @@ change 的 disposition 为准。不要重新执行已取消的 macOS 计划。
 
 ### A. 桌面代码退役与独立 CLI/Host 分发
 
-归属：下一轮建立独立退役 change；本次不创建未经消费者审计的删除方案。
+归属：建议新建 `retire-macos-client-and-standalone-cli`，目前尚未创建。
+本次不创建未经消费者审计的删除方案。
 ADR-0054 已完成产品方向退役，**源代码、构建和发布配置尚未移除**。
 
 - [ ] A1 盘点 Apple 客户端、shell-core/FFI、构建、CI、安装及发布入口的实际消费者，逐项标明删除、保留或迁移；不能因目录名称含 Apple 就整批删除。
@@ -50,13 +51,115 @@ ADR-0054 已完成产品方向退役，**源代码、构建和发布配置尚未
 ### D. 有测量的 Jev 与 Herdr 纵向闭环
 
 依赖：B 的类型/证据合同；终端闭环还依赖 C 的真实执行与 IO 路径。
-归属：Jev 用本 change 的实施及验收 tasks；终端体验由 C 的 changes 承接。
+归属：本 change 交付共享能力与 Machine 合同后，建议新建
+`add-jev-evaluation-adapter`（尚未创建），承接具体适配器和真实任务测量；
+终端体验由 C 的 changes 承接，不重复建设运行时或 Connection 框架。
 
 - [ ] D1 将 B1 场景落实为 shadow evaluation → 受控启用的实施方案，覆盖 no-match、格式错误、超时、不可用、取消及有界 generation fallback。
 - [ ] D2 在测量前确定正确动作率、错误自动执行率、升级率、端到端 p50/p95 延迟和成本的通过标准；不足时允许维持确定性或生成基线，不预设必须上线 Jev。
 - [ ] D3 完成普通终端兼容后，评估是否还有 Herdr 原生识别/通知需求；仅在有实证缺口时另立薄集成切片，不将 Alan kind 或插件系统作为前置条件。
 
 规划出口：场景、基线、通过标准与回退策略可验证；不把模型宣传延迟当作产品验收。
+
+## Step by step：应提交哪些 changes
+
+顺序是主线交付顺序，不要求在设计阶段停止一切独立调查。每一步只激活当期
+切片；后续新 change 的名字是建议，不表示目录或完整方案已经存在。
+
+### Step 0 — 已完成：架构基线与旧计划收口
+
+- Change：`close-architecture-review-baseline`，实现已合并于 #921，本轮归档。
+- 已完成：ADR-0054/0055、指南纠偏、13 个旧计划的处置、5 组 canonical 修正。
+- 参考：`architecture-review.md`（问题与源码证据）、`research-jev-and-fx.md`
+  （外部调研）、归档 change 的 `disposition.md` / `verification.md`。
+- 未完成的运行功能不计入此步：源代码删除、typed evaluation、Shell 改线、Jev 和 Herdr 验收。
+
+### Step 1 — 新建 retire-macos-client-and-standalone-cli
+
+- 工作：完成 A 的消费者清单，再移除批准范围内的桌面产品代码/构建/发布义务；
+  保留或迁移仍被 CLI/Host 使用的平台能力，提供独立安装入口。
+- 参考 ADR：0054、0032（Host/boot）、0044（channel lifetime）、0050（mount grants）、0051（secrets）。
+- 审核并按实际影响写 deltas：`alan-app-distribution`、`alan-os-host-lifecycle`、
+  `host-command-plane`、`provider-connection-contract`、`host-directory-mounts`、
+  `os-sandbox-enforcement`，以及受删除范围影响的 `macos-*`、`shell-core-*`、
+  `shell-workspace-core-contract`。不是批量删除所有 macOS 规范。
+- 源码入口：`clients/apple/`、`crates/shell-core/`、`crates/shell-core-ffi/`、
+  `crates/alan/`、`crates/os-host/`，以及实际引用它们的 Just/CI/安装脚本。
+- 完成证据：独立 CLI 安装/启动验证、存续凭据/挂载/sandbox 回归、workspace 与
+  required CI 通过；无法证明安全接替的适配器留存，而非强行删除。
+
+### Step 2 — 重写并激活 add-cognitive-model-routing 的最小核心切片
+
+- 工作：完成 B，先用确定性代码与可控 fixtures 证明 typed evaluation/generation、
+  状态推进及恢复；不让真实 Jev 网络接入成为验证状态机的前提。
+- 参考 ADR：0055、0024/0025（内核/依赖）、0019（证据）、0022（Agent 治理）、0051。
+- 参考本 change：`proposal.md`、`design.md`、`tasks.md`；旧的两个生成式子 Agent
+  路由方案不再适用。当前 deltas 还不齐全，必须补齐后才能实施。
+- Owning specs：`llm-file-server`、`provider-connection-contract`、
+  `provider-request-controls`、`agent-namespace-runtime`、`agent-file-layout-contract`、
+  `evidence-retention-and-projection`、`runtime-harness-contract`；按场景复核
+  `sandbox-autonomy-invariants`，不改变 Kernel 对 Agent 的无感知边界。
+- 源码入口：`crates/agent-engine/src/agent_machine.rs`、`agent_machine/`、
+  `rollout.rs` / `rollout/`、`crates/agentfs/`、`crates/llmfs/`、`crates/llm/`。
+- 完成证据：结构化成功、no-match、wait/resume、取消、故障恢复和 Unknown
+  副作用都有测试；不以自然语言结束或 text Tape 根替代完整状态证明。
+
+### Step 3 — 重切 define-alan-programmable-client-surface
+
+- 工作：只激活 Shell evaluator / runner / 增量 IO / Local Entry 有界生命周期切片。
+  旧 change 中更大的 editfs UI、脚本能力和 executable packaging 保持延后。
+- 参考 ADR：0036、0038、0039、0045、0048、0049；参考审查 F4–F6。
+- Owning specs：`alan-shell`、`process-launch-context`、`local-entry-service`、
+  `local-alan-os-attachment`、`alan-renderer-host-contract`；按实际影响更新
+  `editable-buffer-interaction`，不能由 renderer 模拟执行来满足场景。
+- 源码入口：`crates/alan/src/cli/shell.rs`、`crates/alan/src/shell_command.rs`、
+  `crates/shell/`、`crates/os-host/` 及其 Process runner/IO 调用链。
+- 完成证据：裸 `alan` 经真实 Shell Process 执行，实时输出来自 Process 文件，
+  取消/退出/回收可测；不新增平行 Session manager 或启动通道。
+
+### Step 4 — 重写 define-alan-interaction-model，交付普通终端/Herdr 体验
+
+- 工作：在 Step 3 的共享执行链路上实现安静的 shell-like 呈现，保留滚动历史、
+  渐进式信息和结果检查；明确 attach、detach、Ctrl-C、EOF 和 pane 关闭语义。
+- 参考 ADR：0054、0046、0047；`research-jev-and-fx.md` 的 fx/终端讨论，
+  `architecture-review.md` 第 5 节。fx 是体验参考，不是授权策略或新运行时模板。
+- Owning specs：`rust-inline-tui`、`alan-renderer-host-contract`、
+  `alan-os-host-lifecycle`、`local-alan-os-attachment`、`tool-result-presentation`；
+  重写旧交互 change 的 delta，不保留桌面窗口和 renderer launch 前提。
+- 源码入口：`crates/alan/` 的实际 StdioDriver 入口与 `crates/tui/`，先确认消费者，
+  不假定裸 `alan` 已使用 TUI。同步修复对应行为 guard 和验收文档。
+- 完成证据：普通终端和 Herdr pane 中 resize、Unicode、paste、scrollback、
+  取消/退出、detach/reattach 均有记录；关闭呈现不误杀 Host，重连不重复执行。
+- 可选项：仅在此验收暴露真实缺口后，另提 Herdr 识别/通知小切片；当前不新建插件 change。
+
+### Step 5 — 新建 add-jev-evaluation-adapter，完成真实任务闭环
+
+- 前置：Step 2 的共享类型与证据合同已交付；终端端到端验收还要求 Step 3/4。
+- 工作：沿现有 Connection adapter 接入 Jev，使用 Step 2 选定场景，从 shadow
+  测量开始，再按预先确定的通过标准决定是否启用自动选择。
+- 参考：ADR-0055、`research-jev-and-fx.md` 的 Jev 能力/限制/评测部分、
+  Step 2 的已合并合同和测试。实施前刷新供应商 API、模型版本和可用性资料。
+- Owning specs：`llm-file-server`、`provider-connection-contract`、
+  `provider-request-controls` 和届时已落地的 `cognitive-model-routing`；
+  仅有必要时新增 provider-specific wire contract，不复制治理或恢复逻辑。
+- 完成证据：真实 API 的类型/错误/取消处理，和规则、仅生成两套基线比较的
+  正确率、错误自动执行率、升级率、p50/p95 与成本；失败可以不启用 Jev。
+
+### Step 6 — 按真实缺口重启后续能力，不作为主线完成条件
+
+- `expose-agent-rollout-history`：需要历史浏览时重写；参考 ADR-0019/0046 和
+  `evidence-retention-and-projection`、`agent-runtime-ui-file-surfaces`。Step 2 的
+  持久恢复不能依赖完成历史 UI，历史 UI 也不能获得额外启动权。
+- `add-proactive-memory-v2`：证据和 Store owner 稳定后再激活；参考 ADR-0006/0037、
+  `runtime-memory-contract`、`runtime-memory-surfaces`、`alan-os-system-store`。
+- q：只有现有 Skill 分发不能满足已选消费者时再提 executable/binfs change；
+  参考 ADR-0009/0030/0041/0052、`package-management-contract`、`skill-system-contract`
+  和 `docs/skills_and_tools.md`。当前不预建通用包管理重构任务。
+- remote 与各领域 App：先满足各自 disposition 的需求门槛，不从本路线推导恢复开发授权。
+
+以上 spec 名称均指 `openspec/specs/<name>/spec.md`，ADR 编号均指
+`docs/adr/` 对应文档；每个 change 实施时只改有具体行为变化的 owning specs，
+不为覆盖清单而制造无效 deltas。
 
 ## 延后项与不做项
 
