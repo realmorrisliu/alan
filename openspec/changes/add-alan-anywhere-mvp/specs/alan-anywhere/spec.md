@@ -1,5 +1,9 @@
 ## ADDED Requirements
 
+> PARKED (2026-09-19): read this change's disposition.md before use. Retained
+> draft text below is not implementation authorization; superseded desktop and
+> renderer-launch assumptions must be replaced before reactivation.
+
 ### Requirement: Alan Anywhere uses explicit owned-device enrollment
 Alan Anywhere SHALL require account sign-in, device-key establishment, a
 user-facing device name, and explicit confirmation before a Mac becomes an

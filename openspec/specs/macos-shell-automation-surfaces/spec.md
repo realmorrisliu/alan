@@ -1,5 +1,10 @@
 # macos-shell-automation-surfaces Specification
 
+> Lifecycle: retained legacy maintenance only (ADR-0054). Alan for macOS is
+> retired as a product direction. These requirements constrain retained
+> consumers, not new product development or Herdr. Platform security and user
+> data obligations remain until explicit consumer removal and requirement deltas.
+
 ## Purpose
 Define native macOS automation surfaces for alan's shell, including App Entity
 representations, App Intents, command-result semantics, and privacy boundaries.

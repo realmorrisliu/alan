@@ -1,5 +1,9 @@
 ## 1. Umbrella Product Design
 
+> PARKED (2026-09-19): read this change's disposition.md before use. Retained
+> draft text below is not implementation authorization; superseded desktop and
+> renderer-launch assumptions must be replaced before reactivation.
+
 - [ ] 1.1 Capture UPDF as Markdown-first for authoring, Typst-backed for
   publishing, and agent-assisted for layout review.
 - [ ] 1.2 Define the writing, publishing, review, and reader package boundaries.

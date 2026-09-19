@@ -1,5 +1,9 @@
 ## 1. Contract Review
 
+> PARKED (2026-09-19): read this change's disposition.md before use. Retained
+> draft text below is not implementation authorization; superseded desktop and
+> renderer-launch assumptions must be replaced before reactivation.
+
 - [ ] 1.1 Review the interaction-model contract against ADR-0039, ADR-0044,
   ADR-0045, ADR-0046/0047, ADR-0048/0049, and ADR-0050 to confirm no
   system-level decision is contradicted or duplicated.

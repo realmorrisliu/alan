@@ -1,5 +1,9 @@
 ## 1. Durable Background Launch
 
+> PARKED (2026-09-19): read this change's disposition.md before use. Retained
+> draft text below is not implementation authorization; superseded desktop and
+> renderer-launch assumptions must be replaced before reactivation.
+
 - [ ] 1.1 Add clone-via-open `/mnt/agent-runtime/clone` to Agent Runtime
   Service. Pin the current `/agent/root` Process as the parent, allocate the
   pending Process through its `/proc/clone` context, accept one

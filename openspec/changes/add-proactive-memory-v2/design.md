@@ -1,5 +1,9 @@
 ## Context
 
+> PARKED (2026-09-19): read this change's disposition.md before use. Retained
+> draft text below is not implementation authorization; superseded desktop and
+> renderer-launch assumptions must be replaced before reactivation.
+
 Alan already has pure-text workspace memory, turn-end promotion, recall bundles,
 and pre-compaction flushes. The accepted architecture now separates memory kind
 (working, episodic, semantic, procedural) from authority (Personal,
@@ -84,9 +88,9 @@ episodic, semantic, or procedural material. A proposal targets one mounted store
 and a path inside it. The engine cannot redirect a write to an unmounted store,
 and a store cannot infer authority from filenames such as `USER.md`.
 
-The current `.alan/runtime/<channel>/memory/` layout is the Workspace Memory
-Store backing tree. Its adapter projects files into the workspace store mount;
-raw host paths are debug metadata, never the agent-facing reference.
+Memory Store backing belongs to its channel System Store service subtree.
+Mounted-domain memory is explicit; neither Host cwd nor a workspace directory
+creates authority. Raw backing paths do not enter Agent-visible records.
 
 ### 4. Ledger and revert belong to the store
 
@@ -143,8 +147,8 @@ stronger and more inspectable than allowing a writer and asking it not to write.
 
 1. Add the store-owned proposal, result, ledger, event, and revert surfaces to
    `alan-memfs` without changing current promotion behavior.
-2. Project the current workspace `.alan/runtime/<channel>/memory/` layout
-   through the Workspace Memory Store adapter.
+2. Project explicitly selected, service-owned System Store memory trees through
+   authorized Memory Store mounts, without Host-directory inference.
 3. Route existing runtime promotion and flush candidates through store proposal
    files; remove direct durable writes from engine code.
 4. Add file-client CLI inspection and revert.

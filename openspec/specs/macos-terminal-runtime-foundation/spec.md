@@ -1,5 +1,10 @@
 # macos-terminal-runtime-foundation Specification
 
+> Lifecycle: retained legacy maintenance only (ADR-0054). Alan for macOS is
+> retired as a product direction. These requirements constrain retained
+> consumers, not new product development or Herdr. Platform security and user
+> data obligations remain until explicit consumer removal and requirement deltas.
+
 ## Purpose
 Defines the macOS terminal runtime foundation, including process-scoped Ghostty
 bootstrap, window-scoped runtime services, stable pane handles, host-view
@@ -574,4 +579,3 @@ export only the currently retained recent diagnostics when requested.
   intervals, and capture window metadata
 - **AND** exporting diagnostics does not change terminal runtime scheduling,
   rendering, focus, or process lifecycle behavior
-

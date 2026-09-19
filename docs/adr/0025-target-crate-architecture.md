@@ -1,5 +1,7 @@
 # Target Crate Architecture
 
+> September baseline: ADR-0054 retires the desktop consumer and scopes shell-core/FFI for removal review; OS Host and Service Manager remain. ADR-0055 changes Machine operations, not Kernel dependencies. The target map below is not a completion ledger.
+
 Status: Accepted. Extends ADR-0024.
 
 ## Context

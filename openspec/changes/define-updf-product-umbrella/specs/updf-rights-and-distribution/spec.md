@@ -1,5 +1,9 @@
 ## ADDED Requirements
 
+> PARKED (2026-09-19): read this change's disposition.md before use. Retained
+> draft text below is not implementation authorization; superseded desktop and
+> renderer-launch assumptions must be replaced before reactivation.
+
 ### Requirement: UPDF Prioritizes Independent Author Distribution
 UPDF SHALL support independent authors selling and distributing reader-owned
 files from their own websites without requiring Kindle-style platform lock-in.

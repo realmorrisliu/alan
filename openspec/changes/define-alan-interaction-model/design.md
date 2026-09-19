@@ -1,5 +1,9 @@
 ## Context
 
+> PARKED (2026-09-19): read this change's disposition.md before use. Retained
+> draft text below is not implementation authorization; superseded desktop and
+> renderer-launch assumptions must be replaced before reactivation.
+
 Alan OS converges on a Plan 9 model: a volatile kernel, one system-level
 instance per channel (ADR-0044), local hosts attaching over aP Unix sockets
 (ADR-0045), renderers persisting only Process References and offsets

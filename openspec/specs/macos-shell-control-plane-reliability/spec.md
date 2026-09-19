@@ -1,5 +1,10 @@
 # macos-shell-control-plane-reliability Specification
 
+> Lifecycle: retained legacy maintenance only (ADR-0054). Alan for macOS is
+> retired as a product direction. These requirements constrain retained
+> consumers, not new product development or Herdr. Platform security and user
+> data obligations remain until explicit consumer removal and requirement deltas.
+
 ## Purpose
 Define reliability requirements for the macOS shell control plane, including
 window-scoped identities, bounded IPC, authoritative mutation results, and

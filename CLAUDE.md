@@ -36,8 +36,10 @@ just install-dev                     # build + install Alan Dev.app locally
 
 ## Architecture
 
-Alan models every Agent Process as an **AI Turing Machine**: LLM generation is the transition
-function, the `Tape` is machine state, and Tools are side effects. Process owns lifecycle and
+Alan models every Agent Process as an **AI Turing Machine**. ADR-0055 accepts
+deterministic, evaluation and generation operations in one Machine; current code
+still implements the generation/Tool loop. Tape alone is not complete recovery
+state. Process owns lifecycle and
 identity; Agent Machine owns tape and transition-local state; AgentFS owns IO and control;
 rollout/checkpoint files own execution evidence; Memory Stores and handoff files own continuity.
 Agent definitions on disk configure an Agent Executable but do not create a second lifecycle owner.
@@ -62,10 +64,11 @@ Skills are Markdown packages with YAML frontmatter, resolved from built-in packa
 
 ### macOS client (`clients/apple/alan-macos`)
 
-SwiftUI + AppKit terminal workspace with Ghostty-backed panes. Its current owners are shell state,
-terminal runtime, local shell control, updater, and privileged-helper integration. It has no Agent
-Console, Alan API client, or decided Alan OS attachment boundary. Tests are script-based under
-`clients/apple/scripts/`.
+Retired product direction (ADR-0054), retained for maintenance until scoped
+removal. The SwiftUI/AppKit/Ghostty client already attaches to Alan OS through
+aP; it is not the future product entry. Herdr is the preferred terminal host.
+Keep OS Host, credential and sandbox ownership independent of desktop removal.
+Tests under `clients/apple/scripts/` remain relevant only to retained consumers.
 
 UI work is governed by `openspec/specs/macos-shell-ui-ux-conformance/spec.md` (terminal-first, Arc-like space/tab sidebar, light-mode-first native materials, no dashboard/card composition, no implementation jargon in default chrome) plus the design context section of AGENTS.md. Visual changes are reviewed against screenshots.
 

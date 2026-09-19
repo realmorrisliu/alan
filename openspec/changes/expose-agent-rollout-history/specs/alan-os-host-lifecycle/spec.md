@@ -1,5 +1,9 @@
 ## ADDED Requirements
 
+> PARKED (2026-09-19): read this change's disposition.md before use. Retained
+> draft text below is not implementation authorization; superseded desktop and
+> renderer-launch assumptions must be replaced before reactivation.
+
 ### Requirement: Alan OS Host owns fatal storage-integrity transitions
 Alan OS Host SHALL provide Agent Runtime Service an internal fatal-transition
 adapter during boot whose call is synchronously non-returning. On a fatal

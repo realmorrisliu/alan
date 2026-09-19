@@ -1,5 +1,9 @@
 ## Why
 
+> PARKED (2026-09-19): read this change's disposition.md before use. Retained
+> draft text below is not implementation authorization; superseded desktop and
+> renderer-launch assumptions must be replaced before reactivation.
+
 Alan should proactively retain durable user and workspace facts without turning
 memory into hidden provider state. Durable mutation, ledger authority, and
 review/revert behavior belong to mounted Memory Stores and their file-server

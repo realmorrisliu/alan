@@ -1,5 +1,9 @@
 ## Why
 
+> PARKED (2026-09-19): read this change's disposition.md before use. Retained
+> draft text below is not implementation authorization; superseded desktop and
+> renderer-launch assumptions must be replaced before reactivation.
+
 Durable Rollouts survive Agent Process exit, but authorized Alan OS consumers
 cannot discover them without scanning Agent Runtime Service System Store
 backing. That prevents reliable review after Process exit or Alan OS Host

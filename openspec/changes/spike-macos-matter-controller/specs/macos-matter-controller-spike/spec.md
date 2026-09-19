@@ -1,5 +1,9 @@
 ## ADDED Requirements
 
+> PARKED (2026-09-19): read this change's disposition.md before use. Retained
+> draft text below is not implementation authorization; superseded desktop and
+> renderer-launch assumptions must be replaced before reactivation.
+
 ### Requirement: Matter integration is a host-backed file server
 Alan for macOS SHALL isolate `Matter.framework` behind an aP Matter Service that
 posts `/srv/matter` and serves `/mnt/matter`. Alan Kernel, Agent Execution Engine,

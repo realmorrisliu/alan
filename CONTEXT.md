@@ -119,8 +119,9 @@ is surfaced through `/agent/<pid>/machine`.
 **Tape** — Ordered messages, context items, Tool records, and compaction state
 consumed by the transition function.
 
-**Turn** — One user-input transition through model generation and any resulting
-Tool loop.
+**Turn** — Currently one user-input generation/Tool loop. ADR-0055 accepts
+event-driven Machine advancement with deterministic, evaluation and generation
+operations; that mixed-capability implementation is pending.
 
 **Yield** — A transition pause that exposes a pending request through AgentFS.
 
@@ -193,14 +194,16 @@ _Avoid_: Manager API, typed runtime command API
 files, Processes, Agent Processes, Tools, Skills, Memory Stores, and services.
 Running `alan` enters this Shell; Agent Process renderers are attachable views
 within it rather than the system boot surface. The current interactive
-implementation is the Rust TUI.
+entry uses StdioDriver; the Rust TUI provides an Agent renderer. The ordinary
+Shell Process evaluator and terminal IO ownership still need implementation
+alignment, as recorded in the September architecture review.
 
 **Alan Renderer Host** — A renderer/input host that consumes mounted AgentFS
 and `/proc` files and writes to their control surfaces.
 
-**Alan for macOS** — The native Apple terminal host, renderer, input shell,
-windowing layer, and OS integration surface. Its future Alan OS attachment is a
-separate design decision governed by ADR-0029.
+**Alan for macOS** — Retired desktop product, with retained source pending scoped
+removal (ADR-0054). Its aP attachment already exists. Herdr is the preferred
+terminal host, not a replacement owner for Alan OS lifecycle or permissions.
 
 **Alan Agent** — An optional Agent Workspace app for inspecting, steering, and
 organizing Agent Processes through files.

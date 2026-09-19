@@ -1,5 +1,9 @@
 ## ADDED Requirements
 
+> PARKED (2026-09-19): read this change's disposition.md before use. Retained
+> draft text below is not implementation authorization; superseded desktop and
+> renderer-launch assumptions must be replaced before reactivation.
+
 ### Requirement: UPDF Separates Writing From Publishing
 UPDF SHALL treat author writing, publishing production, review, and reader
 consumption as distinct workflow stages.

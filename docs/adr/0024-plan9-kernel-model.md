@@ -1,5 +1,7 @@
 # Plan 9 Kernel Model (Consolidated)
 
+> ADR-0055 (2026-09-19) extends the generation-centric Machine description. Typed evaluation and full state/projection alignment remain unimplemented. Namespace capability checks do not replace OS syscall confinement.
+
 Status: Accepted. Supersedes the "Agent Process as a Kernel category" framing and
 tightens kernel identity. This is the durable anchor for the new `alan-kernel`
 spec, the Agent file-layout contract spec, and the deprecation of the older

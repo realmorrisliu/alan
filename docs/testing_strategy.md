@@ -1,5 +1,7 @@
 # Testing Strategy
 
+> Baseline update (2026-09-19): Apple UI verification below applies only to retained legacy consumers (ADR-0054). New terminal and mixed-Machine work must add its own focused acceptance tests; no Herdr/Jev end-to-end qualification is claimed by this guide.
+
 Alan tests each ownership boundary at the narrowest useful layer, then verifies
 the assembled products.
 

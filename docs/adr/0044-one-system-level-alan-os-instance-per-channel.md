@@ -1,5 +1,7 @@
 # One system-level Alan OS instance per channel
 
+> ADR-0054 retires the Alan for macOS consumer, not the independent per-channel OS Host. Terminal clients remain consumers of the protected aP endpoint.
+
 Status: accepted
 
 Each user and device has at most one active Alan OS instance per install

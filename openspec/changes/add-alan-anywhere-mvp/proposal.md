@@ -1,5 +1,9 @@
 ## Why
 
+> PARKED (2026-09-19): read this change's disposition.md before use. Retained
+> draft text below is not implementation authorization; superseded desktop and
+> renderer-launch assumptions must be replaced before reactivation.
+
 Alan Anywhere should let a user enter Alan on an owned Mac from iPhone without
 having to understand network topology. The product plane needs account identity,
 device enrollment, availability, short-lived entry authorization, and a native

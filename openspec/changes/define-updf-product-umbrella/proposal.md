@@ -1,5 +1,9 @@
 ## Why
 
+> PARKED (2026-09-19): read this change's disposition.md before use. Retained
+> draft text below is not implementation authorization; superseded desktop and
+> renderer-launch assumptions must be replaced before reactivation.
+
 PDF remains the best distribution format for high-quality books, research
 papers, technical manuals, mathematical documents, source-code-heavy material,
 and visually designed publications. Its fixed layout also makes it weak on

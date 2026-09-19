@@ -1,5 +1,10 @@
 # macos-terminal-activity-semantics Specification
 
+> Lifecycle: retained legacy maintenance only (ADR-0054). Alan for macOS is
+> retired as a product direction. These requirements constrain retained
+> consumers, not new product development or Herdr. Platform security and user
+> data obligations remain until explicit consumer removal and requirement deltas.
+
 ## Purpose
 
 Define how Alan normalizes terminal progress, command completion, bell

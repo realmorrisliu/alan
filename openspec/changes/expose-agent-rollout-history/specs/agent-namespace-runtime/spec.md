@@ -1,5 +1,9 @@
 ## MODIFIED Requirements
 
+> PARKED (2026-09-19): read this change's disposition.md before use. Retained
+> draft text below is not implementation authorization; superseded desktop and
+> renderer-launch assumptions must be replaced before reactivation.
+
 ### Requirement: Agent Runtime Service owns Agent Process assembly
 Agent Runtime Service SHALL implement the Agent Executable bound at
 `/bin/alan-agent` and SHALL own Process clone inputs, namespace mount assembly,

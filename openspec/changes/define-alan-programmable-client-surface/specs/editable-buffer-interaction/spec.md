@@ -1,5 +1,9 @@
 ## MODIFIED Requirements
 
+> PARKED (2026-09-19): read this change's disposition.md before use. Retained
+> draft text below is not implementation authorization; superseded desktop and
+> renderer-launch assumptions must be replaced before reactivation.
+
 ### Requirement: Executable text uses explicit control operations
 
 Alan OS SHALL execute text from an editable buffer only through an explicit
@@ -22,7 +26,7 @@ projection remains a permanent second enforcement mechanism for them.
 - **AND** the evaluator executes the captured text through the shared Alan Shell
   command path under its inherited Namespace
 
-#### Scenario: Partial control writes do not validate execution
+#### Scenario: Partial control writes do not execute
 
 - **WHEN** the evaluator writes only part of an `exec` control document to `ctl`
 - **THEN** editfs does not validate or record the execution until the evaluator
@@ -73,7 +77,7 @@ status.
 - **THEN** another client reading `event` at the live edge blocks until an edit
   event is appended and then receives that event
 
-#### Scenario: Execution-start event is observed
+#### Scenario: Execution event is observed
 
 - **WHEN** an evaluator Process commits a valid `ctl exec` snapshot
 - **THEN** a client reading `event` at the live edge receives an

@@ -1,5 +1,9 @@
 ## 1. Shared Alan Shell Command Layer
 
+> PARKED (2026-09-19): read this change's disposition.md before use. Retained
+> draft text below is not implementation authorization; superseded desktop and
+> renderer-launch assumptions must be replaced before reactivation.
+
 - [ ] 1.1 Extract the current private `LineCommand` parser from `StdioDriver`
   into a reusable headless Alan Shell command module without adding grammar,
   heuristic path/Tool inference, or agent-specific commands.

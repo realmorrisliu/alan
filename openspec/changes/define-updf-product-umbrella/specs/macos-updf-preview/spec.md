@@ -1,5 +1,9 @@
 ## ADDED Requirements
 
+> PARKED (2026-09-19): read this change's disposition.md before use. Retained
+> draft text below is not implementation authorization; superseded desktop and
+> renderer-launch assumptions must be replaced before reactivation.
+
 ### Requirement: Alan Opens UPDF Reader Packages Read-Only
 Alan for macOS SHALL open `.updf` reader packages as read-only document preview
 content without requiring source files.

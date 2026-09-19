@@ -1,5 +1,10 @@
 # macos-shell-content-containers Specification
 
+> Lifecycle: retained legacy maintenance only (ADR-0054). Alan for macOS is
+> retired as a product direction. These requirements constrain retained
+> consumers, not new product development or Herdr. Platform security and user
+> data obligations remain until explicit consumer removal and requirement deltas.
+
 ## Purpose
 Define the macOS shell content-container contract: Spaces, Tabs, and PaneSlots
 own navigation and layout, while ContentInstances own terminal, markdown,

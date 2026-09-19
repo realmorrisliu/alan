@@ -1,5 +1,9 @@
 ## ADDED Requirements
 
+> PARKED (2026-09-19): read this change's disposition.md before use. Retained
+> draft text below is not implementation authorization; superseded desktop and
+> renderer-launch assumptions must be replaced before reactivation.
+
 ### Requirement: The file system is the API, not the default UI
 Alan renderer hosts SHALL treat the namespace as the shared-truth substrate
 and SHALL NOT require users to understand OS concepts — entering an OS,

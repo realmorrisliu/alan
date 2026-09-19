@@ -1,5 +1,9 @@
 ## 1. Memory Store Transaction Surface
 
+> PARKED (2026-09-19): read this change's disposition.md before use. Retained
+> draft text below is not implementation authorization; superseded desktop and
+> renderer-launch assumptions must be replaced before reactivation.
+
 - [ ] 1.1 Add store-owned proposal, status, result, events, ledger, and `ctl`
   surfaces to `alan-memfs` using ordinary aP operations and commit-on-clunk.
 - [ ] 1.2 Implement atomic target-document plus ledger commit with namespace

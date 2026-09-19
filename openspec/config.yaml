@@ -3,6 +3,10 @@ schema: spec-driven
 context: |
   alan uses OpenSpec changes for in-flight design and implementation work.
   Long-lived behavior contracts belong in openspec/specs/.
+  Before applying any change, read its disposition.md if present. Parked work
+  requires explicit reactivation; cancelled archives are not delivered behavior.
+  ADR-0054 retires the desktop product; ADR-0055 accepts mixed Machine direction
+  without claiming typed evaluation is already implemented.
 
 rules:
   proposal:
