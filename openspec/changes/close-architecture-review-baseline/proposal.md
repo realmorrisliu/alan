@@ -31,6 +31,8 @@ None.
   ownership from the retained desktop implementation.
 - `host-directory-mounts`: Separate surviving native mount adapter ownership
   from the retained desktop presenter and preserve service-mediated grants.
+- `alan-app-service-integration`: Make future app integration consumer-neutral;
+  the retired desktop client is not a prerequisite for surviving clients.
 
 ## Impact
 

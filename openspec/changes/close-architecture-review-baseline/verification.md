@@ -6,7 +6,7 @@
   using installed OpenSpec 1.13.1. CI uses its repository-pinned version.
 - `scripts/check-openspec-current-surfaces.sh`: passed.
 - `git diff --check`: passed.
-- Exact requirement-block comparison: all four baseline deltas match canonical.
+- Exact requirement-block comparison: all five baseline capability deltas match canonical.
 - Byte comparison against origin/main: all four cancelled tasks.md files are
   unchanged; cancellation notes also record their SHA-256 values.
 - Diff scope: Markdown and OpenSpec YAML only. No Rust/Swift source, build,
@@ -37,6 +37,13 @@ adapter boundary, scope the retained App implementation as maintenance-only,
 and gate removal on verified preservation of still-needed safety behavior.
 This is a contract correction, not a claim that adapter extraction has shipped.
 The shared root cause was conflating implementation carrier with durable owner.
+
+The second review identified stale concrete-client naming in the App integration
+contract. Its boundary remains valid, but new consumers must not inherit a
+retired-client prerequisite. Both shared-authority and file-boundary clauses
+now name generic Alan OS clients, scope the old macOS scenario to legacy
+maintenance, and keep Herdr itself outside the aP-client obligation. No new
+integration layer or weakening of direct file boundaries was introduced.
 
 Local `just quality` passed before this docs-only follow-up; current-head
 validation is repeated after it. The PR records the unrelated Cargo Audit
