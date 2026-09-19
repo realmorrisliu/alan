@@ -348,8 +348,8 @@ adapters SHALL own only native login and secret storage.
 - **AND** the adapter can reconnect without reconstructing profiles
 
 ### Requirement: macOS is a Connection Service native adapter
-Platform Host adapters at the Alan OS Host and Host Command Plane boundary
-SHALL own approved native login and secret-storage operations independently of
+Platform Host adapters SHALL own approved native login and secret storage
+at the Alan OS Host and Host Command Plane boundary independently of
 the desktop product. The retained Alan for macOS adapter is a legacy consumer,
 not the durable owner. Its browser/device login and Keychain flows SHALL remain
 maintenance-only until their surviving consumers are removed or an explicitly

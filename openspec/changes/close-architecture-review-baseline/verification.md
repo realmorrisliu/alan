@@ -17,6 +17,11 @@
 
 ## Not claimed
 
+CI compatibility check: OpenSpec 1.4.1 validates the first physical requirement
+line for SHALL/MUST, unlike the installed 1.13.1 paragraph parser. The two
+adapter requirements and their deltas put SHALL on that first line without
+changing semantics. Both versions are used for the follow-up strict validation.
+
 No Jev API test, terminal/Herdr end-to-end qualification, desktop removal, account
 migration or sandbox modification. The old standalone inline-TUI guard remains
 known stale (Ink false positive and old entry symbol); it is not repaired by

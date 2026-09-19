@@ -70,8 +70,8 @@ maintain a second grant registry.
 - **AND** only the service publishes Alan OS-visible grant state
 
 ### Requirement: macOS is a Host Mount native adapter
-Platform Host adapters at the Alan OS Host and Host Command Plane boundary
-SHALL supply native directory authorization and bounded hostfs exports to Host
+Platform Host adapters SHALL supply native directory authorization and hostfs exports
+at the Alan OS Host and Host Command Plane boundary to Host
 Mount Service independently of the desktop product. The retained Alan for
 macOS request presenter is a legacy consumer, not the durable grant or platform
 adapter owner. Its native flows SHALL remain maintenance-only until their
