@@ -50,4 +50,19 @@ validation is repeated after it. The PR records the unrelated Cargo Audit
 failure on main's unchanged rustls 0.23.36 dependency (RUSTSEC-2026-0285).
 
 Full local quality and required current-head CI results are recorded in the PR.
-Merge and archive readiness must be established before tasks 2.2/2.3 are checked.
+PR #921 merged on 2026-09-19 at `3fce4450ad0b1d0412baeec095224d48bc7937d8`.
+The final reviewed head was `a3a3db6c921c25a8cdbe6bf7582582ad9860b2b3`:
+both review threads were resolved, the last Codex review reported no findings,
+and all four required checks passed. Cargo Audit remained a separate failure.
+
+Post-merge, the main tree exactly matched that reviewed head. All five delta
+capabilities already matched canonical, so archival performs no additional sync.
+Local main was fast-forwarded to the merge commit. The old #890 branch had an
+identical tree to its merged squash commit, which is an ancestor of main; both
+that branch and the #921 local branch were removed. Neither remote branch
+remained. No other branches were deleted.
+
+There is only the primary worktree `/Users/morris/Developer/alan`; it was retained.
+The archive and next-planning index are prepared separately on
+`codex/record-next-planning-tasks`, created from the updated main. That follow-up
+PR's own merge and branch cleanup are not claimed complete here.

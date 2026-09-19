@@ -1,6 +1,7 @@
 ## Context
 
-See proposal.md and ../add-cognitive-model-routing/architecture-review.md.
+See proposal.md and
+`openspec/changes/add-cognitive-model-routing/architecture-review.md`.
 The review was approved; runtime implementation is deliberately a subsequent
 planning step on the merged main branch.
 

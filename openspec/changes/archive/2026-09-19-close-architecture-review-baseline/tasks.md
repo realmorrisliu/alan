@@ -8,5 +8,5 @@
 ## 2. Verification and closure
 
 - [x] 2.1 Run full strict OpenSpec validation, current-surface checks and documentation diff review; record actual results.
-- [ ] 2.2 Review and merge the PR only with required current-head CI satisfied; record the PR and merge evidence.
-- [ ] 2.3 After merge, verify canonical sync and archive readiness, update main, and clean only verified merged task branches; record final checkout/worktree state.
+- [x] 2.2 Review and merge the PR only with required current-head CI satisfied; record the PR and merge evidence.
+- [x] 2.3 After merge, verify canonical sync and archive readiness, update main, and clean only verified merged task branches; record final checkout/worktree state.
