@@ -23,7 +23,9 @@ IO, alter permissions, or claim those follow-ups complete.
    intentionally inactive, not ready to apply. Cancelled history is not a
    successful archive and does not sync unfinished deltas.
 5. Correct the package path contract now because existing source implements it.
-   Preserve omitted scenarios in the two invalid MODIFIED deltas.
+   Restore stable scenario names in the two invalid MODIFIED deltas.
+   Native credential and directory adapters belong to the platform Host
+   boundary, not the retired App; removal must preserve still-needed behavior.
 6. Keep immutable prior archives unchanged. Update ADRs with dated pointers,
    never pretend the older decision had always been the new one.
 

@@ -6,7 +6,7 @@
   using installed OpenSpec 1.13.1. CI uses its repository-pinned version.
 - `scripts/check-openspec-current-surfaces.sh`: passed.
 - `git diff --check`: passed.
-- Exact requirement-block comparison: both baseline deltas match canonical.
+- Exact requirement-block comparison: all four baseline deltas match canonical.
 - Byte comparison against origin/main: all four cancelled tasks.md files are
   unchanged; cancellation notes also record their SHA-256 values.
 - Diff scope: Markdown and OpenSpec YAML only. No Rust/Swift source, build,
@@ -24,6 +24,18 @@ this documentation-only baseline. Runtime/source-removal planning owns that
 guard's eventual replacement alongside the terminal entry contract.
 
 ## Delivery evidence
+
+Codex review at 8e97351 found a valid P2: two non-desktop-specific contracts
+still assigned native credential and mount adapter ownership to the retired
+App. Both contracts and matching deltas now name the durable platform Host
+adapter boundary, scope the retained App implementation as maintenance-only,
+and gate removal on verified preservation of still-needed safety behavior.
+This is a contract correction, not a claim that adapter extraction has shipped.
+The shared root cause was conflating implementation carrier with durable owner.
+
+Local `just quality` passed before this docs-only follow-up; current-head
+validation is repeated after it. The PR records the unrelated Cargo Audit
+failure on main's unchanged rustls 0.23.36 dependency (RUSTSEC-2026-0285).
 
 Full local quality and required current-head CI results are recorded in the PR.
 Merge and archive readiness must be established before tasks 2.2/2.3 are checked.

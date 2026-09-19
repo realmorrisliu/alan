@@ -27,6 +27,10 @@ None.
 - `documentation-governance`: Record support lifecycle and distinguish accepted
   direction, retained legacy maintenance, parked proposals and delivered code.
 - `package-management-contract`: Correct mounted control paths to `/mnt/package`.
+- `provider-connection-contract`: Separate surviving platform credential adapter
+  ownership from the retained desktop implementation.
+- `host-directory-mounts`: Separate surviving native mount adapter ownership
+  from the retained desktop presenter and preserve service-mediated grants.
 
 ## Impact
 
