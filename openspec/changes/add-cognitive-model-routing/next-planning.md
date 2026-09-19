@@ -9,6 +9,13 @@
 原审查报告是历史证据快照；当前决策以 ADR-0054/0055、canonical specs 和各
 change 的 disposition 为准。不要重新执行已取消的 macOS 计划。
 
+活动入口的生命周期：本 change 只是路线图的当前保管者。Step 2 完成后，归档前
+必须把所有剩余跨 change 待办、顺序和激活门槛移交到下一项已激活但未完成的
+change（按本顺序为 `define-alan-programmable-client-surface`），保留任务状态，
+更新活动文档的入口引用，并验证剩余工作无需读取 archive 才能找到。若接收者
+尚未激活，就先完成该规划交接，不提前归档当前保管者。后续保管者同样在归档前
+移交剩余路线；不修改已有历史 archive，不把历史路线图当作当前执行指令。
+
 ## 推进顺序与任务归属
 
 ### A. 桌面代码退役与独立 CLI/Host 分发
@@ -109,6 +116,8 @@ ADR-0054 已完成产品方向退役，**源代码、构建和发布配置尚未
   `rollout.rs` / `rollout/`、`crates/agentfs/`、`crates/llmfs/`、`crates/llm/`。
 - 完成证据：结构化成功、no-match、wait/resume、取消、故障恢复和 Unknown
   副作用都有测试；不以自然语言结束或 text Tape 根替代完整状态证明。
+- 归档交接：Step 3–6 中仍未完成的路线移交到下一活动 change，更新入口引用；
+  此移交不等于后续功能交付，也不要求 Step 2 等待这些功能全部实现。
 
 ### Step 3 — 重切 define-alan-programmable-client-surface
 

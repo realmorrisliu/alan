@@ -19,4 +19,4 @@ This change remains parked until the entry scope is explicitly activated.
 
 - [ ] 3.1 Compare correctness, erroneous automatic execution, escalation, p50/p95 latency and cost against both baselines; record measured results, not model marketing latency.
 - [ ] 3.2 Run focused runtime/provider tests and full strict OpenSpec validation; review interruption and crash-boundary coverage.
-- [ ] 3.3 Merge with current-head CI; sync implemented deltas and archive only after delivery evidence exists.
+- [ ] 3.3 Merge with current-head CI and sync implemented deltas. Before archiving, transfer every unfinished cross-change roadmap item, ordering and activation gate from next-planning.md to the next activated, unfinished change (currently planned as define-alan-programmable-client-surface), preserve status and update active incoming references. Verify the remaining roadmap is discoverable outside archive; archive only after both delivery evidence and that handoff exist.
