@@ -18,6 +18,7 @@ change 的 disposition 为准。不要重新执行已取消的 macOS 计划。
 ADR-0054 已完成产品方向退役，**源代码、构建和发布配置尚未移除**。
 
 - [ ] A1 盘点 Apple 客户端、shell-core/FFI、构建、CI、安装及发布入口的实际消费者，逐项标明删除、保留或迁移；不能因目录名称含 Apple 就整批删除。
+- [ ] A1a 按被移除消费者反查全部 canonical requirements/scenarios，而非只按 capability 名称找 `macos-*`；逐项登记删除、改写或因存续消费者而保留的理由，避免代码已删而规范仍要求旧客户端行为。
 - [ ] A2 记录 credentials、Host Mounts、sandbox、系统账户和用户数据的存续 owner；为仍需要的适配器列出迁移前后验证，禁止把删除 UI 当成删除安全边界。
 - [ ] A3 提出最小独立 CLI/Host 安装和启动路径，补齐受影响的分发、平台与遗留规范 deltas，以及 build/test/install 验收任务。
 
@@ -81,8 +82,13 @@ ADR-0054 已完成产品方向退役，**源代码、构建和发布配置尚未
 - 参考 ADR：0054、0032（Host/boot）、0044（channel lifetime）、0050（mount grants）、0051（secrets）。
 - 审核并按实际影响写 deltas：`alan-app-distribution`、`alan-os-host-lifecycle`、
   `host-command-plane`、`provider-connection-contract`、`host-directory-mounts`、
-  `os-sandbox-enforcement`，以及受删除范围影响的 `macos-*`、`shell-core-*`、
-  `shell-workspace-core-contract`。不是批量删除所有 macOS 规范。
+  `os-sandbox-enforcement`、`alan-app-service-integration`、`product-brand-identity`、
+  `repository-quality-gate`、`local-entry-service`、`documentation-governance`，
+  以及受删除范围影响的 `macos-*`、`shell-core-*`、`shell-workspace-core-contract`。
+  这只是审计起点，不是封闭白名单：App 集成中的 retained-legacy-client 场景、
+  品牌中的 App/bundle 场景、质量门禁中的 Apple 检查，都要随相应源码消费者
+  的移除而删除或改写；共享 aP 边界、macOS Rust 检查和平台安全合同继续保留。
+  不批量删除所有 macOS 规范，也不把词匹配直接当作删除依据。
 - 源码入口：`clients/apple/`、`crates/shell-core/`、`crates/shell-core-ffi/`、
   `crates/alan/`、`crates/os-host/`，以及实际引用它们的 Just/CI/安装脚本。
 - 完成证据：独立 CLI 安装/启动验证、存续凭据/挂载/sandbox 回归、workspace 与
