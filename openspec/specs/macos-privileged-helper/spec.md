@@ -1,5 +1,10 @@
 # macos-privileged-helper Specification
 
+> Lifecycle: retained legacy maintenance only (ADR-0054). Alan for macOS is
+> retired as a product direction. These requirements constrain retained
+> consumers, not new product development or Herdr. Platform security and user
+> data obligations remain until explicit consumer removal and requirement deltas.
+
 ## Purpose
 Defines the signed, install-channel-scoped macOS privileged helper, including
 explicit lifecycle authorization, declarative Managed User operations, client

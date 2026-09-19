@@ -1,5 +1,9 @@
 ## 1. Fakeable Matter Service Tree
 
+> PARKED (2026-09-19): read this change's disposition.md before use. Retained
+> draft text below is not implementation authorization; superseded desktop and
+> renderer-launch assumptions must be replaced before reactivation.
+
 - [ ] 1.1 Implement `/mnt/matter` controller, commissioning, device, action,
   status, result, events, and `ctl` semantics against a deterministic fake backend.
 - [ ] 1.2 Post `/srv/matter`, mount `/mnt/matter`, and verify filtered-handle,

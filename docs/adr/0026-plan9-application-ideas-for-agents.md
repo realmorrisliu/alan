@@ -1,5 +1,7 @@
 # Plan 9 Application Ideas for Agents (Acme / Plumber / 9P / Venti)
 
+> September baseline: composition ideas below remain inspiration, not current delivery status. editfs/routefs/branchfs and their specs now exist; old 'not started' statements are historical. Forked state never authorizes replay of external effects.
+
 Status: Accepted. Extends [ADR-0024](0024-plan9-kernel-model.md) (the kernel
 model) and [ADR-0025](0025-target-crate-architecture.md) (crate architecture).
 This record decides which *ideas* — not commands — from the Plan 9 classics Alan

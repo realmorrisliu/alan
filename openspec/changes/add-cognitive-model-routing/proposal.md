@@ -1,53 +1,38 @@
 ## Why
 
-Alan should normally use a fast model path and deliberately escalate complex or
-high-cost work to a deeper model. Model choice, attempt isolation, escalation,
-and observability are expressed through mounted LLM Connections, Processes,
-files, and streams.
+System 1/System 2 were originally modeled as fast/deep generating child Agents.
+ADR-0055 accepts one Agent Machine composing deterministic computation, typed
+evaluation and generation. The old mandatory two-Process routing plan is superseded.
 
 ## What Changes
 
-- Bind configured System 1 and System 2 LLM Connections into the coordinating
-  Agent Process namespace under stable cognitive-role aliases.
-- Represent each routed attempt as an inspectable Process/Generation rather than
-  an invisible provider-dispatch phase.
-- Give speculative System 1 attempts a structurally restricted namespace with
-  read-only context and no side-effecting Tool bindings; System 2 receives only
-  the mounts explicitly assembled for the deeper attempt.
-- Treat System 1 escalation output as a typed suggestion in its model stream;
-  the coordinator records the decision and spawns the System 2 attempt. It is not
-  a privileged virtual Tool.
-- Project routing configuration, current attempt, bounded reason, result,
-  status, and ordered events under `machine/routing/` in the agent overlay.
-- Accept explicit next-attempt/default control as `route` commands on the
-  agent-runtime-owned `machine/ctl` — the agent overlay gains no third `ctl`
-  file.
-- Compose the selected LLM Connection with canonical reasoning-effort controls
-  in the provider-neutral llmfs Generation request. Provider adapters remain
-  unaware of cognitive roles.
-- Preserve provider-native continuation only within a compatible Connection,
-  prompt fingerprint, visible Tool set, and attempt role.
+- Keep Process lifecycle and namespace authority; spawn only when isolation or
+  independently bounded work requires it.
+- Introduce explicit evaluation versus generation capability and typed results,
+  without encoding scores as assistant text.
+- Define Machine completion, waiting and recovery separately from final prose.
+- Reuse action governance, effect lifecycle and rollout/checkpoint evidence.
+- Keep fallback bounded and explicit input modes authoritative.
 
 ## Capabilities
 
 ### New Capabilities
 
-- `cognitive-model-routing`: Defines cognitive-role Connection mounts,
-  restricted attempt Processes, routing precedence, stream-based escalation,
-  file-backed observability, explicit `ctl` intent, and continuation boundaries.
+- `cognitive-model-routing`: Machine-owned mixed-capability decisions,
+  evidence, bounded fallback and unchanged authorization.
 
 ### Modified Capabilities
 
-- `provider-request-controls`: Reasoning controls compose with the selected
-  cognitive-role LLM Connection and remain provider-neutral Generation input.
+- `provider-request-controls`: Resolve controls against the selected operation
+  and Connection, not a presumed fast/deep generation role.
 
 ## Impact
 
-- Agent Runtime Service/AgentFS gains the `machine/routing/` projection and
-  coordinates ordinary child Process/Generation lifecycles.
-- `alan-llmfs` remains the callable model boundary at `/mnt/llm`; configured
-  Connections are mounted under cognitive-role aliases and attempts receive one
-  active Connection.
-- Side-effect isolation is enforced by the attempt namespace and visible `/bin`
-  union, not a runtime-only Tool classification gate.
-- Every observer reads the returned namespace and routing files.
+Agent Machine, AgentFS projections, llmfs/provider operations and evaluation
+tests. No Kernel cognition type, mandatory Process-per-call, global router,
+new package kind or renderer launch authority.
+
+Status: parked for the next planning pass on merged main. This is accepted
+direction, not an implementation-ready slice. Before apply, that pass must
+complete the llm-file-server and agent-namespace-runtime deltas, choose versioned
+wire DTOs, reconcile state recovery, and explicitly activate the task scope.

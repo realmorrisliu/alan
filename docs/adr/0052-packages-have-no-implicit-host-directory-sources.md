@@ -8,5 +8,5 @@ Host directories as implicit local-source providers and preserves no overlay
 precedence for them. Host content must first enter through an explicit Host
 Mount and then be installed by an Alan OS command; resolved packages project at
 `/lib/pkg`, while Agent Definitions and Skills are passed by descriptor. The
-existing package-management change remains blocked until rewritten after the
-workspace-runtime, system Host, and Service Manager changes.
+package-management implementation now follows this explicit-source boundary.
+Its v0 exports Skills; executable distribution remains separate future work.

@@ -1,5 +1,7 @@
 # Quartermaster: Package Service as an Alan OS Organ
 
+> September verification: q v0 distributes Skills through immutable /lib/pkg projections. Embedded boot units and ToolRegistry entries are not yet q-installed executables. No new package kind is needed for evaluation rubrics.
+
 Status: Accepted. Extends [ADR-0024](0024-plan9-kernel-model.md) and
 [ADR-0027](0027-north-star-capability-map.md). The normative v0 behavior lives
 in OpenSpec `package-management-contract`. ADR-0052 supersedes this ADR's

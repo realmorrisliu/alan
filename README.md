@@ -1,19 +1,22 @@
 # Alan
 
 Alan is a programmable personal computing environment. The repository is in
-early development and currently contains three usable layers:
+early development. Its retained implementation contains:
 
 - Alan OS substrate crates for namespaces, mounts, files, descriptors,
   Processes, `/proc`, `/srv`, and file-server composition;
 - an Agent Execution Engine that runs the AI Turing-machine loop and projects
   Agent Process state through AgentFS;
-- local hosts: a file-backed Rust terminal UI, direct management commands, and
-  the native Alan for macOS terminal workspace.
+- a terminal Shell entry, an Agent renderer and direct management commands.
+
+Alan for macOS is retired as a product direction; its source remains pending
+scoped removal. Herdr is the preferred terminal host, without making Alan
+dependent on Herdr or claiming native Alan agent detection already exists.
+See [ADR-0054](docs/adr/0054-retire-desktop-client-prefer-terminal-hosts.md).
 
 The dedicated system Host boots the Service Manager and Root Agent Process.
-Alan for macOS attaches to the matching stable/dev Host over its protected aP
-endpoint; it renders Agent Processes by boot ID and PID without owning their
-lifecycle or embedding Alan OS.
+Terminal renderers attach to the matching stable/dev Host over its protected
+aP endpoint. Host lifetime and Process authority do not belong to a terminal pane.
 
 Package Service is the system owner for installed Skill distributions. It
 publishes `/srv/package`; Quartermaster runs as the ordinary `/bin/q` Process.
@@ -41,6 +44,11 @@ Agent Executable
 
 `alan-agent-engine` is the current implementation of the transition loop. It is
 not Alan Kernel or the Alan OS system boundary.
+
+[ADR-0055](docs/adr/0055-agent-machine-composes-typed-capabilities.md) accepts
+deterministic, typed evaluation and generation operations within one Machine.
+Jev support is not implemented. System 1/System 2 are not mandatory child
+Processes or permission levels. Current execution remains generation-based.
 
 ## Repository map
 
@@ -96,7 +104,7 @@ cargo test -p alan-terminal-ui
 used by the versioned pre-commit hook and required CI. CI remains authoritative
 because local hooks can be bypassed with `--no-verify`.
 
-Local macOS development:
+Retained legacy desktop maintenance only (not the new-product workflow):
 
 ```bash
 just install-dev
@@ -106,7 +114,8 @@ just apple-shell-ui-smoke
 
 ## CLI
 
-Running `alan` without a subcommand starts the linked file-backed terminal UI.
+Running `alan` without a subcommand currently starts the StdioDriver Shell entry.
+The server-side Shell evaluator and Process IO alignment remain follow-up work.
 The current direct command families are:
 
 ```text
@@ -132,6 +141,9 @@ alan skills validate /path/to/my-skill
 alan shell state
 alan shell pane list
 ```
+
+The `alan shell ...` direct commands above control the retained desktop surface;
+they are not Herdr commands or the file-native Shell grammar.
 
 Host files do not enter Alan OS because `alan` was launched from their
 directory. Authorize a Host Mount explicitly, then use its Alan OS path from

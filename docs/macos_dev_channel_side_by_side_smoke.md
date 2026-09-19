@@ -1,5 +1,7 @@
 # macOS Dev Channel Side-by-Side Smoke
 
+> Lifecycle: Alan for macOS is retired as a product direction (ADR-0054). This guide is retained only for legacy maintenance until scoped source/build removal, not authorization for new desktop features or releases.
+
 > Status: current validation guide for the local-only Alan Dev install channel.
 
 ## Purpose

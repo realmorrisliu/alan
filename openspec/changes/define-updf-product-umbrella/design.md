@@ -1,5 +1,9 @@
 ## Context
 
+> PARKED (2026-09-19): read this change's disposition.md before use. Retained
+> draft text below is not implementation authorization; superseded desktop and
+> renderer-launch assumptions must be replaced before reactivation.
+
 UPDF is a publishing product for generating multiple pre-rendered PDF layouts
 from one manuscript and distributing them as a single package. The package is
 conceptually similar to a universal app or fat binary: one distributable

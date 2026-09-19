@@ -1,5 +1,9 @@
 ## ADDED Requirements
 
+> PARKED (2026-09-19): read this change's disposition.md before use. Retained
+> draft text below is not implementation authorization; superseded desktop and
+> renderer-launch assumptions must be replaced before reactivation.
+
 ### Requirement: Groove Master is a real Alan App
 Groove Master SHALL be a bass-practice product for developing groove, pocket,
 long-form playing, and personal musical feel. It SHALL keep app-domain authority

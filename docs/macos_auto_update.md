@@ -1,5 +1,7 @@
 # macOS Auto Update
 
+> Lifecycle: Alan for macOS is retired as a product direction (ADR-0054). This guide is retained only for legacy maintenance until scoped source/build removal, not authorization for new desktop features or releases.
+
 Alan uses Sparkle 2 for direct macOS app updates. The stable app feed is:
 
 ```text

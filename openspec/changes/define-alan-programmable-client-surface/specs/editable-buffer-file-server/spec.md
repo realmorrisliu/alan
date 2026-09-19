@@ -1,5 +1,9 @@
 ## MODIFIED Requirements
 
+> PARKED (2026-09-19): read this change's disposition.md before use. Retained
+> draft text below is not implementation authorization; superseded desktop and
+> renderer-launch assumptions must be replaced before reactivation.
+
 ### Requirement: Address ranges are revision-bound
 
 Alan SHALL store the active body range in `addr` using `rev:<body-revision>

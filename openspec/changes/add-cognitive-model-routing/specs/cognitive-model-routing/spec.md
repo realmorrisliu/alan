@@ -1,144 +1,79 @@
+## Purpose
+
+Define how one Agent Machine selects deterministic, typed evaluation and
+generation work while preserving ordinary Process authority and durable evidence.
+
 ## ADDED Requirements
 
-### Requirement: Cognitive roles resolve to mounted LLM Connections
-Alan SHALL configure System 1 and System 2 as callable llmfs Connections bound
-under stable cognitive-role aliases in the coordinating Agent Process namespace.
-Provider, model, and Credential material SHALL remain owned by the Connection;
-cognitive routing SHALL NOT dispatch through a provider SDK or global opaque id.
+### Requirement: Cognitive modes do not define Process or permission types
+Agent Machine SHALL select deterministic, evaluation or generation operations
+according to explicit input, available capabilities and bounded policy. It
+SHALL NOT require a child Process for every decision or grant permissions
+because a model is designated System 1 or System 2.
 
-#### Scenario: Both cognitive roles are available
-- **WHEN** the spawner resolves valid System 1 and System 2 connection profiles
-- **THEN** it binds each callable Connection under the corresponding role alias
-  in the coordinator namespace
-- **AND** the aliases expose no plaintext credential material
+#### Scenario: Deterministic task completes
+- **WHEN** existing deterministic rules can complete authorized work
+- **THEN** the Machine completes without a model call
+- **AND** no final natural-language generation is required
 
-#### Scenario: A cognitive role is unavailable
-- **WHEN** a configured Connection is missing, unauthorized, or not mounted
-- **THEN** Alan reports that route unavailable before spawning an attempt
-- **AND** it does not bypass the namespace through profile metadata
+#### Scenario: Isolation is needed
+- **WHEN** a step requires an independently bounded lifecycle or authority
+- **THEN** the existing Process launch path supplies that boundary
+- **AND** the child's capabilities do not exceed its authorized launch context
 
-#### Scenario: Cognitive routing is not configured
-- **WHEN** no System 1 or System 2 role aliases are configured and the existing
-  single Connection resolves successfully
-- **THEN** Alan uses that mounted Connection through the existing single-profile
-  Generation path without requiring cognitive-role aliases
-- **AND** startup and ordinary turns do not fail merely because cognitive routing
-  is absent
+### Requirement: Evaluation is typed advice from an available Connection
+A Machine SHALL use only reachable Connections supporting the requested
+operation. Evaluation SHALL return a versioned typed result or a typed failure,
+not assistant prose. Candidate capabilities SHALL be resolved for that Process
+before evaluation, including Skill availability and implicit-exposure rules.
 
-### Requirement: Routed attempts are ordinary Processes
-Each System 1 or System 2 attempt SHALL execute as an ordinary Process visible in
-`/proc` and, when agent-conforming, the `/agent` overlay. Attempts SHALL expose
-normal IO, status, events, and parentage rather than existing only as hidden
-runtime phases.
+#### Scenario: Evaluation selects a candidate
+- **WHEN** a valid result names a member of the submitted candidate set
+- **THEN** the Machine records the selected candidate and result provenance
+- **AND** the choice does not grant authority to execute it
 
-#### Scenario: A System 1 attempt starts
-- **WHEN** the coordinator chooses the fast route
-- **THEN** it spawns a child Agent Process with the System 1 Connection and
-  bounded task descriptors
-- **AND** the attempt is inspectable through process and agent files
+#### Scenario: Candidate is outside the submitted set
+- **WHEN** evaluation names an unavailable or unknown candidate
+- **THEN** the Machine rejects that selection
+- **AND** it does not resolve a global catalog entry to bypass the candidate view
 
-#### Scenario: A System 2 attempt follows escalation
-- **WHEN** the coordinator accepts a System 1 escalation suggestion
-- **THEN** it spawns a sequential System 2 attempt with its own namespace and
-  Connection
-- **AND** both attempts remain linked by process/action provenance
+### Requirement: Fallback and interruption are bounded
+The Machine SHALL preserve explicit input intent and bound evaluation retries
+and generation fallback by its declared budget. Unavailable or uncertain
+evaluation SHALL NOT authorize an effect.
 
-### Requirement: Speculative System 1 has a restricted namespace
-A speculative System 1 attempt SHALL receive read-only context mounts and a
-`/bin` union that omits side-effecting Tools. It SHALL NOT gain a withheld mount
-or executable through `/srv`, opaque ids, retained parent descriptors, or an
-in-process Tool registry.
+#### Scenario: Evaluation has no match
+- **WHEN** evaluation returns no-match and generation is available within budget
+- **THEN** the Machine may request generation with recorded fallback provenance
+- **AND** generation receives no additional authority from that escalation
 
-#### Scenario: System 1 inspects context
-- **WHEN** a System 1 attempt needs repository or app context
-- **THEN** it may read only the explicitly mounted read-only trees and run only
-  the read-only Tools present in its `/bin`
+#### Scenario: Budget is exhausted or user cancels
+- **WHEN** no allowed attempt remains or cancellation is accepted
+- **THEN** no further model or effect dispatch starts for that work
+- **AND** a typed terminal or waiting outcome explains the boundary
 
-#### Scenario: System 1 proposes a mutation
-- **WHEN** System 1 output suggests a state-changing action
-- **THEN** the suggestion is returned as data for coordinator review or deeper
-  routing
-- **AND** no side effect executes from the speculative namespace
+### Requirement: Decisions use existing Machine and execution evidence owners
+Machine state SHALL own pending decisions and wait state, AgentFS SHALL project
+that state, and durable rollout/checkpoint evidence SHALL retain recoverable
+operation identity, input reference, model/schema version, result and effect
+linkage. Model-input projections SHALL NOT be mistaken for complete checkpoints.
 
-### Requirement: Routing precedence is deterministic and observable
-The coordinator SHALL resolve routing in this order: explicit System 2 next
-intent, deterministic System 2 gates, eligible explicit System 1 next intent,
-configured default, then System 1 fallback. Every forced, refused, automatic, or
-explicit decision SHALL append a bounded record to routing events.
+#### Scenario: Work completes without prose
+- **WHEN** the authorized task produces only a structured result
+- **THEN** work can complete without manufacturing an assistant apology
+- **AND** Process exit is governed separately from work completion
 
-#### Scenario: Explicit System 1 conflicts with a gate
-- **WHEN** `next system-1` is pending but a deterministic gate requires System 2
-- **THEN** the coordinator selects System 2
-- **AND** routing status/events identify the refused intent and gate reason
+#### Scenario: External effect outcome is unknown after restart
+- **WHEN** recovery sees a dispatched effect with unknown completion
+- **THEN** normal effect reconciliation or confirmation is required
+- **AND** replaying a decision does not re-execute that effect
 
-#### Scenario: No override or gate applies
-- **WHEN** no explicit next intent or deterministic gate applies
-- **THEN** the configured default role is selected, falling back to System 1
+### Requirement: Agent effects retain existing authorization
+Every Agent-originated effect SHALL pass existing governance and capability
+checks regardless of whether code, evaluation or generation proposed it.
+Ordinary human Shell commands SHALL NOT acquire a universal model-review gate.
 
-### Requirement: Explicit routing intent uses the owning machine ctl
-The coordinating Agent Process SHALL accept `auto` and next-attempt cognitive
-role intent as `route` commands on the agent-runtime-owned `machine/ctl` (for
-example `route next system-2`, `route auto`). `machine/routing/` SHALL carry no
-`ctl` file: per `agent-file-layout-contract`, the agent overlay's only control
-surfaces are the kernel `/proc/<pid>/ctl` and the runtime `machine/ctl`, and new
-control actions are added as new commands on the owning `ctl`, not as new files.
-A next-attempt intent SHALL be consumed by one logical input and SHALL NOT
-create an independent routing authority.
-
-#### Scenario: User requests the deep route
-- **WHEN** an authorized client writes `route next system-2` to `machine/ctl`
-- **THEN** the next logical input uses System 2 unless the command is invalidated
-  before consumption
-- **AND** routing status/events record the command and consumption
-
-#### Scenario: A routing ctl file is proposed
-- **WHEN** an implementation change proposes `machine/routing/ctl` or another
-  routing-specific control file
-- **THEN** the change is rejected in favor of new `route` commands on
-  `machine/ctl`, unless it also modifies `agent-file-layout-contract` explicitly
-
-### Requirement: System 1 escalation is typed stream content
-Alan SHALL allow System 1 to emit a provider-neutral `route/escalate` record
-with a bounded reason and needed-context labels. The record SHALL be treated as
-a suggestion read from the attempt stream, not as a Tool or capability, and the
-coordinator SHALL record its decision before spawning System 2.
-
-#### Scenario: System 1 requests escalation
-- **WHEN** the System 1 events/output stream contains a valid escalation record
-- **THEN** the coordinator suppresses the speculative draft as the accepted
-  result and evaluates the deeper route
-- **AND** no `escalate_to_system2` Tool or virtual action is required
-
-### Requirement: Routing state is projected under machine routing
-AgentFS SHALL expose routing `config`, `status`, `current`, `result`, and
-`events` under `machine/routing/`. Snapshot files and the offset-resumable events
-stream SHALL be the canonical client observability surface; they are read-only
-state and carry no control file.
-
-#### Scenario: A renderer attaches mid-attempt
-- **WHEN** a renderer opens the coordinating agent after an attempt has started
-- **THEN** it reads routing snapshots for the current role, attempt pid,
-  Connection alias, status, and bounded reason
-- **AND** it resumes ordered updates by reading routing events from its offset
-
-### Requirement: Accepted output identifies its attempt provenance
-The coordinator SHALL publish one accepted logical result while retaining the
-accepted attempt pid, cognitive role, Connection alias, reasoning controls,
-routing reason, and prior-attempt references in routing result and tape/action
-records. It SHALL NOT expose hidden reasoning content.
-
-#### Scenario: System 2 answer is accepted
-- **WHEN** a System 1 escalation is followed by a successful System 2 attempt
-- **THEN** the parent output uses the System 2 result
-- **AND** routing files identify both attempts and why the second was selected
-
-### Requirement: Provider continuation is role and namespace compatible
-Provider-native continuation SHALL be reused only when Connection identity,
-model, credential scope, cognitive role, prompt fingerprint, visible Tool
-manifest fingerprint, and relevant request controls are compatible. A role
-change SHALL default to a fresh Generation with accepted context reprojected.
-
-#### Scenario: Routing switches from System 1 to System 2
-- **WHEN** the selected cognitive role or Connection changes
-- **THEN** Alan does not pass System 1 provider-native continuation into System 2
-- **AND** the deeper Generation receives only accepted, provider-neutral context
+#### Scenario: High confidence requests unavailable authority
+- **WHEN** a model result recommends an action requiring absent rights or mounts
+- **THEN** the action remains unavailable or follows explicit grant approval
+- **AND** confidence does not expand authority

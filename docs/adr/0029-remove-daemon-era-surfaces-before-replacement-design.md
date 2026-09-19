@@ -1,5 +1,7 @@
 # Remove Daemon-Era Surfaces Before Replacement Design
 
+> Historical cleanup decision. Subsequent ADR-0044/0045 defined local Host attachment and it is implemented; ADR-0054 now retires the desktop product. Do not cite this record as evidence that attachment is still undecided.
+
 Status: accepted
 
 Alan will remove daemon/session/HTTP/WebSocket/relay contracts and implementation as a clean

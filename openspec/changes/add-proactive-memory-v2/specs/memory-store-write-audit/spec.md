@@ -1,5 +1,9 @@
 ## ADDED Requirements
 
+> PARKED (2026-09-19): read this change's disposition.md before use. Retained
+> draft text below is not implementation authorization; superseded desktop and
+> renderer-launch assumptions must be replaced before reactivation.
+
 ### Requirement: Memory Stores own durable mutations
 The selected Memory Store SHALL be the only authority that commits durable
 changes to its memory documents, ledger, staging areas, or revert state. Agent

@@ -1,5 +1,9 @@
 ## ADDED Requirements
 
+> PARKED (2026-09-19): read this change's disposition.md before use. Retained
+> draft text below is not implementation authorization; superseded desktop and
+> renderer-launch assumptions must be replaced before reactivation.
+
 ### Requirement: Renderer hosts render file surfaces as domain-native affordances
 Renderer hosts SHALL translate agent and service file surfaces into
 domain-native UI affordances — conversation views, plan cards, approval

@@ -1,5 +1,7 @@
 # Alan for macOS
 
+> Lifecycle: Alan for macOS is retired as a product direction (ADR-0054). This guide is retained only for legacy maintenance until scoped source/build removal, not authorization for new desktop features or releases.
+
 `clients/apple` is Alan for macOS, the native Apple host for Alan.
 
 The macOS path is Alan for macOS: a real terminal workspace whose terminal

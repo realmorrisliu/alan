@@ -1,5 +1,7 @@
 # Apple Client Architecture Maintainability
 
+> Lifecycle: Alan for macOS is retired as a product direction (ADR-0054). This guide is retained only for legacy maintenance until scoped source/build removal, not authorization for new desktop features or releases.
+
 This document records the current Apple client source ownership baseline and the
 target layout for behavior-preserving refactor slices. It is intentionally about
 maintainability, not product behavior.

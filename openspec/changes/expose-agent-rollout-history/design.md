@@ -1,5 +1,9 @@
 ## Context
 
+> PARKED (2026-09-19): read this change's disposition.md before use. Retained
+> draft text below is not implementation authorization; superseded desktop and
+> renderer-launch assumptions must be replaced before reactivation.
+
 Agent Runtime Service already stores durable Rollout JSONL files in its System
 Store subtree. Each Rollout has a `rollout_id`, producer Process path, start
 metadata, and append-only Agent Machine evidence. The live `/agent/<pid>` view

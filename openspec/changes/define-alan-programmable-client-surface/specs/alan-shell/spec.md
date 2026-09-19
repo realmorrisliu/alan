@@ -1,5 +1,9 @@
 ## ADDED Requirements
 
+> PARKED (2026-09-19): read this change's disposition.md before use. Retained
+> draft text below is not implementation authorization; superseded desktop and
+> renderer-launch assumptions must be replaced before reactivation.
+
 ### Requirement: Programmable Client Surface belongs to Alan Shell
 Alan Shell SHALL provide the Programmable Client Surface as its text-first
 interaction contract over the caller's mounted Namespace. The surface SHALL

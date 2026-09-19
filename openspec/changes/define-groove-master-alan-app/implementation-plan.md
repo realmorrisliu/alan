@@ -1,5 +1,9 @@
 # Groove Master Alan App Implementation Plan
 
+> PARKED (2026-09-19): read this change's disposition.md before use. Retained
+> draft text below is not implementation authorization; superseded desktop and
+> renderer-launch assumptions must be replaced before reactivation.
+
 The app-owned file tree lands before rich host UI so every later surface uses
 the same authority.
 

@@ -1,5 +1,10 @@
 # macos-shell-action-registry Specification
 
+> Lifecycle: retained legacy maintenance only (ADR-0054). Alan for macOS is
+> retired as a product direction. These requirements constrain retained
+> consumers, not new product development or Herdr. Platform security and user
+> data obligations remain until explicit consumer removal and requirement deltas.
+
 ## Purpose
 Defines stable macOS shell action identity, targeting, availability, menu and
 keyboard routing, removed-action exclusions, and the boundary between shared

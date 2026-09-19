@@ -1,5 +1,9 @@
 ## ADDED Requirements
 
+> PARKED (2026-09-19): read this change's disposition.md before use. Retained
+> draft text below is not implementation authorization; superseded desktop and
+> renderer-launch assumptions must be replaced before reactivation.
+
 ### Requirement: UPDF Provides A Standalone Agent-Friendly Harness
 The Alan workspace SHALL provide a standalone `updf` binary for UPDF publishing
 harness workflows without exposing UPDF as an `alan` CLI subcommand.

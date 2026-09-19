@@ -1,5 +1,9 @@
 ## MODIFIED Requirements
 
+> PARKED (2026-09-19): read this change's disposition.md before use. Retained
+> draft text below is not implementation authorization; superseded desktop and
+> renderer-launch assumptions must be replaced before reactivation.
+
 ### Requirement: Runtime validates model-mediated memory write plans
 alan SHALL use model-mediated semantic judgment for automatic memory promotion
 while separating runtime candidate planning from Memory Store commit authority.
@@ -39,7 +43,7 @@ one of:
 - **THEN** runtime does not directly mutate memory and the Memory Store rejects
   or stages the candidate
 
-#### Scenario: User asks Alan to remember a stable preference
+#### Scenario: User asks alan to remember a stable preference
 - **WHEN** a validated proposal marks the preference as `promote_now` and a
   writable authorized Memory Store is mounted
 - **THEN** the store commits the durable change and ledger record with source

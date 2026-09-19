@@ -32,6 +32,12 @@ metadata is not a lifecycle authority.
 
 ## Skills
 
+Quartermaster currently installs Skill distributions, not general executables.
+Installation, exposure/selection, authorization and execution are separate:
+`/lib/pkg/<id>` is a read-only content projection, not an automatic `/bin`
+registration. A distribution can contain multiple Skill directories. Future
+evaluation-based selection must use the same resolved Process capability view.
+
 A Skill is a directory with a required `SKILL.md` and optional resources:
 
 ```text

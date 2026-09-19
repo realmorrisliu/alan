@@ -27,8 +27,8 @@ Use these names consistently in code, specs, docs, UI copy, and reviews.
 | Memory Stores | File trees that own personal, continuity, app, and mounted-domain memory. |
 | Alan Agent | An optional Agent Workspace app that inspects and steers Agent Processes through files. |
 | Agent Execution Engine / `alan-agent-engine` | The current tape/model/Tool/policy/memory transition loop in `crates/agent-engine`. |
-| Alan for macOS | Native Apple terminal host, renderer, input shell, windowing, and OS integration surface. |
-| Alan Shell / `alan-shell` | The file-native shell. The current interactive product path is the Rust TUI in `crates/tui`. |
+| Alan for macOS | Retired desktop product; retained source is maintenance-only pending scoped removal (ADR-0054). |
+| Alan Shell / `alan-shell` | The file-native shell. Bare `alan` currently uses StdioDriver; `crates/tui` contains an Agent renderer. |
 | Alan Apps | Apps with app-owned domain cores and Alan file-server adapters. |
 
 ## Architecture rules
@@ -46,26 +46,30 @@ OpenSpec and the ADRs.
 - agent-ness is a file-layout convention, never a second Kernel Process type.
 - avoid introducing globally addressable Thread, Conversation, or execution
   manager objects.
-- keep Alan for macOS attachment design out of unrelated changes; see ADR-0029.
+- prefer existing terminal hosts, especially Herdr; do not rebuild desktop topology (ADR-0054).
+- distinguish accepted mixed-Machine direction (ADR-0055) from current generation-only execution.
 
 When a touched area is transitional, make the durable target owner explicit and
 keep the slice narrowly scoped.
 
 ## AI Turing Machine
 
-Each Agent Process is modeled as a Turing machine:
+Each Agent Process uses an AI Turing Machine abstraction. ADR-0055 accepts the
+following mixed-capability direction; typed evaluation is not implemented yet:
 
 | Concept | Implementation |
 | --- | --- |
 | Tape | `Tape` messages, context, and compaction summary |
-| Transition function | LLM generation |
+| Transition function | Machine advancement using deterministic code, typed evaluation or generation |
 | State | Agent Machine files under `/agent/<pid>/machine` |
 | Alphabet | Agent IO, machine events, and Tool Process results |
 | Side effects | Tool spawn and file writes through descriptors |
-| Halt | No more Tool calls; final text is emitted |
+| Completion | Work may complete with a structured result; wait, failure and Process exit are distinct |
 
-The Agent Execution Engine implements this loop. It is not Alan Kernel or Alan
-OS itself.
+The Agent Execution Engine currently implements a generation/Tool loop, not
+the entire target above. Namespace Tape is currently a text projection;
+rollout/checkpoint recovery must not be equated with that projection alone.
+The engine is not Alan Kernel or Alan OS itself.
 
 ## Current repository structure
 
@@ -128,8 +132,9 @@ cargo fmt --all
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 ```
 
-For Alan for macOS changes, use `Alan Dev.app`, relaunch a fresh build, and
-verify rendered behavior as well as source tests.
+Apple commands above apply only to retained legacy maintenance. Do not use them
+as the default new-product workflow. If retained UI code is changed, use
+`Alan Dev.app`, relaunch a fresh build and verify rendered behavior.
 
 ## Rust style
 
@@ -191,8 +196,9 @@ create alternative spec documents elsewhere. Historical files under
 
 ## Product design context
 
-Alan for macOS is terminal-first. Its personality is calm, precise, native,
-and quiet. Use an Arc-like material sidebar, compact controls, restrained type,
-and progressive disclosure. Do not turn the shell into a dashboard or expose
-raw implementation identifiers in the default UI. Build a coherent light
-appearance first.
+Alan is terminal-first, with Herdr as the preferred host. Keep terminal output
+calm, precise and readable with progressive disclosure and usable scrollback.
+Do not recreate a sidebar, workspace manager or terminal emulator. Herdr-native
+Alan detection is not yet implemented; ordinary terminal operation comes first.
+Read a change's disposition before executing its tasks; parked/cancelled work
+does not authorize implementation.

@@ -6,7 +6,7 @@ and rendering into explicit owners.
 ## Layering
 
 ```text
-Alan for macOS / Rust TUI / future apps
+Terminal host (prefer Herdr) → Alan CLI / terminal renderer / future apps
                   |
        mounted files and control writes
                   v
@@ -31,20 +31,30 @@ semantics.
 | durable execution evidence | rollout and checkpoint files |
 | cross-Process continuity | Memory Stores and handoff files |
 | service discovery | `/srv` handles |
-| provider generation | LLM Connections and provider adapters |
+| model operations | LLM Connections and provider adapters; typed evaluation is planned |
 | Tool effects | spawned Tool Processes and file writes |
 | terminal presentation | renderer hosts |
 | app domain truth | app-owned domain core and file-server adapter |
 
 ## Current startup
 
-The `alan` binary currently hosts direct CLI commands and the linked Rust TUI.
-The TUI receives a mounted namespace plus an Agent Process path, hydrates from
-AgentFS snapshots, tails offset-readable files, and writes input or control
-commands back through the mounted tree.
+Bare `alan` attaches to the system Host and runs the local StdioDriver Shell
+evaluator. Service Manager boot exists. The allocated Shell Process identity
+does not yet provide the complete server-side evaluator/runner and incremental
+IO path required by ADR-0048. The Agent TUI is a separate file-backed renderer.
 
-The complete Service Manager boot sequence is still under construction. Target
-crate ownership is recorded in [ADR-0025](adr/0025-target-crate-architecture.md).
+Alan for macOS is retired as a product direction, with source retained for
+scoped removal. Herdr supplies terminal topology, not Alan execution authority.
+See [ADR-0054](adr/0054-retire-desktop-client-prefer-terminal-hosts.md).
+
+The current engine is generation-driven. The accepted mixed Machine direction
+is in [ADR-0055](adr/0055-agent-machine-composes-typed-capabilities.md); evaluation
+operations and complete state/projection alignment are not implemented. Existing
+rollout/checkpoint recovery is not equivalent to the namespace text Tape alone.
+
+Package Service currently distributes Skills. Embedded boot units and Tool
+registry entries do not yet come from q executable installation. Target crate
+ownership is recorded in [ADR-0025](adr/0025-target-crate-architecture.md).
 
 ## Agent definitions
 
@@ -79,5 +89,5 @@ ephemeral.
 - derived UI state is not a second source of domain truth.
 - live child state is read from `/proc`; delegation metadata is bounded and
   Process-local.
-- future Alan for macOS attachment requires a separate accepted design; see
-  [ADR-0029](adr/0029-remove-daemon-era-surfaces-before-replacement-design.md).
+- terminal-host integration cannot grant mounts, credentials or action approval;
+  closing a renderer does not own system Host shutdown.

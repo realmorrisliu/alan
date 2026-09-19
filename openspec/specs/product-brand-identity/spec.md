@@ -1,5 +1,10 @@
 # product-brand-identity Specification
 
+> Lifecycle scope (ADR-0054): Alan remains the product brand. Requirements
+> describing the native macOS App/category, bundle or dev App apply only to
+> retained legacy maintenance, not the terminal-neutral future product. Herdr
+> is a preferred external terminal host, not an Alan rebrand.
+
 ## Purpose
 Defines Alan's product-brand identity, public domain, macOS app naming,
 historical AlanNative removal, and brand validation rules.

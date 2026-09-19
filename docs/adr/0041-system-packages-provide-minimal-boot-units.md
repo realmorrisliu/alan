@@ -1,5 +1,7 @@
 # System packages provide minimal Boot Units
 
+> Implementation status (2026-09-19): BootManifest::system still embeds boot documents with include_str!, and runtime mounts them directly. Package-transaction delivery below is an unimplemented target, not current q upgrade capability.
+
 Status: accepted
 
 The first Service Manager reads a read-only `/lib/boot` tree installed by Alan

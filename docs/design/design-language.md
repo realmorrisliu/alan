@@ -1,5 +1,7 @@
 # Alan Design Language: Paper & Ink
 
+> Lifecycle: Alan for macOS is retired as a product direction (ADR-0054). This guide is retained only for legacy maintenance until scoped source/build removal, not authorization for new desktop features or releases.
+
 This document governs **appearance judgment** for the Alan macOS shell. The
 behavioral UI contract lives in
 `openspec/specs/macos-shell-ui-ux-conformance/spec.md`. When they touch the

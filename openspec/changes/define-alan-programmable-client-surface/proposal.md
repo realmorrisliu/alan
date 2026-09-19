@@ -1,5 +1,9 @@
 ## Why
 
+> PARKED (2026-09-19): read this change's disposition.md before use. Retained
+> draft text below is not implementation authorization; superseded desktop and
+> renderer-launch assumptions must be replaced before reactivation.
+
 Alan already has a namespace-native shell, a headless editable-buffer file
 server, and file-backed renderer contracts, but they do not yet form one
 programmable interaction loop. Without a shared contract, selected-text

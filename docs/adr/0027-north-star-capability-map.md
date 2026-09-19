@@ -1,5 +1,7 @@
 # North Star Capability Map (Five Rings)
 
+> Roadmap snapshot superseded by ADR-0054/0055 and the September architecture review. Ring completion claims below are historical, not current status. Shell and Machine gaps must be replanned on merged main; no desktop roadmap remains.
+
 Status: Accepted. Consolidates [ADR-0024](0024-plan9-kernel-model.md) (kernel
 model), [ADR-0025](0025-target-crate-architecture.md) (crate architecture),
 [ADR-0026](0026-plan9-application-ideas-for-agents.md) (application ideas), the

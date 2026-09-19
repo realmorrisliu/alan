@@ -1,5 +1,9 @@
 ## Context
 
+> PARKED (2026-09-19): read this change's disposition.md before use. Retained
+> draft text below is not implementation authorization; superseded desktop and
+> renderer-launch assumptions must be replaced before reactivation.
+
 Groove Master helps a bassist build pocket, long-form playing, and personal feel
 through a daily practice loop. The product domain is richer than the shell that
 hosts it: practice phases, day plans, audio sources, sessions, recordings,

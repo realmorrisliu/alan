@@ -1,5 +1,9 @@
 ## Why
 
+> PARKED (2026-09-19): read this change's disposition.md before use. Retained
+> draft text below is not implementation authorization; superseded desktop and
+> renderer-launch assumptions must be replaced before reactivation.
+
 Alan's target architecture makes everything a file: namespaces, mounts,
 `/proc`, `/agent`, `/srv`, and the aP protocol are the system substrate. That
 substrate is an excellent API, but it is not a user interaction model. Alan's

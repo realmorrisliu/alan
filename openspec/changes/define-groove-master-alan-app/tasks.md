@@ -1,5 +1,9 @@
 ## 1. Domain Core And App Tree
 
+> PARKED (2026-09-19): read this change's disposition.md before use. Retained
+> draft text below is not implementation authorization; superseded desktop and
+> renderer-launch assumptions must be replaced before reactivation.
+
 - [ ] 1.1 Implement portable practice-route, plan, block, session, marker,
   reflection, Pocket Tracker, loop, recording, and Groove Entry domain models.
 - [ ] 1.2 Implement the Groove Master aP adapter and in-memory

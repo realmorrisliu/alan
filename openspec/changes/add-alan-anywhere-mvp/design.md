@@ -1,5 +1,9 @@
 ## Context
 
+> PARKED (2026-09-19): read this change's disposition.md before use. Retained
+> draft text below is not implementation authorization; superseded desktop and
+> renderer-launch assumptions must be replaced before reactivation.
+
 `remote-access-service` defines how a remote principal receives a Remote Entry
 Process through aP file operations, handoff, and an attachment lease. Alan
 Anywhere owns the user-facing product above that boundary.

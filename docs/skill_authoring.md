@@ -45,6 +45,13 @@ packaged form.
 
 ## Tooling Preference
 
+The `bin/` and `scripts/` files above are packaged assets, not automatically
+registered Alan Tools. q v0 exports Skills only. Host-side authoring/evaluation
+hooks and an authorized Tool Process are distinct execution paths; installing
+a package grants neither Host execution permission nor a new `/bin` command.
+Here “skill package” means one Skill directory; a Package Service distribution
+may contain multiple such directories.
+
 For first-party skill authoring and evaluation flows:
 
 - prefer existing Rust CLI/bin surfaces such as `alan ...`

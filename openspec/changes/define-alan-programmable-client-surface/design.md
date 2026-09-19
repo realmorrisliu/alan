@@ -1,5 +1,9 @@
 ## Context
 
+> PARKED (2026-09-19): read this change's disposition.md before use. Retained
+> draft text below is not implementation authorization; superseded desktop and
+> renderer-launch assumptions must be replaced before reactivation.
+
 ADR-0026 adopts the Acme interaction idea: editable text is programmable and
 the interaction surface is itself a file server. ADR-0027 places that work in
 Ring 4 and states the stronger Alan claim that one namespace is the runtime, UI,

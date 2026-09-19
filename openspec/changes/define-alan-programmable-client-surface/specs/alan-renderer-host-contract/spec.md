@@ -1,5 +1,9 @@
 ## ADDED Requirements
 
+> PARKED (2026-09-19): read this change's disposition.md before use. Retained
+> draft text below is not implementation authorization; superseded desktop and
+> renderer-launch assumptions must be replaced before reactivation.
+
 ### Requirement: Renderer hosts project Programmable Client Surface files
 An Alan renderer host SHALL render a Programmable Client Surface by reading the
 mounted editable-buffer files and evaluator Process files and by translating

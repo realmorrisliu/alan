@@ -1,5 +1,9 @@
 ## ADDED Requirements
 
+> PARKED (2026-09-19): read this change's disposition.md before use. Retained
+> draft text below is not implementation authorization; superseded desktop and
+> renderer-launch assumptions must be replaced before reactivation.
+
 ### Requirement: Memory surfaces consume store-owned write state
 Generated recall, handoff, Episodic Memory, and daily-note surfaces SHALL read
 current memory through namespace-mounted Memory Store files. They SHALL keep

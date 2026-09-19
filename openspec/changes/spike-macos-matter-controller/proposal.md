@@ -1,5 +1,9 @@
 ## Why
 
+> PARKED (2026-09-19): read this change's disposition.md before use. Retained
+> draft text below is not implementation authorization; superseded desktop and
+> renderer-launch assumptions must be replaced before reactivation.
+
 Alan needs evidence that Alan for macOS can safely commission and control one
 low-risk Matter light through Apple's public `Matter.framework`. The previous
 spike pointed toward a typed local RPC/tool provider; under the Plan 9-like
