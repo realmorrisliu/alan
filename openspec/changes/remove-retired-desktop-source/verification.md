@@ -37,3 +37,9 @@ The next review found stale removal-status summaries in README, CONTEXT and
 the architecture guide. Current summaries now consistently state source removal;
 ADR-0054 distinguishes its original maintenance decision from the follow-up,
 and the interaction disposition points at this change's removal ownership.
+
+Follow-up checks cover all non-archived Markdown links targeting files removed
+by this diff. The research source link now pins its original Git revision;
+the testing banner and research acceptance text use current terminal hosts.
+The standalone guide links its completed migration's archive instead of a
+nonexistent active change. No permanent documentation scanner was added.
