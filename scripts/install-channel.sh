@@ -6,10 +6,6 @@ alan_install_channel_load() {
     case "$channel" in
         stable)
             ALAN_CHANNEL_ID="stable"
-            ALAN_APP_BUNDLE_NAME="Alan.app"
-            ALAN_DISPLAY_NAME="Alan"
-            ALAN_BUNDLE_ID="app.alanworks.macos"
-            ALAN_PRIVILEGED_HELPER_LABEL="app.alanworks.macos.privileged-helper"
             ALAN_CLI_NAME="alan"
             ALAN_OS_HOST_NAME="alan-os-host"
             ALAN_SYSTEM_STORE_DISPLAY="~/Library/Application Support/Alan/System Store/stable"
@@ -18,10 +14,6 @@ alan_install_channel_load() {
             ;;
         dev)
             ALAN_CHANNEL_ID="dev"
-            ALAN_APP_BUNDLE_NAME="Alan Dev.app"
-            ALAN_DISPLAY_NAME="Alan Dev"
-            ALAN_BUNDLE_ID="app.alanworks.macos.dev"
-            ALAN_PRIVILEGED_HELPER_LABEL="app.alanworks.macos.dev.privileged-helper"
             ALAN_CLI_NAME="alan-dev"
             ALAN_OS_HOST_NAME="alan-os-host-dev"
             ALAN_SYSTEM_STORE_DISPLAY="~/Library/Application Support/Alan/System Store/dev"
@@ -35,10 +27,6 @@ alan_install_channel_load() {
     esac
 
     export ALAN_CHANNEL_ID
-    export ALAN_APP_BUNDLE_NAME
-    export ALAN_DISPLAY_NAME
-    export ALAN_BUNDLE_ID
-    export ALAN_PRIVILEGED_HELPER_LABEL
     export ALAN_CLI_NAME
     export ALAN_OS_HOST_NAME
     export ALAN_SYSTEM_STORE_DISPLAY

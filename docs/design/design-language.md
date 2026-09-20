@@ -76,8 +76,8 @@ the scale governs sizes, not weights.
 ## Spacing Scale (`ShellSpacing`)
 
 4pt base: `hair` 2, `tight` 4, `control` 8, `row` 12, `section` 16,
-`panel` 24. New layout code uses these names; raw numeric paddings beyond the
-recorded baseline fail `scripts/check-shell-design-tokens.sh`.
+`panel` 24. New retained Apple layout code uses these names; its source-level
+token checks are maintenance-only and are not part of the standalone CLI gate.
 
 ## Color Domains
 

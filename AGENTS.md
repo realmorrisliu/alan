@@ -110,9 +110,8 @@ just fmt
 just lint
 just build
 just install-hooks
-just install-dev
-just apple-shell-focused-tests
-just apple-shell-ui-smoke
+just install
+just standalone-distribution-test
 ```
 
 `just quality` is the canonical non-mutating clean-code and architecture gate.
@@ -132,9 +131,8 @@ cargo fmt --all
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 ```
 
-Apple commands above apply only to retained legacy maintenance. Do not use them
-as the default new-product workflow. If retained UI code is changed, use
-`Alan Dev.app`, relaunch a fresh build and verify rendered behavior.
+Apple source checks apply only to retained legacy maintenance. Do not use an
+app bundle or desktop UI launch as a prerequisite for standalone CLI/Host work.
 
 ## Rust style
 

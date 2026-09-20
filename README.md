@@ -104,13 +104,20 @@ cargo test -p alan-terminal-ui
 used by the versioned pre-commit hook and required CI. CI remains authoritative
 because local hooks can be bypassed with `--no-verify`.
 
-Retained legacy desktop maintenance only (not the new-product workflow):
+Standalone CLI/Host distribution:
 
 ```bash
-just install-dev
-just apple-shell-focused-tests
-just apple-shell-ui-smoke
+just install
+just standalone-distribution-test
 ```
+
+Retained Apple source maintenance is not a product or release workflow; its
+checks are run directly from `clients/apple/scripts/` only when that source is
+being maintained. The standalone guide is
+[here](docs/standalone_cli_distribution.md).
+
+Retained Apple source maintenance is opt-in and uses the focused scripts under
+`clients/apple/scripts/`; it is not a product or distribution prerequisite.
 
 ## CLI
 
@@ -142,7 +149,7 @@ alan shell state
 alan shell pane list
 ```
 
-The `alan shell ...` direct commands above control the retained desktop surface;
+The `alan shell ...` direct commands above are the retained command/control surface;
 they are not Herdr commands or the file-native Shell grammar.
 
 Host files do not enter Alan OS because `alan` was launched from their

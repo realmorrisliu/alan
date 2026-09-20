@@ -23,12 +23,6 @@ pub enum InstallChannel {
 pub struct InstallChannelDescriptor {
     /// Channel id used by scripts and runtime selection.
     pub id: &'static str,
-    /// App bundle directory name.
-    pub app_bundle_name: &'static str,
-    /// Human-readable app name.
-    pub display_name: &'static str,
-    /// macOS bundle identifier.
-    pub bundle_identifier: &'static str,
     /// CLI executable/link name.
     pub cli_name: &'static str,
     /// Dedicated Alan OS Host executable name.
@@ -95,18 +89,12 @@ impl InstallChannel {
         match self {
             Self::Stable => InstallChannelDescriptor {
                 id: "stable",
-                app_bundle_name: "Alan.app",
-                display_name: "Alan",
-                bundle_identifier: "app.alanworks.macos",
                 cli_name: "alan",
                 os_host_name: "alan-os-host",
                 shell_control_namespace: "alan-shell-control",
             },
             Self::Dev => InstallChannelDescriptor {
                 id: "dev",
-                app_bundle_name: "Alan Dev.app",
-                display_name: "Alan Dev",
-                bundle_identifier: "app.alanworks.macos.dev",
                 cli_name: "alan-dev",
                 os_host_name: "alan-os-host-dev",
                 shell_control_namespace: "alan-dev-shell-control",
@@ -129,9 +117,6 @@ mod tests {
             InstallChannel::Stable.descriptor(),
             InstallChannelDescriptor {
                 id: "stable",
-                app_bundle_name: "Alan.app",
-                display_name: "Alan",
-                bundle_identifier: "app.alanworks.macos",
                 cli_name: "alan",
                 os_host_name: "alan-os-host",
                 shell_control_namespace: "alan-shell-control",
@@ -145,9 +130,6 @@ mod tests {
             InstallChannel::Dev.descriptor(),
             InstallChannelDescriptor {
                 id: "dev",
-                app_bundle_name: "Alan Dev.app",
-                display_name: "Alan Dev",
-                bundle_identifier: "app.alanworks.macos.dev",
                 cli_name: "alan-dev",
                 os_host_name: "alan-os-host-dev",
                 shell_control_namespace: "alan-dev-shell-control",
@@ -172,7 +154,7 @@ mod tests {
             Some(InstallChannel::Dev)
         );
         assert_eq!(
-            InstallChannel::from_executable_name("/Applications/Alan Dev.app/alan-dev"),
+            InstallChannel::from_executable_name("/usr/local/bin/alan-dev"),
             Some(InstallChannel::Dev)
         );
     }

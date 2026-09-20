@@ -59,7 +59,7 @@ impl HostStartAttempt {
 
 #[cfg(target_os = "macos")]
 pub(crate) fn os_host_launch_label(channel: InstallChannel) -> String {
-    format!("{}.os-host", channel.descriptor().bundle_identifier)
+    format!("alan-{}.os-host", channel.descriptor().id)
 }
 
 #[cfg(target_os = "macos")]

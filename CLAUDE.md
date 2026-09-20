@@ -8,7 +8,7 @@ language). This file is the short operational summary plus the rules that are ea
 ## Critical Workflow Rules
 
 - **OpenSpec owns all specs and design docs.** Change proposals, design docs, task lists, and spec deltas go in `openspec/changes/<change-id>/`; merged long-lived contracts live in `openspec/specs/`. Do NOT create spec files under `docs/superpowers/specs/`, `docs/spec/`, or `plans/` — this overrides any default workflow that writes design docs elsewhere. Completed changes are archived to `openspec/changes/archive/YYYY-MM-DD-<change-id>/`.
-- **macOS app testing targets the dev channel only**: `Alan Dev.app`, bundle `app.alanworks.macos.dev`, CLI `alan-dev`, and the dev System Store and Host Store (`just install-dev`). Never launch, quit, or install over the user's stable `Alan.app` or stable stores unless explicitly asked — they are the live work environment.
+- **Alan for macOS is retired**: use the standalone CLI/Host path (`just install`, `just install-dev`, `just standalone-distribution-test`). Retained Apple source is maintenance-only; do not build, launch, or publish an app bundle as part of normal work.
 - **After Rust changes**: run `just verify` (fmt + lint + test + mock smoke).
 - New/edited Rust tests follow `openspec/specs/rust-test-placement-contract/spec.md`: choose inline unit tests, extracted white-box test files, or crate-level integration tests deliberately.
 - Branch from `main`; conventional-style commit messages recommended (for example,
@@ -27,11 +27,10 @@ cargo test -p alan-agent-engine                # single crate
 cargo test -p alan-agent-engine test_name     # single test
 cargo test -p alan-llm --features mock   # with MockLlmProvider
 
-# macOS shell (Swift) — script-driven, no plain xcodebuild test target
-just apple-shell-focused-tests       # focused shell tests without Ghostty artifacts
-just apple-shell-ui-smoke            # UI smoke against installed Alan Dev app
-just apple-shell-ghostty-integration # needs local Ghostty artifacts prepared
-just install-dev                     # build + install Alan Dev.app locally
+# Standalone distribution
+just install
+just install-dev
+just standalone-distribution-test
 ```
 
 ## Architecture
@@ -62,7 +61,7 @@ Tool governance is two-stage: `PolicyEngine` (`allow | escalate | deny`, policy 
 
 Skills are Markdown packages with YAML frontmatter, resolved from built-in packages and explicit Skill or Agent Definition descriptors; contract in `openspec/specs/skill-system-contract/spec.md`.
 
-### macOS client (`clients/apple/alan-macos`)
+### Retained Apple source (`clients/apple/alan-macos`)
 
 Retired product direction (ADR-0054), retained for maintenance until scoped
 removal. The SwiftUI/AppKit/Ghostty client already attaches to Alan OS through

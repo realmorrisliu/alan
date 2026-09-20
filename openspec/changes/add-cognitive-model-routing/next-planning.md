@@ -1,7 +1,7 @@
 # 下一步规划入口
 
-基线：PR #921 已于 2026-09-19 合并，main 提交
-`3fce4450ad0b1d0412baeec095224d48bc7937d8`。
+基线：PR #922 已于 2026-09-20 合并，main 提交
+`e153b9f3b755d011f7d1c1e87c605a37fbb5e416`。
 
 本文件汇总跨 change 的规划待办，不替代各 change 的规范和实施 tasks。
 以下复选框表示**规划完成**，不表示功能交付。现有 parked change 不因本表而
@@ -20,14 +20,16 @@ change（按本顺序为 `define-alan-programmable-client-surface`），保留�
 
 ### A. 桌面代码退役与独立 CLI/Host 分发
 
-归属：建议新建 `retire-macos-client-and-standalone-cli`，目前尚未创建。
-本次不创建未经消费者审计的删除方案。
-ADR-0054 已完成产品方向退役，**源代码、构建和发布配置尚未移除**。
+归属：活动 change
+[`retire-macos-client-and-standalone-cli`](../retire-macos-client-and-standalone-cli/)。
+ADR-0054 已完成产品方向退役；本 change 只移除已审计的 app 分发/构建/发布
+消费者，Apple 源码与 shell-core/FFI 保留为 maintenance-only，后续源代码删除
+必须另立 change 并重新审计凭据、挂载、sandbox、Store 和测试消费者。
 
-- [ ] A1 盘点 Apple 客户端、shell-core/FFI、构建、CI、安装及发布入口的实际消费者，逐项标明删除、保留或迁移；不能因目录名称含 Apple 就整批删除。
-- [ ] A1a 按被移除消费者反查全部 canonical requirements/scenarios，而非只按 capability 名称找 `macos-*`；逐项登记删除、改写或因存续消费者而保留的理由，避免代码已删而规范仍要求旧客户端行为。
-- [ ] A2 记录 credentials、Host Mounts、sandbox、系统账户和用户数据的存续 owner；为仍需要的适配器列出迁移前后验证，禁止把删除 UI 当成删除安全边界。
-- [ ] A3 提出最小独立 CLI/Host 安装和启动路径，补齐受影响的分发、平台与遗留规范 deltas，以及 build/test/install 验收任务。
+- [x] A1 盘点 Apple 客户端、shell-core/FFI、构建、CI、安装及发布入口的实际消费者，逐项标明删除、保留或迁移；不能因目录名称含 Apple 就整批删除。
+- [x] A1a 按被移除消费者反查全部 canonical requirements/scenarios，而非只按 capability 名称找 `macos-*`；逐项登记删除、改写或因存续消费者而保留的理由，避免代码已删而规范仍要求旧客户端行为。
+- [x] A2 记录 credentials、Host Mounts、sandbox、系统账户和用户数据的存续 owner；为仍需要的适配器列出迁移前后验证，禁止把删除 UI 当成删除安全边界。
+- [x] A3 提出最小独立 CLI/Host 安装和启动路径，补齐受影响的分发、平台与遗留规范 deltas，以及 build/test/install 验收任务。
 
 规划出口：有确切路径级清单、存续消费者和安全验证、批准的删除范围；未完成
 适配器接替验证的部分继续保留。不得卸载用户 App、删除数据或修改线上 feed。
@@ -82,10 +84,11 @@ ADR-0054 已完成产品方向退役，**源代码、构建和发布配置尚未
   （外部调研）、归档 change 的 `disposition.md` / `verification.md`。
 - 未完成的运行功能不计入此步：源代码删除、typed evaluation、Shell 改线、Jev 和 Herdr 验收。
 
-### Step 1 — 新建 retire-macos-client-and-standalone-cli
+### Step 1 — 实施 retire-macos-client-and-standalone-cli
 
-- 工作：完成 A 的消费者清单，再移除批准范围内的桌面产品代码/构建/发布义务；
-  保留或迁移仍被 CLI/Host 使用的平台能力，提供独立安装入口。
+- 工作：完成 A 的消费者清单，移除批准范围内的桌面产品构建/发布/安装义务；
+  保留 Apple 源码和 shell-core/FFI maintenance-only 边界，保留或迁移仍被
+  CLI/Host 使用的平台能力，提供独立安装入口。
 - 参考 ADR：0054、0032（Host/boot）、0044（channel lifetime）、0050（mount grants）、0051（secrets）。
 - 审核并按实际影响写 deltas：`alan-app-distribution`、`alan-os-host-lifecycle`、
   `host-command-plane`、`provider-connection-contract`、`host-directory-mounts`、
@@ -98,8 +101,14 @@ ADR-0054 已完成产品方向退役，**源代码、构建和发布配置尚未
   不批量删除所有 macOS 规范，也不把词匹配直接当作删除依据。
 - 源码入口：`clients/apple/`、`crates/shell-core/`、`crates/shell-core-ffi/`、
   `crates/alan/`、`crates/os-host/`，以及实际引用它们的 Just/CI/安装脚本。
-- 完成证据：独立 CLI 安装/启动验证、存续凭据/挂载/sandbox 回归、workspace 与
-  required CI 通过；无法证明安全接替的适配器留存，而非强行删除。
+- 完成证据：独立 CLI 安装/启动和 archive 验证、存续凭据/挂载/sandbox owner
+  记录、workspace 与 required CI 通过；无法证明安全接替的适配器留存，而非
+  强行删除。实现完成后先按 change tasks 做 Codex review，合并后同步 delta
+  再归档。
+
+当前状态：该 change 已创建并已完成消费者审计、InstallChannel 重构、独立
+安装/archive 链路、app-only 发布消费者清理和 OpenSpec delta；剩余是完整
+workspace 验证、PR review、合并以及合并后的 canonical spec 同步/归档。
 
 ### Step 2 — 重写并激活 add-cognitive-model-routing 的最小核心切片
 
