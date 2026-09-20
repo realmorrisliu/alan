@@ -19,8 +19,6 @@ members = [
     "crates/agent-engine",
     "crates/agent-engine/skills/swebench/tooling",
     "crates/shell",
-    "crates/shell-core",
-    "crates/shell-core-ffi",
     "crates/tools",
     "crates/tui",
     "crates/alan",
@@ -125,7 +123,5 @@ alan-os-host = { path = "crates/os-host" }
 alan-editfs = { path = "crates/editfs" }
 alan-branchfs = { path = "crates/branchfs" }
 alan-swebench-tooling = { path = "crates/agent-engine/skills/swebench/tooling" }
-alan-shell-core = { path = "crates/shell-core" }
-alan-shell-core-ffi = { path = "crates/shell-core-ffi" }
 alan-tools = { path = "crates/tools" }
 alan-terminal-ui = { path = "crates/tui" }

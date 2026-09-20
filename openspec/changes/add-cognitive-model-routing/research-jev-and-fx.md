@@ -299,9 +299,9 @@ Agent › █
 3. **保持唯一事实来源。** Shell command 结果读 Process streams；Agent 回复读 AgentFS，继续按权威记录消除预览重复；Tool 详情引用原有 action/result，显示折叠不删除证据。
 4. **默认紧凑，细节按需。** 主流显示任务、短状态和结果；长输出预览可展开/按范围读取。计划、批准请求与错误仅在相关时出现。提供显式快捷键进入完整详情，再返回同一输入草稿。
 5. **输入不中断执行。** 粘贴文本不自动提交；Ctrl+C 按当前目标产生明确取消语义；运行中新增输入的 steer/queue 行为由已有 runtime 合约决定，不只在 UI 改按钮。
-6. **macOS 保持 Host 职责。** 原生 sidebar、窗口和终端集成保持轻量；本轮无需设计新的 macOS attachment 协议或替换 Ghostty。遵守 ADR-0029 的边界。
+6. **复用外部终端宿主。** Herdr 负责窗口、pane 与 PTY；Alan 通过普通终端输入输出工作。原生 macOS 客户端已退役，不再建设 sidebar、窗口或 Ghostty 集成。遵守 ADR-0054 的边界。
 
-`shell-core` 目前主要承担原生 shell workspace/pane 等表面模型，不能因名称相近把模型路由和通用 Shell parser 塞进去。[shell-core](../../../crates/shell-core/src/lib.rs)、[ADR-0029](../../../docs/adr/0029-remove-daemon-era-surfaces-before-replacement-design.md)
+调研基线中的 `shell-core` 承担原生 shell workspace/pane 表面模型，现已随桌面源码删除，不是当前实现落点。历史证据固定到[调研提交的 shell-core](https://github.com/realmorrisliu/alan/blob/576fb4752e098e93f076c10f9daba1d200cc3b7a/crates/shell-core/src/lib.rs)；当前 Shell 实现以 `crates/shell/` 和活动 tracer-bullet 路线为准。
 
 ### 6.3 第一版验收
 
@@ -314,9 +314,9 @@ Agent › █
 | 取消当前生成 | UI 很快响应，晚到模型结果不覆写新任务 |
 | 返回 Shell / 清屏 | 不隐式杀死后台 Process，不擦除执行证据 |
 | 非交互输出 | 不混入光标控制序列；结果与诊断可分开消费 |
-| 原生 Host | 新构建 Alan Dev.app 重新启动后，检查真实渲染和输入行为 |
+| 外部终端宿主 | 在普通终端和 Herdr pane 启动当前 Alan 构建，检查真实输出和输入行为 |
 
-验证先用合成 Process streams，不依赖付费模型。终端自动化覆盖 resize/粘贴/恢复，原生路径做新构建回归；截图只能证明某个画面，不能替代滚屏和取消行为检查。
+验证先用合成 Process streams，不依赖付费模型。终端自动化覆盖 resize/粘贴/恢复，真实终端任务使用当前构建回归；截图只能证明某个画面，不能替代滚屏和取消行为检查。
 
 ## 7. 分阶段实施与验收门槛
 

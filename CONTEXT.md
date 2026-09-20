@@ -201,8 +201,8 @@ alignment, as recorded in the September architecture review.
 **Alan Renderer Host** — A renderer/input host that consumes mounted AgentFS
 and `/proc` files and writes to their control surfaces.
 
-**Alan for macOS** — Retired desktop product, with retained source pending scoped
-removal (ADR-0054). Its aP attachment already exists. Herdr is the preferred
+**Alan for macOS** — Retired desktop product whose App, helper and shell-core/FFI
+source has been removed (ADR-0054). Herdr is the preferred
 terminal host, not a replacement owner for Alan OS lifecycle or permissions.
 
 **Alan Agent** — An optional Agent Workspace app for inspecting, steering, and
@@ -240,6 +240,5 @@ Tool, policy, Skill, memory, compaction, and persistence loop in
 **Alan terminal UI (`alan-terminal-ui`)** — The linked Ratatui renderer and
 input loop in `crates/tui`, backed by AgentFS and `/proc` files.
 
-**Shell surface core (`alan-shell-core`)** — Platform-neutral spaces, tabs,
-panes, terminal activity, settings, and persistence domain model shared with
-Alan for macOS.
+The former desktop shell-core/FFI implementation has been removed. External
+terminal hosts own spaces, tabs and panes; Alan owns its Process execution.

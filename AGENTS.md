@@ -27,7 +27,7 @@ Use these names consistently in code, specs, docs, UI copy, and reviews.
 | Memory Stores | File trees that own personal, continuity, app, and mounted-domain memory. |
 | Alan Agent | An optional Agent Workspace app that inspects and steers Agent Processes through files. |
 | Agent Execution Engine / `alan-agent-engine` | The current tape/model/Tool/policy/memory transition loop in `crates/agent-engine`. |
-| Alan for macOS | Retired desktop product; retained source is maintenance-only pending scoped removal (ADR-0054). |
+| Alan for macOS | Retired desktop product; App and shell-core/FFI source removed (ADR-0054). |
 | Alan Shell / `alan-shell` | The file-native shell. Bare `alan` currently uses StdioDriver; `crates/tui` contains an Agent renderer. |
 | Alan Apps | Apps with app-owned domain cores and Alan file-server adapters. |
 
@@ -90,11 +90,8 @@ crates/
 ├── agent-engine/     # Agent Execution Engine
 ├── tools/            # builtin Tool implementations
 ├── tui/              # file-backed Ratatui renderer/input loop
-├── shell-core/       # platform-neutral shell surface model
-├── shell-core-ffi/   # C ABI facade
 └── alan/             # CLI host and linked TUI
 
-clients/apple/        # Alan for macOS
 openspec/             # canonical specs and active changes
 ```
 
@@ -126,13 +123,12 @@ cargo test --workspace
 cargo test -p alan-agent-engine
 cargo test -p alan-agent-protocol
 cargo test -p alan-terminal-ui
-cargo test -p alan-shell-core -p alan-shell-core-ffi
 cargo fmt --all
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 ```
 
-Apple source checks apply only to retained legacy maintenance. Do not use an
-app bundle or desktop UI launch as a prerequisite for standalone CLI/Host work.
+Desktop App, shell-core and FFI source has been removed. Validate standalone
+CLI/Host behavior and macOS Rust platform adapters; no Apple UI build is needed.
 
 ## Rust style
 

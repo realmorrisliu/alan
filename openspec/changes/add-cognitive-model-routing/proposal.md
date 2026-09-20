@@ -32,7 +32,9 @@ Agent Machine, AgentFS projections, llmfs/provider operations and evaluation
 tests. No Kernel cognition type, mandatory Process-per-call, global router,
 new package kind or renderer launch authority.
 
-Status: parked for the next planning pass on merged main. This is accepted
+Status: queued for tracer bullet slice 3 after the first usable-agent loop;
+necessary recovery contracts may be sliced earlier for reliability. See
+[next-planning.md](next-planning.md). This is accepted
 direction, not an implementation-ready slice. Before apply, that pass must
 complete the llm-file-server and agent-namespace-runtime deltas, choose versioned
 wire DTOs, reconcile state recovery, and explicitly activate the task scope.

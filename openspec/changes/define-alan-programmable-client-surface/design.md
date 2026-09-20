@@ -1,8 +1,11 @@
 ## Context
 
-> PARKED (2026-09-19): read this change's disposition.md before use. Retained
-> draft text below is not implementation authorization; superseded desktop and
-> renderer-launch assumptions must be replaced before reactivation.
+> SUPERSEDED INVENTORY (2026-09-20): current scope and ordering are in
+> [disposition.md](disposition.md), [tasks.md](tasks.md), and the
+> [tracer bullet roadmap](../add-cognitive-model-routing/next-planning.md).
+> Replace this retained draft and its deltas before implementation; do not
+> execute or sync the old plan below. Desktop GUI work is cancelled;
+> editfs and executable packaging are outside the current delivery scope.
 
 ADR-0026 adopts the Acme interaction idea: editable text is programmable and
 the interaction surface is itself a file server. ADR-0027 places that work in

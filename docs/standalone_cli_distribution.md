@@ -3,8 +3,8 @@
 The supported Alan delivery boundary is the terminal-neutral Rust CLI plus the
 Alan OS Host executables. The durable contract is
 [`standalone-cli-distribution`](../openspec/specs/standalone-cli-distribution/spec.md)
-and the active retirement work is tracked in
-[`retire-macos-client-and-standalone-cli`](../openspec/changes/retire-macos-client-and-standalone-cli/).
+and its completed distribution migration is recorded in
+[`retire-macos-client-and-standalone-cli`](../openspec/changes/archive/2026-09-20-retire-macos-client-and-standalone-cli/).
 
 ## Local install
 
@@ -45,5 +45,5 @@ just quality
 
 The check starts only `alan --version`; Host lifecycle remains the existing
 channel-aware CLI attachment/start path. Alan.app, Sparkle, appcast, cask, and
-embedded-CLI workflows are retired. Retained Apple source is maintenance-only
-and must not become a prerequisite for the CLI/Host distribution.
+embedded-CLI workflows are retired. Desktop source has been removed; macOS
+credentials, Host Mounts and sandboxing remain owned by Rust runtime adapters.

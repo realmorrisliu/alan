@@ -44,14 +44,12 @@ reject_pattern 'ALAN_TUI_PATH|clients/tui|\bBun\b|\bInk\b' \
     .github \
     Cargo.toml \
     crates \
-    clients/apple \
     README.md \
     AGENTS.md
 
 reject_pattern 'alan chat|alan ask' \
     .github \
     crates \
-    clients/apple \
     README.md \
     AGENTS.md
 
