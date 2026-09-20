@@ -17,8 +17,6 @@ alan-os-host|alan-agent-engine alan-agentfs alan-ap alan-hostfs alan-kernel alan
 alan-routefs|alan-ap
 alan-service-manager|alan-agent-engine alan-agentfs alan-ap alan-hostfs alan-kernel alan-llm alan-llmfs alan-routefs alan-shell
 alan-shell|alan-ap
-alan-shell-core|
-alan-shell-core-ffi|alan-shell-core
 alan-swebench-tooling|
 alan-terminal-ui|alan-agent-protocol alan-ap alan-shell
 alan-tools|alan-agent-engine alan-agent-protocol

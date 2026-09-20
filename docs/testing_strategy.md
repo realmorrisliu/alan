@@ -68,15 +68,8 @@ Provider and runtime live tests are ignored by default and require
 `ALAN_LIVE_PROVIDER_TESTS=1`. They validate real upstream auth and request
 shaping without becoming part of normal CI.
 
-## Apple verification
+## Platform verification
 
-For retained Alan for macOS maintenance only:
-
-```bash
-cargo test -p alan-shell-core -p alan-shell-core-ffi
-bash clients/apple/scripts/test-shell-core-ffi-adapter.sh
-```
-
-These checks are not part of the standalone product gate. Do not build or
-launch an app bundle for CLI/Host changes; use `just standalone-distribution-test`
-and `just quality` instead.
+Desktop App and shell-core/FFI tests were removed with their source. Validate
+macOS credentials, Host Mounts and sandboxing through their Rust owner tests.
+Use `just standalone-distribution-test` and `just quality` for CLI/Host delivery.

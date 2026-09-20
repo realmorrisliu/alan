@@ -36,8 +36,8 @@ guarantees today.
 - [Live Provider Harness](./live_provider_harness.md)
 - [Live Runtime Smoke](./live_runtime_smoke.md)
 
-The retained Apple source and its historical checks are maintenance-only; they
-are not a supported product or release workflow.
+The retired Apple desktop source and its checks have been removed. CLI/Host
+and macOS Rust platform adapters are the supported product surfaces.
 
 Read each active change's disposition before applying tasks. A parked change
 is retained planning context, not approval to resume implementation.

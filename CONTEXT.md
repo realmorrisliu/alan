@@ -240,6 +240,5 @@ Tool, policy, Skill, memory, compaction, and persistence loop in
 **Alan terminal UI (`alan-terminal-ui`)** — The linked Ratatui renderer and
 input loop in `crates/tui`, backed by AgentFS and `/proc` files.
 
-**Shell surface core (`alan-shell-core`)** — Platform-neutral spaces, tabs,
-panes, terminal activity, settings, and persistence domain model shared with
-Alan for macOS.
+The former desktop shell-core/FFI implementation has been removed. External
+terminal hosts own spaces, tabs and panes; Alan owns its Process execution.

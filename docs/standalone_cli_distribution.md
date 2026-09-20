@@ -45,5 +45,5 @@ just quality
 
 The check starts only `alan --version`; Host lifecycle remains the existing
 channel-aware CLI attachment/start path. Alan.app, Sparkle, appcast, cask, and
-embedded-CLI workflows are retired. Retained Apple source is maintenance-only
-and must not become a prerequisite for the CLI/Host distribution.
+embedded-CLI workflows are retired. Desktop source has been removed; macOS
+credentials, Host Mounts and sandboxing remain owned by Rust runtime adapters.

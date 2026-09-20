@@ -127,9 +127,6 @@ is_allowed_daemon_match() {
     [[ "$text" == *"guard-daemon-era-absence"* ]] && return 0
 
     case "$file" in
-        crates/shell-core/src/managed_terminal_account.rs)
-            return 0 # Unix reserved account name
-            ;;
         crates/agent-engine/skills/swebench/scripts/check_swebench_harness_env.sh)
             return 0 # Docker daemon
             ;;
@@ -144,18 +141,6 @@ is_allowed_daemon_match() {
             ;;
         openspec/changes/remove-workspace-runtime-model/tasks.md)
             return 0 # Exact cleanup task names generated state owned by the retired implementation
-            ;;
-        clients/apple/alan-macos/Services/Shell/AlanPrivilegedHelperService.swift)
-            return 0 # Apple SMAppService.daemon
-            ;;
-        clients/apple/alan-macos/Services/Shell/AlanPrivilegedHelperManagedUserService.swift)
-            return 0 # Reserved Unix account name rejected by Managed User validation
-            ;;
-        clients/apple/alan-macos/Services/Shell/AlanPrivilegedHelperContracts.swift)
-            return 0 # Apple SMAppService.daemon diagnostic label
-            ;;
-        clients/apple/scripts/test-shell-settings-surface.swift)
-            return 0 # SMAppService coverage and negative UI assertions
             ;;
         scripts/check-rust-inline-tui-contract.sh)
             return 0 # Negative structural assertion
@@ -194,24 +179,6 @@ is_allowed_session_match() {
             ;;
         crates/llm/src/openrouter.rs)
             return 0 # OpenRouter SDK request metadata
-            ;;
-        clients/apple/scripts/test-shell-runtime-metadata.swift)
-            return 0 # External Codex metadata redaction fixture
-            ;;
-        clients/apple/alan-macos/Models/Shell/ShellSidebarTabPresentation.swift)
-            return 0 # External command metadata redaction
-            ;;
-        clients/apple/alan-macos/Models/Shell/TerminalActivityModels.swift)
-            return 0 # External agent activity metadata
-            ;;
-        clients/apple/alan-macos/Services/Terminal/TerminalAgentActivityAdapter.swift)
-            return 0 # External agent session label redaction
-            ;;
-        clients/apple/alan-macos/Services/Shell/AlanPrivilegedHelperContracts.swift)
-            return 0 # Managed User PTY session contract
-            ;;
-        clients/apple/scripts/support/AlanPrivilegedHelperFakeClient.swift)
-            return 0 # Managed User PTY test session fixture
             ;;
         openspec/changes/define-groove-master-alan-app/design.md)
             return 0 # Groove Master practice-session domain

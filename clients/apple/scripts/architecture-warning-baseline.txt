@@ -1,3 +1,0 @@
-# Exact Apple architecture-warning debt. Keep entries sorted.
-# large entries include their current line ceiling; every reduction tightens it.
-# No accepted warnings remain.

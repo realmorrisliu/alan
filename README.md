@@ -69,11 +69,8 @@ crates/
 ├── agent-engine/       # Agent Execution Engine
 ├── tools/              # builtin Tool implementations
 ├── tui/                # file-backed Rust terminal UI
-├── shell-core/         # platform-neutral shell surface model
-├── shell-core-ffi/     # C ABI for shell-core
 └── alan/               # CLI host and linked TUI binary
 
-clients/apple/          # Alan for macOS
 openspec/               # canonical specifications and active changes
 ```
 
@@ -111,13 +108,9 @@ just install
 just standalone-distribution-test
 ```
 
-Retained Apple source maintenance is not a product or release workflow; its
-checks are run directly from `clients/apple/scripts/` only when that source is
-being maintained. The standalone guide is
-[here](docs/standalone_cli_distribution.md).
-
-Retained Apple source maintenance is opt-in and uses the focused scripts under
-`clients/apple/scripts/`; it is not a product or distribution prerequisite.
+Standalone installation and release usage is documented
+[here](docs/standalone_cli_distribution.md). Desktop source has been removed;
+Herdr is the preferred external terminal host.
 
 ## CLI
 

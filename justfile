@@ -8,15 +8,6 @@ default:
 test:
     cargo test --workspace
 
-# Run the platform-neutral shell surface core tests
-shell-core-test:
-    cargo test -p alan-shell-core
-
-# Run shell-core FFI facade and Swift adapter tests
-shell-core-ffi-test:
-    cargo test -p alan-shell-core-ffi
-    bash clients/apple/scripts/test-shell-core-ffi-adapter.sh
-
 # Run the canonical non-mutating quality gate and workspace tests
 check: quality test
     @echo "✅ All checks passed"

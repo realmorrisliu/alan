@@ -1,8 +1,11 @@
 ## Context
 
-> PARKED (2026-09-19): read this change's disposition.md before use. Retained
-> draft text below is not implementation authorization; superseded desktop and
-> renderer-launch assumptions must be replaced before reactivation.
+> SUPERSEDED INVENTORY (2026-09-20): current scope and ordering are in
+> [disposition.md](disposition.md), [tasks.md](tasks.md), and the
+> [tracer bullet roadmap](../add-cognitive-model-routing/next-planning.md).
+> Replace this retained draft and its deltas before implementation; do not
+> execute or sync the old plan below. Desktop GUI work is cancelled;
+> editfs and executable packaging are outside the current delivery scope.
 
 Alan OS converges on a Plan 9 model: a volatile kernel, one system-level
 instance per channel (ADR-0044), local hosts attaching over aP Unix sockets

@@ -50,5 +50,11 @@ Shell commands. Do not implement Herdr topology or q executable distribution.
 
 ## Migration Plan
 
-The next main-based planning pass selects a vertical slice and completes the
-entry tasks below. Implementation, rollout and canonical sync remain pending.
+First deliver the usable-agent task through the existing generation Connection
+as specified in [next-planning.md](next-planning.md). Then select one bounded
+evaluation point inside that working task and complete the entry contracts.
+Necessary Machine recovery contracts may land earlier for the reliability slice;
+they do not require evaluation or Jev. Reuse those contracts rather than creating
+another checkpoint path. Real-provider benefit measurement belongs to the later
+Jev adapter change; fixtures establish state-machine correctness only.
+Implementation, rollout and canonical sync remain pending.

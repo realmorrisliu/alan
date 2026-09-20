@@ -76,7 +76,7 @@ if rg -n 'SkillScope::(Repo|User)|serde\(rename = "(repo|user|system)"\)' \
 fi
 
 if rg -n '\$HOME/\.alan(-dev)?|\$\{HOME\}/\.alan(-dev)?' \
-    scripts packaging clients/apple/alan-macos >"$matches_file"; then
+    scripts packaging >"$matches_file"; then
     cat "$matches_file" >&2
     fail "legacy Alan home is still used by a Host script or product surface"
 fi

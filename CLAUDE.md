@@ -8,7 +8,7 @@ language). This file is the short operational summary plus the rules that are ea
 ## Critical Workflow Rules
 
 - **OpenSpec owns all specs and design docs.** Change proposals, design docs, task lists, and spec deltas go in `openspec/changes/<change-id>/`; merged long-lived contracts live in `openspec/specs/`. Do NOT create spec files under `docs/superpowers/specs/`, `docs/spec/`, or `plans/` — this overrides any default workflow that writes design docs elsewhere. Completed changes are archived to `openspec/changes/archive/YYYY-MM-DD-<change-id>/`.
-- **Alan for macOS is retired**: use the standalone CLI/Host path (`just install`, `just install-dev`, `just standalone-distribution-test`). Retained Apple source is maintenance-only; do not build, launch, or publish an app bundle as part of normal work.
+- **Alan for macOS is retired**: use the standalone CLI/Host path (`just install`, `just install-dev`, `just standalone-distribution-test`). Desktop source is removed; do not restore its build, UI or packaging tasks.
 - **After Rust changes**: run `just verify` (fmt + lint + test + mock smoke).
 - New/edited Rust tests follow `openspec/specs/rust-test-placement-contract/spec.md`: choose inline unit tests, extracted white-box test files, or crate-level integration tests deliberately.
 - Branch from `main`; conventional-style commit messages recommended (for example,
@@ -61,15 +61,11 @@ Tool governance is two-stage: `PolicyEngine` (`allow | escalate | deny`, policy 
 
 Skills are Markdown packages with YAML frontmatter, resolved from built-in packages and explicit Skill or Agent Definition descriptors; contract in `openspec/specs/skill-system-contract/spec.md`.
 
-### Retained Apple source (`clients/apple/alan-macos`)
+### Terminal hosts
 
-Retired product direction (ADR-0054), retained for maintenance until scoped
-removal. The SwiftUI/AppKit/Ghostty client already attaches to Alan OS through
-aP; it is not the future product entry. Herdr is the preferred terminal host.
-Keep OS Host, credential and sandbox ownership independent of desktop removal.
-Tests under `clients/apple/scripts/` remain relevant only to retained consumers.
-
-UI work is governed by `openspec/specs/macos-shell-ui-ux-conformance/spec.md` (terminal-first, Arc-like space/tab sidebar, light-mode-first native materials, no dashboard/card composition, no implementation jargon in default chrome) plus the design context section of AGENTS.md. Visual changes are reviewed against screenshots.
+The retired Apple desktop source and shell-core/FFI have been removed.
+Herdr is the preferred external terminal host. CLI/Host credentials, Host Mounts
+and sandboxing remain owned by Rust runtime adapters.
 
 ## Configuration Pointers
 

@@ -28,3 +28,8 @@ acceptance tests before new behavior ships.
 
 Normative lifecycle scope: `documentation-governance`. Implementation removal
 and terminal integration require their own subsequent OpenSpec deltas.
+
+Implementation follow-up (2026-09-20): standalone distribution retirement has
+merged. `remove-retired-desktop-source` tracks the approved deletion of App and
+shell-core/FFI source and desktop-only requirements; its tasks carry delivery
+status. No user migration or desktop compatibility is required.

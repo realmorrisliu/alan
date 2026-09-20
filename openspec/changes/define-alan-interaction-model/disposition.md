@@ -1,7 +1,15 @@
-# Disposition — 2026-09-19
+# Disposition — 2026-09-20
 
-Parked for redesign. Target Alan inside an existing terminal host, preferably Herdr. Old native-client obligations and renderer-only launch in D7 are rejected. Progressive disclosure and outcome review remain useful, without rebuilding host topology.
+Queued for tracer bullet slice 2 after the first usable task. Minimal terminal
+input/output ships with programmable-client; this change owns remaining inline
+presentation and terminal acceptance, using the same Process execution path.
+See [the roadmap](../add-cognitive-model-routing/next-planning.md).
+Old native-client obligations and renderer-only launch in D7 are rejected.
+Native desktop GUI work is cancelled, not deferred. Retained draft references
+to macOS UI are historical inventory only. This does not authorize unaudited
+deletion of retained Apple source or shared platform adapters.
+History UI, background/event-driven modes and full editfs are deferred.
 
-Do not execute the retained tasks until an explicit new planning decision
-replaces the affected design and deltas. Remaining artifacts are a design
-inventory, not implementation authorization or accepted canonical behavior.
+Rewritten tasks supersede the former 18-task plan without marking it complete.
+Retained proposal/design/deltas are inventory only and must be replaced before
+implementation; they must not be synced as implemented canonical behavior.
