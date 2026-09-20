@@ -30,6 +30,7 @@ export CARGO_TARGET_DIR="$quality_target_dir"
 cargo build --locked -p alan --bin alan
 cargo build --locked -p alan-os-host --bin alan-os-host --bin alan-os-host-dev
 "$ROOT/scripts/check-daemon-era-absence.sh" "$alan_binary"
+bash "$ROOT/scripts/test-daemon-era-absence.sh"
 "$ROOT/scripts/check-workspace-runtime-absence.sh" "$ROOT" "$alan_binary"
 "$ROOT/scripts/check-legacy-macos-absence.sh"
 bash "$ROOT/scripts/check-openspec-current-surfaces.sh"

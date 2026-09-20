@@ -23,3 +23,12 @@ These are local results, not PR/CI/merge evidence.
   unrelated file and archive content checks passed in an isolated directory.
 
 Review, CI, merge, canonical sync and archive remain unchecked in tasks.md.
+
+## Review correction
+
+PR #926 identified a fresh-checkout regression: the removed clients scan root
+made ripgrep return status 2, which conditional callers treated as no matches.
+Removed that root and made the shared search function fail on search errors
+for both rg and git grep. The quality gate now runs an isolated regression
+covering all three forbidden-source scans without clients, plus missing-root
+errors with and without a forbidden match. No runtime code changed.

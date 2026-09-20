@@ -42,7 +42,6 @@ scan_roots=(
     CONTRIBUTING.md
     Cargo.toml
     README.md
-    clients
     crates
     docs
     justfile
@@ -56,11 +55,10 @@ exclude_globs=(
     '.git/**'
     'target/**'
     'third_party/**'
-    'clients/apple/build/**'
-    'clients/apple/.build/**'
     'openspec/changes/archive/**'
     'docs/adr/0029-remove-daemon-era-surfaces-before-replacement-design.md'
     'scripts/check-daemon-era-absence.sh'
+    'scripts/test-daemon-era-absence.sh'
 )
 
 rg_args=()
@@ -73,12 +71,15 @@ done
 search_repo() {
     local pattern="$1"
     shift
+    local status=0
 
     if command -v rg >/dev/null 2>&1; then
-        rg -n -i "$pattern" "${rg_args[@]}" "$@"
+        rg -n -i "$pattern" "${rg_args[@]}" "$@" || status=$?
     else
-        git grep -n -I -i -E -- "$pattern" -- "$@" "${git_exclude_args[@]}"
+        git grep -n -I -i -E -- "$pattern" -- "$@" "${git_exclude_args[@]}" || status=$?
     fi
+    ((status <= 1)) || fail "repository search failed with status $status"
+    return "$status"
 }
 
 matches_file="$(mktemp /tmp/alan-daemon-era-absence.XXXXXX)"
@@ -124,6 +125,7 @@ is_allowed_daemon_match() {
     # Current documents may point at the removal decision/change by name.
     [[ "$text" == *"remove-daemon-era"* ]] && return 0
     [[ "$text" == *"check-daemon-era-absence"* ]] && return 0
+    [[ "$text" == *"test-daemon-era-absence"* ]] && return 0
     [[ "$text" == *"guard-daemon-era-absence"* ]] && return 0
 
     case "$file" in
