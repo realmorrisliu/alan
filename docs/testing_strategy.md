@@ -70,16 +70,13 @@ shaping without becoming part of normal CI.
 
 ## Apple verification
 
-For Alan for macOS changes:
+For retained Alan for macOS maintenance only:
 
 ```bash
 cargo test -p alan-shell-core -p alan-shell-core-ffi
 bash clients/apple/scripts/test-shell-core-ffi-adapter.sh
-just apple-shell-focused-tests
-xcodebuild -project clients/apple/alan-macos.xcodeproj -scheme alan-macos build
-just install-dev
-just apple-shell-ui-smoke
 ```
 
-Use a fresh Alan Dev launch and inspect the rendered result when UI or shell
-behavior changes.
+These checks are not part of the standalone product gate. Do not build or
+launch an app bundle for CLI/Host changes; use `just standalone-distribution-test`
+and `just quality` instead.

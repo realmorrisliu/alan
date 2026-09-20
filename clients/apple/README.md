@@ -125,23 +125,17 @@ If you want an alan-targeted surface to launch a specific alan binary, set:
 ALAN_SHELL_ALAN_PATH=/absolute/path/to/alan
 ```
 
-Without that override, the macOS terminal workspace resolves alan in this order:
+Without that override, retained maintenance fixtures resolve alan in this order:
 
 1. `ALAN_SHELL_ALAN_PATH`
 2. worktree-local `target/debug/alan`
 3. worktree-local `target/release/alan`
-4. app-bundled `Contents/Resources/bin/alan`
-5. `alan` from the current `PATH`
+4. `alan` from the current `PATH`
 
-The app bundle is also the command-line distribution unit. Homebrew cask
-installs link `Contents/Resources/bin/alan` into the Homebrew prefix. For a direct app install, use **Tools > Install
-Command Line Tools...** in the app to create PATH-visible symlinks. The app does
-not silently modify shell startup files or use `~/.alan/bin`.
-
-Direct app installs use **Check for Updates...** and Sparkle to read
-`https://alanworks.app/appcast.xml`. Homebrew-managed installs should update
-with `brew upgrade --cask alan`; Sparkle does not replace Homebrew-owned app
-bundles.
+The app bundle, embedded CLI, Homebrew cask, Sparkle feed, and appcast are
+retired distribution paths. Standalone CLI/Host installation is documented in
+[`docs/standalone_cli_distribution.md`](../docs/standalone_cli_distribution.md);
+this source tree does not own that lifecycle.
 
 The macOS app owns one primary shell context for the process. The default shell
 surface uses the stable `window_main` identity, so reopen, activation, and New
@@ -170,28 +164,22 @@ zsh ./clients/apple/scripts/capture-alan-window.sh --pid 12345 --output .artifac
 The helper uses ScreenCaptureKit, so it may require Screen Recording permission
 for your terminal on first use.
 
-### Shell UI Smoke
+### Historical Shell UI Smoke
 
-For a repeatable shell UI smoke flow, use:
-
-```bash
-just apple-shell-ui-smoke
-```
-
-The smoke command launches the installed dev-channel app at
-`~/Applications/Alan Dev.app` by default, using isolated runtime directories and
-a stable zsh shell environment, then captures screenshots under
-`debug/artifacts/apple-shell-ui-smoke/`. Install or refresh that app first:
+The app-only shell UI smoke lane is retained for source maintenance and is not
+part of the supported CLI/Host product or distribution gate. When maintaining
+this source, invoke the script directly against an explicitly built app:
 
 ```bash
-just install-dev
+bash clients/apple/scripts/test-shell-ui-smoke.sh \
+  --skip-build --app "/path/to/Alan Dev.app"
 ```
 
-To force a repo-local Debug build instead, run:
+The script uses isolated runtime directories and writes screenshots under
+`debug/artifacts/apple-shell-ui-smoke/`.
 
-```bash
-ALAN_UI_SMOKE_SKIP_BUILD=0 just apple-shell-ui-smoke
-```
+To build a repo-local Debug app as part of this maintenance lane, omit
+`--skip-build` and prepare the local Ghostty links described below.
 
 Because the current macOS project links Ghostty at build time, prepare the
 ignored local Ghostty links before using that build mode:
@@ -208,7 +196,9 @@ captures command UI, keyboard space/tab switching, and pane-scoped Find. To
 require those UI-scripting steps, run:
 
 ```bash
-ALAN_REQUIRE_UI_SCRIPTING_UI_SMOKE=1 just apple-shell-ui-smoke
+ALAN_REQUIRE_UI_SCRIPTING_UI_SMOKE=1 \
+  bash clients/apple/scripts/test-shell-ui-smoke.sh \
+  --skip-build --app "/path/to/Alan Dev.app"
 ```
 
 When local Ghostty artifacts are prepared, the smoke also captures basic
@@ -216,13 +206,14 @@ terminal input using only static smoke text. To require terminal-specific steps,
 run:
 
 ```bash
-ALAN_REQUIRE_TERMINAL_UI_SMOKE=1 just apple-shell-ui-smoke
+ALAN_REQUIRE_TERMINAL_UI_SMOKE=1 \
+  bash clients/apple/scripts/test-shell-ui-smoke.sh \
+  --skip-build --app "/path/to/Alan Dev.app"
 ```
 
 The smoke artifacts are generated from the controlled smoke window only; the
-script uses the dev install channel plus per-run shell control and Application
-Support paths, and does not capture arbitrary existing terminal windows or log
-terminal content.
+script uses per-run shell control and Application Support paths, and does not
+capture arbitrary existing terminal windows or log terminal content.
 
 ## Current Features (v0.1)
 
@@ -265,26 +256,11 @@ xcodebuild \
 # Shell control-plane contract smoke
 bash clients/apple/scripts/check-shell-contracts.sh
 
-# Focused shell tests: model, fake runtime, control-plane, and App Intent routing.
-# This target does not require real Ghostty artifacts.
-just apple-shell-focused-tests
-
-# Shell automation command seam tests
-just apple-shell-automation-seams
-
-# App Intents metadata review after building alan-macos with the command above.
-just apple-shell-app-intents-metadata
-
-# Ghostty-backed shell integration lane.
-# Skips when local Ghostty links are absent; set ALAN_REQUIRE_GHOSTTY_INTEGRATION=1
-# to make missing artifacts fail the command.
-just apple-shell-ghostty-integration
-
-# Shell UI smoke screenshots
-# Defaults to the installed dev-channel app at ~/Applications/Alan Dev.app.
-# Run `just install-dev` first; set ALAN_UI_SMOKE_SKIP_BUILD=0 to build a
-# repo-local Debug Alan.app instead.
-just apple-shell-ui-smoke
+# Retained Apple-source checks are individual scripts, not root just recipes.
+bash clients/apple/scripts/test-alan-os-attachment.sh
+bash clients/apple/scripts/test-shell-automation-command-seams.sh
+bash clients/apple/scripts/test-shell-ghostty-integration.sh
+# UI smoke requires an explicitly built app; see the section above.
 
 # Apple source architecture maintainability report
 bash clients/apple/scripts/check-architecture-maintainability.sh

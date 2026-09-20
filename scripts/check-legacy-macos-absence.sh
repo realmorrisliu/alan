@@ -23,8 +23,8 @@ scan_roots=(
     crates/shell-core
     crates/shell-core-ffi
     scripts/install-channel.sh
-    scripts/install.sh
-    scripts/uninstall.sh
+    scripts/install-cli.sh
+    scripts/uninstall-cli.sh
 )
 
 retired_symbols='AlanNative|ShellStatePersistenceStore|restorePrevious|migrateLegacyTerminalManifest|ShellWorkspaceSpaceRecord|ShellWorkspaceTabRecord|ShellTabRestoreSnapshot|ShellPaneRestoreRecord|LegacyQuickTerminal|legacyQuickTerminal|legacy_quick_terminal|ALAN_LEGACY_APP_BUNDLE_NAME|ManagedTerminalAccountSudoers|legacySudoers|legacy_sudoers|writeSudoersDropIn|validateSudoers|verifyTerminalEntry|removeSudoersDropIn|guiUserName|bindCurrentSpaceAfterSuccess|ManagedTerminalAccountAuthorizedScriptExecutor|ManagedTerminalAccountAppleScriptPrivilegeRunner'
@@ -40,7 +40,7 @@ matches="$(rg -n "$retired_symbols" "${scan_roots[@]}" \
 }
 
 installer_matches="$(rg -n '/alan\.app/|\"alan\.app\"|lowercase[^\n]*alan\.app' \
-    scripts/install-channel.sh scripts/install.sh scripts/uninstall.sh \
+    scripts/install-channel.sh scripts/install-cli.sh scripts/uninstall-cli.sh \
     clients/apple/alan-macos/Support/AlanCommandLineToolInstaller.swift || true)"
 [[ -z "$installer_matches" ]] || {
     printf '%s\n' "$installer_matches" >&2

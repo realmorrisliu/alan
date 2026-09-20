@@ -32,13 +32,12 @@ guarantees today.
 - [Skills And Tools](./skills_and_tools.md)
 - [Skill Authoring](./skill_authoring.md)
 - [Testing Strategy](./testing_strategy.md)
+- [Standalone CLI/Host Distribution](./standalone_cli_distribution.md)
 - [Live Provider Harness](./live_provider_harness.md)
 - [Live Runtime Smoke](./live_runtime_smoke.md)
 
-Legacy desktop maintenance only, not the future product workflow:
-
-- [macOS Auto Update](./macos_auto_update.md)
-- [macOS Dev Channel Side-by-Side Smoke](./macos_dev_channel_side_by_side_smoke.md)
+The retained Apple source and its historical checks are maintenance-only; they
+are not a supported product or release workflow.
 
 Read each active change's disposition before applying tasks. A parked change
 is retained planning context, not approval to resume implementation.

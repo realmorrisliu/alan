@@ -829,11 +829,11 @@ mod tests {
     fn alan_os_host_launch_labels_are_channel_isolated() {
         assert_eq!(
             os_host_launch_label(InstallChannel::Stable),
-            "app.alanworks.macos.os-host"
+            "alan-stable.os-host"
         );
         assert_eq!(
             os_host_launch_label(InstallChannel::Dev),
-            "app.alanworks.macos.dev.os-host"
+            "alan-dev.os-host"
         );
     }
 
@@ -843,10 +843,10 @@ mod tests {
         use std::os::unix::fs::symlink;
 
         let root = tempfile::tempdir().unwrap();
-        let bundle_bin = root.path().join("Alan.app/Contents/Resources/bin");
-        std::fs::create_dir_all(&bundle_bin).unwrap();
-        let cli = bundle_bin.join("alan");
-        let host = bundle_bin.join("alan-os-host");
+        let bin = root.path().join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let cli = bin.join("alan");
+        let host = bin.join("alan-os-host");
         std::fs::write(&cli, []).unwrap();
         std::fs::write(&host, []).unwrap();
         let link = root.path().join("installed-alan");

@@ -60,18 +60,12 @@ reject_pattern 'TUI Lint / Test / Typecheck|clients/tui|ALAN_TUI_PATH' \
     docs/maintainer/github_automation.md
 
 reject_pattern 'ALAN_TUI_NAME|ALAN_TUI_BINARY_OUTFILE|alan-tui\.entitlements|clients/tui' \
-    scripts/assemble-release-app.sh \
     scripts/install-channel.sh \
-    scripts/install.sh \
-    scripts/uninstall.sh \
-    scripts/release-check.sh
+    scripts/install-cli.sh \
+    scripts/uninstall-cli.sh
 
-reject_pattern 'Contents/Resources/bin/alan-tui|binary .*alan-tui' \
-    clients/apple \
-    packaging \
-    README.md \
-    AGENTS.md
+reject_pattern 'Contents/Resources/bin/alan-tui|binary .*alan-tui|appcast|Sparkle' \
+    packaging README.md AGENTS.md scripts
 
 require_pattern 'alan_tui::run' crates/alan/src/main.rs
-require_pattern 'Contents/Resources/bin/alan' scripts/assemble-release-app.sh scripts/validate-release-app.sh
-require_pattern 'program: "alan"' clients/apple/alan-macos
+require_pattern 'check-standalone-cli\.sh' scripts/check-quality.sh

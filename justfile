@@ -43,14 +43,6 @@ guard-daemon-era-absence:
 guard-legacy-macos-absence:
     ./scripts/check-legacy-macos-absence.sh
 
-# Check macOS Sparkle auto-update project metadata
-guard-macos-auto-update:
-    ./scripts/check-macos-auto-update-config.sh
-
-# Check macOS shell design-token literals against the recorded baseline
-guard-shell-design-tokens:
-    ./scripts/check-shell-design-tokens.sh
-
 # Check canonical specs, active changes, and OpenSpec schema instructions
 guard-openspec-current-surfaces:
     bash scripts/check-openspec-current-surfaces.sh
@@ -60,13 +52,6 @@ openspec-check:
     bash scripts/test-openspec-current-surfaces.sh
     bash scripts/check-openspec-current-surfaces.sh
     openspec validate --all --strict
-
-# Run focused macOS auto-update tests and release appcast guards
-apple-auto-update-tests:
-    bash clients/apple/scripts/test-macos-auto-update-policy.sh
-    ./scripts/test-app-bundle-paths.sh
-    ./scripts/test-appcast-tools.sh
-    ./scripts/check-macos-auto-update-config.sh
 
 # Run the canonical non-mutating repository quality gate
 quality:
@@ -96,67 +81,34 @@ coverage-html:
 build:
     cargo build --release
 
-# Install release Alan.app plus CLI locally
+# Install standalone release CLI and Alan OS Host binaries locally
 install:
-    ALAN_INSTALL_CHANNEL=stable ./scripts/install.sh
+    ALAN_INSTALL_CHANNEL=stable ./scripts/install-cli.sh
 
-# Install local-only Alan Dev.app plus alan-dev
+# Install the local development CLI channel plus Alan OS Host binaries
 install-dev:
-    ./scripts/install-dev.sh
+    ALAN_INSTALL_CHANNEL=dev ./scripts/install-cli.sh
 
-# Run local side-by-side smoke for stable Alan and Alan Dev
-dev-channel-smoke:
-    ./scripts/smoke-dev-channel-side-by-side.sh
+# Validate the standalone CLI/Host installer and archive contract
+standalone-distribution-test:
+    ./scripts/test-standalone-cli-distribution.sh
 
-# Run focused macOS shell tests that do not require real Ghostty artifacts
-apple-shell-focused-tests:
-    bash clients/apple/scripts/test-alan-os-attachment.sh
-    bash clients/apple/scripts/test-shell-workspace-manifest.sh
-    bash clients/apple/scripts/test-shell-performance-diagnostics.sh
-    bash clients/apple/scripts/test-terminal-runtime-service.sh
-    bash clients/apple/scripts/test-terminal-surface-controller.sh
-    bash clients/apple/scripts/test-shell-automation-command-seams.sh
-    bash clients/apple/scripts/test-shell-runtime-metadata.sh
-    bash clients/apple/scripts/test-shell-settings-surface.sh
-    bash clients/apple/scripts/test-terminal-account-dev-dry-run-smoke.sh
-    bash clients/apple/scripts/test-macos-auto-update-policy.sh
-    ./scripts/test-appcast-tools.sh
-
-# Run focused macOS shell automation command seam tests
-apple-shell-automation-seams:
-    bash clients/apple/scripts/test-shell-automation-command-seams.sh
-
-# Review generated App Intents metadata from a built alan-macos app
-apple-shell-app-intents-metadata:
-    bash clients/apple/scripts/check-shell-app-intents-metadata.sh
-
-# Run Ghostty-backed macOS shell integration checks when local artifacts are prepared
-apple-shell-ghostty-integration:
-    bash clients/apple/scripts/test-shell-ghostty-integration.sh
-
-# Run repeatable macOS shell UI smoke against the installed Alan Dev app
-apple-shell-ui-smoke:
-    bash clients/apple/scripts/test-shell-ui-smoke.sh
-
-# Capture the macOS shell screenshot state matrix (semi-manual, dev channel)
-apple-shell-screenshot-matrix out_dir="":
-    bash clients/apple/scripts/capture-shell-state-matrix.sh {{out_dir}}
-
-# Check release signing and notarization configuration without building
+# Check standalone release inputs without assembling an app bundle
 release-check:
-    ALAN_NOTARIZE=1 ./scripts/release-check.sh
+    cargo check --locked -p alan --bin alan
+    cargo check --locked -p alan-os-host --bins
 
-# Build, sign, notarize, staple, and archive the public macOS release app
+# Build and archive the standalone CLI/Host release
 release:
-    ALAN_INSTALL_CHANNEL=stable ALAN_NOTARIZE=1 ALAN_CREATE_RELEASE_ARCHIVE=1 ./scripts/assemble-release-app.sh
+    ./scripts/assemble-cli-release.sh
 
-# Uninstall alan app and user-level CLI without removing System/Host Store data
+# Uninstall owned standalone CLI/Host binaries without removing stores
 uninstall:
-    ALAN_INSTALL_CHANNEL=stable ./scripts/uninstall.sh
+    ALAN_INSTALL_CHANNEL=stable ./scripts/uninstall-cli.sh
 
-# Uninstall Alan Dev.app and dev command links without removing System/Host Store data
+# Uninstall owned development CLI/Host binaries without removing stores
 uninstall-dev:
-    ./scripts/uninstall-dev.sh
+    ALAN_INSTALL_CHANNEL=dev ./scripts/uninstall-cli.sh
 
 # Clean artifacts
 clean:

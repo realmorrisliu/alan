@@ -66,15 +66,6 @@ jobs:
       - name: Run macOS Rust quality checks
         run: ./scripts/check-rust-quality.sh
 
-  shell-design-tokens:
-    name: Shell Design Token Guard
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Guard macOS shell raw-literal baseline
-        run: ./scripts/check-shell-design-tokens.sh
-
   openspec:
     name: OpenSpec Current Surfaces
     runs-on: ubuntu-latest
@@ -243,5 +234,8 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: alan-${{ matrix.target }}
-          path: target/${{ matrix.target }}/release/alan
+          path: |
+            target/${{ matrix.target }}/release/alan
+            target/${{ matrix.target }}/release/alan-os-host
+            target/${{ matrix.target }}/release/alan-os-host-dev
           if-no-files-found: error
