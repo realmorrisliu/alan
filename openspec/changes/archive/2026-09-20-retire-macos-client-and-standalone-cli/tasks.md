@@ -20,10 +20,10 @@
 ## 4. OpenSpec and canonical documentation
 
 - [x] 4.1 Validate the proposal, design, spec deltas, and task list with OpenSpec; verify `openspec validate retire-macos-client-and-standalone-cli --type change --strict` passes.
-- [ ] 4.2 Sync the completed delta into canonical specs after implementation is merged; verify no canonical requirement still presents the retired app distribution as supported.
+- [x] 4.2 Sync the completed delta into canonical specs after implementation is merged; verify no canonical requirement still presents the retired app distribution as supported.
 
 ## 5. Verification and delivery
 
 - [x] 5.1 Run `just quality`, focused `alan`/`os-host` tests, standalone distribution checks, and workspace tests; record failures as scoped follow-up work rather than weakening the gate.
-- [ ] 5.2 Mark the branch ready for review and request Codex review; verify all review comments are classified by root cause, fixes are tested, and resolved comments produce no new major findings.
-- [ ] 5.3 Merge the reviewed branch and archive the change only after canonical spec synchronization; verify the merged commit, clean worktree, and archive path on the latest `main`.
+- [x] 5.2 Mark the branch ready for review and request Codex review; verify all review comments are classified by root cause, fixes are tested, and resolved comments produce no new major findings.
+- [x] 5.3 Merge the reviewed branch and archive the change only after canonical spec synchronization; verify the merged commit, clean worktree, and archive path on the latest `main`.

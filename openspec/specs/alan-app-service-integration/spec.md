@@ -5,7 +5,9 @@ Defines how Alan Apps and host-backed services preserve app-owned domain
 authority while exporting aP file trees, posting handles through `/srv`,
 mounting them under `/mnt`, and granting UI, Tool, and Agent Process clients
 the same descriptor-bounded operations.
+
 ## Requirements
+
 ### Requirement: Alan Apps keep domain authority above Kernel
 An Alan App SHALL own its domain model, invariants, persistence rules, and product semantics outside
 Alan Kernel. Its Alan adapter SHALL project that domain through aP without introducing app-specific
@@ -120,28 +122,37 @@ references. Alan Kernel SHALL NOT persist app state.
 - **AND** Service Manager remounts the tree without Kernel understanding the app storage format
 
 ### Requirement: Client integration waits for the direct file boundary
-Alan OS clients SHALL integrate an app or host service
-through its authoritative mounted aP tree and normal Process namespace. A
-missing attachment, service tree, package mount, or binfs implementation SHALL
-block the dependent client feature rather than authorize a temporary
-client-facing bridge. New work SHALL select a surviving consumer; the retired
-Alan for macOS client is not a prerequisite for delivering other clients.
+Alan OS clients SHALL integrate an app or host service through its authoritative
+mounted aP tree and normal Process namespace. A missing attachment, service
+tree, package mount, or binfs implementation SHALL block the dependent client
+feature rather than authorize a temporary client-facing bridge. Retired Alan
+for macOS delivery is not a prerequisite for delivering other clients.
+
+#### Scenario: Retained Apple source is not a delivery consumer
+- **WHEN** maintenance work inspects the retained Apple source or shell-core
+  crates
+- **THEN** it does not treat the retired app bundle as a required client for
+  Alan OS service delivery
+- **AND** any surviving platform capability uses its authoritative file or
+  adapter boundary
 
 #### Scenario: macOS client attachment is not implemented
-- **WHEN** retained legacy macOS client maintenance needs service state but
-  that consumer cannot open and watch the mounted service files
+- **WHEN** retained legacy macOS source maintenance needs service state but
+  that source cannot open and watch the mounted service files
 - **THEN** its integration remains blocked on direct file attachment
-- **AND** this does not require restoring the retired App for other consumers
-- **AND** no client-owned operation surface substitutes for the authorized aP tree
+- **AND** this does not authorize restoring the retired app delivery path
+- **AND** no client-owned operation surface substitutes for the authorized aP
+  tree
 
 #### Scenario: Surviving client requires service state
 - **WHEN** a new Alan App feature selects a supported Alan OS client
-- **THEN** its prerequisites are that client's authorized attachment and service tree
-- **AND** Alan for macOS implementation is not a delivery prerequisite
+- **THEN** its prerequisites are that client's authorized attachment and service
+  tree
+- **AND** Alan for macOS packaging is not a delivery prerequisite
 
 #### Scenario: Packaged command is not mounted
-- **WHEN** a feature requires a package-provided command but the package store is
-  not yet projected through the canonical package/binfs mount into `/bin`
+- **WHEN** a feature requires a package-provided command but the package store
+  is not yet projected through the canonical package/binfs mount into `/bin`
 - **THEN** command discovery and launch remain blocked on that mount
-- **AND** the feature reports the missing capability rather than fabricating
-  an executable binding outside the canonical package/binfs owner
+- **AND** the feature reports the missing capability rather than fabricating an
+  executable binding outside the canonical package/binfs owner

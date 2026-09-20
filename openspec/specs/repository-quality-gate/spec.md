@@ -8,19 +8,21 @@ dependency ratchets, retired-surface absence checks, and Apple architecture
 debt enforcement.
 
 ## Requirements
+
 ### Requirement: Repository quality has one canonical interface
 Alan SHALL provide one non-mutating repository quality command used by local
 development, repository Git hooks, and CI. The command MUST fail when any owned
-clean-code or clean-architecture check fails.
+clean-code, clean-architecture, or standalone-distribution check fails.
 
 #### Scenario: Developer runs the quality gate
 - **WHEN** a developer invokes the canonical repository quality command
 - **THEN** it checks formatting without rewriting files
 - **AND** it runs the curated Rust, source-hygiene, dependency, Alan OS absence,
-  and Apple architecture checks
+  OpenSpec, and standalone CLI/Host distribution checks
 
 #### Scenario: Gate composition changes
-- **WHEN** a required clean-code or clean-architecture check is added or removed
+- **WHEN** a required clean-code, clean-architecture, or distribution check is
+  added or removed
 - **THEN** the canonical command changes once
 - **AND** local hooks and CI consume the updated interface without duplicating
   its internal command list

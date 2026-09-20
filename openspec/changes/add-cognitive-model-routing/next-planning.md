@@ -1,7 +1,7 @@
 # 下一步规划入口
 
-基线：PR #922 已于 2026-09-20 合并，main 提交
-`e153b9f3b755d011f7d1c1e87c605a37fbb5e416`。
+基线：PR #923 已于 2026-09-20 合并，main 提交
+`63e9c0431090304965c354a01877b64d1c50654d`。
 
 本文件汇总跨 change 的规划待办，不替代各 change 的规范和实施 tasks。
 以下复选框表示**规划完成**，不表示功能交付。现有 parked change 不因本表而
@@ -20,8 +20,8 @@ change（按本顺序为 `define-alan-programmable-client-surface`），保留�
 
 ### A. 桌面代码退役与独立 CLI/Host 分发
 
-归属：活动 change
-[`retire-macos-client-and-standalone-cli`](../retire-macos-client-and-standalone-cli/)。
+归属：已完成并归档的 change
+[`retire-macos-client-and-standalone-cli`](../archive/2026-09-20-retire-macos-client-and-standalone-cli/)。
 ADR-0054 已完成产品方向退役；本 change 只移除已审计的 app 分发/构建/发布
 消费者，Apple 源码与 shell-core/FFI 保留为 maintenance-only，后续源代码删除
 必须另立 change 并重新审计凭据、挂载、sandbox、Store 和测试消费者。
@@ -84,7 +84,7 @@ ADR-0054 已完成产品方向退役；本 change 只移除已审计的 app 分�
   （外部调研）、归档 change 的 `disposition.md` / `verification.md`。
 - 未完成的运行功能不计入此步：源代码删除、typed evaluation、Shell 改线、Jev 和 Herdr 验收。
 
-### Step 1 — 实施 retire-macos-client-and-standalone-cli
+### Step 1 — 已完成：retire-macos-client-and-standalone-cli
 
 - 工作：完成 A 的消费者清单，移除批准范围内的桌面产品构建/发布/安装义务；
   保留 Apple 源码和 shell-core/FFI maintenance-only 边界，保留或迁移仍被
@@ -103,12 +103,10 @@ ADR-0054 已完成产品方向退役；本 change 只移除已审计的 app 分�
   `crates/alan/`、`crates/os-host/`，以及实际引用它们的 Just/CI/安装脚本。
 - 完成证据：独立 CLI 安装/启动和 archive 验证、存续凭据/挂载/sandbox owner
   记录、workspace 与 required CI 通过；无法证明安全接替的适配器留存，而非
-  强行删除。实现完成后先按 change tasks 做 Codex review，合并后同步 delta
-  再归档。
-
-当前状态：该 change 已创建并已完成消费者审计、InstallChannel 重构、独立
-安装/archive 链路、app-only 发布消费者清理和 OpenSpec delta；剩余是完整
-workspace 验证、PR review、合并以及合并后的 canonical spec 同步/归档。
+  强行删除。
+- 交付记录：PR #923 已合并为 `63e9c043`；Codex review 在当前 head
+  `231e0514` 完成且无需修复的 major finding；canonical deltas 已同步，change
+  已归档到 `openspec/changes/archive/2026-09-20-retire-macos-client-and-standalone-cli/`。
 
 ### Step 2 — 重写并激活 add-cognitive-model-routing 的最小核心切片
 

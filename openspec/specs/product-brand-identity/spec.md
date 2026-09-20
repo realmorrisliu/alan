@@ -8,36 +8,53 @@
 ## Purpose
 Defines Alan's product-brand identity, public domain, macOS app naming,
 historical AlanNative removal, and brand validation rules.
+
 ## Requirements
+
 ### Requirement: Primary public domain is alanworks.app
-The product SHALL use `alanworks.app` as the primary public domain for this
-branding pass. Short domains such as `alan.now` MAY be reserved for future
-action-oriented entry points, but they MUST NOT drive macOS app identifiers in
-this change.
+The product SHALL use `alanworks.app` as the primary public domain for
+documentation and public project identity. Short domains such as `alan.now`
+MAY be reserved for future action-oriented entry points, but the current
+standalone CLI/Host distribution MUST NOT derive an app bundle identifier or
+update feed from this requirement.
 
 #### Scenario: macOS app identifier is derived
-- **WHEN** the macOS app bundle identifier or local automation defaults need a
-  reverse-DNS identity
-- **THEN** they use the selected primary domain as `app.alanworks.macos`
-- **AND** they do not use `dev.alan.macos`, `dev.alan.native`, or
-  `com.realmorrisliu.AlanNative`
+- **WHEN** retained compatibility metadata or current documentation needs the
+  public project domain
+- **THEN** it uses `alanworks.app` only as a documentation/project identity
+- **AND** it does not create an app identifier, Sparkle feed, or appcast as a
+  consequence
+
+#### Scenario: Historical app metadata is inspected
+- **WHEN** retained Apple source contains an old bundle identifier
+- **THEN** it is treated as maintenance-only compatibility context
+- **AND** standalone CLI/Host packaging does not depend on it
 
 ### Requirement: Terminal category is separate from shell command syntax
-Alan's user-facing product category SHALL describe the macOS app as a terminal
-emulator or terminal workspace. The phrase `alan shell` MUST NOT be used as the
-product name, app name, or product category.
+Alan's supported product documentation SHALL describe the terminal-neutral CLI
+and Alan OS Host without presenting a native macOS app category as the current
+product. The literal `alan shell ...` command namespace remains a command
+surface, not a product or app name.
+
+#### Scenario: CLI is described
+- **WHEN** current docs explain the supported user-facing product
+- **THEN** they describe Alan as a programmable personal computing environment
+  with a terminal-native CLI/Host path
+- **AND** they do not present a desktop app or `alan shell` as a separate
+  product
 
 #### Scenario: macOS app is described
-- **WHEN** docs or UI explain what the native app is
-- **THEN** they describe it as a terminal emulator or terminal workspace
-- **AND** they do not describe the app as `alan shell`
+- **WHEN** maintenance-only documentation explains retained native source
+- **THEN** it labels that source as legacy maintenance rather than a supported
+  desktop product
+- **AND** it does not make the app bundle a prerequisite for the CLI/Host path
 
 #### Scenario: CLI syntax is documented
 - **WHEN** docs, help text, skills, scripts, or tests refer to the literal
   `alan shell ...` command namespace
 - **THEN** that command syntax remains allowed
 - **AND** the surrounding copy makes clear it is a command/control namespace,
-  not the product or app name
+  not the product name
 
 ### Requirement: Historical AlanNative identity is removed from active surfaces
 The active repository MUST remove `AlanNative` as a product, project, target,
@@ -109,41 +126,3 @@ identifiers.
   `app.alanworks.macos`, and `alan-macos`
 - **AND** they do not imply those lowercase identifiers are the app's
   user-visible brand spelling
-
-### Requirement: macOS platform label is Alan for macOS
-The native macOS app SHALL use `Alan for macOS` as the platform variant label
-when a surface needs to distinguish the macOS app from the CLI, runtime, docs,
-or other future clients.
-
-#### Scenario: Platform-specific copy is displayed
-- **WHEN** a README, release note, download page, architecture doc, or support
-  message distinguishes the native macOS app
-- **THEN** it uses `Alan for macOS` as the platform label
-- **AND** it does not introduce a second app brand such as `AlanNative` or
-  `alanterm`
-
-#### Scenario: Product name is enough
-- **WHEN** Dock, app menu, window title, or default app metadata only needs the
-  product name
-- **THEN** it uses `Alan` instead of `Alan for macOS`
-
-### Requirement: Alan Dev is an allowlisted local development channel name
-The product SHALL keep `Alan` as the public product brand while allowing
-`Alan Dev` only as the user-visible name for the local dev install channel.
-
-#### Scenario: Dev app metadata is generated
-- **WHEN** the local dev macOS app bundle is built
-- **THEN** `CFBundleDisplayName` and the generated app product name may use `Alan Dev`
-- **AND** the bundle identifier may use `app.alanworks.macos.dev`
-- **AND** these identifiers are treated as dev-channel identities rather than public rebrands
-
-#### Scenario: Stable app metadata is generated
-- **WHEN** the stable macOS app bundle is built
-- **THEN** `CFBundleDisplayName` and product name remain `Alan`
-- **AND** the bundle identifier remains `app.alanworks.macos`
-- **AND** stable build metadata does not include `Alan Dev` or dev-channel bundle identifiers
-
-#### Scenario: Brand validation runs
-- **WHEN** brand validation scans active source, scripts, docs, project metadata, and active OpenSpec changes
-- **THEN** it allows `Alan Dev`, `alan-dev`, and `app.alanworks.macos.dev` only in dev-channel contexts
-- **AND** it continues to reject obsolete product names and unallowlisted lowercase user-visible app branding
