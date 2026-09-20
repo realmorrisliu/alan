@@ -201,8 +201,8 @@ alignment, as recorded in the September architecture review.
 **Alan Renderer Host** — A renderer/input host that consumes mounted AgentFS
 and `/proc` files and writes to their control surfaces.
 
-**Alan for macOS** — Retired desktop product, with retained source pending scoped
-removal (ADR-0054). Its aP attachment already exists. Herdr is the preferred
+**Alan for macOS** — Retired desktop product whose App, helper and shell-core/FFI
+source has been removed (ADR-0054). Herdr is the preferred
 terminal host, not a replacement owner for Alan OS lifecycle or permissions.
 
 **Alan Agent** — An optional Agent Workspace app for inspecting, steering, and

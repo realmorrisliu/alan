@@ -43,8 +43,9 @@ evaluator. Service Manager boot exists. The allocated Shell Process identity
 does not yet provide the complete server-side evaluator/runner and incremental
 IO path required by ADR-0048. The Agent TUI is a separate file-backed renderer.
 
-Alan for macOS is retired as a product direction, with source retained for
-scoped removal. Herdr supplies terminal topology, not Alan execution authority.
+Alan for macOS is retired; its App, helper and shell-core/FFI source has been
+removed. Rust Host platform adapters remain. Herdr supplies terminal topology,
+not Alan execution authority.
 See [ADR-0054](adr/0054-retire-desktop-client-prefer-terminal-hosts.md).
 
 The current engine is generation-driven. The accepted mixed Machine direction

@@ -9,8 +9,8 @@ early development. Its retained implementation contains:
   Agent Process state through AgentFS;
 - a terminal Shell entry, an Agent renderer and direct management commands.
 
-Alan for macOS is retired as a product direction; its source remains pending
-scoped removal. Herdr is the preferred terminal host, without making Alan
+Alan for macOS is retired; its App, helper and shell-core/FFI source has been
+removed. Herdr is the preferred terminal host, without making Alan
 dependent on Herdr or claiming native Alan agent detection already exists.
 See [ADR-0054](docs/adr/0054-retire-desktop-client-prefer-terminal-hosts.md).
 

@@ -32,3 +32,8 @@ Removed that root and made the shared search function fail on search errors
 for both rg and git grep. The quality gate now runs an isolated regression
 covering all three forbidden-source scans without clients, plus missing-root
 errors with and without a forbidden match. No runtime code changed.
+
+The next review found stale removal-status summaries in README, CONTEXT and
+the architecture guide. Current summaries now consistently state source removal;
+ADR-0054 distinguishes its original maintenance decision from the follow-up,
+and the interaction disposition points at this change's removal ownership.
