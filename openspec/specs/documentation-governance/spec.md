@@ -4,15 +4,17 @@
 Defines how alan separates durable OpenSpec requirements from implementation
 guides, operator runbooks, executable fixtures, bridge pages, and retired
 historical plans.
+
 ## Requirements
 
 ### Requirement: Product lifecycle and implementation status are explicit
 Current specifications and active plans SHALL distinguish supported product
 surfaces, retained legacy maintenance, accepted but unimplemented direction,
-parked work, and cancelled work. Alan for macOS is retired as a product direction;
-its retained source and associated contracts are maintenance-only until a
-separately scoped removal. This does not retire macOS platform support, Alan OS
-Host, credentials, Host Mounts, sandboxing, or user stores.
+parked work, and cancelled work. Alan for macOS is retired as a product and
+distribution direction; its retained source and associated contracts are
+maintenance-only until a separately scoped removal. This does not retire macOS
+platform support, Alan OS Host, credentials, Host Mounts, sandboxing, or user
+stores. The standalone CLI/Host distribution is the supported delivery surface.
 
 #### Scenario: Retained desktop contract is consulted
 - **WHEN** an agent reads a macOS desktop, shell-workspace, shell-core or App
@@ -21,6 +23,14 @@ Host, credentials, Host Mounts, sandboxing, or user stores.
 - **AND** it does not authorize new desktop features or require Herdr to
   reproduce that contract
 - **AND** still-used platform security and data-preservation obligations remain
+
+#### Scenario: Standalone distribution is consulted
+- **WHEN** an agent needs to install, package, or validate the supported Alan
+  command-line product
+- **THEN** it uses the standalone CLI/Host capability and current Rust/Host
+  guides
+- **AND** it does not select an app-bundle, Sparkle, appcast, or embedded-CLI
+  path
 
 #### Scenario: An old implementation plan is resumed
 - **WHEN** an agent considers a parked or cancelled change
@@ -32,7 +42,8 @@ Host, credentials, Host Mounts, sandboxing, or user stores.
 #### Scenario: Mixed cognition direction is documented
 - **WHEN** current documentation describes deterministic, evaluation and
   generation transitions or Herdr integration
-- **THEN** it distinguishes accepted design from implemented and verified support
+- **THEN** it distinguishes accepted design from implemented and verified
+  support
 - **AND** it does not present Jev support or a Herdr Alan agent kind as shipped
 
 #### Scenario: Desktop source removal is planned
