@@ -49,12 +49,23 @@ behavior.
 - **AND** the client reports interruption without terminating the Root Agent
   Process
 
+#### Scenario: A redirected client overlaps another one-shot task
+- **WHEN** another redirected `alan` client already owns the channel's one-shot
+  task lease
+- **THEN** the new client fails clearly and does not attach its result to the
+  other client's task
+- **AND** the user can retry after the active task settles
+
 #### Scenario: Root Agent Process changes during redirected task
 - **WHEN** the Root Agent PID changes while the client waits for the submitted
   task
 - **THEN** the client reopens its tape and UI tails against `/agent/root`
-- **AND** it recovers the matching task result without resubmitting input or
-  duplicating stdout
+- **AND** it recovers a result only from records appended after the captured
+  tape baseline or from UI activity correlated to this submission
+- **AND** if the replacement history cannot establish that correlation, it
+  reports that the outcome is unknown rather than reusing an older identical
+  prompt
+- **AND** it never resubmits input or duplicates stdout
 
 ## REMOVED Requirements
 

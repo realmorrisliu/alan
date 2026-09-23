@@ -96,7 +96,7 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
     } else {
         None
     };
-    let mut pending_root_agent_turn: Option<(String, bool)> = None;
+    let mut pending_root_agent_turn: Option<PendingRootAgentTurn> = None;
     let watch_tails = hydrate_and_open_tails(&shell, &config.agent_path, &mut app).await?;
 
     let mut terminal = TerminalSession::enter()?;
@@ -134,20 +134,34 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                         if let Some(action) = app.dispatch(other) {
                             match action {
                                 FileBackedAction::Submit(text) => {
+                                    let submitted_at_ms = unix_time_ms();
+                                    let prior_matching_turns =
+                                        app.tape_user_prompt_count(&text);
                                     match write_agent_input(&shell, &app.agent_path, &text).await {
                                         Ok(()) => {
                                             app.notice = None;
                                             if follows_root_agent {
-                                                pending_root_agent_turn = Some((text.clone(), false));
-                                                watchers
+                                                pending_root_agent_turn = Some(PendingRootAgentTurn {
+                                                    input: text.clone(),
+                                                    observed_active: false,
+                                                    submitted_at_ms,
+                                                    prior_matching_turns,
+                                                });
+                                                let submitted_task_settled = watchers
                                                     .refresh_root_agent_attachment(
                                                     &shell,
                                                     &config.agent_path,
                                                     &mut app,
-                                                    Some(&text),
+                                                    Some((&text, submitted_at_ms, prior_matching_turns)),
                                                     &tx,
-                                                )
-                                                .await;
+                                                    )
+                                                    .await;
+                                                if submitted_task_settled
+                                                    && let Some(turn) =
+                                                        pending_root_agent_turn.as_mut()
+                                                {
+                                                    turn.observed_active = true;
+                                                }
                                             }
                                         }
                                         Err(err) => app.push_error(format!("submit failed: {err:#}")),
@@ -192,16 +206,27 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
             _ = root_agent_pid_tick.tick(), if follows_root_agent && pending_root_agent_turn.is_some() => {
                 let submitted_input = pending_root_agent_turn
                     .as_ref()
-                    .map(|(text, _)| text.as_str());
-                watchers
+                    .map(|turn| {
+                        (
+                            turn.input.as_str(),
+                            turn.submitted_at_ms,
+                            turn.prior_matching_turns,
+                        )
+                    });
+                let submitted_task_settled = watchers
                     .refresh_root_agent_attachment(
                     &shell,
                     &config.agent_path,
                     &mut app,
                     submitted_input,
                     &tx,
-                )
-                .await;
+                    )
+                    .await;
+                if submitted_task_settled
+                    && let Some(turn) = pending_root_agent_turn.as_mut()
+                {
+                    turn.observed_active = true;
+                }
                 observe_root_agent_activity(
                     &mut pending_root_agent_turn,
                     app.activity.state,
@@ -228,6 +253,14 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
     Ok(())
 }
 
+#[derive(Debug, PartialEq, Eq)]
+struct PendingRootAgentTurn {
+    input: String,
+    observed_active: bool,
+    submitted_at_ms: u64,
+    prior_matching_turns: usize,
+}
+
 struct AgentWatchers {
     shutdown: tokio::sync::watch::Sender<bool>,
     tasks: Vec<tokio::task::JoinHandle<Result<()>>>,
@@ -236,13 +269,13 @@ struct AgentWatchers {
 }
 
 fn observe_root_agent_activity(
-    pending_turn: &mut Option<(String, bool)>,
+    pending_turn: &mut Option<PendingRootAgentTurn>,
     activity: UiActivityState,
 ) {
-    if let Some((_, observed_active)) = pending_turn {
+    if let Some(turn) = pending_turn {
         match activity {
-            UiActivityState::Running | UiActivityState::Paused => *observed_active = true,
-            UiActivityState::Idle if *observed_active => *pending_turn = None,
+            UiActivityState::Running | UiActivityState::Paused => turn.observed_active = true,
+            UiActivityState::Idle if turn.observed_active => *pending_turn = None,
             UiActivityState::Idle => {}
         }
     }
@@ -287,30 +320,36 @@ impl AgentWatchers {
         shell: &alan_shell::Shell,
         agent_path: &str,
         app: &mut FileBackedApp,
-        submitted_input: Option<&str>,
+        submitted_task: Option<(&str, u64, usize)>,
         tx: &tokio::sync::mpsc::Sender<FileBackedEvent>,
-    ) {
+    ) -> bool {
         match current_root_agent_pid(shell).await {
             Ok(Some(pid)) if self.root_agent_pid != Some(pid) => {
                 self.pid_refresh_failed = false;
                 self.stop().await;
-                match reattach_to_current_agent(shell, agent_path, app, submitted_input).await {
-                    Ok(tails) => *self = Self::start(tails, tx.clone(), Some(pid)),
+                match reattach_to_current_agent(shell, agent_path, app, submitted_task).await {
+                    Ok((tails, submitted_task_settled)) => {
+                        *self = Self::start(tails, tx.clone(), Some(pid));
+                        submitted_task_settled
+                    }
                     Err(err) => {
                         self.root_agent_pid = None;
                         app.push_error(format!("Root Agent reattach failed: {err:#}"));
+                        false
                     }
                 }
             }
             Ok(pid) => {
                 self.root_agent_pid = pid;
                 self.pid_refresh_failed = false;
+                false
             }
             Err(err) if !self.pid_refresh_failed => {
                 self.pid_refresh_failed = true;
                 app.push_error(format!("Root Agent identity refresh failed: {err:#}"));
+                false
             }
-            Err(_) => {}
+            Err(_) => false,
         }
     }
 
@@ -355,17 +394,18 @@ pub async fn run_stdio_task(
         }
     }
 
-    // ponytail: the input stream has no request IDs, so refuse an already-busy
-    // shared Agent; add correlation metadata if concurrent stdio tasks matter.
+    // ponytail: the CLI lock excludes concurrent one-shot clients; add IDs if
+    // one-shot and interactive submissions need concurrent task correlation.
     let tape_path = format!("{agent_path}/machine/tape");
     let ui_events_path = format!("{agent_path}/machine/ui/events");
-    let (mut tape_tail, _) = tail_with_history(&shell, &tape_path).await?;
+    let (mut tape_tail, baseline_tape_history) = tail_with_history(&shell, &tape_path).await?;
     let (mut ui_tail, _) = tail_with_history(&shell, &ui_events_path).await?;
+    let task = StdioTaskWaitContext::new(input, &baseline_tape_history);
 
     let result = wait_for_stdio_answer(
         &shell,
         &agent_path,
-        input,
+        task,
         &mut tape_tail,
         &mut ui_tail,
         &mut root_agent_pid,
@@ -390,7 +430,7 @@ pub async fn run_stdio_task(
 async fn wait_for_stdio_answer(
     shell: &alan_shell::Shell,
     agent_path: &str,
-    input: &str,
+    task: StdioTaskWaitContext<'_>,
     tape_tail: &mut alan_shell::Tail,
     ui_tail: &mut alan_shell::Tail,
     root_agent_pid: &mut Option<u64>,
@@ -409,7 +449,7 @@ async fn wait_for_stdio_answer(
     let mut root_agent_pid_tick = tokio::time::interval(std::time::Duration::from_millis(250));
     root_agent_pid_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
-    write_agent_input(shell, agent_path, input).await?;
+    write_agent_input(shell, agent_path, task.input).await?;
 
     loop {
         tokio::select! {
@@ -427,7 +467,8 @@ async fn wait_for_stdio_answer(
                         continue;
                     }
                     if !snapshot.task_started {
-                        snapshot.task_started = record.role == "user" && record.content == input;
+                        snapshot.task_started =
+                            record.role == "user" && record.content == task.input;
                     } else if record.role == "assistant" {
                         snapshot.assistant_answer = Some(record.content);
                     }
@@ -447,13 +488,20 @@ async fn wait_for_stdio_answer(
                         .map_err(|err| anyhow::anyhow!("parse Agent UI event failed: {err}"))?;
                     match event {
                         UiEvent::Activity { snapshot: activity } => {
-                            if activity.state == UiActivityState::Running {
+                            if activity.state == UiActivityState::Running
+                                && activity
+                                    .started_at_ms
+                                    .is_none_or(|started_at| started_at >= task.submitted_at_ms)
+                            {
                                 snapshot.task_started = true;
                                 snapshot.task_error = None;
                             }
                             snapshot.activity_state = Some(activity.state)
                         }
-                        UiEvent::Error { message, .. } => snapshot.task_error = Some(message),
+                        UiEvent::Error { message, .. } if snapshot.task_started => {
+                            snapshot.task_error = Some(message)
+                        }
+                        UiEvent::Error { .. } => {}
                         UiEvent::Plan { .. } | UiEvent::Thinking { .. } | UiEvent::Notice { .. } => {}
                     }
                 }
@@ -485,7 +533,7 @@ async fn wait_for_stdio_answer(
                     let recovered = stdio_task_snapshot(
                         shell,
                         agent_path,
-                        input,
+                        task,
                         &tape_history,
                         &ui_history,
                     )
@@ -505,6 +553,9 @@ async fn wait_for_stdio_answer(
                     }
                     if let Some(answer) = finish_stdio_task_if_ready(&mut snapshot)? {
                         return Ok(answer);
+                    }
+                    if snapshot.activity_state == Some(UiActivityState::Idle) {
+                        bail!("Root Agent changed before the submitted task outcome could be recovered; outcome is unknown");
                     }
                 }
             }
@@ -556,30 +607,55 @@ struct StdioTaskSnapshot {
     task_error: Option<String>,
 }
 
+#[derive(Clone, Copy)]
+struct StdioTaskWaitContext<'a> {
+    input: &'a str,
+    baseline_tape_history: &'a [u8],
+    submitted_at_ms: u64,
+}
+
+impl<'a> StdioTaskWaitContext<'a> {
+    fn new(input: &'a str, baseline_tape_history: &'a [u8]) -> Self {
+        Self {
+            input,
+            baseline_tape_history,
+            submitted_at_ms: unix_time_ms(),
+        }
+    }
+}
+
 async fn stdio_task_snapshot(
     shell: &alan_shell::Shell,
     agent_path: &str,
-    input: &str,
+    task: StdioTaskWaitContext<'_>,
     tape_history: &[u8],
     ui_history: &[u8],
 ) -> Result<StdioTaskSnapshot> {
-    let mut snapshot = stdio_task_snapshot_from_history(input, tape_history, ui_history)?;
+    let mut snapshot = stdio_task_snapshot_from_history(task, tape_history, ui_history)?;
     if snapshot.activity_state.is_none() {
         let raw = shell
             .cat(&format!("{agent_path}/machine/ui/activity"))
             .await
             .map_err(|err| anyhow::anyhow!("read Agent activity failed: {err:?}"))?;
-        snapshot.activity_state = Some(
-            serde_json::from_slice::<UiActivitySnapshot>(&raw)
-                .context("parse Agent activity")?
-                .state,
-        );
+        let activity =
+            serde_json::from_slice::<UiActivitySnapshot>(&raw).context("parse Agent activity")?;
+        if matches!(
+            activity.state,
+            UiActivityState::Running | UiActivityState::Paused
+        ) && activity
+            .started_at_ms
+            .is_some_and(|started_at| started_at >= task.submitted_at_ms)
+        {
+            snapshot.task_started = true;
+            snapshot.task_error = None;
+        }
+        snapshot.activity_state = Some(activity.state);
     }
     Ok(snapshot)
 }
 
 fn stdio_task_snapshot_from_history(
-    input: &str,
+    task: StdioTaskWaitContext<'_>,
     tape_history: &[u8],
     ui_history: &[u8],
 ) -> Result<StdioTaskSnapshot> {
@@ -589,9 +665,29 @@ fn stdio_task_snapshot_from_history(
         .filter_map(|line| serde_json::from_str::<TapeRecordV1>(line).ok())
         .filter(|record| record.kind == "message")
         .collect::<Vec<_>>();
-    let task_index = records
+    let matching_task_indices = records
         .iter()
-        .rposition(|record| record.role == "user" && record.content == input);
+        .enumerate()
+        .filter_map(|(index, record)| {
+            (record.role == "user" && record.content == task.input).then_some(index)
+        })
+        .collect::<Vec<_>>();
+    let baseline_record_count = std::str::from_utf8(task.baseline_tape_history)
+        .context("baseline machine/tape is not utf8")?
+        .lines()
+        .filter_map(|line| serde_json::from_str::<TapeRecordV1>(line).ok())
+        .filter(|record| record.kind == "message")
+        .count();
+    let task_index = tape_history
+        .as_bytes()
+        .starts_with(task.baseline_tape_history)
+        .then(|| {
+            matching_task_indices
+                .iter()
+                .copied()
+                .rfind(|index| *index >= baseline_record_count)
+        })
+        .flatten();
     let assistant_answer = task_index.and_then(|index| {
         let following = &records[index + 1..];
         let turn_end = following
@@ -605,29 +701,20 @@ fn stdio_task_snapshot_from_history(
             .map(|record| record.content.clone())
     });
 
-    let mut task_started = task_index.is_some();
-    let mut activity_state = None;
-    let mut task_error = None;
-    let ui_history = std::str::from_utf8(ui_history).context("ui events are not utf8")?;
-    for line in ui_history.lines().filter(|line| !line.trim().is_empty()) {
-        match serde_json::from_str::<UiEvent>(line).context("parse Agent UI event")? {
-            UiEvent::Activity { snapshot } => {
-                if snapshot.state == UiActivityState::Running {
-                    task_started = true;
-                    task_error = None;
-                }
-                activity_state = Some(snapshot.state);
-            }
-            UiEvent::Error { message, .. } => task_error = Some(message),
-            UiEvent::Plan { .. } | UiEvent::Thinking { .. } | UiEvent::Notice { .. } => {}
-        }
-    }
+    let ui_task = file_surface::correlated_ui_task(ui_history, task.submitted_at_ms)?;
     Ok(StdioTaskSnapshot {
-        task_started,
+        task_started: task_index.is_some() || ui_task.started,
         assistant_answer,
-        activity_state,
-        task_error,
+        activity_state: ui_task.state,
+        task_error: ui_task.error,
     })
+}
+
+fn unix_time_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
 }
 
 fn drain_lines(pending: &mut Vec<u8>) -> Vec<Vec<u8>> {

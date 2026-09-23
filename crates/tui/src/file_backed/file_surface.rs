@@ -1,7 +1,8 @@
 //! AgentFS file observation, command writes, and snapshot projection.
 
 use alan_agent_protocol::{
-    ContentPart, StructuredInputQuestion, ToolResultPresentation, UiEvent, YieldKind,
+    ContentPart, StructuredInputQuestion, ToolResultPresentation, UiActivityState, UiEvent,
+    YieldKind,
 };
 use anyhow::{Context, Result, anyhow, bail};
 use crossterm::event::{Event as TerminalEvent, KeyCode, KeyEvent, KeyModifiers};
@@ -46,8 +47,8 @@ pub(super) async fn hydrate_and_open_tails(
     app.transcript = parse_tape_history(&tape_history);
     app.seed_reconciler_from_tape_history(&tape_history);
 
-    let ui_history = String::from_utf8(ui_history).context("ui events are not utf8")?;
-    let ui_events = ui_history
+    let ui_history_text = std::str::from_utf8(&ui_history).context("ui events are not utf8")?;
+    let ui_events = ui_history_text
         .lines()
         .filter(|line| !line.trim().is_empty())
         .map(|line| serde_json::from_str::<UiEvent>(line).context("parse ui event"))
@@ -71,6 +72,7 @@ pub(super) async fn hydrate_and_open_tails(
         actions,
         ui,
         tape,
+        ui_history,
     })
 }
 
@@ -90,8 +92,8 @@ pub(super) async fn reattach_to_current_agent(
     shell: &alan_shell::Shell,
     agent_path: &str,
     app: &mut FileBackedApp,
-    submitted_input: Option<&str>,
-) -> Result<WatchTails> {
+    submitted_task: Option<(&str, u64, usize)>,
+) -> Result<(WatchTails, bool)> {
     let previous_transcript = std::mem::take(&mut app.transcript);
     app.reset_for_root_process_change();
     let tails = match hydrate_and_open_tails(shell, agent_path, app).await {
@@ -103,12 +105,46 @@ pub(super) async fn reattach_to_current_agent(
     };
     let current_transcript = std::mem::take(&mut app.transcript);
     app.transcript = previous_transcript;
-    if let Some(submitted_input) = submitted_input
-        && !app.merge_reconnected_history(current_transcript, submitted_input)
-    {
-        app.reconciler.on_local_submit(submitted_input);
+    let mut submitted_task_settled = false;
+    if let Some((submitted_input, submitted_at_ms, prior_matching_turns)) = submitted_task {
+        let ui_task = correlated_ui_task(&tails.ui_history, submitted_at_ms)?;
+        if app.notice.as_ref().is_some_and(|notice| {
+            current_transcript
+                .iter()
+                .any(|cell| matches!(cell, HistoryCell::Error(message) if message == notice))
+                && ui_task.error.as_ref() != Some(notice)
+        }) {
+            app.notice = None;
+        }
+        let current_transcript = current_transcript
+            .into_iter()
+            .filter(|cell| !matches!(cell, HistoryCell::Error(_)))
+            .collect();
+        let recovered_current_turn = ui_task.started
+            && app.merge_reconnected_history(
+                current_transcript,
+                submitted_input,
+                prior_matching_turns,
+            );
+        if !recovered_current_turn {
+            app.reconciler.on_local_submit(submitted_input);
+        }
+        if let Some(message) = ui_task.started.then_some(ui_task.error).flatten() {
+            app.notice = Some(message.clone());
+            app.transcript.push(HistoryCell::Error(message));
+            submitted_task_settled = ui_task.state == Some(UiActivityState::Idle);
+        } else if !recovered_current_turn && app.activity.state == UiActivityState::Idle {
+            let message =
+                    "Root Agent changed before the submitted turn could be recovered; outcome is unknown"
+                        .to_string();
+            app.notice = Some(message.clone());
+            app.transcript.push(HistoryCell::Error(message));
+            submitted_task_settled = true;
+        } else if recovered_current_turn {
+            submitted_task_settled = ui_task.state == Some(UiActivityState::Idle);
+        }
     }
-    Ok(tails)
+    Ok((tails, submitted_task_settled))
 }
 
 pub(super) async fn sync_requests_from_files(
@@ -142,6 +178,62 @@ pub(super) struct WatchTails {
     pub(super) actions: alan_shell::Tail,
     pub(super) ui: alan_shell::Tail,
     pub(super) tape: alan_shell::Tail,
+    pub(super) ui_history: Vec<u8>,
+}
+
+#[derive(Default)]
+pub(super) struct CorrelatedUiTask {
+    pub(super) started: bool,
+    pub(super) state: Option<UiActivityState>,
+    pub(super) error: Option<String>,
+}
+
+pub(super) fn correlated_ui_task(
+    ui_history: &[u8],
+    submitted_at_ms: u64,
+) -> Result<CorrelatedUiTask> {
+    let ui_history = std::str::from_utf8(ui_history).context("ui events are not utf8")?;
+    let mut task = CorrelatedUiTask::default();
+    for line in ui_history.lines().filter(|line| !line.trim().is_empty()) {
+        let event = serde_json::from_str::<UiEvent>(line).context("parse Agent UI event")?;
+        if !task.started {
+            if let UiEvent::Activity { snapshot } = event
+                && snapshot.state == UiActivityState::Running
+                && snapshot
+                    .started_at_ms
+                    .is_some_and(|started_at| started_at >= submitted_at_ms)
+            {
+                task.started = true;
+                task.state = Some(UiActivityState::Running);
+            }
+            continue;
+        }
+        match event {
+            UiEvent::Activity { snapshot } => {
+                task.state = Some(snapshot.state);
+                if snapshot.state == UiActivityState::Idle {
+                    break;
+                }
+            }
+            UiEvent::Error { message, .. } => task.error = Some(message),
+            UiEvent::Plan { .. } | UiEvent::Thinking { .. } | UiEvent::Notice { .. } => {}
+        }
+    }
+    Ok(task)
+}
+
+pub(super) async fn send_event_or_shutdown(
+    tx: &tokio::sync::mpsc::Sender<FileBackedEvent>,
+    shutdown_rx: &mut tokio::sync::watch::Receiver<bool>,
+    event: FileBackedEvent,
+) -> bool {
+    tokio::select! {
+        result = tx.send(event) => result.is_ok(),
+        changed = shutdown_rx.changed() => {
+            let _ = changed;
+            false
+        }
+    }
 }
 
 pub(super) async fn spawn_output_tail(
@@ -161,14 +253,23 @@ pub(super) async fn spawn_output_tail(
                     Ok(bytes) if bytes.is_empty() => break,
                     Ok(bytes) => {
                         let text = String::from_utf8_lossy(&bytes).to_string();
-                        if tx.send(FileBackedEvent::Output(text)).await.is_err() {
+                        if !send_event_or_shutdown(
+                            &tx,
+                            &mut shutdown_rx,
+                            FileBackedEvent::Output(text),
+                        )
+                        .await
+                        {
                             break;
                         }
                     }
                     Err(err) => {
-                        let _ = tx.send(FileBackedEvent::Error(format!(
-                            "output tail failed: {err:?}"
-                        ))).await;
+                        let _ = send_event_or_shutdown(
+                            &tx,
+                            &mut shutdown_rx,
+                            FileBackedEvent::Error(format!("output tail failed: {err:?}")),
+                        )
+                        .await;
                         break;
                     }
                 }
@@ -198,14 +299,23 @@ pub(super) async fn spawn_request_watch(
                 match result {
                     Ok(bytes) if bytes.is_empty() => break,
                     Ok(_) => {
-                        if tx.send(FileBackedEvent::RequestsChanged).await.is_err() {
+                        if !send_event_or_shutdown(
+                            &tx,
+                            &mut shutdown_rx,
+                            FileBackedEvent::RequestsChanged,
+                        )
+                        .await
+                        {
                             break;
                         }
                     }
                     Err(err) => {
-                        let _ = tx.send(FileBackedEvent::Error(format!(
-                            "request watch failed: {err:?}"
-                        ))).await;
+                        let _ = send_event_or_shutdown(
+                            &tx,
+                            &mut shutdown_rx,
+                            FileBackedEvent::Error(format!("request watch failed: {err:?}")),
+                        )
+                        .await;
                         break;
                     }
                 }
@@ -235,14 +345,23 @@ pub(super) async fn spawn_action_watch(
                 match result {
                     Ok(bytes) if bytes.is_empty() => break,
                     Ok(_) => {
-                        if tx.send(FileBackedEvent::ActionsChanged).await.is_err() {
+                        if !send_event_or_shutdown(
+                            &tx,
+                            &mut shutdown_rx,
+                            FileBackedEvent::ActionsChanged,
+                        )
+                        .await
+                        {
                             break;
                         }
                     }
                     Err(err) => {
-                        let _ = tx.send(FileBackedEvent::Error(format!(
-                            "action watch failed: {err:?}"
-                        ))).await;
+                        let _ = send_event_or_shutdown(
+                            &tx,
+                            &mut shutdown_rx,
+                            FileBackedEvent::Error(format!("action watch failed: {err:?}")),
+                        )
+                        .await;
                         break;
                     }
                 }
@@ -262,7 +381,7 @@ pub(super) async fn spawn_ui_watch(
     mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
 ) -> Result<()> {
     let mut pending = Vec::new();
-    loop {
+    'watch: loop {
         tokio::select! {
             changed = shutdown_rx.changed() => {
                 if changed.is_err() || *shutdown_rx.borrow() {
@@ -282,23 +401,38 @@ pub(super) async fn spawn_ui_watch(
                             }
                             match serde_json::from_slice::<UiEvent>(line) {
                                 Ok(event) => {
-                                    if tx.send(FileBackedEvent::Ui(event)).await.is_err() {
+                                    if !send_event_or_shutdown(
+                                        &tx,
+                                        &mut shutdown_rx,
+                                        FileBackedEvent::Ui(event),
+                                    )
+                                    .await
+                                    {
                                         pending.clear();
-                                        break;
+                                        break 'watch;
                                     }
                                 }
                                 Err(err) => {
-                                    let _ = tx.send(FileBackedEvent::Error(format!(
-                                        "ui watch parse failed: {err}"
-                                    ))).await;
+                                    if !send_event_or_shutdown(
+                                        &tx,
+                                        &mut shutdown_rx,
+                                        FileBackedEvent::Error(format!("ui watch parse failed: {err}")),
+                                    )
+                                    .await
+                                    {
+                                        break 'watch;
+                                    }
                                 }
                             }
                         }
                     }
                     Err(err) => {
-                        let _ = tx.send(FileBackedEvent::Error(format!(
-                            "ui watch failed: {err:?}"
-                        ))).await;
+                        let _ = send_event_or_shutdown(
+                            &tx,
+                            &mut shutdown_rx,
+                            FileBackedEvent::Error(format!("ui watch failed: {err:?}")),
+                        )
+                        .await;
                         break;
                     }
                 }
@@ -318,7 +452,7 @@ pub(super) async fn spawn_tape_watch(
     mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
 ) -> Result<()> {
     let mut pending = Vec::new();
-    loop {
+    'watch: loop {
         tokio::select! {
             changed = shutdown_rx.changed() => {
                 if changed.is_err() || *shutdown_rx.borrow() {
@@ -341,16 +475,25 @@ pub(super) async fn spawn_tape_watch(
                             let Ok(record) = serde_json::from_slice::<TapeRecordV1>(line) else {
                                 continue;
                             };
-                            if tx.send(FileBackedEvent::Tape(record)).await.is_err() {
+                            if !send_event_or_shutdown(
+                                &tx,
+                                &mut shutdown_rx,
+                                FileBackedEvent::Tape(record),
+                            )
+                            .await
+                            {
                                 pending.clear();
-                                break;
+                                break 'watch;
                             }
                         }
                     }
                     Err(err) => {
-                        let _ = tx.send(FileBackedEvent::Error(format!(
-                            "tape watch failed: {err:?}"
-                        ))).await;
+                        let _ = send_event_or_shutdown(
+                            &tx,
+                            &mut shutdown_rx,
+                            FileBackedEvent::Error(format!("tape watch failed: {err:?}")),
+                        )
+                        .await;
                         break;
                     }
                 }

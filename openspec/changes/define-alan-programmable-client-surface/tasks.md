@@ -32,8 +32,10 @@
   Root Agent PID rebinding, and exit-code behavior. Keep waiting for the task
   outcome without a client-only timeout; recognize `Running`/terminal-error
   events before tape persistence; prefer terminal errors over intermediate
-  assistant content; and retain Ctrl-C until `Running` confirms acceptance
-  before sending interruption.
+  assistant content; retain Ctrl-C until `Running` confirms acceptance before
+  sending interruption; exclude concurrent one-shot writers; and fail closed
+  when replacement tape/UI history cannot correlate the result to this
+  submission.
 
 > Live acceptance status (2026-09-23): an explicit read-only synthetic Host
 > Mount and `bash` read returned the expected sentinel; a leading `!` reached

@@ -1,6 +1,9 @@
 //! File-backed TUI input handling and application state transitions.
 
-use std::collections::BTreeMap;
+use std::{
+    collections::{BTreeMap, HashMap},
+    hash::BuildHasher,
+};
 
 use alan_agent_protocol::{
     UiActivitySnapshot, UiActivityState, UiEvent, UiNoticeKind, UiNoticeSnapshot, UiPlanSnapshot,
@@ -83,6 +86,8 @@ pub(super) struct FileBackedApp {
     /// arrives, insert the user cell before the whole block and shift side
     /// indexes such as `action_cells`.
     pub(super) pending_remote_turn_start: Option<usize>,
+    /// Keep occurrence counts through `/clear` without retaining prompt text.
+    tape_user_prompt_counts: HashMap<u64, usize>,
 }
 
 impl FileBackedApp {
@@ -108,6 +113,7 @@ impl FileBackedApp {
             should_quit: false,
             reconciler: StreamReconciler::new(),
             pending_remote_turn_start: None,
+            tape_user_prompt_counts: HashMap::new(),
         }
     }
 
@@ -550,6 +556,7 @@ impl FileBackedApp {
         }
         match record.role.as_str() {
             "user" => {
+                self.count_tape_user_prompt(&record.content);
                 match self.reconciler.on_user_record(&record.content) {
                     UserDecision::Drop => {}
                     UserDecision::Push(content) => self.insert_user_boundary(content),
@@ -766,14 +773,30 @@ impl FileBackedApp {
     pub(super) fn seed_reconciler_from_tape_history(&mut self, raw: &str) {
         self.reconciler = StreamReconciler::new();
         self.pending_remote_turn_start = None;
+        self.tape_user_prompt_counts.clear();
         for line in raw.lines() {
             let Ok(record) = serde_json::from_str::<TapeRecordV1>(line) else {
                 continue;
             };
             if record.kind == "message" {
+                if record.role == "user" {
+                    self.count_tape_user_prompt(&record.content);
+                }
                 self.reconciler.on_hydrated_message_record(&record.role);
             }
         }
+    }
+
+    pub(super) fn tape_user_prompt_count(&self, prompt: &str) -> usize {
+        self.tape_user_prompt_counts
+            .get(&self.tape_user_prompt_counts.hasher().hash_one(prompt))
+            .copied()
+            .unwrap_or_default()
+    }
+
+    fn count_tape_user_prompt(&mut self, prompt: &str) {
+        let prompt_hash = self.tape_user_prompt_counts.hasher().hash_one(prompt);
+        *self.tape_user_prompt_counts.entry(prompt_hash).or_default() += 1;
     }
 
     pub(super) fn reset_for_root_process_change(&mut self) {
@@ -796,10 +819,15 @@ impl FileBackedApp {
         &mut self,
         current: Vec<HistoryCell>,
         submitted_input: &str,
+        prior_matching_turns: usize,
     ) -> bool {
         let Some(boundary) = current
             .iter()
-            .rposition(|cell| matches!(cell, HistoryCell::User(text) if text == submitted_input))
+            .enumerate()
+            .filter_map(|(index, cell)| {
+                matches!(cell, HistoryCell::User(text) if text == submitted_input).then_some(index)
+            })
+            .nth(prior_matching_turns)
         else {
             return false;
         };

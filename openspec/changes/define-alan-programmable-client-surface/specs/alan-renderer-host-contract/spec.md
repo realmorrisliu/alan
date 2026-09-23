@@ -24,7 +24,18 @@ output, status, and Agent UI state.
   Root Agent PID
 - **THEN** the renderer reopens its AgentFS tails against the current
   `/agent/root` and preserves the already-rendered transcript
-- **AND** it observes the current task's output without resubmitting the input
+- **AND** it merges a recovered turn only when current UI activity and its tape
+  boundary can be correlated to that submission
+- **AND** if the replacement is idle without correlated turn evidence, it
+  renders an outcome-unknown error instead of reusing an older identical
+  prompt or stale UI error
+- **AND** it never resubmits the input
+
+#### Scenario: The replacement Root Agent fails before persisting the user turn
+- **WHEN** a replacement Root Agent emits a post-submission `Running`, an
+  `Error`, and then `Idle` without writing the user message to tape
+- **THEN** the renderer preserves that correlated error in its transcript
+- **AND** it stops polling for this turn after rendering the terminal outcome
 
 #### Scenario: An explicit shell request is submitted
 - **WHEN** the user submits text beginning with `!`

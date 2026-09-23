@@ -60,6 +60,12 @@ its user message to tape. A terminal task error takes precedence over any
 intermediate assistant content. Ctrl-C remains pending until the waiter observes
 `Running`, then sends the turn interrupt; sending it before that acceptance
 signal could let an idle Runtime consume the interrupt before reading the task.
+Redirected clients take a channel-scoped, nonblocking one-shot lease before
+submitting, so concurrent one-shot writers cannot claim one another's
+`Running` event or answer. If another client owns it, the new invocation fails
+clearly and can be retried. This lease does not serialize a TTY renderer; add
+request identities only if mixed one-shot/interactive concurrency becomes a
+supported use case.
 
 ### 2. Attach the existing Root Agent; do not create another Process
 
@@ -91,9 +97,16 @@ immediate check alone can miss the replacement. When it changes, the renderer
 closes only its old AgentFS tails, hydrates the replacement Process's current
 state, and opens new tails without resubmitting input. The transcript already
 rendered by this client remains in view; current-turn tape recovered during
-rebind is merged after the matching user entry. Polling stops when the turn
-returns to idle. This is live Process rebinding, not durable stream-offset
-recovery or cross-Host restoration.
+rebind is merged after the matching user entry only when a post-submission
+`Running` event correlates it to the pending turn. Tape-less terminal errors
+are retained only when the replacement's UI history has that correlated
+`Running` → `Error` → `Idle` sequence. If the replacement is idle but the
+available tape/UI evidence cannot identify the submitted turn, the renderer
+reports an unknown outcome instead of matching old prompt text or stale errors.
+Polling stops after a recovered terminal result. Watcher sends remain
+cancellable while the bounded event queue is full, so stopping old watchers
+during rebind cannot deadlock the renderer. This is live Process rebinding, not
+durable stream-offset recovery or cross-Host restoration.
 
 ### 5. Preserve explicit access grants
 
@@ -126,9 +139,12 @@ the repository quality gate so this route cannot silently regress.
 - Verify redirected stdin is one Agent task, stdout contains only its answer,
   stderr carries diagnostics, and failures produce a nonzero exit code.
   Include a Root Agent PID change during the wait and ensure the answer is not
-  lost or duplicated. Wait beyond five minutes without an invented client
-  timeout; report a runtime error even when it precedes tape persistence, prefer
-  that error over intermediate assistant content, and verify Ctrl-C is retained
+  lost or duplicated; verify a concurrent redirected client cannot claim that
+  answer. On PID change, include an older identical prompt in replacement tape
+  with no current turn and require an unknown outcome rather than the old
+  answer. Wait beyond five minutes without an invented client timeout; report a
+  runtime error even when it precedes tape persistence, prefer that error over
+  intermediate assistant content, and verify Ctrl-C is retained
   until `Running` confirms the task has been accepted before writing the turn
   interrupt.
 - If the mounted Connection metadata reports `unconfigured`, fail the task with

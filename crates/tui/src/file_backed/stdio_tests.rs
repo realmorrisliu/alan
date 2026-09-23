@@ -67,17 +67,21 @@ fn line_drain_keeps_partial_records_until_newline() {
 #[test]
 fn snapshot_restores_the_latest_matching_turn_after_root_process_change() {
     let snapshot = stdio_task_snapshot_from_history(
-        "same task",
+        StdioTaskWaitContext {
+            input: "same task",
+            baseline_tape_history: b"",
+            submitted_at_ms: 2,
+        },
         br#"{"version":1,"kind":"message","role":"user","content":"same task"}
 {"version":1,"kind":"message","role":"assistant","content":"old answer"}
 {"version":1,"kind":"message","role":"user","content":"same task"}
 {"version":1,"kind":"message","role":"assistant","content":"intermediate response"}
 {"version":1,"kind":"message","role":"assistant","content":"current answer"}
 "#,
-        br#"{"type":"activity","snapshot":{"version":1,"state":"running"}}
+        br#"{"type":"activity","snapshot":{"version":1,"state":"running","started_at_ms":1}}
 {"type":"error","message":"previous provider failure","recoverable":true}
 {"type":"activity","snapshot":{"version":1,"state":"idle"}}
-{"type":"activity","snapshot":{"version":1,"state":"running"}}
+{"type":"activity","snapshot":{"version":1,"state":"running","started_at_ms":2}}
 {"type":"activity","snapshot":{"version":1,"state":"idle"}}
 "#,
     )
@@ -92,9 +96,13 @@ fn snapshot_restores_the_latest_matching_turn_after_root_process_change() {
 #[test]
 fn one_shot_reports_failure_before_the_user_record_reaches_tape() {
     let mut snapshot = stdio_task_snapshot_from_history(
-        "task with no tape record",
+        StdioTaskWaitContext {
+            input: "task with no tape record",
+            baseline_tape_history: b"",
+            submitted_at_ms: 0,
+        },
         b"",
-        br#"{"type":"activity","snapshot":{"version":1,"state":"running"}}
+        br#"{"type":"activity","snapshot":{"version":1,"state":"running","started_at_ms":1}}
 {"type":"error","message":"provider unavailable","recoverable":true}
 {"type":"activity","snapshot":{"version":1,"state":"idle"}}
 "#,
@@ -111,6 +119,318 @@ fn one_shot_reports_failure_before_the_user_record_reaches_tape() {
             .to_string(),
         "Agent task failed: provider unavailable"
     );
+}
+
+#[test]
+fn recovery_does_not_reuse_an_identical_prompt_from_the_baseline_tape() {
+    let baseline_tape = br#"{"version":1,"kind":"message","role":"user","content":"same task"}
+{"version":1,"kind":"message","role":"assistant","content":"old answer"}
+"#;
+    let baseline_ui =
+        br#"{"type":"activity","snapshot":{"version":1,"state":"running","started_at_ms":10}}
+{"type":"activity","snapshot":{"version":1,"state":"idle"}}
+"#;
+    let snapshot = stdio_task_snapshot_from_history(
+        StdioTaskWaitContext {
+            input: "same task",
+            baseline_tape_history: baseline_tape,
+            submitted_at_ms: 20,
+        },
+        baseline_tape,
+        baseline_ui,
+    )
+    .unwrap();
+
+    assert!(!snapshot.task_started);
+    assert!(snapshot.assistant_answer.is_none());
+    assert_eq!(snapshot.activity_state, None);
+}
+
+#[test]
+fn recovery_rejects_a_reset_tape_with_only_an_old_identical_prompt() {
+    let baseline_tape = br#"{"version":1,"kind":"message","role":"user","content":"earlier task"}
+{"version":1,"kind":"message","role":"assistant","content":"earlier answer"}
+"#;
+    let replacement_tape = br#"{"version":1,"kind":"message","role":"user","content":"same task"}
+{"version":1,"kind":"message","role":"assistant","content":"old answer"}
+"#;
+    let snapshot = stdio_task_snapshot_from_history(
+        StdioTaskWaitContext {
+            input: "same task",
+            baseline_tape_history: baseline_tape,
+            submitted_at_ms: 20,
+        },
+        replacement_tape,
+        br#"{"type":"activity","snapshot":{"version":1,"state":"idle"}}
+"#,
+    )
+    .unwrap();
+
+    assert!(!snapshot.task_started);
+    assert!(snapshot.assistant_answer.is_none());
+}
+
+#[test]
+fn reattachment_does_not_treat_a_pre_submission_ui_error_as_current() {
+    let task = file_surface::correlated_ui_task(
+        br#"{"type":"activity","snapshot":{"version":1,"state":"running","started_at_ms":10}}
+{"type":"error","message":"old provider failure","recoverable":true}
+{"type":"activity","snapshot":{"version":1,"state":"idle"}}
+"#,
+        20,
+    )
+    .unwrap();
+
+    assert!(!task.started);
+    assert_eq!(task.state, None);
+    assert_eq!(task.error, None);
+}
+
+#[test]
+fn renderer_reconnect_does_not_reuse_an_older_identical_prompt() {
+    let mut app = FileBackedApp::new("/agent/root".to_string());
+    app.transcript = vec![
+        HistoryCell::User("same task".to_string()),
+        HistoryCell::Assistant("old answer".to_string()),
+        HistoryCell::User("same task".to_string()),
+    ];
+    let previous = app.transcript.clone();
+
+    assert!(!app.merge_reconnected_history(
+        vec![
+            HistoryCell::User("same task".to_string()),
+            HistoryCell::Assistant("old answer".to_string()),
+        ],
+        "same task",
+        1,
+    ));
+    assert_eq!(app.transcript, previous);
+}
+
+#[tokio::test]
+async fn full_watcher_queue_does_not_block_shutdown() {
+    let (tx, _rx) = tokio::sync::mpsc::channel(1);
+    tx.send(FileBackedEvent::RequestsChanged).await.unwrap();
+    let (shutdown, mut shutdown_rx) = tokio::sync::watch::channel(false);
+    let send = tokio::spawn(async move {
+        file_surface::send_event_or_shutdown(&tx, &mut shutdown_rx, FileBackedEvent::ActionsChanged)
+            .await
+    });
+
+    tokio::task::yield_now().await;
+    shutdown.send(true).unwrap();
+    assert!(
+        !tokio::time::timeout(std::time::Duration::from_secs(1), send)
+            .await
+            .expect("watcher send must unblock on shutdown")
+            .unwrap()
+    );
+}
+
+#[tokio::test]
+async fn renderer_reconnect_hydrates_the_current_turn_and_keeps_prior_transcript() {
+    let (shell, agent_root, live_namespace, old_pid) = live_root_agent().await;
+    shell
+        .write(
+            "/agent/root/machine/tape",
+            b"{\"version\":1,\"kind\":\"message\",\"role\":\"user\",\"content\":\"previous task\"}\n{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"previous answer\"}\n",
+        )
+        .await
+        .unwrap();
+
+    let mut app = FileBackedApp::new("/agent/root".to_string());
+    let old_tails = hydrate_and_open_tails(&shell, "/agent/root", &mut app)
+        .await
+        .unwrap();
+    let (tx, _rx) = tokio::sync::mpsc::channel(8);
+    let mut watchers = AgentWatchers::start(old_tails, tx.clone(), Some(old_pid.parse().unwrap()));
+    app.transcript
+        .push(HistoryCell::User("current task".to_string()));
+    app.reconciler.on_local_submit("current task");
+
+    let new_pid = shell.spawn(EXEC_SPEC).await.unwrap();
+    agent_root
+        .bind_process(new_pid.clone(), Arc::new(AgentFs::new()))
+        .await;
+    agent_root.set_root_process(new_pid.clone()).await;
+    live_namespace.replace_mount(
+        PID_MOUNT,
+        InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::with_read_only_file(
+            "pid",
+            format!("{new_pid}\n").into_bytes(),
+        ))),
+        Access::ReadOnly,
+    );
+    shell
+        .write(
+            "/agent/root/machine/tape",
+            b"{\"version\":1,\"kind\":\"message\",\"role\":\"user\",\"content\":\"current task\"}\n{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"current answer\"}\n",
+        )
+        .await
+        .unwrap();
+    shell
+        .write(
+            "/agent/root/machine/ui/events",
+            b"{\"type\":\"activity\",\"snapshot\":{\"version\":1,\"state\":\"running\",\"started_at_ms\":10}}\n{\"type\":\"error\",\"message\":\"old provider failure\",\"recoverable\":true}\n{\"type\":\"activity\",\"snapshot\":{\"version\":1,\"state\":\"idle\"}}\n{\"type\":\"activity\",\"snapshot\":{\"version\":1,\"state\":\"running\",\"started_at_ms\":30}}\n{\"type\":\"activity\",\"snapshot\":{\"version\":1,\"state\":\"idle\"}}\n",
+        )
+        .await
+        .unwrap();
+
+    assert!(
+        watchers
+            .refresh_root_agent_attachment(
+                &shell,
+                "/agent/root",
+                &mut app,
+                Some(("current task", 20, 0)),
+                &tx,
+            )
+            .await
+    );
+    assert_eq!(
+        app.transcript,
+        vec![
+            HistoryCell::User("previous task".to_string()),
+            HistoryCell::Assistant("previous answer".to_string()),
+            HistoryCell::User("current task".to_string()),
+            HistoryCell::Assistant("current answer".to_string()),
+        ]
+    );
+
+    watchers.stop().await;
+}
+
+#[tokio::test]
+async fn renderer_does_not_reuse_a_tape_turn_hidden_by_clear() {
+    let (shell, agent_root, live_namespace, old_pid) = live_root_agent().await;
+    shell
+        .write(
+            "/agent/root/machine/tape",
+            b"{\"version\":1,\"kind\":\"message\",\"role\":\"user\",\"content\":\"same task\"}\n{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"old answer\"}\n",
+        )
+        .await
+        .unwrap();
+
+    let mut app = FileBackedApp::new("/agent/root".to_string());
+    let old_tails = hydrate_and_open_tails(&shell, "/agent/root", &mut app)
+        .await
+        .unwrap();
+    let prior_matching_turns = app.tape_user_prompt_count("same task");
+    app.transcript.clear();
+    app.transcript
+        .push(HistoryCell::User("same task".to_string()));
+    app.reconciler.on_local_submit("same task");
+    let (tx, _rx) = tokio::sync::mpsc::channel(8);
+    let mut watchers = AgentWatchers::start(old_tails, tx.clone(), Some(old_pid.parse().unwrap()));
+
+    let new_pid = shell.spawn(EXEC_SPEC).await.unwrap();
+    agent_root
+        .bind_process(new_pid.clone(), Arc::new(AgentFs::new()))
+        .await;
+    agent_root.set_root_process(new_pid.clone()).await;
+    live_namespace.replace_mount(
+        PID_MOUNT,
+        InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::with_read_only_file(
+            "pid",
+            format!("{new_pid}\n").into_bytes(),
+        ))),
+        Access::ReadOnly,
+    );
+    shell
+        .write(
+            "/agent/root/machine/tape",
+            b"{\"version\":1,\"kind\":\"message\",\"role\":\"user\",\"content\":\"same task\"}\n{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"old answer\"}\n",
+        )
+        .await
+        .unwrap();
+    shell
+        .write(
+            "/agent/root/machine/ui/events",
+            b"{\"type\":\"activity\",\"snapshot\":{\"version\":1,\"state\":\"running\",\"started_at_ms\":30}}\n{\"type\":\"activity\",\"snapshot\":{\"version\":1,\"state\":\"idle\"}}\n",
+        )
+        .await
+        .unwrap();
+
+    assert!(
+        watchers
+            .refresh_root_agent_attachment(
+                &shell,
+                "/agent/root",
+                &mut app,
+                Some(("same task", 20, prior_matching_turns)),
+                &tx,
+            )
+            .await
+    );
+    assert_eq!(
+        app.transcript,
+        vec![
+            HistoryCell::User("same task".to_string()),
+            HistoryCell::Error(
+                "Root Agent changed before the submitted turn could be recovered; outcome is unknown"
+                    .to_string(),
+            ),
+        ]
+    );
+
+    watchers.stop().await;
+}
+
+#[tokio::test]
+async fn renderer_reattach_keeps_a_tape_less_terminal_error() {
+    let (shell, agent_root, live_namespace, old_pid) = live_root_agent().await;
+    let old_tails = hydrate_and_open_tails(
+        &shell,
+        "/agent/root",
+        &mut FileBackedApp::new("/agent/root".to_string()),
+    )
+    .await
+    .unwrap();
+    let (tx, _rx) = tokio::sync::mpsc::channel(8);
+    let mut app = FileBackedApp::new("/agent/root".to_string());
+    app.transcript.push(crate::history::HistoryCell::User(
+        "current task".to_string(),
+    ));
+    let mut watchers = AgentWatchers::start(old_tails, tx.clone(), Some(old_pid.parse().unwrap()));
+
+    let new_pid = shell.spawn(EXEC_SPEC).await.unwrap();
+    agent_root
+        .bind_process(new_pid.clone(), Arc::new(AgentFs::new()))
+        .await;
+    agent_root.set_root_process(new_pid.clone()).await;
+    live_namespace.replace_mount(
+        PID_MOUNT,
+        InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::with_read_only_file(
+            "pid",
+            format!("{new_pid}\n").into_bytes(),
+        ))),
+        Access::ReadOnly,
+    );
+    shell
+        .write(
+            "/agent/root/machine/ui/events",
+            b"{\"type\":\"activity\",\"snapshot\":{\"version\":1,\"state\":\"running\",\"started_at_ms\":30}}\n{\"type\":\"error\",\"message\":\"provider unavailable\",\"recoverable\":true}\n{\"type\":\"activity\",\"snapshot\":{\"version\":1,\"state\":\"idle\"}}\n",
+        )
+        .await
+        .unwrap();
+
+    assert!(
+        watchers
+            .refresh_root_agent_attachment(
+                &shell,
+                "/agent/root",
+                &mut app,
+                Some(("current task", 20, 0)),
+                &tx,
+            )
+            .await
+    );
+    assert!(matches!(
+        app.transcript.last(),
+        Some(crate::history::HistoryCell::Error(message)) if message == "provider unavailable"
+    ));
+
+    watchers.stop().await;
 }
 
 #[test]
@@ -149,9 +469,10 @@ fn one_shot_result_waits_for_seen_task_and_idle_activity() {
 async fn one_shot_keeps_waiting_past_five_minutes_and_recovers_after_root_agent_pid_changes() {
     let (shell, agent_root, live_namespace, old_pid) = live_root_agent().await;
 
-    let (mut tape_tail, _) = tail_with_history(&shell, "/agent/root/machine/tape")
-        .await
-        .unwrap();
+    let (mut tape_tail, baseline_tape_history) =
+        tail_with_history(&shell, "/agent/root/machine/tape")
+            .await
+            .unwrap();
     let (mut ui_tail, _) = tail_with_history(&shell, "/agent/root/machine/ui/events")
         .await
         .unwrap();
@@ -202,7 +523,7 @@ async fn one_shot_keeps_waiting_past_five_minutes_and_recovers_after_root_agent_
         let wait_for_answer = wait_for_stdio_answer(
             &shell,
             "/agent/root",
-            "rebind me",
+            StdioTaskWaitContext::new("rebind me", &baseline_tape_history),
             &mut tape_tail,
             &mut ui_tail,
             &mut root_agent_pid,
@@ -239,9 +560,10 @@ async fn one_shot_keeps_waiting_past_five_minutes_and_recovers_after_root_agent_
 #[tokio::test]
 async fn one_shot_returns_runtime_failure_without_a_tape_user_record() {
     let (shell, _agent_root, _live_namespace, pid) = live_root_agent().await;
-    let (mut tape_tail, _) = tail_with_history(&shell, "/agent/root/machine/tape")
-        .await
-        .unwrap();
+    let (mut tape_tail, baseline_tape_history) =
+        tail_with_history(&shell, "/agent/root/machine/tape")
+            .await
+            .unwrap();
     let (mut ui_tail, _) = tail_with_history(&shell, "/agent/root/machine/ui/events")
         .await
         .unwrap();
@@ -252,7 +574,7 @@ async fn one_shot_returns_runtime_failure_without_a_tape_user_record() {
         let wait_for_answer = wait_for_stdio_answer(
             &shell,
             "/agent/root",
-            "fail before tape persistence",
+            StdioTaskWaitContext::new("fail before tape persistence", &baseline_tape_history),
             &mut tape_tail,
             &mut ui_tail,
             &mut root_agent_pid,
@@ -267,7 +589,7 @@ async fn one_shot_returns_runtime_failure_without_a_tape_user_record() {
         shell
             .write(
                 "/agent/root/machine/ui/events",
-                b"{\"type\":\"activity\",\"snapshot\":{\"version\":1,\"state\":\"running\"}}\n{\"type\":\"error\",\"message\":\"provider unavailable\",\"recoverable\":true}\n{\"type\":\"activity\",\"snapshot\":{\"version\":1,\"state\":\"idle\"}}\n",
+                b"{\"type\":\"activity\",\"snapshot\":{\"version\":1,\"state\":\"running\",\"started_at_ms\":18446744073709551615}}\n{\"type\":\"error\",\"message\":\"provider unavailable\",\"recoverable\":true}\n{\"type\":\"activity\",\"snapshot\":{\"version\":1,\"state\":\"idle\"}}\n",
             )
             .await
             .unwrap();
@@ -296,9 +618,10 @@ async fn one_shot_returns_runtime_failure_without_a_tape_user_record() {
 #[tokio::test]
 async fn one_shot_cancellation_interrupts_before_running_is_observed() {
     let (shell, _agent_root, _live_namespace, pid) = live_root_agent().await;
-    let (mut tape_tail, _) = tail_with_history(&shell, "/agent/root/machine/tape")
-        .await
-        .unwrap();
+    let (mut tape_tail, baseline_tape_history) =
+        tail_with_history(&shell, "/agent/root/machine/tape")
+            .await
+            .unwrap();
     let (mut ui_tail, _) = tail_with_history(&shell, "/agent/root/machine/ui/events")
         .await
         .unwrap();
@@ -310,7 +633,7 @@ async fn one_shot_cancellation_interrupts_before_running_is_observed() {
         let wait_for_answer = wait_for_stdio_answer(
             &shell,
             "/agent/root",
-            "cancel this turn",
+            StdioTaskWaitContext::new("cancel this turn", &baseline_tape_history),
             &mut tape_tail,
             &mut ui_tail,
             &mut root_agent_pid,
