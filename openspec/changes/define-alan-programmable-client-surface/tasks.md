@@ -1,29 +1,40 @@
-## 1. Tracer bullet planning gate
+## 1. Trace and replan
 
-Status: selected for replanning, not implementation-ready.
-See [disposition.md](disposition.md) and the
-[active roadmap](../add-cognitive-model-routing/next-planning.md).
-The former 33-task editfs/run/package plan is superseded, not completed.
+- [x] 1.1 Trace bare `alan` through LocalAttachment, StdioDriver, Root Agent,
+  generation Connection, governed Tools, and AgentFS IO; record the missing
+  composition edge.
+- [x] 1.2 Replace the superseded proposal/design and retained deltas with the
+  bounded TTY-to-Root-Agent tracer bullet and explicit input/access rules.
+- [x] 1.3 Keep each behavior with its existing owner; remove editfs, `run`,
+  executable packaging, and unrelated UI/runtime requirements from this slice.
 
-- [ ] 1.1 Trace bare alan input through Shell evaluation, Agent Process, existing generation Connection, governed Tools and Process IO; record reusable code and concrete gaps.
-- [ ] 1.2 Rewrite proposal/design and replace retained deltas for the bounded read-only project inspection task; define explicit Shell versus natural-language input and required grants.
-- [ ] 1.3 Assign each affected requirement to one change, including minimal renderer behavior here; defer full editfs, scripts and namespace discovery expansion. Remove generic run/executable packaging from the delivery plan; any future proposal needs a real consumer.
+## 2. Minimal usable Agent loop
 
-## 2. First usable agent
+- [x] 2.1 Route bare `alan` with TTY stdin/stdout to the existing file-backed
+  renderer attached to `/agent/root`; keep StdioDriver for redirected IO.
+- [ ] 2.2 Verify incremental AgentFS output, Ctrl-C turn interruption,
+  subsequent input, and renderer exit without killing the shared Host or Agent.
+- [x] 2.3 Verify unavailable Connection behavior: a clear error appears before
+  provider dispatch, the renderer accepts another submission, and the Host and
+  Root Agent remain available.
+- [ ] 2.4 Verify a known-content read-only Host Mount, an unmounted boundary,
+  and existing Tool failure handling without adding a second test-only path.
+- [ ] 2.5 In an ordinary terminal and a Herdr sibling pane, record the current
+  build and actual input/output for two successive tasks, cancellation, and a
+  further successful task on the same Root Agent.
 
-- [ ] 2.1 Implement the missing shared execution path using existing Process/runtime authority and provider Connection; no renderer-private spawn or second execution manager.
-- [ ] 2.2 Deliver incremental output, completion, Ctrl-C cancellation and subsequent input using Process-backed IO.
-- [ ] 2.3 Test known project contents, denied paths, unavailable Connection and Tool failures; verify cancellation prevents subsequent dispatch.
-- [ ] 2.4 Run the current build in an ordinary terminal and a Herdr sibling pane; record build/commands and evidence for two successive tasks plus cancellation followed by another task.
+> Live acceptance status (2026-09-23): the current build opens correctly in an
+> ordinary TTY and a Herdr sibling pane, and both show the explicit
+> unavailable-Connection error. `alan connection list` reports no profiles in
+> either stable or dev. Successful model tasks, read-only project inspection,
+> and live cancellation therefore remain unverified; do not treat the error
+> path as a completed tracer bullet.
 
-## 3. Reliability follow-up
+## 3. Verification and delivery
 
-- [ ] 3.1 Define and test bounded Local Entry retention/reclamation, EOF, cancellation and Process exit without terminating the shared Host on pane closure.
-- [ ] 3.2 Verify detach/reattach identity and output offsets without task resubmission; expose unavailable output rather than silently inventing continuity.
-- [ ] 3.3 Coordinate any durable Machine recovery changes with cognition-owned deltas; test indeterminate outcomes and prohibit blind Unknown-effect replay.
-
-## 4. Delivery
-
-- [ ] 4.1 Run proportional runtime/IO tests, terminal acceptance, quality and strict OpenSpec validation.
-- [ ] 4.2 Complete current-head CI and Codex review/fix/resolve; merge and sync only implemented deltas.
-- [ ] 4.3 Explicitly hand off unfinished reliability tasks if splitting delivery; remove superseded deltas before archive and keep the active roadmap discoverable.
+- [x] 3.1 Run focused Rust tests, the inline-TUI contract, Repository Quality
+  Gate, strict OpenSpec validation, and diff checks.
+- [ ] 3.2 Complete ready/Codex review, root-cause fixes and resolution, and all
+  current-head checks; then merge the implementation.
+- [ ] 3.3 Sync only implemented deltas. Before archiving, hand any reliability
+  work revealed by acceptance to an active change and keep the roadmap link live.

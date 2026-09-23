@@ -1,18 +1,26 @@
-# Disposition — 2026-09-20
+# Disposition — 2026-09-23
 
-Selected for the first usable-agent tracer bullet. Planning is active; runtime
-implementation awaits replacement of the retained proposal/design/deltas.
-Use the read-only project task and acceptance gates in
-[the roadmap](../add-cognitive-model-routing/next-planning.md).
-This change owns the minimal end-to-end execution/IO/presentation slice and its
-bounded lifecycle follow-up. Existing generation is sufficient; typed evaluation
-and Jev are not prerequisites. Full editfs UI and scripts are deferred.
-Generic executable/binfs/WASM packaging is removed from this delivery plan;
-future work requires a demonstrated consumer and a new proposal. Existing q
-Skill distribution remains supported. This is unrelated to retired App packaging.
+Implementation active for the first usable-Agent tracer bullet, selected from
+the vertical route in
+[`next-planning.md`](../add-cognitive-model-routing/next-planning.md).
+The prior 33-task editable-buffer/run/package design is superseded inventory,
+not an implementation contract.
 
-The rewritten tasks replace the former 33-task plan, without marking it complete.
-Retained proposal/design/spec deltas are superseded design inventory, not an
-implementation contract. Replace them before implementation and never sync their
-unimplemented requirements wholesale. Interaction follow-up owns only remaining
-terminal UX requirements, not duplicate launch or execution authority.
+The first slice attaches the terminal CLI to the existing Host-managed
+`/agent/root` using the existing file-backed `alan-terminal-ui`. TTY text is an
+Agent task; it is not shell syntax. Non-TTY calls retain the generic
+StdioDriver. Existing Connection, Tool governance, Host Mount, sandbox, Process
+and durable evidence owners remain unchanged. No new evaluator Process or
+execution manager is authorized.
+
+The old `editable-buffer-file-server` and `editable-buffer-interaction` deltas
+are removed because their behavior is not part of this tracer bullet. Generic
+packaging, `run`, editfs UI, scripts, typed evaluation and Jev remain outside
+scope. No removed or unimplemented requirement may be synced as current
+behavior.
+
+This change owns only the minimal terminal Agent loop and its direct
+verification. Reliability beyond turn cancellation, continued use, and
+non-owning renderer exit must be re-planned from observed gaps before this
+change is archived. The queued interaction change remains the owner for richer
+presentation, not Agent launch or execution authority.

@@ -6,7 +6,7 @@ mod shell_command;
 
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use std::path::PathBuf;
+use std::{io::IsTerminal, path::PathBuf};
 
 #[derive(Parser)]
 #[command(
@@ -637,13 +637,21 @@ async fn main() -> Result<()> {
         None => {
             let channel = alan_agent_engine::InstallChannel::detect_current();
             let attachment = cli::host::attach_or_start_host(channel).await?;
-            let shell = alan_shell::Shell::new(attachment.root);
-            alan_shell::StdioDriver::new(shell)
-                .run(
-                    tokio::io::BufReader::new(tokio::io::stdin()),
-                    tokio::io::stdout(),
-                )
+            if std::io::stdin().is_terminal() && std::io::stdout().is_terminal() {
+                alan_tui::run_file_backed(alan_tui::FileBackedRunConfig::new(
+                    attachment.root,
+                    "/agent/root",
+                ))
                 .await?;
+            } else {
+                let shell = alan_shell::Shell::new(attachment.root);
+                alan_shell::StdioDriver::new(shell)
+                    .run(
+                        tokio::io::BufReader::new(tokio::io::stdin()),
+                        tokio::io::stdout(),
+                    )
+                    .await?;
+            }
         }
     }
 

@@ -39,6 +39,7 @@ dependencies = [
  "alan-service-manager",
  "alan-shell",
  "alan-swebench-tooling",
+ "alan-terminal-ui",
  "alan-tools",
  "anyhow",
  "async-trait",

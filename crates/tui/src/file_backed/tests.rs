@@ -95,6 +95,23 @@ fn esc_interrupts_during_turn_even_with_completion_open() {
 }
 
 #[test]
+fn ctrl_c_interrupts_during_turn_even_with_completion_open() {
+    let mut app = FileBackedApp::new("/agent/root".to_string());
+    app.apply_ui_activity_snapshot(UiActivitySnapshot::running(1));
+    press(&mut app, KeyCode::Char('/'), KeyModifiers::NONE);
+    press(&mut app, KeyCode::Char('c'), KeyModifiers::NONE);
+    assert!(app.completion.is_some());
+
+    let action = press(&mut app, KeyCode::Char('c'), KeyModifiers::CONTROL);
+
+    assert!(matches!(action, Some(FileBackedAction::Interrupt)));
+    assert!(
+        app.completion.is_some(),
+        "interrupt should not dismiss popup first"
+    );
+}
+
+#[test]
 fn ctrl_r_toggles_thinking_expansion() {
     let mut app = FileBackedApp::new("/agent/1".to_string());
     app.apply_ui_thinking_snapshot(UiThinkingSnapshot::complete(

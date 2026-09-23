@@ -1,124 +1,63 @@
+## MODIFIED Requirements
+
+### Requirement: The first driver is line-oriented stdio
+The Alan Shell StdioDriver SHALL remain a minimal line-oriented driver for
+namespace operations when used without the terminal renderer. Rich terminal
+rendering SHALL be provided by the separate `alan-terminal-ui` crate; Alan
+Shell itself SHALL remain aP-only and MUST NOT acquire renderer or Agent runtime
+dependencies.
+
+#### Scenario: The shell runs without a renderer
+- **WHEN** the StdioDriver receives explicit Shell builtin input
+- **THEN** a user can list, read, write, tail, and spawn through the namespace
+- **AND** Ratatui rendering remains outside `alan-shell`
+
+### Requirement: Alan enters the system Shell
+Running bare `alan` SHALL start or attach to the matching dedicated Alan OS
+Host. When stdin and stdout are terminals it SHALL attach the terminal renderer
+to the Host-managed `/agent/root`; otherwise it SHALL use the line-oriented
+StdioDriver. The CLI MUST NOT privately boot an Agent Runtime or select an
+Agent Definition as Host startup behavior.
+
+#### Scenario: User runs alan with no subcommand
+- **WHEN** the system Host is ready and both stdin and stdout are terminals
+- **THEN** the client attaches the file-backed renderer to `/agent/root`
+- **AND** the Root Agent remains the Process and execution authority
+
+#### Scenario: User runs alan with redirected IO
+- **WHEN** either stdin or stdout is not a terminal
+- **THEN** the client enters the generic StdioDriver
+- **AND** it does not emit terminal UI control sequences
+
+## REMOVED Requirements
+
+### Requirement: Interactive Alan Shell is an ordinary Process
+**Reason**: The terminal CLI is an external renderer/Host client attached to the
+existing Root Agent. Creating a second Shell Process for the TTY would add a
+redundant identity and lifecycle without serving the first usable task loop.
+**Migration**: Keep Alan Kernel Process identity on the Root Agent and Tools;
+keep terminal input and rendering at the existing LocalAttachment and
+`alan-terminal-ui` boundaries.
+
 ## ADDED Requirements
 
-> PARKED (2026-09-19): read this change's disposition.md before use. Retained
-> draft text below is not implementation authorization; superseded desktop and
-> renderer-launch assumptions must be replaced before reactivation.
+### Requirement: Terminal task input is distinct from Shell evaluation
+The interactive bare-`alan` renderer SHALL submit each user entry as one task
+to `/agent/root/io/input`. It SHALL NOT parse arbitrary text as Alan Shell
+builtins or infer execution authority from shell-looking text. Agent-originated
+effects MUST continue through the existing Agent Runtime, Tool governance,
+Namespace access, explicit Host Mounts, credentials, and sandbox.
 
-### Requirement: Programmable Client Surface belongs to Alan Shell
-Alan Shell SHALL provide the Programmable Client Surface as its text-first
-interaction contract over the caller's mounted Namespace. The surface SHALL
-compose Files, Streams, editable buffers, and executable Processes without
-creating a separate client service, app runtime, authority store, generic UI
-framework, or top-level namespace root.
+#### Scenario: Shell-looking text is entered in the terminal renderer
+- **WHEN** a user submits text such as `ls /mnt/project` in the interactive
+  renderer
+- **THEN** the renderer submits it as Agent task text, not as a StdioDriver
+  command
+- **AND** any resulting operation is subject to the Agent's existing Tool and
+  Namespace authority
 
-#### Scenario: Surface ownership is reviewed
-- **WHEN** a programmable client interaction is implemented or rendered
-- **THEN** its domain truth remains in the owning mounted service tree, its
-  editable interaction state remains in editfs, and its execution truth remains
-  in `/proc`
-- **AND** no ClientSurface object, client manager, opaque surface id, `/client`,
-  or `/mnt/client` authority is introduced
-
-### Requirement: Alan Shell reuses one explicit command grammar
-Alan Shell SHALL expose one reusable headless parser and executor for its
-existing `ls`, `cat`, `tail`, `write`, `echo`, and `spawn` grammar. The stdio
-driver and editable-text execution SHALL use that same parser and executor.
-Unknown text SHALL fail explicitly and SHALL NOT be inferred as a Path, Tool,
-script language expression, or side-effecting action.
-
-#### Scenario: Stdio and editable text run the same command
-- **WHEN** the same valid command text is submitted through `StdioDriver` and
-  through an editable buffer selection
-- **THEN** both paths resolve the same Alan Shell command and aP operations
-- **AND** neither path uses a renderer-local or editfs-local parser
-
-#### Scenario: Arbitrary prose is selected
-- **WHEN** selected text does not match the bounded Alan Shell grammar
-- **THEN** execution fails without reading, writing, tailing, or spawning based
-  on a heuristic interpretation of the prose
-
-### Requirement: The run Tool creates Alan Shell Evaluator Processes
-Alan Shell SHALL provide a first-party Tool named `run`, bound at `/bin/run`,
-with a Tool Manifest under `/lib/exec/run/manifest` and a manual under
-`/man/1/run`. These paths SHALL become visible only through the canonical
-package/binfs mount; command exposure SHALL remain blocked while that mount is
-unavailable, and Alan SHALL NOT create a startup or harness-only binding as an
-alternate installation path. Each selected-text execution SHALL spawn one
-ordinary Alan Shell Evaluator Process; `/proc/<pid>` SHALL be its execution
-identity, status, output, cancellation, and exit surface. Tool governance and
-policy escalation SHALL apply to every command the evaluator dispatches —
-including `spawn` of another Tool — identically to the same operation invoked
-directly by the caller; `run` SHALL NOT bypass, launder, or pre-approve a policy
-decision that direct invocation would raise.
-
-#### Scenario: Canonical package mount is unavailable
-- **WHEN** the package/binfs path cannot yet mount the `run` executable,
-  manifest, and manual into the caller Namespace
-- **THEN** `run` command exposure and the programmable-client integration
-  harness remain blocked
-- **AND** no bootstrap helper, renderer, or test fixture publishes a second
-  `/bin/run` authority
-
-#### Scenario: Selected text is executed
-- **WHEN** a client invokes `run` with an editable-buffer Path or bounded
-  descriptors and an expected body/address revision snapshot
-- **THEN** it spawns a Process under the caller's delegated Namespace and the
-  Process validates that snapshot before dispatching the shared command
-  executor
-- **AND** editfs does not create an execution object or run the command under
-  service authority
-
-#### Scenario: Selection validation fails
-- **WHEN** the body revision, address revision, or selected range no longer
-  matches when the evaluator Process validates it
-- **THEN** the Process exits failed without executing the selected command
-- **AND** its failure is inspectable through `/proc/<pid>`
-
-#### Scenario: Inner spawn keeps governance parity
-- **WHEN** the evaluator executes `spawn` for a Tool whose direct invocation
-  would raise a policy escalation or approval requirement
-- **THEN** the identical governance decision applies to the evaluator-initiated
-  spawn, and any escalation surfaces through the normal request path before the
-  Tool runs
-- **AND** the policy audit records the inner Tool identity, so executing it
-  through `run` is indistinguishable from direct spawn to governance
-
-### Requirement: Programmable discovery derives from the Namespace
-Alan Shell SHALL derive generic programmable-client discovery from resources
-visible in the caller's Namespace, including directory entries, file kinds,
-access rights, `/bin`, Tool Manifests, `/man`, and `/lib/skill`. Renderer
-completion or selector models SHALL remain projections of those files and SHALL
-NOT become private capability registries. Alan Shell SHALL NOT require services
-to publish a generic widget, form, card, view, command, or query schema.
-
-#### Scenario: A renderer offers completion
-- **WHEN** a renderer presents Paths, Tools, Skills, or commands for completion
-- **THEN** the candidates are derived from the mounted Namespace and its package
-  metadata
-- **AND** withholding a mount or executable removes the corresponding candidate
-  without a second renderer-specific deny list
-
-#### Scenario: A service has no rich renderer schema
-- **WHEN** a conforming mounted service exposes only its documented file layout
-- **THEN** the Programmable Client Surface can still inspect, observe, and invoke
-  allowed behavior through text-first file operations
-- **AND** the service is not required to describe a generated UI
-
-### Requirement: Mature surface behavior promotes explicitly to classified extensions
-Alan Shell SHALL treat scratch editable text as interaction state, not as an
-installed extension. Reusable behavior SHALL be promoted explicitly and
-classified as either a Tool or a File-Server Service. Rust to WASM Component
-with a WIT boundary and explicit descriptors/access rights SHALL remain the
-portable extension direction, while `/bin` executables and aP file trees remain
-the Alan OS surfaces.
-
-#### Scenario: Scratch text is saved
-- **WHEN** a user saves or retains editable buffer text
-- **THEN** Alan does not automatically install it as a Tool, Skill, WASM
-  Component, or service
-
-#### Scenario: Reusable behavior is promoted later
-- **WHEN** a later workflow compiles Rust behavior into a WASM Component
-- **THEN** it classifies the component as a Tool or File-Server Service and
-  grants only explicit descriptors and access rights
-- **AND** WIT does not replace aP as the client-facing Alan OS contract
+#### Scenario: Explicit StdioDriver builtin is entered
+- **WHEN** the StdioDriver receives the same text as explicit builtin input
+- **THEN** only its fixed generic grammar decides whether the operation is
+  supported
+- **AND** unknown text fails rather than being inferred as a script or action

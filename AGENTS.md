@@ -28,7 +28,7 @@ Use these names consistently in code, specs, docs, UI copy, and reviews.
 | Alan Agent | An optional Agent Workspace app that inspects and steers Agent Processes through files. |
 | Agent Execution Engine / `alan-agent-engine` | The current tape/model/Tool/policy/memory transition loop in `crates/agent-engine`. |
 | Alan for macOS | Retired desktop product; App and shell-core/FFI source removed (ADR-0054). |
-| Alan Shell / `alan-shell` | The file-native shell. Bare `alan` currently uses StdioDriver; `crates/tui` contains an Agent renderer. |
+| Alan Shell / `alan-shell` | The file-native shell. Bare `alan` uses the file-backed TUI on terminal stdin/stdout to attach to `/agent/root`; redirected IO uses StdioDriver. |
 | Alan Apps | Apps with app-owned domain cores and Alan file-server adapters. |
 
 ## Architecture rules

@@ -321,7 +321,7 @@ fn activity_line(app: &FileBackedApp, label: &str) -> Line<'static> {
             Style::default().add_modifier(Modifier::BOLD),
         ),
         Span::styled(
-            format!(" · esc interrupt · {elapsed}s"),
+            format!(" · ctrl+c/esc interrupt · {elapsed}s"),
             Style::default().fg(Color::DarkGray),
         ),
     ])

@@ -26,6 +26,7 @@ export CARGO_TARGET_DIR="$quality_target_dir"
 "$ROOT/scripts/check-rust-source-size.sh"
 "$ROOT/scripts/check-rust-architecture.sh"
 "$ROOT/scripts/check-rust-quality.sh"
+bash "$ROOT/scripts/check-rust-inline-tui-contract.sh"
 
 cargo build --locked -p alan --bin alan
 cargo build --locked -p alan-os-host --bin alan-os-host --bin alan-os-host-dev

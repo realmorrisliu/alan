@@ -294,6 +294,7 @@ where
         .collect::<Vec<_>>();
     let llm_generation = state.namespace_generation();
     let generation = NamespaceTurnGeneration::load(&llm_generation).await;
+    generation.ensure_callable()?;
     let initial_provider_capabilities = generation.capabilities();
     let turn_request_controls = crate::resolve_turn_request_controls(
         &state.core_config,

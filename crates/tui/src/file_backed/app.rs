@@ -399,7 +399,7 @@ impl FileBackedApp {
             }
             "help" => {
                 self.notice = Some(
-                    "/compact /rollback /clear /quit · ctrl+r toggle thinking · esc interrupt"
+                    "/compact /rollback /clear /quit · ctrl+r toggle thinking · ctrl+c/esc interrupt"
                         .to_string(),
                 );
                 None

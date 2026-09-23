@@ -1,81 +1,63 @@
 ## Why
 
-> SUPERSEDED INVENTORY (2026-09-20): current scope and ordering are in
-> [disposition.md](disposition.md), [tasks.md](tasks.md), and the
-> [tracer bullet roadmap](../add-cognitive-model-routing/next-planning.md).
-> Replace this retained draft and its deltas before implementation; do not
-> execute or sync the old plan below. Desktop GUI work is cancelled;
-> editfs and executable packaging are outside the current delivery scope.
-
-Alan already has a namespace-native shell, a headless editable-buffer file
-server, and file-backed renderer contracts, but they do not yet form one
-programmable interaction loop. Without a shared contract, selected-text
-execution, result capture, completion, and future renderer work can drift into
-renderer-local commands, hidden editfs authority, or another generic UI/action
-framework.
+Bare `alan` currently attaches to the Alan OS Host but enters only the generic
+line-oriented StdioDriver. Alan already starts a Root Agent Process with its
+configured generation Connection and governed Tools, and `alan-terminal-ui`
+already renders a mounted Agent Process through AgentFS files. The missing piece
+is one small composition path joining the terminal CLI to that existing Agent
+and renderer; another evaluator, Process manager, or command runtime is not
+needed for the first usable task loop.
 
 ## What Changes
 
-- Define the Programmable Client Surface as part of Alan Shell: a text-first
-  interaction contract over the caller's mounted Namespace, not a new service,
-  app, UI framework, registry, or top-level namespace root.
-- Reuse Alan Shell's existing explicit `ls`, `cat`, `tail`, `write`, `echo`, and
-  `spawn` grammar through a shared headless parser/executor; do not introduce a
-  second surface-only parser or a full `rc`-like language in this slice.
-- Add the short, discoverable `run` Tool through the canonical package/binfs
-  mount. Treat that mount as an entry criterion for command exposure. Each
-  selected-text execution spawns an ordinary Alan Shell Evaluator Process whose
-  `/proc/<pid>` tree is the sole execution identity and lifecycle surface.
-- Make the evaluator validate the selected `body`/`addr` revisions through
-  `editfs`, execute under its inherited caller Namespace, stream output through
-  its Process files, and materialize bounded UTF-8 results back into the buffer
-  without overwriting concurrent edits.
-- Keep live `tail` output descriptor-backed and transient; only an explicit
-  bounded capture becomes editable buffer text.
-- Remove `editfs` execution policy as an authority boundary. `editfs` owns
-  selection consistency and interaction events; Process spawn, Namespace,
-  access rights, Tool governance, and sandbox projection own execution
-  authority.
-- Derive text-first discovery from the mounted Namespace, `/bin`, Tool
-  Manifests, `/man`, `/lib/skill`, file kinds, and access rights; do not define a
-  generic UI/form schema.
-- Record Rust to WASM Component as the explicit promotion direction for mature
-  reusable behavior while deferring WASM hosting, WIT package design, build,
-  signing, installation, and projection to a later change.
-- Deliver a headless end-to-end harness over the existing single buffer at
-  `/mnt/edit`; defer multi-buffer allocation and TUI/macOS surface work.
+- When both stdin and stdout are terminals, bare `alan` attaches its mounted
+  namespace to the existing `/agent/root` through `alan-terminal-ui`.
+- In that terminal UI, submitted text is one natural-language task for the Root
+  Agent. It is not parsed as shell syntax; all Agent effects continue through
+  the existing Namespace, Connection, Tool governance, Host Mounts, and
+  sandbox owners.
+- Keep the existing StdioDriver when either stdin or stdout is not a terminal.
+  Its explicit `ls`, `cat`, `tail`, `write`, `echo`, and `spawn` builtins remain
+  the generic file-native Shell surface.
+- Use AgentFS Process IO for input and incremental output. Ctrl-C interrupts the
+  current Agent turn through `/agent/root/machine/ctl`, not Kernel Process
+  control, and a subsequent task can use the still-running Root Agent.
+- Closing the renderer closes its own file streams only; it does not stop the
+  shared Host or Root Agent.
 
 ## Capabilities
 
 ### New Capabilities
 
-None. Programmable Client Surface is part of the existing `alan-shell`
-capability, not an independent durable subsystem.
+None.
 
 ### Modified Capabilities
 
-- `alan-shell`: Define the programmable interaction contract, shared command
-  execution layer, namespace-derived discovery, and Process-backed `run` Tool.
-- `editable-buffer-interaction`: Replace service-side execution with
-  caller-spawned evaluator Processes, define result materialization and live
-  stream behavior, and keep interaction events linked to `/proc` truth.
-- `editable-buffer-file-server`: Replace the headless accept/deny execution
-  policy with revision validation and evaluator-originated execution events.
-- `alan-renderer-host-contract`: Require renderers to project programmable
-  buffers and evaluator Process files without becoming execution or domain
-  authority.
+- `alan-shell`: distinguish terminal Agent task input from the generic
+  StdioDriver command grammar and define the TTY/non-TTY entry behavior.
+- `alan-renderer-host-contract`: define the minimal Root Agent attachment,
+  incremental IO, turn-scoped interrupt, and detach-without-shutdown behavior.
+
+## Non-Goals
+
+- Do not add an Alan Shell Evaluator Process, `run` Tool, parser, script
+  language, generic executable packaging, binfs requirement, or editfs
+  execution/materialization contract.
+- Do not spawn a new Agent for each terminal invocation or add another
+  execution manager, conversation object, namespace root, or Herdr-specific
+  runtime. Keep the attached Host as the only Host lifecycle owner.
+- Do not change Agent Machine generation, add typed evaluation/Jev, relax
+  Connection or Tool governance, or infer Host Mount grants from cwd/pane state.
+- Do not promise cross-Host recovery, saved stream offsets, or full terminal UX
+  conformance. Those remain later roadmap work if the tracer bullet shows a
+  real gap.
 
 ## Impact
 
-- Refactors `crates/shell` so its current private line parser/executor can be
-  reused by stdio and the `run` Tool.
-- Evolves `crates/editfs` control and event semantics and removes
-  `ExecutionPolicy::{AcceptAll,DenyAll}` as the execution boundary.
-- Adds a first-party `run` executable, Tool Manifest, manual surface, Process
-  lifecycle tests, and a headless Shell + editfs + Kernel integration harness
-  only through the canonical package/binfs mount; no bootstrap-only command
-  binding is introduced.
-- Updates the Alan product glossary with Programmable Client Surface, Alan Shell
-  Evaluator Process, and WASM Component terminology.
-- Does not change Alan Kernel primitives, add a new namespace root, implement a
-  WASM host, or modify Ratatui and Alan for macOS in the first slice.
+The composition change belongs in `crates/alan/src/main.rs`: add the existing
+`alan-terminal-ui` workspace crate as a direct dependency, choose its
+file-backed renderer only for a TTY, and preserve the StdioDriver fallback.
+The Rust architecture ratchet will record this single root-composition edge;
+it does not add an external package. A focused renderer test will lock down
+Ctrl-C mapping, and ordinary-terminal/Herdr acceptance will validate real
+read-only Agent tasks, incremental output, cancellation, and continued use.
