@@ -36,7 +36,17 @@ output, status, and Agent UI state.
   and the replacement Process already has completed AgentFS history
 - **THEN** the renderer preserves its existing transcript and appends the
   replacement history not already represented there
-- **AND** it does not duplicate their shared history or resubmit work
+- **AND** it does not duplicate an unambiguous shared suffix or resubmit work
+- **AND** when identical retained history appears more than once, it keeps the
+  replacement turns after the earliest matching window rather than dropping
+  intervening turns
+
+#### Scenario: Idle reattachment follows partially pruned scrollback
+- **WHEN** the renderer's first retained history cell was partially pruned to
+  bound scrollback before the Root Agent changed
+- **THEN** it matches the retained rendered-text suffix against replacement
+  history and appends only the replacement history after that match
+- **AND** it does not replay the full pruned cell
 
 #### Scenario: Root Agent identity changes while a tail is opening
 - **WHEN** the Service Manager changes the Root Agent PID between the renderer's

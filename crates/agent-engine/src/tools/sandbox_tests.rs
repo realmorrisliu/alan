@@ -47,6 +47,34 @@ fn namespace_path_translation_preserves_data_and_maps_file_paths() {
         "cat /Users/alice/project/probe.txt"
     );
     assert_eq!(
+        translate("awk -v root=/mnt/project 'BEGIN { print root }' > /mnt/project/out.txt"),
+        "awk -v root=/mnt/project 'BEGIN { print root }' > /Users/alice/project/out.txt"
+    );
+    assert_eq!(
+        translate("awk 'BEGIN { print \"/mnt/project\" }' > /mnt/project/out.txt"),
+        "awk 'BEGIN { print \"/mnt/project\" }' > /Users/alice/project/out.txt"
+    );
+    assert_eq!(
+        translate("awk -f /mnt/project/script.awk"),
+        "awk -f /Users/alice/project/script.awk"
+    );
+    assert_eq!(
+        translate("awk -v root=/mnt/project 'BEGIN { print root }' /mnt/project/input.tsv"),
+        "awk -v root=/mnt/project 'BEGIN { print root }' /Users/alice/project/input.tsv"
+    );
+    assert_eq!(
+        translate("awk 'BEGIN { print \"/mnt/project\" }' -- /mnt/project/input.tsv"),
+        "awk 'BEGIN { print \"/mnt/project\" }' -- /Users/alice/project/input.tsv"
+    );
+    assert_eq!(
+        translate("awk -- 'BEGIN { print \"/mnt/project\" }' /mnt/project/input.tsv"),
+        "awk -- 'BEGIN { print \"/mnt/project\" }' /Users/alice/project/input.tsv"
+    );
+    assert_eq!(
+        translate("awk -f /mnt/project/script.awk /mnt/project/input.tsv"),
+        "awk -f /Users/alice/project/script.awk /Users/alice/project/input.tsv"
+    );
+    assert_eq!(
         translate("git commit -m /mnt/project"),
         "git commit -m /mnt/project"
     );

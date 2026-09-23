@@ -89,7 +89,7 @@ Runtime or select an Agent Definition as Host startup behavior.
 - **AND** it recovers a correlated result from replacement history, or reports
   an unknown outcome when that history cannot establish the submitted result
 - **AND** if the Root Agent PID is unchanged, it reports the original tail
-  failure instead of retrying a broken stream
+  failure after one PID-poll grace interval instead of retrying a broken stream
 
 ## REMOVED Requirements
 
@@ -128,11 +128,19 @@ and sandbox.
   boundaries still apply
 
 #### Scenario: A namespace path is used as shell data
-- **WHEN** an authorized `!` command uses a namespace path as `echo`/`printf`
-  data or as a `git commit -m`/`--message` value
+- **WHEN** an authorized `!` command uses a namespace path in a recognized data
+  position such as `echo`/`printf` data, a Git commit message, or an AWK
+  assignment/program
 - **THEN** the data argument remains the original namespace path text
 - **AND** the redirection target still resolves only within the authorized
   Host Mount
+
+#### Scenario: AWK preserves program text while projecting file paths
+- **WHEN** an authorized AWK command has a namespace path in a `-v` assignment
+  or program text and uses a namespace path for a `-f` script or input file
+- **THEN** assignment and program text keep the namespace path unchanged
+- **AND** the script and input file operands resolve to their authorized Host
+  Mount paths, including input operands after `--`
 
 #### Scenario: Explicit StdioDriver builtin is entered
 - **WHEN** the StdioDriver receives the same text as explicit builtin input

@@ -54,13 +54,29 @@ pub(super) fn token_is_data_argument(command: &str, token: &ShellWordToken) -> b
         .and_then(|name| name.to_str())
         .unwrap_or(command_name);
 
+    if matches!(command_name, "awk" | "gawk" | "mawk" | "nawk") {
+        let awk_index = words.iter().position(|word| {
+            matches!(
+                Path::new(word).file_name().and_then(|name| name.to_str()),
+                Some("awk" | "gawk" | "mawk" | "nawk")
+            )
+        });
+        if let Some(awk_index) = awk_index
+            && super::command_interpreters::awk_next_argument_is_data(
+                &words[awk_index + 1..],
+                &token.decoded,
+            )
+        {
+            return true;
+        }
+    }
+
     if matches!(command_name, "echo" | "printf") {
         return true;
     }
 
-    // ponytail: this covers common unambiguous data positions; arbitrary
-    // command argument roles need a real namespace filesystem, not a growing
-    // command allowlist.
+    // ponytail: classify only data positions with known command syntax; arbitrary
+    // argv roles need a real namespace filesystem, not more command-specific guesses.
     let git_commit = command_name == "git"
         && words
             .iter()

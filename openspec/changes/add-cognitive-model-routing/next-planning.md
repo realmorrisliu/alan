@@ -23,15 +23,15 @@
 让它检查一个明确授权的测试项目目录，调用只读工具并给出带路径依据的结果。
 测试目录包含已知内容和不可访问的边界，便于判断回答和授权是否正确。
 
-- [x] 追踪裸 alan → LocalAttachment → TTY 分支的 file-backed renderer → 现有 `/agent/root` → generation → 受控 Tool → AgentFS IO；非 TTY 分支保留 StdioDriver。
-- [x] 明确输入边界：TTY composer 永远提交 Agent task，不解析 shell 语法；重定向 IO 才进入 StdioDriver 的固定内建语法，不用模型猜测执行权限。
+- [x] 追踪裸 `alan` → LocalAttachment → TTY 分支的 file-backed renderer → 现有 `/agent/root` → generation → 受控 Tool → AgentFS IO；重定向 stdin 提交一次 Agent task。
+- [x] 明确输入边界：TTY composer 永远提交 Agent task，不解析 shell 语法；`!` 显式请求受治理的 `bash` Tool；管道输入只执行一次 Agent task，不用模型猜测执行权限。
 - [x] 已重写本 change 的 proposal/design/deltas：只改 `alan-shell` 与 `alan-renderer-host-contract`；旧 editfs/run/binfs 前置条件不再属于本切片。
-- [x] 已接通裸 `alan` 的 TTY → 现有 `/agent/root` file-backed renderer，并保留重定向 IO 的 StdioDriver；无 Connection 时现已给出准确错误，普通 TTY 与 Herdr pane 均验证过。
-- [ ] 配置 dev Connection 后，交付真实只读工具任务、AgentFS 增量输出、完成、Ctrl-C 取消和取消后的成功后续任务。
-- [ ] 验证工具失败、未授权路径和取消后不继续派发动作；不可用 Connection 的清晰错误已在两种终端中验证。
-- [ ] 在普通终端和 Herdr 记录同一当前构建的成功任务、输入/输出与退出结果，证明连续任务和取消后仍可使用。
+- [x] 已接通裸 `alan` 的 TTY → 现有 `/agent/root` file-backed renderer 和重定向 stdin 的 one-shot Agent 路径；无 Connection 时给出准确错误，普通 TTY、Herdr pane 与管道输出均已验证。
+- [x] 配置 dev Connection 后，交付只读工具任务、AgentFS 增量输出、完成、Ctrl-C 取消和取消后的成功后续任务；验收记录见主 change 的 tasks.md。
+- [x] 验证工具失败、未授权路径和取消后不继续派发动作；不可用 Connection 的清晰错误已在两种终端中验证。
+- [x] 在普通终端和 Herdr 记录同一构建的成功任务、输入/输出与退出结果，证明连续任务和取消后仍可使用；记录构建 `bef854e3`，该提交是当前分支祖先。
 
-当前阻塞（2026-09-23）：stable 与 dev 的 `alan connection list` 均无 profile。普通 TTY/Herdr 目前只验证了 renderer 和不可用连接错误路径；没有把它记作真实 agent 成功、授权只读 Mount 或取消验收。成功路径须先有 dev Connection，且不得借用 stable 用户数据。
+当前状态（2026-09-24）：重启后的 dev Host 正常运行，dev channel 的 `connection list` 显示 `chatgpt-main` credential 已配置。上述固定验收已经在 `bef854e3` 完成并记录；本轮新增的是重连边界与路径翻译回归修复，已用本地测试覆盖，不借用 stable 用户数据。
 
 复用已有 generation 能力；typed evaluation/Jev 不作为启动条件。
 权限、credentials、sandbox、Process 生命周期和证据写入继续走现有 owner。

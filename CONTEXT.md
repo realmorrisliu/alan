@@ -192,11 +192,11 @@ _Avoid_: Manager API, typed runtime command API
 
 **Alan Shell** — The primary file-native interaction model for namespace,
 files, Processes, Agent Processes, Tools, Skills, Memory Stores, and services.
-Running `alan` enters this Shell; Agent Process renderers are attachable views
-within it rather than the system boot surface. The current interactive
-entry uses StdioDriver; the Rust TUI provides an Agent renderer. The ordinary
-Shell Process evaluator and terminal IO ownership still need implementation
-alignment, as recorded in the September architecture review.
+Bare `alan` currently opens the file-backed Agent renderer on terminal stdin
+and stdout, attaching to `/agent/root`; redirected stdin submits one Agent
+task. The renderer is a client of the file-native Alan OS, not a separate
+Process or lifecycle owner. `StdioDriver` remains a Shell library surface and
+is not the bare CLI entry path.
 
 **Alan Renderer Host** — A renderer/input host that consumes mounted AgentFS
 and `/proc` files and writes to their control surfaces.

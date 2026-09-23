@@ -38,10 +38,12 @@ semantics.
 
 ## Current startup
 
-Bare `alan` attaches to the system Host and runs the local StdioDriver Shell
-evaluator. Service Manager boot exists. The allocated Shell Process identity
-does not yet provide the complete server-side evaluator/runner and incremental
-IO path required by ADR-0048. The Agent TUI is a separate file-backed renderer.
+Bare `alan` is terminal-first: with terminal stdin and stdout it attaches to the
+system Host and runs the file-backed Agent renderer against the existing
+`/agent/root`. With redirected stdin it submits one Agent task and writes the
+final answer to stdout, diagnostics to stderr, and the result through its exit
+status. Interactive `!` requests a command through the governed `bash` Tool.
+The renderer does not create or own the Root Agent Process or Host lifecycle.
 
 Alan for macOS is retired; its App, helper and shell-core/FFI source has been
 removed. Rust Host platform adapters remain. Herdr supplies terminal topology,

@@ -1,14 +1,14 @@
 ## Why
 
-Bare `alan` currently attaches to the Alan OS Host but enters only the generic
-line-oriented StdioDriver. The Host starts a Root Agent Process with its
-configured generation Connection, and `alan-terminal-ui` already renders a
-mounted Agent Process through AgentFS files. Product boot does not currently
-register the existing Core Tools in the Root Agent's ToolRegistry, so explicit
-`!` shell requests cannot work through the intended governed `bash` Tool. The
-missing pieces are small composition paths joining the terminal CLI and the
-existing Core Tools to that Agent; another evaluator, Process manager, or
-command runtime is not needed for the first usable task loop.
+Before this change, bare `alan` attached to the Alan OS Host but entered only
+the generic line-oriented StdioDriver. The Host already started a Root Agent
+Process with its configured generation Connection, and `alan-terminal-ui`
+already rendered a mounted Agent Process through AgentFS files. Product boot
+also left the existing Core Tools out of the Root Agent's ToolRegistry, so
+explicit `!` shell requests could not reach the governed `bash` Tool. The
+required work was to join the terminal CLI and existing Core Tools to that
+Agent; another evaluator, Process manager, or command runtime was not needed
+for the first usable task loop.
 
 ## What Changes
 

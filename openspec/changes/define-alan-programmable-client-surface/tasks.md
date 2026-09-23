@@ -15,8 +15,9 @@
   IO rather than the interactive renderer.
 - [x] 2.2 Verify incremental AgentFS output, Ctrl-C turn interruption,
   subsequent input, tail rebinding after a Root Agent PID change during both a
-  local turn and idle reattachment (including replacement history merge), and
-  renderer exit without killing the shared Host or Agent.
+  local turn and idle reattachment (including replacement history merge,
+  pruned scrollback, and repeated transcript content), and renderer exit
+  without killing the shared Host or Agent.
 - [x] 2.3 Verify unavailable Connection behavior: a clear error appears before
   provider dispatch, the renderer accepts another submission, and the Host and
   Root Agent remain available.
@@ -28,8 +29,9 @@
 - [x] 2.6 Route `!<command>` through the existing governed `bash` Tool by
   registering only the existing Core Tool set in product Root Agent boot;
   verify the exact set and shell behavior, including preserving namespace-path
-  data passed to `echo`/`printf` or a Git commit message while projecting file
-  operands and redirection targets.
+  data passed to `echo`/`printf`, Git commit messages, and AWK assignments or
+  inline programs while projecting `-f` scripts, post-program input files, and
+  redirection targets, including AWK `--` option termination.
 - [x] 2.7 Keep recoverable Agent errors in the rendered transcript.
 - [x] 2.8 Implement and verify terminal-mode selection, one-shot redirected
   stdin/stdout/stderr, Root Agent PID rebinding (including tail closure before
@@ -85,8 +87,10 @@
 > `ALAN_POST_RESTART_OK`; redirected one-shot returned
 > `ALAN_ONE_SHOT_POST_RESTART_OK` with exit 0. Stable Host PID was unchanged.
 > The one-shot integration test also closes old tails while the Service
-> Manager PID is temporarily `0`, then publishes a replacement with the
-> correlated answer; the waiter remains pending and recovers that answer.
+> Manager still publishes the old PID, then publishes PID `0` and a replacement
+> with the correlated answer; the waiter remains pending and recovers that
+> answer. Native path projection preserves an AWK `-v` assignment and inline
+> program while still mapping the redirection target.
 
 > The watcher integration also replaces an idle Root Agent after another
 > client has completed a task; reattachment preserves the prior transcript and

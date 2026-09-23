@@ -25,6 +25,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph, Wrap};
 mod app;
 mod file_surface;
+mod history_merge;
 mod tail;
 
 use app::{FileBackedAction, FileBackedApp, FileBackedEvent};
@@ -562,7 +563,7 @@ async fn wait_for_stdio_answer(
                             Ok(_) => anyhow::anyhow!("Agent tape closed before the task completed"),
                             Err(err) => anyhow::anyhow!("read Agent tape failed: {err:?}"),
                         };
-                        match tail::recover_stdio_task_after_root_change(
+                        match tail::recover_stdio_task_after_tail_close(
                             shell, root_agent_path, &task, attachment, &mut snapshot, interrupt_requested,
                         ).await? {
                             tail::StdioTaskRecovery::Complete(answer) => return Ok(answer),
@@ -606,7 +607,7 @@ async fn wait_for_stdio_answer(
                             Ok(_) => anyhow::anyhow!("Agent UI event stream closed before the task completed"),
                             Err(err) => anyhow::anyhow!("read Agent UI events failed: {err:?}"),
                         };
-                        match tail::recover_stdio_task_after_root_change(
+                        match tail::recover_stdio_task_after_tail_close(
                             shell, root_agent_path, &task, attachment, &mut snapshot, interrupt_requested,
                         ).await? {
                             tail::StdioTaskRecovery::Complete(answer) => return Ok(answer),

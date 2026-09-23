@@ -23,12 +23,12 @@ already submits framed input, tails AgentFS output and state, and sends
 turn-scoped interruption through the AgentFS control file. It does not own
 Process spawn or Host shutdown.
 
-The actual gaps are the bare-CLI branch in `crates/alan/src/main.rs`, which
-always constructs `StdioDriver`, and product Host boot, which constructs an
-empty `ToolRegistry` despite the existing Core Tools. The CLI needs a direct
-composition edge to the already-installed workspace TUI crate and a one-shot
-Agent stdio path; Host boot needs to register the existing Core Tool catalog
-and implementations so `!` can reach the existing governed `bash` Tool.
+At the start of this change, the bare-CLI branch in
+`crates/alan/src/main.rs` always constructed `StdioDriver`, and product Host
+boot constructed an empty `ToolRegistry` despite the existing Core Tools. The
+implemented composition routes terminal and redirected input to the existing
+Agent renderer/one-shot path and registers the Core Tool catalog so `!` reaches
+the existing governed `bash` Tool.
 `alan-shell` itself remains protocol-only and agent-agnostic.
 
 ## Decisions
@@ -48,10 +48,13 @@ changes during attach, and uses that same Process path for submission and
 observation. It reopens both tails together if the Root Agent PID changes
 during a task, recovering the matching submitted turn from the replacement
 Process. EOF or an IO error on either tail first triggers a Root Agent PID
-check: the waiter lets the existing poll cadence bridge a temporarily
+check. If the published PID still matches, the waiter allows one 250 ms
+PID-poll interval for the Service Manager to publish the exit, then rechecks;
+this covers stream closure before PID clearing without retrying a persistently
+broken stream. It lets the existing poll cadence bridge a temporarily
 unavailable PID during supervised replacement, then reattaches the pair and
-recovers from replacement history. If the PID is unchanged, the original tail
-failure remains terminal.
+recovers from replacement history. If the PID remains unchanged, the original
+tail failure remains terminal.
 
 The TUI composer always submits one task to AgentFS. Ordinary prose is not
 interpreted as a shell command. A leading `!` is the explicit shell escape:
@@ -61,8 +64,9 @@ Host Mount boundaries remain authoritative. Product boot registers the
 existing Core Tool catalog and implementations; it does not add a new Tool or
 register the explorer-only Tools. Existing slash UI controls remain renderer
 controls. On host-backed sandbox adapters, filesystem operands and redirection
-targets are projected to their authorized Host paths; `echo` and `printf` data
-arguments keep their original namespace text.
+targets are projected to their authorized Host paths; recognized data positions
+such as `echo`/`printf`, Git commit messages, and AWK assignments/programs keep
+their original namespace text.
 
 The redirected one-shot client waits for task completion or explicit Ctrl-C;
 it does not impose a client-only deadline. A `Running` Activity event establishes
@@ -110,8 +114,12 @@ immediate check alone can miss the replacement. When it changes, the renderer
 closes only its old AgentFS tails, hydrates the replacement Process's current
 state, and opens new tails without resubmitting input. When this renderer has
 no pending task, it preserves its visible transcript and appends replacement
-history after the longest shared transcript prefix, so work completed through
-another client is not lost or duplicated. For a locally submitted task,
+history after the longest matching suffix of retained history. A partially
+pruned first cell is matched by its retained rendered-text suffix. Matching
+uses the earliest window when identical history repeats; without stable tape
+record IDs this favors preserving intervening turns over silently skipping
+them, though identical repeated text can remain visually ambiguous. For a
+locally submitted task,
 current-turn tape is merged after the matching user entry only when a
 post-submission `Running` event correlates it to the pending turn. Tape-less
 terminal errors are retained only when the replacement's UI history has that

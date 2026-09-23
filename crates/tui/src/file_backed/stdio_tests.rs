@@ -712,6 +712,7 @@ async fn one_shot_waits_without_timeout_and_rebinds_when_a_tail_closes_before_pi
     let (input_seen_tx, input_seen_rx) = tokio::sync::oneshot::channel();
     let (release_tx, release_rx) = tokio::sync::oneshot::channel();
     let (closed_tx, closed_rx) = tokio::sync::oneshot::channel();
+    let (clear_pid_tx, clear_pid_rx) = tokio::sync::oneshot::channel();
     let (resume_tx, resume_rx) = tokio::sync::oneshot::channel();
     let controller_shell = shell.clone();
     let controller_agent_root = agent_root.clone();
@@ -722,6 +723,9 @@ async fn one_shot_waits_without_timeout_and_rebinds_when_a_tail_closes_before_pi
         assert!(!input_tail.read(4096).await.unwrap().is_empty());
         input_seen_tx.send(()).unwrap();
         release_rx.await.unwrap();
+        controller_tail_closer.close(old_agent_pid);
+        closed_tx.send(()).unwrap();
+        clear_pid_rx.await.unwrap();
         controller_namespace.replace_mount(
             PID_MOUNT,
             InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::with_read_only_file(
@@ -730,8 +734,6 @@ async fn one_shot_waits_without_timeout_and_rebinds_when_a_tail_closes_before_pi
             ))),
             Access::ReadOnly,
         );
-        controller_tail_closer.close(old_agent_pid);
-        closed_tx.send(()).unwrap();
         resume_rx.await.unwrap();
         let new_pid = controller_shell.spawn(EXEC_SPEC).await.unwrap();
         controller_agent_root
@@ -795,6 +797,7 @@ async fn one_shot_waits_without_timeout_and_rebinds_when_a_tail_closes_before_pi
                 .is_err(),
             "one-shot must wait while the supervised Root Agent is restarting"
         );
+        clear_pid_tx.send(()).unwrap();
         resume_tx.send(()).unwrap();
         tokio::time::advance(std::time::Duration::from_millis(250)).await;
         wait_for_answer.await.unwrap()

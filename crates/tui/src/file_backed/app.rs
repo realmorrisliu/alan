@@ -87,6 +87,7 @@ pub(super) struct FileBackedApp {
     /// arrives, insert the user cell before the whole block and shift side
     /// indexes such as `action_cells`.
     pub(super) pending_remote_turn_start: Option<usize>,
+    pub(super) scrollback_front_is_partial: bool,
     /// Keep occurrence counts through `/clear` without retaining prompt text.
     tape_user_prompt_counts: HashMap<u64, usize>,
 }
@@ -114,6 +115,7 @@ impl FileBackedApp {
             should_quit: false,
             reconciler: StreamReconciler::new(),
             pending_remote_turn_start: None,
+            scrollback_front_is_partial: false,
             tape_user_prompt_counts: HashMap::new(),
         }
     }
@@ -413,6 +415,7 @@ impl FileBackedApp {
                 self.transcript.clear();
                 self.action_cells.clear();
                 self.pending_remote_turn_start = None;
+                self.scrollback_front_is_partial = false;
                 None
             }
             "help" => {
@@ -742,6 +745,7 @@ impl FileBackedApp {
             self.transcript.drain(0..cells_to_remove);
             self.shift_action_cells(cells_to_remove);
             self.shift_pending_remote_turn_start(cells_to_remove);
+            self.scrollback_front_is_partial = false;
         }
 
         if remaining > 0
@@ -749,6 +753,7 @@ impl FileBackedApp {
             && cell.trim_rendered_prefix(opts, remaining)
         {
             pruned += remaining;
+            self.scrollback_front_is_partial = true;
         }
 
         pruned
@@ -860,27 +865,7 @@ impl FileBackedApp {
 
     /// Append replacement-process history not already present in this renderer.
     pub(super) fn merge_reconnected_idle_history(&mut self, current: Vec<HistoryCell>) {
-        let shared_prefix_len = self
-            .transcript
-            .iter()
-            .zip(&current)
-            .take_while(|(previous, replacement)| previous == replacement)
-            .count();
-        let previous_len = self.transcript.len();
-        let current_actions = std::mem::take(&mut self.action_cells);
-        self.action_cells = current_actions
-            .into_iter()
-            .map(|(action_id, index)| {
-                let merged_index = if index < shared_prefix_len {
-                    index
-                } else {
-                    previous_len + index.saturating_sub(shared_prefix_len)
-                };
-                (action_id, merged_index)
-            })
-            .collect();
-        self.transcript
-            .extend(current.into_iter().skip(shared_prefix_len));
+        super::history_merge::merge_idle_history(self, current);
     }
 
     pub(super) fn render_opts(&self, width: usize) -> RenderOpts {
@@ -975,3 +960,7 @@ impl FileBackedApp {
         Line::styled(hint, Style::default().fg(Color::DarkGray))
     }
 }
+
+#[cfg(test)]
+#[path = "app_tests.rs"]
+mod tests;

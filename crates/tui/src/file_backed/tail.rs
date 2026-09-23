@@ -188,6 +188,40 @@ pub(super) enum StdioTaskRecovery {
     Complete(String),
 }
 
+pub(super) async fn recover_stdio_task_after_tail_close(
+    shell: &alan_shell::Shell,
+    root_agent_path: &str,
+    task: &StdioTaskWaitContext<'_>,
+    attachment: &mut StdioTailAttachment,
+    snapshot: &mut StdioTaskSnapshot,
+    interrupt_requested: bool,
+) -> Result<StdioTaskRecovery> {
+    let recovery = recover_stdio_task_after_root_change(
+        shell,
+        root_agent_path,
+        task,
+        attachment,
+        snapshot,
+        interrupt_requested,
+    )
+    .await?;
+    if !matches!(recovery, StdioTaskRecovery::Unchanged) {
+        return Ok(recovery);
+    }
+
+    // The supervisor can close the old AgentFS streams before publishing PID 0.
+    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    recover_stdio_task_after_root_change(
+        shell,
+        root_agent_path,
+        task,
+        attachment,
+        snapshot,
+        interrupt_requested,
+    )
+    .await
+}
+
 pub(super) async fn recover_stdio_task_after_root_change(
     shell: &alan_shell::Shell,
     root_agent_path: &str,
