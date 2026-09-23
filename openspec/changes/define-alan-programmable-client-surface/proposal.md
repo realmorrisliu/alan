@@ -1,27 +1,35 @@
 ## Why
 
 Bare `alan` currently attaches to the Alan OS Host but enters only the generic
-line-oriented StdioDriver. Alan already starts a Root Agent Process with its
-configured generation Connection and governed Tools, and `alan-terminal-ui`
-already renders a mounted Agent Process through AgentFS files. The missing piece
-is one small composition path joining the terminal CLI to that existing Agent
-and renderer; another evaluator, Process manager, or command runtime is not
-needed for the first usable task loop.
+line-oriented StdioDriver. The Host starts a Root Agent Process with its
+configured generation Connection, and `alan-terminal-ui` already renders a
+mounted Agent Process through AgentFS files. Product boot does not currently
+register the existing Core Tools in the Root Agent's ToolRegistry, so explicit
+`!` shell requests cannot work through the intended governed `bash` Tool. The
+missing pieces are small composition paths joining the terminal CLI and the
+existing Core Tools to that Agent; another evaluator, Process manager, or
+command runtime is not needed for the first usable task loop.
 
 ## What Changes
 
 - When both stdin and stdout are terminals, bare `alan` attaches its mounted
   namespace to the existing `/agent/root` through `alan-terminal-ui`.
-- In that terminal UI, submitted text is one natural-language task for the Root
-  Agent. It is not parsed as shell syntax; all Agent effects continue through
-  the existing Namespace, Connection, Tool governance, Host Mounts, and
-  sandbox owners.
-- Keep the existing StdioDriver when either stdin or stdout is not a terminal.
-  Its explicit `ls`, `cat`, `tail`, `write`, `echo`, and `spawn` builtins remain
-  the generic file-native Shell surface.
+- Product Host boot registers the existing Core Tool catalog and implementations
+  in the Root Agent ToolRegistry; it does not add a new Tool or broaden that set.
+- In that terminal UI, ordinary submitted text is one task for the Root Agent.
+  A leading `!` explicitly requests the exact remainder as a shell command via
+  the existing `bash` Tool; it does not bypass Tool governance, Host Mounts,
+  approvals, or sandbox boundaries.
+- When stdin/stdout are redirected, read stdin as one task, write only the
+  final answer to stdout, diagnostics to stderr, and report success/failure in
+  the exit code. Keep file-native Shell operations behind explicit input such
+  as `!` rather than interpreting arbitrary task text as commands.
 - Use AgentFS Process IO for input and incremental output. Ctrl-C interrupts the
   current Agent turn through `/agent/root/machine/ctl`, not Kernel Process
   control, and a subsequent task can use the still-running Root Agent.
+- After a task submission, track the Root Agent PID until the turn settles;
+  re-open file-backed streams if the Process changes asynchronously, without
+  resubmitting the task or discarding the renderer's prior transcript.
 - Closing the renderer closes its own file streams only; it does not stop the
   shared Host or Root Agent.
 
@@ -33,10 +41,10 @@ None.
 
 ### Modified Capabilities
 
-- `alan-shell`: distinguish terminal Agent task input from the generic
-  StdioDriver command grammar and define the TTY/non-TTY entry behavior.
+- `alan-shell`: define TTY Agent REPL and one-shot redirected-IO behavior.
 - `alan-renderer-host-contract`: define the minimal Root Agent attachment,
-  incremental IO, turn-scoped interrupt, and detach-without-shutdown behavior.
+  explicit `!` shell intent, incremental IO, turn-scoped interrupt, and
+  detach-without-shutdown behavior.
 
 ## Non-Goals
 
@@ -49,15 +57,18 @@ None.
 - Do not change Agent Machine generation, add typed evaluation/Jev, relax
   Connection or Tool governance, or infer Host Mount grants from cwd/pane state.
 - Do not promise cross-Host recovery, saved stream offsets, or full terminal UX
-  conformance. Those remain later roadmap work if the tracer bullet shows a
-  real gap.
+  conformance. Rebinding after a live Root Agent PID change is not durable
+  cross-Host recovery; broader detach/reattach behavior remains later roadmap
+  work if the tracer bullet shows a real gap.
 
 ## Impact
 
-The composition change belongs in `crates/alan/src/main.rs`: add the existing
-`alan-terminal-ui` workspace crate as a direct dependency, choose its
-file-backed renderer only for a TTY, and preserve the StdioDriver fallback.
-The Rust architecture ratchet will record this single root-composition edge;
-it does not add an external package. A focused renderer test will lock down
-Ctrl-C mapping, and ordinary-terminal/Herdr acceptance will validate real
-read-only Agent tasks, incremental output, cancellation, and continued use.
+The composition changes belong in `crates/alan/src/main.rs` and
+`crates/os-host/src/boot.rs`: the CLI uses the existing `alan-terminal-ui`
+renderer for a TTY and a one-shot Agent task for redirected input; product Host
+boot registers the existing Core Tools for the Root Agent. The Rust
+architecture ratchet records only these two root-composition edges, with no
+new external package or Tool implementation. A focused renderer test will
+lock down Ctrl-C mapping, and ordinary-terminal/Herdr acceptance will validate
+real read-only Agent tasks, explicit `!` shell use, incremental output,
+cancellation, and continued use.

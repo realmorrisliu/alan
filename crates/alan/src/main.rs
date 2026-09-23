@@ -7,6 +7,7 @@ mod shell_command;
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::{io::IsTerminal, path::PathBuf};
+use tokio::io::AsyncReadExt;
 
 #[derive(Parser)]
 #[command(
@@ -644,13 +645,13 @@ async fn main() -> Result<()> {
                 ))
                 .await?;
             } else {
-                let shell = alan_shell::Shell::new(attachment.root);
-                alan_shell::StdioDriver::new(shell)
-                    .run(
-                        tokio::io::BufReader::new(tokio::io::stdin()),
-                        tokio::io::stdout(),
-                    )
-                    .await?;
+                let mut input = Vec::new();
+                tokio::io::stdin()
+                    .read_to_end(&mut input)
+                    .await
+                    .context("read Agent task from stdin")?;
+                let input = String::from_utf8(input).context("stdin task is not valid UTF-8")?;
+                alan_tui::run_stdio_task(attachment.root, "/agent/root", &input).await?;
             }
         }
     }

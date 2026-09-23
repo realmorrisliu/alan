@@ -11,24 +11,49 @@
 ## 2. Minimal usable Agent loop
 
 - [x] 2.1 Route bare `alan` with TTY stdin/stdout to the existing file-backed
-  renderer attached to `/agent/root`; keep StdioDriver for redirected IO.
+  renderer attached to `/agent/root`; use Agent task semantics for redirected
+  IO rather than the interactive renderer.
 - [ ] 2.2 Verify incremental AgentFS output, Ctrl-C turn interruption,
-  subsequent input, and renderer exit without killing the shared Host or Agent.
+  subsequent input, tail rebinding after a Root Agent PID change, and renderer
+  exit without killing the shared Host or Agent.
 - [x] 2.3 Verify unavailable Connection behavior: a clear error appears before
   provider dispatch, the renderer accepts another submission, and the Host and
   Root Agent remain available.
-- [ ] 2.4 Verify a known-content read-only Host Mount, an unmounted boundary,
+- [x] 2.4 Verify a known-content read-only Host Mount, an unmounted boundary,
   and existing Tool failure handling without adding a second test-only path.
 - [ ] 2.5 In an ordinary terminal and a Herdr sibling pane, record the current
   build and actual input/output for two successive tasks, cancellation, and a
   further successful task on the same Root Agent.
+- [x] 2.6 Route `!<command>` through the existing governed `bash` Tool by
+  registering only the existing Core Tool set in product Root Agent boot;
+  verify the exact set and live shell behavior.
+- [x] 2.7 Keep recoverable Agent errors in the rendered transcript.
+- [ ] 2.8 Implement and verify one-shot redirected stdin/stdout/stderr,
+  Root Agent PID rebinding, and exit-code behavior.
 
-> Live acceptance status (2026-09-23): the current build opens correctly in an
-> ordinary TTY and a Herdr sibling pane, and both show the explicit
-> unavailable-Connection error. `alan connection list` reports no profiles in
-> either stable or dev. Successful model tasks, read-only project inspection,
-> and live cancellation therefore remain unverified; do not treat the error
-> path as a completed tracer bullet.
+> Live acceptance status (2026-09-23): an explicit read-only synthetic Host
+> Mount and `bash` read returned the expected sentinel; a leading `!` reached
+> the existing `bash` Tool and succeeded while that Process-scoped grant was
+> active. After restarting dev Host, a fresh Herdr TUI reattached and rendered
+> a response. A new approved read-only mount then exposed that native bash
+> validation treated `/mnt/<mount>` as outside its Host Mount. The shared path
+> guard now maps namespace paths to their backing Host paths for authorization,
+> and native shell execution maps them before dispatch; sandbox and Tool tests
+> pass. A rebuilt dev Host then returned the sentinel from the same `!cat`; the
+> read-only grant was revoked afterward. Unmounted-path and read-only-write
+> denials pass sandbox tests. A `Ctrl-Q` renderer exit left dev Host Ready and
+> Connections usable; a new renderer attached and completed another task. A
+> separate task had exposed a PID-update race: the Process can change just
+> after the post-submit PID check, leaving TUI tails attached to the prior
+> Process. TTY and one-shot paths now poll and recover from that replacement;
+> local tests pass. `bash` still requires an explicit Host execution adapter,
+> so `!` does not bypass a Host Mount. A 100-line live response exposed
+> interleaved terminal rows: committed history had been written directly to
+> stdout between Ratatui draws. The renderer now uses Ratatui's inline viewport
+> and scrollback insertion; the rebuilt TUI displayed the ordered response
+> legibly in both visible output and scrollback, and `Ctrl-Q` returned to fish
+> without stopping dev Host. Ordinary-terminal cancellation and live
+> reattachment to an already-running Root Agent remain unverified.
 
 ## 3. Verification and delivery
 

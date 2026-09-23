@@ -1,10 +1,10 @@
 use anyhow::{Context, Result};
 use crossterm::event::{DisableBracketedPaste, EnableBracketedPaste};
 use crossterm::{execute, terminal as crossterm_terminal};
-use ratatui::Frame;
-use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
-use std::io::{IsTerminal, Stdout, Write, stdout};
+use ratatui::widgets::{Paragraph, Widget, Wrap};
+use ratatui::{Frame, Terminal, TerminalOptions, Viewport};
+use std::io::{IsTerminal, Stdout, stdout};
 
 pub type AlanTerminal = Terminal<CrosstermBackend<Stdout>>;
 
@@ -26,8 +26,15 @@ impl TerminalSession {
         let startup_guard = TerminalStartupGuard::new();
         let mut out = stdout();
         execute!(out, EnableBracketedPaste).context("failed to enable terminal input modes")?;
+        let (_, height) = crossterm_terminal::size().context("failed to read terminal size")?;
         let backend = CrosstermBackend::new(out);
-        let mut terminal = Terminal::new(backend).context("failed to initialize terminal")?;
+        let mut terminal = Terminal::with_options(
+            backend,
+            TerminalOptions {
+                viewport: Viewport::Inline(height),
+            },
+        )
+        .context("failed to initialize terminal")?;
         terminal.clear().context("failed to clear terminal")?;
         startup_guard.disarm();
         Ok(Self { terminal })
@@ -61,11 +68,20 @@ impl TerminalSession {
         if lines.is_empty() {
             return Ok(());
         }
-        let out = self.terminal.backend_mut();
-        for line in lines {
-            writeln!(out, "{line}")?;
+        for chunk in lines.chunks(u16::MAX as usize) {
+            let styled = chunk
+                .iter()
+                .cloned()
+                .map(crate::transcript_ui::style_transcript_line)
+                .collect::<Vec<_>>();
+            self.terminal
+                .insert_before(chunk.len() as u16, |buf| {
+                    Paragraph::new(styled)
+                        .wrap(Wrap { trim: false })
+                        .render(buf.area, buf);
+                })
+                .context("failed to append transcript to terminal scrollback")?;
         }
-        out.flush()?;
         Ok(())
     }
 }

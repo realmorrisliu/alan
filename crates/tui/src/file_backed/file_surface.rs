@@ -74,6 +74,43 @@ pub(super) async fn hydrate_and_open_tails(
     })
 }
 
+pub(super) async fn current_root_agent_pid(shell: &alan_shell::Shell) -> Result<Option<u64>> {
+    let raw = read_utf8(shell, "/mnt/service-manager/units/root-agent/pid").await?;
+    let value = raw.trim();
+    if value.is_empty() {
+        return Ok(None);
+    }
+    let pid = value
+        .parse::<u64>()
+        .context("Root Agent PID is not an unsigned integer")?;
+    Ok((pid > 0).then_some(pid))
+}
+
+pub(super) async fn reattach_to_current_agent(
+    shell: &alan_shell::Shell,
+    agent_path: &str,
+    app: &mut FileBackedApp,
+    submitted_input: Option<&str>,
+) -> Result<WatchTails> {
+    let previous_transcript = std::mem::take(&mut app.transcript);
+    app.reset_for_root_process_change();
+    let tails = match hydrate_and_open_tails(shell, agent_path, app).await {
+        Ok(tails) => tails,
+        Err(error) => {
+            app.transcript = previous_transcript;
+            return Err(error);
+        }
+    };
+    let current_transcript = std::mem::take(&mut app.transcript);
+    app.transcript = previous_transcript;
+    if let Some(submitted_input) = submitted_input
+        && !app.merge_reconnected_history(current_transcript, submitted_input)
+    {
+        app.reconciler.on_local_submit(submitted_input);
+    }
+    Ok(tails)
+}
+
 pub(super) async fn sync_requests_from_files(
     shell: &alan_shell::Shell,
     agent_path: &str,
@@ -335,7 +372,7 @@ async fn tail_from_live_edge(shell: &alan_shell::Shell, path: &str) -> Result<al
 /// that existed at open time. Hydrating from these returned bytes — instead
 /// of from a separate read of the same file — makes history + live delivery
 /// exactly-once by construction.
-async fn tail_with_history(
+pub(super) async fn tail_with_history(
     shell: &alan_shell::Shell,
     path: &str,
 ) -> Result<(alan_shell::Tail, Vec<u8>)> {

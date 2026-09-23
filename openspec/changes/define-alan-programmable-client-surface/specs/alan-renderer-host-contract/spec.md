@@ -19,6 +19,20 @@ output, status, and Agent UI state.
   `/agent/root/io/output`
 - **AND** the renderer does not privately call a provider or Tool
 
+#### Scenario: Root Agent Process changes between submissions
+- **WHEN** the renderer submits a task and the Service Manager reports a new
+  Root Agent PID
+- **THEN** the renderer reopens its AgentFS tails against the current
+  `/agent/root` and preserves the already-rendered transcript
+- **AND** it observes the current task's output without resubmitting the input
+
+#### Scenario: An explicit shell request is submitted
+- **WHEN** the user submits text beginning with `!`
+- **THEN** the input remains a framed AgentFS task and requests the exact
+  remainder through the existing `bash` Tool
+- **AND** the renderer does not execute a host command or bypass Agent Tool
+  governance
+
 #### Scenario: No callable Connection is configured
 - **WHEN** the Root Agent has no callable Connection and the user submits a task
 - **THEN** the renderer displays a clear unavailable-Connection error

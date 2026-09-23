@@ -120,9 +120,10 @@ if "${git_command[@]}" cat-file -e "$base_ref:$BASELINE_REL" 2>/dev/null; then
             count = split($2, dependencies, " ")
             for (i = 1; i <= count; i++) {
                 dependency = dependencies[i]
-                # The root CLI composes the existing terminal renderer. Keep
-                # every other new Alan-crate edge forbidden by this ratchet.
-                if (dependency != "" && !($1 == "alan" && dependency == "alan-terminal-ui") && !(($1 SUBSEP dependency) in previous)) {
+                # The root CLI composes the terminal renderer, and the OS Host
+                # composes existing Core Tools for the Root Agent. Keep every
+                # other new Alan-crate edge forbidden by this ratchet.
+                if (dependency != "" && !($1 == "alan" && dependency == "alan-terminal-ui") && !($1 == "alan-os-host" && dependency == "alan-tools") && !(($1 SUBSEP dependency) in previous)) {
                     printf "error: Rust dependency allowance expanded: %s -> %s\n", $1, dependency > "/dev/stderr"
                     failed = 1
                 }

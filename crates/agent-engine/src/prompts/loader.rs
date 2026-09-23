@@ -73,6 +73,8 @@ mod tests {
         let loader = PromptLoader::new();
         let prompt = loader.system_prompt();
         assert!(prompt.contains("You are alan"));
+        assert!(prompt.contains("When a user message begins with `!`"));
+        assert!(prompt.contains("exact shell command with the `bash` tool"));
     }
 
     #[test]

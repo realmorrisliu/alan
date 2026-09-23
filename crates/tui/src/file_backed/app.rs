@@ -594,16 +594,7 @@ impl FileBackedApp {
             UiEvent::Plan { snapshot } => self.apply_ui_plan_snapshot(snapshot),
             UiEvent::Thinking { snapshot } => self.apply_ui_thinking_snapshot(snapshot),
             UiEvent::Notice { snapshot } => self.apply_ui_notice_snapshot(snapshot),
-            UiEvent::Error {
-                message,
-                recoverable,
-            } => {
-                if recoverable {
-                    self.notice = Some(message);
-                } else {
-                    self.push_error(message);
-                }
-            }
+            UiEvent::Error { message, .. } => self.push_error(message),
         }
     }
 
@@ -783,6 +774,48 @@ impl FileBackedApp {
                 self.reconciler.on_hydrated_message_record(&record.role);
             }
         }
+    }
+
+    pub(super) fn reset_for_root_process_change(&mut self) {
+        self.action_cells.clear();
+        self.activity = UiActivitySnapshot::idle();
+        self.plan = UiPlanSnapshot::empty();
+        self.thinking = UiThinkingSnapshot::idle();
+        self.running_tools.clear();
+        self.pending_yield = None;
+        self.form = None;
+        self.completion = None;
+        self.notice = None;
+        self.reconciler = StreamReconciler::new();
+        self.pending_remote_turn_start = None;
+    }
+
+    /// Keep this renderer's earlier transcript while adding the current turn
+    /// recovered from a replacement Root Agent Process.
+    pub(super) fn merge_reconnected_history(
+        &mut self,
+        current: Vec<HistoryCell>,
+        submitted_input: &str,
+    ) -> bool {
+        let Some(boundary) = current
+            .iter()
+            .rposition(|cell| matches!(cell, HistoryCell::User(text) if text == submitted_input))
+        else {
+            return false;
+        };
+
+        let previous_len = self.transcript.len();
+        let current_actions = std::mem::take(&mut self.action_cells);
+        self.action_cells = current_actions
+            .into_iter()
+            .filter_map(|(action_id, index)| {
+                (index > boundary)
+                    .then_some((action_id, previous_len + index.saturating_sub(boundary + 1)))
+            })
+            .collect();
+        self.transcript
+            .extend(current.into_iter().skip(boundary + 1));
+        true
     }
 
     pub(super) fn render_opts(&self, width: usize) -> RenderOpts {

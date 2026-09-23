@@ -15,9 +15,10 @@ dependencies.
 ### Requirement: Alan enters the system Shell
 Running bare `alan` SHALL start or attach to the matching dedicated Alan OS
 Host. When stdin and stdout are terminals it SHALL attach the terminal renderer
-to the Host-managed `/agent/root`; otherwise it SHALL use the line-oriented
-StdioDriver. The CLI MUST NOT privately boot an Agent Runtime or select an
-Agent Definition as Host startup behavior.
+to the Host-managed `/agent/root`; otherwise it SHALL submit stdin as one task
+to that Agent and follow the one-shot standard-stream contract. The CLI MUST NOT
+privately boot an Agent Runtime or select an Agent Definition as Host startup
+behavior.
 
 #### Scenario: User runs alan with no subcommand
 - **WHEN** the system Host is ready and both stdin and stdout are terminals
@@ -26,8 +27,18 @@ Agent Definition as Host startup behavior.
 
 #### Scenario: User runs alan with redirected IO
 - **WHEN** either stdin or stdout is not a terminal
-- **THEN** the client enters the generic StdioDriver
+- **THEN** stdin is submitted as one task and only the final answer is written
+  to stdout
+- **AND** diagnostics go to stderr and task failure is reported by a nonzero
+  exit code
 - **AND** it does not emit terminal UI control sequences
+
+#### Scenario: Root Agent Process changes during redirected task
+- **WHEN** the Root Agent PID changes while the client waits for the submitted
+  task
+- **THEN** the client reopens its tape and UI tails against `/agent/root`
+- **AND** it recovers the matching task result without resubmitting input or
+  duplicating stdout
 
 ## REMOVED Requirements
 
@@ -44,9 +55,11 @@ keep terminal input and rendering at the existing LocalAttachment and
 ### Requirement: Terminal task input is distinct from Shell evaluation
 The interactive bare-`alan` renderer SHALL submit each user entry as one task
 to `/agent/root/io/input`. It SHALL NOT parse arbitrary text as Alan Shell
-builtins or infer execution authority from shell-looking text. Agent-originated
-effects MUST continue through the existing Agent Runtime, Tool governance,
-Namespace access, explicit Host Mounts, credentials, and sandbox.
+builtins or infer execution authority from shell-looking text. A leading `!`
+SHALL explicitly request execution of the exact remainder using the existing
+`bash` Tool. Agent-originated effects MUST continue through the existing Agent
+Runtime, Tool governance, Namespace access, explicit Host Mounts, credentials,
+and sandbox.
 
 #### Scenario: Shell-looking text is entered in the terminal renderer
 - **WHEN** a user submits text such as `ls /mnt/project` in the interactive
@@ -55,6 +68,13 @@ Namespace access, explicit Host Mounts, credentials, and sandbox.
   command
 - **AND** any resulting operation is subject to the Agent's existing Tool and
   Namespace authority
+
+#### Scenario: User explicitly requests a shell command
+- **WHEN** the user submits `!<command>` in the terminal renderer
+- **THEN** the Agent is asked to run the exact `<command>` through its existing
+  `bash` Tool without rewriting or adding commands
+- **AND** Tool policy, required approval, sandbox, and explicit Host Mount
+  boundaries still apply
 
 #### Scenario: Explicit StdioDriver builtin is entered
 - **WHEN** the StdioDriver receives the same text as explicit builtin input

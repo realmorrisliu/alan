@@ -2,11 +2,12 @@ use std::path::PathBuf;
 
 #[cfg(test)]
 use alan_agent_protocol::{
-    ToolResultPresentation, UiActivitySnapshot, UiEvent, UiNoticeKind, UiNoticeSnapshot,
-    UiPlanSnapshot, UiThinkingSnapshot, YieldKind,
+    ToolResultPresentation, UiNoticeKind, UiNoticeSnapshot, UiPlanSnapshot, UiThinkingSnapshot,
+    YieldKind,
 };
+use alan_agent_protocol::{UiActivitySnapshot, UiActivityState, UiEvent};
 use alan_ap::InProcessTransport;
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 #[cfg(test)]
 use crossterm::event::{Event as TerminalEvent, KeyCode, KeyEvent, KeyModifiers};
 use ratatui::Frame;
@@ -21,20 +22,22 @@ use app::{FileBackedAction, FileBackedApp, FileBackedEvent};
 
 #[cfg(test)]
 use file_surface::{
-    ActionSnapshot, RequestSnapshot, TapeRecordV1, agent_output_path, parse_tape_history,
+    ActionSnapshot, RequestSnapshot, agent_output_path, parse_tape_history,
     request_snapshot_to_pending_yield, sync_actions_from_snapshots,
 };
 use file_surface::{
-    hydrate_and_open_tails, spawn_action_watch, spawn_output_tail, spawn_request_watch,
-    spawn_tape_watch, spawn_terminal_events, spawn_ui_watch, sync_actions_from_files,
-    sync_requests_from_files, write_agent_input, write_interrupt, write_machine_ctl,
+    TapeRecordV1, current_root_agent_pid, hydrate_and_open_tails, reattach_to_current_agent,
+    spawn_action_watch, spawn_output_tail, spawn_request_watch, spawn_tape_watch,
+    spawn_terminal_events, spawn_ui_watch, sync_actions_from_files, sync_requests_from_files,
+    tail_with_history, write_agent_input, write_interrupt, write_machine_ctl,
     write_request_response,
 };
 
 use crate::completion::{self, CompletionCandidate};
 use crate::composer::{Composer, load_history};
+use crate::history::HistoryCell;
 #[cfg(test)]
-use crate::history::{HistoryCell, PendingYieldCell, RenderOpts, RunningTool, ToolStatus};
+use crate::history::{PendingYieldCell, RenderOpts, RunningTool, ToolStatus};
 use crate::terminal::{TerminalSession, terminal_capability_error};
 use crate::transcript_ui::style_transcript_line;
 
@@ -86,6 +89,13 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
         let history = load_history(history_path, crate::HISTORY_LIMIT);
         app.composer = Composer::with_history(history, Some(history_path.clone()));
     }
+    let follows_root_agent = config.agent_path == "/agent/root";
+    let root_agent_pid = if follows_root_agent {
+        current_root_agent_pid(&shell).await?
+    } else {
+        None
+    };
+    let mut pending_root_agent_turn: Option<(String, bool)> = None;
     let watch_tails = hydrate_and_open_tails(&shell, &config.agent_path, &mut app).await?;
 
     let mut terminal = TerminalSession::enter()?;
@@ -94,31 +104,12 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
     let (tx, mut rx) = tokio::sync::mpsc::channel::<FileBackedEvent>(128);
     spawn_terminal_events(tx.clone());
 
-    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-    let output_task = tokio::spawn(spawn_output_tail(
-        watch_tails.output,
-        tx.clone(),
-        shutdown_rx.clone(),
-    ));
-    let request_task = tokio::spawn(spawn_request_watch(
-        watch_tails.requests,
-        tx.clone(),
-        shutdown_rx.clone(),
-    ));
-    let action_task = tokio::spawn(spawn_action_watch(
-        watch_tails.actions,
-        tx.clone(),
-        shutdown_rx.clone(),
-    ));
-    let ui_task = tokio::spawn(spawn_ui_watch(
-        watch_tails.ui,
-        tx.clone(),
-        shutdown_rx.clone(),
-    ));
-    let tape_task = tokio::spawn(spawn_tape_watch(watch_tails.tape, tx, shutdown_rx));
+    let mut watchers = AgentWatchers::start(watch_tails, tx.clone(), root_agent_pid);
 
     let mut frame_tick = tokio::time::interval(std::time::Duration::from_millis(33));
     frame_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut root_agent_pid_tick = tokio::time::interval(std::time::Duration::from_millis(250));
+    root_agent_pid_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut dirty = true;
 
     loop {
@@ -143,7 +134,21 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                             match action {
                                 FileBackedAction::Submit(text) => {
                                     match write_agent_input(&shell, &app.agent_path, &text).await {
-                                        Ok(()) => app.notice = None,
+                                        Ok(()) => {
+                                            app.notice = None;
+                                            if follows_root_agent {
+                                                pending_root_agent_turn = Some((text.clone(), false));
+                                                watchers
+                                                    .refresh_root_agent_attachment(
+                                                    &shell,
+                                                    &config.agent_path,
+                                                    &mut app,
+                                                    Some(&text),
+                                                    &tx,
+                                                )
+                                                .await;
+                                            }
+                                        }
                                         Err(err) => app.push_error(format!("submit failed: {err:#}")),
                                     }
                                 }
@@ -175,6 +180,33 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                         }
                     }
                 }
+                if follows_root_agent {
+                    observe_root_agent_activity(
+                        &mut pending_root_agent_turn,
+                        app.activity.state,
+                        &app.transcript,
+                    );
+                }
+                dirty = true;
+            }
+            _ = root_agent_pid_tick.tick(), if follows_root_agent && pending_root_agent_turn.is_some() => {
+                let submitted_input = pending_root_agent_turn
+                    .as_ref()
+                    .map(|(text, _)| text.as_str());
+                watchers
+                    .refresh_root_agent_attachment(
+                    &shell,
+                    &config.agent_path,
+                    &mut app,
+                    submitted_input,
+                    &tx,
+                )
+                .await;
+                observe_root_agent_activity(
+                    &mut pending_root_agent_turn,
+                    app.activity.state,
+                    &app.transcript,
+                );
                 dirty = true;
             }
             _ = frame_tick.tick() => {
@@ -192,14 +224,399 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
         }
     }
 
-    let _ = shutdown_tx.send(true);
-    let _ = output_task.await;
-    let _ = request_task.await;
-    let _ = action_task.await;
-    let _ = ui_task.await;
-    let _ = tape_task.await;
+    watchers.stop().await;
 
     Ok(())
+}
+
+struct AgentWatchers {
+    shutdown: tokio::sync::watch::Sender<bool>,
+    tasks: Vec<tokio::task::JoinHandle<Result<()>>>,
+    root_agent_pid: Option<u64>,
+    pid_refresh_failed: bool,
+}
+
+fn observe_root_agent_activity(
+    pending_turn: &mut Option<(String, bool)>,
+    activity: UiActivityState,
+    transcript: &[HistoryCell],
+) {
+    if let Some((input, observed_active)) = pending_turn {
+        match activity {
+            UiActivityState::Running | UiActivityState::Paused => *observed_active = true,
+            UiActivityState::Idle
+                if *observed_active || root_agent_turn_has_outcome(transcript, input) =>
+            {
+                *pending_turn = None;
+            }
+            UiActivityState::Idle => {}
+        }
+    }
+}
+
+fn root_agent_turn_has_outcome(transcript: &[HistoryCell], input: &str) -> bool {
+    let Some(user_index) = transcript
+        .iter()
+        .rposition(|cell| matches!(cell, HistoryCell::User(text) if text == input))
+    else {
+        return false;
+    };
+
+    transcript[user_index + 1..]
+        .iter()
+        .any(|cell| matches!(cell, HistoryCell::Assistant(_) | HistoryCell::Error(_)))
+}
+
+impl AgentWatchers {
+    fn start(
+        tails: file_surface::WatchTails,
+        tx: tokio::sync::mpsc::Sender<FileBackedEvent>,
+        root_agent_pid: Option<u64>,
+    ) -> Self {
+        let (shutdown, shutdown_rx) = tokio::sync::watch::channel(false);
+        let tasks = vec![
+            tokio::spawn(spawn_output_tail(
+                tails.output,
+                tx.clone(),
+                shutdown_rx.clone(),
+            )),
+            tokio::spawn(spawn_request_watch(
+                tails.requests,
+                tx.clone(),
+                shutdown_rx.clone(),
+            )),
+            tokio::spawn(spawn_action_watch(
+                tails.actions,
+                tx.clone(),
+                shutdown_rx.clone(),
+            )),
+            tokio::spawn(spawn_ui_watch(tails.ui, tx.clone(), shutdown_rx.clone())),
+            tokio::spawn(spawn_tape_watch(tails.tape, tx, shutdown_rx)),
+        ];
+        Self {
+            shutdown,
+            tasks,
+            root_agent_pid,
+            pid_refresh_failed: false,
+        }
+    }
+
+    async fn refresh_root_agent_attachment(
+        &mut self,
+        shell: &alan_shell::Shell,
+        agent_path: &str,
+        app: &mut FileBackedApp,
+        submitted_input: Option<&str>,
+        tx: &tokio::sync::mpsc::Sender<FileBackedEvent>,
+    ) {
+        match current_root_agent_pid(shell).await {
+            Ok(Some(pid)) if self.root_agent_pid != Some(pid) => {
+                self.pid_refresh_failed = false;
+                self.stop().await;
+                match reattach_to_current_agent(shell, agent_path, app, submitted_input).await {
+                    Ok(tails) => *self = Self::start(tails, tx.clone(), Some(pid)),
+                    Err(err) => {
+                        self.root_agent_pid = None;
+                        app.push_error(format!("Root Agent reattach failed: {err:#}"));
+                    }
+                }
+            }
+            Ok(pid) => {
+                self.root_agent_pid = pid;
+                self.pid_refresh_failed = false;
+            }
+            Err(err) if !self.pid_refresh_failed => {
+                self.pid_refresh_failed = true;
+                app.push_error(format!("Root Agent identity refresh failed: {err:#}"));
+            }
+            Err(_) => {}
+        }
+    }
+
+    async fn stop(&mut self) {
+        let _ = self.shutdown.send(true);
+        for task in self.tasks.drain(..) {
+            let _ = task.await;
+        }
+    }
+}
+
+/// Run one task from redirected stdin and write its final Agent answer to stdout.
+pub async fn run_stdio_task(
+    root_transport: InProcessTransport,
+    agent_path: impl Into<String>,
+    input: &str,
+) -> Result<()> {
+    use tokio::io::AsyncWriteExt;
+
+    if input.trim().is_empty() {
+        bail!("stdin did not contain an Agent task");
+    }
+
+    let agent_path = agent_path.into();
+    let shell = alan_shell::Shell::new(root_transport);
+    let mut root_agent_pid = current_root_agent_pid(&shell).await?;
+    let activity_path = format!("{agent_path}/machine/ui/activity");
+    let activity: UiActivitySnapshot = serde_json::from_slice(
+        &shell
+            .cat(&activity_path)
+            .await
+            .map_err(|err| anyhow::anyhow!("read Agent activity failed: {err:?}"))?,
+    )
+    .map_err(|err| anyhow::anyhow!("parse Agent activity failed: {err}"))?;
+    match activity.state {
+        UiActivityState::Idle => {}
+        UiActivityState::Running => {
+            bail!("Root Agent is already working; retry after it finishes")
+        }
+        UiActivityState::Paused => {
+            bail!("Root Agent is waiting for interactive input; use the TTY renderer")
+        }
+    }
+
+    // ponytail: the input stream has no request IDs, so refuse an already-busy
+    // shared Agent; add correlation metadata if concurrent stdio tasks matter.
+    let tape_path = format!("{agent_path}/machine/tape");
+    let ui_events_path = format!("{agent_path}/machine/ui/events");
+    let (mut tape_tail, _) = tail_with_history(&shell, &tape_path).await?;
+    let (mut ui_tail, _) = tail_with_history(&shell, &ui_events_path).await?;
+
+    let result = wait_for_stdio_answer(
+        &shell,
+        &agent_path,
+        input,
+        &mut tape_tail,
+        &mut ui_tail,
+        &mut root_agent_pid,
+    )
+    .await;
+    let tape_close = tape_tail.close().await;
+    let ui_close = ui_tail.close().await;
+    let answer = result?;
+    tape_close.map_err(|err| anyhow::anyhow!("close Agent tape tail failed: {err:?}"))?;
+    ui_close.map_err(|err| anyhow::anyhow!("close Agent UI tail failed: {err:?}"))?;
+
+    let mut stdout = tokio::io::stdout();
+    stdout.write_all(answer.as_bytes()).await?;
+    if !answer.ends_with('\n') {
+        stdout.write_all(b"\n").await?;
+    }
+    stdout.flush().await?;
+    Ok(())
+}
+
+async fn wait_for_stdio_answer(
+    shell: &alan_shell::Shell,
+    agent_path: &str,
+    input: &str,
+    tape_tail: &mut alan_shell::Tail,
+    ui_tail: &mut alan_shell::Tail,
+    root_agent_pid: &mut Option<u64>,
+) -> Result<String> {
+    let mut tape_pending = Vec::new();
+    let mut ui_pending = Vec::new();
+    let mut task_seen = false;
+    let mut assistant_answer = None;
+    let mut activity_state = None;
+    let mut task_error: Option<String> = None;
+    let deadline = tokio::time::sleep(std::time::Duration::from_secs(300));
+    tokio::pin!(deadline);
+    let mut root_agent_pid_tick = tokio::time::interval(std::time::Duration::from_millis(250));
+    root_agent_pid_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+    write_agent_input(shell, agent_path, input).await?;
+
+    loop {
+        tokio::select! {
+            bytes = tape_tail.read(4096) => {
+                let bytes = bytes.map_err(|err| anyhow::anyhow!("read Agent tape failed: {err:?}"))?;
+                if bytes.is_empty() {
+                    bail!("Agent tape closed before the task completed");
+                }
+                tape_pending.extend_from_slice(&bytes);
+                for line in drain_lines(&mut tape_pending) {
+                    let Ok(record) = serde_json::from_slice::<TapeRecordV1>(&line) else {
+                        continue;
+                    };
+                    if record.kind != "message" {
+                        continue;
+                    }
+                    if !task_seen {
+                        task_seen = record.role == "user" && record.content == input;
+                    } else if record.role == "assistant" {
+                        assistant_answer = Some(record.content);
+                    }
+                }
+                if task_seen && activity_state == Some(UiActivityState::Idle) {
+                    if let Some(answer) = assistant_answer.take() {
+                        return Ok(answer);
+                    }
+                    if let Some(message) = task_error.take() {
+                        bail!("Agent task failed: {message}");
+                    }
+                }
+            }
+            bytes = ui_tail.read(4096) => {
+                let bytes = bytes.map_err(|err| anyhow::anyhow!("read Agent UI events failed: {err:?}"))?;
+                if bytes.is_empty() {
+                    bail!("Agent UI event stream closed before the task completed");
+                }
+                ui_pending.extend_from_slice(&bytes);
+                for line in drain_lines(&mut ui_pending) {
+                    let event = serde_json::from_slice::<UiEvent>(&line)
+                        .map_err(|err| anyhow::anyhow!("parse Agent UI event failed: {err}"))?;
+                    match event {
+                        UiEvent::Activity { snapshot } => activity_state = Some(snapshot.state),
+                        UiEvent::Error { message, .. } => task_error = Some(message),
+                        UiEvent::Plan { .. } | UiEvent::Thinking { .. } | UiEvent::Notice { .. } => {}
+                    }
+                }
+                if activity_state == Some(UiActivityState::Paused) {
+                    bail!("Agent task needs interactive input; attach with the TTY renderer");
+                }
+                if activity_state == Some(UiActivityState::Idle) {
+                    if task_seen && let Some(answer) = assistant_answer.take() {
+                        return Ok(answer);
+                    }
+                    if let Some(message) = task_error.take() {
+                        bail!("Agent task failed: {message}");
+                    }
+                }
+            }
+            _ = &mut deadline => bail!("timed out waiting for the Root Agent task"),
+            _ = root_agent_pid_tick.tick() => {
+                if let Some(pid) = current_root_agent_pid(shell).await?
+                    && *root_agent_pid != Some(pid)
+                {
+                    let (new_tape_tail, tape_history) =
+                        tail_with_history(shell, &format!("{agent_path}/machine/tape")).await?;
+                    let (new_ui_tail, ui_history) =
+                        tail_with_history(shell, &format!("{agent_path}/machine/ui/events")).await?;
+                    std::mem::replace(tape_tail, new_tape_tail).close().await
+                        .map_err(|err| anyhow::anyhow!("close old Agent tape tail failed: {err:?}"))?;
+                    std::mem::replace(ui_tail, new_ui_tail).close().await
+                        .map_err(|err| anyhow::anyhow!("close old Agent UI tail failed: {err:?}"))?;
+
+                    let snapshot = stdio_task_snapshot(shell, agent_path, input, &tape_history, &ui_history).await?;
+                    task_seen = snapshot.task_seen;
+                    assistant_answer = snapshot.assistant_answer;
+                    activity_state = snapshot.activity_state;
+                    task_error = snapshot.task_error;
+                    tape_pending.clear();
+                    ui_pending.clear();
+                    *root_agent_pid = Some(pid);
+
+                    if activity_state == Some(UiActivityState::Paused) {
+                        bail!("Agent task needs interactive input; attach with the TTY renderer");
+                    }
+                    if activity_state == Some(UiActivityState::Idle) {
+                        if task_seen && let Some(answer) = assistant_answer.take() {
+                            return Ok(answer);
+                        }
+                        if let Some(message) = task_error.take() {
+                            bail!("Agent task failed: {message}");
+                        }
+                    }
+                }
+            }
+            signal = tokio::signal::ctrl_c() => {
+                signal?;
+                if activity_state == Some(UiActivityState::Running) {
+                    let _ = write_machine_ctl(shell, agent_path, "interrupt").await;
+                }
+                bail!("Agent task interrupted");
+            }
+        }
+    }
+}
+
+struct StdioTaskSnapshot {
+    task_seen: bool,
+    assistant_answer: Option<String>,
+    activity_state: Option<UiActivityState>,
+    task_error: Option<String>,
+}
+
+async fn stdio_task_snapshot(
+    shell: &alan_shell::Shell,
+    agent_path: &str,
+    input: &str,
+    tape_history: &[u8],
+    ui_history: &[u8],
+) -> Result<StdioTaskSnapshot> {
+    let mut snapshot = stdio_task_snapshot_from_history(input, tape_history, ui_history)?;
+    if snapshot.activity_state.is_none() {
+        let raw = shell
+            .cat(&format!("{agent_path}/machine/ui/activity"))
+            .await
+            .map_err(|err| anyhow::anyhow!("read Agent activity failed: {err:?}"))?;
+        snapshot.activity_state = Some(
+            serde_json::from_slice::<UiActivitySnapshot>(&raw)
+                .context("parse Agent activity")?
+                .state,
+        );
+    }
+    Ok(snapshot)
+}
+
+fn stdio_task_snapshot_from_history(
+    input: &str,
+    tape_history: &[u8],
+    ui_history: &[u8],
+) -> Result<StdioTaskSnapshot> {
+    let tape_history = std::str::from_utf8(tape_history).context("machine/tape is not utf8")?;
+    let records = tape_history
+        .lines()
+        .filter_map(|line| serde_json::from_str::<TapeRecordV1>(line).ok())
+        .filter(|record| record.kind == "message")
+        .collect::<Vec<_>>();
+    let task_index = records
+        .iter()
+        .rposition(|record| record.role == "user" && record.content == input);
+    let assistant_answer = task_index.and_then(|index| {
+        let following = &records[index + 1..];
+        let turn_end = following
+            .iter()
+            .position(|record| record.role == "user")
+            .unwrap_or(following.len());
+        following[..turn_end]
+            .iter()
+            .rev()
+            .find(|record| record.role == "assistant")
+            .map(|record| record.content.clone())
+    });
+
+    let mut activity_state = None;
+    let mut task_error = None;
+    let ui_history = std::str::from_utf8(ui_history).context("ui events are not utf8")?;
+    for line in ui_history.lines().filter(|line| !line.trim().is_empty()) {
+        match serde_json::from_str::<UiEvent>(line).context("parse Agent UI event")? {
+            UiEvent::Activity { snapshot } => activity_state = Some(snapshot.state),
+            UiEvent::Error { message, .. } => task_error = Some(message),
+            UiEvent::Plan { .. } | UiEvent::Thinking { .. } | UiEvent::Notice { .. } => {}
+        }
+    }
+    Ok(StdioTaskSnapshot {
+        task_seen: task_index.is_some(),
+        assistant_answer,
+        activity_state,
+        task_error,
+    })
+}
+
+fn drain_lines(pending: &mut Vec<u8>) -> Vec<Vec<u8>> {
+    let mut lines = Vec::new();
+    while let Some(newline) = pending.iter().position(|byte| *byte == b'\n') {
+        let mut line = pending.drain(..=newline).collect::<Vec<_>>();
+        line.pop();
+        if line.last() == Some(&b'\r') {
+            line.pop();
+        }
+        if !line.is_empty() {
+            lines.push(line);
+        }
+    }
+    lines
 }
 
 fn draw(frame: &mut Frame<'_>, app: &FileBackedApp) {
@@ -327,5 +744,7 @@ fn activity_line(app: &FileBackedApp, label: &str) -> Line<'static> {
     ])
 }
 
+#[cfg(test)]
+mod stdio_tests;
 #[cfg(test)]
 mod tests;

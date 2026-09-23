@@ -7,11 +7,13 @@ The prior 33-task editable-buffer/run/package design is superseded inventory,
 not an implementation contract.
 
 The first slice attaches the terminal CLI to the existing Host-managed
-`/agent/root` using the existing file-backed `alan-terminal-ui`. TTY text is an
-Agent task; it is not shell syntax. Non-TTY calls retain the generic
-StdioDriver. Existing Connection, Tool governance, Host Mount, sandbox, Process
-and durable evidence owners remain unchanged. No new evaluator Process or
-execution manager is authorized.
+`/agent/root` using the existing file-backed `alan-terminal-ui`. Ordinary TTY
+text is an Agent task; a leading `!` explicitly requests the exact remainder
+through the existing `bash` Tool, with normal governance intact. Non-TTY stdin
+is one Agent task with answer on stdout, diagnostics on stderr, and task outcome
+in the exit status. Existing Connection, Tool governance, Host Mount, sandbox,
+Process and durable evidence owners remain unchanged. No new evaluator Process
+or execution manager is authorized.
 
 The old `editable-buffer-file-server` and `editable-buffer-interaction` deltas
 are removed because their behavior is not part of this tracer bullet. Generic

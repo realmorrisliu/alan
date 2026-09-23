@@ -41,6 +41,76 @@ fn parse_tape_history_restores_user_and_assistant_messages() {
 }
 
 #[test]
+fn root_process_reattach_preserves_prior_transcript_and_adds_current_turn() {
+    let mut app = FileBackedApp::new("/agent/root".to_string());
+    app.transcript = vec![
+        HistoryCell::User("previous task".to_string()),
+        HistoryCell::Assistant("previous answer".to_string()),
+        HistoryCell::User("current task".to_string()),
+    ];
+    app.action_cells.insert("a-current".to_string(), 1);
+
+    let attached = app.merge_reconnected_history(
+        vec![
+            HistoryCell::User("current task".to_string()),
+            HistoryCell::Tool {
+                title: "bash".to_string(),
+                status: ToolStatus::Complete,
+                preview: Some("read complete".to_string()),
+                presentation: None,
+            },
+            HistoryCell::Assistant("current answer".to_string()),
+        ],
+        "current task",
+    );
+
+    assert!(attached);
+    assert_eq!(
+        app.transcript,
+        vec![
+            HistoryCell::User("previous task".to_string()),
+            HistoryCell::Assistant("previous answer".to_string()),
+            HistoryCell::User("current task".to_string()),
+            HistoryCell::Tool {
+                title: "bash".to_string(),
+                status: ToolStatus::Complete,
+                preview: Some("read complete".to_string()),
+                presentation: None,
+            },
+            HistoryCell::Assistant("current answer".to_string()),
+        ]
+    );
+    assert_eq!(app.action_cells.get("a-current"), Some(&3));
+}
+
+#[test]
+fn root_agent_pid_polling_stops_after_the_turn_returns_to_idle() {
+    let mut pending = Some(("current task".to_string(), false));
+
+    observe_root_agent_activity(&mut pending, UiActivityState::Idle, &[]);
+    assert_eq!(pending, Some(("current task".to_string(), false)));
+
+    observe_root_agent_activity(&mut pending, UiActivityState::Running, &[]);
+    assert_eq!(pending, Some(("current task".to_string(), true)));
+
+    observe_root_agent_activity(&mut pending, UiActivityState::Idle, &[]);
+    assert_eq!(pending, None);
+}
+
+#[test]
+fn root_agent_pid_polling_stops_when_fast_turn_finishes_before_running_is_seen() {
+    let mut pending = Some(("current task".to_string(), false));
+    let transcript = vec![
+        HistoryCell::User("current task".to_string()),
+        HistoryCell::Assistant("current answer".to_string()),
+    ];
+
+    observe_root_agent_activity(&mut pending, UiActivityState::Idle, &transcript);
+
+    assert_eq!(pending, None);
+}
+
+#[test]
 fn request_snapshot_maps_confirmation_payload() {
     let pending = request_snapshot_to_pending_yield(RequestSnapshot {
         id: "r1".to_string(),
@@ -263,6 +333,22 @@ fn transcript_renders_error_style() {
 
     assert_eq!(cell.symbol(), "e");
     assert_eq!(cell.fg, Color::Red);
+}
+
+#[test]
+fn recoverable_error_is_kept_in_the_transcript() {
+    let mut app = FileBackedApp::new("/agent/1".to_string());
+
+    app.apply_ui_event(UiEvent::Error {
+        message: "provider request failed".to_string(),
+        recoverable: true,
+    });
+
+    assert_eq!(
+        app.transcript,
+        vec![HistoryCell::Error("provider request failed".to_string())]
+    );
+    assert_eq!(app.notice.as_deref(), Some("provider request failed"));
 }
 
 #[test]
@@ -813,4 +899,88 @@ async fn response_missed_at_attach_is_recovered_by_the_tape_watcher() {
         vec!["hi"],
         "the tape watcher must recover a response the output tail missed"
     );
+}
+
+#[tokio::test]
+async fn root_process_reconnect_hydrates_the_new_tape_and_keeps_old_transcript() {
+    let proc = Arc::new(ProcFs::new());
+    let proc_server: Arc<dyn FileServer> = proc.clone();
+    let proc_events: Arc<dyn ProcessEventSource> = proc.clone();
+    let agent_root = Arc::new(AgentRootFs::new_with_process_events(
+        proc_server,
+        proc_events,
+    ));
+    let mut namespace = Namespace::new();
+    namespace.mount("/proc", InProcessTransport::new(proc), Access::ReadWrite);
+    namespace.mount(
+        "/agent",
+        InProcessTransport::new(agent_root.clone()),
+        Access::ReadWrite,
+    );
+    let shell = alan_shell::Shell::new(InProcessTransport::new(Arc::new(MountFs::new(namespace))));
+    let spawn_agent = || {
+        shell.spawn(
+            r#"{"executable":"/bin/alan-agent","args":[],"namespace":{"generation": 0,"mounts":[]}}"#,
+        )
+    };
+
+    let old_pid = spawn_agent().await.unwrap();
+    agent_root
+        .bind_process(old_pid.clone(), Arc::new(AgentFs::new()))
+        .await;
+    agent_root.set_root_process(old_pid).await;
+    shell
+        .write(
+            "/agent/root/machine/tape",
+            b"{\"version\":1,\"kind\":\"message\",\"role\":\"user\",\"content\":\"previous task\"}\n{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"previous answer\"}\n",
+        )
+        .await
+        .unwrap();
+
+    let mut app = FileBackedApp::new("/agent/root".to_string());
+    let old_tails = hydrate_and_open_tails(&shell, "/agent/root", &mut app)
+        .await
+        .unwrap();
+    app.transcript
+        .push(HistoryCell::User("current task".to_string()));
+    app.reconciler.on_local_submit("current task");
+
+    let new_pid = spawn_agent().await.unwrap();
+    agent_root
+        .bind_process(new_pid.clone(), Arc::new(AgentFs::new()))
+        .await;
+    agent_root.set_root_process(new_pid).await;
+    shell
+        .write(
+            "/agent/root/machine/tape",
+            b"{\"version\":1,\"kind\":\"message\",\"role\":\"user\",\"content\":\"current task\"}\n{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"current answer\"}\n",
+        )
+        .await
+        .unwrap();
+
+    old_tails.output.close().await.unwrap();
+    old_tails.requests.close().await.unwrap();
+    old_tails.actions.close().await.unwrap();
+    old_tails.ui.close().await.unwrap();
+    old_tails.tape.close().await.unwrap();
+
+    let tails = reattach_to_current_agent(&shell, "/agent/root", &mut app, Some("current task"))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        app.transcript,
+        vec![
+            HistoryCell::User("previous task".to_string()),
+            HistoryCell::Assistant("previous answer".to_string()),
+            HistoryCell::User("current task".to_string()),
+            HistoryCell::Assistant("current answer".to_string()),
+        ]
+    );
+
+    tails.output.close().await.unwrap();
+    tails.requests.close().await.unwrap();
+    tails.actions.close().await.unwrap();
+    tails.ui.close().await.unwrap();
+    tails.tape.close().await.unwrap();
 }

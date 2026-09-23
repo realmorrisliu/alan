@@ -13,7 +13,7 @@ alan-knowledge|
 alan-llm|alan-agent-protocol alan-auth
 alan-llmfs|alan-ap alan-llm
 alan-memfs|alan-ap alan-knowledge
-alan-os-host|alan-agent-engine alan-agentfs alan-ap alan-hostfs alan-kernel alan-llm alan-llmfs alan-routefs alan-service-manager alan-shell
+alan-os-host|alan-agent-engine alan-agentfs alan-ap alan-hostfs alan-kernel alan-llm alan-llmfs alan-routefs alan-service-manager alan-shell alan-tools
 alan-routefs|alan-ap
 alan-service-manager|alan-agent-engine alan-agentfs alan-ap alan-hostfs alan-kernel alan-llm alan-llmfs alan-routefs alan-shell
 alan-shell|alan-ap

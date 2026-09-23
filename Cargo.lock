@@ -277,6 +277,7 @@ dependencies = [
  "alan-routefs",
  "alan-service-manager",
  "alan-shell",
+ "alan-tools",
  "anyhow",
  "async-trait",
  "dirs",
