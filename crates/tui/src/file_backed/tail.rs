@@ -239,6 +239,80 @@ pub(super) async fn open_stdio_tail_attachment(
     bail!("Root Agent kept changing while opening one-shot AgentFS streams; retry")
 }
 
+pub(super) async fn open_stdio_tail_attachment_when_idle(
+    shell: &alan_shell::Shell,
+    root_agent_path: &str,
+) -> Result<StdioTailAttachment> {
+    for attempt in 0..ROOT_AGENT_ATTACH_ATTEMPTS {
+        if let Some(attachment) =
+            try_open_stdio_tail_attachment_when_idle(shell, root_agent_path).await?
+        {
+            return Ok(attachment);
+        }
+        if attempt + 1 < ROOT_AGENT_ATTACH_ATTEMPTS {
+            tokio::time::sleep(ROOT_AGENT_ATTACH_RETRY_DELAY).await;
+        }
+    }
+    bail!("Root Agent kept changing while preparing one-shot attachment; retry")
+}
+
+async fn try_open_stdio_tail_attachment_when_idle(
+    shell: &alan_shell::Shell,
+    root_agent_path: &str,
+) -> Result<Option<StdioTailAttachment>> {
+    let (root_agent_pid, activity) = wait_for_root_agent_activity(shell, root_agent_path).await?;
+    if current_root_agent_pid(shell).await? != Some(root_agent_pid) {
+        return Ok(None);
+    }
+    if let Err(error) = super::require_root_agent_idle(activity.state) {
+        return if current_root_agent_pid(shell).await? == Some(root_agent_pid) {
+            Err(error)
+        } else {
+            Ok(None)
+        };
+    }
+
+    let attachment = match open_stdio_tail_attachment(shell, root_agent_path).await {
+        Ok(attachment) => attachment,
+        Err(error) => {
+            return if current_root_agent_pid(shell).await? == Some(root_agent_pid) {
+                Err(error)
+            } else {
+                Ok(None)
+            };
+        }
+    };
+    if attachment.root_agent_pid != root_agent_pid {
+        let _ = close_stdio_tails(attachment.tape_tail, attachment.ui_tail).await;
+        return Ok(None);
+    }
+    if let Err(error) = require_stdio_attachment_idle(shell, &attachment).await {
+        let current_pid = current_root_agent_pid(shell).await;
+        let _ = close_stdio_tails(attachment.tape_tail, attachment.ui_tail).await;
+        return match current_pid {
+            Ok(Some(pid)) if pid == attachment.root_agent_pid => Err(error),
+            Ok(_) => Ok(None),
+            Err(pid_error) => Err(pid_error),
+        };
+    }
+    Ok(Some(attachment))
+}
+
+async fn require_stdio_attachment_idle(
+    shell: &alan_shell::Shell,
+    attachment: &StdioTailAttachment,
+) -> Result<()> {
+    let activity =
+        super::file_surface::read_activity_snapshot(shell, &attachment.agent_process_path)
+            .await
+            .context("read Agent activity failed")?;
+    super::require_root_agent_idle(activity.state)?;
+    if current_root_agent_pid(shell).await? != Some(attachment.root_agent_pid) {
+        bail!("Root Agent changed before the task could be submitted; retry")
+    }
+    Ok(())
+}
+
 pub(super) async fn close_stdio_tails(
     tape_tail: alan_shell::Tail,
     ui_tail: alan_shell::Tail,

@@ -37,9 +37,12 @@ Runtime or select an Agent Definition as Host startup behavior.
 #### Scenario: One-shot starts during Root Agent PID handoff
 - **WHEN** redirected `alan` starts while the Service Manager publishes a
   detached old PID or temporarily publishes an empty or zero PID during
-  supervised restart
-- **THEN** it retries stale AgentFS hydration and unavailable PID lookup for a
-  bounded startup window, attaching to the replacement once ready
+  supervised restart, or the PID changes between initial activity snapshot,
+  tail attachment, and final idle verification
+- **THEN** it retries the complete activity/tail/idle attachment sequence
+  within a bounded startup window, attaching to the replacement once ready
+- **AND** it closes partial tails before retrying and preserves same-PID busy
+  or attachment errors
 - **AND** it reports the attach error after retries are exhausted without
   submitting task input
 

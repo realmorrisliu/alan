@@ -4,7 +4,7 @@ mod faulting_agentfs;
 use alan_agentfs::{AgentFs, AgentRootFs};
 use alan_ap::ProcessEventSource;
 use alan_kernel::{Access, LiveNamespace, MountFs, Namespace, ProcFs};
-pub(crate) use faulting_agentfs::CloseTailOnPid;
+pub(crate) use faulting_agentfs::FaultingFileServer;
 use std::sync::Arc;
 
 pub(super) const PID_MOUNT: &str = "/mnt/service-manager/units/root-agent";
@@ -743,7 +743,7 @@ fn one_shot_result_waits_for_seen_task_and_idle_activity() {
 #[tokio::test(start_paused = true)]
 async fn one_shot_waits_without_timeout_and_rebinds_when_a_tail_closes_before_pid_poll() {
     let (shell, agent_root, live_namespace, old_pid) = live_root_agent().await;
-    let tail_closer = Arc::new(CloseTailOnPid::new(agent_root.clone()));
+    let tail_closer = Arc::new(FaultingFileServer::new(agent_root.clone()));
     live_namespace.replace_mount(
         "/agent",
         InProcessTransport::new(tail_closer.clone()),

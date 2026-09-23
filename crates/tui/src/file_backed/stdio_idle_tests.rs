@@ -81,8 +81,9 @@ async fn one_shot_tail_open_retries_a_stale_published_root_agent_pid() {
     assert!(agent_root.unbind_process(&old_pid).await);
 
     let attach_shell = shell.clone();
-    let mut attaching =
-        tokio::spawn(async move { open_stdio_tail_attachment(&attach_shell, "/agent/root").await });
+    let mut attaching = tokio::spawn(async move {
+        tail::open_stdio_tail_attachment(&attach_shell, "/agent/root").await
+    });
     tokio::select! {
         _ = &mut attaching => panic!("one-shot tail open failed on the detached but published PID"),
         _ = tokio::time::sleep(std::time::Duration::from_millis(25)) => {}
@@ -113,9 +114,55 @@ async fn one_shot_tail_open_retries_a_stale_published_root_agent_pid() {
 }
 
 #[tokio::test]
+async fn one_shot_start_retries_the_complete_attach_when_root_agent_changes_between_phases() {
+    let (shell, agent_root, namespace, old_pid) = stdio_tests::live_root_agent().await;
+    let pid_fs = std::sync::Arc::new(stdio_tests::FaultingFileServer::new(std::sync::Arc::new(
+        alan_ap::reference::MemFs::with_read_only_file("pid", format!("{old_pid}\n").into_bytes()),
+    )));
+    let (read_reached, resume_read) = pid_fs.pause_read_after_matching_reads("pid", 3);
+    namespace.replace_mount(
+        stdio_tests::PID_MOUNT,
+        InProcessTransport::new(pid_fs),
+        alan_kernel::Access::ReadOnly,
+    );
+
+    let attach_shell = shell.clone();
+    let mut attaching = tokio::spawn(async move {
+        open_stdio_tail_attachment_when_idle(&attach_shell, "/agent/root").await
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(2), read_reached)
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert!(agent_root.unbind_process(&old_pid).await);
+    publish_root_agent_pid(&namespace, 0);
+    let new_pid = shell.spawn(stdio_tests::EXEC_SPEC).await.unwrap();
+    agent_root
+        .bind_process(
+            new_pid.clone(),
+            std::sync::Arc::new(alan_agentfs::AgentFs::new()),
+        )
+        .await;
+    agent_root.set_root_process(new_pid.clone()).await;
+    publish_root_agent_pid(&namespace, &new_pid);
+    resume_read.send(()).unwrap();
+
+    let attachment = tokio::time::timeout(std::time::Duration::from_secs(2), &mut attaching)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    assert_eq!(attachment.root_agent_pid, new_pid.parse::<u64>().unwrap());
+    close_stdio_tails(attachment.tape_tail, attachment.ui_tail)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
 async fn one_shot_rebases_tails_after_the_previous_turn_reaches_idle() {
     let (shell, _agent_root, _live_namespace, pid) = stdio_tests::live_root_agent().await;
-    let previous = open_stdio_tail_attachment(&shell, "/agent/root")
+    let previous = tail::open_stdio_tail_attachment(&shell, "/agent/root")
         .await
         .unwrap();
     let agent_path = format!("/agent/{pid}");
@@ -213,7 +260,7 @@ async fn one_shot_rebases_tails_after_the_previous_turn_reaches_idle() {
 #[tokio::test]
 async fn one_shot_recovers_when_final_tape_read_races_root_agent_restart() {
     let (shell, agent_root, namespace, old_pid) = stdio_tests::live_root_agent().await;
-    let tail_closer = std::sync::Arc::new(stdio_tests::CloseTailOnPid::new(agent_root.clone()));
+    let tail_closer = std::sync::Arc::new(stdio_tests::FaultingFileServer::new(agent_root.clone()));
     namespace.replace_mount(
         "/agent",
         alan_ap::InProcessTransport::new(tail_closer.clone()),

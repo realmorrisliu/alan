@@ -1,5 +1,5 @@
 use super::*;
-use crate::file_backed::stdio_tests::{CloseTailOnPid, EXEC_SPEC, PID_MOUNT, live_root_agent};
+use crate::file_backed::stdio_tests::{EXEC_SPEC, FaultingFileServer, PID_MOUNT, live_root_agent};
 use crate::history::ToolStatus;
 use alan_agentfs::AgentFs;
 use alan_ap::{Fid, FileServer, InProcessTransport, OpenMode};
@@ -76,7 +76,7 @@ async fn renderer_hydration_retries_all_streams_after_root_pid_changes() {
         .await
         .unwrap();
 
-    let interceptor = Arc::new(CloseTailOnPid::new(agent_root.clone()));
+    let interceptor = Arc::new(FaultingFileServer::new(agent_root.clone()));
     namespace.replace_mount(
         "/agent",
         InProcessTransport::new(interceptor.clone()),

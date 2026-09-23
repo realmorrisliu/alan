@@ -11,14 +11,22 @@ struct WalkPause {
     resume: oneshot::Receiver<()>,
 }
 
-pub(crate) struct CloseTailOnPid {
+struct ReadPause {
+    suffix: String,
+    remaining_matches: usize,
+    reached: oneshot::Sender<()>,
+    resume: oneshot::Receiver<()>,
+}
+
+pub(crate) struct FaultingFileServer {
     inner: Arc<dyn FileServer>,
     paths: Mutex<HashMap<Fid, String>>,
     closed_pid: watch::Sender<Option<u64>>,
     walk_pause: Mutex<Option<WalkPause>>,
+    read_pause: Mutex<Option<ReadPause>>,
 }
 
-impl CloseTailOnPid {
+impl FaultingFileServer {
     pub(crate) fn new(inner: Arc<dyn FileServer>) -> Self {
         let (closed_pid, _) = watch::channel(None);
         Self {
@@ -26,6 +34,7 @@ impl CloseTailOnPid {
             paths: Mutex::new(HashMap::new()),
             closed_pid,
             walk_pause: Mutex::new(None),
+            read_pause: Mutex::new(None),
         }
     }
 
@@ -43,8 +52,43 @@ impl CloseTailOnPid {
         (reached_rx, resume_tx)
     }
 
+    pub(crate) fn pause_read_after_matching_reads(
+        &self,
+        suffix: &str,
+        matching_reads: usize,
+    ) -> (oneshot::Receiver<()>, oneshot::Sender<()>) {
+        let (reached_tx, reached_rx) = oneshot::channel();
+        let (resume_tx, resume_rx) = oneshot::channel();
+        *self.read_pause.lock().unwrap() = Some(ReadPause {
+            suffix: suffix.to_string(),
+            remaining_matches: matching_reads.max(1),
+            reached: reached_tx,
+            resume: resume_rx,
+        });
+        (reached_rx, resume_tx)
+    }
+
     pub(crate) fn close(&self, pid: u64) {
         self.closed_pid.send_replace(Some(pid));
+    }
+
+    async fn pause_matching_read(&self, path: &str) {
+        let pause = {
+            let mut pending = self.read_pause.lock().unwrap();
+            let should_pause = pending.as_mut().is_some_and(|pause| {
+                if path.ends_with(&pause.suffix) {
+                    pause.remaining_matches -= 1;
+                    pause.remaining_matches == 0
+                } else {
+                    false
+                }
+            });
+            should_pause.then(|| pending.take()).flatten()
+        };
+        if let Some(pause) = pause {
+            let _ = pause.reached.send(());
+            let _ = pause.resume.await;
+        }
     }
 
     fn path_after(&self, fid: Fid, names: &[String]) -> String {
@@ -66,7 +110,7 @@ impl CloseTailOnPid {
 }
 
 #[async_trait::async_trait]
-impl FileServer for CloseTailOnPid {
+impl FileServer for FaultingFileServer {
     async fn walk(&self, fid: Fid, newfid: Fid, names: &[String]) -> Result<Qid, ErrorCode> {
         let qid = self.inner.walk(fid, newfid, names).await?;
         let path = self.path_after(fid, names);
@@ -106,7 +150,9 @@ impl FileServer for CloseTailOnPid {
             .then(|| path.split('/').next()?.parse::<u64>().ok())
             .flatten()
         else {
-            return self.inner.read(fid, offset, count).await;
+            let bytes = self.inner.read(fid, offset, count).await?;
+            self.pause_matching_read(&path).await;
+            return Ok(bytes);
         };
         let mut closed_pid = self.closed_pid.subscribe();
         loop {
@@ -114,7 +160,11 @@ impl FileServer for CloseTailOnPid {
                 return Err(ErrorCode::Io);
             }
             tokio::select! {
-                result = self.inner.read(fid, offset, count) => return result,
+                result = self.inner.read(fid, offset, count) => {
+                    let bytes = result?;
+                    self.pause_matching_read(&path).await;
+                    return Ok(bytes);
+                },
                 changed = closed_pid.changed() => {
                     if changed.is_err() {
                         return Err(ErrorCode::Io);

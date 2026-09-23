@@ -45,9 +45,12 @@ stdin is a terminal but stdout is redirected, it errors before attaching to the
 Host instead of waiting for terminal EOF. At initial attach, the one-shot
 waiter retries stale-PID activity/tail hydration and an empty Root Agent PID
 twice at 250 ms intervals, then reports the attach error rather than waiting
-indefinitely. It opens tape and UI tails
-against one concrete Root Agent PID, retries the pair if that identity changes
-during attach, and uses that same Process path for submission and observation.
+indefinitely. Initial one-shot attachment retries the complete activity,
+tape/UI-tail, and idle-verification sequence if the published PID changes
+between phases, closing any partial tails before retrying; persistent
+busy-state or same-PID errors remain terminal. It opens tape and UI tails
+against one concrete Root Agent PID and uses that same Process path for
+submission and observation.
 It reopens both tails together if the Root Agent PID changes
 during a task, recovering the matching submitted turn from the replacement
 Process. EOF or an IO error on either tail first triggers a Root Agent PID

@@ -50,7 +50,8 @@ use file_surface::{
     write_machine_ctl, write_request_response,
 };
 use tail::{
-    StdioTailAttachment, close_stdio_tails, current_root_agent_pid, open_stdio_tail_attachment,
+    StdioTailAttachment, close_stdio_tails, current_root_agent_pid,
+    open_stdio_tail_attachment_when_idle,
 };
 
 use crate::completion::{self, CompletionCandidate};
@@ -486,43 +487,6 @@ pub async fn run_stdio_task(
         stdout.write_all(b"\n").await?;
     }
     stdout.flush().await?;
-    Ok(())
-}
-
-async fn open_stdio_tail_attachment_when_idle(
-    shell: &alan_shell::Shell,
-    root_agent_path: &str,
-) -> Result<StdioTailAttachment> {
-    let (root_agent_pid, activity) =
-        tail::wait_for_root_agent_activity(shell, root_agent_path).await?;
-    require_root_agent_idle(activity.state)?;
-    if current_root_agent_pid(shell).await? != Some(root_agent_pid) {
-        bail!("Root Agent changed before the task could be submitted; retry")
-    }
-
-    let attachment = open_stdio_tail_attachment(shell, root_agent_path).await?;
-    if attachment.root_agent_pid != root_agent_pid {
-        let _ = close_stdio_tails(attachment.tape_tail, attachment.ui_tail).await;
-        bail!("Root Agent changed before the task could be submitted; retry")
-    }
-    if let Err(error) = require_stdio_attachment_idle(shell, &attachment).await {
-        let _ = close_stdio_tails(attachment.tape_tail, attachment.ui_tail).await;
-        return Err(error);
-    }
-    Ok(attachment)
-}
-
-async fn require_stdio_attachment_idle(
-    shell: &alan_shell::Shell,
-    attachment: &StdioTailAttachment,
-) -> Result<()> {
-    let activity = file_surface::read_activity_snapshot(shell, &attachment.agent_process_path)
-        .await
-        .context("read Agent activity failed")?;
-    require_root_agent_idle(activity.state)?;
-    if current_root_agent_pid(shell).await? != Some(attachment.root_agent_pid) {
-        bail!("Root Agent changed before the task could be submitted; retry")
-    }
     Ok(())
 }
 

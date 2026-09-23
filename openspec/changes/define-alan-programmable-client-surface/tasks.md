@@ -40,7 +40,9 @@
 - [x] 2.8 Implement and verify terminal-mode selection, one-shot redirected
   stdin/stdout/stderr, Root Agent PID rebinding (including tail closure before
   PID polling, temporary empty and stale published PIDs during supervised
-  restart, and bounded one-shot startup retries), and exit-code behavior. Keep
+  restart, bounded one-shot startup retries, and retrying the complete initial
+  attach when PID changes between activity/tail/idle phases), and exit-code
+  behavior. Keep
   waiting for the task
   outcome without a client-only timeout; persist generation failures as UI
   terminal-error events before idle without requiring tape; recognize
