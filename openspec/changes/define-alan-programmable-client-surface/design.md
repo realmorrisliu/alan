@@ -51,7 +51,9 @@ Tool, without rewriting or adding commands. Tool policy, approval, sandbox, and
 Host Mount boundaries remain authoritative. Product boot registers the
 existing Core Tool catalog and implementations; it does not add a new Tool or
 register the explorer-only Tools. Existing slash UI controls remain renderer
-controls.
+controls. On host-backed sandbox adapters, filesystem operands and redirection
+targets are projected to their authorized Host paths; `echo` and `printf` data
+arguments keep their original namespace text.
 
 The redirected one-shot client waits for task completion or explicit Ctrl-C;
 it does not impose a client-only deadline. A `Running` Activity event establishes
@@ -135,6 +137,8 @@ the repository quality gate so this route cannot silently regress.
   confirm the Agent Process remains running after interruption.
 - Verify `!<command>` requests that exact command through the existing `bash`
   Tool, while policy, approval, sandbox, and Host Mount checks still apply;
+  preserve namespace paths used as `echo`/`printf` data while mapping file
+  operands and redirection targets to the authorized Host Mount;
   verify product boot registers only the existing Core Tool set.
 - Verify redirected stdin is one Agent task, stdout contains only its answer,
   stderr carries diagnostics, and failures produce a nonzero exit code.

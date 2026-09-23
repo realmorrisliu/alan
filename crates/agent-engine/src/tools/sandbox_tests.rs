@@ -1,4 +1,6 @@
 use super::*;
+use crate::tools::reified_namespace::ReifiedMountAccess;
+use std::path::PathBuf;
 use tempfile::TempDir;
 
 #[path = "sandbox/reified_tests.rs"]
@@ -21,6 +23,58 @@ async fn test_sandbox_exec() {
     let result = sandbox.exec("echo hello", temp.path()).await.unwrap();
     assert_eq!(result.stdout.trim(), "hello");
     assert_eq!(result.exit_code, 0);
+}
+
+#[test]
+fn namespace_path_translation_preserves_printf_data_and_maps_file_paths() {
+    let mounts = vec![SandboxHostMount {
+        namespace_path: PathBuf::from("/mnt/project"),
+        host_path: PathBuf::from("/Users/alice/project"),
+        access: ReifiedMountAccess::ReadWrite,
+    }];
+    let translate = |command: &str| {
+        Sandbox::translate_command_path_literals(command, |token| {
+            translate_namespace_shell_token(token, &mounts)
+        })
+    };
+
+    assert_eq!(
+        translate("printf '%s' /mnt/project > /mnt/project/path.txt"),
+        "printf '%s' /mnt/project > /Users/alice/project/path.txt"
+    );
+    assert_eq!(
+        translate("cat /mnt/project/probe.txt"),
+        "cat /Users/alice/project/probe.txt"
+    );
+    let nested = translate("bash -lc \"printf '%s' /mnt/project > /mnt/project/path.txt\"");
+    assert!(nested.contains("/mnt/project > /Users/alice/project/path.txt"));
+}
+
+#[cfg(target_os = "macos")]
+#[tokio::test]
+async fn sandbox_preserves_a_namespace_path_written_as_printf_data() {
+    let mount = TempDir::new().unwrap();
+    let spec = SandboxSpec::from_host_mounts(&[SandboxHostMount {
+        namespace_path: PathBuf::from("/mnt/project"),
+        host_path: mount.path().to_path_buf(),
+        access: ReifiedMountAccess::ReadWrite,
+    }]);
+    let sandbox = Sandbox::from_spec_with_backend(spec, crate::tools::SandboxBackendKind::Seatbelt);
+
+    sandbox
+        .exec_with_timeout_and_capability(
+            "printf '%s' /mnt/project > /mnt/project/path.txt",
+            mount.path(),
+            None,
+            Some(alan_agent_protocol::ToolCapability::Write),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        std::fs::read_to_string(mount.path().join("path.txt")).unwrap(),
+        "/mnt/project"
+    );
 }
 
 #[tokio::test]

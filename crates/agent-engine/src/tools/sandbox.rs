@@ -29,7 +29,8 @@ use path_literals::{
     absolute_path_literal_candidates, is_allowed_absolute_command_path,
     is_file_redirection_operator, lexically_normalize_path,
     looks_like_bare_protected_subpath_token, looks_like_path_token, namespace_path_to_host,
-    path_like_subtokens, translate_namespace_shell_token, translate_reified_shell_token,
+    path_like_subtokens, token_is_data_argument, translate_namespace_shell_token,
+    translate_reified_shell_token,
 };
 use path_safety::{existing_regular_file_has_multiple_links, is_path_guard_reason};
 use shell_syntax::{
@@ -950,6 +951,9 @@ impl Sandbox {
         let mut translated = String::with_capacity(cmd.len());
         let mut last = 0;
         for token in tokens {
+            if token_is_data_argument(cmd, &token) {
+                continue;
+            }
             let Some(rewritten) = translate_token(&token.decoded) else {
                 continue;
             };

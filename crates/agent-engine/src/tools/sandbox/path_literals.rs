@@ -1,7 +1,7 @@
 use super::super::reified_namespace::ReifiedNamespacePlan;
 use super::command_wrappers::is_env_assignment;
 use super::path_safety::PROTECTED_SUBPATHS;
-use super::shell_syntax::{ShellWordToken, shell_word_tokens_with_spans};
+use super::shell_syntax::{ShellWordToken, shell_commands, shell_word_tokens_with_spans};
 use std::ops::Range;
 use std::path::{Component, Path, PathBuf};
 
@@ -20,6 +20,43 @@ pub(super) fn translate_namespace_shell_token(
     mounts: &[super::sandbox_spec::SandboxHostMount],
 ) -> Option<String> {
     translate_shell_token(token, &|path| namespace_path_to_host(path, mounts))
+}
+
+pub(super) fn token_is_data_argument(command: &str, token: &ShellWordToken) -> bool {
+    let prefix = command[..token.raw_start].trim_end();
+    if prefix.ends_with('>') || prefix.ends_with('<') {
+        return false;
+    }
+
+    let Ok(commands) = shell_commands(&command[..token.raw_start]) else {
+        return false;
+    };
+    let Some(words) = commands.last() else {
+        return false;
+    };
+    let Some(command_index) = words.iter().position(|word| !is_env_assignment(word)) else {
+        return false;
+    };
+    let mut command_name = words[command_index].as_str();
+    if Path::new(command_name)
+        .file_name()
+        .and_then(|name| name.to_str())
+        == Some("env")
+        && let Some(inner_command) = words
+            .iter()
+            .skip(command_index + 1)
+            .find(|word| !word.starts_with('-') && !is_env_assignment(word))
+    {
+        command_name = inner_command;
+    }
+    let command_name = Path::new(command_name)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(command_name);
+
+    // ponytail: preserve data for common output builtins; add another command
+    // only when a reproduced namespace-path literal is rewritten as data.
+    matches!(command_name, "echo" | "printf")
 }
 
 fn translate_shell_token(
@@ -85,6 +122,9 @@ fn translate_nested_shell_token(
     let mut last = 0;
     let mut changed = false;
     for nested_token in tokens {
+        if token_is_data_argument(token, &nested_token) {
+            continue;
+        }
         let Some(rewritten) = translate_shell_token(&nested_token.decoded, map_path) else {
             continue;
         };

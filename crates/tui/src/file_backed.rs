@@ -17,6 +17,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph, Wrap};
 mod app;
 mod file_surface;
+mod tail;
 
 use app::{FileBackedAction, FileBackedApp, FileBackedEvent};
 
@@ -26,12 +27,12 @@ use file_surface::{
     request_snapshot_to_pending_yield, sync_actions_from_snapshots,
 };
 use file_surface::{
-    TapeRecordV1, current_root_agent_pid, hydrate_and_open_tails, reattach_to_current_agent,
-    spawn_action_watch, spawn_output_tail, spawn_request_watch, spawn_tape_watch,
-    spawn_terminal_events, spawn_ui_watch, sync_actions_from_files, sync_requests_from_files,
-    tail_with_history, write_agent_input, write_interrupt, write_machine_ctl,
-    write_request_response,
+    TapeRecordV1, hydrate_and_open_tails, reattach_to_current_agent, spawn_action_watch,
+    spawn_output_tail, spawn_request_watch, spawn_tape_watch, spawn_terminal_events,
+    spawn_ui_watch, sync_actions_from_files, sync_requests_from_files, write_agent_input,
+    write_interrupt, write_machine_ctl, write_request_response,
 };
+use tail::{current_root_agent_pid, tail_with_history};
 
 use crate::completion::{self, CompletionCandidate};
 use crate::composer::{Composer, load_history};

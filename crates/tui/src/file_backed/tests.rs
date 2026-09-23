@@ -85,6 +85,22 @@ fn root_process_reattach_preserves_prior_transcript_and_adds_current_turn() {
 }
 
 #[test]
+fn root_agent_file_paths_pin_to_a_process_id() {
+    assert_eq!(
+        super::tail::root_agent_path_for_pid("/agent/root/machine/tape", 42),
+        Some("/agent/42/machine/tape".to_string())
+    );
+    assert_eq!(
+        super::tail::root_agent_path_for_pid("/agent/root", 42),
+        Some("/agent/42".to_string())
+    );
+    assert_eq!(
+        super::tail::root_agent_path_for_pid("/agent/rooted/machine/tape", 42),
+        None
+    );
+}
+
+#[test]
 fn root_agent_pid_polling_requires_an_active_to_idle_transition() {
     let mut pending = Some(PendingRootAgentTurn {
         input: "current task".to_string(),

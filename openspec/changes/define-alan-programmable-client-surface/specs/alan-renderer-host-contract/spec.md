@@ -31,6 +31,13 @@ output, status, and Agent UI state.
   prompt or stale UI error
 - **AND** it never resubmits the input
 
+#### Scenario: Root Agent identity changes while a tail is opening
+- **WHEN** the Service Manager changes the Root Agent PID between the renderer's
+  history snapshot and tail open
+- **THEN** the renderer snapshots and tails one concrete `/agent/<pid>` path
+- **AND** it discards that attachment and retries if the reported PID changed
+  before the tail is ready
+
 #### Scenario: The replacement Root Agent fails before persisting the user turn
 - **WHEN** a replacement Root Agent emits a post-submission `Running`, an
   `Error`, and then `Idle` without writing the user message to tape

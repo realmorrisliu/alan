@@ -103,6 +103,13 @@ and sandbox.
 - **AND** Tool policy, required approval, sandbox, and explicit Host Mount
   boundaries still apply
 
+#### Scenario: A namespace path is used as shell data
+- **WHEN** an authorized `!` command uses `printf` to write a namespace path
+  literal into a file in the same Host Mount
+- **THEN** the file contains the original namespace path text
+- **AND** the redirection target still resolves only within the authorized
+  Host Mount
+
 #### Scenario: Explicit StdioDriver builtin is entered
 - **WHEN** the StdioDriver receives the same text as explicit builtin input
 - **THEN** only its fixed generic grammar decides whether the operation is

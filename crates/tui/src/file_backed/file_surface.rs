@@ -4,7 +4,7 @@ use alan_agent_protocol::{
     ContentPart, StructuredInputQuestion, ToolResultPresentation, UiActivityState, UiEvent,
     YieldKind,
 };
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result, anyhow};
 use crossterm::event::{Event as TerminalEvent, KeyCode, KeyEvent, KeyModifiers};
 use serde::{Deserialize, de::DeserializeOwned};
 use serde_json::Value;
@@ -12,6 +12,7 @@ use serde_json::Value;
 use crate::history::{HistoryCell, PendingYieldCell, RunningTool, ToolStatus};
 
 use super::app::{FileBackedApp, FileBackedEvent};
+use super::tail::tail_with_history;
 
 /// Hydrate startup state and open the live watch tails so that attach time
 /// neither loses nor replays records, per channel:
@@ -74,18 +75,6 @@ pub(super) async fn hydrate_and_open_tails(
         tape,
         ui_history,
     })
-}
-
-pub(super) async fn current_root_agent_pid(shell: &alan_shell::Shell) -> Result<Option<u64>> {
-    let raw = read_utf8(shell, "/mnt/service-manager/units/root-agent/pid").await?;
-    let value = raw.trim();
-    if value.is_empty() {
-        return Ok(None);
-    }
-    let pid = value
-        .parse::<u64>()
-        .context("Root Agent PID is not an unsigned integer")?;
-    Ok((pid > 0).then_some(pid))
 }
 
 pub(super) async fn reattach_to_current_agent(
@@ -509,37 +498,6 @@ pub(super) async fn spawn_tape_watch(
 
 async fn tail_from_live_edge(shell: &alan_shell::Shell, path: &str) -> Result<alan_shell::Tail> {
     Ok(tail_with_history(shell, path).await?.0)
-}
-
-/// Open a tail pinned at the file's current live edge and return the bytes
-/// that existed at open time. Hydrating from these returned bytes — instead
-/// of from a separate read of the same file — makes history + live delivery
-/// exactly-once by construction.
-pub(super) async fn tail_with_history(
-    shell: &alan_shell::Shell,
-    path: &str,
-) -> Result<(alan_shell::Tail, Vec<u8>)> {
-    let existing = shell
-        .cat(path)
-        .await
-        .map_err(|err| anyhow!("failed to snapshot {path}: {err:?}"))?;
-    let mut tail = shell
-        .tail(path)
-        .await
-        .map_err(|err| anyhow!("failed to tail {path}: {err:?}"))?;
-    let mut skipped = 0usize;
-    while skipped < existing.len() {
-        let remaining = existing.len() - skipped;
-        let chunk = tail
-            .read(remaining.min(64 * 1024) as u32)
-            .await
-            .map_err(|err| anyhow!("failed to skip existing {path} bytes: {err:?}"))?;
-        if chunk.is_empty() {
-            bail!("tail for {path} closed before existing bytes were skipped");
-        }
-        skipped += chunk.len();
-    }
-    Ok((tail, existing))
 }
 
 pub(super) fn spawn_terminal_events(tx: tokio::sync::mpsc::Sender<FileBackedEvent>) {
