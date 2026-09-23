@@ -42,39 +42,30 @@ fn snapshot_restores_the_latest_matching_turn_after_root_process_change() {
 
 #[test]
 fn one_shot_result_waits_for_seen_task_and_idle_activity() {
-    let mut answer = Some("answer".to_string());
-    let mut error = None;
+    let mut task = StdioTaskSnapshot {
+        task_seen: false,
+        assistant_answer: Some("answer".to_string()),
+        activity_state: Some(UiActivityState::Idle),
+        task_error: None,
+    };
 
+    assert_eq!(finish_stdio_task_if_ready(&mut task).unwrap(), None);
+    task.task_seen = true;
+    task.activity_state = Some(UiActivityState::Running);
+    assert_eq!(finish_stdio_task_if_ready(&mut task).unwrap(), None);
+    task.activity_state = Some(UiActivityState::Idle);
     assert_eq!(
-        finish_stdio_task_if_ready(false, Some(UiActivityState::Idle), &mut answer, &mut error)
-            .unwrap(),
-        None
-    );
-    assert_eq!(
-        finish_stdio_task_if_ready(
-            true,
-            Some(UiActivityState::Running),
-            &mut answer,
-            &mut error
-        )
-        .unwrap(),
-        None
-    );
-    assert_eq!(
-        finish_stdio_task_if_ready(true, Some(UiActivityState::Idle), &mut answer, &mut error)
-            .unwrap()
-            .as_deref(),
+        finish_stdio_task_if_ready(&mut task).unwrap().as_deref(),
         Some("answer")
     );
 
-    let mut error = Some("provider failed".to_string());
-    let mut no_answer = None;
-    let result = finish_stdio_task_if_ready(
-        true,
-        Some(UiActivityState::Idle),
-        &mut no_answer,
-        &mut error,
-    );
+    let mut failed_task = StdioTaskSnapshot {
+        task_seen: true,
+        assistant_answer: None,
+        activity_state: Some(UiActivityState::Idle),
+        task_error: Some("provider failed".to_string()),
+    };
+    let result = finish_stdio_task_if_ready(&mut failed_task);
     assert_eq!(
         result.unwrap_err().to_string(),
         "Agent task failed: provider failed"

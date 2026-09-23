@@ -415,10 +415,12 @@ async fn wait_for_stdio_answer(
 ) -> Result<String> {
     let mut tape_pending = Vec::new();
     let mut ui_pending = Vec::new();
-    let mut task_seen = false;
-    let mut assistant_answer = None;
-    let mut activity_state = None;
-    let mut task_error: Option<String> = None;
+    let mut snapshot = StdioTaskSnapshot {
+        task_seen: false,
+        assistant_answer: None,
+        activity_state: None,
+        task_error: None,
+    };
     let deadline = tokio::time::sleep(std::time::Duration::from_secs(300));
     tokio::pin!(deadline);
     let mut root_agent_pid_tick = tokio::time::interval(std::time::Duration::from_millis(250));
@@ -441,18 +443,13 @@ async fn wait_for_stdio_answer(
                     if record.kind != "message" {
                         continue;
                     }
-                    if !task_seen {
-                        task_seen = record.role == "user" && record.content == input;
+                    if !snapshot.task_seen {
+                        snapshot.task_seen = record.role == "user" && record.content == input;
                     } else if record.role == "assistant" {
-                        assistant_answer = Some(record.content);
+                        snapshot.assistant_answer = Some(record.content);
                     }
                 }
-                if let Some(answer) = finish_stdio_task_if_ready(
-                    task_seen,
-                    activity_state,
-                    &mut assistant_answer,
-                    &mut task_error,
-                )? {
+                if let Some(answer) = finish_stdio_task_if_ready(&mut snapshot)? {
                     return Ok(answer);
                 }
             }
@@ -466,20 +463,17 @@ async fn wait_for_stdio_answer(
                     let event = serde_json::from_slice::<UiEvent>(&line)
                         .map_err(|err| anyhow::anyhow!("parse Agent UI event failed: {err}"))?;
                     match event {
-                        UiEvent::Activity { snapshot } => activity_state = Some(snapshot.state),
-                        UiEvent::Error { message, .. } => task_error = Some(message),
+                        UiEvent::Activity { snapshot: activity } => {
+                            snapshot.activity_state = Some(activity.state)
+                        }
+                        UiEvent::Error { message, .. } => snapshot.task_error = Some(message),
                         UiEvent::Plan { .. } | UiEvent::Thinking { .. } | UiEvent::Notice { .. } => {}
                     }
                 }
-                if activity_state == Some(UiActivityState::Paused) {
+                if snapshot.activity_state == Some(UiActivityState::Paused) {
                     bail!("Agent task needs interactive input; attach with the TTY renderer");
                 }
-                if let Some(answer) = finish_stdio_task_if_ready(
-                    task_seen,
-                    activity_state,
-                    &mut assistant_answer,
-                    &mut task_error,
-                )? {
+                if let Some(answer) = finish_stdio_task_if_ready(&mut snapshot)? {
                     return Ok(answer);
                 }
             }
@@ -497,31 +491,30 @@ async fn wait_for_stdio_answer(
                     std::mem::replace(ui_tail, new_ui_tail).close().await
                         .map_err(|err| anyhow::anyhow!("close old Agent UI tail failed: {err:?}"))?;
 
-                    let snapshot = stdio_task_snapshot(shell, agent_path, input, &tape_history, &ui_history).await?;
-                    task_seen = snapshot.task_seen;
-                    assistant_answer = snapshot.assistant_answer;
-                    activity_state = snapshot.activity_state;
-                    task_error = snapshot.task_error;
+                    let recovered = stdio_task_snapshot(
+                        shell,
+                        agent_path,
+                        input,
+                        &tape_history,
+                        &ui_history,
+                    )
+                    .await?;
                     tape_pending.clear();
                     ui_pending.clear();
                     *root_agent_pid = Some(pid);
+                    snapshot = recovered;
 
-                    if activity_state == Some(UiActivityState::Paused) {
+                    if snapshot.activity_state == Some(UiActivityState::Paused) {
                         bail!("Agent task needs interactive input; attach with the TTY renderer");
                     }
-                    if let Some(answer) = finish_stdio_task_if_ready(
-                        task_seen,
-                        activity_state,
-                        &mut assistant_answer,
-                        &mut task_error,
-                    )? {
+                    if let Some(answer) = finish_stdio_task_if_ready(&mut snapshot)? {
                         return Ok(answer);
                     }
                 }
             }
             signal = tokio::signal::ctrl_c() => {
                 signal?;
-                if activity_state == Some(UiActivityState::Running) {
+                if snapshot.activity_state == Some(UiActivityState::Running) {
                     let _ = write_machine_ctl(shell, agent_path, "interrupt").await;
                 }
                 bail!("Agent task interrupted");
@@ -530,19 +523,14 @@ async fn wait_for_stdio_answer(
     }
 }
 
-fn finish_stdio_task_if_ready(
-    task_seen: bool,
-    activity_state: Option<UiActivityState>,
-    assistant_answer: &mut Option<String>,
-    task_error: &mut Option<String>,
-) -> Result<Option<String>> {
-    if !task_seen || activity_state != Some(UiActivityState::Idle) {
+fn finish_stdio_task_if_ready(snapshot: &mut StdioTaskSnapshot) -> Result<Option<String>> {
+    if !snapshot.task_seen || snapshot.activity_state != Some(UiActivityState::Idle) {
         return Ok(None);
     }
-    if let Some(answer) = assistant_answer.take() {
+    if let Some(answer) = snapshot.assistant_answer.take() {
         return Ok(Some(answer));
     }
-    if let Some(message) = task_error.take() {
+    if let Some(message) = snapshot.task_error.take() {
         bail!("Agent task failed: {message}");
     }
     Ok(None)

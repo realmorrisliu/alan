@@ -13,7 +13,7 @@
 - [x] 2.1 Route bare `alan` with TTY stdin/stdout to the existing file-backed
   renderer attached to `/agent/root`; use Agent task semantics for redirected
   IO rather than the interactive renderer.
-- [ ] 2.2 Verify incremental AgentFS output, Ctrl-C turn interruption,
+- [x] 2.2 Verify incremental AgentFS output, Ctrl-C turn interruption,
   subsequent input, tail rebinding after a Root Agent PID change, and renderer
   exit without killing the shared Host or Agent.
 - [x] 2.3 Verify unavailable Connection behavior: a clear error appears before
@@ -52,12 +52,16 @@
 > stdout between Ratatui draws. The renderer now uses Ratatui's inline viewport
 > and scrollback insertion; the rebuilt TUI displayed the ordered response
 > legibly in both visible output and scrollback, and `Ctrl-Q` returned to fish
-> without stopping dev Host. Ordinary-terminal cancellation and live
-> reattachment to an already-running Root Agent remain unverified. A one-shot
-> command returned the exact Agent answer on stdout with empty stderr and exit
-> 0; empty stdin produced a stderr diagnostic and exit 1. The TUI integration
-> test also replaces the Root Agent PID after accepting one-shot input and
-> recovers the matching answer once from the new Process.
+> without stopping dev Host. Ordinary-terminal interaction and live Host
+> reattachment after an active Root Agent replacement remain unverified. A
+> one-shot command returned the exact Agent answer on stdout with empty stderr
+> and exit 0; empty stdin produced a stderr diagnostic and exit 1. The TUI
+> integration test also replaces the Root Agent PID after accepting one-shot input and
+> recovers the matching answer once from the new Process. The interactive
+> watcher integration now changes the Root Agent PID and verifies the renderer
+> reattaches, preserves its earlier transcript, and hydrates the current turn
+> from the replacement Process. Ordinary-terminal interaction remains the
+> outstanding acceptance gap.
 
 ## 3. Verification and delivery
 

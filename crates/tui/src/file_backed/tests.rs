@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use alan_agentfs::{AgentFs, AgentRootFs};
 use alan_ap::{FileServer, ProcessEventSource};
-use alan_kernel::{Access, MountFs, Namespace, ProcFs};
+use alan_kernel::{Access, LiveNamespace, MountFs, Namespace, ProcFs};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 
@@ -917,7 +917,10 @@ async fn root_process_reconnect_hydrates_the_new_tape_and_keeps_old_transcript()
         InProcessTransport::new(agent_root.clone()),
         Access::ReadWrite,
     );
-    let shell = alan_shell::Shell::new(InProcessTransport::new(Arc::new(MountFs::new(namespace))));
+    let live_namespace = LiveNamespace::new(namespace);
+    let shell = alan_shell::Shell::new(InProcessTransport::new(Arc::new(
+        MountFs::from_live_namespace(live_namespace.clone()),
+    )));
     let spawn_agent = || {
         shell.spawn(
             r#"{"executable":"/bin/alan-agent","args":[],"namespace":{"generation": 0,"mounts":[]}}"#,
@@ -928,7 +931,15 @@ async fn root_process_reconnect_hydrates_the_new_tape_and_keeps_old_transcript()
     agent_root
         .bind_process(old_pid.clone(), Arc::new(AgentFs::new()))
         .await;
-    agent_root.set_root_process(old_pid).await;
+    agent_root.set_root_process(old_pid.clone()).await;
+    live_namespace.replace_mount(
+        "/mnt/service-manager/units/root-agent",
+        InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::with_read_only_file(
+            "pid",
+            format!("{old_pid}\n").into_bytes(),
+        ))),
+        Access::ReadOnly,
+    );
     shell
         .write(
             "/agent/root/machine/tape",
@@ -941,6 +952,8 @@ async fn root_process_reconnect_hydrates_the_new_tape_and_keeps_old_transcript()
     let old_tails = hydrate_and_open_tails(&shell, "/agent/root", &mut app)
         .await
         .unwrap();
+    let (tx, _rx) = tokio::sync::mpsc::channel(8);
+    let mut watchers = AgentWatchers::start(old_tails, tx.clone(), Some(old_pid.parse().unwrap()));
     app.transcript
         .push(HistoryCell::User("current task".to_string()));
     app.reconciler.on_local_submit("current task");
@@ -949,7 +962,15 @@ async fn root_process_reconnect_hydrates_the_new_tape_and_keeps_old_transcript()
     agent_root
         .bind_process(new_pid.clone(), Arc::new(AgentFs::new()))
         .await;
-    agent_root.set_root_process(new_pid).await;
+    agent_root.set_root_process(new_pid.clone()).await;
+    live_namespace.replace_mount(
+        "/mnt/service-manager/units/root-agent",
+        InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::with_read_only_file(
+            "pid",
+            format!("{new_pid}\n").into_bytes(),
+        ))),
+        Access::ReadOnly,
+    );
     shell
         .write(
             "/agent/root/machine/tape",
@@ -958,16 +979,11 @@ async fn root_process_reconnect_hydrates_the_new_tape_and_keeps_old_transcript()
         .await
         .unwrap();
 
-    old_tails.output.close().await.unwrap();
-    old_tails.requests.close().await.unwrap();
-    old_tails.actions.close().await.unwrap();
-    old_tails.ui.close().await.unwrap();
-    old_tails.tape.close().await.unwrap();
+    watchers
+        .refresh_root_agent_attachment(&shell, "/agent/root", &mut app, Some("current task"), &tx)
+        .await;
 
-    let tails = reattach_to_current_agent(&shell, "/agent/root", &mut app, Some("current task"))
-        .await
-        .unwrap();
-
+    assert_eq!(watchers.root_agent_pid, Some(new_pid.parse().unwrap()));
     assert_eq!(
         app.transcript,
         vec![
@@ -978,9 +994,5 @@ async fn root_process_reconnect_hydrates_the_new_tape_and_keeps_old_transcript()
         ]
     );
 
-    tails.output.close().await.unwrap();
-    tails.requests.close().await.unwrap();
-    tails.actions.close().await.unwrap();
-    tails.ui.close().await.unwrap();
-    tails.tape.close().await.unwrap();
+    watchers.stop().await;
 }
