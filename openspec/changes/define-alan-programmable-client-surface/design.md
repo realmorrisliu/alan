@@ -53,6 +53,14 @@ existing Core Tool catalog and implementations; it does not add a new Tool or
 register the explorer-only Tools. Existing slash UI controls remain renderer
 controls.
 
+The redirected one-shot client waits for task completion or explicit Ctrl-C;
+it does not impose a client-only deadline. A `Running` Activity event establishes
+that the submitted task has started even when the engine has not yet persisted
+its user message to tape. A terminal task error takes precedence over any
+intermediate assistant content. Ctrl-C remains pending until the waiter observes
+`Running`, then sends the turn interrupt; sending it before that acceptance
+signal could let an idle Runtime consume the interrupt before reading the task.
+
 ### 2. Attach the existing Root Agent; do not create another Process
 
 The Host starts the Root Agent and owns its Connection, namespace, credentials,
@@ -70,7 +78,9 @@ The existing renderer maps Ctrl-C and Escape to `FileBackedAction::Interrupt`
 and writes `interrupt` to `/agent/root/machine/ctl`. This is an Agent Runtime
 turn interruption; writing `/proc/<pid>/ctl` would terminate the shared Agent
 Process and is explicitly wrong. The same Root Agent remains usable for the
-next task. Quitting the renderer stops its own file-tail tasks and restores the
+next task. The redirected one-shot waiter retains Ctrl-C until its asynchronous
+Activity watcher observes `Running`, then writes the same control command.
+Quitting the renderer stops its own file-tail tasks and restores the
 terminal; it does not request Host or Agent shutdown.
 
 ### 4. Rebind file tails when the Root Agent Process changes
@@ -116,7 +126,11 @@ the repository quality gate so this route cannot silently regress.
 - Verify redirected stdin is one Agent task, stdout contains only its answer,
   stderr carries diagnostics, and failures produce a nonzero exit code.
   Include a Root Agent PID change during the wait and ensure the answer is not
-  lost or duplicated.
+  lost or duplicated. Wait beyond five minutes without an invented client
+  timeout; report a runtime error even when it precedes tape persistence, prefer
+  that error over intermediate assistant content, and verify Ctrl-C is retained
+  until `Running` confirms the task has been accepted before writing the turn
+  interrupt.
 - If the mounted Connection metadata reports `unconfigured`, fail the task with
   a clear unavailable-Connection error before applying defaults from the
   unrelated local model catalog.

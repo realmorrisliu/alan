@@ -33,6 +33,22 @@ behavior.
   exit code
 - **AND** it does not emit terminal UI control sequences
 
+#### Scenario: One-shot task fails before tape persistence
+- **WHEN** the Root Agent reports a running task failure before writing the
+  submitted user message to tape
+- **THEN** the client reports the task error on stderr with a nonzero exit code
+- **AND** any intermediate assistant content is not reported as a successful
+  final answer
+
+#### Scenario: One-shot task runs longer than expected
+- **WHEN** the redirected task has not reached a terminal outcome
+- **THEN** the client continues waiting without an arbitrary client-side timeout
+- **AND** Ctrl-C remains pending until `Running` confirms that the submitted
+  task has been accepted, then writes a turn interrupt through
+  `/agent/root/machine/ctl`
+- **AND** the client reports interruption without terminating the Root Agent
+  Process
+
 #### Scenario: Root Agent Process changes during redirected task
 - **WHEN** the Root Agent PID changes while the client waits for the submitted
   task

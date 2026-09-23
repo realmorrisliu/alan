@@ -399,8 +399,9 @@ async fn wait_for_stdio_answer(
     tokio::pin!(interrupt);
     let mut tape_pending = Vec::new();
     let mut ui_pending = Vec::new();
+    let mut interrupt_requested = false;
     let mut snapshot = StdioTaskSnapshot {
-        task_seen: false,
+        task_started: false,
         assistant_answer: None,
         activity_state: None,
         task_error: None,
@@ -425,8 +426,8 @@ async fn wait_for_stdio_answer(
                     if record.kind != "message" {
                         continue;
                     }
-                    if !snapshot.task_seen {
-                        snapshot.task_seen = record.role == "user" && record.content == input;
+                    if !snapshot.task_started {
+                        snapshot.task_started = record.role == "user" && record.content == input;
                     } else if record.role == "assistant" {
                         snapshot.assistant_answer = Some(record.content);
                     }
@@ -446,11 +447,20 @@ async fn wait_for_stdio_answer(
                         .map_err(|err| anyhow::anyhow!("parse Agent UI event failed: {err}"))?;
                     match event {
                         UiEvent::Activity { snapshot: activity } => {
+                            if activity.state == UiActivityState::Running {
+                                snapshot.task_started = true;
+                                snapshot.task_error = None;
+                            }
                             snapshot.activity_state = Some(activity.state)
                         }
                         UiEvent::Error { message, .. } => snapshot.task_error = Some(message),
                         UiEvent::Plan { .. } | UiEvent::Thinking { .. } | UiEvent::Notice { .. } => {}
                     }
+                }
+                if interrupt_requested
+                    && interrupt_stdio_task_if_active(shell, agent_path, &snapshot).await?
+                {
+                    bail!("Agent task interrupted");
                 }
                 if snapshot.activity_state == Some(UiActivityState::Paused) {
                     bail!("Agent task needs interactive input; attach with the TTY renderer");
@@ -485,6 +495,11 @@ async fn wait_for_stdio_answer(
                     *root_agent_pid = Some(pid);
                     snapshot = recovered;
 
+                    if interrupt_requested
+                        && interrupt_stdio_task_if_active(shell, agent_path, &snapshot).await?
+                    {
+                        bail!("Agent task interrupted");
+                    }
                     if snapshot.activity_state == Some(UiActivityState::Paused) {
                         bail!("Agent task needs interactive input; attach with the TTY renderer");
                     }
@@ -493,32 +508,49 @@ async fn wait_for_stdio_answer(
                     }
                 }
             }
-            signal = &mut interrupt => {
+            signal = &mut interrupt, if !interrupt_requested => {
                 signal?;
-                if snapshot.activity_state == Some(UiActivityState::Running) {
-                    let _ = write_machine_ctl(shell, agent_path, "interrupt").await;
+                interrupt_requested = true;
+                if interrupt_stdio_task_if_active(shell, agent_path, &snapshot).await? {
+                    bail!("Agent task interrupted");
                 }
-                bail!("Agent task interrupted");
             }
         }
     }
 }
 
-fn finish_stdio_task_if_ready(snapshot: &mut StdioTaskSnapshot) -> Result<Option<String>> {
-    if !snapshot.task_seen || snapshot.activity_state != Some(UiActivityState::Idle) {
-        return Ok(None);
+async fn interrupt_stdio_task_if_active(
+    shell: &alan_shell::Shell,
+    agent_path: &str,
+    snapshot: &StdioTaskSnapshot,
+) -> Result<bool> {
+    if !matches!(
+        snapshot.activity_state,
+        Some(UiActivityState::Running | UiActivityState::Paused)
+    ) {
+        return Ok(false);
     }
-    if let Some(answer) = snapshot.assistant_answer.take() {
-        return Ok(Some(answer));
+    write_machine_ctl(shell, agent_path, "interrupt")
+        .await
+        .context("failed to send Agent task interrupt")?;
+    Ok(true)
+}
+
+fn finish_stdio_task_if_ready(snapshot: &mut StdioTaskSnapshot) -> Result<Option<String>> {
+    if !snapshot.task_started || snapshot.activity_state != Some(UiActivityState::Idle) {
+        return Ok(None);
     }
     if let Some(message) = snapshot.task_error.take() {
         bail!("Agent task failed: {message}");
+    }
+    if let Some(answer) = snapshot.assistant_answer.take() {
+        return Ok(Some(answer));
     }
     Ok(None)
 }
 
 struct StdioTaskSnapshot {
-    task_seen: bool,
+    task_started: bool,
     assistant_answer: Option<String>,
     activity_state: Option<UiActivityState>,
     task_error: Option<String>,
@@ -573,18 +605,25 @@ fn stdio_task_snapshot_from_history(
             .map(|record| record.content.clone())
     });
 
+    let mut task_started = task_index.is_some();
     let mut activity_state = None;
     let mut task_error = None;
     let ui_history = std::str::from_utf8(ui_history).context("ui events are not utf8")?;
     for line in ui_history.lines().filter(|line| !line.trim().is_empty()) {
         match serde_json::from_str::<UiEvent>(line).context("parse Agent UI event")? {
-            UiEvent::Activity { snapshot } => activity_state = Some(snapshot.state),
+            UiEvent::Activity { snapshot } => {
+                if snapshot.state == UiActivityState::Running {
+                    task_started = true;
+                    task_error = None;
+                }
+                activity_state = Some(snapshot.state);
+            }
             UiEvent::Error { message, .. } => task_error = Some(message),
             UiEvent::Plan { .. } | UiEvent::Thinking { .. } | UiEvent::Notice { .. } => {}
         }
     }
     Ok(StdioTaskSnapshot {
-        task_seen: task_index.is_some(),
+        task_started,
         assistant_answer,
         activity_state,
         task_error,

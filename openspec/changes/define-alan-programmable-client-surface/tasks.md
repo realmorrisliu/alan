@@ -29,7 +29,11 @@
   verify the exact set and live shell behavior.
 - [x] 2.7 Keep recoverable Agent errors in the rendered transcript.
 - [x] 2.8 Implement and verify one-shot redirected stdin/stdout/stderr,
-  Root Agent PID rebinding, and exit-code behavior.
+  Root Agent PID rebinding, and exit-code behavior. Keep waiting for the task
+  outcome without a client-only timeout; recognize `Running`/terminal-error
+  events before tape persistence; prefer terminal errors over intermediate
+  assistant content; and retain Ctrl-C until `Running` confirms acceptance
+  before sending interruption.
 
 > Live acceptance status (2026-09-23): an explicit read-only synthetic Host
 > Mount and `bash` read returned the expected sentinel; a leading `!` reached

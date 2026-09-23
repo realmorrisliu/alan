@@ -74,28 +74,56 @@ fn snapshot_restores_the_latest_matching_turn_after_root_process_change() {
 {"version":1,"kind":"message","role":"assistant","content":"intermediate response"}
 {"version":1,"kind":"message","role":"assistant","content":"current answer"}
 "#,
-        br#"{"type":"activity","snapshot":{"version":1,"state":"idle"}}
+        br#"{"type":"activity","snapshot":{"version":1,"state":"running"}}
+{"type":"error","message":"previous provider failure","recoverable":true}
+{"type":"activity","snapshot":{"version":1,"state":"idle"}}
+{"type":"activity","snapshot":{"version":1,"state":"running"}}
+{"type":"activity","snapshot":{"version":1,"state":"idle"}}
 "#,
     )
     .unwrap();
 
-    assert!(snapshot.task_seen);
+    assert!(snapshot.task_started);
     assert_eq!(snapshot.assistant_answer.as_deref(), Some("current answer"));
     assert_eq!(snapshot.activity_state, Some(UiActivityState::Idle));
     assert!(snapshot.task_error.is_none());
 }
 
 #[test]
+fn one_shot_reports_failure_before_the_user_record_reaches_tape() {
+    let mut snapshot = stdio_task_snapshot_from_history(
+        "task with no tape record",
+        b"",
+        br#"{"type":"activity","snapshot":{"version":1,"state":"running"}}
+{"type":"error","message":"provider unavailable","recoverable":true}
+{"type":"activity","snapshot":{"version":1,"state":"idle"}}
+"#,
+    )
+    .unwrap();
+
+    assert!(
+        snapshot.task_started,
+        "Running establishes this submitted task"
+    );
+    assert_eq!(
+        finish_stdio_task_if_ready(&mut snapshot)
+            .unwrap_err()
+            .to_string(),
+        "Agent task failed: provider unavailable"
+    );
+}
+
+#[test]
 fn one_shot_result_waits_for_seen_task_and_idle_activity() {
     let mut task = StdioTaskSnapshot {
-        task_seen: false,
+        task_started: false,
         assistant_answer: Some("answer".to_string()),
         activity_state: Some(UiActivityState::Idle),
         task_error: None,
     };
 
     assert_eq!(finish_stdio_task_if_ready(&mut task).unwrap(), None);
-    task.task_seen = true;
+    task.task_started = true;
     task.activity_state = Some(UiActivityState::Running);
     assert_eq!(finish_stdio_task_if_ready(&mut task).unwrap(), None);
     task.activity_state = Some(UiActivityState::Idle);
@@ -105,8 +133,8 @@ fn one_shot_result_waits_for_seen_task_and_idle_activity() {
     );
 
     let mut failed_task = StdioTaskSnapshot {
-        task_seen: true,
-        assistant_answer: None,
+        task_started: true,
+        assistant_answer: Some("intermediate response".to_string()),
         activity_state: Some(UiActivityState::Idle),
         task_error: Some("provider failed".to_string()),
     };
@@ -209,7 +237,7 @@ async fn one_shot_keeps_waiting_past_five_minutes_and_recovers_after_root_agent_
 }
 
 #[tokio::test]
-async fn one_shot_cancellation_interrupts_the_running_agent_turn() {
+async fn one_shot_returns_runtime_failure_without_a_tape_user_record() {
     let (shell, _agent_root, _live_namespace, pid) = live_root_agent().await;
     let (mut tape_tail, _) = tail_with_history(&shell, "/agent/root/machine/tape")
         .await
@@ -218,7 +246,63 @@ async fn one_shot_cancellation_interrupts_the_running_agent_turn() {
         .await
         .unwrap();
     let mut input_tail = shell.tail("/agent/root/io/input").await.unwrap();
-    let mut ui_observer = shell.tail("/agent/root/machine/ui/events").await.unwrap();
+    let mut root_agent_pid = Some(pid.parse::<u64>().unwrap());
+
+    let result = {
+        let wait_for_answer = wait_for_stdio_answer(
+            &shell,
+            "/agent/root",
+            "fail before tape persistence",
+            &mut tape_tail,
+            &mut ui_tail,
+            &mut root_agent_pid,
+            std::future::pending::<anyhow::Result<()>>(),
+        );
+        tokio::pin!(wait_for_answer);
+        tokio::select! {
+            result = &mut wait_for_answer => panic!("one-shot returned before input was observed: {result:?}"),
+            input = input_tail.read(4096) => assert!(!input.unwrap().is_empty()),
+        }
+
+        shell
+            .write(
+                "/agent/root/machine/ui/events",
+                b"{\"type\":\"activity\",\"snapshot\":{\"version\":1,\"state\":\"running\"}}\n{\"type\":\"error\",\"message\":\"provider unavailable\",\"recoverable\":true}\n{\"type\":\"activity\",\"snapshot\":{\"version\":1,\"state\":\"idle\"}}\n",
+            )
+            .await
+            .unwrap();
+
+        wait_for_answer.await
+    };
+
+    assert_eq!(
+        result.unwrap_err().to_string(),
+        "Agent task failed: provider unavailable"
+    );
+    let tape = shell.cat("/agent/root/machine/tape").await.unwrap();
+    assert!(
+        tape.is_empty(),
+        "this failure path must not depend on tape data"
+    );
+    let process_status =
+        String::from_utf8(shell.cat(&format!("/proc/{pid}/status")).await.unwrap()).unwrap();
+    assert_eq!(process_status.trim(), "running");
+
+    tape_tail.close().await.unwrap();
+    ui_tail.close().await.unwrap();
+    input_tail.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn one_shot_cancellation_interrupts_before_running_is_observed() {
+    let (shell, _agent_root, _live_namespace, pid) = live_root_agent().await;
+    let (mut tape_tail, _) = tail_with_history(&shell, "/agent/root/machine/tape")
+        .await
+        .unwrap();
+    let (mut ui_tail, _) = tail_with_history(&shell, "/agent/root/machine/ui/events")
+        .await
+        .unwrap();
+    let mut input_tail = shell.tail("/agent/root/io/input").await.unwrap();
     let mut root_agent_pid = Some(pid.parse::<u64>().unwrap());
     let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
 
@@ -238,13 +322,17 @@ async fn one_shot_cancellation_interrupts_the_running_agent_turn() {
             result = &mut wait_for_answer => panic!("one-shot returned before input was observed: {result:?}"),
             input = input_tail.read(4096) => assert!(!input.unwrap().is_empty()),
         }
-        shell
-            .write(
-                "/agent/root/machine/tape",
-                b"{\"version\":1,\"kind\":\"message\",\"role\":\"user\",\"content\":\"cancel this turn\"}\n",
-            )
+        cancel_tx.send(()).unwrap();
+
+        tokio::time::timeout(std::time::Duration::from_millis(10), &mut wait_for_answer)
             .await
-            .unwrap();
+            .expect_err("cancellation waits until the task is accepted");
+        let events = shell.cat("/agent/root/events").await.unwrap();
+        assert!(
+            !String::from_utf8_lossy(&events).contains("ctl:interrupt"),
+            "do not let an idle Runtime consume the interrupt before input"
+        );
+
         shell
             .write(
                 "/agent/root/machine/ui/events",
@@ -252,13 +340,6 @@ async fn one_shot_cancellation_interrupts_the_running_agent_turn() {
             )
             .await
             .unwrap();
-        tokio::select! {
-            biased;
-            result = &mut wait_for_answer => panic!("one-shot returned before cancellation: {result:?}"),
-            event = ui_observer.read(4096) => assert!(!event.unwrap().is_empty()),
-        }
-
-        cancel_tx.send(()).unwrap();
         wait_for_answer.await
     };
 
@@ -275,5 +356,4 @@ async fn one_shot_cancellation_interrupts_the_running_agent_turn() {
     tape_tail.close().await.unwrap();
     ui_tail.close().await.unwrap();
     input_tail.close().await.unwrap();
-    ui_observer.close().await.unwrap();
 }
