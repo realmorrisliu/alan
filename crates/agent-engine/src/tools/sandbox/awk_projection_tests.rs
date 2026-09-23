@@ -1,9 +1,10 @@
+#![cfg(target_os = "macos")]
+
 use super::super::*;
 use crate::tools::{SandboxBackendKind, reified_namespace::ReifiedMountAccess};
 use std::path::PathBuf;
 use tempfile::TempDir;
 
-#[cfg(target_os = "macos")]
 #[tokio::test]
 async fn sandbox_projects_awk_script_and_input_paths_before_execution() {
     let mount = TempDir::new().unwrap();
