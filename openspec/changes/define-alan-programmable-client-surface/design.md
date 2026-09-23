@@ -35,14 +35,19 @@ and implementations so `!` can reach the existing governed `bash` Tool.
 
 ### 1. Select by the terminal boundary, not by model interpretation
 
-After explicit subcommands are dispatched, the bare CLI checks both stdin and
+After explicit subcommands are dispatched, the bare CLI checks stdin and
 stdout with `std::io::IsTerminal`. If both are terminals, it passes the
 existing attached namespace and `/agent/root` to
-`alan_tui::run_file_backed(FileBackedRunConfig::new(...))`. If either is
-redirected, it reads stdin as one task, writes the final answer to stdout,
-keeps diagnostics on stderr, and reports task failure with a nonzero exit code.
-The one-shot waiter also reopens its tape and UI tails if the Root Agent PID
-changes, recovering the matching submitted turn from the replacement Process.
+`alan_tui::run_file_backed(FileBackedRunConfig::new(...))`. If stdin is
+redirected, it reads one task, writes the final answer to stdout, keeps
+diagnostics on stderr, and reports task failure with a nonzero exit code. If
+stdin is a terminal but stdout is redirected, it errors before attaching to the
+Host instead of waiting for terminal EOF. The one-shot waiter opens tape and UI
+tails against one concrete Root Agent PID, retries the pair if that identity
+changes during attach, and uses that same Process path for submission and
+observation. It reopens both tails together if the Root Agent PID changes
+during a task, recovering the matching submitted turn from the replacement
+Process.
 
 The TUI composer always submits one task to AgentFS. Ordinary prose is not
 interpreted as a shell command. A leading `!` is the explicit shell escape:

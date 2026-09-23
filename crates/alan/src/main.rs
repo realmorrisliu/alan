@@ -44,6 +44,22 @@ enum Commands {
     },
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum BareRunMode {
+    Interactive,
+    OneShot,
+}
+
+fn bare_run_mode(stdin_is_terminal: bool, stdout_is_terminal: bool) -> Result<BareRunMode> {
+    match (stdin_is_terminal, stdout_is_terminal) {
+        (true, true) => Ok(BareRunMode::Interactive),
+        (false, _) => Ok(BareRunMode::OneShot),
+        (true, false) => anyhow::bail!(
+            "bare `alan` needs terminal stdout for interactive input; pipe a task on stdin for one-shot mode"
+        ),
+    }
+}
+
 #[derive(Subcommand)]
 enum HostAction {
     /// Start the matching dedicated Alan OS Host
@@ -636,23 +652,32 @@ async fn main() -> Result<()> {
         },
         Some(Commands::Shell { action }) => shell_command::run(action)?,
         None => {
+            let mode = bare_run_mode(
+                std::io::stdin().is_terminal(),
+                std::io::stdout().is_terminal(),
+            )?;
             let channel = alan_agent_engine::InstallChannel::detect_current();
             let attachment = cli::host::attach_or_start_host(channel).await?;
             let host_paths = alan_os_host::HostEndpointPaths::detect(channel.descriptor().id)?;
             let task_lock_path = host_paths.root.join("task.lock");
-            if std::io::stdin().is_terminal() && std::io::stdout().is_terminal() {
-                let mut config = alan_tui::FileBackedRunConfig::new(attachment.root, "/agent/root");
-                config.task_submission_lock_path = Some(task_lock_path);
-                alan_tui::run_file_backed(config).await?;
-            } else {
-                let mut input = Vec::new();
-                tokio::io::stdin()
-                    .read_to_end(&mut input)
-                    .await
-                    .context("read Agent task from stdin")?;
-                let input = String::from_utf8(input).context("stdin task is not valid UTF-8")?;
-                let _task_lock = alan_tui::acquire_task_submission_lock(&task_lock_path)?;
-                alan_tui::run_stdio_task(attachment.root, "/agent/root", &input).await?;
+            match mode {
+                BareRunMode::Interactive => {
+                    let mut config =
+                        alan_tui::FileBackedRunConfig::new(attachment.root, "/agent/root");
+                    config.task_submission_lock_path = Some(task_lock_path);
+                    alan_tui::run_file_backed(config).await?;
+                }
+                BareRunMode::OneShot => {
+                    let mut input = Vec::new();
+                    tokio::io::stdin()
+                        .read_to_end(&mut input)
+                        .await
+                        .context("read Agent task from stdin")?;
+                    let input =
+                        String::from_utf8(input).context("stdin task is not valid UTF-8")?;
+                    let _task_lock = alan_tui::acquire_task_submission_lock(&task_lock_path)?;
+                    alan_tui::run_stdio_task(attachment.root, "/agent/root", &input).await?;
+                }
             }
         }
     }
@@ -818,10 +843,10 @@ fn print_legacy_cleanup(report: &legacy_state::LegacyCleanupReport, json: bool) 
 
 #[cfg(test)]
 mod tests {
-    use super::Cli;
     #[cfg(target_os = "macos")]
     use super::cli::host::os_host_launch_label;
     use super::cli::host::sibling_executable;
+    use super::{BareRunMode, Cli, bare_run_mode};
     #[cfg(target_os = "macos")]
     use alan_agent_engine::InstallChannel;
     use clap::Parser;
@@ -832,6 +857,15 @@ mod tests {
             .map(|_| ())
             .unwrap_err();
         assert!(err.to_string().contains("--tui-backend"));
+    }
+
+    #[test]
+    fn bare_mode_uses_redirected_stdin_as_the_one_shot_boundary() {
+        assert_eq!(bare_run_mode(true, true).unwrap(), BareRunMode::Interactive);
+        assert_eq!(bare_run_mode(false, true).unwrap(), BareRunMode::OneShot);
+        assert_eq!(bare_run_mode(false, false).unwrap(), BareRunMode::OneShot);
+        let err = bare_run_mode(true, false).unwrap_err();
+        assert!(err.to_string().contains("needs terminal stdout"));
     }
 
     #[test]

@@ -20,10 +20,12 @@ command runtime is not needed for the first usable task loop.
   A leading `!` explicitly requests the exact remainder as a shell command via
   the existing `bash` Tool; it does not bypass Tool governance, Host Mounts,
   approvals, or sandbox boundaries.
-- When stdin/stdout are redirected, read stdin as one task, write only the
-  final answer to stdout, diagnostics to stderr, and report success/failure in
-  the exit code. Keep file-native Shell operations behind explicit input such
-  as `!` rather than interpreting arbitrary task text as commands.
+- When stdin is redirected, read it as one task, write only the final answer
+  to stdout, diagnostics to stderr, and report success/failure in the exit
+  code. If stdin is a terminal but stdout is redirected, fail clearly instead
+  of waiting for terminal EOF. Keep file-native Shell operations behind
+  explicit input such as `!` rather than interpreting arbitrary task text as
+  commands.
 - Use AgentFS Process IO for input and incremental output. Ctrl-C interrupts the
   current Agent turn through `/agent/root/machine/ctl`, not Kernel Process
   control, and a subsequent task can use the still-running Root Agent.

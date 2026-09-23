@@ -15,10 +15,11 @@ dependencies.
 ### Requirement: Alan enters the system Shell
 Running bare `alan` SHALL start or attach to the matching dedicated Alan OS
 Host. When stdin and stdout are terminals it SHALL attach the terminal renderer
-to the Host-managed `/agent/root`; otherwise it SHALL submit stdin as one task
-to that Agent and follow the one-shot standard-stream contract. The CLI MUST NOT
-privately boot an Agent Runtime or select an Agent Definition as Host startup
-behavior.
+to the Host-managed `/agent/root`. When stdin is redirected it SHALL submit
+stdin as one task to that Agent and follow the one-shot standard-stream
+contract. If stdin is a terminal but stdout is not, it SHALL report an error
+instead of waiting for terminal EOF. The CLI MUST NOT privately boot an Agent
+Runtime or select an Agent Definition as Host startup behavior.
 
 #### Scenario: User runs alan with no subcommand
 - **WHEN** the system Host is ready and both stdin and stdout are terminals
@@ -26,12 +27,18 @@ behavior.
 - **AND** the Root Agent remains the Process and execution authority
 
 #### Scenario: User runs alan with redirected IO
-- **WHEN** either stdin or stdout is not a terminal
+- **WHEN** stdin is not a terminal, regardless of stdout
 - **THEN** stdin is submitted as one task and only the final answer is written
   to stdout
 - **AND** diagnostics go to stderr and task failure is reported by a nonzero
   exit code
 - **AND** it does not emit terminal UI control sequences
+
+#### Scenario: User redirects stdout without redirecting stdin
+- **WHEN** stdin is a terminal and stdout is not a terminal
+- **THEN** the CLI reports that interactive mode requires terminal stdout
+  instead of reading stdin until EOF
+- **AND** it does not start or attach to the Alan OS Host
 
 #### Scenario: One-shot task fails before tape persistence
 - **WHEN** the Root Agent reports a running task failure before writing the
@@ -61,7 +68,10 @@ behavior.
 #### Scenario: Root Agent Process changes during redirected task
 - **WHEN** the Root Agent PID changes while the client waits for the submitted
   task
-- **THEN** the client reopens its tape and UI tails against `/agent/root`
+- **THEN** the client resolves one replacement Root Agent PID and opens both
+  tape and UI tails against that concrete Process path
+- **AND** it retries the pair if the Root Agent PID changes while either tail
+  is opening
 - **AND** it recovers a result only from records appended after the captured
   tape baseline or from UI activity correlated to this submission
 - **AND** if the replacement history cannot establish that correlation, it

@@ -1,3 +1,4 @@
+use super::tail::tail_with_history;
 use super::*;
 use alan_agentfs::{AgentFs, AgentRootFs};
 use alan_ap::ProcessEventSource;
@@ -104,6 +105,22 @@ async fn live_root_agent() -> (alan_shell::Shell, Arc<AgentRootFs>, LiveNamespac
     (shell, agent_root, live_namespace, pid)
 }
 
+fn stdio_attachment(
+    pid: &str,
+    tape_tail: alan_shell::Tail,
+    tape_history: Vec<u8>,
+    ui_tail: alan_shell::Tail,
+) -> StdioTailAttachment {
+    StdioTailAttachment {
+        root_agent_pid: pid.parse().unwrap(),
+        agent_process_path: format!("/agent/{pid}"),
+        tape_tail,
+        tape_history,
+        ui_tail,
+        ui_history: Vec::new(),
+    }
+}
+
 #[test]
 fn line_drain_keeps_partial_records_until_newline() {
     let mut pending = b"{\"role\":\"user\"}\n{\"role\"".to_vec();
@@ -125,9 +142,9 @@ fn line_drain_keeps_partial_records_until_newline() {
 #[test]
 fn snapshot_restores_the_latest_matching_turn_after_root_process_change() {
     let snapshot = stdio_task_snapshot_from_history(
-        StdioTaskWaitContext {
+        &StdioTaskWaitContext {
             input: "same task",
-            baseline_tape_history: b"",
+            baseline_tape_history: Vec::new(),
             submitted_at_ms: 2,
         },
         br#"{"version":1,"kind":"message","role":"user","content":"same task"}
@@ -154,9 +171,9 @@ fn snapshot_restores_the_latest_matching_turn_after_root_process_change() {
 #[test]
 fn one_shot_reports_failure_before_the_user_record_reaches_tape() {
     let mut snapshot = stdio_task_snapshot_from_history(
-        StdioTaskWaitContext {
+        &StdioTaskWaitContext {
             input: "task with no tape record",
-            baseline_tape_history: b"",
+            baseline_tape_history: Vec::new(),
             submitted_at_ms: 0,
         },
         b"",
@@ -189,9 +206,9 @@ fn recovery_does_not_reuse_an_identical_prompt_from_the_baseline_tape() {
 {"type":"activity","snapshot":{"version":1,"state":"idle"}}
 "#;
     let snapshot = stdio_task_snapshot_from_history(
-        StdioTaskWaitContext {
+        &StdioTaskWaitContext {
             input: "same task",
-            baseline_tape_history: baseline_tape,
+            baseline_tape_history: baseline_tape.to_vec(),
             submitted_at_ms: 20,
         },
         baseline_tape,
@@ -213,9 +230,9 @@ fn recovery_rejects_a_reset_tape_with_only_an_old_identical_prompt() {
 {"version":1,"kind":"message","role":"assistant","content":"old answer"}
 "#;
     let snapshot = stdio_task_snapshot_from_history(
-        StdioTaskWaitContext {
+        &StdioTaskWaitContext {
             input: "same task",
-            baseline_tape_history: baseline_tape,
+            baseline_tape_history: baseline_tape.to_vec(),
             submitted_at_ms: 20,
         },
         replacement_tape,
@@ -676,13 +693,13 @@ fn one_shot_result_waits_for_seen_task_and_idle_activity() {
 async fn one_shot_keeps_waiting_past_five_minutes_and_recovers_after_root_agent_pid_changes() {
     let (shell, agent_root, live_namespace, old_pid) = live_root_agent().await;
 
-    let (mut tape_tail, baseline_tape_history) =
-        tail_with_history(&shell, "/agent/root/machine/tape")
-            .await
-            .unwrap();
-    let (mut ui_tail, _) = tail_with_history(&shell, "/agent/root/machine/ui/events")
+    let (tape_tail, baseline_tape_history) = tail_with_history(&shell, "/agent/root/machine/tape")
         .await
         .unwrap();
+    let (ui_tail, _) = tail_with_history(&shell, "/agent/root/machine/ui/events")
+        .await
+        .unwrap();
+    let mut attachment = stdio_attachment(&old_pid, tape_tail, baseline_tape_history, ui_tail);
     let mut input_tail = shell.tail("/agent/root/io/input").await.unwrap();
     let (input_seen_tx, input_seen_rx) = tokio::sync::oneshot::channel();
     let (release_tx, release_rx) = tokio::sync::oneshot::channel();
@@ -725,15 +742,12 @@ async fn one_shot_keeps_waiting_past_five_minutes_and_recovers_after_root_agent_
         input_tail.close().await.unwrap();
     });
 
-    let mut root_agent_pid = Some(old_pid.parse::<u64>().unwrap());
     let answer = {
         let wait_for_answer = wait_for_stdio_answer(
             &shell,
             "/agent/root",
-            StdioTaskWaitContext::new("rebind me", &baseline_tape_history),
-            &mut tape_tail,
-            &mut ui_tail,
-            &mut root_agent_pid,
+            StdioTaskWaitContext::new("rebind me", std::mem::take(&mut attachment.tape_history)),
+            &mut attachment,
             std::future::pending::<anyhow::Result<()>>(),
         );
         tokio::pin!(wait_for_answer);
@@ -756,35 +770,38 @@ async fn one_shot_keeps_waiting_past_five_minutes_and_recovers_after_root_agent_
     controller.await.unwrap();
 
     assert_eq!(answer, "one answer");
+    let current_pid = current_root_agent_pid(&shell).await.unwrap().unwrap();
+    assert_eq!(attachment.root_agent_pid, current_pid);
     assert_eq!(
-        root_agent_pid,
-        Some(current_root_agent_pid(&shell).await.unwrap().unwrap())
+        attachment.agent_process_path,
+        format!("/agent/{current_pid}")
     );
-    tape_tail.close().await.unwrap();
-    ui_tail.close().await.unwrap();
+    close_stdio_tails(attachment.tape_tail, attachment.ui_tail)
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
 async fn one_shot_returns_runtime_failure_without_a_tape_user_record() {
     let (shell, _agent_root, _live_namespace, pid) = live_root_agent().await;
-    let (mut tape_tail, baseline_tape_history) =
-        tail_with_history(&shell, "/agent/root/machine/tape")
-            .await
-            .unwrap();
-    let (mut ui_tail, _) = tail_with_history(&shell, "/agent/root/machine/ui/events")
+    let (tape_tail, baseline_tape_history) = tail_with_history(&shell, "/agent/root/machine/tape")
+        .await
+        .unwrap();
+    let (ui_tail, _) = tail_with_history(&shell, "/agent/root/machine/ui/events")
         .await
         .unwrap();
     let mut input_tail = shell.tail("/agent/root/io/input").await.unwrap();
-    let mut root_agent_pid = Some(pid.parse::<u64>().unwrap());
+    let mut attachment = stdio_attachment(&pid, tape_tail, baseline_tape_history, ui_tail);
 
     let result = {
         let wait_for_answer = wait_for_stdio_answer(
             &shell,
             "/agent/root",
-            StdioTaskWaitContext::new("fail before tape persistence", &baseline_tape_history),
-            &mut tape_tail,
-            &mut ui_tail,
-            &mut root_agent_pid,
+            StdioTaskWaitContext::new(
+                "fail before tape persistence",
+                std::mem::take(&mut attachment.tape_history),
+            ),
+            &mut attachment,
             std::future::pending::<anyhow::Result<()>>(),
         );
         tokio::pin!(wait_for_answer);
@@ -817,33 +834,34 @@ async fn one_shot_returns_runtime_failure_without_a_tape_user_record() {
         String::from_utf8(shell.cat(&format!("/proc/{pid}/status")).await.unwrap()).unwrap();
     assert_eq!(process_status.trim(), "running");
 
-    tape_tail.close().await.unwrap();
-    ui_tail.close().await.unwrap();
+    close_stdio_tails(attachment.tape_tail, attachment.ui_tail)
+        .await
+        .unwrap();
     input_tail.close().await.unwrap();
 }
 
 #[tokio::test]
 async fn one_shot_cancellation_interrupts_before_running_is_observed() {
     let (shell, _agent_root, _live_namespace, pid) = live_root_agent().await;
-    let (mut tape_tail, baseline_tape_history) =
-        tail_with_history(&shell, "/agent/root/machine/tape")
-            .await
-            .unwrap();
-    let (mut ui_tail, _) = tail_with_history(&shell, "/agent/root/machine/ui/events")
+    let (tape_tail, baseline_tape_history) = tail_with_history(&shell, "/agent/root/machine/tape")
+        .await
+        .unwrap();
+    let (ui_tail, _) = tail_with_history(&shell, "/agent/root/machine/ui/events")
         .await
         .unwrap();
     let mut input_tail = shell.tail("/agent/root/io/input").await.unwrap();
-    let mut root_agent_pid = Some(pid.parse::<u64>().unwrap());
+    let mut attachment = stdio_attachment(&pid, tape_tail, baseline_tape_history, ui_tail);
     let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
 
     let result = {
         let wait_for_answer = wait_for_stdio_answer(
             &shell,
             "/agent/root",
-            StdioTaskWaitContext::new("cancel this turn", &baseline_tape_history),
-            &mut tape_tail,
-            &mut ui_tail,
-            &mut root_agent_pid,
+            StdioTaskWaitContext::new(
+                "cancel this turn",
+                std::mem::take(&mut attachment.tape_history),
+            ),
+            &mut attachment,
             async move { cancel_rx.await.map_err(anyhow::Error::from) },
         );
         tokio::pin!(wait_for_answer);
@@ -883,7 +901,8 @@ async fn one_shot_cancellation_interrupts_before_running_is_observed() {
         String::from_utf8(shell.cat(&format!("/proc/{pid}/status")).await.unwrap()).unwrap();
     assert_eq!(process_status.trim(), "running");
 
-    tape_tail.close().await.unwrap();
-    ui_tail.close().await.unwrap();
+    close_stdio_tails(attachment.tape_tail, attachment.ui_tail)
+        .await
+        .unwrap();
     input_tail.close().await.unwrap();
 }

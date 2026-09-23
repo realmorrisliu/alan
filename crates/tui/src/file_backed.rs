@@ -40,7 +40,9 @@ use file_surface::{
     spawn_ui_watch, sync_actions_from_files, sync_requests_from_files, write_agent_input,
     write_interrupt, write_machine_ctl, write_request_response,
 };
-use tail::{current_root_agent_pid, tail_with_history};
+use tail::{
+    StdioTailAttachment, close_stdio_tails, current_root_agent_pid, open_stdio_tail_attachment,
+};
 
 use crate::completion::{self, CompletionCandidate};
 use crate::composer::{Composer, load_history};
@@ -465,48 +467,56 @@ pub async fn run_stdio_task(
 
     let agent_path = agent_path.into();
     let shell = alan_shell::Shell::new(root_transport);
-    let mut root_agent_pid = current_root_agent_pid(&shell).await?;
-    let activity_path = format!("{agent_path}/machine/ui/activity");
-    let activity: UiActivitySnapshot = serde_json::from_slice(
-        &shell
-            .cat(&activity_path)
-            .await
-            .map_err(|err| anyhow::anyhow!("read Agent activity failed: {err:?}"))?,
-    )
-    .map_err(|err| anyhow::anyhow!("parse Agent activity failed: {err}"))?;
+    let mut attachment = open_stdio_tail_attachment(&shell, &agent_path).await?;
+    let activity_path = format!("{}/machine/ui/activity", attachment.agent_process_path);
+    let activity = match shell
+        .cat(&activity_path)
+        .await
+        .map_err(|err| anyhow::anyhow!("read Agent activity failed: {err:?}"))
+        .and_then(|raw| {
+            serde_json::from_slice::<UiActivitySnapshot>(&raw)
+                .map_err(|err| anyhow::anyhow!("parse Agent activity failed: {err}"))
+        }) {
+        Ok(activity) => activity,
+        Err(err) => {
+            let _ = close_stdio_tails(attachment.tape_tail, attachment.ui_tail).await;
+            return Err(err);
+        }
+    };
     match activity.state {
         UiActivityState::Idle => {}
         UiActivityState::Running => {
+            let _ = close_stdio_tails(attachment.tape_tail, attachment.ui_tail).await;
             bail!("Root Agent is already working; retry after it finishes")
         }
         UiActivityState::Paused => {
+            let _ = close_stdio_tails(attachment.tape_tail, attachment.ui_tail).await;
             bail!("Root Agent is waiting for interactive input; use the TTY renderer")
+        }
+    }
+    match current_root_agent_pid(&shell).await {
+        Ok(Some(pid)) if pid == attachment.root_agent_pid => {}
+        Ok(_) => {
+            let _ = close_stdio_tails(attachment.tape_tail, attachment.ui_tail).await;
+            bail!("Root Agent changed before the task could be submitted; retry")
+        }
+        Err(err) => {
+            let _ = close_stdio_tails(attachment.tape_tail, attachment.ui_tail).await;
+            return Err(err);
         }
     }
 
     // ponytail: the CLI lock excludes concurrent one-shot clients; add IDs if
     // one-shot and interactive submissions need concurrent task correlation.
-    let tape_path = format!("{agent_path}/machine/tape");
-    let ui_events_path = format!("{agent_path}/machine/ui/events");
-    let (mut tape_tail, baseline_tape_history) = tail_with_history(&shell, &tape_path).await?;
-    let (mut ui_tail, _) = tail_with_history(&shell, &ui_events_path).await?;
-    let task = StdioTaskWaitContext::new(input, &baseline_tape_history);
+    let task = StdioTaskWaitContext::new(input, std::mem::take(&mut attachment.tape_history));
 
-    let result = wait_for_stdio_answer(
-        &shell,
-        &agent_path,
-        task,
-        &mut tape_tail,
-        &mut ui_tail,
-        &mut root_agent_pid,
-        async { tokio::signal::ctrl_c().await.map_err(anyhow::Error::from) },
-    )
+    let result = wait_for_stdio_answer(&shell, &agent_path, task, &mut attachment, async {
+        tokio::signal::ctrl_c().await.map_err(anyhow::Error::from)
+    })
     .await;
-    let tape_close = tape_tail.close().await;
-    let ui_close = ui_tail.close().await;
+    let close_result = close_stdio_tails(attachment.tape_tail, attachment.ui_tail).await;
     let answer = result?;
-    tape_close.map_err(|err| anyhow::anyhow!("close Agent tape tail failed: {err:?}"))?;
-    ui_close.map_err(|err| anyhow::anyhow!("close Agent UI tail failed: {err:?}"))?;
+    close_result?;
 
     let mut stdout = tokio::io::stdout();
     stdout.write_all(answer.as_bytes()).await?;
@@ -519,11 +529,9 @@ pub async fn run_stdio_task(
 
 async fn wait_for_stdio_answer(
     shell: &alan_shell::Shell,
-    agent_path: &str,
+    root_agent_path: &str,
     task: StdioTaskWaitContext<'_>,
-    tape_tail: &mut alan_shell::Tail,
-    ui_tail: &mut alan_shell::Tail,
-    root_agent_pid: &mut Option<u64>,
+    attachment: &mut StdioTailAttachment,
     interrupt: impl std::future::Future<Output = Result<()>>,
 ) -> Result<String> {
     tokio::pin!(interrupt);
@@ -539,11 +547,14 @@ async fn wait_for_stdio_answer(
     let mut root_agent_pid_tick = tokio::time::interval(std::time::Duration::from_millis(250));
     root_agent_pid_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
-    write_agent_input(shell, agent_path, task.input).await?;
+    if current_root_agent_pid(shell).await? != Some(attachment.root_agent_pid) {
+        bail!("Root Agent changed before the task could be submitted; retry")
+    }
+    write_agent_input(shell, &attachment.agent_process_path, task.input).await?;
 
     loop {
         tokio::select! {
-            bytes = tape_tail.read(4096) => {
+            bytes = attachment.tape_tail.read(4096) => {
                 let bytes = bytes.map_err(|err| anyhow::anyhow!("read Agent tape failed: {err:?}"))?;
                 if bytes.is_empty() {
                     bail!("Agent tape closed before the task completed");
@@ -567,7 +578,7 @@ async fn wait_for_stdio_answer(
                     return Ok(answer);
                 }
             }
-            bytes = ui_tail.read(4096) => {
+            bytes = attachment.ui_tail.read(4096) => {
                 let bytes = bytes.map_err(|err| anyhow::anyhow!("read Agent UI events failed: {err:?}"))?;
                 if bytes.is_empty() {
                     bail!("Agent UI event stream closed before the task completed");
@@ -596,7 +607,7 @@ async fn wait_for_stdio_answer(
                     }
                 }
                 if interrupt_requested
-                    && interrupt_stdio_task_if_active(shell, agent_path, &snapshot).await?
+                    && interrupt_stdio_task_if_active(shell, &attachment.agent_process_path, &snapshot).await?
                 {
                     bail!("Agent task interrupted");
                 }
@@ -609,32 +620,45 @@ async fn wait_for_stdio_answer(
             }
             _ = root_agent_pid_tick.tick() => {
                 if let Some(pid) = current_root_agent_pid(shell).await?
-                    && *root_agent_pid != Some(pid)
+                    && attachment.root_agent_pid != pid
                 {
-                    let (new_tape_tail, tape_history) =
-                        tail_with_history(shell, &format!("{agent_path}/machine/tape")).await?;
-                    let (new_ui_tail, ui_history) =
-                        tail_with_history(shell, &format!("{agent_path}/machine/ui/events")).await?;
-                    std::mem::replace(tape_tail, new_tape_tail).close().await
-                        .map_err(|err| anyhow::anyhow!("close old Agent tape tail failed: {err:?}"))?;
-                    std::mem::replace(ui_tail, new_ui_tail).close().await
-                        .map_err(|err| anyhow::anyhow!("close old Agent UI tail failed: {err:?}"))?;
-
-                    let recovered = stdio_task_snapshot(
+                    let new_attachment =
+                        open_stdio_tail_attachment(shell, root_agent_path).await?;
+                    let recovered = match stdio_task_snapshot(
                         shell,
-                        agent_path,
-                        task,
-                        &tape_history,
-                        &ui_history,
+                        &new_attachment.agent_process_path,
+                        &task,
+                        &new_attachment.tape_history,
+                        &new_attachment.ui_history,
                     )
-                    .await?;
+                    .await
+                    {
+                        Ok(snapshot) => snapshot,
+                        Err(err) => {
+                            let _ = close_stdio_tails(
+                                new_attachment.tape_tail,
+                                new_attachment.ui_tail,
+                            )
+                            .await;
+                            return Err(err);
+                        }
+                    };
+                    let old_tape_tail = std::mem::replace(
+                        &mut attachment.tape_tail,
+                        new_attachment.tape_tail,
+                    );
+                    let old_ui_tail =
+                        std::mem::replace(&mut attachment.ui_tail, new_attachment.ui_tail);
+                    attachment.root_agent_pid = new_attachment.root_agent_pid;
+                    attachment.agent_process_path = new_attachment.agent_process_path;
+                    let close_old = close_stdio_tails(old_tape_tail, old_ui_tail).await;
                     tape_pending.clear();
                     ui_pending.clear();
-                    *root_agent_pid = Some(pid);
                     snapshot = recovered;
+                    close_old?;
 
                     if interrupt_requested
-                        && interrupt_stdio_task_if_active(shell, agent_path, &snapshot).await?
+                        && interrupt_stdio_task_if_active(shell, &attachment.agent_process_path, &snapshot).await?
                     {
                         bail!("Agent task interrupted");
                     }
@@ -652,7 +676,7 @@ async fn wait_for_stdio_answer(
             signal = &mut interrupt, if !interrupt_requested => {
                 signal?;
                 interrupt_requested = true;
-                if interrupt_stdio_task_if_active(shell, agent_path, &snapshot).await? {
+                if interrupt_stdio_task_if_active(shell, &attachment.agent_process_path, &snapshot).await? {
                     bail!("Agent task interrupted");
                 }
             }
@@ -697,15 +721,14 @@ struct StdioTaskSnapshot {
     task_error: Option<String>,
 }
 
-#[derive(Clone, Copy)]
 struct StdioTaskWaitContext<'a> {
     input: &'a str,
-    baseline_tape_history: &'a [u8],
+    baseline_tape_history: Vec<u8>,
     submitted_at_ms: u64,
 }
 
 impl<'a> StdioTaskWaitContext<'a> {
-    fn new(input: &'a str, baseline_tape_history: &'a [u8]) -> Self {
+    fn new(input: &'a str, baseline_tape_history: Vec<u8>) -> Self {
         Self {
             input,
             baseline_tape_history,
@@ -717,7 +740,7 @@ impl<'a> StdioTaskWaitContext<'a> {
 async fn stdio_task_snapshot(
     shell: &alan_shell::Shell,
     agent_path: &str,
-    task: StdioTaskWaitContext<'_>,
+    task: &StdioTaskWaitContext<'_>,
     tape_history: &[u8],
     ui_history: &[u8],
 ) -> Result<StdioTaskSnapshot> {
@@ -745,7 +768,7 @@ async fn stdio_task_snapshot(
 }
 
 fn stdio_task_snapshot_from_history(
-    task: StdioTaskWaitContext<'_>,
+    task: &StdioTaskWaitContext<'_>,
     tape_history: &[u8],
     ui_history: &[u8],
 ) -> Result<StdioTaskSnapshot> {
@@ -762,7 +785,7 @@ fn stdio_task_snapshot_from_history(
             (record.role == "user" && record.content == task.input).then_some(index)
         })
         .collect::<Vec<_>>();
-    let baseline_record_count = std::str::from_utf8(task.baseline_tape_history)
+    let baseline_record_count = std::str::from_utf8(&task.baseline_tape_history)
         .context("baseline machine/tape is not utf8")?
         .lines()
         .filter_map(|line| serde_json::from_str::<TapeRecordV1>(line).ok())
@@ -770,7 +793,7 @@ fn stdio_task_snapshot_from_history(
         .count();
     let task_index = tape_history
         .as_bytes()
-        .starts_with(task.baseline_tape_history)
+        .starts_with(&task.baseline_tape_history)
         .then(|| {
             matching_task_indices
                 .iter()
