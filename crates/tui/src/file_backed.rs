@@ -58,6 +58,7 @@ const MAX_COMPOSER_LINES: usize = 10;
 const MAX_COMPLETION_ROWS: usize = 6;
 const SPINNER: [&str; 10] = ["|", "/", "-", "\\", "|", "/", "-", "\\", "|", "/"];
 
+/// Configuration for rendering an Agent Process through a mounted file-backed surface.
 #[derive(Clone)]
 pub struct FileBackedRunConfig {
     /// Mounted namespace surface for the local renderer host.
@@ -77,6 +78,7 @@ pub struct FileBackedRunConfig {
 }
 
 impl FileBackedRunConfig {
+    /// Create a renderer configuration for a mounted Agent Process.
     pub fn new(root_transport: InProcessTransport, agent_path: impl Into<String>) -> Self {
         Self {
             root_transport,
