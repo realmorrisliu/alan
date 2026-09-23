@@ -42,10 +42,12 @@ existing attached namespace and `/agent/root` to
 redirected, it reads one task, writes the final answer to stdout, keeps
 diagnostics on stderr, and reports task failure with a nonzero exit code. If
 stdin is a terminal but stdout is redirected, it errors before attaching to the
-Host instead of waiting for terminal EOF. The one-shot waiter opens tape and UI
-tails against one concrete Root Agent PID, retries the pair if that identity
-changes during attach, and uses that same Process path for submission and
-observation. It reopens both tails together if the Root Agent PID changes
+Host instead of waiting for terminal EOF. At initial attach, the one-shot
+waiter retries an empty Root Agent PID twice at 250 ms intervals, then reports
+unavailability rather than waiting indefinitely. It opens tape and UI tails
+against one concrete Root Agent PID, retries the pair if that identity changes
+during attach, and uses that same Process path for submission and observation.
+It reopens both tails together if the Root Agent PID changes
 during a task, recovering the matching submitted turn from the replacement
 Process. EOF or an IO error on either tail first triggers a Root Agent PID
 check. If the published PID still matches, the waiter allows one 250 ms

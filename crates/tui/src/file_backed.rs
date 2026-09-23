@@ -493,9 +493,7 @@ async fn open_stdio_tail_attachment_when_idle(
     shell: &alan_shell::Shell,
     root_agent_path: &str,
 ) -> Result<StdioTailAttachment> {
-    let root_agent_pid = current_root_agent_pid(shell)
-        .await?
-        .ok_or_else(|| anyhow::anyhow!("Root Agent PID is unavailable"))?;
+    let root_agent_pid = tail::wait_for_root_agent_pid(shell).await?;
     let pinned_agent_path = tail::root_agent_path_for_pid(root_agent_path, root_agent_pid)
         .ok_or_else(|| anyhow::anyhow!("one-shot tasks require the /agent/root path"))?;
     let activity = file_surface::read_activity_snapshot(shell, &pinned_agent_path)

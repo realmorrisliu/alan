@@ -21,6 +21,20 @@ pub(super) async fn current_root_agent_pid(shell: &alan_shell::Shell) -> Result<
     Ok((pid > 0).then_some(pid))
 }
 
+pub(super) async fn wait_for_root_agent_pid(shell: &alan_shell::Shell) -> Result<u64> {
+    for attempt in 0..3 {
+        if let Some(pid) = current_root_agent_pid(shell).await? {
+            return Ok(pid);
+        }
+        // ponytail: two 250ms retries cover the empty-PID handoff; persistent
+        // unavailability stays a clear one-shot error instead of waiting forever.
+        if attempt < 2 {
+            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        }
+    }
+    bail!("Root Agent PID is unavailable")
+}
+
 pub(super) async fn tail_with_history(
     shell: &alan_shell::Shell,
     path: &str,

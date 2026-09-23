@@ -1,6 +1,45 @@
 use super::*;
 
 #[tokio::test]
+async fn one_shot_start_waits_for_root_agent_pid_during_restart() {
+    let (shell, _agent_root, namespace, pid) = stdio_tests::live_root_agent().await;
+    namespace.replace_mount(
+        stdio_tests::PID_MOUNT,
+        InProcessTransport::new(std::sync::Arc::new(
+            alan_ap::reference::MemFs::with_read_only_file("pid", b"0\n".to_vec()),
+        )),
+        alan_kernel::Access::ReadOnly,
+    );
+
+    let attach_shell = shell.clone();
+    let mut attaching = tokio::spawn(async move {
+        open_stdio_tail_attachment_when_idle(&attach_shell, "/agent/root").await
+    });
+    tokio::select! {
+        _ = &mut attaching => panic!("one-shot startup returned before a replacement PID was published"),
+        _ = tokio::time::sleep(std::time::Duration::from_millis(25)) => {}
+    }
+
+    namespace.replace_mount(
+        stdio_tests::PID_MOUNT,
+        InProcessTransport::new(std::sync::Arc::new(
+            alan_ap::reference::MemFs::with_read_only_file("pid", format!("{pid}\n").into_bytes()),
+        )),
+        alan_kernel::Access::ReadOnly,
+    );
+    let attachment = tokio::time::timeout(std::time::Duration::from_secs(2), &mut attaching)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(attachment.root_agent_pid, pid.parse::<u64>().unwrap());
+    close_stdio_tails(attachment.tape_tail, attachment.ui_tail)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
 async fn one_shot_rebases_tails_after_the_previous_turn_reaches_idle() {
     let (shell, _agent_root, _live_namespace, pid) = stdio_tests::live_root_agent().await;
     let previous = open_stdio_tail_attachment(&shell, "/agent/root")

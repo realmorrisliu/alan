@@ -39,8 +39,9 @@
 - [x] 2.7 Keep recoverable Agent errors in the rendered transcript.
 - [x] 2.8 Implement and verify terminal-mode selection, one-shot redirected
   stdin/stdout/stderr, Root Agent PID rebinding (including tail closure before
-  PID polling and a temporary missing PID during supervised restart), and
-  exit-code behavior. Keep waiting for the task
+  PID polling, temporary missing PID during supervised restart, and bounded
+  retry when one-shot startup reads an empty PID), and exit-code behavior. Keep
+  waiting for the task
   outcome without a client-only timeout; persist generation failures as UI
   terminal-error events before idle without requiring tape; recognize
   `Running`/terminal-error events before tape persistence; prefer terminal
