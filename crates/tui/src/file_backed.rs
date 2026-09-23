@@ -26,9 +26,16 @@ use ratatui::widgets::{Block, Paragraph, Wrap};
 mod app;
 mod file_surface;
 mod history_merge;
+mod interrupt;
+mod submission;
 mod tail;
 
 use app::{FileBackedAction, FileBackedApp, FileBackedEvent};
+use interrupt::{
+    PendingRootAgentTurn, observe_root_agent_activity, request_pending_root_interrupt,
+    send_interrupt,
+};
+use submission::{prepare_root_agent_submission, require_root_agent_idle};
 
 #[cfg(test)]
 use file_surface::{
@@ -39,7 +46,7 @@ use file_surface::{
     TapeRecordV1, hydrate_and_open_tails, reattach_to_current_agent, spawn_action_watch,
     spawn_output_tail, spawn_request_watch, spawn_tape_watch, spawn_terminal_events,
     spawn_ui_watch, sync_actions_from_files, sync_requests_from_files, write_agent_input,
-    write_interrupt, write_machine_ctl, write_request_response,
+    write_machine_ctl, write_request_response,
 };
 use tail::{
     StdioTailAttachment, close_stdio_tails, current_root_agent_pid, open_stdio_tail_attachment,
@@ -182,26 +189,33 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                     }
                     other => {
                         let mut submission_lock = None;
-                        let blocked_submission = follows_root_agent
+                        let submission_requested = follows_root_agent
                             && matches!(
                                 &other,
                                 FileBackedEvent::Terminal(TerminalEvent::Key(key))
                                     if key.code == KeyCode::Enter
                                         && !key.modifiers.contains(KeyModifiers::SHIFT)
                             )
-                            && app.enter_submits_agent_task()
-                            && match config.task_submission_lock_path.as_deref() {
-                                Some(path) => match acquire_task_submission_lock(path) {
-                                    Ok(lock) => {
-                                        submission_lock = Some(lock);
-                                        false
-                                    }
-                                    Err(err) => {
-                                        app.push_error(format!("submit blocked: {err:#}"));
-                                        true
-                                    }
-                                },
-                                None => false,
+                            && app.enter_submits_agent_task();
+                        let blocked_submission = if submission_requested {
+                            match prepare_root_agent_submission(
+                                &shell,
+                                &config.agent_path,
+                                config.task_submission_lock_path.as_deref(),
+                            )
+                            .await
+                            {
+                                Ok(lock) => {
+                                    submission_lock = lock;
+                                    false
+                                }
+                                Err(err) => {
+                                    app.push_error(format!("submit blocked: {err:#}"));
+                                    true
+                                }
+                            }
+                        } else {
+                            false
                         };
                         if !blocked_submission
                             && let Some(action) = app.dispatch(other)
@@ -219,6 +233,7 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                                                 pending_root_agent_turn = Some(PendingRootAgentTurn {
                                                     input: text.clone(),
                                                     observed_active: false,
+                                                    interrupt_requested: false,
                                                     submitted_at_ms,
                                                     prior_matching_turns,
                                                 });
@@ -260,9 +275,10 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                                     }
                                 }
                                 FileBackedAction::Interrupt => {
-                                    match write_interrupt(&shell, &app.agent_path).await {
-                                        Ok(()) => app.notice = Some("interrupt sent".to_string()),
-                                        Err(err) => app.push_error(format!("interrupt failed: {err:#}")),
+                                    if request_pending_root_interrupt(&mut pending_root_agent_turn) {
+                                        send_interrupt(&shell, &mut app).await;
+                                    } else {
+                                        app.notice = Some("interrupt queued".to_string());
                                     }
                                 }
                                 FileBackedAction::Quit => break,
@@ -271,10 +287,12 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                     }
                 }
                 if follows_root_agent {
-                    observe_root_agent_activity(
+                    if observe_root_agent_activity(
                         &mut pending_root_agent_turn,
                         app.activity.state,
-                    );
+                    ) {
+                        send_interrupt(&shell, &mut app).await;
+                    }
                     if pending_root_agent_turn.is_none() {
                         _active_task_lock = None;
                     }
@@ -308,10 +326,12 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                 {
                     turn.observed_active = true;
                 }
-                observe_root_agent_activity(
+                if observe_root_agent_activity(
                     &mut pending_root_agent_turn,
                     app.activity.state,
-                );
+                ) {
+                    send_interrupt(&shell, &mut app).await;
+                }
                 if pending_root_agent_turn.is_none() {
                     _active_task_lock = None;
                 }
@@ -346,32 +366,11 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
     Ok(())
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct PendingRootAgentTurn {
-    input: String,
-    observed_active: bool,
-    submitted_at_ms: u64,
-    prior_matching_turns: usize,
-}
-
 struct AgentWatchers {
     shutdown: tokio::sync::watch::Sender<bool>,
     tasks: Vec<tokio::task::JoinHandle<Result<()>>>,
     root_agent_pid: Option<u64>,
     pid_refresh_failed: bool,
-}
-
-fn observe_root_agent_activity(
-    pending_turn: &mut Option<PendingRootAgentTurn>,
-    activity: UiActivityState,
-) {
-    if let Some(turn) = pending_turn {
-        match activity {
-            UiActivityState::Running | UiActivityState::Paused => turn.observed_active = true,
-            UiActivityState::Idle if turn.observed_active => *pending_turn = None,
-            UiActivityState::Idle => {}
-        }
-    }
 }
 
 impl AgentWatchers {
@@ -472,31 +471,17 @@ pub async fn run_stdio_task(
     let agent_path = agent_path.into();
     let shell = alan_shell::Shell::new(root_transport);
     let mut attachment = open_stdio_tail_attachment(&shell, &agent_path).await?;
-    let activity_path = format!("{}/machine/ui/activity", attachment.agent_process_path);
-    let activity = match shell
-        .cat(&activity_path)
-        .await
-        .map_err(|err| anyhow::anyhow!("read Agent activity failed: {err:?}"))
-        .and_then(|raw| {
-            serde_json::from_slice::<UiActivitySnapshot>(&raw)
-                .map_err(|err| anyhow::anyhow!("parse Agent activity failed: {err}"))
-        }) {
-        Ok(activity) => activity,
-        Err(err) => {
-            let _ = close_stdio_tails(attachment.tape_tail, attachment.ui_tail).await;
-            return Err(err);
-        }
-    };
-    match activity.state {
-        UiActivityState::Idle => {}
-        UiActivityState::Running => {
-            let _ = close_stdio_tails(attachment.tape_tail, attachment.ui_tail).await;
-            bail!("Root Agent is already working; retry after it finishes")
-        }
-        UiActivityState::Paused => {
-            let _ = close_stdio_tails(attachment.tape_tail, attachment.ui_tail).await;
-            bail!("Root Agent is waiting for interactive input; use the TTY renderer")
-        }
+    let activity =
+        match file_surface::read_activity_snapshot(&shell, &attachment.agent_process_path).await {
+            Ok(activity) => activity,
+            Err(err) => {
+                let _ = close_stdio_tails(attachment.tape_tail, attachment.ui_tail).await;
+                return Err(err.context("read Agent activity failed"));
+            }
+        };
+    if let Err(err) = require_root_agent_idle(activity.state) {
+        let _ = close_stdio_tails(attachment.tape_tail, attachment.ui_tail).await;
+        return Err(err);
     }
     match current_root_agent_pid(&shell).await {
         Ok(Some(pid)) if pid == attachment.root_agent_pid => {}

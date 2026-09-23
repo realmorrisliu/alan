@@ -29,6 +29,54 @@ fn interactive_task_lock_is_shared_and_released_after_the_turn() {
 }
 
 #[test]
+fn root_agent_interrupt_waits_until_the_submitted_turn_is_accepted() {
+    let mut pending = Some(PendingRootAgentTurn {
+        input: "current task".to_string(),
+        observed_active: false,
+        interrupt_requested: false,
+        submitted_at_ms: 20,
+        prior_matching_turns: 0,
+    });
+
+    assert!(!request_pending_root_interrupt(&mut pending));
+    assert!(!observe_root_agent_activity(
+        &mut pending,
+        UiActivityState::Idle
+    ));
+    assert!(pending.as_ref().unwrap().interrupt_requested);
+
+    assert!(observe_root_agent_activity(
+        &mut pending,
+        UiActivityState::Running
+    ));
+    assert!(!pending.as_ref().unwrap().interrupt_requested);
+    assert!(!observe_root_agent_activity(
+        &mut pending,
+        UiActivityState::Idle
+    ));
+    assert_eq!(pending, None);
+}
+
+#[test]
+fn pending_root_agent_interrupt_is_discarded_if_task_settles_before_activation() {
+    let mut pending = Some(PendingRootAgentTurn {
+        input: "current task".to_string(),
+        observed_active: false,
+        interrupt_requested: false,
+        submitted_at_ms: 20,
+        prior_matching_turns: 0,
+    });
+
+    assert!(!request_pending_root_interrupt(&mut pending));
+    pending.as_mut().unwrap().observed_active = true;
+    assert!(!observe_root_agent_activity(
+        &mut pending,
+        UiActivityState::Idle
+    ));
+    assert_eq!(pending, None);
+}
+
+#[test]
 fn only_a_plain_enter_submits_a_new_agent_task() {
     let mut app = FileBackedApp::new("/agent/root".to_string());
     app.composer.set_text("do work");

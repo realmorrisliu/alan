@@ -30,8 +30,9 @@
   registering only the existing Core Tool set in product Root Agent boot;
   verify the exact set and shell behavior, including preserving namespace-path
   data passed to `echo`/`printf`, Git commit messages, and AWK assignments or
-  inline programs while projecting `-f` scripts, post-program input files, and
-  redirection targets, including AWK `--` option termination.
+  inline programs while projecting `-f` scripts and input files on backends
+  that permit those scripts, including AWK `--` option termination; confirm
+  conservative backends continue to reject opaque AWK script execution.
 - [x] 2.7 Keep recoverable Agent errors in the rendered transcript.
 - [x] 2.8 Implement and verify terminal-mode selection, one-shot redirected
   stdin/stdout/stderr, Root Agent PID rebinding (including tail closure before
@@ -40,11 +41,15 @@
   outcome without a client-only timeout; persist generation failures as UI
   terminal-error events before idle without requiring tape; recognize
   `Running`/terminal-error events before tape persistence; prefer terminal
-  errors over intermediate assistant content; retain Ctrl-C until `Running`
-  confirms acceptance before sending interruption; exclude concurrent one-shot
-  writers; and fail closed when replacement tape/UI history cannot correlate
-  the result to this submission. Open the tape/UI tail pair against one
-  concrete PID and retry the pair if it changes during attachment.
+  errors over intermediate assistant content; retain one-shot Ctrl-C until
+  `Running` confirms acceptance before sending interruption; defer TTY
+  Ctrl-C/Escape until the submitted turn becomes active and discard the
+  deferred interrupt if it settles first; serialize TTY and one-shot submission
+  through the shared channel lease; reject TTY and one-shot submission when the
+  Root Agent is already Running or Paused even after its prior renderer exits;
+  and fail closed when replacement tape/UI history cannot correlate the result
+  to this submission. Open the tape/UI tail pair against one concrete PID and
+  retry the pair if it changes during attachment.
 
 > Live acceptance status (2026-09-23): an explicit read-only synthetic Host
 > Mount and `bash` read returned the expected sentinel; a leading `!` reached

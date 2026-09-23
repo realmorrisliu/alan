@@ -15,6 +15,9 @@ mod command_shape_tests;
 #[path = "sandbox/interpreter_wrapper_tests.rs"]
 mod interpreter_wrapper_tests;
 
+#[path = "sandbox/awk_projection_tests.rs"]
+mod awk_projection_tests;
+
 #[tokio::test]
 async fn test_sandbox_exec() {
     let temp = TempDir::new().unwrap();

@@ -58,11 +58,13 @@ Runtime or select an Agent Definition as Host startup behavior.
 - **AND** the client reports interruption without terminating the Root Agent
   Process
 
-#### Scenario: A redirected client overlaps another one-shot task
-- **WHEN** another redirected `alan` client already owns the channel's one-shot
-  task lease
+#### Scenario: A client overlaps another Root Agent task
+- **WHEN** another TTY or redirected `alan` client owns the channel's
+  nonblocking task-submission lease, or the Root Agent remains running or
+  paused after its prior renderer exited
 - **THEN** the new client fails clearly and does not attach its result to the
   other client's task
+- **AND** it does not write new task input while the Root Agent is active
 - **AND** the user can retry after the active task settles
 
 #### Scenario: Root Agent Process changes during redirected task
@@ -135,12 +137,15 @@ and sandbox.
 - **AND** the redirection target still resolves only within the authorized
   Host Mount
 
-#### Scenario: AWK preserves program text while projecting file paths
+#### Scenario: AWK preserves program text while projecting supported file paths
 - **WHEN** an authorized AWK command has a namespace path in a `-v` assignment
-  or program text and uses a namespace path for a `-f` script or input file
+  or program text and the selected sandbox permits that AWK script form
+- **AND** it uses a namespace path for a `-f` script or input file
 - **THEN** assignment and program text keep the namespace path unchanged
 - **AND** the script and input file operands resolve to their authorized Host
   Mount paths, including input operands after `--`
+- **AND** a conservative sandbox may reject opaque AWK script forms rather than
+  executing them without protected-path validation
 
 #### Scenario: Explicit StdioDriver builtin is entered
 - **WHEN** the StdioDriver receives the same text as explicit builtin input

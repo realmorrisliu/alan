@@ -66,7 +66,9 @@ register the explorer-only Tools. Existing slash UI controls remain renderer
 controls. On host-backed sandbox adapters, filesystem operands and redirection
 targets are projected to their authorized Host paths; recognized data positions
 such as `echo`/`printf`, Git commit messages, and AWK assignments/programs keep
-their original namespace text.
+their original namespace text. AWK `-f` scripts and input-file operands are
+projected when the selected backend permits that script form; conservative
+backends still reject opaque scripts when they cannot validate protected paths.
 
 The redirected one-shot client waits for task completion or explicit Ctrl-C;
 it does not impose a client-only deadline. A `Running` Activity event establishes
@@ -74,15 +76,17 @@ that the submitted task has started even when the engine has not yet persisted
 its user message to tape. Generation failures are persisted to the UI event
 stream before the Agent returns to idle, so the one-shot client can report them
 without a tape record. A terminal task error takes precedence over any
-intermediate assistant content. Ctrl-C remains pending until the waiter observes
-`Running`, then sends the turn interrupt; sending it before that acceptance
-signal could let an idle Runtime consume the interrupt before reading the task.
-Redirected clients take a channel-scoped, nonblocking one-shot lease before
-submitting, so concurrent one-shot writers cannot claim one another's
-`Running` event or answer. If another client owns it, the new invocation fails
-clearly and can be retried. This lease does not serialize a TTY renderer; add
-request identities only if mixed one-shot/interactive concurrency becomes a
-supported use case.
+intermediate assistant content. Both a TTY renderer and the redirected waiter
+keep Ctrl-C pending until the submitted turn is observed as `Running` or
+`Paused`, then send the turn interrupt; sending it before acceptance could let
+an idle Runtime consume the interrupt before reading the task. They discard the
+pending interrupt if the turn settles before becoming active. TTY and redirected
+clients take the same channel-scoped, nonblocking task-submission lease and
+check the live Root Agent activity before writing. This also prevents a new
+client from submitting after a TTY renderer exits and releases its lease while
+the shared task keeps running. If the lease is held or activity is Running or
+Paused, the new invocation fails clearly and can be retried when idle; durable
+request identities are unnecessary while supported clients honor this boundary.
 
 ### 2. Attach the existing Root Agent; do not create another Process
 
@@ -101,8 +105,10 @@ The existing renderer maps Ctrl-C and Escape to `FileBackedAction::Interrupt`
 and writes `interrupt` to `/agent/root/machine/ctl`. This is an Agent Runtime
 turn interruption; writing `/proc/<pid>/ctl` would terminate the shared Agent
 Process and is explicitly wrong. The same Root Agent remains usable for the
-next task. The redirected one-shot waiter retains Ctrl-C until its asynchronous
-Activity watcher observes `Running`, then writes the same control command.
+next task. Both TTY and redirected one-shot paths retain Ctrl-C until their
+asynchronous Activity watcher observes the submitted turn as `Running` or
+`Paused`, then write the same control command. A deferred interrupt is dropped
+if the submission settles before becoming active.
 Quitting the renderer stops its own file-tail tasks and restores the
 terminal; it does not request Host or Agent shutdown.
 
@@ -166,13 +172,16 @@ the repository quality gate so this route cannot silently regress.
   stderr carries diagnostics, and failures produce a nonzero exit code.
   Include a Root Agent PID change during the wait and ensure the answer is not
   lost or duplicated; verify a concurrent redirected client cannot claim that
-  answer. On PID change, include an older identical prompt in replacement tape
+  answer. Verify both TTY and redirected clients refuse submission while the
+  Root Agent remains active after its prior TTY renderer exits. On PID change,
+  include an older identical prompt in replacement tape
   with no current turn and require an unknown outcome rather than the old
   answer. Wait beyond five minutes without an invented client timeout; report a
   runtime error even when it precedes tape persistence, prefer that error over
-  intermediate assistant content, and verify Ctrl-C is retained
-  until `Running` confirms the task has been accepted before writing the turn
-  interrupt.
+  intermediate assistant content, and verify one-shot Ctrl-C is retained
+  until `Running` confirms acceptance before writing the turn interrupt. Verify
+  the TTY renderer also defers Ctrl-C/Escape until its submitted turn becomes
+  active and drops the deferred interrupt if the turn settles first.
 - If the mounted Connection metadata reports `unconfigured`, fail the task with
   a clear unavailable-Connection error before applying defaults from the
   unrelated local model catalog.

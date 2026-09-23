@@ -1,8 +1,8 @@
 //! AgentFS file observation, command writes, and snapshot projection.
 
 use alan_agent_protocol::{
-    ContentPart, StructuredInputQuestion, ToolResultPresentation, UiActivityState, UiEvent,
-    YieldKind,
+    ContentPart, StructuredInputQuestion, ToolResultPresentation, UiActivitySnapshot,
+    UiActivityState, UiEvent, YieldKind,
 };
 use anyhow::{Context, Result, anyhow};
 use crossterm::event::{Event as TerminalEvent, KeyCode, KeyEvent, KeyModifiers};
@@ -55,7 +55,7 @@ pub(super) async fn hydrate_and_open_tails(
         .map(|line| serde_json::from_str::<UiEvent>(line).context("parse ui event"))
         .collect::<Result<Vec<_>>>()?;
     if ui_events.is_empty() {
-        app.apply_ui_activity_snapshot(read_json_file(shell, &ui_activity_path(agent_path)).await?);
+        app.apply_ui_activity_snapshot(read_activity_snapshot(shell, agent_path).await?);
         app.apply_ui_plan_snapshot(read_json_file(shell, &ui_plan_path(agent_path)).await?);
         app.apply_ui_thinking_snapshot(read_json_file(shell, &ui_thinking_path(agent_path)).await?);
         app.apply_ui_notice_snapshot(read_json_file(shell, &ui_notice_path(agent_path)).await?);
@@ -560,6 +560,13 @@ fn action_events_path(agent_path: &str) -> String {
 
 fn ui_activity_path(agent_path: &str) -> String {
     format!("{agent_path}/machine/ui/activity")
+}
+
+pub(super) async fn read_activity_snapshot(
+    shell: &alan_shell::Shell,
+    agent_path: &str,
+) -> Result<UiActivitySnapshot> {
+    read_json_file(shell, &ui_activity_path(agent_path)).await
 }
 
 fn ui_plan_path(agent_path: &str) -> String {

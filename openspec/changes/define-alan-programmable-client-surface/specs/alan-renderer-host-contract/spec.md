@@ -86,6 +86,14 @@ usable for subsequent input after a turn is interrupted.
 - **THEN** the renderer writes the Agent Runtime interrupt control
 - **AND** the Root Agent Process remains running and accepts a subsequent task
 
+#### Scenario: Interrupt arrives before a submitted turn starts
+- **WHEN** the user presses Ctrl-C or Escape after submitting a Root Agent task
+  but before observing that task as active
+- **THEN** the renderer keeps the turn interrupt pending until the submitted
+  task is observed as running or paused
+- **AND** it discards the pending interrupt if the task settles before becoming
+  active
+
 #### Scenario: Renderer exits
 - **WHEN** the user quits or closes the local renderer
 - **THEN** it closes its own file streams and restores the terminal
