@@ -28,8 +28,8 @@
   blockchain/provenance/license records.
 - [ ] 2.3 Define `updf-harness-contract` for the standalone `updf` binary,
   package format, QA report contract, JSON outputs, and mutation-lane guidance.
-- [ ] 2.4 Define `macos-updf-preview` for Alan's read-only `.updf` preview and
-  QA summary consumer role.
+- [ ] 2.4 Cancelled: define the desktop-only `.updf` preview; retain unchecked
+  as history because Alan for macOS is retired (see disposition.md).
 - [ ] 2.5 Define agent review through bounded descriptors, `/bin/updf`, a role
   Skill, Agent Executable spawn, and a writable proposal tree.
 
@@ -37,8 +37,8 @@
 
 - [ ] 3.1 Identify the first follow-up implementation slice for `crates/updf`,
   standalone binary, Typst-first build, QA, package, and inspect.
-- [ ] 3.2 Identify the Alan macOS read-only `.updf` preview follow-up slice and
-  record direct package-file consumption as its entry criterion.
+- [ ] 3.2 Cancelled: identify a desktop `.updf` preview slice; any future
+  preview requires a selected, supported host consumer.
 - [ ] 3.3 Identify the Markdown manuscript authoring project follow-up slice.
 - [ ] 3.4 Identify the preview-comment-agent review loop follow-up slice.
 - [ ] 3.5 Identify the signed package and personalized watermark distribution
@@ -47,9 +47,8 @@
   focused specs rather than first-slice implementation requirements.
 - [ ] 3.7 Defer WYSIWYG-like semantic editing to a later slice after comments,
   anchors, and agent patch review are proven.
-- [ ] 3.8 Keep the macOS preview slice parked until Alan for macOS can open and
-  read the package file contract directly; do not introduce an alternate
-  client-facing authority.
+- [ ] 3.8 Cancelled: keep the retired desktop preview slice parked; this task
+  remains unchecked as history (see disposition.md).
 
 ## 4. Verification
 

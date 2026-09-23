@@ -39,8 +39,9 @@ act on triggers and report outcomes.
 
 - Runtime event/trigger machinery (schedulers, watchers, rule storage): this
   change defines only how event-driven behavior appears to the user.
-- Visual design tokens and material treatment: owned by
-  `macos-shell-ui-ux-conformance`.
+- Retired desktop visual tokens and material treatment are outside the queued
+  terminal-interaction scope. Terminal rendering remains owned by
+  `rust-inline-tui`.
 - Onboarding flows, empty states, and first-run copy: a later change.
 - TUI-specific keybindings and macOS-specific layout details.
 - Remote Entry launch authority, revocation, and background dispatch; those

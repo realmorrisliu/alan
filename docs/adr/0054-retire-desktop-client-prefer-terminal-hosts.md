@@ -26,10 +26,12 @@ integration is claimed implemented. Closing a renderer must not own system
 Host shutdown; foreground cancellation versus detach needs explicit terminal
 acceptance tests before new behavior ships.
 
-Normative lifecycle scope: `documentation-governance`. Implementation removal
-and terminal integration require their own subsequent OpenSpec deltas.
+Normative lifecycle scope: `documentation-governance`. Desktop source removal
+is complete and recorded in the
+[archived OpenSpec change](../../openspec/changes/archive/2026-09-23-remove-retired-desktop-source/);
+terminal integration continues through its own OpenSpec changes.
 
 Implementation follow-up (2026-09-20): standalone distribution retirement has
-merged. `remove-retired-desktop-source` tracks the approved deletion of App and
-shell-core/FFI source and desktop-only requirements; its tasks carry delivery
-status. No user migration or desktop compatibility is required.
+merged. The archived `remove-retired-desktop-source` change records the
+completed deletion of App and shell-core/FFI source and desktop-only
+requirements. No user migration or desktop compatibility is required.

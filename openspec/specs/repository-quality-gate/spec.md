@@ -4,8 +4,7 @@
 
 Define the single non-mutating and reproducible repository gate shared by local
 development, Git hooks, and CI, including Rust quality, source-size and
-dependency ratchets, retired-surface absence checks, and Apple architecture
-debt enforcement.
+dependency ratchets, and retired-surface absence checks.
 
 ## Requirements
 
@@ -237,8 +236,21 @@ baseline in the same PR. It MUST NOT increase another debt budget to compensate.
 
 #### Scenario: A refactor shifts debt elsewhere
 - **WHEN** a slice reduces one budget but grows another oversized source,
-  transitional dependency set, or Apple warning class
+  transitional dependency set, or another recorded source/dependency budget
 - **THEN** the canonical quality gate fails
+
+### Requirement: Removed desktop implementation stays absent
+The repository quality gate SHALL reject tracked Alan desktop source and
+shell-core/FFI workspace membership. It SHALL continue validating standalone
+CLI/Host and Rust platform safety without requiring Swift, Xcode or desktop UI.
+
+#### Scenario: Desktop source returns
+- **WHEN** a tracked file is added under clients/apple or either retired shell-core crate
+- **THEN** the quality gate fails
+
+#### Scenario: Developer retains local build artifacts
+- **WHEN** ignored Apple build products remain on disk without tracked desktop source
+- **THEN** their presence does not require deleting local files or running desktop verification
 
 ### Requirement: Rust oversized-source debt reaches zero
 This change SHALL reduce every Rust source under `crates/` to no more than 1,000

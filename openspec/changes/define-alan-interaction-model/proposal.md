@@ -16,12 +16,11 @@ OS, start a shell, mount things with commands", the file-native architecture
 becomes a barrier instead of a capability.
 
 Today the UX contract is only implied: ADR-0046/0047 fix renderer discipline,
-ADR-0050 defines grant-based host file access, and
-`macos-shell-ui-ux-conformance` defines visual treatment — but no spec defines
-how a user actually relates to Alan: what objects they manipulate, which
-interaction modes exist, and where OS concepts are allowed to surface. Without
-that contract, the macOS client, the TUI, and future Alan Apps will each invent
-their own answer, and OS vocabulary will leak into the default UI.
+ADR-0050 defines grant-based host file access, and `rust-inline-tui` defines
+terminal presentation — but no current spec defines how a user relates to Alan
+across interaction modes. The retired desktop client is outside this change's
+scope; the remaining interaction work is queued after the first usable-agent
+tracer bullet.
 
 ## What Changes
 
@@ -105,9 +104,9 @@ their own answer, and OS vocabulary will leak into the default UI.
 - No system-architecture change: ADR-0039 (shell before agent views),
   ADR-0045 (aP attachment), and ADR-0050 (Host Mount Service grants) remain
   the system truth; this change defines the UX layered on top of them.
-- Existing `macos-shell-ui-ux-conformance` keeps owning visual treatment;
-  this change owns interaction structure and vocabulary, and the two must not
-  duplicate rules.
+- `rust-inline-tui` owns terminal rendering behavior; any broader interaction
+  contract will be rewritten after the first usable-agent tracer bullet and
+  must not duplicate renderer-specific rules.
 - Future event-driven work (triggers, schedules, proactive reports) must
   express its user-facing surface through this model; this change defines the
   UX contract only, not the runtime event machinery.

@@ -47,8 +47,6 @@ license records, but they should not be mandatory for ordinary readers.
   license records.
 - Define the standalone `updf` harness direction inside the Alan workspace with
   an independent binary rather than an `alan` subcommand.
-- Define Alan for macOS as a package preview and review consumer rather than the
-  first authoring editor.
 - Capture how future authoring should work: writing flow in Markdown, publishing
   flow through Typst profiles/templates, review flow through preview comments,
   QA issues, bounded Agent Process patches, visual diffs, and human approval.
@@ -76,17 +74,6 @@ license records, but they should not be mandatory for ordinary readers.
   layout, Markdown/Typst publishing pipeline direction, Typst target
   compilation, QA report contract, package format, inspection behavior, and
   agent-facing mutation-lane guidance.
-- `macos-updf-preview`: Defines Alan for macOS `.updf` opening, manifest
-  parsing, PDF target rendering, target switching, QA summary display, and
-  read-only package handling.
-
-### Modified Capabilities
-
-- `macos-shell-workspace-interactions`: Alan shell content panes need to support
-  a non-terminal document preview content kind for `.updf` packages.
-- `macos-shell-build-test-contract`: Apple client verification must cover `.updf`
-  package parsing and preview-routing model behavior.
-
 ### Dependencies
 
 - `alan-app-service-integration`: UPDF consumes its descriptor-passing, Agent
@@ -97,12 +84,10 @@ license records, but they should not be mandatory for ordinary readers.
 ## Impact
 
 - This umbrella change captures product direction and capability boundaries.
-- Alan for macOS preview remains parked until the host can consume the read-only
-  package file contract directly; package preview does not introduce another
-  client-facing authority.
+- UPDF remains parked without a reader-host preview capability. A future
+  preview proposal requires a selected, supported host consumer.
 - Follow-up implementation changes should separately cover:
   - the first `crates/updf` harness and standalone binary;
-  - Alan for macOS read-only `.updf` package preview;
   - Markdown authoring project support;
   - preview comments and agent-assisted publishing review;
   - signed package and personalized watermark distribution support;

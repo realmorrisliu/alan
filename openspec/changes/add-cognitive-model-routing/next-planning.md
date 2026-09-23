@@ -9,8 +9,8 @@
 - 架构基线已收口：ADR-0054 退役桌面产品，ADR-0055 接受同一 Machine 组合确定性计算、typed evaluation 和 generation。
 - 独立 CLI/Host 分发已完成并归档：
   [retire-macos-client-and-standalone-cli](../archive/2026-09-20-retire-macos-client-and-standalone-cli/)。
-  后续源码删除由 [remove-retired-desktop-source](../remove-retired-desktop-source/tasks.md)
-  跟踪，用户已批准删除 App 和 shell-core/FFI；平台安全能力继续保留。
+  源码删除已由 [remove-retired-desktop-source 归档记录](../archive/2026-09-23-remove-retired-desktop-source/)
+  完成，App 和 shell-core/FFI 已移除；平台安全能力继续保留。
 - 当前只更新规划，以下功能均未声明完成。第一切片进入重规划，旧 deltas 必须按实际调用链重切后才可实施。
 - 原路线所列 rustls 风险已由 PR #923 中的依赖修复处理，当前锁定 0.23.45，不再作为待办。
 
