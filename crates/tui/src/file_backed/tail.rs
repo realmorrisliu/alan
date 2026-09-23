@@ -2,7 +2,12 @@ use super::{
     StdioTaskSnapshot, StdioTaskWaitContext, finish_stdio_task_if_ready,
     interrupt_stdio_task_if_active, stdio_task_snapshot,
 };
+use alan_agent_protocol::UiActivitySnapshot;
 use anyhow::{Context, Result, anyhow, bail};
+
+// ponytail: two 250ms retries cap startup handoff at 500ms; longer outages fail clearly.
+const ROOT_AGENT_ATTACH_ATTEMPTS: usize = 3;
+const ROOT_AGENT_ATTACH_RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis(250);
 
 pub(super) async fn current_root_agent_pid(shell: &alan_shell::Shell) -> Result<Option<u64>> {
     let path = "/mnt/service-manager/units/root-agent/pid";
@@ -21,16 +26,47 @@ pub(super) async fn current_root_agent_pid(shell: &alan_shell::Shell) -> Result<
     Ok((pid > 0).then_some(pid))
 }
 
-pub(super) async fn wait_for_root_agent_pid(shell: &alan_shell::Shell) -> Result<u64> {
-    for attempt in 0..3 {
-        if let Some(pid) = current_root_agent_pid(shell).await? {
-            return Ok(pid);
+pub(super) async fn wait_for_root_agent_activity(
+    shell: &alan_shell::Shell,
+    root_agent_path: &str,
+) -> Result<(u64, UiActivitySnapshot)> {
+    let mut last_activity_error = None;
+    for attempt in 0..ROOT_AGENT_ATTACH_ATTEMPTS {
+        let Some(pid) = current_root_agent_pid(shell).await? else {
+            last_activity_error = None;
+            if attempt + 1 < ROOT_AGENT_ATTACH_ATTEMPTS {
+                tokio::time::sleep(ROOT_AGENT_ATTACH_RETRY_DELAY).await;
+            }
+            continue;
+        };
+        let Some(agent_process_path) = root_agent_path_for_pid(root_agent_path, pid) else {
+            bail!("one-shot tasks require the /agent/root path");
+        };
+        let activity =
+            match super::file_surface::read_activity_snapshot(shell, &agent_process_path).await {
+                Ok(activity) => activity,
+                Err(error) => {
+                    last_activity_error = if current_root_agent_pid(shell).await? == Some(pid) {
+                        Some(error.context("read Agent activity failed"))
+                    } else {
+                        None
+                    };
+                    if attempt + 1 < ROOT_AGENT_ATTACH_ATTEMPTS {
+                        tokio::time::sleep(ROOT_AGENT_ATTACH_RETRY_DELAY).await;
+                    }
+                    continue;
+                }
+            };
+        if current_root_agent_pid(shell).await? == Some(pid) {
+            return Ok((pid, activity));
         }
-        // ponytail: two 250ms retries cover the empty-PID handoff; persistent
-        // unavailability stays a clear one-shot error instead of waiting forever.
-        if attempt < 2 {
-            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        last_activity_error = None;
+        if attempt + 1 < ROOT_AGENT_ATTACH_ATTEMPTS {
+            tokio::time::sleep(ROOT_AGENT_ATTACH_RETRY_DELAY).await;
         }
+    }
+    if let Some(error) = last_activity_error {
+        return Err(error);
     }
     bail!("Root Agent PID is unavailable")
 }
@@ -139,24 +175,40 @@ pub(super) async fn open_stdio_tail_attachment(
     shell: &alan_shell::Shell,
     root_agent_path: &str,
 ) -> Result<StdioTailAttachment> {
-    for _ in 0..3 {
-        let root_agent_pid = current_root_agent_pid(shell)
-            .await?
-            .ok_or_else(|| anyhow!("Root Agent PID is unavailable"))?;
+    for attempt in 0..ROOT_AGENT_ATTACH_ATTEMPTS {
+        let Some(root_agent_pid) = current_root_agent_pid(shell).await? else {
+            if attempt + 1 < ROOT_AGENT_ATTACH_ATTEMPTS {
+                tokio::time::sleep(ROOT_AGENT_ATTACH_RETRY_DELAY).await;
+                continue;
+            }
+            bail!("Root Agent PID is unavailable");
+        };
         let agent_process_path = root_agent_path_for_pid(root_agent_path, root_agent_pid)
             .ok_or_else(|| anyhow!("one-shot tasks require the /agent/root path"))?;
         let tape_path = format!("{agent_process_path}/machine/tape");
         let ui_path = format!("{agent_process_path}/machine/ui/events");
         let (tape_tail, tape_history) = match tail_with_history(shell, &tape_path).await {
             Ok(opened) => opened,
-            Err(_err) if current_root_agent_pid(shell).await? != Some(root_agent_pid) => continue,
-            Err(err) => return Err(err),
+            Err(err) => {
+                if current_root_agent_pid(shell).await? != Some(root_agent_pid) {
+                    continue;
+                }
+                if attempt + 1 < ROOT_AGENT_ATTACH_ATTEMPTS {
+                    tokio::time::sleep(ROOT_AGENT_ATTACH_RETRY_DELAY).await;
+                    continue;
+                }
+                return Err(err);
+            }
         };
         let (ui_tail, ui_history) = match tail_with_history(shell, &ui_path).await {
             Ok(opened) => opened,
             Err(err) => {
                 let _ = tape_tail.close().await;
                 if current_root_agent_pid(shell).await? != Some(root_agent_pid) {
+                    continue;
+                }
+                if attempt + 1 < ROOT_AGENT_ATTACH_ATTEMPTS {
+                    tokio::time::sleep(ROOT_AGENT_ATTACH_RETRY_DELAY).await;
                     continue;
                 }
                 return Err(err);
@@ -180,6 +232,9 @@ pub(super) async fn open_stdio_tail_attachment(
             });
         }
         let _ = close_stdio_tails(tape_tail, ui_tail).await;
+        if attempt + 1 < ROOT_AGENT_ATTACH_ATTEMPTS {
+            tokio::time::sleep(ROOT_AGENT_ATTACH_RETRY_DELAY).await;
+        }
     }
     bail!("Root Agent kept changing while opening one-shot AgentFS streams; retry")
 }

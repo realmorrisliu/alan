@@ -493,12 +493,8 @@ async fn open_stdio_tail_attachment_when_idle(
     shell: &alan_shell::Shell,
     root_agent_path: &str,
 ) -> Result<StdioTailAttachment> {
-    let root_agent_pid = tail::wait_for_root_agent_pid(shell).await?;
-    let pinned_agent_path = tail::root_agent_path_for_pid(root_agent_path, root_agent_pid)
-        .ok_or_else(|| anyhow::anyhow!("one-shot tasks require the /agent/root path"))?;
-    let activity = file_surface::read_activity_snapshot(shell, &pinned_agent_path)
-        .await
-        .context("read Agent activity failed")?;
+    let (root_agent_pid, activity) =
+        tail::wait_for_root_agent_activity(shell, root_agent_path).await?;
     require_root_agent_idle(activity.state)?;
     if current_root_agent_pid(shell).await? != Some(root_agent_pid) {
         bail!("Root Agent changed before the task could be submitted; retry")

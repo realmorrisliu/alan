@@ -43,8 +43,9 @@ redirected, it reads one task, writes the final answer to stdout, keeps
 diagnostics on stderr, and reports task failure with a nonzero exit code. If
 stdin is a terminal but stdout is redirected, it errors before attaching to the
 Host instead of waiting for terminal EOF. At initial attach, the one-shot
-waiter retries an empty Root Agent PID twice at 250 ms intervals, then reports
-unavailability rather than waiting indefinitely. It opens tape and UI tails
+waiter retries stale-PID activity/tail hydration and an empty Root Agent PID
+twice at 250 ms intervals, then reports the attach error rather than waiting
+indefinitely. It opens tape and UI tails
 against one concrete Root Agent PID, retries the pair if that identity changes
 during attach, and uses that same Process path for submission and observation.
 It reopens both tails together if the Root Agent PID changes

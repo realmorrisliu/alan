@@ -35,12 +35,13 @@ Runtime or select an Agent Definition as Host startup behavior.
 - **AND** it does not emit terminal UI control sequences
 
 #### Scenario: One-shot starts during Root Agent PID handoff
-- **WHEN** redirected `alan` starts while the Service Manager temporarily
-  publishes an empty or zero Root Agent PID during supervised restart
-- **THEN** it retries for a bounded startup window and attaches to the
-  replacement once its PID is published
-- **AND** it reports the unavailable-PID error after retries are exhausted
-  without submitting task input
+- **WHEN** redirected `alan` starts while the Service Manager publishes a
+  detached old PID or temporarily publishes an empty or zero PID during
+  supervised restart
+- **THEN** it retries stale AgentFS hydration and unavailable PID lookup for a
+  bounded startup window, attaching to the replacement once ready
+- **AND** it reports the attach error after retries are exhausted without
+  submitting task input
 
 #### Scenario: User redirects stdout without redirecting stdin
 - **WHEN** stdin is a terminal and stdout is not a terminal
