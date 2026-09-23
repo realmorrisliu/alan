@@ -37,6 +37,8 @@ behavior.
 - **WHEN** the Root Agent reports a running task failure before writing the
   submitted user message to tape
 - **THEN** the client reports the task error on stderr with a nonzero exit code
+- **AND** the Root Agent exposes a terminal UI error before idle without
+  requiring a tape record
 - **AND** any intermediate assistant content is not reported as a successful
   final answer
 
@@ -104,9 +106,9 @@ and sandbox.
   boundaries still apply
 
 #### Scenario: A namespace path is used as shell data
-- **WHEN** an authorized `!` command uses `printf` to write a namespace path
-  literal into a file in the same Host Mount
-- **THEN** the file contains the original namespace path text
+- **WHEN** an authorized `!` command uses a namespace path as `echo`/`printf`
+  data or as a `git commit -m`/`--message` value
+- **THEN** the data argument remains the original namespace path text
 - **AND** the redirection target still resolves only within the authorized
   Host Mount
 

@@ -58,7 +58,9 @@ arguments keep their original namespace text.
 The redirected one-shot client waits for task completion or explicit Ctrl-C;
 it does not impose a client-only deadline. A `Running` Activity event establishes
 that the submitted task has started even when the engine has not yet persisted
-its user message to tape. A terminal task error takes precedence over any
+its user message to tape. Generation failures are persisted to the UI event
+stream before the Agent returns to idle, so the one-shot client can report them
+without a tape record. A terminal task error takes precedence over any
 intermediate assistant content. Ctrl-C remains pending until the waiter observes
 `Running`, then sends the turn interrupt; sending it before that acceptance
 signal could let an idle Runtime consume the interrupt before reading the task.
@@ -137,8 +139,9 @@ the repository quality gate so this route cannot silently regress.
   confirm the Agent Process remains running after interruption.
 - Verify `!<command>` requests that exact command through the existing `bash`
   Tool, while policy, approval, sandbox, and Host Mount checks still apply;
-  preserve namespace paths used as `echo`/`printf` data while mapping file
-  operands and redirection targets to the authorized Host Mount;
+  preserve namespace paths used as `echo`/`printf` data and Git commit message
+  values while mapping file operands and redirection targets to the authorized
+  Host Mount;
   verify product boot registers only the existing Core Tool set.
 - Verify redirected stdin is one Agent task, stdout contains only its answer,
   stderr carries diagnostics, and failures produce a nonzero exit code.

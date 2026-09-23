@@ -60,6 +60,11 @@ pub(crate) async fn turn_completed(namespace: &NamespaceAgentFiles, cancelled: b
 }
 
 pub(crate) async fn turn_failed(namespace: &NamespaceAgentFiles, message: &str) -> Result<()> {
+    error_notice(namespace, message).await?;
+    turn_completed(namespace, false).await
+}
+
+pub(crate) async fn error_notice(namespace: &NamespaceAgentFiles, message: &str) -> Result<()> {
     let notice = UiNoticeSnapshot::new(UiNoticeKind::Error, message);
     namespace.write_ui_notice_snapshot(&notice).await?;
     namespace
@@ -70,8 +75,7 @@ pub(crate) async fn turn_failed(namespace: &NamespaceAgentFiles, message: &str) 
             message: message.to_string(),
             recoverable: true,
         })
-        .await?;
-    turn_completed(namespace, false).await
+        .await
 }
 
 pub(crate) async fn paused(namespace: &NamespaceAgentFiles) -> Result<()> {

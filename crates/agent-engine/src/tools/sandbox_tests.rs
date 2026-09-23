@@ -26,7 +26,7 @@ async fn test_sandbox_exec() {
 }
 
 #[test]
-fn namespace_path_translation_preserves_printf_data_and_maps_file_paths() {
+fn namespace_path_translation_preserves_data_and_maps_file_paths() {
     let mounts = vec![SandboxHostMount {
         namespace_path: PathBuf::from("/mnt/project"),
         host_path: PathBuf::from("/Users/alice/project"),
@@ -46,8 +46,21 @@ fn namespace_path_translation_preserves_printf_data_and_maps_file_paths() {
         translate("cat /mnt/project/probe.txt"),
         "cat /Users/alice/project/probe.txt"
     );
+    assert_eq!(
+        translate("git commit -m /mnt/project"),
+        "git commit -m /mnt/project"
+    );
+    assert_eq!(
+        translate("git commit --message='Keep /mnt/project literal'"),
+        "git commit --message='Keep /mnt/project literal'"
+    );
     let nested = translate("bash -lc \"printf '%s' /mnt/project > /mnt/project/path.txt\"");
     assert!(nested.contains("/mnt/project > /Users/alice/project/path.txt"));
+    let nested_git = translate("bash -lc \"git commit -m /mnt/project\"");
+    assert!(
+        nested_git.contains("git commit -m /mnt/project"),
+        "nested command changed data: {nested_git}"
+    );
 }
 
 #[cfg(target_os = "macos")]

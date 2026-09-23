@@ -26,19 +26,20 @@
   further successful task on the same Root Agent.
 - [x] 2.6 Route `!<command>` through the existing governed `bash` Tool by
   registering only the existing Core Tool set in product Root Agent boot;
-  verify the exact set and live shell behavior, including preserving
-  namespace-path data passed to `printf` while projecting its redirection
-  target.
+  verify the exact set and shell behavior, including preserving namespace-path
+  data passed to `echo`/`printf` or a Git commit message while projecting file
+  operands and redirection targets.
 - [x] 2.7 Keep recoverable Agent errors in the rendered transcript.
 - [x] 2.8 Implement and verify one-shot redirected stdin/stdout/stderr,
   Root Agent PID rebinding, and exit-code behavior. Keep waiting for the task
-  outcome without a client-only timeout; recognize `Running`/terminal-error
-  events before tape persistence; prefer terminal errors over intermediate
-  assistant content; retain Ctrl-C until `Running` confirms acceptance before
-  sending interruption; exclude concurrent one-shot writers; and fail closed
-  when replacement tape/UI history cannot correlate the result to this
-  submission. Pin each Root Agent history snapshot/tail pair to a concrete PID
-  and retry if that PID changes while the tail opens.
+  outcome without a client-only timeout; persist generation failures as UI
+  terminal-error events before idle without requiring tape; recognize
+  `Running`/terminal-error events before tape persistence; prefer terminal
+  errors over intermediate assistant content; retain Ctrl-C until `Running`
+  confirms acceptance before sending interruption; exclude concurrent one-shot
+  writers; and fail closed when replacement tape/UI history cannot correlate
+  the result to this submission. Pin each Root Agent history snapshot/tail pair
+  to a concrete PID and retry if that PID changes while the tail opens.
 
 > Live acceptance status (2026-09-23): an explicit read-only synthetic Host
 > Mount and `bash` read returned the expected sentinel; a leading `!` reached

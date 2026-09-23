@@ -54,9 +54,22 @@ pub(super) fn token_is_data_argument(command: &str, token: &ShellWordToken) -> b
         .and_then(|name| name.to_str())
         .unwrap_or(command_name);
 
-    // ponytail: preserve data for common output builtins; add another command
-    // only when a reproduced namespace-path literal is rewritten as data.
-    matches!(command_name, "echo" | "printf")
+    if matches!(command_name, "echo" | "printf") {
+        return true;
+    }
+
+    // ponytail: this covers common unambiguous data positions; arbitrary
+    // command argument roles need a real namespace filesystem, not a growing
+    // command allowlist.
+    let git_commit = command_name == "git"
+        && words
+            .iter()
+            .skip(command_index + 1)
+            .any(|word| word == "commit");
+    git_commit
+        && (matches!(words.last().map(String::as_str), Some("-m" | "--message"))
+            || token.decoded.starts_with("--message=")
+            || token.decoded.starts_with("-m"))
 }
 
 fn translate_shell_token(
@@ -134,7 +147,7 @@ fn translate_nested_shell_token(
         changed = true;
     }
     if !changed {
-        return None;
+        return Some(token.to_string());
     }
 
     translated.push_str(&token[last..]);
