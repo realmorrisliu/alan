@@ -261,6 +261,70 @@ fn awk_script_interpreter_display(display: &str, args: &[String]) -> Option<Stri
     None
 }
 
+pub(super) fn awk_next_argument_is_data(args: &[String], candidate: &str) -> bool {
+    let mut index = 0;
+    let mut program_supplied = false;
+    let mut options_ended = false;
+    while let Some(arg) = args.get(index).map(|arg| arg.as_str()) {
+        if !options_ended && arg == "--" {
+            options_ended = true;
+            index += 1;
+            continue;
+        }
+        if !options_ended && exact_or_inline_option_with_value(arg, &["-f"], &["--file"]) {
+            if has_attached_option_value(arg) {
+                program_supplied = true;
+                index += 1;
+            } else if index + 1 < args.len() {
+                program_supplied = true;
+                index += 2;
+            } else {
+                return false;
+            }
+            continue;
+        }
+        if !options_ended && exact_or_inline_option_with_value(arg, &["-F", "-v", "-W"], &[]) {
+            if has_attached_option_value(arg) {
+                index += 1;
+            } else if index + 1 < args.len() {
+                index += 2;
+            } else {
+                return true;
+            }
+            continue;
+        }
+        if !options_ended && arg.starts_with('-') {
+            index += 1;
+            continue;
+        }
+        program_supplied = true;
+        index += 1;
+    }
+
+    if exact_or_inline_option_with_value(candidate, &["-F", "-v", "-W"], &[])
+        && has_attached_option_value(candidate)
+    {
+        return true;
+    }
+    if exact_or_inline_option_with_value(candidate, &["-f"], &["--file"])
+        && has_attached_option_value(candidate)
+    {
+        return false;
+    }
+    !program_supplied || is_awk_assignment(candidate)
+}
+
+fn is_awk_assignment(arg: &str) -> bool {
+    let Some((name, _)) = arg.split_once('=') else {
+        return false;
+    };
+    let mut chars = name.chars();
+    chars
+        .next()
+        .is_some_and(|ch| ch == '_' || ch.is_ascii_alphabetic())
+        && chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+}
+
 fn shell_query_flag(arg: &str) -> bool {
     matches!(arg, "--help" | "--version")
 }

@@ -186,7 +186,7 @@ impl HostBootConfig {
         process.store_bindings = Some(system_store.agent_runtime_bindings()?);
         process.memory_store_backing = Some(memory_store_backing);
         let connection_store = system_store.connection_bindings()?;
-        let tools = ToolRegistry::with_config(Arc::new(process.agent_config.core_config.clone()));
+        let tools = product_tool_registry(Arc::new(process.agent_config.core_config.clone()));
         let llm_factory = Arc::new(ProductLlmClientFactory {
             credentials_dir: host_store.credentials.clone(),
             keychain_service: {
@@ -241,6 +241,15 @@ impl HostBootConfig {
     }
 }
 
+fn product_tool_registry(core_config: Arc<Config>) -> ToolRegistry {
+    let mut tools = ToolRegistry::with_config(core_config);
+    alan_tools::register_builtin_tool_catalog(&mut tools);
+    for tool in alan_tools::create_core_tools() {
+        tools.register_boxed(tool);
+    }
+    tools
+}
+
 fn snapshot_agent_definition(root: &Path) -> Result<ProcessFileTree> {
     let metadata = std::fs::symlink_metadata(root)
         .with_context(|| format!("inspect Agent Definition {}", root.display()))?;
@@ -286,6 +295,31 @@ fn snapshot_agent_definition(root: &Path) -> Result<ProcessFileTree> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeSet;
+
+    #[test]
+    fn product_root_agent_has_only_the_existing_core_tool_set() {
+        let tools = product_tool_registry(Arc::new(Config::default()));
+        let names = tools
+            .list_tools()
+            .into_iter()
+            .map(str::to_string)
+            .collect::<BTreeSet<_>>();
+
+        assert_eq!(
+            names,
+            ["bash", "edit_file", "read_file", "write_file"]
+                .into_iter()
+                .map(str::to_string)
+                .collect()
+        );
+        for tool in ["bash", "edit_file", "read_file", "write_file"] {
+            assert!(tools.has_tool_factory(tool), "missing Tool factory: {tool}");
+        }
+        for tool in ["glob", "grep", "list_dir"] {
+            assert!(!tools.has(tool), "unexpected exploration Tool: {tool}");
+        }
+    }
 
     #[tokio::test]
     async fn missing_connection_keeps_host_bootable_but_generation_unavailable() {

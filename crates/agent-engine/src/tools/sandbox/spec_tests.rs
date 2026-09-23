@@ -232,6 +232,63 @@ async fn sandbox_exec_read_capability_allows_read_only_mount_paths() {
 }
 
 #[tokio::test]
+async fn sandbox_exec_projects_namespace_paths_for_native_host_mounts() {
+    let read_only = TempDir::new().unwrap();
+    let document = read_only.path().join("probe.txt");
+    tokio::fs::write(&document, "mounted read\n").await.unwrap();
+    let sandbox = Sandbox::from_spec_with_backend(
+        SandboxSpec::from_host_mounts(&[SandboxHostMount {
+            namespace_path: PathBuf::from("/mnt/acceptance"),
+            host_path: read_only.path().to_path_buf(),
+            access: crate::tools::ReifiedMountAccess::ReadOnly,
+        }]),
+        crate::tools::SandboxBackendKind::HostMountPathGuard,
+    );
+
+    let result = sandbox
+        .exec_with_timeout_and_capability(
+            "cat /mnt/acceptance/probe.txt",
+            read_only.path(),
+            None,
+            Some(alan_agent_protocol::ToolCapability::Read),
+        )
+        .await
+        .unwrap();
+    assert_eq!(result.stdout, "mounted read\n");
+
+    let write = sandbox
+        .exec_with_timeout_and_capability(
+            "touch /mnt/acceptance/denied.txt",
+            read_only.path(),
+            None,
+            Some(alan_agent_protocol::ToolCapability::Write),
+        )
+        .await;
+    assert!(
+        write
+            .unwrap_err()
+            .to_string()
+            .contains("outside host_mount")
+    );
+    assert!(!read_only.path().join("denied.txt").exists());
+
+    let unmounted = sandbox
+        .exec_with_timeout_and_capability(
+            "cat /mnt/unmounted/probe.txt",
+            read_only.path(),
+            None,
+            Some(alan_agent_protocol::ToolCapability::Read),
+        )
+        .await;
+    assert!(
+        unmounted
+            .unwrap_err()
+            .to_string()
+            .contains("outside host_mount")
+    );
+}
+
+#[tokio::test]
 async fn sandbox_exec_write_capability_rejects_read_only_mount_paths() {
     let writable = TempDir::new().unwrap();
     let read_only = TempDir::new().unwrap();

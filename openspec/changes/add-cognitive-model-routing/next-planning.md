@@ -1,6 +1,6 @@
 # 下一步规划入口：Tracer bullet
 
-基线：main `04753a2f`（PR #925，2026-09-20）。
+基线：main `6916a9cb`（PR #928，2026-09-23）。
 2026-09-20 用户确认改为纵向 tracer bullet：尽快交付可用 agent，通过真实终端任务反馈推进架构。
 本路线替代原 Step 2 → 3 → 4 的逐层交付顺序；ADR-0054/0055 的所有权边界不变。
 
@@ -11,7 +11,7 @@
   [retire-macos-client-and-standalone-cli](../archive/2026-09-20-retire-macos-client-and-standalone-cli/)。
   源码删除已由 [remove-retired-desktop-source 归档记录](../archive/2026-09-23-remove-retired-desktop-source/)
   完成，App 和 shell-core/FFI 已移除；平台安全能力继续保留。
-- 当前只更新规划，以下功能均未声明完成。第一切片进入重规划，旧 deltas 必须按实际调用链重切后才可实施。
+- 首切片已按当前真实调用链重切，进入实现；未完成的功能仍不得标为完成。
 - 原路线所列 rustls 风险已由 PR #923 中的依赖修复处理，当前锁定 0.23.45，不再作为待办。
 
 ## 切片 1：一个可用 agent 闭环
@@ -23,22 +23,28 @@
 让它检查一个明确授权的测试项目目录，调用只读工具并给出带路径依据的结果。
 测试目录包含已知内容和不可访问的边界，便于判断回答和授权是否正确。
 
-- [ ] 追踪裸 alan → 输入解释/Shell evaluator → Agent Process → generation → 受控 Tool → Process IO 的真实路径，记录现有可复用部分和缺口。
-- [ ] 明确自然语言任务与显式 Shell 命令的输入规则，不用模型猜测执行权限。
-- [ ] 重写所属 proposal/design/deltas，覆盖必要的 Shell、启动上下文、Local Entry、attachment 和 renderer 合同；移除旧 editfs/binfs 前置条件。
-- [ ] 交付启动、提交任务、真实工具调用、增量输出、完成、Ctrl-C 取消和第二次输入。
-- [ ] 验证连接不可用、工具失败、无访问权限时给出明确结果；取消后不继续派发动作。
-- [ ] 在普通终端和 Herdr 记录实际构建、命令、输入、输出和退出结果，证明连续完成两个任务且取消后仍可使用。
+- [x] 追踪裸 `alan` → LocalAttachment → TTY 分支的 file-backed renderer → 现有 `/agent/root` → generation → 受控 Tool → AgentFS IO；重定向 stdin 提交一次 Agent task。
+- [x] 明确输入边界：TTY composer 永远提交 Agent task，不解析 shell 语法；`!` 显式请求受治理的 `bash` Tool；管道输入只执行一次 Agent task，不用模型猜测执行权限。
+- [x] 已重写本 change 的 proposal/design/deltas：只改 `alan-shell` 与 `alan-renderer-host-contract`；旧 editfs/run/binfs 前置条件不再属于本切片。
+- [x] 已接通裸 `alan` 的 TTY → 现有 `/agent/root` file-backed renderer 和重定向 stdin 的 one-shot Agent 路径；无 Connection 时给出准确错误，普通 TTY、Herdr pane 与管道输出均已验证。
+- [x] 配置 dev Connection 后，交付只读工具任务、AgentFS 增量输出、完成、Ctrl-C 取消和取消后的成功后续任务；验收记录见主 change 的 tasks.md。
+- [x] 验证工具失败、未授权路径和取消后不继续派发动作；不可用 Connection 的清晰错误已在两种终端中验证。
+- [x] 在普通终端和 Herdr 记录同一构建的成功任务、输入/输出与退出结果，证明连续任务和取消后仍可使用；记录构建 `bef854e3`，该提交是当前分支祖先。
+
+当前状态（2026-09-24）：重启后的 dev Host 正常运行，dev channel 的 `connection list` 显示 `chatgpt-main` credential 已配置。上述固定验收已经在 `bef854e3` 完成并记录；本轮新增的是重连边界与路径翻译回归修复，已用本地测试覆盖，不借用 stable 用户数据。
 
 复用已有 generation 能力；typed evaluation/Jev 不作为启动条件。
 权限、credentials、sandbox、Process 生命周期和证据写入继续走现有 owner。
 首切片不承诺跨 Host 重启恢复，但不得新增重连自动重发、权限绕过或重复执行路径。
 
 参考：ADR-0036/0038/0039/0045/0048/0049/0054，
-`alan-shell`、`process-launch-context`、`local-entry-service`、
-`local-alan-os-attachment`、`alan-renderer-host-contract`；
-源码从 `crates/alan/src/cli/shell.rs`、`shell_command.rs`、
-`crates/shell/`、`crates/os-host/` 及现有 Agent Runtime 调用链追踪。
+`alan-shell`、`local-alan-os-attachment`、`alan-renderer-host-contract`、
+`agent-file-layout-contract`、`provider-connection-contract`、
+`host-directory-mounts` 与 `host-mount-escalation`。真实入口从
+`crates/alan/src/main.rs`、`crates/alan/src/cli/host.rs`、
+`crates/os-host/src/local.rs`、`crates/service-manager/src/agent_runtime.rs`、
+`crates/shell/` 和 `crates/tui/src/file_backed.rs` 追踪；本切片不新增
+Shell evaluator Process。
 
 ## 切片 2：同一任务的执行可靠性与终端体验
 

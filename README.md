@@ -114,8 +114,12 @@ Herdr is the preferred external terminal host.
 
 ## CLI
 
-Running `alan` without a subcommand currently starts the StdioDriver Shell entry.
-The server-side Shell evaluator and Process IO alignment remain follow-up work.
+Running bare `alan` with terminal stdin and stdout attaches the local namespace
+to the existing `/agent/root` Agent Process and opens the file-backed Agent
+renderer. With redirected stdin, it submits one Agent task, writes the final
+answer to stdout, sends diagnostics to stderr, and returns the task's exit
+status. A leading `!` in the interactive renderer requests a command through
+the governed `bash` Tool; it does not execute a host command directly.
 The current direct command families are:
 
 ```text

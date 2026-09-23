@@ -19,6 +19,7 @@ alan-ap = { path = "../ap" }
 alan-agent-engine.workspace = true
 alan-agentfs = { path = "../agentfs" }
 alan-hostfs.workspace = true
+alan-tools.workspace = true
 alan-kernel = { path = "../kernel" }
 alan-llm.workspace = true
 alan-llmfs = { path = "../llmfs" }

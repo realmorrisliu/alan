@@ -40,6 +40,14 @@ impl NamespaceTurnGeneration {
         &self.provider
     }
 
+    pub(super) fn ensure_callable(&self) -> Result<()> {
+        anyhow::ensure!(
+            self.provider != "unconfigured",
+            "No callable Connection is available. Configure and select a Connection profile before submitting tasks."
+        );
+        Ok(())
+    }
+
     pub(super) fn capabilities(&self) -> crate::llm::ProviderCapabilities {
         self.capabilities
     }
@@ -153,5 +161,20 @@ mod tests {
         );
         assert!(!neutral.supports_server_managed_continuation);
         assert!(!neutral.supports_provider_compaction);
+    }
+
+    #[test]
+    fn unconfigured_connection_has_a_clear_error_before_generation() {
+        let generation = NamespaceTurnGeneration {
+            provider: "unconfigured".to_string(),
+            capabilities: neutral_namespace_generation_capabilities(),
+        };
+
+        let error = generation.ensure_callable().unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "No callable Connection is available. Configure and select a Connection profile before submitting tasks."
+        );
     }
 }

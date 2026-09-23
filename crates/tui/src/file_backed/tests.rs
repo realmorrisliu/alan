@@ -1,3 +1,4 @@
+use super::file_surface::write_interrupt;
 use super::*;
 use std::sync::Arc;
 
@@ -38,6 +39,105 @@ fn parse_tape_history_restores_user_and_assistant_messages() {
             HistoryCell::Assistant("world".to_string()),
         ]
     );
+}
+
+#[test]
+fn root_process_reattach_preserves_prior_transcript_and_adds_current_turn() {
+    let mut app = FileBackedApp::new("/agent/root".to_string());
+    app.transcript = vec![
+        HistoryCell::User("previous task".to_string()),
+        HistoryCell::Assistant("previous answer".to_string()),
+        HistoryCell::User("current task".to_string()),
+    ];
+    app.action_cells.insert("a-current".to_string(), 1);
+
+    let attached = app.merge_reconnected_history(
+        vec![
+            HistoryCell::User("current task".to_string()),
+            HistoryCell::Tool {
+                title: "bash".to_string(),
+                status: ToolStatus::Complete,
+                preview: Some("read complete".to_string()),
+                presentation: None,
+            },
+            HistoryCell::Assistant("current answer".to_string()),
+        ],
+        "current task",
+        0,
+    );
+
+    assert!(attached);
+    assert_eq!(
+        app.transcript,
+        vec![
+            HistoryCell::User("previous task".to_string()),
+            HistoryCell::Assistant("previous answer".to_string()),
+            HistoryCell::User("current task".to_string()),
+            HistoryCell::Tool {
+                title: "bash".to_string(),
+                status: ToolStatus::Complete,
+                preview: Some("read complete".to_string()),
+                presentation: None,
+            },
+            HistoryCell::Assistant("current answer".to_string()),
+        ]
+    );
+    assert_eq!(app.action_cells.get("a-current"), Some(&3));
+}
+
+#[test]
+fn root_agent_file_paths_pin_to_a_process_id() {
+    assert_eq!(
+        super::tail::root_agent_path_for_pid("/agent/root/machine/tape", 42),
+        Some("/agent/42/machine/tape".to_string())
+    );
+    assert_eq!(
+        super::tail::root_agent_path_for_pid("/agent/root", 42),
+        Some("/agent/42".to_string())
+    );
+    assert_eq!(
+        super::tail::root_agent_path_for_pid("/agent/rooted/machine/tape", 42),
+        None
+    );
+}
+
+#[test]
+fn root_agent_pid_polling_requires_an_active_to_idle_transition() {
+    let mut pending = Some(PendingRootAgentTurn {
+        input: "current task".to_string(),
+        observed_active: false,
+        interrupt_requested: false,
+        submitted_at_ms: 20,
+        prior_matching_turns: 0,
+    });
+    observe_root_agent_activity(&mut pending, UiActivityState::Idle);
+    assert_eq!(
+        pending,
+        Some(PendingRootAgentTurn {
+            input: "current task".to_string(),
+            observed_active: false,
+            interrupt_requested: false,
+            submitted_at_ms: 20,
+            prior_matching_turns: 0,
+        }),
+        "streamed assistant output is not proof that the turn completed"
+    );
+
+    observe_root_agent_activity(&mut pending, UiActivityState::Running);
+    assert_eq!(
+        pending,
+        Some(PendingRootAgentTurn {
+            input: "current task".to_string(),
+            observed_active: true,
+            interrupt_requested: false,
+            submitted_at_ms: 20,
+            prior_matching_turns: 0,
+        })
+    );
+
+    observe_root_agent_activity(&mut pending, UiActivityState::Idle);
+
+    assert_eq!(pending, None);
 }
 
 #[test]
@@ -95,6 +195,83 @@ fn esc_interrupts_during_turn_even_with_completion_open() {
 }
 
 #[test]
+fn ctrl_c_interrupts_during_turn_even_with_completion_open() {
+    let mut app = FileBackedApp::new("/agent/root".to_string());
+    app.apply_ui_activity_snapshot(UiActivitySnapshot::running(1));
+    press(&mut app, KeyCode::Char('/'), KeyModifiers::NONE);
+    press(&mut app, KeyCode::Char('c'), KeyModifiers::NONE);
+    assert!(app.completion.is_some());
+
+    let action = press(&mut app, KeyCode::Char('c'), KeyModifiers::CONTROL);
+
+    assert!(matches!(action, Some(FileBackedAction::Interrupt)));
+    assert!(
+        app.completion.is_some(),
+        "interrupt should not dismiss popup first"
+    );
+}
+
+#[test]
+fn ctrl_c_interrupts_instead_of_entering_a_structured_input_form() {
+    let mut app = FileBackedApp::new("/agent/root".to_string());
+    app.activity = UiActivitySnapshot::paused(Some(1));
+    app.set_pending_yield(PendingYieldCell {
+        request_id: "r1".to_string(),
+        kind: YieldKind::StructuredInput,
+        title: "Answer these questions".to_string(),
+        prompt: None,
+        options: Vec::new(),
+        default_option: None,
+        questions: ["first", "second"]
+            .into_iter()
+            .map(|id| alan_agent_protocol::StructuredInputQuestion {
+                id: id.to_string(),
+                label: id.to_string(),
+                prompt: format!("{id} answer"),
+                kind: alan_agent_protocol::StructuredInputKind::Text,
+                required: false,
+                placeholder: None,
+                help_text: None,
+                default_value: None,
+                default_values: Vec::new(),
+                min_selected: None,
+                max_selected: None,
+                options: Vec::new(),
+                presentation_hints: Vec::new(),
+            })
+            .collect(),
+        capability: None,
+        reason: None,
+        presentation: None,
+    });
+    let form = app.form.as_ref().expect("multi-question form");
+    let initial_value = form.fields[form.focus].value.clone();
+
+    let action = press(&mut app, KeyCode::Char('c'), KeyModifiers::CONTROL);
+
+    assert!(matches!(action, Some(FileBackedAction::Interrupt)));
+    assert_eq!(
+        app.form.as_ref().unwrap().fields[0].value,
+        initial_value,
+        "Ctrl-C must not be inserted as form text"
+    );
+}
+
+#[tokio::test]
+async fn terminal_reader_exits_after_its_event_receiver_is_dropped() {
+    let (tx, rx) = tokio::sync::mpsc::channel(1);
+    drop(rx);
+
+    tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        super::file_surface::spawn_terminal_events(tx),
+    )
+    .await
+    .expect("terminal reader should observe shutdown")
+    .expect("terminal reader task should exit cleanly");
+}
+
+#[test]
 fn ctrl_r_toggles_thinking_expansion() {
     let mut app = FileBackedApp::new("/agent/1".to_string());
     app.apply_ui_thinking_snapshot(UiThinkingSnapshot::complete(
@@ -140,15 +317,15 @@ fn scrollback_drains_by_rendered_lines() {
 #[test]
 fn action_snapshots_track_running_and_commit_completed_tool() {
     let mut app = FileBackedApp::new("/agent/1".to_string());
-    sync_actions_from_snapshots(
+    sync_action_snapshot(
         &mut app,
-        vec![ActionSnapshot {
+        ActionSnapshot {
             id: "a0".to_string(),
             name: "edit".to_string(),
             status: "running".to_string(),
             output: String::new(),
             result: String::new(),
-        }],
+        },
     );
     assert_eq!(
         app.running_tools,
@@ -159,15 +336,15 @@ fn action_snapshots_track_running_and_commit_completed_tool() {
     );
     assert!(app.transcript.is_empty());
 
-    sync_actions_from_snapshots(
+    sync_action_snapshot(
         &mut app,
-        vec![ActionSnapshot {
+        ActionSnapshot {
             id: "a0".to_string(),
             name: "edit".to_string(),
             status: "completed".to_string(),
             output: "updated file".to_string(),
             result: r#"{"exit_code":0}"#.to_string(),
-        }],
+        },
     );
     assert!(app.running_tools.is_empty());
     assert_eq!(
@@ -246,6 +423,22 @@ fn transcript_renders_error_style() {
 
     assert_eq!(cell.symbol(), "e");
     assert_eq!(cell.fg, Color::Red);
+}
+
+#[test]
+fn recoverable_error_is_kept_in_the_transcript() {
+    let mut app = FileBackedApp::new("/agent/1".to_string());
+
+    app.apply_ui_event(UiEvent::Error {
+        message: "provider request failed".to_string(),
+        recoverable: true,
+    });
+
+    assert_eq!(
+        app.transcript,
+        vec![HistoryCell::Error("provider request failed".to_string())]
+    );
+    assert_eq!(app.notice.as_deref(), Some("provider request failed"));
 }
 
 #[test]
@@ -407,15 +600,15 @@ fn post_yield_cells_do_not_arm_remote_boundary_insertion() {
         reason: None,
         presentation: None,
     });
-    sync_actions_from_snapshots(
+    sync_action_snapshot(
         &mut app,
-        vec![ActionSnapshot {
+        ActionSnapshot {
             id: "a1".to_string(),
             name: "tool".to_string(),
             status: "completed".to_string(),
             output: "ran".to_string(),
             result: r#"{"exit_code":0}"#.to_string(),
-        }],
+        },
     );
 
     app.apply_tape_record(TapeRecordV1 {
@@ -554,15 +747,15 @@ fn raced_turn_preview_cells_move_behind_their_user_boundary() {
             }],
         ),
     });
-    sync_actions_from_snapshots(
+    sync_action_snapshot(
         &mut app,
-        vec![ActionSnapshot {
+        ActionSnapshot {
             id: "a1".to_string(),
             name: "tool".to_string(),
             status: "completed".to_string(),
             output: "ran".to_string(),
             result: r#"{"exit_code":0}"#.to_string(),
-        }],
+        },
     );
     app.push_output("wor".to_string());
 
@@ -697,15 +890,15 @@ fn pending_remote_turn_start_shifts_with_scrollback_prune() {
         role: "assistant".to_string(),
         content: "done".to_string(),
     });
-    sync_actions_from_snapshots(
+    sync_action_snapshot(
         &mut app,
-        vec![ActionSnapshot {
+        ActionSnapshot {
             id: "a1".to_string(),
             name: "tool".to_string(),
             status: "completed".to_string(),
             output: "ran".to_string(),
             result: r#"{"exit_code":0}"#.to_string(),
-        }],
+        },
     );
 
     app.prune_rendered_prefix(RenderOpts::new(80, false), 1);

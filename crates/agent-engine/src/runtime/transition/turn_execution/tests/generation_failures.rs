@@ -57,6 +57,10 @@ async fn test_run_turn_llm_error() {
         |e| matches!(e, Event::Error { message, .. } if message.contains("LLM request failed")),
     );
     assert!(has_error, "Expected Error event for LLM failure");
+
+    let notice = state.agent_files().read_ui_notice_snapshot().await.unwrap();
+    assert_eq!(notice.kind, alan_agent_protocol::UiNoticeKind::Error);
+    assert!(notice.message.contains("LLM request failed"));
 }
 
 #[tokio::test]

@@ -21,6 +21,7 @@ alan-kernel = { path = "../kernel" }
 alan-os-host.workspace = true
 alan-service-manager.workspace = true
 alan-shell = { path = "../shell" }
+alan-terminal-ui.workspace = true
 alan-swebench-tooling.workspace = true
 alan-tools.workspace = true
 tokio.workspace = true

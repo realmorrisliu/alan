@@ -1,6 +1,9 @@
 //! File-backed TUI input handling and application state transitions.
 
-use std::collections::BTreeMap;
+use std::{
+    collections::{BTreeMap, HashMap},
+    hash::BuildHasher,
+};
 
 use alan_agent_protocol::{
     UiActivitySnapshot, UiActivityState, UiEvent, UiNoticeKind, UiNoticeSnapshot, UiPlanSnapshot,
@@ -36,10 +39,14 @@ pub(super) enum FileBackedEvent {
     Terminal(TerminalEvent),
     Output(String),
     RequestsChanged,
-    ActionsChanged,
+    ActionsChanged {
+        agent_path: String,
+        action_id: String,
+    },
     Ui(UiEvent),
     Tape(TapeRecordV1),
     Error(String),
+    TerminalError(String),
 }
 
 #[derive(Debug)]
@@ -57,6 +64,7 @@ pub(super) enum FileBackedAction {
     Quit,
 }
 
+#[derive(Clone)]
 pub(super) struct FileBackedApp {
     pub(super) agent_path: String,
     pub(super) composer: Composer,
@@ -83,6 +91,9 @@ pub(super) struct FileBackedApp {
     /// arrives, insert the user cell before the whole block and shift side
     /// indexes such as `action_cells`.
     pub(super) pending_remote_turn_start: Option<usize>,
+    pub(super) scrollback_front_is_partial: bool,
+    /// Keep occurrence counts through `/clear` without retaining prompt text.
+    tape_user_prompt_counts: HashMap<u64, usize>,
 }
 
 impl FileBackedApp {
@@ -108,6 +119,8 @@ impl FileBackedApp {
             should_quit: false,
             reconciler: StreamReconciler::new(),
             pending_remote_turn_start: None,
+            scrollback_front_is_partial: false,
+            tape_user_prompt_counts: HashMap::new(),
         }
     }
 
@@ -147,8 +160,8 @@ impl FileBackedApp {
                 self.apply_tape_record(record);
                 None
             }
-            FileBackedEvent::RequestsChanged | FileBackedEvent::ActionsChanged => None,
-            FileBackedEvent::Error(message) => {
+            FileBackedEvent::RequestsChanged | FileBackedEvent::ActionsChanged { .. } => None,
+            FileBackedEvent::Error(message) | FileBackedEvent::TerminalError(message) => {
                 self.push_error(message);
                 None
             }
@@ -156,6 +169,9 @@ impl FileBackedApp {
     }
 
     pub(super) fn handle_key(&mut self, key: KeyEvent) -> Option<FileBackedAction> {
+        if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+            return Some(FileBackedAction::Interrupt);
+        }
         let pending_input = self.form.is_some() || self.pending_yield.is_some();
         if pending_input {
             self.completion = None;
@@ -366,13 +382,21 @@ impl FileBackedApp {
         let text = self.composer.take_submit()?;
         self.completion = None;
         self.composer.remember(&text);
-        if let Some(action) = self.handle_command(&text) {
-            return Some(action);
+        if text.starts_with('/') {
+            return self.handle_command(&text);
         }
         self.transcript.push(HistoryCell::User(text.clone()));
         self.reconciler.on_local_submit(&text);
         self.pending_remote_turn_start = None;
         Some(FileBackedAction::Submit(text))
+    }
+
+    pub(super) fn enter_submits_agent_task(&self) -> bool {
+        if self.form.is_some() || self.pending_yield.is_some() || self.completion.is_some() {
+            return false;
+        }
+        let text = self.composer.text().trim();
+        !text.is_empty() && !text.starts_with('/')
     }
 
     pub(super) fn handle_command(&mut self, text: &str) -> Option<FileBackedAction> {
@@ -395,11 +419,12 @@ impl FileBackedApp {
                 self.transcript.clear();
                 self.action_cells.clear();
                 self.pending_remote_turn_start = None;
+                self.scrollback_front_is_partial = false;
                 None
             }
             "help" => {
                 self.notice = Some(
-                    "/compact /rollback /clear /quit · ctrl+r toggle thinking · esc interrupt"
+                    "/compact /rollback /clear /quit · ctrl+r toggle thinking · ctrl+c/esc interrupt"
                         .to_string(),
                 );
                 None
@@ -550,6 +575,7 @@ impl FileBackedApp {
         }
         match record.role.as_str() {
             "user" => {
+                self.count_tape_user_prompt(&record.content);
                 match self.reconciler.on_user_record(&record.content) {
                     UserDecision::Drop => {}
                     UserDecision::Push(content) => self.insert_user_boundary(content),
@@ -594,16 +620,7 @@ impl FileBackedApp {
             UiEvent::Plan { snapshot } => self.apply_ui_plan_snapshot(snapshot),
             UiEvent::Thinking { snapshot } => self.apply_ui_thinking_snapshot(snapshot),
             UiEvent::Notice { snapshot } => self.apply_ui_notice_snapshot(snapshot),
-            UiEvent::Error {
-                message,
-                recoverable,
-            } => {
-                if recoverable {
-                    self.notice = Some(message);
-                } else {
-                    self.push_error(message);
-                }
-            }
+            UiEvent::Error { message, .. } => self.push_error(message),
         }
     }
 
@@ -732,6 +749,7 @@ impl FileBackedApp {
             self.transcript.drain(0..cells_to_remove);
             self.shift_action_cells(cells_to_remove);
             self.shift_pending_remote_turn_start(cells_to_remove);
+            self.scrollback_front_is_partial = false;
         }
 
         if remaining > 0
@@ -739,6 +757,7 @@ impl FileBackedApp {
             && cell.trim_rendered_prefix(opts, remaining)
         {
             pruned += remaining;
+            self.scrollback_front_is_partial = true;
         }
 
         pruned
@@ -775,14 +794,65 @@ impl FileBackedApp {
     pub(super) fn seed_reconciler_from_tape_history(&mut self, raw: &str) {
         self.reconciler = StreamReconciler::new();
         self.pending_remote_turn_start = None;
+        self.tape_user_prompt_counts.clear();
         for line in raw.lines() {
             let Ok(record) = serde_json::from_str::<TapeRecordV1>(line) else {
                 continue;
             };
             if record.kind == "message" {
+                if record.role == "user" {
+                    self.count_tape_user_prompt(&record.content);
+                }
                 self.reconciler.on_hydrated_message_record(&record.role);
             }
         }
+    }
+
+    pub(super) fn tape_user_prompt_count(&self, prompt: &str) -> usize {
+        self.tape_user_prompt_counts
+            .get(&self.tape_user_prompt_counts.hasher().hash_one(prompt))
+            .copied()
+            .unwrap_or_default()
+    }
+
+    fn count_tape_user_prompt(&mut self, prompt: &str) {
+        let prompt_hash = self.tape_user_prompt_counts.hasher().hash_one(prompt);
+        *self.tape_user_prompt_counts.entry(prompt_hash).or_default() += 1;
+    }
+
+    pub(super) fn reset_for_root_process_change(&mut self) {
+        self.action_cells.clear();
+        self.activity = UiActivitySnapshot::idle();
+        self.plan = UiPlanSnapshot::empty();
+        self.thinking = UiThinkingSnapshot::idle();
+        self.running_tools.clear();
+        self.pending_yield = None;
+        self.form = None;
+        self.completion = None;
+        self.notice = None;
+        self.reconciler = StreamReconciler::new();
+        self.pending_remote_turn_start = None;
+    }
+
+    /// Keep this renderer's earlier transcript while adding the current turn
+    /// recovered from a replacement Root Agent Process.
+    pub(super) fn merge_reconnected_history(
+        &mut self,
+        current: Vec<HistoryCell>,
+        submitted_input: &str,
+        prior_matching_turns: usize,
+    ) -> bool {
+        super::history_merge::merge_reconnected_history(
+            self,
+            current,
+            submitted_input,
+            prior_matching_turns,
+        )
+    }
+
+    /// Append replacement-process history not already present in this renderer.
+    pub(super) fn merge_reconnected_idle_history(&mut self, current: Vec<HistoryCell>) {
+        super::history_merge::merge_idle_history(self, current);
     }
 
     pub(super) fn render_opts(&self, width: usize) -> RenderOpts {
@@ -877,3 +947,7 @@ impl FileBackedApp {
         Line::styled(hint, Style::default().fg(Color::DarkGray))
     }
 }
+
+#[cfg(test)]
+#[path = "app_tests.rs"]
+mod tests;

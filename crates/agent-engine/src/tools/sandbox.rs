@@ -28,7 +28,8 @@ use command_wrappers::{
 use path_literals::{
     absolute_path_literal_candidates, is_allowed_absolute_command_path,
     is_file_redirection_operator, lexically_normalize_path,
-    looks_like_bare_protected_subpath_token, looks_like_path_token, path_like_subtokens,
+    looks_like_bare_protected_subpath_token, looks_like_path_token, namespace_path_to_host,
+    path_like_subtokens, token_is_data_argument, translate_namespace_shell_token,
     translate_reified_shell_token,
 };
 use path_safety::{existing_regular_file_has_multiple_links, is_path_guard_reason};
@@ -362,7 +363,10 @@ impl Sandbox {
                 .await;
         }
 
-        let mut command = self.build_confined_command(cmd, allow_network, backend)?;
+        let command = Self::translate_command_path_literals(cmd, |token| {
+            translate_namespace_shell_token(token, &self.spec.host_mounts)
+        });
+        let mut command = self.build_confined_command(&command, allow_network, backend)?;
         command.current_dir(cwd);
         let output = if let Some(limit) = timeout {
             match tokio::time::timeout(limit, command.output()).await {
@@ -796,9 +800,8 @@ impl Sandbox {
             if candidate.is_absolute() && is_allowed_absolute_command_path(&candidate) {
                 return Ok(());
             }
-            let validation_path = self
-                .reified_namespace_path_to_host(&candidate)
-                .unwrap_or(candidate);
+            let validation_path =
+                namespace_path_to_host(&candidate, &self.spec.host_mounts).unwrap_or(candidate);
             let read_only_command =
                 matches!(capability, Some(alan_agent_protocol::ToolCapability::Read));
             let path_is_authorized = if read_only_command {
@@ -843,9 +846,8 @@ impl Sandbox {
         if candidate.is_absolute() && is_allowed_absolute_command_path(&candidate) {
             return Ok(());
         }
-        let validation_path = self
-            .reified_namespace_path_to_host(&candidate)
-            .unwrap_or(candidate);
+        let validation_path =
+            namespace_path_to_host(&candidate, &self.spec.host_mounts).unwrap_or(candidate);
         if !self.is_writable(&validation_path) {
             return Err(anyhow!(
                 "Command references path outside host_mount: {}",
@@ -855,28 +857,6 @@ impl Sandbox {
         self.ensure_path_not_protected(&validation_path, "process path reference")?;
         self.ensure_path_not_multiply_linked(&validation_path, "process path reference")?;
         Ok(())
-    }
-
-    fn reified_namespace_path_to_host(&self, path: &Path) -> Option<PathBuf> {
-        if !matches!(
-            self.active_backend(),
-            super::sandbox_backend::SandboxBackendKind::LinuxReifiedNamespace
-        ) || !path.is_absolute()
-        {
-            return None;
-        }
-
-        for grant in &self.spec.host_mounts {
-            let root = &grant.host_path;
-            let namespace_path = grant.namespace_path.clone();
-            if path == namespace_path {
-                return Some(root.clone());
-            }
-            if let Ok(suffix) = path.strip_prefix(&namespace_path) {
-                return Some(root.join(suffix));
-            }
-        }
-        None
     }
 
     fn validate_absolute_path_literals(
@@ -909,8 +889,7 @@ impl Sandbox {
         if is_allowed_absolute_command_path(literal_path) {
             return true;
         }
-        let validation_path = self
-            .reified_namespace_path_to_host(literal_path)
+        let validation_path = namespace_path_to_host(literal_path, &self.spec.host_mounts)
             .unwrap_or_else(|| literal_path.to_path_buf());
         if matches!(capability, Some(alan_agent_protocol::ToolCapability::Read)) {
             self.is_readable(&validation_path)
@@ -928,8 +907,7 @@ impl Sandbox {
         if !literal_path.is_absolute() || is_allowed_absolute_command_path(literal_path) {
             return Ok(());
         }
-        let validation_path = self
-            .reified_namespace_path_to_host(literal_path)
+        let validation_path = namespace_path_to_host(literal_path, &self.spec.host_mounts)
             .unwrap_or_else(|| literal_path.to_path_buf());
         // Containment applies in every mode: the OS sandbox does not confine
         // reads, so an out-of-host_mount absolute path (e.g. a read of a secret)
@@ -958,13 +936,25 @@ impl Sandbox {
         cmd: &str,
         plan: &super::reified_namespace::ReifiedNamespacePlan,
     ) -> String {
+        Self::translate_command_path_literals(cmd, |token| {
+            translate_reified_shell_token(token, plan)
+        })
+    }
+
+    fn translate_command_path_literals(
+        cmd: &str,
+        mut translate_token: impl FnMut(&str) -> Option<String>,
+    ) -> String {
         let Ok(tokens) = shell_word_tokens_with_spans(cmd) else {
             return cmd.to_string();
         };
         let mut translated = String::with_capacity(cmd.len());
         let mut last = 0;
         for token in tokens {
-            let Some(rewritten) = translate_reified_shell_token(&token.decoded, plan) else {
+            if token_is_data_argument(cmd, &token) {
+                continue;
+            }
+            let Some(rewritten) = translate_token(&token.decoded) else {
                 continue;
             };
             translated.push_str(&cmd[last..token.raw_start]);

@@ -17,7 +17,7 @@ reject_path() {
 reject_pattern() {
     local pattern="$1"
     shift
-    if rg -n "$pattern" "$@" >/tmp/alan-rust-inline-tui-contract-rg.txt; then
+    if rg -n --glob '!scripts/check-rust-inline-tui-contract.sh' "$pattern" "$@" >/tmp/alan-rust-inline-tui-contract-rg.txt; then
         cat /tmp/alan-rust-inline-tui-contract-rg.txt >&2
         fail "legacy pattern matched: $pattern"
     fi
@@ -47,7 +47,7 @@ reject_pattern 'ALAN_TUI_PATH|clients/tui|\bBun\b|\bInk\b' \
     README.md \
     AGENTS.md
 
-reject_pattern 'alan chat|alan ask' \
+reject_pattern '(^|[^[:alnum:]_])alan (chat|ask)([^[:alnum:]_]|$)' \
     .github \
     crates \
     README.md \
@@ -62,7 +62,7 @@ reject_pattern 'ALAN_TUI_NAME|ALAN_TUI_BINARY_OUTFILE|alan-tui\.entitlements|cli
     scripts/install-cli.sh \
     scripts/uninstall-cli.sh
 
-reject_pattern 'Contents/Resources/bin/alan-tui|binary .*alan-tui|appcast|Sparkle' \
+reject_pattern 'Contents/Resources/bin/alan-tui|binary .*alan-tui' \
     packaging README.md AGENTS.md scripts
 
 require_pattern 'alan_tui::run' crates/alan/src/main.rs

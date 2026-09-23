@@ -1,7 +1,7 @@
 use super::super::reified_namespace::ReifiedNamespacePlan;
 use super::command_wrappers::is_env_assignment;
 use super::path_safety::PROTECTED_SUBPATHS;
-use super::shell_syntax::{ShellWordToken, shell_word_tokens_with_spans};
+use super::shell_syntax::{ShellWordToken, shell_commands, shell_word_tokens_with_spans};
 use std::ops::Range;
 use std::path::{Component, Path, PathBuf};
 
@@ -9,7 +9,63 @@ pub(super) fn translate_reified_shell_token(
     token: &str,
     plan: &ReifiedNamespacePlan,
 ) -> Option<String> {
-    if let Some(rewritten) = translate_reified_nested_shell_token(token, plan) {
+    translate_shell_token(token, &|path| {
+        plan.translate_projected_host_path(path)
+            .or_else(|| plan.translate_projected_host_path(&lexically_normalize_path(path)))
+    })
+}
+
+pub(super) fn translate_namespace_shell_token(
+    token: &str,
+    mounts: &[super::sandbox_spec::SandboxHostMount],
+) -> Option<String> {
+    translate_shell_token(token, &|path| namespace_path_to_host(path, mounts))
+}
+
+pub(super) fn token_is_data_argument(command: &str, token: &ShellWordToken) -> bool {
+    let prefix = command[..token.raw_start].trim_end();
+    if prefix.ends_with('>') || prefix.ends_with('<') {
+        return false;
+    }
+
+    let Ok(commands) = shell_commands(&command[..token.raw_start]) else {
+        return false;
+    };
+    let Some(words) = commands.last() else {
+        return false;
+    };
+    let Some((command_name, args)) = super::command_wrappers::command_and_args(words) else {
+        return false;
+    };
+    let command_name = Path::new(command_name)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(command_name);
+
+    if matches!(command_name, "awk" | "gawk" | "mawk" | "nawk")
+        && super::command_interpreters::awk_next_argument_is_data(args, &token.decoded)
+    {
+        return true;
+    }
+
+    if matches!(command_name, "echo" | "printf") {
+        return true;
+    }
+
+    // ponytail: classify only data positions with known command syntax; arbitrary
+    // argv roles need a real namespace filesystem, not more command-specific guesses.
+    let git_commit = command_name == "git" && args.iter().any(|word| word == "commit");
+    git_commit
+        && (matches!(args.last().map(String::as_str), Some("-m" | "--message"))
+            || token.decoded.starts_with("--message=")
+            || token.decoded.starts_with("-m"))
+}
+
+fn translate_shell_token(
+    token: &str,
+    map_path: &dyn Fn(&Path) -> Option<PathBuf>,
+) -> Option<String> {
+    if let Some(rewritten) = translate_nested_shell_token(token, map_path) {
         return Some(shell_quote_token(&rewritten));
     }
 
@@ -28,15 +84,10 @@ pub(super) fn translate_reified_shell_token(
             continue;
         }
 
-        let Some(namespace_path) =
-            plan.translate_projected_host_path(candidate_path)
-                .or_else(|| {
-                    plan.translate_projected_host_path(&lexically_normalize_path(candidate_path))
-                })
-        else {
+        let Some(mapped_path) = map_path(candidate_path) else {
             continue;
         };
-        replacements.push((range, namespace_path.display().to_string()));
+        replacements.push((range, mapped_path.display().to_string()));
     }
 
     if replacements.is_empty() {
@@ -57,12 +108,12 @@ pub(super) fn translate_reified_shell_token(
     }
     rewritten.push_str(&token[last..]);
 
-    Some(shell_quote_reified_token(&rewritten))
+    Some(shell_quote_translated_token(&rewritten))
 }
 
-fn translate_reified_nested_shell_token(
+fn translate_nested_shell_token(
     token: &str,
-    plan: &ReifiedNamespacePlan,
+    map_path: &dyn Fn(&Path) -> Option<PathBuf>,
 ) -> Option<String> {
     let tokens = shell_word_tokens_with_spans(token).ok()?;
     if !looks_like_nested_shell_script(&tokens) {
@@ -73,7 +124,10 @@ fn translate_reified_nested_shell_token(
     let mut last = 0;
     let mut changed = false;
     for nested_token in tokens {
-        let Some(rewritten) = translate_reified_shell_token(&nested_token.decoded, plan) else {
+        if token_is_data_argument(token, &nested_token) {
+            continue;
+        }
+        let Some(rewritten) = translate_shell_token(&nested_token.decoded, map_path) else {
             continue;
         };
         translated.push_str(&token[last..nested_token.raw_start]);
@@ -82,7 +136,7 @@ fn translate_reified_nested_shell_token(
         changed = true;
     }
     if !changed {
-        return None;
+        return Some(token.to_string());
     }
 
     translated.push_str(&token[last..]);
@@ -104,7 +158,7 @@ fn looks_like_nested_shell_script(tokens: &[ShellWordToken]) -> bool {
         && !looks_like_bare_protected_subpath_token(&command.decoded)
 }
 
-fn shell_quote_reified_token(token: &str) -> String {
+fn shell_quote_translated_token(token: &str) -> String {
     if is_env_assignment(token) {
         let (name, value) = token
             .split_once('=')
@@ -112,6 +166,29 @@ fn shell_quote_reified_token(token: &str) -> String {
         return format!("{name}={}", shell_quote_token(value));
     }
     shell_quote_token(token)
+}
+
+pub(super) fn namespace_path_to_host(
+    path: &Path,
+    mounts: &[super::sandbox_spec::SandboxHostMount],
+) -> Option<PathBuf> {
+    if !path.is_absolute() {
+        return None;
+    }
+    let path = lexically_normalize_path(path);
+    mounts
+        .iter()
+        .filter_map(|mount| {
+            let namespace_path = lexically_normalize_path(&mount.namespace_path);
+            path.strip_prefix(&namespace_path).ok().map(|suffix| {
+                (
+                    namespace_path.components().count(),
+                    mount.host_path.join(suffix),
+                )
+            })
+        })
+        .max_by_key(|(components, _)| *components)
+        .map(|(_, host_path)| host_path)
 }
 
 fn ranges_overlap(left: &Range<usize>, right: &Range<usize>) -> bool {

@@ -1,9 +1,10 @@
 //! AgentFS file observation, command writes, and snapshot projection.
 
 use alan_agent_protocol::{
-    ContentPart, StructuredInputQuestion, ToolResultPresentation, UiEvent, YieldKind,
+    ContentPart, StructuredInputQuestion, ToolResultPresentation, UiActivitySnapshot,
+    UiActivityState, UiEvent, YieldKind,
 };
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result, anyhow};
 use crossterm::event::{Event as TerminalEvent, KeyCode, KeyEvent, KeyModifiers};
 use serde::{Deserialize, de::DeserializeOwned};
 use serde_json::Value;
@@ -11,68 +12,10 @@ use serde_json::Value;
 use crate::history::{HistoryCell, PendingYieldCell, RunningTool, ToolStatus};
 
 use super::app::{FileBackedApp, FileBackedEvent};
+use super::tail::tail_with_history;
+mod attachment;
 
-/// Hydrate startup state and open the live watch tails so that attach time
-/// neither loses nor replays records, per channel:
-///
-/// - `machine/tape` and `machine/ui/events` hydrate FROM the byte snapshot
-///   their own tail pinned at open (`tail_with_history`): the same file is
-///   both history source and live stream, so delivery is exactly-once by
-///   construction — no ordering race can exist between "what was hydrated"
-///   and "what the tail will deliver".
-/// - The request/action event tails only trigger idempotent directory
-///   re-syncs, so overlap between their open point and the first sync is
-///   harmless.
-/// - `io/output` is an optimistic live preview: it is never hydrated, and the
-///   tape watcher is the authority that reconciles it (`apply_tape_record`
-///   dedupes fully-streamed responses, repairs a mid-turn attach that only
-///   caught the suffix, and appends responses the stream missed entirely).
-/// - UI snapshot files are read only when the ui event history is empty
-///   (fresh log); otherwise replaying the pinned history is strictly more
-///   consistent than mixing it with later point-in-time snapshot reads.
-pub(super) async fn hydrate_and_open_tails(
-    shell: &alan_shell::Shell,
-    agent_path: &str,
-    app: &mut FileBackedApp,
-) -> Result<WatchTails> {
-    let requests = tail_from_live_edge(shell, &request_events_path(agent_path)).await?;
-    let actions = tail_from_live_edge(shell, &action_events_path(agent_path)).await?;
-    let (ui, ui_history) = tail_with_history(shell, &ui_events_path(agent_path)).await?;
-    let (tape, tape_history) =
-        tail_with_history(shell, &format!("{agent_path}/machine/tape")).await?;
-    let output = tail_from_live_edge(shell, &agent_output_path(agent_path)).await?;
-
-    let tape_history = String::from_utf8(tape_history).context("machine/tape is not utf8")?;
-    app.transcript = parse_tape_history(&tape_history);
-    app.seed_reconciler_from_tape_history(&tape_history);
-
-    let ui_history = String::from_utf8(ui_history).context("ui events are not utf8")?;
-    let ui_events = ui_history
-        .lines()
-        .filter(|line| !line.trim().is_empty())
-        .map(|line| serde_json::from_str::<UiEvent>(line).context("parse ui event"))
-        .collect::<Result<Vec<_>>>()?;
-    if ui_events.is_empty() {
-        app.apply_ui_activity_snapshot(read_json_file(shell, &ui_activity_path(agent_path)).await?);
-        app.apply_ui_plan_snapshot(read_json_file(shell, &ui_plan_path(agent_path)).await?);
-        app.apply_ui_thinking_snapshot(read_json_file(shell, &ui_thinking_path(agent_path)).await?);
-        app.apply_ui_notice_snapshot(read_json_file(shell, &ui_notice_path(agent_path)).await?);
-    } else {
-        for event in ui_events {
-            app.apply_ui_event(event);
-        }
-    }
-
-    sync_actions_from_files(shell, agent_path, app).await?;
-    sync_requests_from_files(shell, agent_path, app).await?;
-    Ok(WatchTails {
-        output,
-        requests,
-        actions,
-        ui,
-        tape,
-    })
-}
+pub(super) use attachment::{hydrate_and_open_tails, reattach_to_current_agent};
 
 pub(super) async fn sync_requests_from_files(
     shell: &alan_shell::Shell,
@@ -87,24 +30,91 @@ pub(super) async fn sync_requests_from_files(
     Ok(())
 }
 
-pub(super) async fn sync_actions_from_files(
+pub(super) async fn hydrate_actions_from_files(
     shell: &alan_shell::Shell,
     agent_path: &str,
     app: &mut FileBackedApp,
 ) -> Result<()> {
     let snapshots = read_action_snapshots(shell, agent_path).await?;
-    sync_actions_from_snapshots(app, snapshots);
+    hydrate_actions_from_snapshots(app, snapshots);
     Ok(())
 }
 
-/// The live watch tails, opened during `hydrate_and_open_tails` so that
-/// attach time neither loses nor replays records (see that function's doc).
+pub(super) async fn sync_action_from_file(
+    shell: &alan_shell::Shell,
+    agent_path: &str,
+    action_id: &str,
+    app: &mut FileBackedApp,
+) -> Result<()> {
+    let snapshot = read_action_snapshot(shell, agent_path, action_id).await?;
+    sync_action_snapshot(app, snapshot);
+    Ok(())
+}
+
+/// Live streams and history from one file-backed renderer attachment.
 pub(super) struct WatchTails {
+    pub(super) root_agent_pid: Option<u64>,
     pub(super) output: alan_shell::Tail,
     pub(super) requests: alan_shell::Tail,
     pub(super) actions: alan_shell::Tail,
     pub(super) ui: alan_shell::Tail,
     pub(super) tape: alan_shell::Tail,
+    pub(super) ui_history: Vec<u8>,
+}
+
+#[derive(Default)]
+pub(super) struct CorrelatedUiTask {
+    pub(super) started: bool,
+    pub(super) state: Option<UiActivityState>,
+    pub(super) error: Option<String>,
+}
+
+pub(super) fn correlated_ui_task(
+    ui_history: &[u8],
+    submitted_at_ms: u64,
+) -> Result<CorrelatedUiTask> {
+    let ui_history = std::str::from_utf8(ui_history).context("ui events are not utf8")?;
+    let mut task = CorrelatedUiTask::default();
+    for line in ui_history.lines().filter(|line| !line.trim().is_empty()) {
+        let event = serde_json::from_str::<UiEvent>(line).context("parse Agent UI event")?;
+        if !task.started {
+            if let UiEvent::Activity { snapshot } = event
+                && snapshot.state == UiActivityState::Running
+                && snapshot
+                    .started_at_ms
+                    .is_some_and(|started_at| started_at >= submitted_at_ms)
+            {
+                task.started = true;
+                task.state = Some(UiActivityState::Running);
+            }
+            continue;
+        }
+        match event {
+            UiEvent::Activity { snapshot } => {
+                task.state = Some(snapshot.state);
+                if snapshot.state == UiActivityState::Idle {
+                    break;
+                }
+            }
+            UiEvent::Error { message, .. } => task.error = Some(message),
+            UiEvent::Plan { .. } | UiEvent::Thinking { .. } | UiEvent::Notice { .. } => {}
+        }
+    }
+    Ok(task)
+}
+
+pub(super) async fn send_event_or_shutdown(
+    tx: &tokio::sync::mpsc::Sender<FileBackedEvent>,
+    shutdown_rx: &mut tokio::sync::watch::Receiver<bool>,
+    event: FileBackedEvent,
+) -> bool {
+    tokio::select! {
+        result = tx.send(event) => result.is_ok(),
+        changed = shutdown_rx.changed() => {
+            let _ = changed;
+            false
+        }
+    }
 }
 
 pub(super) async fn spawn_output_tail(
@@ -124,14 +134,23 @@ pub(super) async fn spawn_output_tail(
                     Ok(bytes) if bytes.is_empty() => break,
                     Ok(bytes) => {
                         let text = String::from_utf8_lossy(&bytes).to_string();
-                        if tx.send(FileBackedEvent::Output(text)).await.is_err() {
+                        if !send_event_or_shutdown(
+                            &tx,
+                            &mut shutdown_rx,
+                            FileBackedEvent::Output(text),
+                        )
+                        .await
+                        {
                             break;
                         }
                     }
                     Err(err) => {
-                        let _ = tx.send(FileBackedEvent::Error(format!(
-                            "output tail failed: {err:?}"
-                        ))).await;
+                        let _ = send_event_or_shutdown(
+                            &tx,
+                            &mut shutdown_rx,
+                            FileBackedEvent::Error(format!("output tail failed: {err:?}")),
+                        )
+                        .await;
                         break;
                     }
                 }
@@ -161,14 +180,23 @@ pub(super) async fn spawn_request_watch(
                 match result {
                     Ok(bytes) if bytes.is_empty() => break,
                     Ok(_) => {
-                        if tx.send(FileBackedEvent::RequestsChanged).await.is_err() {
+                        if !send_event_or_shutdown(
+                            &tx,
+                            &mut shutdown_rx,
+                            FileBackedEvent::RequestsChanged,
+                        )
+                        .await
+                        {
                             break;
                         }
                     }
                     Err(err) => {
-                        let _ = tx.send(FileBackedEvent::Error(format!(
-                            "request watch failed: {err:?}"
-                        ))).await;
+                        let _ = send_event_or_shutdown(
+                            &tx,
+                            &mut shutdown_rx,
+                            FileBackedEvent::Error(format!("request watch failed: {err:?}")),
+                        )
+                        .await;
                         break;
                     }
                 }
@@ -184,10 +212,12 @@ pub(super) async fn spawn_request_watch(
 
 pub(super) async fn spawn_action_watch(
     mut tail: alan_shell::Tail,
+    agent_path: String,
     tx: tokio::sync::mpsc::Sender<FileBackedEvent>,
     mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
 ) -> Result<()> {
-    loop {
+    let mut pending = Vec::new();
+    'watch: loop {
         tokio::select! {
             changed = shutdown_rx.changed() => {
                 if changed.is_err() || *shutdown_rx.borrow() {
@@ -197,15 +227,30 @@ pub(super) async fn spawn_action_watch(
             result = tail.read(4096) => {
                 match result {
                     Ok(bytes) if bytes.is_empty() => break,
-                    Ok(_) => {
-                        if tx.send(FileBackedEvent::ActionsChanged).await.is_err() {
-                            break;
+                    Ok(bytes) => {
+                        pending.extend(bytes);
+                        for action_id in action_ids_from_events(&mut pending) {
+                            if !send_event_or_shutdown(
+                                &tx,
+                                &mut shutdown_rx,
+                                FileBackedEvent::ActionsChanged {
+                                    agent_path: agent_path.clone(),
+                                    action_id,
+                                },
+                            )
+                            .await
+                            {
+                                break 'watch;
+                            }
                         }
                     }
                     Err(err) => {
-                        let _ = tx.send(FileBackedEvent::Error(format!(
-                            "action watch failed: {err:?}"
-                        ))).await;
+                        let _ = send_event_or_shutdown(
+                            &tx,
+                            &mut shutdown_rx,
+                            FileBackedEvent::Error(format!("action watch failed: {err:?}")),
+                        )
+                        .await;
                         break;
                     }
                 }
@@ -225,7 +270,7 @@ pub(super) async fn spawn_ui_watch(
     mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
 ) -> Result<()> {
     let mut pending = Vec::new();
-    loop {
+    'watch: loop {
         tokio::select! {
             changed = shutdown_rx.changed() => {
                 if changed.is_err() || *shutdown_rx.borrow() {
@@ -245,23 +290,38 @@ pub(super) async fn spawn_ui_watch(
                             }
                             match serde_json::from_slice::<UiEvent>(line) {
                                 Ok(event) => {
-                                    if tx.send(FileBackedEvent::Ui(event)).await.is_err() {
+                                    if !send_event_or_shutdown(
+                                        &tx,
+                                        &mut shutdown_rx,
+                                        FileBackedEvent::Ui(event),
+                                    )
+                                    .await
+                                    {
                                         pending.clear();
-                                        break;
+                                        break 'watch;
                                     }
                                 }
                                 Err(err) => {
-                                    let _ = tx.send(FileBackedEvent::Error(format!(
-                                        "ui watch parse failed: {err}"
-                                    ))).await;
+                                    if !send_event_or_shutdown(
+                                        &tx,
+                                        &mut shutdown_rx,
+                                        FileBackedEvent::Error(format!("ui watch parse failed: {err}")),
+                                    )
+                                    .await
+                                    {
+                                        break 'watch;
+                                    }
                                 }
                             }
                         }
                     }
                     Err(err) => {
-                        let _ = tx.send(FileBackedEvent::Error(format!(
-                            "ui watch failed: {err:?}"
-                        ))).await;
+                        let _ = send_event_or_shutdown(
+                            &tx,
+                            &mut shutdown_rx,
+                            FileBackedEvent::Error(format!("ui watch failed: {err:?}")),
+                        )
+                        .await;
                         break;
                     }
                 }
@@ -281,7 +341,7 @@ pub(super) async fn spawn_tape_watch(
     mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
 ) -> Result<()> {
     let mut pending = Vec::new();
-    loop {
+    'watch: loop {
         tokio::select! {
             changed = shutdown_rx.changed() => {
                 if changed.is_err() || *shutdown_rx.borrow() {
@@ -304,16 +364,25 @@ pub(super) async fn spawn_tape_watch(
                             let Ok(record) = serde_json::from_slice::<TapeRecordV1>(line) else {
                                 continue;
                             };
-                            if tx.send(FileBackedEvent::Tape(record)).await.is_err() {
+                            if !send_event_or_shutdown(
+                                &tx,
+                                &mut shutdown_rx,
+                                FileBackedEvent::Tape(record),
+                            )
+                            .await
+                            {
                                 pending.clear();
-                                break;
+                                break 'watch;
                             }
                         }
                     }
                     Err(err) => {
-                        let _ = tx.send(FileBackedEvent::Error(format!(
-                            "tape watch failed: {err:?}"
-                        ))).await;
+                        let _ = send_event_or_shutdown(
+                            &tx,
+                            &mut shutdown_rx,
+                            FileBackedEvent::Error(format!("tape watch failed: {err:?}")),
+                        )
+                        .await;
                         break;
                     }
                 }
@@ -331,40 +400,14 @@ async fn tail_from_live_edge(shell: &alan_shell::Shell, path: &str) -> Result<al
     Ok(tail_with_history(shell, path).await?.0)
 }
 
-/// Open a tail pinned at the file's current live edge and return the bytes
-/// that existed at open time. Hydrating from these returned bytes — instead
-/// of from a separate read of the same file — makes history + live delivery
-/// exactly-once by construction.
-async fn tail_with_history(
-    shell: &alan_shell::Shell,
-    path: &str,
-) -> Result<(alan_shell::Tail, Vec<u8>)> {
-    let existing = shell
-        .cat(path)
-        .await
-        .map_err(|err| anyhow!("failed to snapshot {path}: {err:?}"))?;
-    let mut tail = shell
-        .tail(path)
-        .await
-        .map_err(|err| anyhow!("failed to tail {path}: {err:?}"))?;
-    let mut skipped = 0usize;
-    while skipped < existing.len() {
-        let remaining = existing.len() - skipped;
-        let chunk = tail
-            .read(remaining.min(64 * 1024) as u32)
-            .await
-            .map_err(|err| anyhow!("failed to skip existing {path} bytes: {err:?}"))?;
-        if chunk.is_empty() {
-            bail!("tail for {path} closed before existing bytes were skipped");
-        }
-        skipped += chunk.len();
-    }
-    Ok((tail, existing))
-}
-
-pub(super) fn spawn_terminal_events(tx: tokio::sync::mpsc::Sender<FileBackedEvent>) {
+pub(super) fn spawn_terminal_events(
+    tx: tokio::sync::mpsc::Sender<FileBackedEvent>,
+) -> tokio::task::JoinHandle<()> {
     tokio::task::spawn_blocking(move || {
         loop {
+            if tx.is_closed() {
+                break;
+            }
             match crossterm::event::poll(std::time::Duration::from_millis(100)) {
                 Ok(true) => match crossterm::event::read() {
                     Ok(event) => {
@@ -383,7 +426,7 @@ pub(super) fn spawn_terminal_events(tx: tokio::sync::mpsc::Sender<FileBackedEven
                         }
                     }
                     Err(err) => {
-                        let _ = tx.blocking_send(FileBackedEvent::Error(format!(
+                        let _ = tx.blocking_send(FileBackedEvent::TerminalError(format!(
                             "terminal input failed: {err}"
                         )));
                         break;
@@ -391,14 +434,14 @@ pub(super) fn spawn_terminal_events(tx: tokio::sync::mpsc::Sender<FileBackedEven
                 },
                 Ok(false) => {}
                 Err(err) => {
-                    let _ = tx.blocking_send(FileBackedEvent::Error(format!(
+                    let _ = tx.blocking_send(FileBackedEvent::TerminalError(format!(
                         "terminal polling failed: {err}"
                     )));
                     break;
                 }
             }
         }
-    });
+    })
 }
 
 fn agent_input_path(agent_path: &str) -> String {
@@ -419,6 +462,13 @@ fn action_events_path(agent_path: &str) -> String {
 
 fn ui_activity_path(agent_path: &str) -> String {
     format!("{agent_path}/machine/ui/activity")
+}
+
+pub(super) async fn read_activity_snapshot(
+    shell: &alan_shell::Shell,
+    agent_path: &str,
+) -> Result<UiActivitySnapshot> {
+    read_json_file(shell, &ui_activity_path(agent_path)).await
 }
 
 fn ui_plan_path(agent_path: &str) -> String {
@@ -713,20 +763,61 @@ pub(super) fn response_text_from_content(content: Vec<ContentPart>) -> String {
         .join("")
 }
 
-pub(super) fn sync_actions_from_snapshots(app: &mut FileBackedApp, snapshots: Vec<ActionSnapshot>) {
-    let mut running_tools = Vec::new();
-    for snapshot in snapshots {
-        if action_status_is_running(&snapshot.status) {
-            running_tools.push(RunningTool {
-                id: snapshot.id.clone(),
-                title: action_title(&snapshot),
-            });
+pub(super) fn hydrate_actions_from_snapshots(
+    app: &mut FileBackedApp,
+    snapshots: Vec<ActionSnapshot>,
+) {
+    app.running_tools = snapshots.iter().filter_map(running_tool).collect();
+}
+
+pub(super) fn sync_action_snapshot(app: &mut FileBackedApp, snapshot: ActionSnapshot) {
+    app.running_tools.retain(|tool| tool.id != snapshot.id);
+    if let Some(tool) = running_tool(&snapshot) {
+        app.running_tools.push(tool);
+    }
+    if let Some(cell) = action_snapshot_to_history_cell(&snapshot) {
+        app.upsert_action_cell(snapshot.id, cell);
+    }
+}
+
+fn running_tool(snapshot: &ActionSnapshot) -> Option<RunningTool> {
+    action_status_is_running(&snapshot.status).then(|| RunningTool {
+        id: snapshot.id.clone(),
+        title: action_title(snapshot),
+    })
+}
+
+pub(super) fn action_ids_from_events(pending: &mut Vec<u8>) -> Vec<String> {
+    let mut action_ids = Vec::new();
+    while let Some(end) = pending.iter().position(|byte| *byte == b'\n') {
+        let record = pending.drain(..end).collect::<Vec<_>>();
+        pending.drain(..1);
+        let record = record.strip_suffix(b"\r").unwrap_or(&record);
+        let Some(separator) = record.iter().position(|byte| *byte == b':') else {
+            continue;
+        };
+        let action_id = if &record[..separator] == b"created" {
+            &record[separator + 1..]
+        } else {
+            if &record[separator + 1..] != b"status" {
+                continue;
+            }
+            &record[..separator]
+        };
+        if action_id.is_empty()
+            || action_id == b"."
+            || action_id == b".."
+            || !action_id
+                .iter()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(*byte, b'_' | b'-' | b'.'))
+        {
+            continue;
         }
-        if let Some(cell) = action_snapshot_to_history_cell(&snapshot) {
-            app.upsert_action_cell(snapshot.id.clone(), cell);
+        if let Ok(action_id) = std::str::from_utf8(action_id) {
+            action_ids.push(action_id.to_string());
         }
     }
-    app.running_tools = running_tools;
+    action_ids
 }
 
 fn action_status_is_running(status: &str) -> bool {
