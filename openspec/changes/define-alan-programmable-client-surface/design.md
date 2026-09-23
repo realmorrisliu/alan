@@ -165,6 +165,14 @@ Tape messages and UI events have no shared turn identifier. During hydration,
 only error events since the latest `Running` event are replayed after tape
 history; errors from older turns are not appended after newer tape messages.
 Errors already shown in an attached renderer remain in its retained transcript.
+Action records likewise have no shared turn identifier with Tape. Hydration
+therefore restores pending/running Tools in the live-tool region but omits
+already-completed Tool cells whose transcript position cannot be established.
+The action-event tail is pinned at the live edge; only creation and status
+records carry an action ID plus its Process-pinned path to the renderer. This
+lets observed live actions insert or replace their own Tool cell without
+replaying unrelated historical action updates or reading a same-ID action from
+a replacement Process.
 
 ### 5. Preserve explicit access grants
 

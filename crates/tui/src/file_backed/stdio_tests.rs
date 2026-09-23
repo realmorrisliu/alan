@@ -339,8 +339,15 @@ async fn full_watcher_queue_does_not_block_shutdown() {
     tx.send(FileBackedEvent::RequestsChanged).await.unwrap();
     let (shutdown, mut shutdown_rx) = tokio::sync::watch::channel(false);
     let send = tokio::spawn(async move {
-        file_surface::send_event_or_shutdown(&tx, &mut shutdown_rx, FileBackedEvent::ActionsChanged)
-            .await
+        file_surface::send_event_or_shutdown(
+            &tx,
+            &mut shutdown_rx,
+            FileBackedEvent::ActionsChanged {
+                agent_path: "/agent/1".to_string(),
+                action_id: "a0".to_string(),
+            },
+        )
+        .await
     });
 
     tokio::task::yield_now().await;
@@ -369,7 +376,7 @@ async fn renderer_reconnect_hydrates_the_current_turn_and_keeps_prior_transcript
         .await
         .unwrap();
     let (tx, _rx) = tokio::sync::mpsc::channel(8);
-    let mut watchers = AgentWatchers::start(old_tails, tx.clone());
+    let mut watchers = AgentWatchers::start(old_tails, "/agent/root", tx.clone());
     app.transcript
         .push(HistoryCell::User("current task".to_string()));
     app.reconciler.on_local_submit("current task");
@@ -441,7 +448,7 @@ async fn renderer_reconnects_after_root_pid_changes_without_a_pending_turn() {
         .await
         .unwrap();
     let (tx, _rx) = tokio::sync::mpsc::channel(8);
-    let mut watchers = AgentWatchers::start(old_tails, tx.clone());
+    let mut watchers = AgentWatchers::start(old_tails, "/agent/root", tx.clone());
 
     let new_pid = shell.spawn(EXEC_SPEC).await.unwrap();
     agent_root
@@ -494,7 +501,7 @@ async fn failed_root_reattach_preserves_state_and_retries_the_new_pid() {
     .await
     .unwrap();
     let (tx, _rx) = tokio::sync::mpsc::channel(8);
-    let mut watchers = AgentWatchers::start(old_tails, tx.clone());
+    let mut watchers = AgentWatchers::start(old_tails, "/agent/root", tx.clone());
 
     let mut app = FileBackedApp::new("/agent/root".to_string());
     app.transcript = vec![
@@ -596,7 +603,7 @@ async fn renderer_does_not_reuse_a_tape_turn_hidden_by_clear() {
         .push(HistoryCell::User("same task".to_string()));
     app.reconciler.on_local_submit("same task");
     let (tx, _rx) = tokio::sync::mpsc::channel(8);
-    let mut watchers = AgentWatchers::start(old_tails, tx.clone());
+    let mut watchers = AgentWatchers::start(old_tails, "/agent/root", tx.clone());
 
     let new_pid = shell.spawn(EXEC_SPEC).await.unwrap();
     agent_root
@@ -666,7 +673,7 @@ async fn renderer_reattach_keeps_a_tape_less_terminal_error() {
     app.transcript.push(crate::history::HistoryCell::User(
         "current task".to_string(),
     ));
-    let mut watchers = AgentWatchers::start(old_tails, tx.clone());
+    let mut watchers = AgentWatchers::start(old_tails, "/agent/root", tx.clone());
 
     let new_pid = shell.spawn(EXEC_SPEC).await.unwrap();
     agent_root

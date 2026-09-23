@@ -18,8 +18,10 @@
   local turn and idle reattachment (including replacement history merge,
   pruned scrollback, repeated transcript content, full-stream single-PID
   hydration/retry, bounded retry through stale PID publication, historical UI
-  error ordering, and action-cell index preservation when recoverable errors
-  are filtered), and renderer exit without killing the shared Host or Agent.
+  error ordering, omission of completed actions whose turn position is
+  unknown, live action updates by action ID, and action-cell index preservation
+  when recoverable errors are filtered), and renderer exit without killing the
+  shared Host or Agent.
 - [x] 2.3 Verify unavailable Connection behavior: a clear error appears before
   any provider request, including pre-turn compaction; the renderer accepts
   another submission, and the Host and Root Agent remain available.

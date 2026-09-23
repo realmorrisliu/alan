@@ -70,13 +70,18 @@ output, status, and Agent UI state.
 - **THEN** the renderer preserves that correlated error in its transcript
 - **AND** it stops polling for this turn after rendering the terminal outcome
 
-#### Scenario: Reattachment filters errors without displacing action history
-- **WHEN** a correlated replacement turn contains a recoverable error before a
-  completed action snapshot and the renderer filters the error while merging
-  that turn
-- **THEN** a later update for the action replaces its matching tool cell
-- **AND** it does not replace another transcript cell or append a duplicate
-  tool result
+#### Scenario: Hydration omits completed actions with unknown turn position
+- **WHEN** Tape contains multiple completed turns and action snapshots contain
+  completed Tools without a shared turn identifier
+- **THEN** hydration preserves Tape order and does not append those Tool cells
+  after the latest turn
+- **AND** pending/running Tools remain visible in the live-tool region
+
+#### Scenario: A live action status event changes only its own tool cell
+- **WHEN** an action creation or status event is observed after attachment
+- **THEN** the renderer inserts or updates only that action's Tool cell
+- **AND** it does not append unrelated historical action snapshots or duplicate
+  the changed action's result
 
 #### Scenario: Hydration does not replay older errors after later turns
 - **WHEN** UI history contains an error followed by a newer `Running` event and

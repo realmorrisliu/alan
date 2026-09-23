@@ -317,15 +317,15 @@ fn scrollback_drains_by_rendered_lines() {
 #[test]
 fn action_snapshots_track_running_and_commit_completed_tool() {
     let mut app = FileBackedApp::new("/agent/1".to_string());
-    sync_actions_from_snapshots(
+    sync_action_snapshot(
         &mut app,
-        vec![ActionSnapshot {
+        ActionSnapshot {
             id: "a0".to_string(),
             name: "edit".to_string(),
             status: "running".to_string(),
             output: String::new(),
             result: String::new(),
-        }],
+        },
     );
     assert_eq!(
         app.running_tools,
@@ -336,15 +336,15 @@ fn action_snapshots_track_running_and_commit_completed_tool() {
     );
     assert!(app.transcript.is_empty());
 
-    sync_actions_from_snapshots(
+    sync_action_snapshot(
         &mut app,
-        vec![ActionSnapshot {
+        ActionSnapshot {
             id: "a0".to_string(),
             name: "edit".to_string(),
             status: "completed".to_string(),
             output: "updated file".to_string(),
             result: r#"{"exit_code":0}"#.to_string(),
-        }],
+        },
     );
     assert!(app.running_tools.is_empty());
     assert_eq!(
@@ -600,15 +600,15 @@ fn post_yield_cells_do_not_arm_remote_boundary_insertion() {
         reason: None,
         presentation: None,
     });
-    sync_actions_from_snapshots(
+    sync_action_snapshot(
         &mut app,
-        vec![ActionSnapshot {
+        ActionSnapshot {
             id: "a1".to_string(),
             name: "tool".to_string(),
             status: "completed".to_string(),
             output: "ran".to_string(),
             result: r#"{"exit_code":0}"#.to_string(),
-        }],
+        },
     );
 
     app.apply_tape_record(TapeRecordV1 {
@@ -747,15 +747,15 @@ fn raced_turn_preview_cells_move_behind_their_user_boundary() {
             }],
         ),
     });
-    sync_actions_from_snapshots(
+    sync_action_snapshot(
         &mut app,
-        vec![ActionSnapshot {
+        ActionSnapshot {
             id: "a1".to_string(),
             name: "tool".to_string(),
             status: "completed".to_string(),
             output: "ran".to_string(),
             result: r#"{"exit_code":0}"#.to_string(),
-        }],
+        },
     );
     app.push_output("wor".to_string());
 
@@ -890,15 +890,15 @@ fn pending_remote_turn_start_shifts_with_scrollback_prune() {
         role: "assistant".to_string(),
         content: "done".to_string(),
     });
-    sync_actions_from_snapshots(
+    sync_action_snapshot(
         &mut app,
-        vec![ActionSnapshot {
+        ActionSnapshot {
             id: "a1".to_string(),
             name: "tool".to_string(),
             status: "completed".to_string(),
             output: "ran".to_string(),
             result: r#"{"exit_code":0}"#.to_string(),
-        }],
+        },
     );
 
     app.prune_rendered_prefix(RenderOpts::new(80, false), 1);

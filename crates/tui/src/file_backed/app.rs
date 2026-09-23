@@ -39,7 +39,10 @@ pub(super) enum FileBackedEvent {
     Terminal(TerminalEvent),
     Output(String),
     RequestsChanged,
-    ActionsChanged,
+    ActionsChanged {
+        agent_path: String,
+        action_id: String,
+    },
     Ui(UiEvent),
     Tape(TapeRecordV1),
     Error(String),
@@ -156,7 +159,7 @@ impl FileBackedApp {
                 self.apply_tape_record(record);
                 None
             }
-            FileBackedEvent::RequestsChanged | FileBackedEvent::ActionsChanged => None,
+            FileBackedEvent::RequestsChanged | FileBackedEvent::ActionsChanged { .. } => None,
             FileBackedEvent::Error(message) => {
                 self.push_error(message);
                 None

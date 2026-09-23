@@ -7,6 +7,70 @@ use alan_kernel::Access;
 use std::sync::Arc;
 
 #[test]
+fn hydration_omits_unplaced_completed_actions_but_keeps_live_tool_updates() {
+    let mut app = FileBackedApp::new("/agent/root".to_string());
+    app.transcript = vec![
+        HistoryCell::User("first task".to_string()),
+        HistoryCell::Assistant("first answer".to_string()),
+        HistoryCell::User("second task".to_string()),
+        HistoryCell::Assistant("second answer".to_string()),
+    ];
+    let action = |id: &str, name: &str, status: &str, output: &str| super::super::ActionSnapshot {
+        id: id.to_string(),
+        name: name.to_string(),
+        status: status.to_string(),
+        output: output.to_string(),
+        result: String::new(),
+    };
+
+    super::super::hydrate_actions_from_snapshots(
+        &mut app,
+        vec![
+            action("a0", "first tool", "completed", "first result"),
+            action("a1", "second tool", "completed", "second result"),
+            action("a2", "active tool", "running", ""),
+        ],
+    );
+
+    assert_eq!(app.transcript.len(), 4);
+    assert_eq!(
+        app.running_tools,
+        vec![crate::history::RunningTool {
+            id: "a2".to_string(),
+            title: "active tool".to_string(),
+        }]
+    );
+
+    super::super::sync_action_snapshot(
+        &mut app,
+        action("a2", "active tool", "completed", "live result"),
+    );
+    assert!(app.running_tools.is_empty());
+    assert!(matches!(
+        app.transcript.last(),
+        Some(HistoryCell::Tool {
+            title,
+            status: ToolStatus::Complete,
+            ..
+        }) if title == "active tool"
+    ));
+}
+
+#[test]
+fn action_event_ids_are_parsed_across_partial_records() {
+    let mut pending = b"a0:status\ncreated:a1\na1:output\na1:sta".to_vec();
+    assert_eq!(
+        super::super::action_ids_from_events(&mut pending),
+        ["a0", "a1"]
+    );
+    assert_eq!(pending, b"a1:sta");
+
+    pending.extend_from_slice(b"tus\n");
+    assert_eq!(super::super::action_ids_from_events(&mut pending), ["a1"]);
+    assert!(pending.is_empty());
+}
+
+#[test]
 fn reattached_action_indices_follow_removed_error_cells() {
     let mut reattached = FileBackedApp::new("/agent/root".to_string());
     reattached.transcript = vec![

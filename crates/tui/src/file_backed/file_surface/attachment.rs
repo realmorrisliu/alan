@@ -1,8 +1,8 @@
 use super::super::tail::{current_root_agent_pid, root_agent_path_for_pid, tail_with_history};
 use super::{
     FileBackedApp, WatchTails, action_events_path, agent_output_path, correlated_ui_task,
-    parse_tape_history, read_activity_snapshot, read_json_file, request_events_path,
-    sync_actions_from_files, sync_requests_from_files, tail_from_live_edge, ui_events_path,
+    hydrate_actions_from_files, parse_tape_history, read_activity_snapshot, read_json_file,
+    request_events_path, sync_requests_from_files, tail_from_live_edge, ui_events_path,
     ui_notice_path, ui_plan_path, ui_thinking_path,
 };
 use crate::history::HistoryCell;
@@ -154,7 +154,7 @@ async fn hydrate_pinned_agent(
             }
         }
 
-        sync_actions_from_files(shell, agent_path, app).await?;
+        hydrate_actions_from_files(shell, agent_path, app).await?;
         sync_requests_from_files(shell, agent_path, app).await
     }
     .await;

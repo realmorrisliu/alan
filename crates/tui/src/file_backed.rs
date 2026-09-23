@@ -41,17 +41,17 @@ use submission::{prepare_root_agent_submission, require_root_agent_idle};
 #[cfg(test)]
 use file_surface::{
     ActionSnapshot, RequestSnapshot, agent_output_path, parse_tape_history,
-    request_snapshot_to_pending_yield, sync_actions_from_snapshots,
+    request_snapshot_to_pending_yield, sync_action_snapshot,
 };
 use file_surface::{
     TapeRecordV1, hydrate_and_open_tails, reattach_to_current_agent, spawn_action_watch,
     spawn_output_tail, spawn_request_watch, spawn_tape_watch, spawn_terminal_events,
-    spawn_ui_watch, sync_actions_from_files, sync_requests_from_files, write_agent_input,
+    spawn_ui_watch, sync_action_from_file, sync_requests_from_files, write_agent_input,
     write_machine_ctl, write_request_response,
 };
 use tail::{
     StdioTailAttachment, close_stdio_tails, current_root_agent_pid,
-    open_stdio_tail_attachment_when_idle,
+    open_stdio_tail_attachment_when_idle, root_agent_path_for_pid,
 };
 
 use crate::completion::{self, CompletionCandidate};
@@ -159,7 +159,7 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
     let (tx, mut rx) = tokio::sync::mpsc::channel::<FileBackedEvent>(128);
     let terminal_reader = spawn_terminal_events(tx.clone());
 
-    let mut watchers = AgentWatchers::start(watch_tails, tx.clone());
+    let mut watchers = AgentWatchers::start(watch_tails, &config.agent_path, tx.clone());
 
     let mut frame_tick = tokio::time::interval(std::time::Duration::from_millis(33));
     frame_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -179,8 +179,15 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                             app.push_error(format!("request refresh failed: {err:#}"));
                         }
                     }
-                    FileBackedEvent::ActionsChanged => {
-                        if let Err(err) = sync_actions_from_files(&shell, &app.agent_path.clone(), &mut app).await {
+                    FileBackedEvent::ActionsChanged { agent_path, action_id } => {
+                        if let Err(err) = sync_action_from_file(
+                            &shell,
+                            &agent_path,
+                            &action_id,
+                            &mut app,
+                        )
+                        .await
+                        {
                             app.push_error(format!("action refresh failed: {err:#}"));
                         }
                     }
@@ -373,9 +380,13 @@ struct AgentWatchers {
 impl AgentWatchers {
     fn start(
         tails: file_surface::WatchTails,
+        agent_path: &str,
         tx: tokio::sync::mpsc::Sender<FileBackedEvent>,
     ) -> Self {
         let root_agent_pid = tails.root_agent_pid;
+        let action_agent_path = root_agent_pid
+            .and_then(|pid| root_agent_path_for_pid(agent_path, pid))
+            .unwrap_or_else(|| agent_path.to_string());
         let (shutdown, shutdown_rx) = tokio::sync::watch::channel(false);
         let tasks = vec![
             tokio::spawn(spawn_output_tail(
@@ -390,6 +401,7 @@ impl AgentWatchers {
             )),
             tokio::spawn(spawn_action_watch(
                 tails.actions,
+                action_agent_path,
                 tx.clone(),
                 shutdown_rx.clone(),
             )),
@@ -418,7 +430,7 @@ impl AgentWatchers {
                 match reattach_to_current_agent(shell, agent_path, app, submitted_task).await {
                     Ok((tails, submitted_task_settled)) => {
                         self.pid_refresh_failed = false;
-                        *self = Self::start(tails, tx.clone());
+                        *self = Self::start(tails, agent_path, tx.clone());
                         submitted_task_settled
                     }
                     Err(err) => {

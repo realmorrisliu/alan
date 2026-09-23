@@ -30,13 +30,24 @@ pub(super) async fn sync_requests_from_files(
     Ok(())
 }
 
-pub(super) async fn sync_actions_from_files(
+pub(super) async fn hydrate_actions_from_files(
     shell: &alan_shell::Shell,
     agent_path: &str,
     app: &mut FileBackedApp,
 ) -> Result<()> {
     let snapshots = read_action_snapshots(shell, agent_path).await?;
-    sync_actions_from_snapshots(app, snapshots);
+    hydrate_actions_from_snapshots(app, snapshots);
+    Ok(())
+}
+
+pub(super) async fn sync_action_from_file(
+    shell: &alan_shell::Shell,
+    agent_path: &str,
+    action_id: &str,
+    app: &mut FileBackedApp,
+) -> Result<()> {
+    let snapshot = read_action_snapshot(shell, agent_path, action_id).await?;
+    sync_action_snapshot(app, snapshot);
     Ok(())
 }
 
@@ -201,10 +212,12 @@ pub(super) async fn spawn_request_watch(
 
 pub(super) async fn spawn_action_watch(
     mut tail: alan_shell::Tail,
+    agent_path: String,
     tx: tokio::sync::mpsc::Sender<FileBackedEvent>,
     mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
 ) -> Result<()> {
-    loop {
+    let mut pending = Vec::new();
+    'watch: loop {
         tokio::select! {
             changed = shutdown_rx.changed() => {
                 if changed.is_err() || *shutdown_rx.borrow() {
@@ -214,15 +227,21 @@ pub(super) async fn spawn_action_watch(
             result = tail.read(4096) => {
                 match result {
                     Ok(bytes) if bytes.is_empty() => break,
-                    Ok(_) => {
-                        if !send_event_or_shutdown(
-                            &tx,
-                            &mut shutdown_rx,
-                            FileBackedEvent::ActionsChanged,
-                        )
-                        .await
-                        {
-                            break;
+                    Ok(bytes) => {
+                        pending.extend(bytes);
+                        for action_id in action_ids_from_events(&mut pending) {
+                            if !send_event_or_shutdown(
+                                &tx,
+                                &mut shutdown_rx,
+                                FileBackedEvent::ActionsChanged {
+                                    agent_path: agent_path.clone(),
+                                    action_id,
+                                },
+                            )
+                            .await
+                            {
+                                break 'watch;
+                            }
                         }
                     }
                     Err(err) => {
@@ -744,20 +763,61 @@ pub(super) fn response_text_from_content(content: Vec<ContentPart>) -> String {
         .join("")
 }
 
-pub(super) fn sync_actions_from_snapshots(app: &mut FileBackedApp, snapshots: Vec<ActionSnapshot>) {
-    let mut running_tools = Vec::new();
-    for snapshot in snapshots {
-        if action_status_is_running(&snapshot.status) {
-            running_tools.push(RunningTool {
-                id: snapshot.id.clone(),
-                title: action_title(&snapshot),
-            });
+pub(super) fn hydrate_actions_from_snapshots(
+    app: &mut FileBackedApp,
+    snapshots: Vec<ActionSnapshot>,
+) {
+    app.running_tools = snapshots.iter().filter_map(running_tool).collect();
+}
+
+pub(super) fn sync_action_snapshot(app: &mut FileBackedApp, snapshot: ActionSnapshot) {
+    app.running_tools.retain(|tool| tool.id != snapshot.id);
+    if let Some(tool) = running_tool(&snapshot) {
+        app.running_tools.push(tool);
+    }
+    if let Some(cell) = action_snapshot_to_history_cell(&snapshot) {
+        app.upsert_action_cell(snapshot.id, cell);
+    }
+}
+
+fn running_tool(snapshot: &ActionSnapshot) -> Option<RunningTool> {
+    action_status_is_running(&snapshot.status).then(|| RunningTool {
+        id: snapshot.id.clone(),
+        title: action_title(snapshot),
+    })
+}
+
+pub(super) fn action_ids_from_events(pending: &mut Vec<u8>) -> Vec<String> {
+    let mut action_ids = Vec::new();
+    while let Some(end) = pending.iter().position(|byte| *byte == b'\n') {
+        let record = pending.drain(..end).collect::<Vec<_>>();
+        pending.drain(..1);
+        let record = record.strip_suffix(b"\r").unwrap_or(&record);
+        let Some(separator) = record.iter().position(|byte| *byte == b':') else {
+            continue;
+        };
+        let action_id = if &record[..separator] == b"created" {
+            &record[separator + 1..]
+        } else {
+            if &record[separator + 1..] != b"status" {
+                continue;
+            }
+            &record[..separator]
+        };
+        if action_id.is_empty()
+            || action_id == b"."
+            || action_id == b".."
+            || !action_id
+                .iter()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(*byte, b'_' | b'-' | b'.'))
+        {
+            continue;
         }
-        if let Some(cell) = action_snapshot_to_history_cell(&snapshot) {
-            app.upsert_action_cell(snapshot.id.clone(), cell);
+        if let Ok(action_id) = std::str::from_utf8(action_id) {
+            action_ids.push(action_id.to_string());
         }
     }
-    app.running_tools = running_tools;
+    action_ids
 }
 
 fn action_status_is_running(status: &str) -> bool {

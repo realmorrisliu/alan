@@ -283,6 +283,7 @@ async fn one_shot_recovers_when_final_tape_read_races_root_agent_restart() {
             result = &mut wait_for_answer => panic!("one-shot completed before input was observed: {result:?}"),
             input = input_tail.read(4096) => assert!(!input.unwrap().is_empty()),
         }
+        input_tail.close().await.unwrap();
 
         shell
         .write(
@@ -356,5 +357,4 @@ async fn one_shot_recovers_when_final_tape_read_races_root_agent_restart() {
     close_stdio_tails(attachment.tape_tail, attachment.ui_tail)
         .await
         .unwrap();
-    input_tail.close().await.unwrap();
 }
