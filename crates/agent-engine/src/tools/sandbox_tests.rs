@@ -54,6 +54,12 @@ fn namespace_path_translation_preserves_data_and_maps_file_paths() {
         "awk -v root=/mnt/project 'BEGIN { print root }' > /Users/alice/project/out.txt"
     );
     assert_eq!(
+        translate(
+            "env -u HOME awk -v root=/mnt/project 'BEGIN { print root }' > /mnt/project/out.txt"
+        ),
+        "env -u HOME awk -v root=/mnt/project 'BEGIN { print root }' > /Users/alice/project/out.txt"
+    );
+    assert_eq!(
         translate("awk 'BEGIN { print \"/mnt/project\" }' > /mnt/project/out.txt"),
         "awk 'BEGIN { print \"/mnt/project\" }' > /Users/alice/project/out.txt"
     );

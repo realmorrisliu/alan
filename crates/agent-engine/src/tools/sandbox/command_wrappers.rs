@@ -166,6 +166,11 @@ fn nested_evaluator_view(words: &[String]) -> Option<NestedEvaluatorView<'_>> {
     }
 }
 
+pub(super) fn command_and_args(words: &[String]) -> Option<(&str, &[String])> {
+    let view = nested_evaluator_view(words)?;
+    Some((view.command, view.args))
+}
+
 fn next_command_offset(words: &[String]) -> Option<usize> {
     let mut index = 0;
     while let Some(word) = words.get(index).map(|word| word.as_str()) {

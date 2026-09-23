@@ -34,41 +34,18 @@ pub(super) fn token_is_data_argument(command: &str, token: &ShellWordToken) -> b
     let Some(words) = commands.last() else {
         return false;
     };
-    let Some(command_index) = words.iter().position(|word| !is_env_assignment(word)) else {
+    let Some((command_name, args)) = super::command_wrappers::command_and_args(words) else {
         return false;
     };
-    let mut command_name = words[command_index].as_str();
-    if Path::new(command_name)
-        .file_name()
-        .and_then(|name| name.to_str())
-        == Some("env")
-        && let Some(inner_command) = words
-            .iter()
-            .skip(command_index + 1)
-            .find(|word| !word.starts_with('-') && !is_env_assignment(word))
-    {
-        command_name = inner_command;
-    }
     let command_name = Path::new(command_name)
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or(command_name);
 
-    if matches!(command_name, "awk" | "gawk" | "mawk" | "nawk") {
-        let awk_index = words.iter().position(|word| {
-            matches!(
-                Path::new(word).file_name().and_then(|name| name.to_str()),
-                Some("awk" | "gawk" | "mawk" | "nawk")
-            )
-        });
-        if let Some(awk_index) = awk_index
-            && super::command_interpreters::awk_next_argument_is_data(
-                &words[awk_index + 1..],
-                &token.decoded,
-            )
-        {
-            return true;
-        }
+    if matches!(command_name, "awk" | "gawk" | "mawk" | "nawk")
+        && super::command_interpreters::awk_next_argument_is_data(args, &token.decoded)
+    {
+        return true;
     }
 
     if matches!(command_name, "echo" | "printf") {
@@ -77,13 +54,9 @@ pub(super) fn token_is_data_argument(command: &str, token: &ShellWordToken) -> b
 
     // ponytail: classify only data positions with known command syntax; arbitrary
     // argv roles need a real namespace filesystem, not more command-specific guesses.
-    let git_commit = command_name == "git"
-        && words
-            .iter()
-            .skip(command_index + 1)
-            .any(|word| word == "commit");
+    let git_commit = command_name == "git" && args.iter().any(|word| word == "commit");
     git_commit
-        && (matches!(words.last().map(String::as_str), Some("-m" | "--message"))
+        && (matches!(args.last().map(String::as_str), Some("-m" | "--message"))
             || token.decoded.starts_with("--message=")
             || token.decoded.starts_with("-m"))
 }
