@@ -28,7 +28,7 @@
   registering only the existing Core Tool set in product Root Agent boot;
   verify the exact set and live shell behavior.
 - [x] 2.7 Keep recoverable Agent errors in the rendered transcript.
-- [ ] 2.8 Implement and verify one-shot redirected stdin/stdout/stderr,
+- [x] 2.8 Implement and verify one-shot redirected stdin/stdout/stderr,
   Root Agent PID rebinding, and exit-code behavior.
 
 > Live acceptance status (2026-09-23): an explicit read-only synthetic Host
@@ -53,7 +53,11 @@
 > and scrollback insertion; the rebuilt TUI displayed the ordered response
 > legibly in both visible output and scrollback, and `Ctrl-Q` returned to fish
 > without stopping dev Host. Ordinary-terminal cancellation and live
-> reattachment to an already-running Root Agent remain unverified.
+> reattachment to an already-running Root Agent remain unverified. A one-shot
+> command returned the exact Agent answer on stdout with empty stderr and exit
+> 0; empty stdin produced a stderr diagnostic and exit 1. The TUI integration
+> test also replaces the Root Agent PID after accepting one-shot input and
+> recovers the matching answer once from the new Process.
 
 ## 3. Verification and delivery
 

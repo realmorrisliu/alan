@@ -447,13 +447,13 @@ async fn wait_for_stdio_answer(
                         assistant_answer = Some(record.content);
                     }
                 }
-                if task_seen && activity_state == Some(UiActivityState::Idle) {
-                    if let Some(answer) = assistant_answer.take() {
-                        return Ok(answer);
-                    }
-                    if let Some(message) = task_error.take() {
-                        bail!("Agent task failed: {message}");
-                    }
+                if let Some(answer) = finish_stdio_task_if_ready(
+                    task_seen,
+                    activity_state,
+                    &mut assistant_answer,
+                    &mut task_error,
+                )? {
+                    return Ok(answer);
                 }
             }
             bytes = ui_tail.read(4096) => {
@@ -474,13 +474,13 @@ async fn wait_for_stdio_answer(
                 if activity_state == Some(UiActivityState::Paused) {
                     bail!("Agent task needs interactive input; attach with the TTY renderer");
                 }
-                if activity_state == Some(UiActivityState::Idle) {
-                    if task_seen && let Some(answer) = assistant_answer.take() {
-                        return Ok(answer);
-                    }
-                    if let Some(message) = task_error.take() {
-                        bail!("Agent task failed: {message}");
-                    }
+                if let Some(answer) = finish_stdio_task_if_ready(
+                    task_seen,
+                    activity_state,
+                    &mut assistant_answer,
+                    &mut task_error,
+                )? {
+                    return Ok(answer);
                 }
             }
             _ = &mut deadline => bail!("timed out waiting for the Root Agent task"),
@@ -509,13 +509,13 @@ async fn wait_for_stdio_answer(
                     if activity_state == Some(UiActivityState::Paused) {
                         bail!("Agent task needs interactive input; attach with the TTY renderer");
                     }
-                    if activity_state == Some(UiActivityState::Idle) {
-                        if task_seen && let Some(answer) = assistant_answer.take() {
-                            return Ok(answer);
-                        }
-                        if let Some(message) = task_error.take() {
-                            bail!("Agent task failed: {message}");
-                        }
+                    if let Some(answer) = finish_stdio_task_if_ready(
+                        task_seen,
+                        activity_state,
+                        &mut assistant_answer,
+                        &mut task_error,
+                    )? {
+                        return Ok(answer);
                     }
                 }
             }
@@ -528,6 +528,24 @@ async fn wait_for_stdio_answer(
             }
         }
     }
+}
+
+fn finish_stdio_task_if_ready(
+    task_seen: bool,
+    activity_state: Option<UiActivityState>,
+    assistant_answer: &mut Option<String>,
+    task_error: &mut Option<String>,
+) -> Result<Option<String>> {
+    if !task_seen || activity_state != Some(UiActivityState::Idle) {
+        return Ok(None);
+    }
+    if let Some(answer) = assistant_answer.take() {
+        return Ok(Some(answer));
+    }
+    if let Some(message) = task_error.take() {
+        bail!("Agent task failed: {message}");
+    }
+    Ok(None)
 }
 
 struct StdioTaskSnapshot {
