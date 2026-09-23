@@ -41,6 +41,45 @@ async fn test_run_turn_with_content_response() {
 }
 
 #[tokio::test]
+async fn unconfigured_connection_is_rejected_before_pre_turn_compaction() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let mut state = create_test_state_with_provider(NamedRecordingStreamProvider {
+        provider_name: "unconfigured",
+        chunks: vec!["should not compact".to_string()],
+        requests: Arc::clone(&requests),
+    });
+    state.runtime_config.compaction_trigger_messages = 0;
+    state.runtime_config.context_window_tokens = 1;
+    state.runtime_config.compaction_soft_trigger_ratio = 0.0;
+    state.runtime_config.compaction_hard_trigger_ratio = 0.0;
+    state.runtime_config.compaction_keep_last = 1;
+    state.machine.add_user_message("Earlier input");
+    state.machine.add_assistant_message("Earlier answer", None);
+
+    let cancel = CancellationToken::new();
+    let mut emit = |_event: Event| async {};
+    let error = run_turn_with_cancel(
+        &mut state,
+        TurnRunKind::NewTurn,
+        Some(vec![ContentPart::text("New input")]),
+        &mut emit,
+        &cancel,
+        None,
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(
+        error.to_string(),
+        "No callable Connection is available. Configure and select a Connection profile before submitting tasks."
+    );
+    assert!(
+        requests.lock().unwrap().is_empty(),
+        "pre-turn compaction must not call an unconfigured Connection"
+    );
+}
+
+#[tokio::test]
 async fn test_namespace_turn_reads_agent_input_generates_via_llmfs_and_writes_agent_output() {
     let procfs = Arc::new(alan_kernel::ProcFs::new());
     let agentfs = Arc::new(alan_agentfs::AgentFs::new());

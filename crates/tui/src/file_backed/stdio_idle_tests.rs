@@ -97,3 +97,105 @@ async fn one_shot_rebases_tails_after_the_previous_turn_reaches_idle() {
         .unwrap();
     input_tail.close().await.unwrap();
 }
+
+#[tokio::test]
+async fn one_shot_recovers_when_final_tape_read_races_root_agent_restart() {
+    let (shell, agent_root, namespace, old_pid) = stdio_tests::live_root_agent().await;
+    let tail_closer = std::sync::Arc::new(stdio_tests::CloseTailOnPid::new(agent_root.clone()));
+    namespace.replace_mount(
+        "/agent",
+        alan_ap::InProcessTransport::new(tail_closer.clone()),
+        alan_kernel::Access::ReadWrite,
+    );
+    let mut attachment = open_stdio_tail_attachment_when_idle(&shell, "/agent/root")
+        .await
+        .unwrap();
+    let mut input_tail = shell.tail("/agent/root/io/input").await.unwrap();
+    let (answer, new_pid) = {
+        let wait_for_answer = wait_for_stdio_answer(
+            &shell,
+            "/agent/root",
+            StdioTaskWaitContext::new("restart after idle", attachment.tape_history.clone()),
+            &mut attachment,
+            std::future::pending::<anyhow::Result<()>>(),
+        );
+        tokio::pin!(wait_for_answer);
+        tokio::select! {
+            result = &mut wait_for_answer => panic!("one-shot completed before input was observed: {result:?}"),
+            input = input_tail.read(4096) => assert!(!input.unwrap().is_empty()),
+        }
+
+        shell
+        .write(
+            "/agent/root/machine/tape",
+            b"{\"version\":1,\"kind\":\"message\",\"role\":\"user\",\"content\":\"restart after idle\"}\n{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"old answer\"}\n",
+        )
+        .await
+        .unwrap();
+        shell
+        .write(
+            "/agent/root/machine/ui/events",
+            b"{\"type\":\"activity\",\"snapshot\":{\"version\":1,\"state\":\"running\",\"started_at_ms\":18446744073709551615}}\n",
+        )
+        .await
+        .unwrap();
+        let (walked, resume) = tail_closer.pause_next_walk_with_suffix("/machine/tape");
+        shell
+            .write(
+                "/agent/root/machine/ui/events",
+                b"{\"type\":\"activity\",\"snapshot\":{\"version\":1,\"state\":\"idle\"}}\n",
+            )
+            .await
+            .unwrap();
+
+        tokio::select! {
+            result = &mut wait_for_answer => panic!("one-shot failed before the final tape read completed: {result:?}"),
+            result = tokio::time::timeout(std::time::Duration::from_secs(2), walked) => {
+                result.unwrap().unwrap();
+            }
+        }
+        tail_closer.close(old_pid.parse().unwrap());
+        assert!(agent_root.unbind_process(&old_pid).await);
+        let new_pid = shell.spawn(stdio_tests::EXEC_SPEC).await.unwrap();
+        agent_root
+            .bind_process(
+                new_pid.clone(),
+                std::sync::Arc::new(alan_agentfs::AgentFs::new()),
+            )
+            .await;
+        agent_root.set_root_process(new_pid.clone()).await;
+        namespace.replace_mount(
+            stdio_tests::PID_MOUNT,
+            alan_ap::InProcessTransport::new(std::sync::Arc::new(
+                alan_ap::reference::MemFs::with_read_only_file(
+                    "pid",
+                    format!("{new_pid}\n").into_bytes(),
+                ),
+            )),
+            alan_kernel::Access::ReadOnly,
+        );
+        shell
+        .write(
+            "/agent/root/machine/tape",
+            b"{\"version\":1,\"kind\":\"message\",\"role\":\"user\",\"content\":\"restart after idle\"}\n{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"recovered answer\"}\n",
+        )
+        .await
+        .unwrap();
+        shell
+        .write(
+            "/agent/root/machine/ui/events",
+            b"{\"type\":\"activity\",\"snapshot\":{\"version\":1,\"state\":\"running\",\"started_at_ms\":18446744073709551615}}\n{\"type\":\"activity\",\"snapshot\":{\"version\":1,\"state\":\"idle\"}}\n",
+        )
+        .await
+        .unwrap();
+        resume.send(()).unwrap();
+
+        (wait_for_answer.await.unwrap(), new_pid)
+    };
+    assert_eq!(answer, "recovered answer");
+    assert_eq!(attachment.root_agent_pid, new_pid.parse::<u64>().unwrap());
+    close_stdio_tails(attachment.tape_tail, attachment.ui_tail)
+        .await
+        .unwrap();
+    input_tail.close().await.unwrap();
+}

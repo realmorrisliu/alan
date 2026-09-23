@@ -675,13 +675,37 @@ async fn wait_for_stdio_answer(
                 if snapshot.activity_state == Some(UiActivityState::Paused) {
                     bail!("Agent task needs interactive input; attach with the TTY renderer");
                 }
-                stdio_completion::refresh_answer_after_idle(
+                if let Err(error) = stdio_completion::refresh_answer_after_idle(
                     shell,
                     &attachment.agent_process_path,
                     &task,
                     &mut snapshot,
                 )
-                .await?;
+                .await
+                {
+                    match tail::recover_stdio_task_after_tail_close(
+                        shell,
+                        root_agent_path,
+                        &task,
+                        attachment,
+                        &mut snapshot,
+                        interrupt_requested,
+                    )
+                    .await?
+                    {
+                        tail::StdioTaskRecovery::Complete(answer) => return Ok(answer),
+                        tail::StdioTaskRecovery::Reattached => {
+                            tape_pending.clear();
+                            ui_pending.clear();
+                            continue;
+                        }
+                        tail::StdioTaskRecovery::Unavailable => {
+                            root_agent_pid_tick.tick().await;
+                            continue;
+                        }
+                        tail::StdioTaskRecovery::Unchanged => return Err(error),
+                    }
+                }
                 if let Some(answer) = finish_stdio_task_if_ready(&mut snapshot)? {
                     return Ok(answer);
                 }

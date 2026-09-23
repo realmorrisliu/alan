@@ -206,6 +206,10 @@ where
         None
     };
 
+    let llm_generation = state.namespace_generation();
+    let generation = NamespaceTurnGeneration::load(&llm_generation).await;
+    generation.ensure_callable()?;
+
     if !should_skip_auto_compaction_for_responses_continuation(state) {
         let compaction_request = CompactionRequest::automatic_pre_turn()
             .with_additional_prompt_tokens(estimate_pending_turn_prompt_tokens(
@@ -292,9 +296,6 @@ where
         .iter()
         .map(|tool| tool.name.clone())
         .collect::<Vec<_>>();
-    let llm_generation = state.namespace_generation();
-    let generation = NamespaceTurnGeneration::load(&llm_generation).await;
-    generation.ensure_callable()?;
     let initial_provider_capabilities = generation.capabilities();
     let turn_request_controls = crate::resolve_turn_request_controls(
         &state.core_config,

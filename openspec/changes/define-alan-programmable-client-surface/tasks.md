@@ -20,8 +20,8 @@
   hydration/retry, and action-cell index preservation when recoverable errors
   are filtered), and renderer exit without killing the shared Host or Agent.
 - [x] 2.3 Verify unavailable Connection behavior: a clear error appears before
-  provider dispatch, the renderer accepts another submission, and the Host and
-  Root Agent remain available.
+  any provider request, including pre-turn compaction; the renderer accepts
+  another submission, and the Host and Root Agent remain available.
 - [x] 2.4 Verify a known-content read-only Host Mount, an unmounted boundary,
   and existing Tool failure handling without adding a second test-only path.
 - [x] 2.5 In an ordinary terminal and a Herdr sibling pane, record the current
@@ -45,8 +45,9 @@
   `Running`/terminal-error events before tape persistence; prefer terminal
   errors over intermediate assistant content; after `Idle`, reconcile the
   final assistant answer from the pinned tape so a successful tool-call
-  preamble is not returned before a later final tape record; read `Idle`
-  before opening fresh tape/UI tails and recheck PID/activity before input;
+  preamble is not returned before a later final tape record, and recover the
+  correlated answer if that final read races Root Agent replacement; read
+  `Idle` before opening fresh tape/UI tails and recheck PID/activity before input;
   ignore delayed prior `Idle`/error events until this task's correlated
   `Running`; retain one-shot Ctrl-C until
   `Running` confirms acceptance before sending interruption; defer TTY

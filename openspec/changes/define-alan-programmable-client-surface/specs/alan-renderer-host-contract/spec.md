@@ -81,7 +81,7 @@ output, status, and Agent UI state.
 - **WHEN** the Root Agent has no callable Connection and the user submits a task
 - **THEN** the renderer displays a clear unavailable-Connection error
 - **AND** the Agent does not report a model-control incompatibility or start a
-  provider request
+  provider request, including automatic pre-turn compaction
 - **AND** the Host and Root Agent remain available
 
 ### Requirement: Root Agent interruption is turn-scoped
