@@ -31,6 +31,13 @@ output, status, and Agent UI state.
   prompt or stale UI error
 - **AND** it never resubmits the input
 
+#### Scenario: Root Agent Process changes while this renderer is idle
+- **WHEN** `/agent/root` is rebound while this renderer has no submitted turn
+  and the replacement Process already has completed AgentFS history
+- **THEN** the renderer preserves its existing transcript and appends the
+  replacement history not already represented there
+- **AND** it does not duplicate their shared history or resubmit work
+
 #### Scenario: Root Agent identity changes while a tail is opening
 - **WHEN** the Service Manager changes the Root Agent PID between the renderer's
   history snapshot and tail open

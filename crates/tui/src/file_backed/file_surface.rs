@@ -127,6 +127,8 @@ pub(super) async fn reattach_to_current_agent(
         } else if recovered_current_turn {
             submitted_task_settled = ui_task.state == Some(UiActivityState::Idle);
         }
+    } else {
+        reattached.merge_reconnected_idle_history(current_transcript);
     }
     *app = reattached;
     Ok((tails, submitted_task_settled))

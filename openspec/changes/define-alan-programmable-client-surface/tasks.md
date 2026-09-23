@@ -14,14 +14,15 @@
   renderer attached to `/agent/root`; use Agent task semantics for redirected
   IO rather than the interactive renderer.
 - [x] 2.2 Verify incremental AgentFS output, Ctrl-C turn interruption,
-  subsequent input, tail rebinding after a Root Agent PID change, and renderer
-  exit without killing the shared Host or Agent.
+  subsequent input, tail rebinding after a Root Agent PID change during both a
+  local turn and idle reattachment (including replacement history merge), and
+  renderer exit without killing the shared Host or Agent.
 - [x] 2.3 Verify unavailable Connection behavior: a clear error appears before
   provider dispatch, the renderer accepts another submission, and the Host and
   Root Agent remain available.
 - [x] 2.4 Verify a known-content read-only Host Mount, an unmounted boundary,
   and existing Tool failure handling without adding a second test-only path.
-- [ ] 2.5 In an ordinary terminal and a Herdr sibling pane, record the current
+- [x] 2.5 In an ordinary terminal and a Herdr sibling pane, record the current
   build and actual input/output for two successive tasks, cancellation, and a
   further successful task on the same Root Agent.
 - [x] 2.6 Route `!<command>` through the existing governed `bash` Tool by
@@ -62,16 +63,26 @@
 > stdout between Ratatui draws. The renderer now uses Ratatui's inline viewport
 > and scrollback insertion; the rebuilt TUI displayed the ordered response
 > legibly in both visible output and scrollback, and `Ctrl-Q` returned to fish
-> without stopping dev Host. Ordinary-terminal interaction and live Host
-> reattachment after an active Root Agent replacement remain unverified. A
+> without stopping dev Host. Live Host reattachment after an active Root Agent
+> replacement remains unverified. A
 > one-shot command returned the exact Agent answer on stdout with empty stderr
 > and exit 0; empty stdin produced a stderr diagnostic and exit 1. The TUI
 > integration test also replaces the Root Agent PID after accepting one-shot input and
 > recovers the matching answer once from the new Process. The interactive
 > watcher integration now changes the Root Agent PID and verifies the renderer
 > reattaches, preserves its earlier transcript, and hydrates the current turn
-> from the replacement Process. Ordinary-terminal interaction remains the
-> outstanding acceptance gap.
+> from the replacement Process. Current build `bef854e3` was tested on dev on
+> 2026-09-23: ordinary PTY `w4X:p8` returned `ALAN_RESTART_CHECK_ONE`,
+> `ALAN_RESTART_CHECK_TWO`, and `ALAN_AFTER_GENERATION_CANCEL` after a Ctrl-C
+> cancellation; Herdr sibling `w4X:p9` returned two successive markers, then
+> `ALAN_HERDR_SIBLING_AFTER_CANCEL` after the same cancellation sequence. Both
+> clients attached to the same Root Agent. A separate `!sleep 30` attempt
+> returned `Tool Process has no explicit Host execution adapter` and was not
+> counted as cancellation evidence.
+
+> The watcher integration also replaces an idle Root Agent after another
+> client has completed a task; reattachment preserves the prior transcript and
+> appends the replacement's completed turn exactly once.
 
 ## 3. Verification and delivery
 

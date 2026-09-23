@@ -95,22 +95,24 @@ terminal; it does not request Host or Agent shutdown.
 
 ### 4. Rebind file tails when the Root Agent Process changes
 
-The renderer watches the Service Manager's Root Agent PID while a submitted
-turn is active. The PID can update asynchronously after the input write, so an
+The renderer watches the Service Manager's Root Agent PID independently of
+local task state. The PID can update asynchronously after an input write, so an
 immediate check alone can miss the replacement. When it changes, the renderer
 closes only its old AgentFS tails, hydrates the replacement Process's current
-state, and opens new tails without resubmitting input. The transcript already
-rendered by this client remains in view; current-turn tape recovered during
-rebind is merged after the matching user entry only when a post-submission
-`Running` event correlates it to the pending turn. Tape-less terminal errors
-are retained only when the replacement's UI history has that correlated
-`Running` → `Error` → `Idle` sequence. If the replacement is idle but the
-available tape/UI evidence cannot identify the submitted turn, the renderer
-reports an unknown outcome instead of matching old prompt text or stale errors.
-Polling stops after a recovered terminal result. Watcher sends remain
-cancellable while the bounded event queue is full, so stopping old watchers
-during rebind cannot deadlock the renderer. This is live Process rebinding, not
-durable stream-offset recovery or cross-Host restoration.
+state, and opens new tails without resubmitting input. When this renderer has
+no pending task, it preserves its visible transcript and appends replacement
+history after the longest shared transcript prefix, so work completed through
+another client is not lost or duplicated. For a locally submitted task,
+current-turn tape is merged after the matching user entry only when a
+post-submission `Running` event correlates it to the pending turn. Tape-less
+terminal errors are retained only when the replacement's UI history has that
+correlated `Running` → `Error` → `Idle` sequence. If the replacement is idle
+but the available tape/UI evidence cannot identify the submitted turn, the
+renderer reports an unknown outcome instead of matching old prompt text or
+stale errors; local turn correlation then ends while PID polling continues.
+Watcher sends remain cancellable while the bounded event queue is full, so
+stopping old watchers during rebind cannot deadlock the renderer. This is live
+Process rebinding, not durable stream-offset recovery or cross-Host restoration.
 
 ### 5. Preserve explicit access grants
 

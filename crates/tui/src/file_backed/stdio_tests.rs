@@ -361,13 +361,17 @@ async fn renderer_reconnect_hydrates_the_current_turn_and_keeps_prior_transcript
 #[tokio::test]
 async fn renderer_reconnects_after_root_pid_changes_without_a_pending_turn() {
     let (shell, agent_root, live_namespace, old_pid) = live_root_agent().await;
-    let old_tails = hydrate_and_open_tails(
-        &shell,
-        "/agent/root",
-        &mut FileBackedApp::new("/agent/root".to_string()),
-    )
-    .await
-    .unwrap();
+    shell
+        .write(
+            "/agent/root/machine/tape",
+            b"{\"version\":1,\"kind\":\"message\",\"role\":\"user\",\"content\":\"previous task\"}\n{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"previous answer\"}\n",
+        )
+        .await
+        .unwrap();
+    let mut app = FileBackedApp::new("/agent/root".to_string());
+    let old_tails = hydrate_and_open_tails(&shell, "/agent/root", &mut app)
+        .await
+        .unwrap();
     let (tx, _rx) = tokio::sync::mpsc::channel(8);
     let mut watchers = AgentWatchers::start(old_tails, tx.clone(), Some(old_pid.parse().unwrap()));
 
@@ -384,7 +388,13 @@ async fn renderer_reconnects_after_root_pid_changes_without_a_pending_turn() {
         ))),
         Access::ReadOnly,
     );
-    let mut app = FileBackedApp::new("/agent/root".to_string());
+    shell
+        .write(
+            "/agent/root/machine/tape",
+            b"{\"version\":1,\"kind\":\"message\",\"role\":\"user\",\"content\":\"previous task\"}\n{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"previous answer\"}\n{\"version\":1,\"kind\":\"message\",\"role\":\"user\",\"content\":\"remote task\"}\n{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"remote answer\"}\n",
+        )
+        .await
+        .unwrap();
 
     assert!(
         !watchers
@@ -392,6 +402,15 @@ async fn renderer_reconnects_after_root_pid_changes_without_a_pending_turn() {
             .await
     );
     assert_eq!(watchers.root_agent_pid, Some(new_pid.parse().unwrap()));
+    assert_eq!(
+        app.transcript,
+        vec![
+            HistoryCell::User("previous task".to_string()),
+            HistoryCell::Assistant("previous answer".to_string()),
+            HistoryCell::User("remote task".to_string()),
+            HistoryCell::Assistant("remote answer".to_string()),
+        ]
+    );
 
     watchers.stop().await;
 }

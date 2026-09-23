@@ -858,6 +858,31 @@ impl FileBackedApp {
         true
     }
 
+    /// Append replacement-process history not already present in this renderer.
+    pub(super) fn merge_reconnected_idle_history(&mut self, current: Vec<HistoryCell>) {
+        let shared_prefix_len = self
+            .transcript
+            .iter()
+            .zip(&current)
+            .take_while(|(previous, replacement)| previous == replacement)
+            .count();
+        let previous_len = self.transcript.len();
+        let current_actions = std::mem::take(&mut self.action_cells);
+        self.action_cells = current_actions
+            .into_iter()
+            .map(|(action_id, index)| {
+                let merged_index = if index < shared_prefix_len {
+                    index
+                } else {
+                    previous_len + index.saturating_sub(shared_prefix_len)
+                };
+                (action_id, merged_index)
+            })
+            .collect();
+        self.transcript
+            .extend(current.into_iter().skip(shared_prefix_len));
+    }
+
     pub(super) fn render_opts(&self, width: usize) -> RenderOpts {
         RenderOpts::new(width, self.expand_thinking)
     }
