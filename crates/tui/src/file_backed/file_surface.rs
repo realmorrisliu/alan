@@ -100,10 +100,8 @@ pub(super) async fn reattach_to_current_agent(
         }) {
             reattached.notice = None;
         }
-        let current_transcript = current_transcript
-            .into_iter()
-            .filter(|cell| !matches!(cell, HistoryCell::Error(_)))
-            .collect();
+        let current_transcript =
+            remove_error_cells_and_remap_actions(current_transcript, &mut reattached.action_cells);
         let recovered_current_turn = ui_task.started
             && reattached.merge_reconnected_history(
                 current_transcript,
@@ -132,6 +130,38 @@ pub(super) async fn reattach_to_current_agent(
     }
     *app = reattached;
     Ok((tails, submitted_task_settled))
+}
+
+fn remove_error_cells_and_remap_actions(
+    current: Vec<HistoryCell>,
+    action_cells: &mut std::collections::BTreeMap<String, usize>,
+) -> Vec<HistoryCell> {
+    let mut action_indices = Vec::with_capacity(current.len());
+    let mut next_index = 0;
+    let current = current
+        .into_iter()
+        .filter_map(|cell| {
+            if matches!(cell, HistoryCell::Error(_)) {
+                action_indices.push(None);
+                None
+            } else {
+                action_indices.push(Some(next_index));
+                next_index += 1;
+                Some(cell)
+            }
+        })
+        .collect();
+    *action_cells = std::mem::take(action_cells)
+        .into_iter()
+        .filter_map(|(id, index)| {
+            action_indices
+                .get(index)
+                .copied()
+                .flatten()
+                .map(|index| (id, index))
+        })
+        .collect();
+    current
 }
 
 pub(super) async fn sync_requests_from_files(
@@ -941,3 +971,7 @@ pub(super) struct TapeRecordV1 {
     pub(super) role: String,
     pub(super) content: String,
 }
+
+#[cfg(test)]
+#[path = "file_surface_reconnect_tests.rs"]
+mod reconnect_tests;

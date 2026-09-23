@@ -61,6 +61,14 @@ output, status, and Agent UI state.
 - **THEN** the renderer preserves that correlated error in its transcript
 - **AND** it stops polling for this turn after rendering the terminal outcome
 
+#### Scenario: Reattachment filters errors without displacing action history
+- **WHEN** a correlated replacement turn contains a recoverable error before a
+  completed action snapshot and the renderer filters the error while merging
+  that turn
+- **THEN** a later update for the action replaces its matching tool cell
+- **AND** it does not replace another transcript cell or append a duplicate
+  tool result
+
 #### Scenario: An explicit shell request is submitted
 - **WHEN** the user submits text beginning with `!`
 - **THEN** the input remains a framed AgentFS task and requests the exact

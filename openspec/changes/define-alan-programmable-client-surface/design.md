@@ -66,7 +66,8 @@ register the explorer-only Tools. Existing slash UI controls remain renderer
 controls. On host-backed sandbox adapters, filesystem operands and redirection
 targets are projected to their authorized Host paths; recognized data positions
 such as `echo`/`printf`, Git commit messages, and AWK assignments/programs keep
-their original namespace text. AWK `-f` scripts and input-file operands are
+their original namespace text. This includes AWK positional `name=value`
+operands after its program; AWK `-f` scripts and input-file operands are
 projected when the selected backend permits that script form; conservative
 backends still reject opaque scripts when they cannot validate protected paths.
 

@@ -48,4 +48,17 @@ async fn sandbox_projects_awk_script_and_input_paths_before_execution() {
         std::fs::read_to_string(mount.path().join("data.txt")).unwrap(),
         "/mnt/project\n"
     );
+
+    let result = sandbox
+        .exec_with_timeout_and_capability(
+            "awk '{ print root }' root=/mnt/project /mnt/project/input.tsv",
+            mount.path(),
+            None,
+            Some(alan_agent_protocol::ToolCapability::Write),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(result.exit_code, 0, "{}", result.stderr);
+    assert_eq!(result.stdout, "/mnt/project\n");
 }

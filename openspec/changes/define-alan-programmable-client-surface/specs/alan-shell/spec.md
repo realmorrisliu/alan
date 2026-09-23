@@ -159,9 +159,10 @@ and sandbox.
 - **AND** the redirection target still resolves only within the authorized
   Host Mount
 
-#### Scenario: AWK preserves program text while projecting supported file paths
-- **WHEN** an authorized AWK command has a namespace path in a `-v` assignment
-  or program text and the selected sandbox permits that AWK script form
+#### Scenario: AWK preserves data while projecting supported file paths
+- **WHEN** an authorized AWK command has a namespace path in a `-v` assignment,
+  a positional `name=value` operand after its program, or program text and the
+  selected sandbox permits that AWK script form
 - **AND** it uses a namespace path for a `-f` script or input file
 - **THEN** assignment and program text keep the namespace path unchanged
 - **AND** the script and input file operands resolve to their authorized Host

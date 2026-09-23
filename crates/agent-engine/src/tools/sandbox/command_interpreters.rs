@@ -311,7 +311,18 @@ pub(super) fn awk_next_argument_is_data(args: &[String], candidate: &str) -> boo
     {
         return false;
     }
-    !program_supplied
+    !program_supplied || is_awk_assignment(candidate)
+}
+
+fn is_awk_assignment(arg: &str) -> bool {
+    let Some((name, _)) = arg.split_once('=') else {
+        return false;
+    };
+    let mut chars = name.chars();
+    chars
+        .next()
+        .is_some_and(|ch| ch == '_' || ch.is_ascii_alphabetic())
+        && chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
 }
 
 fn shell_query_flag(arg: &str) -> bool {

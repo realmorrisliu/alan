@@ -16,8 +16,9 @@
 - [x] 2.2 Verify incremental AgentFS output, Ctrl-C turn interruption,
   subsequent input, tail rebinding after a Root Agent PID change during both a
   local turn and idle reattachment (including replacement history merge,
-  pruned scrollback, and repeated transcript content), and renderer exit
-  without killing the shared Host or Agent.
+  pruned scrollback, repeated transcript content, and action-cell index
+  preservation when recoverable errors are filtered), and renderer exit without
+  killing the shared Host or Agent.
 - [x] 2.3 Verify unavailable Connection behavior: a clear error appears before
   provider dispatch, the renderer accepts another submission, and the Host and
   Root Agent remain available.
@@ -29,10 +30,11 @@
 - [x] 2.6 Route `!<command>` through the existing governed `bash` Tool by
   registering only the existing Core Tool set in product Root Agent boot;
   verify the exact set and shell behavior, including preserving namespace-path
-  data passed to `echo`/`printf`, Git commit messages, and AWK assignments or
-  inline programs while projecting `-f` scripts and input files on backends
-  that permit those scripts, including AWK `--` option termination; confirm
-  conservative backends continue to reject opaque AWK script execution.
+  data passed to `echo`/`printf`, Git commit messages, and AWK `-v` or
+  post-program assignments and inline programs while projecting `-f` scripts
+  and input files on backends that permit those scripts, including AWK `--`
+  option termination; confirm conservative backends continue to reject opaque
+  AWK script execution.
 - [x] 2.7 Keep recoverable Agent errors in the rendered transcript.
 - [x] 2.8 Implement and verify terminal-mode selection, one-shot redirected
   stdin/stdout/stderr, Root Agent PID rebinding (including tail closure before
