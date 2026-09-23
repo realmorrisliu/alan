@@ -123,6 +123,7 @@ pub fn acquire_task_submission_lock(path: &Path) -> Result<std::fs::File> {
     Ok(file)
 }
 
+/// Run the inline renderer for a mounted Agent Process.
 pub async fn run(config: FileBackedRunConfig) -> Result<()> {
     if config.require_interactive_terminal && !crate::terminal::is_interactive_terminal() {
         bail!("{}", terminal_capability_error());
