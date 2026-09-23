@@ -31,6 +31,21 @@ output, status, and Agent UI state.
   prompt or stale UI error
 - **AND** it never resubmits the input
 
+#### Scenario: Recovered Tape reconciles an existing assistant preview
+- **WHEN** the old Process streamed the submitted turn's assistant preview
+  before reattachment and the two answers are equal or one is a prefix of the
+  other
+- **THEN** the renderer keeps the longer compatible answer, using Tape when it
+  extends the preview
+- **AND** it does not display the current-turn answer twice
+
+#### Scenario: Queued events from a superseded attachment are discarded
+- **WHEN** the Root Agent PID changes while old watcher events remain queued
+- **THEN** the renderer discards queued output, Tape, UI, action, request, and
+  watcher-error events before hydrating the replacement Process
+- **AND** it preserves queued terminal input and terminal-reader errors
+- **AND** events from the replacement tails update only the replacement view
+
 #### Scenario: Root Agent Process changes while this renderer is idle
 - **WHEN** `/agent/root` is rebound while this renderer has no submitted turn
   and the replacement Process already has completed AgentFS history

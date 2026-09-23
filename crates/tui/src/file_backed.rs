@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::{
+    collections::VecDeque,
     fs::OpenOptions,
     os::{
         fd::AsRawFd,
@@ -169,7 +170,7 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
 
     loop {
         tokio::select! {
-            event = rx.recv() => {
+            event = receive_file_backed_event(&mut watchers.pending_terminal_events, &mut rx) => {
                 let Some(event) = event else {
                     break;
                 };
@@ -246,6 +247,7 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                                                     &shell,
                                                     &config.agent_path,
                                                     &mut app,
+                                                    &mut rx,
                                                     Some((&text, submitted_at_ms, prior_matching_turns)),
                                                     &tx,
                                                     )
@@ -321,6 +323,7 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                     &shell,
                     &config.agent_path,
                     &mut app,
+                    &mut rx,
                     submitted_input,
                     &tx,
                     )
@@ -370,11 +373,39 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
     Ok(())
 }
 
+fn discard_superseded_attachment_events(
+    rx: &mut tokio::sync::mpsc::Receiver<FileBackedEvent>,
+    pending_terminal_events: &mut VecDeque<FileBackedEvent>,
+) {
+    for _ in 0..rx.len() {
+        let Ok(event) = rx.try_recv() else {
+            break;
+        };
+        if matches!(
+            event,
+            FileBackedEvent::Terminal(_) | FileBackedEvent::TerminalError(_)
+        ) {
+            pending_terminal_events.push_back(event);
+        }
+    }
+}
+
+async fn receive_file_backed_event(
+    pending_terminal_events: &mut VecDeque<FileBackedEvent>,
+    rx: &mut tokio::sync::mpsc::Receiver<FileBackedEvent>,
+) -> Option<FileBackedEvent> {
+    match pending_terminal_events.pop_front() {
+        Some(event) => Some(event),
+        None => rx.recv().await,
+    }
+}
+
 struct AgentWatchers {
     shutdown: tokio::sync::watch::Sender<bool>,
     tasks: Vec<tokio::task::JoinHandle<Result<()>>>,
     root_agent_pid: Option<u64>,
     pid_refresh_failed: bool,
+    pending_terminal_events: VecDeque<FileBackedEvent>,
 }
 
 impl AgentWatchers {
@@ -413,6 +444,7 @@ impl AgentWatchers {
             tasks,
             root_agent_pid,
             pid_refresh_failed: false,
+            pending_terminal_events: VecDeque::new(),
         }
     }
 
@@ -421,16 +453,21 @@ impl AgentWatchers {
         shell: &alan_shell::Shell,
         agent_path: &str,
         app: &mut FileBackedApp,
+        rx: &mut tokio::sync::mpsc::Receiver<FileBackedEvent>,
         submitted_task: Option<(&str, u64, usize)>,
         tx: &tokio::sync::mpsc::Sender<FileBackedEvent>,
     ) -> bool {
         match current_root_agent_pid(shell).await {
             Ok(Some(pid)) if self.root_agent_pid != Some(pid) => {
                 self.stop().await;
+                discard_superseded_attachment_events(rx, &mut self.pending_terminal_events);
                 match reattach_to_current_agent(shell, agent_path, app, submitted_task).await {
                     Ok((tails, submitted_task_settled)) => {
                         self.pid_refresh_failed = false;
+                        let pending_terminal_events =
+                            std::mem::take(&mut self.pending_terminal_events);
                         *self = Self::start(tails, agent_path, tx.clone());
+                        self.pending_terminal_events = pending_terminal_events;
                         submitted_task_settled
                     }
                     Err(err) => {

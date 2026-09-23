@@ -20,8 +20,9 @@
   hydration/retry, bounded retry through stale PID publication, historical UI
   error ordering, omission of completed actions whose turn position is
   unknown, live action updates by action ID, and action-cell index preservation
-  when recoverable errors are filtered), and renderer exit without killing the
-  shared Host or Agent.
+  when recoverable errors are filtered, stale watcher-event draining during
+  PID replacement, and current-turn preview replacement during history merge),
+  and renderer exit without killing the shared Host or Agent.
 - [x] 2.3 Verify unavailable Connection behavior: a clear error appears before
   any provider request, including pre-turn compaction; the renderer accepts
   another submission, and the Host and Root Agent remain available.

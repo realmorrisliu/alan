@@ -4,6 +4,80 @@ use crate::history::{HistoryCell, RenderOpts};
 
 use super::app::FileBackedApp;
 
+pub(super) fn merge_reconnected_history(
+    app: &mut FileBackedApp,
+    current: Vec<HistoryCell>,
+    submitted_input: &str,
+    prior_matching_turns: usize,
+) -> bool {
+    let Some(boundary) = current
+        .iter()
+        .enumerate()
+        .filter_map(|(index, cell)| {
+            matches!(cell, HistoryCell::User(text) if text == submitted_input).then_some(index)
+        })
+        .nth(prior_matching_turns)
+    else {
+        return false;
+    };
+
+    let mut omitted_current_cell = None;
+    if let Some(previous_boundary) = app
+        .transcript
+        .iter()
+        .rposition(|cell| matches!(cell, HistoryCell::User(text) if text == submitted_input))
+        && let Some((previous_answer_index, previous_answer)) = app
+            .transcript
+            .iter()
+            .enumerate()
+            .skip(previous_boundary + 1)
+            .rev()
+            .find_map(|(index, cell)| match cell {
+                HistoryCell::Assistant(text) => Some((index, text.as_str())),
+                _ => None,
+            })
+        && let Some((current_answer_index, current_answer)) = current
+            .iter()
+            .enumerate()
+            .skip(boundary + 1)
+            .rev()
+            .find_map(|(index, cell)| match cell {
+                HistoryCell::Assistant(text) => Some((index, text.as_str())),
+                _ => None,
+            })
+        && !previous_answer.is_empty()
+        && !current_answer.is_empty()
+        && (current_answer.starts_with(previous_answer)
+            || previous_answer.starts_with(current_answer))
+    {
+        if current_answer.starts_with(previous_answer) {
+            app.transcript[previous_answer_index] = current[current_answer_index].clone();
+        }
+        omitted_current_cell = Some(current_answer_index);
+    }
+
+    let previous_len = app.transcript.len();
+    app.action_cells = std::mem::take(&mut app.action_cells)
+        .into_iter()
+        .filter_map(|(action_id, index)| {
+            if index <= boundary {
+                return None;
+            }
+            let omitted_before_action =
+                usize::from(omitted_current_cell.is_some_and(|omitted| omitted < index));
+            Some((
+                action_id,
+                previous_len + index - boundary - 1 - omitted_before_action,
+            ))
+        })
+        .collect();
+    app.transcript
+        .extend(current.into_iter().enumerate().filter_map(|(index, cell)| {
+            (index > boundary && Some(index) != omitted_current_cell).then_some(cell)
+        }));
+    true
+}
+
 pub(super) fn merge_idle_history(app: &mut FileBackedApp, current: Vec<HistoryCell>) {
     // ponytail: O(current * retained^2), bounded by scrollback; tape IDs would remove text ambiguity.
     let max_overlap_len = app.transcript.len().min(current.len());

@@ -375,7 +375,7 @@ async fn renderer_reconnect_hydrates_the_current_turn_and_keeps_prior_transcript
     let old_tails = hydrate_and_open_tails(&shell, "/agent/root", &mut app)
         .await
         .unwrap();
-    let (tx, _rx) = tokio::sync::mpsc::channel(8);
+    let (tx, mut rx) = tokio::sync::mpsc::channel(8);
     let mut watchers = AgentWatchers::start(old_tails, "/agent/root", tx.clone());
     app.transcript
         .push(HistoryCell::User("current task".to_string()));
@@ -415,6 +415,7 @@ async fn renderer_reconnect_hydrates_the_current_turn_and_keeps_prior_transcript
                 &shell,
                 "/agent/root",
                 &mut app,
+                &mut rx,
                 Some(("current task", 20, 0)),
                 &tx,
             )
@@ -434,63 +435,6 @@ async fn renderer_reconnect_hydrates_the_current_turn_and_keeps_prior_transcript
 }
 
 #[tokio::test]
-async fn renderer_reconnects_after_root_pid_changes_without_a_pending_turn() {
-    let (shell, agent_root, live_namespace, _old_pid) = live_root_agent().await;
-    shell
-        .write(
-            "/agent/root/machine/tape",
-            b"{\"version\":1,\"kind\":\"message\",\"role\":\"user\",\"content\":\"previous task\"}\n{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"previous answer\"}\n",
-        )
-        .await
-        .unwrap();
-    let mut app = FileBackedApp::new("/agent/root".to_string());
-    let old_tails = hydrate_and_open_tails(&shell, "/agent/root", &mut app)
-        .await
-        .unwrap();
-    let (tx, _rx) = tokio::sync::mpsc::channel(8);
-    let mut watchers = AgentWatchers::start(old_tails, "/agent/root", tx.clone());
-
-    let new_pid = shell.spawn(EXEC_SPEC).await.unwrap();
-    agent_root
-        .bind_process(new_pid.clone(), Arc::new(AgentFs::new()))
-        .await;
-    agent_root.set_root_process(new_pid.clone()).await;
-    live_namespace.replace_mount(
-        PID_MOUNT,
-        InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::with_read_only_file(
-            "pid",
-            format!("{new_pid}\n").into_bytes(),
-        ))),
-        Access::ReadOnly,
-    );
-    shell
-        .write(
-            "/agent/root/machine/tape",
-            b"{\"version\":1,\"kind\":\"message\",\"role\":\"user\",\"content\":\"previous task\"}\n{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"previous answer\"}\n{\"version\":1,\"kind\":\"message\",\"role\":\"user\",\"content\":\"remote task\"}\n{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"remote answer\"}\n",
-        )
-        .await
-        .unwrap();
-
-    assert!(
-        !watchers
-            .refresh_root_agent_attachment(&shell, "/agent/root", &mut app, None, &tx)
-            .await
-    );
-    assert_eq!(watchers.root_agent_pid, Some(new_pid.parse().unwrap()));
-    assert_eq!(
-        app.transcript,
-        vec![
-            HistoryCell::User("previous task".to_string()),
-            HistoryCell::Assistant("previous answer".to_string()),
-            HistoryCell::User("remote task".to_string()),
-            HistoryCell::Assistant("remote answer".to_string()),
-        ]
-    );
-
-    watchers.stop().await;
-}
-
-#[tokio::test]
 async fn failed_root_reattach_preserves_state_and_retries_the_new_pid() {
     let (shell, agent_root, live_namespace, _old_pid) = live_root_agent().await;
     let old_tails = hydrate_and_open_tails(
@@ -500,7 +444,7 @@ async fn failed_root_reattach_preserves_state_and_retries_the_new_pid() {
     )
     .await
     .unwrap();
-    let (tx, _rx) = tokio::sync::mpsc::channel(8);
+    let (tx, mut rx) = tokio::sync::mpsc::channel(8);
     let mut watchers = AgentWatchers::start(old_tails, "/agent/root", tx.clone());
 
     let mut app = FileBackedApp::new("/agent/root".to_string());
@@ -535,7 +479,7 @@ async fn failed_root_reattach_preserves_state_and_retries_the_new_pid() {
 
     assert!(
         !watchers
-            .refresh_root_agent_attachment(&shell, "/agent/root", &mut app, None, &tx)
+            .refresh_root_agent_attachment(&shell, "/agent/root", &mut app, &mut rx, None, &tx,)
             .await
     );
     assert_eq!(watchers.root_agent_pid, None);
@@ -562,7 +506,7 @@ async fn failed_root_reattach_preserves_state_and_retries_the_new_pid() {
         Access::ReadOnly,
     );
     watchers
-        .refresh_root_agent_attachment(&shell, "/agent/root", &mut app, None, &tx)
+        .refresh_root_agent_attachment(&shell, "/agent/root", &mut app, &mut rx, None, &tx)
         .await;
     assert_eq!(
         watchers.root_agent_pid,
@@ -602,7 +546,7 @@ async fn renderer_does_not_reuse_a_tape_turn_hidden_by_clear() {
     app.transcript
         .push(HistoryCell::User("same task".to_string()));
     app.reconciler.on_local_submit("same task");
-    let (tx, _rx) = tokio::sync::mpsc::channel(8);
+    let (tx, mut rx) = tokio::sync::mpsc::channel(8);
     let mut watchers = AgentWatchers::start(old_tails, "/agent/root", tx.clone());
 
     let new_pid = shell.spawn(EXEC_SPEC).await.unwrap();
@@ -639,6 +583,7 @@ async fn renderer_does_not_reuse_a_tape_turn_hidden_by_clear() {
                 &shell,
                 "/agent/root",
                 &mut app,
+                &mut rx,
                 Some(("same task", 20, prior_matching_turns)),
                 &tx,
             )
@@ -668,7 +613,7 @@ async fn renderer_reattach_keeps_a_tape_less_terminal_error() {
     )
     .await
     .unwrap();
-    let (tx, _rx) = tokio::sync::mpsc::channel(8);
+    let (tx, mut rx) = tokio::sync::mpsc::channel(8);
     let mut app = FileBackedApp::new("/agent/root".to_string());
     app.transcript.push(crate::history::HistoryCell::User(
         "current task".to_string(),
@@ -702,6 +647,7 @@ async fn renderer_reattach_keeps_a_tape_less_terminal_error() {
                 &shell,
                 "/agent/root",
                 &mut app,
+                &mut rx,
                 Some(("current task", 20, 0)),
                 &tx,
             )

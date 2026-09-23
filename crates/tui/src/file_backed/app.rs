@@ -46,6 +46,7 @@ pub(super) enum FileBackedEvent {
     Ui(UiEvent),
     Tape(TapeRecordV1),
     Error(String),
+    TerminalError(String),
 }
 
 #[derive(Debug)]
@@ -160,7 +161,7 @@ impl FileBackedApp {
                 None
             }
             FileBackedEvent::RequestsChanged | FileBackedEvent::ActionsChanged { .. } => None,
-            FileBackedEvent::Error(message) => {
+            FileBackedEvent::Error(message) | FileBackedEvent::TerminalError(message) => {
                 self.push_error(message);
                 None
             }
@@ -841,29 +842,12 @@ impl FileBackedApp {
         submitted_input: &str,
         prior_matching_turns: usize,
     ) -> bool {
-        let Some(boundary) = current
-            .iter()
-            .enumerate()
-            .filter_map(|(index, cell)| {
-                matches!(cell, HistoryCell::User(text) if text == submitted_input).then_some(index)
-            })
-            .nth(prior_matching_turns)
-        else {
-            return false;
-        };
-
-        let previous_len = self.transcript.len();
-        let current_actions = std::mem::take(&mut self.action_cells);
-        self.action_cells = current_actions
-            .into_iter()
-            .filter_map(|(action_id, index)| {
-                (index > boundary)
-                    .then_some((action_id, previous_len + index.saturating_sub(boundary + 1)))
-            })
-            .collect();
-        self.transcript
-            .extend(current.into_iter().skip(boundary + 1));
-        true
+        super::history_merge::merge_reconnected_history(
+            self,
+            current,
+            submitted_input,
+            prior_matching_turns,
+        )
     }
 
     /// Append replacement-process history not already present in this renderer.

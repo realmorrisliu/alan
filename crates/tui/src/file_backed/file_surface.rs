@@ -426,7 +426,7 @@ pub(super) fn spawn_terminal_events(
                         }
                     }
                     Err(err) => {
-                        let _ = tx.blocking_send(FileBackedEvent::Error(format!(
+                        let _ = tx.blocking_send(FileBackedEvent::TerminalError(format!(
                             "terminal input failed: {err}"
                         )));
                         break;
@@ -434,7 +434,7 @@ pub(super) fn spawn_terminal_events(
                 },
                 Ok(false) => {}
                 Err(err) => {
-                    let _ = tx.blocking_send(FileBackedEvent::Error(format!(
+                    let _ = tx.blocking_send(FileBackedEvent::TerminalError(format!(
                         "terminal polling failed: {err}"
                     )));
                     break;

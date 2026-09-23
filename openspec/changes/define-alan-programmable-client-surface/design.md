@@ -151,8 +151,12 @@ but the available tape/UI evidence cannot identify the submitted turn, the
 renderer reports an unknown outcome instead of matching old prompt text or
 stale errors; local turn correlation then ends while PID polling continues.
 Watcher sends remain cancellable while the bounded event queue is full, so
-stopping old watchers during rebind cannot deadlock the renderer. This is live
-Process rebinding, not durable stream-offset recovery or cross-Host restoration.
+stopping old watchers during rebind cannot deadlock the renderer. After the
+old watcher tasks stop, queued watcher events are discarded before replacement
+hydration; queued terminal input and terminal-reader errors are retained. This
+prevents old-PID output, Tape, UI, and watcher errors from mutating the new
+projection without dropping user input. This is live Process rebinding, not
+durable stream-offset recovery or cross-Host restoration.
 An attachment to `/agent/root` resolves one PID for the request, action, UI,
 tape, and output streams and any UI snapshot reads. It rechecks that PID after
 hydration; a change closes the complete tail set, discards the projection, and
@@ -160,6 +164,12 @@ retries before watchers start. The supervisor detaches an exiting Root Agent
 before clearing its published PID, so hydration errors against that still-
 published PID receive a bounded retry window rather than ending renderer
 startup immediately.
+
+When a correlated submitted turn is recovered, an assistant preview already
+streamed by the old Process is reconciled with the replacement Tape assistant
+when either content is a prefix of the other. The renderer keeps the longer
+compatible content (using Tape when it extends the preview) and omits the
+recovered duplicate; unrelated prior-turn content is retained.
 
 Tape messages and UI events have no shared turn identifier. During hydration,
 only error events since the latest `Running` event are replayed after tape

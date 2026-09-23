@@ -358,3 +358,73 @@ async fn one_shot_recovers_when_final_tape_read_races_root_agent_restart() {
         .await
         .unwrap();
 }
+
+#[tokio::test]
+async fn renderer_reconnect_discards_queued_events_from_the_old_root_pid() {
+    let (shell, agent_root, live_namespace, _old_pid) = stdio_tests::live_root_agent().await;
+    shell
+        .write(
+            "/agent/root/machine/tape",
+            b"{\"version\":1,\"kind\":\"message\",\"role\":\"user\",\"content\":\"previous task\"}\n{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"previous answer\"}\n",
+        )
+        .await
+        .unwrap();
+    let mut app = FileBackedApp::new("/agent/root".to_string());
+    let old_tails = hydrate_and_open_tails(&shell, "/agent/root", &mut app)
+        .await
+        .unwrap();
+    let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+    let mut watchers = AgentWatchers::start(old_tails, "/agent/root", tx.clone());
+
+    let new_pid = shell.spawn(stdio_tests::EXEC_SPEC).await.unwrap();
+    agent_root
+        .bind_process(
+            new_pid.clone(),
+            std::sync::Arc::new(alan_agentfs::AgentFs::new()),
+        )
+        .await;
+    agent_root.set_root_process(new_pid.clone()).await;
+    live_namespace.replace_mount(
+        stdio_tests::PID_MOUNT,
+        alan_ap::InProcessTransport::new(std::sync::Arc::new(
+            alan_ap::reference::MemFs::with_read_only_file(
+                "pid",
+                format!("{new_pid}\n").into_bytes(),
+            ),
+        )),
+        alan_kernel::Access::ReadOnly,
+    );
+    shell
+        .write(
+            "/agent/root/machine/tape",
+            b"{\"version\":1,\"kind\":\"message\",\"role\":\"user\",\"content\":\"previous task\"}\n{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"previous answer\"}\n{\"version\":1,\"kind\":\"message\",\"role\":\"user\",\"content\":\"remote task\"}\n{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"remote answer\"}\n",
+        )
+        .await
+        .unwrap();
+    tx.send(FileBackedEvent::Output("stale output".to_string()))
+        .await
+        .unwrap();
+    tx.send(FileBackedEvent::Error("stale watcher error".to_string()))
+        .await
+        .unwrap();
+
+    assert!(
+        !watchers
+            .refresh_root_agent_attachment(&shell, "/agent/root", &mut app, &mut rx, None, &tx,)
+            .await
+    );
+    assert_eq!(watchers.root_agent_pid, Some(new_pid.parse().unwrap()));
+    assert!(rx.try_recv().is_err());
+    assert!(watchers.pending_terminal_events.is_empty());
+    assert_eq!(
+        app.transcript,
+        vec![
+            HistoryCell::User("previous task".to_string()),
+            HistoryCell::Assistant("previous answer".to_string()),
+            HistoryCell::User("remote task".to_string()),
+            HistoryCell::Assistant("remote answer".to_string()),
+        ]
+    );
+
+    watchers.stop().await;
+}

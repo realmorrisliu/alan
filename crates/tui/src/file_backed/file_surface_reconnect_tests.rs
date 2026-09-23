@@ -6,6 +6,45 @@ use alan_ap::{Fid, FileServer, InProcessTransport, OpenMode};
 use alan_kernel::Access;
 use std::sync::Arc;
 
+#[tokio::test]
+async fn superseded_attachment_events_are_dropped_but_terminal_input_survives() {
+    use crate::file_backed::app::FileBackedEvent;
+    use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+
+    let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+    tx.send(FileBackedEvent::Output("stale output".to_string()))
+        .await
+        .unwrap();
+    tx.send(FileBackedEvent::Terminal(Event::Key(KeyEvent::new(
+        KeyCode::Esc,
+        KeyModifiers::NONE,
+    ))))
+    .await
+    .unwrap();
+    tx.send(FileBackedEvent::Error("stale watcher error".to_string()))
+        .await
+        .unwrap();
+    tx.send(FileBackedEvent::TerminalError(
+        "terminal input error".to_string(),
+    ))
+    .await
+    .unwrap();
+
+    let mut pending_terminal_events = std::collections::VecDeque::new();
+    crate::file_backed::discard_superseded_attachment_events(&mut rx, &mut pending_terminal_events);
+
+    assert!(matches!(
+        pending_terminal_events.pop_front(),
+        Some(FileBackedEvent::Terminal(_))
+    ));
+    assert!(matches!(
+        pending_terminal_events.pop_front(),
+        Some(FileBackedEvent::TerminalError(message)) if message == "terminal input error"
+    ));
+    assert!(pending_terminal_events.is_empty());
+    assert!(rx.try_recv().is_err());
+}
+
 #[test]
 fn hydration_omits_unplaced_completed_actions_but_keeps_live_tool_updates() {
     let mut app = FileBackedApp::new("/agent/root".to_string());
@@ -54,6 +93,58 @@ fn hydration_omits_unplaced_completed_actions_but_keeps_live_tool_updates() {
             ..
         }) if title == "active tool"
     ));
+}
+
+#[test]
+fn submitted_turn_reconnect_reconciles_its_streamed_assistant_preview() {
+    for (preview, recovered, expected) in [
+        ("same answer", "same answer", "same answer"),
+        (
+            "streamed prefix",
+            "streamed prefix completed",
+            "streamed prefix completed",
+        ),
+        (
+            "streamed answer completed",
+            "streamed answer",
+            "streamed answer completed",
+        ),
+    ] {
+        let mut app = FileBackedApp::new("/agent/root".to_string());
+        app.transcript = vec![
+            HistoryCell::User("previous task".to_string()),
+            HistoryCell::Assistant("previous answer".to_string()),
+            HistoryCell::User("current task".to_string()),
+            HistoryCell::Assistant(preview.to_string()),
+        ];
+        let tool = HistoryCell::Tool {
+            title: "after answer".to_string(),
+            status: ToolStatus::Complete,
+            preview: None,
+            presentation: None,
+        };
+        app.action_cells.insert("current-tool".to_string(), 4);
+        let current = vec![
+            HistoryCell::User("previous task".to_string()),
+            HistoryCell::Assistant("previous answer".to_string()),
+            HistoryCell::User("current task".to_string()),
+            HistoryCell::Assistant(recovered.to_string()),
+            tool.clone(),
+        ];
+
+        assert!(app.merge_reconnected_history(current, "current task", 0));
+        assert_eq!(
+            app.transcript,
+            vec![
+                HistoryCell::User("previous task".to_string()),
+                HistoryCell::Assistant("previous answer".to_string()),
+                HistoryCell::User("current task".to_string()),
+                HistoryCell::Assistant(expected.to_string()),
+                tool,
+            ]
+        );
+        assert_eq!(app.action_cells.get("current-tool"), Some(&4));
+    }
 }
 
 #[test]
