@@ -1,13 +1,14 @@
 # product-brand-identity Specification
 
 > Lifecycle scope (ADR-0054): Alan remains the product brand. Requirements
-> describing the native macOS App/category, bundle or dev App apply only to
-> retained legacy maintenance, not the terminal-neutral future product. Herdr
-> is a preferred external terminal host, not an Alan rebrand.
+> describing the former native macOS App/category, bundle or dev App are
+> historical, not active maintenance obligations or part of the
+> terminal-neutral CLI/Host product. Herdr is a preferred external terminal
+> host, not an Alan rebrand.
 
 ## Purpose
-Defines Alan's product-brand identity, public domain, macOS app naming,
-historical AlanNative removal, and brand validation rules.
+Defines Alan's product-brand identity, public domain, historical macOS app
+naming, AlanNative removal, and brand validation rules.
 
 ## Requirements
 
@@ -26,8 +27,9 @@ update feed from this requirement.
   consequence
 
 #### Scenario: Historical app metadata is inspected
-- **WHEN** retained Apple source contains an old bundle identifier
-- **THEN** it is treated as maintenance-only compatibility context
+- **WHEN** Git history or an archived change contains an old bundle identifier
+- **THEN** it is treated as historical context, not an active maintenance
+  obligation
 - **AND** standalone CLI/Host packaging does not depend on it
 
 ### Requirement: Terminal category is separate from shell command syntax
@@ -44,9 +46,9 @@ surface, not a product or app name.
   product
 
 #### Scenario: macOS app is described
-- **WHEN** maintenance-only documentation explains retained native source
-- **THEN** it labels that source as legacy maintenance rather than a supported
-  desktop product
+- **WHEN** documentation references the former native app or source
+- **THEN** it labels them as retired and removed rather than a supported
+  desktop product or retained maintenance surface
 - **AND** it does not make the app bundle a prerequisite for the CLI/Host path
 
 #### Scenario: CLI syntax is documented
