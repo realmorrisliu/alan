@@ -288,8 +288,7 @@ ADR 应记录历史决策及显式 supersession，不静默重写当年的事实
 | `alan-os-host-lifecycle`、`local-alan-os-attachment`、`ap-wire-transport` | 保留非 GUI Host 和 aP；明确 Herdr 只在字节终端层，不要求其直接实现协议 |
 | `package-management-contract`、`skill-system-contract` | `/srv` vs `/mnt` 修正；distribution/Skill 区别；安装/授权/选择/执行分开 |
 | `service-manager`、`alan-os-system-store` | 明确 boot 内容现状；包、证据、记忆各自 durable owner |
-| 19 个 `macos-*` capability | 随客户端退役逐条评估并通过正式 REMOVED delta 撤销 App 义务；安全/平台能力先迁至仍存活的 owner，不按前缀批删 |
-| `shell-core-authority-contract`、`shell-workspace-core-contract` | 若无存活消费者，随自建 workspace/tab/pane domain 一起退役，而不是转移到 Herdr 内重新实现 |
+| 21 个桌面专属 capability（含 shell-core/workspace） | 已由 `remove-retired-desktop-source` 的 REMOVED deltas 退役；Rust CLI/Host 的平台安全合同继续由存活 owner 维护 |
 | `alan-app-distribution`、`product-brand-identity` | 从 App bundle/cask/Sparkle 改为仍支持的 CLI/Host 分发与产品定位，保留必要兼容/迁移说明 |
 | `repository-quality-gate`、`governance-tooling-contract`、`documentation-governance` | 清理 Apple-only 门禁与过时 guard，保留 Rust macOS 测试和安全检查；退役规范与文档一致 |
 | `message-routing`、`plan9-kernel-substrate` 等未受影响底座 | 原则上保留；routefs 负责确定性组合，不变成概率策略引擎 |

@@ -22,7 +22,30 @@ These are local results, not PR/CI/merge evidence.
   builds; stable/dev installation, version output, refusal to overwrite an
   unrelated file and archive content checks passed in an isolated directory.
 
-Review, CI, merge, canonical sync and archive remain unchecked in tasks.md.
+## Pull request delivery
+
+- PR [#926](https://github.com/realmorrisliu/alan/pull/926) merged as
+  `1586e3899fa63fadba3d4db96878b2886289f082` on 2026-09-20.
+- Final Codex review of `ef07ed2bbc6abf3915e293e7cd82c84c2bf20862` found no
+  major issues. All four review threads were resolved.
+- All 16 current-head CI checks passed before merge.
+
+Canonical sync and archive are tracked by task 2.3.
+
+## Canonical specification sync
+
+- Removed all 21 desktop-only canonical capability files. Each removal delta's
+  requirement names match the corresponding main-branch specification.
+- Synced the added requirements into `documentation-governance` and
+  `repository-quality-gate`, preserving the Rust CLI/Host security owners.
+- Updated active OpenSpec references, including the cancelled UPDF desktop
+  preview task; that parked delta remains unchecked and is not synchronized.
+- `openspec validate --all --strict`: 65 passed, 0 failed. Existing long-
+  requirement advisories remain informational.
+- `git diff --check`: passed. No active non-archived change references the
+  retired desktop capability names outside this removal record.
+
+The change is ready to archive with specs already synchronized.
 
 ## Review correction
 

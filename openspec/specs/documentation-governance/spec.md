@@ -9,19 +9,18 @@ historical plans.
 
 ### Requirement: Product lifecycle and implementation status are explicit
 Current specifications and active plans SHALL distinguish supported product
-surfaces, retained legacy maintenance, accepted but unimplemented direction,
-parked work, and cancelled work. Alan for macOS is retired as a product and
-distribution direction; its retained source and associated contracts are
-maintenance-only until a separately scoped removal. This does not retire macOS
-platform support, Alan OS Host, credentials, Host Mounts, sandboxing, or user
-stores. The standalone CLI/Host distribution is the supported delivery surface.
+surfaces, accepted but unimplemented direction, parked work, and cancelled
+work. Alan for macOS and its desktop implementation are retired; desktop-only
+contracts are historical rather than active maintenance obligations. This does
+not retire macOS platform support, Alan OS Host, credentials, Host Mounts,
+sandboxing, or user stores. The standalone CLI/Host distribution is the
+supported delivery surface.
 
-#### Scenario: Retained desktop contract is consulted
-- **WHEN** an agent reads a macOS desktop, shell-workspace, shell-core or App
-  distribution contract retained for legacy source
-- **THEN** its lifecycle notice identifies maintenance-only applicability
-- **AND** it does not authorize new desktop features or require Herdr to
-  reproduce that contract
+#### Scenario: Removed desktop contract is consulted
+- **WHEN** an agent encounters a former macOS desktop, shell-workspace,
+  shell-core or App distribution contract in historical material
+- **THEN** it treats the contract as retired history, not current behavior or
+  deferred desktop delivery
 - **AND** still-used platform security and data-preservation obligations remain
 
 #### Scenario: Standalone distribution is consulted
@@ -45,13 +44,6 @@ stores. The standalone CLI/Host distribution is the supported delivery surface.
 - **THEN** it distinguishes accepted design from implemented and verified
   support
 - **AND** it does not present Jev support or a Herdr Alan agent kind as shipped
-
-#### Scenario: Desktop source removal is planned
-- **WHEN** retained Apple source or shell-core consumers are removed
-- **THEN** the removal inventories build, release, safety-adapter and storage
-  consumers and supplies explicit requirement-removal deltas
-- **AND** no account, credential, store, installed app or external release
-  endpoint is deleted merely because the product direction was retired
 
 ### Requirement: OpenSpec owns durable specifications
 alan SHALL use OpenSpec as the only durable source of truth for product,
@@ -135,6 +127,23 @@ system outside OpenSpec.
 - **THEN** OpenSpec strict validation is run
 - **AND** the review checks active non-archived references for stale
   `docs/spec/`, `plans/`, or `docs/superpowers/` contract-source links
+
+### Requirement: Removed desktop contracts are historical
+After desktop source removal, Alan SHALL treat its desktop-only macOS,
+shell-core and workspace contracts as retired history, not active maintenance
+or deferred GUI delivery. Current plans SHALL preserve standalone CLI/Host
+platform security and existing q Skill distribution. Generic executable
+packaging SHALL require an independently justified consumer before new work.
+
+#### Scenario: Removed desktop functionality is requested by an old plan
+- **WHEN** an old draft references native windows, desktop panels or Swift UI tests
+- **THEN** it is not executed as current work
+- **AND** removed requirements are not restored by syncing that draft
+
+#### Scenario: CLI uses macOS platform security
+- **WHEN** standalone Alan accesses credentials or approved Host Mounts
+- **THEN** existing Rust Host/runtime security contracts still apply
+- **AND** desktop removal does not erase accounts, credentials, stores or installed apps
 
 #### Scenario: New spec-like docs are added outside OpenSpec
 - **WHEN** an active non-OpenSpec document introduces normative target behavior

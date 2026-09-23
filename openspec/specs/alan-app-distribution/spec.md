@@ -1,14 +1,14 @@
 # alan-app-distribution Specification
 
-> Lifecycle: retained legacy maintenance only (ADR-0054). Alan for macOS is
-> retired as a product direction. These requirements constrain retained
-> consumers, not new product development or Herdr. Platform security and user
-> data obligations remain until explicit consumer removal and requirement deltas.
+> Lifecycle: retired product and removed source (ADR-0054; source retirement is
+> recorded in the archive). These requirements prohibit current Alan.app
+> distribution. Historical app artifacts create no maintenance obligation;
+> platform security and user-data obligations remain with their current owners.
 
 ## Purpose
 Defines the lifecycle boundary for the retired Alan for macOS distribution
-surface and the supported standalone CLI/Host replacement. Retained Apple
-source remains maintenance-only until a separately scoped removal.
+surface and the supported standalone CLI/Host replacement. Apple App source is
+removed; Git and OpenSpec archives preserve its history.
 
 ## Requirements
 
@@ -25,7 +25,8 @@ standalone CLI/Host distribution owns current installation and release behavior.
   or cask publication
 
 #### Scenario: Historical app artifacts are encountered
-- **WHEN** an archived change or retained Apple source mentions Alan.app or its
-  update pipeline
-- **THEN** it is treated as historical or maintenance-only context
+- **WHEN** Git history or an archived change mentions Alan.app or its update
+  pipeline
+- **THEN** it is treated as historical context, not an active maintenance
+  obligation
 - **AND** it does not authorize a current release or installation path
