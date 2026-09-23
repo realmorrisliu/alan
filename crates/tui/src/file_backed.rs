@@ -1,4 +1,11 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::{
+    fs::OpenOptions,
+    os::{
+        fd::AsRawFd,
+        unix::fs::{MetadataExt, OpenOptionsExt},
+    },
+};
 
 #[cfg(test)]
 use alan_agent_protocol::{
@@ -9,7 +16,8 @@ use alan_agent_protocol::{UiActivitySnapshot, UiActivityState, UiEvent};
 use alan_ap::InProcessTransport;
 use anyhow::{Context, Result, bail};
 #[cfg(test)]
-use crossterm::event::{Event as TerminalEvent, KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::KeyEvent;
+use crossterm::event::{Event as TerminalEvent, KeyCode, KeyModifiers};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -61,6 +69,8 @@ pub struct FileBackedRunConfig {
     pub history_path: Option<PathBuf>,
     /// Optional local skill candidates used for `$` completion.
     pub skill_candidates: Vec<CompletionCandidate>,
+    /// Shared lock path for serializing Root Agent submissions across clients.
+    pub task_submission_lock_path: Option<PathBuf>,
 }
 
 impl FileBackedRunConfig {
@@ -72,8 +82,40 @@ impl FileBackedRunConfig {
             require_interactive_terminal: true,
             history_path: None,
             skill_candidates: Vec::new(),
+            task_submission_lock_path: None,
         }
     }
+}
+
+/// Acquire the channel-scoped lock shared by interactive and redirected tasks.
+pub fn acquire_task_submission_lock(path: &Path) -> Result<std::fs::File> {
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .mode(0o600)
+        .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW)
+        .open(path)
+        .with_context(|| format!("open task submission lock {}", path.display()))?;
+    let metadata = file.metadata()?;
+    // SAFETY: geteuid has no memory-safety preconditions.
+    let current_uid = unsafe { libc::geteuid() };
+    anyhow::ensure!(metadata.file_type().is_file(), "task lock is not a file");
+    anyhow::ensure!(
+        metadata.uid() == current_uid,
+        "task lock has a foreign owner"
+    );
+    anyhow::ensure!(metadata.mode() & 0o077 == 0, "task lock is not private");
+
+    // SAFETY: flock acts on the live descriptor and does not retain the pointer.
+    if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+        let error = std::io::Error::last_os_error();
+        if error.raw_os_error() == Some(libc::EWOULDBLOCK) {
+            bail!("another Alan task is already running for this channel");
+        }
+        return Err(error).context("acquire task submission lock");
+    }
+    Ok(file)
 }
 
 pub async fn run(config: FileBackedRunConfig) -> Result<()> {
@@ -98,6 +140,7 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
         None
     };
     let mut pending_root_agent_turn: Option<PendingRootAgentTurn> = None;
+    let mut _active_task_lock = None;
     let watch_tails = hydrate_and_open_tails(&shell, &config.agent_path, &mut app).await?;
 
     let mut terminal = TerminalSession::enter()?;
@@ -132,7 +175,31 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                         }
                     }
                     other => {
-                        if let Some(action) = app.dispatch(other) {
+                        let mut submission_lock = None;
+                        let blocked_submission = follows_root_agent
+                            && matches!(
+                                &other,
+                                FileBackedEvent::Terminal(TerminalEvent::Key(key))
+                                    if key.code == KeyCode::Enter
+                                        && !key.modifiers.contains(KeyModifiers::SHIFT)
+                            )
+                            && app.enter_submits_agent_task()
+                            && match config.task_submission_lock_path.as_deref() {
+                                Some(path) => match acquire_task_submission_lock(path) {
+                                    Ok(lock) => {
+                                        submission_lock = Some(lock);
+                                        false
+                                    }
+                                    Err(err) => {
+                                        app.push_error(format!("submit blocked: {err:#}"));
+                                        true
+                                    }
+                                },
+                                None => false,
+                        };
+                        if !blocked_submission
+                            && let Some(action) = app.dispatch(other)
+                        {
                             match action {
                                 FileBackedAction::Submit(text) => {
                                     let submitted_at_ms = unix_time_ms();
@@ -142,6 +209,7 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                                         Ok(()) => {
                                             app.notice = None;
                                             if follows_root_agent {
+                                                _active_task_lock = submission_lock.take();
                                                 pending_root_agent_turn = Some(PendingRootAgentTurn {
                                                     input: text.clone(),
                                                     observed_active: false,
@@ -201,10 +269,16 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                         &mut pending_root_agent_turn,
                         app.activity.state,
                     );
+                    if pending_root_agent_turn.is_none() {
+                        _active_task_lock = None;
+                    }
                 }
                 dirty = true;
             }
-            _ = root_agent_pid_tick.tick(), if follows_root_agent && pending_root_agent_turn.is_some() => {
+            _ = root_agent_pid_tick.tick(), if follows_root_agent => {
+                let previous_pid = watchers.root_agent_pid;
+                let previous_refresh_failed = watchers.pid_refresh_failed;
+                let previous_turn = pending_root_agent_turn.clone();
                 let submitted_input = pending_root_agent_turn
                     .as_ref()
                     .map(|turn| {
@@ -232,7 +306,15 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                     &mut pending_root_agent_turn,
                     app.activity.state,
                 );
-                dirty = true;
+                if pending_root_agent_turn.is_none() {
+                    _active_task_lock = None;
+                }
+                if previous_pid != watchers.root_agent_pid
+                    || previous_refresh_failed != watchers.pid_refresh_failed
+                    || previous_turn != pending_root_agent_turn
+                {
+                    dirty = true;
+                }
             }
             _ = frame_tick.tick() => {
                 if dirty {
@@ -258,7 +340,7 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
     Ok(())
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct PendingRootAgentTurn {
     input: String,
     observed_active: bool,
@@ -330,16 +412,19 @@ impl AgentWatchers {
     ) -> bool {
         match current_root_agent_pid(shell).await {
             Ok(Some(pid)) if self.root_agent_pid != Some(pid) => {
-                self.pid_refresh_failed = false;
                 self.stop().await;
                 match reattach_to_current_agent(shell, agent_path, app, submitted_task).await {
                     Ok((tails, submitted_task_settled)) => {
+                        self.pid_refresh_failed = false;
                         *self = Self::start(tails, tx.clone(), Some(pid));
                         submitted_task_settled
                     }
                     Err(err) => {
                         self.root_agent_pid = None;
-                        app.push_error(format!("Root Agent reattach failed: {err:#}"));
+                        if !self.pid_refresh_failed {
+                            app.push_error(format!("Root Agent reattach failed: {err:#}"));
+                        }
+                        self.pid_refresh_failed = true;
                         false
                     }
                 }

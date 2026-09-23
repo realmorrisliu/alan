@@ -638,12 +638,12 @@ async fn main() -> Result<()> {
         None => {
             let channel = alan_agent_engine::InstallChannel::detect_current();
             let attachment = cli::host::attach_or_start_host(channel).await?;
+            let host_paths = alan_os_host::HostEndpointPaths::detect(channel.descriptor().id)?;
+            let task_lock_path = host_paths.root.join("task.lock");
             if std::io::stdin().is_terminal() && std::io::stdout().is_terminal() {
-                alan_tui::run_file_backed(alan_tui::FileBackedRunConfig::new(
-                    attachment.root,
-                    "/agent/root",
-                ))
-                .await?;
+                let mut config = alan_tui::FileBackedRunConfig::new(attachment.root, "/agent/root");
+                config.task_submission_lock_path = Some(task_lock_path);
+                alan_tui::run_file_backed(config).await?;
             } else {
                 let mut input = Vec::new();
                 tokio::io::stdin()
@@ -651,8 +651,7 @@ async fn main() -> Result<()> {
                     .await
                     .context("read Agent task from stdin")?;
                 let input = String::from_utf8(input).context("stdin task is not valid UTF-8")?;
-                let host_paths = alan_os_host::HostEndpointPaths::detect(channel.descriptor().id)?;
-                let _stdio_task_lock = cli::host::acquire_stdio_task_lock(&host_paths)?;
+                let _task_lock = alan_tui::acquire_task_submission_lock(&task_lock_path)?;
                 alan_tui::run_stdio_task(attachment.root, "/agent/root", &input).await?;
             }
         }

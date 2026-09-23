@@ -60,6 +60,7 @@ pub(super) enum FileBackedAction {
     Quit,
 }
 
+#[derive(Clone)]
 pub(super) struct FileBackedApp {
     pub(super) agent_path: String,
     pub(super) composer: Composer,
@@ -375,13 +376,21 @@ impl FileBackedApp {
         let text = self.composer.take_submit()?;
         self.completion = None;
         self.composer.remember(&text);
-        if let Some(action) = self.handle_command(&text) {
-            return Some(action);
+        if text.starts_with('/') {
+            return self.handle_command(&text);
         }
         self.transcript.push(HistoryCell::User(text.clone()));
         self.reconciler.on_local_submit(&text);
         self.pending_remote_turn_start = None;
         Some(FileBackedAction::Submit(text))
+    }
+
+    pub(super) fn enter_submits_agent_task(&self) -> bool {
+        if self.form.is_some() || self.pending_yield.is_some() || self.completion.is_some() {
+            return false;
+        }
+        let text = self.composer.text().trim();
+        !text.is_empty() && !text.starts_with('/')
     }
 
     pub(super) fn handle_command(&mut self, text: &str) -> Option<FileBackedAction> {

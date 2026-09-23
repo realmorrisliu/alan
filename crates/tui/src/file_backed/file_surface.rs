@@ -83,56 +83,52 @@ pub(super) async fn reattach_to_current_agent(
     app: &mut FileBackedApp,
     submitted_task: Option<(&str, u64, usize)>,
 ) -> Result<(WatchTails, bool)> {
-    let previous_transcript = std::mem::take(&mut app.transcript);
-    app.reset_for_root_process_change();
-    let tails = match hydrate_and_open_tails(shell, agent_path, app).await {
-        Ok(tails) => tails,
-        Err(error) => {
-            app.transcript = previous_transcript;
-            return Err(error);
-        }
-    };
-    let current_transcript = std::mem::take(&mut app.transcript);
-    app.transcript = previous_transcript;
+    let mut reattached = app.clone();
+    let previous_transcript = std::mem::take(&mut reattached.transcript);
+    reattached.reset_for_root_process_change();
+    let tails = hydrate_and_open_tails(shell, agent_path, &mut reattached).await?;
+    let current_transcript = std::mem::take(&mut reattached.transcript);
+    reattached.transcript = previous_transcript;
     let mut submitted_task_settled = false;
     if let Some((submitted_input, submitted_at_ms, prior_matching_turns)) = submitted_task {
         let ui_task = correlated_ui_task(&tails.ui_history, submitted_at_ms)?;
-        if app.notice.as_ref().is_some_and(|notice| {
+        if reattached.notice.as_ref().is_some_and(|notice| {
             current_transcript
                 .iter()
                 .any(|cell| matches!(cell, HistoryCell::Error(message) if message == notice))
                 && ui_task.error.as_ref() != Some(notice)
         }) {
-            app.notice = None;
+            reattached.notice = None;
         }
         let current_transcript = current_transcript
             .into_iter()
             .filter(|cell| !matches!(cell, HistoryCell::Error(_)))
             .collect();
         let recovered_current_turn = ui_task.started
-            && app.merge_reconnected_history(
+            && reattached.merge_reconnected_history(
                 current_transcript,
                 submitted_input,
                 prior_matching_turns,
             );
         if !recovered_current_turn {
-            app.reconciler.on_local_submit(submitted_input);
+            reattached.reconciler.on_local_submit(submitted_input);
         }
         if let Some(message) = ui_task.started.then_some(ui_task.error).flatten() {
-            app.notice = Some(message.clone());
-            app.transcript.push(HistoryCell::Error(message));
+            reattached.notice = Some(message.clone());
+            reattached.transcript.push(HistoryCell::Error(message));
             submitted_task_settled = ui_task.state == Some(UiActivityState::Idle);
-        } else if !recovered_current_turn && app.activity.state == UiActivityState::Idle {
+        } else if !recovered_current_turn && reattached.activity.state == UiActivityState::Idle {
             let message =
                     "Root Agent changed before the submitted turn could be recovered; outcome is unknown"
                         .to_string();
-            app.notice = Some(message.clone());
-            app.transcript.push(HistoryCell::Error(message));
+            reattached.notice = Some(message.clone());
+            reattached.transcript.push(HistoryCell::Error(message));
             submitted_task_settled = true;
         } else if recovered_current_turn {
             submitted_task_settled = ui_task.state == Some(UiActivityState::Idle);
         }
     }
+    *app = reattached;
     Ok((tails, submitted_task_settled))
 }
 

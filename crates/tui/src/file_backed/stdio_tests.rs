@@ -8,6 +8,64 @@ const PID_MOUNT: &str = "/mnt/service-manager/units/root-agent";
 const EXEC_SPEC: &str =
     r#"{"executable":"/bin/alan-agent","args":[],"namespace":{"generation":0,"mounts":[]}}"#;
 
+#[test]
+fn interactive_task_lock_is_shared_and_released_after_the_turn() {
+    let runtime = tempfile::tempdir().unwrap();
+    let path = runtime.path().join("task.lock");
+
+    let interactive = acquire_task_submission_lock(&path).unwrap();
+    let competing = acquire_task_submission_lock(&path).unwrap_err();
+    assert!(
+        competing
+            .to_string()
+            .contains("another Alan task is already running")
+    );
+
+    drop(interactive);
+    assert!(acquire_task_submission_lock(&path).is_ok());
+}
+
+#[test]
+fn only_a_plain_enter_submits_a_new_agent_task() {
+    let mut app = FileBackedApp::new("/agent/root".to_string());
+    app.composer.set_text("do work");
+    assert!(app.enter_submits_agent_task());
+
+    app.composer.set_text("  ");
+    assert!(!app.enter_submits_agent_task());
+    app.composer.set_text("/help");
+    assert!(!app.enter_submits_agent_task());
+    app.composer.set_text("do work");
+    app.completion = Some(crate::completion::CompletionState {
+        kind: crate::completion::CompletionKind::Command,
+        token_start: 0,
+        query: String::new(),
+        matches: Vec::new(),
+        selected: 0,
+    });
+    assert!(!app.enter_submits_agent_task());
+}
+
+#[test]
+fn actionless_slash_commands_never_become_agent_tasks() {
+    let mut app = FileBackedApp::new("/agent/root".to_string());
+    app.composer.set_text("/help");
+
+    assert!(app.handle_submit().is_none());
+    assert!(app.transcript.is_empty());
+    assert!(
+        app.notice
+            .as_deref()
+            .is_some_and(|notice| notice.contains("/compact"))
+    );
+
+    app.transcript
+        .push(HistoryCell::User("old transcript".to_string()));
+    app.composer.set_text("/clear");
+    assert!(app.handle_submit().is_none());
+    assert!(app.transcript.is_empty());
+}
+
 async fn live_root_agent() -> (alan_shell::Shell, Arc<AgentRootFs>, LiveNamespace, String) {
     let proc = Arc::new(ProcFs::new());
     let proc_server: Arc<dyn alan_ap::FileServer> = proc.clone();
@@ -296,6 +354,136 @@ async fn renderer_reconnect_hydrates_the_current_turn_and_keeps_prior_transcript
             HistoryCell::Assistant("current answer".to_string()),
         ]
     );
+
+    watchers.stop().await;
+}
+
+#[tokio::test]
+async fn renderer_reconnects_after_root_pid_changes_without_a_pending_turn() {
+    let (shell, agent_root, live_namespace, old_pid) = live_root_agent().await;
+    let old_tails = hydrate_and_open_tails(
+        &shell,
+        "/agent/root",
+        &mut FileBackedApp::new("/agent/root".to_string()),
+    )
+    .await
+    .unwrap();
+    let (tx, _rx) = tokio::sync::mpsc::channel(8);
+    let mut watchers = AgentWatchers::start(old_tails, tx.clone(), Some(old_pid.parse().unwrap()));
+
+    let new_pid = shell.spawn(EXEC_SPEC).await.unwrap();
+    agent_root
+        .bind_process(new_pid.clone(), Arc::new(AgentFs::new()))
+        .await;
+    agent_root.set_root_process(new_pid.clone()).await;
+    live_namespace.replace_mount(
+        PID_MOUNT,
+        InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::with_read_only_file(
+            "pid",
+            format!("{new_pid}\n").into_bytes(),
+        ))),
+        Access::ReadOnly,
+    );
+    let mut app = FileBackedApp::new("/agent/root".to_string());
+
+    assert!(
+        !watchers
+            .refresh_root_agent_attachment(&shell, "/agent/root", &mut app, None, &tx)
+            .await
+    );
+    assert_eq!(watchers.root_agent_pid, Some(new_pid.parse().unwrap()));
+
+    watchers.stop().await;
+}
+
+#[tokio::test]
+async fn failed_root_reattach_preserves_state_and_retries_the_new_pid() {
+    let (shell, agent_root, live_namespace, old_pid) = live_root_agent().await;
+    let old_tails = hydrate_and_open_tails(
+        &shell,
+        "/agent/root",
+        &mut FileBackedApp::new("/agent/root".to_string()),
+    )
+    .await
+    .unwrap();
+    let (tx, _rx) = tokio::sync::mpsc::channel(8);
+    let mut watchers = AgentWatchers::start(old_tails, tx.clone(), Some(old_pid.parse().unwrap()));
+
+    let mut app = FileBackedApp::new("/agent/root".to_string());
+    app.transcript = vec![
+        HistoryCell::User("prior task".to_string()),
+        HistoryCell::Assistant("prior answer".to_string()),
+    ];
+    app.action_cells.insert("prior-action".to_string(), 1);
+    app.activity = UiActivitySnapshot::running(10);
+    app.composer.set_text("unsent draft");
+    let original_transcript = app.transcript.clone();
+    let original_activity = app.activity.clone();
+    let original_actions = app.action_cells.clone();
+
+    let new_pid = shell.spawn(EXEC_SPEC).await.unwrap();
+    agent_root
+        .bind_process(new_pid.clone(), Arc::new(AgentFs::new()))
+        .await;
+    agent_root.set_root_process(new_pid.clone()).await;
+    live_namespace.replace_mount(
+        PID_MOUNT,
+        InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::with_read_only_file(
+            "pid",
+            format!("{new_pid}\n").into_bytes(),
+        ))),
+        Access::ReadOnly,
+    );
+    shell
+        .write("/agent/root/machine/ui/events", b"not valid json\n")
+        .await
+        .unwrap();
+
+    assert!(
+        !watchers
+            .refresh_root_agent_attachment(&shell, "/agent/root", &mut app, None, &tx)
+            .await
+    );
+    assert_eq!(watchers.root_agent_pid, None);
+    assert_eq!(
+        app.transcript[..original_transcript.len()],
+        original_transcript
+    );
+    assert_eq!(app.activity, original_activity);
+    assert_eq!(app.action_cells, original_actions);
+    assert_eq!(app.composer.text(), "unsent draft");
+    assert!(watchers.pid_refresh_failed);
+
+    let recovered_pid = shell.spawn(EXEC_SPEC).await.unwrap();
+    agent_root
+        .bind_process(recovered_pid.clone(), Arc::new(AgentFs::new()))
+        .await;
+    agent_root.set_root_process(recovered_pid.clone()).await;
+    live_namespace.replace_mount(
+        PID_MOUNT,
+        InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::with_read_only_file(
+            "pid",
+            format!("{recovered_pid}\n").into_bytes(),
+        ))),
+        Access::ReadOnly,
+    );
+    watchers
+        .refresh_root_agent_attachment(&shell, "/agent/root", &mut app, None, &tx)
+        .await;
+    assert_eq!(
+        watchers.root_agent_pid,
+        Some(recovered_pid.parse().unwrap())
+    );
+    assert!(!watchers.pid_refresh_failed);
+    assert_eq!(
+        app.transcript[..original_transcript.len()],
+        original_transcript
+    );
+    assert!(matches!(
+        app.transcript.last(),
+        Some(HistoryCell::Error(message)) if message.starts_with("Root Agent reattach failed:")
+    ));
+    assert_eq!(app.composer.text(), "unsent draft");
 
     watchers.stop().await;
 }

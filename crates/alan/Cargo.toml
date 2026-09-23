@@ -32,7 +32,6 @@ thiserror.workspace = true
 tracing.workspace = true
 uuid.workspace = true
 dirs.workspace = true
-libc.workspace = true
 chrono.workspace = true
 sha2.workspace = true
 clap = { version = "4", features = ["derive"] }

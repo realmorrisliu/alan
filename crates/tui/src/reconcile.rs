@@ -70,7 +70,7 @@ pub(crate) enum AssistantDecision {
 }
 
 /// Pure attach/streaming reconciliation state machine. See module docs.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub(crate) struct StreamReconciler {
     /// The current assistant cell is an unconfirmed, still-streaming preview.
     preview_open: bool,

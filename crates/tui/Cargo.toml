@@ -14,6 +14,7 @@ alan-agent-protocol.workspace = true
 alan-shell = { path = "../shell" }
 anyhow.workspace = true
 crossterm.workspace = true
+libc.workspace = true
 ratatui.workspace = true
 serde.workspace = true
 serde_json.workspace = true

@@ -1,53 +1,9 @@
 use std::path::{Path, PathBuf};
-use std::{
-    fs::OpenOptions,
-    os::{
-        fd::AsRawFd,
-        unix::fs::{MetadataExt, OpenOptionsExt},
-    },
-};
 
 #[cfg(not(target_os = "macos"))]
 use alan_agent_engine::INSTALL_CHANNEL_ENV;
 use alan_agent_engine::InstallChannel;
-use anyhow::{Context, Result, bail, ensure};
-
-pub fn acquire_stdio_task_lock(paths: &alan_os_host::HostEndpointPaths) -> Result<std::fs::File> {
-    let path = paths.root.join("stdio-task.lock");
-    let file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .mode(0o600)
-        .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW)
-        .open(&path)
-        .with_context(|| format!("open one-shot task lock {}", path.display()))?;
-    let metadata = file.metadata()?;
-    // SAFETY: geteuid has no memory-safety preconditions.
-    let current_uid = unsafe { libc::geteuid() };
-    ensure!(
-        metadata.file_type().is_file(),
-        "one-shot task lock is not a file"
-    );
-    ensure!(
-        metadata.uid() == current_uid,
-        "one-shot task lock has a foreign owner"
-    );
-    ensure!(
-        metadata.mode() & 0o077 == 0,
-        "one-shot task lock is not private"
-    );
-
-    // SAFETY: flock acts on the live descriptor and does not retain the pointer.
-    if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
-        let error = std::io::Error::last_os_error();
-        if error.raw_os_error() == Some(libc::EWOULDBLOCK) {
-            bail!("another redirected Alan task is already running for this channel");
-        }
-        return Err(error).context("acquire one-shot task lock");
-    }
-    Ok(file)
-}
+use anyhow::{Context, Result};
 
 pub async fn attach_or_start_host(
     channel: InstallChannel,
@@ -184,24 +140,4 @@ pub(crate) fn sibling_executable(current: &Path, name: &str) -> Option<PathBuf> 
         .unwrap_or_else(|_| current.to_owned());
     let sibling = current.parent()?.join(name);
     sibling.is_file().then_some(sibling)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn stdio_task_lock_rejects_a_second_client_and_releases_on_drop() {
-        let runtime = tempfile::tempdir().unwrap();
-        let paths =
-            alan_os_host::HostEndpointPaths::from_runtime_dir(runtime.path(), "dev").unwrap();
-        std::fs::create_dir_all(&paths.root).unwrap();
-
-        let first = acquire_stdio_task_lock(&paths).unwrap();
-        let error = acquire_stdio_task_lock(&paths).unwrap_err();
-        assert!(error.to_string().contains("another redirected Alan task"));
-
-        drop(first);
-        assert!(acquire_stdio_task_lock(&paths).is_ok());
-    }
 }
