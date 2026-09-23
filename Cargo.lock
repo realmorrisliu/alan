@@ -373,6 +373,7 @@ dependencies = [
  "alan-kernel",
  "alan-shell",
  "anyhow",
+ "async-trait",
  "crossterm",
  "libc",
  "ratatui",

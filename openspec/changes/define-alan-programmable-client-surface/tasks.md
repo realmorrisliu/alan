@@ -32,8 +32,9 @@
   operands and redirection targets.
 - [x] 2.7 Keep recoverable Agent errors in the rendered transcript.
 - [x] 2.8 Implement and verify terminal-mode selection, one-shot redirected
-  stdin/stdout/stderr,
-  Root Agent PID rebinding, and exit-code behavior. Keep waiting for the task
+  stdin/stdout/stderr, Root Agent PID rebinding (including tail closure before
+  PID polling and a temporary missing PID during supervised restart), and
+  exit-code behavior. Keep waiting for the task
   outcome without a client-only timeout; persist generation failures as UI
   terminal-error events before idle without requiring tape; recognize
   `Running`/terminal-error events before tape persistence; prefer terminal
@@ -80,6 +81,12 @@
 > clients attached to the same Root Agent. A separate `!sleep 30` attempt
 > returned `Tool Process has no explicit Host execution adapter` and was not
 > counted as cancellation evidence.
+> On 2026-09-24, after restarting only dev Host, a fresh Herdr TUI returned
+> `ALAN_POST_RESTART_OK`; redirected one-shot returned
+> `ALAN_ONE_SHOT_POST_RESTART_OK` with exit 0. Stable Host PID was unchanged.
+> The one-shot integration test also closes old tails while the Service
+> Manager PID is temporarily `0`, then publishes a replacement with the
+> correlated answer; the waiter remains pending and recovers that answer.
 
 > The watcher integration also replaces an idle Root Agent after another
 > client has completed a task; reattachment preserves the prior transcript and

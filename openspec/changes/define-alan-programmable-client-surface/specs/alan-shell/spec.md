@@ -79,6 +79,18 @@ Runtime or select an Agent Definition as Host startup behavior.
   prompt
 - **AND** it never resubmits input or duplicates stdout
 
+#### Scenario: A one-shot tail closes before Root Agent polling observes restart
+- **WHEN** either tape or UI tail reaches EOF or returns an IO error while the
+  supervised Root Agent is being replaced
+- **THEN** the client checks the published Root Agent PID before failing the
+  task
+- **AND** it waits through a temporarily unavailable Root Agent and attaches
+  both tails to the replacement once its PID is published
+- **AND** it recovers a correlated result from replacement history, or reports
+  an unknown outcome when that history cannot establish the submitted result
+- **AND** if the Root Agent PID is unchanged, it reports the original tail
+  failure instead of retrying a broken stream
+
 ## REMOVED Requirements
 
 ### Requirement: Interactive Alan Shell is an ordinary Process

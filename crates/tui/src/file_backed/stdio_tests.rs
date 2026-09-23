@@ -1,8 +1,10 @@
 use super::tail::tail_with_history;
 use super::*;
+mod faulting_agentfs;
 use alan_agentfs::{AgentFs, AgentRootFs};
 use alan_ap::ProcessEventSource;
 use alan_kernel::{Access, LiveNamespace, MountFs, Namespace, ProcFs};
+use faulting_agentfs::CloseTailOnPid;
 use std::sync::Arc;
 
 const PID_MOUNT: &str = "/mnt/service-manager/units/root-agent";
@@ -690,8 +692,14 @@ fn one_shot_result_waits_for_seen_task_and_idle_activity() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn one_shot_keeps_waiting_past_five_minutes_and_recovers_after_root_agent_pid_changes() {
+async fn one_shot_waits_without_timeout_and_rebinds_when_a_tail_closes_before_pid_poll() {
     let (shell, agent_root, live_namespace, old_pid) = live_root_agent().await;
+    let tail_closer = Arc::new(CloseTailOnPid::new(agent_root.clone()));
+    live_namespace.replace_mount(
+        "/agent",
+        InProcessTransport::new(tail_closer.clone()),
+        Access::ReadWrite,
+    );
 
     let (tape_tail, baseline_tape_history) = tail_with_history(&shell, "/agent/root/machine/tape")
         .await
@@ -703,13 +711,28 @@ async fn one_shot_keeps_waiting_past_five_minutes_and_recovers_after_root_agent_
     let mut input_tail = shell.tail("/agent/root/io/input").await.unwrap();
     let (input_seen_tx, input_seen_rx) = tokio::sync::oneshot::channel();
     let (release_tx, release_rx) = tokio::sync::oneshot::channel();
+    let (closed_tx, closed_rx) = tokio::sync::oneshot::channel();
+    let (resume_tx, resume_rx) = tokio::sync::oneshot::channel();
     let controller_shell = shell.clone();
     let controller_agent_root = agent_root.clone();
     let controller_namespace = live_namespace.clone();
+    let controller_tail_closer = tail_closer.clone();
+    let old_agent_pid = old_pid.parse::<u64>().unwrap();
     let controller = tokio::spawn(async move {
         assert!(!input_tail.read(4096).await.unwrap().is_empty());
         input_seen_tx.send(()).unwrap();
         release_rx.await.unwrap();
+        controller_namespace.replace_mount(
+            PID_MOUNT,
+            InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::with_read_only_file(
+                "pid",
+                b"0\n".to_vec(),
+            ))),
+            Access::ReadOnly,
+        );
+        controller_tail_closer.close(old_agent_pid);
+        closed_tx.send(()).unwrap();
+        resume_rx.await.unwrap();
         let new_pid = controller_shell.spawn(EXEC_SPEC).await.unwrap();
         controller_agent_root
             .bind_process(new_pid.clone(), Arc::new(AgentFs::new()))
@@ -765,6 +788,15 @@ async fn one_shot_keeps_waiting_past_five_minutes_and_recovers_after_root_agent_
         );
 
         release_tx.send(()).unwrap();
+        closed_rx.await.unwrap();
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(1), &mut wait_for_answer)
+                .await
+                .is_err(),
+            "one-shot must wait while the supervised Root Agent is restarting"
+        );
+        resume_tx.send(()).unwrap();
+        tokio::time::advance(std::time::Duration::from_millis(250)).await;
         wait_for_answer.await.unwrap()
     };
     controller.await.unwrap();

@@ -47,7 +47,11 @@ tails against one concrete Root Agent PID, retries the pair if that identity
 changes during attach, and uses that same Process path for submission and
 observation. It reopens both tails together if the Root Agent PID changes
 during a task, recovering the matching submitted turn from the replacement
-Process.
+Process. EOF or an IO error on either tail first triggers a Root Agent PID
+check: the waiter lets the existing poll cadence bridge a temporarily
+unavailable PID during supervised replacement, then reattaches the pair and
+recovers from replacement history. If the PID is unchanged, the original tail
+failure remains terminal.
 
 The TUI composer always submits one task to AgentFS. Ordinary prose is not
 interpreted as a shell command. A leading `!` is the explicit shell escape:

@@ -555,10 +555,30 @@ async fn wait_for_stdio_answer(
     loop {
         tokio::select! {
             bytes = attachment.tape_tail.read(4096) => {
-                let bytes = bytes.map_err(|err| anyhow::anyhow!("read Agent tape failed: {err:?}"))?;
-                if bytes.is_empty() {
-                    bail!("Agent tape closed before the task completed");
-                }
+                let bytes = match bytes {
+                    Ok(bytes) if !bytes.is_empty() => bytes,
+                    result => {
+                        let error = match result {
+                            Ok(_) => anyhow::anyhow!("Agent tape closed before the task completed"),
+                            Err(err) => anyhow::anyhow!("read Agent tape failed: {err:?}"),
+                        };
+                        match tail::recover_stdio_task_after_root_change(
+                            shell, root_agent_path, &task, attachment, &mut snapshot, interrupt_requested,
+                        ).await? {
+                            tail::StdioTaskRecovery::Complete(answer) => return Ok(answer),
+                            tail::StdioTaskRecovery::Reattached => {
+                                tape_pending.clear();
+                                ui_pending.clear();
+                                continue;
+                            }
+                            tail::StdioTaskRecovery::Unavailable => {
+                                root_agent_pid_tick.tick().await;
+                                continue;
+                            }
+                            tail::StdioTaskRecovery::Unchanged => return Err(error),
+                        }
+                    }
+                };
                 tape_pending.extend_from_slice(&bytes);
                 for line in drain_lines(&mut tape_pending) {
                     let Ok(record) = serde_json::from_slice::<TapeRecordV1>(&line) else {
@@ -579,10 +599,30 @@ async fn wait_for_stdio_answer(
                 }
             }
             bytes = attachment.ui_tail.read(4096) => {
-                let bytes = bytes.map_err(|err| anyhow::anyhow!("read Agent UI events failed: {err:?}"))?;
-                if bytes.is_empty() {
-                    bail!("Agent UI event stream closed before the task completed");
-                }
+                let bytes = match bytes {
+                    Ok(bytes) if !bytes.is_empty() => bytes,
+                    result => {
+                        let error = match result {
+                            Ok(_) => anyhow::anyhow!("Agent UI event stream closed before the task completed"),
+                            Err(err) => anyhow::anyhow!("read Agent UI events failed: {err:?}"),
+                        };
+                        match tail::recover_stdio_task_after_root_change(
+                            shell, root_agent_path, &task, attachment, &mut snapshot, interrupt_requested,
+                        ).await? {
+                            tail::StdioTaskRecovery::Complete(answer) => return Ok(answer),
+                            tail::StdioTaskRecovery::Reattached => {
+                                tape_pending.clear();
+                                ui_pending.clear();
+                                continue;
+                            }
+                            tail::StdioTaskRecovery::Unavailable => {
+                                root_agent_pid_tick.tick().await;
+                                continue;
+                            }
+                            tail::StdioTaskRecovery::Unchanged => return Err(error),
+                        }
+                    }
+                };
                 ui_pending.extend_from_slice(&bytes);
                 for line in drain_lines(&mut ui_pending) {
                     let event = serde_json::from_slice::<UiEvent>(&line)
@@ -619,58 +659,15 @@ async fn wait_for_stdio_answer(
                 }
             }
             _ = root_agent_pid_tick.tick() => {
-                if let Some(pid) = current_root_agent_pid(shell).await?
-                    && attachment.root_agent_pid != pid
-                {
-                    let new_attachment =
-                        open_stdio_tail_attachment(shell, root_agent_path).await?;
-                    let recovered = match stdio_task_snapshot(
-                        shell,
-                        &new_attachment.agent_process_path,
-                        &task,
-                        &new_attachment.tape_history,
-                        &new_attachment.ui_history,
-                    )
-                    .await
-                    {
-                        Ok(snapshot) => snapshot,
-                        Err(err) => {
-                            let _ = close_stdio_tails(
-                                new_attachment.tape_tail,
-                                new_attachment.ui_tail,
-                            )
-                            .await;
-                            return Err(err);
-                        }
-                    };
-                    let old_tape_tail = std::mem::replace(
-                        &mut attachment.tape_tail,
-                        new_attachment.tape_tail,
-                    );
-                    let old_ui_tail =
-                        std::mem::replace(&mut attachment.ui_tail, new_attachment.ui_tail);
-                    attachment.root_agent_pid = new_attachment.root_agent_pid;
-                    attachment.agent_process_path = new_attachment.agent_process_path;
-                    let close_old = close_stdio_tails(old_tape_tail, old_ui_tail).await;
-                    tape_pending.clear();
-                    ui_pending.clear();
-                    snapshot = recovered;
-                    close_old?;
-
-                    if interrupt_requested
-                        && interrupt_stdio_task_if_active(shell, &attachment.agent_process_path, &snapshot).await?
-                    {
-                        bail!("Agent task interrupted");
+                match tail::recover_stdio_task_after_root_change(
+                    shell, root_agent_path, &task, attachment, &mut snapshot, interrupt_requested,
+                ).await? {
+                    tail::StdioTaskRecovery::Complete(answer) => return Ok(answer),
+                    tail::StdioTaskRecovery::Reattached => {
+                        tape_pending.clear();
+                        ui_pending.clear();
                     }
-                    if snapshot.activity_state == Some(UiActivityState::Paused) {
-                        bail!("Agent task needs interactive input; attach with the TTY renderer");
-                    }
-                    if let Some(answer) = finish_stdio_task_if_ready(&mut snapshot)? {
-                        return Ok(answer);
-                    }
-                    if snapshot.activity_state == Some(UiActivityState::Idle) {
-                        bail!("Root Agent changed before the submitted task outcome could be recovered; outcome is unknown");
-                    }
+                    tail::StdioTaskRecovery::Unavailable | tail::StdioTaskRecovery::Unchanged => {}
                 }
             }
             signal = &mut interrupt, if !interrupt_requested => {

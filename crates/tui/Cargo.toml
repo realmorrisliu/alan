@@ -24,6 +24,7 @@ tracing.workspace = true
 unicode-width.workspace = true
 
 [dev-dependencies]
+async-trait.workspace = true
 alan-agentfs = { path = "../agentfs" }
 alan-kernel = { path = "../kernel" }
 tempfile.workspace = true
