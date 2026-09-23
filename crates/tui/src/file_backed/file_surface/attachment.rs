@@ -18,13 +18,17 @@ pub(in crate::file_backed) async fn hydrate_and_open_tails(
     app: &mut FileBackedApp,
 ) -> Result<WatchTails> {
     let follows_root_agent = agent_path == "/agent/root";
-    for _ in 0..if follows_root_agent { 3 } else { 1 } {
+    let attempts = if follows_root_agent { 3 } else { 1 };
+    for attempt in 0..attempts {
         let root_agent_pid = if follows_root_agent {
-            Some(
-                current_root_agent_pid(shell)
-                    .await?
-                    .ok_or_else(|| anyhow!("Root Agent PID is unavailable while attaching"))?,
-            )
+            match current_root_agent_pid(shell).await? {
+                Some(pid) => Some(pid),
+                None if attempt + 1 < attempts => {
+                    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+                    continue;
+                }
+                None => return Err(anyhow!("Root Agent PID is unavailable while attaching")),
+            }
         } else {
             None
         };
@@ -56,6 +60,12 @@ pub(in crate::file_backed) async fn hydrate_and_open_tails(
                 if let Some(pid) = root_agent_pid
                     && current_root_agent_pid(shell).await? != Some(pid)
                 {
+                    continue;
+                }
+                // ponytail: two 250ms retries cover the detach-before-PID-clear window; persistent
+                // hydration errors stay visible instead of making terminal startup wait forever.
+                if follows_root_agent && attempt + 1 < attempts {
+                    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
                     continue;
                 }
                 return Err(error);
@@ -125,7 +135,21 @@ async fn hydrate_pinned_agent(
             );
             app.apply_ui_notice_snapshot(read_json_file(shell, &ui_notice_path(agent_path)).await?);
         } else {
-            for event in ui_events {
+            // ponytail: UI and tape lack shared event IDs, so replay only the latest-turn error;
+            // add cross-log correlation metadata if exact older-error placement becomes required.
+            let latest_running = ui_events.iter().rposition(|event| {
+                matches!(
+                    event,
+                    UiEvent::Activity { snapshot }
+                        if snapshot.state == UiActivityState::Running
+                )
+            });
+            for (index, event) in ui_events.into_iter().enumerate() {
+                if latest_running.is_some_and(|running| {
+                    index < running && matches!(event, UiEvent::Error { .. })
+                }) {
+                    continue;
+                }
                 app.apply_ui_event(event);
             }
         }

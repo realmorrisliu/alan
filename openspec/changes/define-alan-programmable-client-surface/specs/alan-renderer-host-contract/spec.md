@@ -56,6 +56,14 @@ output, status, and Agent UI state.
 - **AND** it discards that attachment and retries if the reported PID changed
   before hydration is complete
 
+#### Scenario: Renderer starts during stale Root Agent PID publication
+- **WHEN** the supervisor has detached the Root Agent but the Service Manager
+  still publishes its old PID
+- **THEN** the renderer retries hydration within a bounded startup window
+- **AND** it attaches to the replacement if the published PID changes during
+  that window
+- **AND** it surfaces the attachment error if the bounded retries are exhausted
+
 #### Scenario: The replacement Root Agent fails before persisting the user turn
 - **WHEN** a replacement Root Agent emits a post-submission `Running`, an
   `Error`, and then `Idle` without writing the user message to tape
@@ -69,6 +77,13 @@ output, status, and Agent UI state.
 - **THEN** a later update for the action replaces its matching tool cell
 - **AND** it does not replace another transcript cell or append a duplicate
   tool result
+
+#### Scenario: Hydration does not replay older errors after later turns
+- **WHEN** UI history contains an error followed by a newer `Running` event and
+  later completed tape messages
+- **THEN** hydration does not append that older error after the later messages
+- **AND** errors after the latest `Running` event remain visible as the current
+  or most recent turn outcome
 
 #### Scenario: An explicit shell request is submitted
 - **WHEN** the user submits text beginning with `!`

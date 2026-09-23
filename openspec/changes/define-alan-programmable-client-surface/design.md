@@ -150,7 +150,15 @@ Process rebinding, not durable stream-offset recovery or cross-Host restoration.
 An attachment to `/agent/root` resolves one PID for the request, action, UI,
 tape, and output streams and any UI snapshot reads. It rechecks that PID after
 hydration; a change closes the complete tail set, discards the projection, and
-retries before watchers start.
+retries before watchers start. The supervisor detaches an exiting Root Agent
+before clearing its published PID, so hydration errors against that still-
+published PID receive a bounded retry window rather than ending renderer
+startup immediately.
+
+Tape messages and UI events have no shared turn identifier. During hydration,
+only error events since the latest `Running` event are replayed after tape
+history; errors from older turns are not appended after newer tape messages.
+Errors already shown in an attached renderer remain in its retained transcript.
 
 ### 5. Preserve explicit access grants
 

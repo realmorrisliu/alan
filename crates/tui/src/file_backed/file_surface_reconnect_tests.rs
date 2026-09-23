@@ -147,6 +147,88 @@ async fn renderer_hydration_retries_all_streams_after_root_pid_changes() {
     tails.output.close().await.unwrap();
 }
 
+#[tokio::test]
+async fn renderer_hydration_waits_for_a_stale_published_root_pid_to_change() {
+    let (shell, agent_root, namespace, old_pid) = live_root_agent().await;
+    assert!(agent_root.unbind_process(&old_pid).await);
+
+    let attach_shell = shell.clone();
+    let mut attach = tokio::spawn(async move {
+        let mut app = FileBackedApp::new("/agent/root".to_string());
+        let tails = hydrate_and_open_tails(&attach_shell, "/agent/root", &mut app).await?;
+        anyhow::Ok((app, tails))
+    });
+    tokio::select! {
+        _ = &mut attach => panic!("renderer returned while the old PID was still published"),
+        _ = tokio::time::sleep(std::time::Duration::from_millis(25)) => {}
+    }
+
+    let new_pid = shell.spawn(EXEC_SPEC).await.unwrap();
+    agent_root
+        .bind_process(new_pid.clone(), Arc::new(AgentFs::new()))
+        .await;
+    agent_root.set_root_process(new_pid.clone()).await;
+    namespace.replace_mount(
+        PID_MOUNT,
+        InProcessTransport::new(Arc::new(alan_ap::reference::MemFs::with_read_only_file(
+            "pid",
+            format!("{new_pid}\n").into_bytes(),
+        ))),
+        Access::ReadOnly,
+    );
+
+    let (_, tails) = tokio::time::timeout(std::time::Duration::from_secs(2), &mut attach)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    assert_eq!(tails.root_agent_pid, Some(new_pid.parse().unwrap()));
+    tails.requests.close().await.unwrap();
+    tails.actions.close().await.unwrap();
+    tails.ui.close().await.unwrap();
+    tails.tape.close().await.unwrap();
+    tails.output.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn hydration_does_not_append_a_historical_error_after_later_tape_turns() {
+    let (shell, _agent_root, _namespace, _pid) = live_root_agent().await;
+    shell
+        .write(
+            "/agent/root/machine/tape",
+            b"{\"version\":1,\"kind\":\"message\",\"role\":\"user\",\"content\":\"first task\"}\n{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"first answer\"}\n{\"version\":1,\"kind\":\"message\",\"role\":\"user\",\"content\":\"later task\"}\n{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"later answer\"}\n",
+        )
+        .await
+        .unwrap();
+    shell
+        .write(
+            "/agent/root/machine/ui/events",
+            b"{\"type\":\"activity\",\"snapshot\":{\"version\":1,\"state\":\"running\",\"started_at_ms\":1}}\n{\"type\":\"error\",\"message\":\"earlier failure\",\"recoverable\":true}\n{\"type\":\"activity\",\"snapshot\":{\"version\":1,\"state\":\"idle\"}}\n{\"type\":\"activity\",\"snapshot\":{\"version\":1,\"state\":\"running\",\"started_at_ms\":2}}\n{\"type\":\"activity\",\"snapshot\":{\"version\":1,\"state\":\"idle\"}}\n",
+        )
+        .await
+        .unwrap();
+
+    let mut app = FileBackedApp::new("/agent/root".to_string());
+    let tails = hydrate_and_open_tails(&shell, "/agent/root", &mut app)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        app.transcript,
+        vec![
+            HistoryCell::User("first task".to_string()),
+            HistoryCell::Assistant("first answer".to_string()),
+            HistoryCell::User("later task".to_string()),
+            HistoryCell::Assistant("later answer".to_string()),
+        ]
+    );
+    tails.requests.close().await.unwrap();
+    tails.actions.close().await.unwrap();
+    tails.ui.close().await.unwrap();
+    tails.tape.close().await.unwrap();
+    tails.output.close().await.unwrap();
+}
+
 async fn create_request(agent_root: &alan_agentfs::AgentRootFs, pid: &str, fid: Fid) -> String {
     agent_root
         .walk(

@@ -17,7 +17,8 @@
   subsequent input, tail rebinding after a Root Agent PID change during both a
   local turn and idle reattachment (including replacement history merge,
   pruned scrollback, repeated transcript content, full-stream single-PID
-  hydration/retry, and action-cell index preservation when recoverable errors
+  hydration/retry, bounded retry through stale PID publication, historical UI
+  error ordering, and action-cell index preservation when recoverable errors
   are filtered), and renderer exit without killing the shared Host or Agent.
 - [x] 2.3 Verify unavailable Connection behavior: a clear error appears before
   any provider request, including pre-turn compaction; the renderer accepts
