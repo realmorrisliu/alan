@@ -27,6 +27,7 @@ mod app;
 mod file_surface;
 mod history_merge;
 mod interrupt;
+mod stdio_completion;
 mod submission;
 mod tail;
 
@@ -643,6 +644,13 @@ async fn wait_for_stdio_answer(
                 if snapshot.activity_state == Some(UiActivityState::Paused) {
                     bail!("Agent task needs interactive input; attach with the TTY renderer");
                 }
+                stdio_completion::refresh_answer_after_idle(
+                    shell,
+                    &attachment.agent_process_path,
+                    &task,
+                    &mut snapshot,
+                )
+                .await?;
                 if let Some(answer) = finish_stdio_task_if_ready(&mut snapshot)? {
                     return Ok(answer);
                 }
@@ -750,6 +758,7 @@ async fn stdio_task_snapshot(
         }
         snapshot.activity_state = Some(activity.state);
     }
+    stdio_completion::refresh_answer_after_idle(shell, agent_path, task, &mut snapshot).await?;
     Ok(snapshot)
 }
 
@@ -758,51 +767,11 @@ fn stdio_task_snapshot_from_history(
     tape_history: &[u8],
     ui_history: &[u8],
 ) -> Result<StdioTaskSnapshot> {
-    let tape_history = std::str::from_utf8(tape_history).context("machine/tape is not utf8")?;
-    let records = tape_history
-        .lines()
-        .filter_map(|line| serde_json::from_str::<TapeRecordV1>(line).ok())
-        .filter(|record| record.kind == "message")
-        .collect::<Vec<_>>();
-    let matching_task_indices = records
-        .iter()
-        .enumerate()
-        .filter_map(|(index, record)| {
-            (record.role == "user" && record.content == task.input).then_some(index)
-        })
-        .collect::<Vec<_>>();
-    let baseline_record_count = std::str::from_utf8(&task.baseline_tape_history)
-        .context("baseline machine/tape is not utf8")?
-        .lines()
-        .filter_map(|line| serde_json::from_str::<TapeRecordV1>(line).ok())
-        .filter(|record| record.kind == "message")
-        .count();
-    let task_index = tape_history
-        .as_bytes()
-        .starts_with(&task.baseline_tape_history)
-        .then(|| {
-            matching_task_indices
-                .iter()
-                .copied()
-                .rfind(|index| *index >= baseline_record_count)
-        })
-        .flatten();
-    let assistant_answer = task_index.and_then(|index| {
-        let following = &records[index + 1..];
-        let turn_end = following
-            .iter()
-            .position(|record| record.role == "user")
-            .unwrap_or(following.len());
-        following[..turn_end]
-            .iter()
-            .rev()
-            .find(|record| record.role == "assistant")
-            .map(|record| record.content.clone())
-    });
-
+    let (tape_task_started, assistant_answer) =
+        stdio_completion::tape_outcome(task.input, &task.baseline_tape_history, tape_history)?;
     let ui_task = file_surface::correlated_ui_task(ui_history, task.submitted_at_ms)?;
     Ok(StdioTaskSnapshot {
-        task_started: task_index.is_some() || ui_task.started,
+        task_started: tape_task_started || ui_task.started,
         assistant_answer,
         activity_state: ui_task.state,
         task_error: ui_task.error,

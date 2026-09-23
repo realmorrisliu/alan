@@ -41,7 +41,9 @@
   outcome without a client-only timeout; persist generation failures as UI
   terminal-error events before idle without requiring tape; recognize
   `Running`/terminal-error events before tape persistence; prefer terminal
-  errors over intermediate assistant content; retain one-shot Ctrl-C until
+  errors over intermediate assistant content; after `Idle`, reconcile the
+  final assistant answer from the pinned tape so a successful tool-call
+  preamble is not returned before a later final tape record; retain one-shot Ctrl-C until
   `Running` confirms acceptance before sending interruption; defer TTY
   Ctrl-C/Escape until the submitted turn becomes active and discard the
   deferred interrupt if it settles first; serialize TTY and one-shot submission

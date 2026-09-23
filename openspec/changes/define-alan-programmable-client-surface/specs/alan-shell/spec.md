@@ -49,6 +49,17 @@ Runtime or select an Agent Definition as Host startup behavior.
 - **AND** any intermediate assistant content is not reported as a successful
   final answer
 
+#### Scenario: One-shot task emits an intermediate assistant preamble
+- **WHEN** a successful task emits assistant content with tool calls followed
+  by a final assistant answer
+- **AND** the client observes `Idle` before its tape tail delivers that final
+  answer
+- **THEN** the client reads the pinned Root Agent Process tape after `Idle` and
+  correlates the latest assistant answer with the submitted user record
+- **AND** only that final answer is written to stdout
+- **AND** a missing correlated final answer is reported as an unknown outcome
+  rather than returning intermediate content
+
 #### Scenario: One-shot task runs longer than expected
 - **WHEN** the redirected task has not reached a terminal outcome
 - **THEN** the client continues waiting without an arbitrary client-side timeout

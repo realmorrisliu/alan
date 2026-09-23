@@ -87,6 +87,11 @@ client from submitting after a TTY renderer exits and releases its lease while
 the shared task keeps running. If the lease is held or activity is Running or
 Paused, the new invocation fails clearly and can be retried when idle; durable
 request identities are unnecessary while supported clients honor this boundary.
+Because tape and UI events have independent tails, observing `Idle` does not
+mean the client has consumed every tape record. After `Idle`, one-shot reads the
+complete tape from its pinned Process and selects the latest assistant record
+for the correlated user task; if no final answer can be correlated, it reports
+an unknown outcome instead of returning a streamed preamble.
 
 ### 2. Attach the existing Root Agent; do not create another Process
 
@@ -178,7 +183,10 @@ the repository quality gate so this route cannot silently regress.
   with no current turn and require an unknown outcome rather than the old
   answer. Wait beyond five minutes without an invented client timeout; report a
   runtime error even when it precedes tape persistence, prefer that error over
-  intermediate assistant content, and verify one-shot Ctrl-C is retained
+  intermediate assistant content, and verify that a successful turn with a
+  tool-call preamble still returns its final answer when `Idle` arrives before
+  the final tape-tail record. One-shot must reconcile from the pinned tape after
+  `Idle`. Verify one-shot Ctrl-C is retained
   until `Running` confirms acceptance before writing the turn interrupt. Verify
   the TTY renderer also defers Ctrl-C/Escape until its submitted turn becomes
   active and drops the deferred interrupt if the turn settles first.
