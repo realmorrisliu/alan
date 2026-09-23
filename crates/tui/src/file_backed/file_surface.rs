@@ -500,9 +500,14 @@ async fn tail_from_live_edge(shell: &alan_shell::Shell, path: &str) -> Result<al
     Ok(tail_with_history(shell, path).await?.0)
 }
 
-pub(super) fn spawn_terminal_events(tx: tokio::sync::mpsc::Sender<FileBackedEvent>) {
+pub(super) fn spawn_terminal_events(
+    tx: tokio::sync::mpsc::Sender<FileBackedEvent>,
+) -> tokio::task::JoinHandle<()> {
     tokio::task::spawn_blocking(move || {
         loop {
+            if tx.is_closed() {
+                break;
+            }
             match crossterm::event::poll(std::time::Duration::from_millis(100)) {
                 Ok(true) => match crossterm::event::read() {
                     Ok(event) => {
@@ -536,7 +541,7 @@ pub(super) fn spawn_terminal_events(tx: tokio::sync::mpsc::Sender<FileBackedEven
                 }
             }
         }
-    });
+    })
 }
 
 fn agent_input_path(agent_path: &str) -> String {

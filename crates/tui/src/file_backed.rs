@@ -104,7 +104,7 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
     terminal.draw_with(|frame| draw(frame, &app))?;
 
     let (tx, mut rx) = tokio::sync::mpsc::channel::<FileBackedEvent>(128);
-    spawn_terminal_events(tx.clone());
+    let terminal_reader = spawn_terminal_events(tx.clone());
 
     let mut watchers = AgentWatchers::start(watch_tails, tx.clone(), root_agent_pid);
 
@@ -250,6 +250,10 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
     }
 
     watchers.stop().await;
+    drop(rx);
+    terminal_reader
+        .await
+        .context("terminal reader task failed")?;
 
     Ok(())
 }

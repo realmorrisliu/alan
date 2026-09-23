@@ -162,6 +162,9 @@ impl FileBackedApp {
     }
 
     pub(super) fn handle_key(&mut self, key: KeyEvent) -> Option<FileBackedAction> {
+        if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+            return Some(FileBackedAction::Interrupt);
+        }
         let pending_input = self.form.is_some() || self.pending_yield.is_some();
         if pending_input {
             self.completion = None;
