@@ -84,28 +84,19 @@ fn root_process_reattach_preserves_prior_transcript_and_adds_current_turn() {
 }
 
 #[test]
-fn root_agent_pid_polling_stops_after_the_turn_returns_to_idle() {
+fn root_agent_pid_polling_requires_an_active_to_idle_transition() {
     let mut pending = Some(("current task".to_string(), false));
+    observe_root_agent_activity(&mut pending, UiActivityState::Idle);
+    assert_eq!(
+        pending,
+        Some(("current task".to_string(), false)),
+        "streamed assistant output is not proof that the turn completed"
+    );
 
-    observe_root_agent_activity(&mut pending, UiActivityState::Idle, &[]);
-    assert_eq!(pending, Some(("current task".to_string(), false)));
-
-    observe_root_agent_activity(&mut pending, UiActivityState::Running, &[]);
+    observe_root_agent_activity(&mut pending, UiActivityState::Running);
     assert_eq!(pending, Some(("current task".to_string(), true)));
 
-    observe_root_agent_activity(&mut pending, UiActivityState::Idle, &[]);
-    assert_eq!(pending, None);
-}
-
-#[test]
-fn root_agent_pid_polling_stops_when_fast_turn_finishes_before_running_is_seen() {
-    let mut pending = Some(("current task".to_string(), false));
-    let transcript = vec![
-        HistoryCell::User("current task".to_string()),
-        HistoryCell::Assistant("current answer".to_string()),
-    ];
-
-    observe_root_agent_activity(&mut pending, UiActivityState::Idle, &transcript);
+    observe_root_agent_activity(&mut pending, UiActivityState::Idle);
 
     assert_eq!(pending, None);
 }

@@ -35,6 +35,7 @@ use file_surface::{
 
 use crate::completion::{self, CompletionCandidate};
 use crate::composer::{Composer, load_history};
+#[cfg(test)]
 use crate::history::HistoryCell;
 #[cfg(test)]
 use crate::history::{PendingYieldCell, RenderOpts, RunningTool, ToolStatus};
@@ -184,7 +185,6 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                     observe_root_agent_activity(
                         &mut pending_root_agent_turn,
                         app.activity.state,
-                        &app.transcript,
                     );
                 }
                 dirty = true;
@@ -205,7 +205,6 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                 observe_root_agent_activity(
                     &mut pending_root_agent_turn,
                     app.activity.state,
-                    &app.transcript,
                 );
                 dirty = true;
             }
@@ -239,32 +238,14 @@ struct AgentWatchers {
 fn observe_root_agent_activity(
     pending_turn: &mut Option<(String, bool)>,
     activity: UiActivityState,
-    transcript: &[HistoryCell],
 ) {
-    if let Some((input, observed_active)) = pending_turn {
+    if let Some((_, observed_active)) = pending_turn {
         match activity {
             UiActivityState::Running | UiActivityState::Paused => *observed_active = true,
-            UiActivityState::Idle
-                if *observed_active || root_agent_turn_has_outcome(transcript, input) =>
-            {
-                *pending_turn = None;
-            }
+            UiActivityState::Idle if *observed_active => *pending_turn = None,
             UiActivityState::Idle => {}
         }
     }
-}
-
-fn root_agent_turn_has_outcome(transcript: &[HistoryCell], input: &str) -> bool {
-    let Some(user_index) = transcript
-        .iter()
-        .rposition(|cell| matches!(cell, HistoryCell::User(text) if text == input))
-    else {
-        return false;
-    };
-
-    transcript[user_index + 1..]
-        .iter()
-        .any(|cell| matches!(cell, HistoryCell::Assistant(_) | HistoryCell::Error(_)))
 }
 
 impl AgentWatchers {
@@ -388,6 +369,7 @@ pub async fn run_stdio_task(
         &mut tape_tail,
         &mut ui_tail,
         &mut root_agent_pid,
+        async { tokio::signal::ctrl_c().await.map_err(anyhow::Error::from) },
     )
     .await;
     let tape_close = tape_tail.close().await;
@@ -412,7 +394,9 @@ async fn wait_for_stdio_answer(
     tape_tail: &mut alan_shell::Tail,
     ui_tail: &mut alan_shell::Tail,
     root_agent_pid: &mut Option<u64>,
+    interrupt: impl std::future::Future<Output = Result<()>>,
 ) -> Result<String> {
+    tokio::pin!(interrupt);
     let mut tape_pending = Vec::new();
     let mut ui_pending = Vec::new();
     let mut snapshot = StdioTaskSnapshot {
@@ -421,8 +405,6 @@ async fn wait_for_stdio_answer(
         activity_state: None,
         task_error: None,
     };
-    let deadline = tokio::time::sleep(std::time::Duration::from_secs(300));
-    tokio::pin!(deadline);
     let mut root_agent_pid_tick = tokio::time::interval(std::time::Duration::from_millis(250));
     root_agent_pid_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
@@ -477,7 +459,6 @@ async fn wait_for_stdio_answer(
                     return Ok(answer);
                 }
             }
-            _ = &mut deadline => bail!("timed out waiting for the Root Agent task"),
             _ = root_agent_pid_tick.tick() => {
                 if let Some(pid) = current_root_agent_pid(shell).await?
                     && *root_agent_pid != Some(pid)
@@ -512,7 +493,7 @@ async fn wait_for_stdio_answer(
                     }
                 }
             }
-            signal = tokio::signal::ctrl_c() => {
+            signal = &mut interrupt => {
                 signal?;
                 if snapshot.activity_state == Some(UiActivityState::Running) {
                     let _ = write_machine_ctl(shell, agent_path, "interrupt").await;
