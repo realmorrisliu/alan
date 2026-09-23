@@ -87,6 +87,11 @@ client from submitting after a TTY renderer exits and releases its lease while
 the shared task keeps running. If the lease is held or activity is Running or
 Paused, the new invocation fails clearly and can be retried when idle; durable
 request identities are unnecessary while supported clients honor this boundary.
+One-shot first reads the pinned Root Agent activity and requires `Idle`, then
+opens fresh tape/UI tails and rechecks PID plus activity before writing input.
+This gives the tape baseline all records from a prior task that settled during
+attach. A delayed prior UI `Idle` or error event is not terminal for the new
+task; live events are accepted only after its correlated `Running` event.
 Because tape and UI events have independent tails, observing `Idle` does not
 mean the client has consumed every tape record. After `Idle`, one-shot reads the
 complete tape from its pinned Process and selects the latest assistant record
@@ -186,7 +191,9 @@ the repository quality gate so this route cannot silently regress.
   intermediate assistant content, and verify that a successful turn with a
   tool-call preamble still returns its final answer when `Idle` arrives before
   the final tape-tail record. One-shot must reconcile from the pinned tape after
-  `Idle`. Verify one-shot Ctrl-C is retained
+  `Idle`. Also settle a prior turn after the initial attach snapshot, repeat
+  the same prompt, and prove its buffered tape and delayed `Idle` cannot finish
+  the new task. Verify one-shot Ctrl-C is retained
   until `Running` confirms acceptance before writing the turn interrupt. Verify
   the TTY renderer also defers Ctrl-C/Escape until its submitted turn becomes
   active and drops the deferred interrupt if the turn settles first.

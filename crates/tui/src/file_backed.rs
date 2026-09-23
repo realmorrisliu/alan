@@ -471,30 +471,7 @@ pub async fn run_stdio_task(
 
     let agent_path = agent_path.into();
     let shell = alan_shell::Shell::new(root_transport);
-    let mut attachment = open_stdio_tail_attachment(&shell, &agent_path).await?;
-    let activity =
-        match file_surface::read_activity_snapshot(&shell, &attachment.agent_process_path).await {
-            Ok(activity) => activity,
-            Err(err) => {
-                let _ = close_stdio_tails(attachment.tape_tail, attachment.ui_tail).await;
-                return Err(err.context("read Agent activity failed"));
-            }
-        };
-    if let Err(err) = require_root_agent_idle(activity.state) {
-        let _ = close_stdio_tails(attachment.tape_tail, attachment.ui_tail).await;
-        return Err(err);
-    }
-    match current_root_agent_pid(&shell).await {
-        Ok(Some(pid)) if pid == attachment.root_agent_pid => {}
-        Ok(_) => {
-            let _ = close_stdio_tails(attachment.tape_tail, attachment.ui_tail).await;
-            bail!("Root Agent changed before the task could be submitted; retry")
-        }
-        Err(err) => {
-            let _ = close_stdio_tails(attachment.tape_tail, attachment.ui_tail).await;
-            return Err(err);
-        }
-    }
+    let mut attachment = open_stdio_tail_attachment_when_idle(&shell, &agent_path).await?;
 
     // ponytail: the CLI lock excludes concurrent one-shot clients; add IDs if
     // one-shot and interactive submissions need concurrent task correlation.
@@ -514,6 +491,49 @@ pub async fn run_stdio_task(
         stdout.write_all(b"\n").await?;
     }
     stdout.flush().await?;
+    Ok(())
+}
+
+async fn open_stdio_tail_attachment_when_idle(
+    shell: &alan_shell::Shell,
+    root_agent_path: &str,
+) -> Result<StdioTailAttachment> {
+    let root_agent_pid = current_root_agent_pid(shell)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("Root Agent PID is unavailable"))?;
+    let pinned_agent_path = tail::root_agent_path_for_pid(root_agent_path, root_agent_pid)
+        .ok_or_else(|| anyhow::anyhow!("one-shot tasks require the /agent/root path"))?;
+    let activity = file_surface::read_activity_snapshot(shell, &pinned_agent_path)
+        .await
+        .context("read Agent activity failed")?;
+    require_root_agent_idle(activity.state)?;
+    if current_root_agent_pid(shell).await? != Some(root_agent_pid) {
+        bail!("Root Agent changed before the task could be submitted; retry")
+    }
+
+    let attachment = open_stdio_tail_attachment(shell, root_agent_path).await?;
+    if attachment.root_agent_pid != root_agent_pid {
+        let _ = close_stdio_tails(attachment.tape_tail, attachment.ui_tail).await;
+        bail!("Root Agent changed before the task could be submitted; retry")
+    }
+    if let Err(error) = require_stdio_attachment_idle(shell, &attachment).await {
+        let _ = close_stdio_tails(attachment.tape_tail, attachment.ui_tail).await;
+        return Err(error);
+    }
+    Ok(attachment)
+}
+
+async fn require_stdio_attachment_idle(
+    shell: &alan_shell::Shell,
+    attachment: &StdioTailAttachment,
+) -> Result<()> {
+    let activity = file_surface::read_activity_snapshot(shell, &attachment.agent_process_path)
+        .await
+        .context("read Agent activity failed")?;
+    require_root_agent_idle(activity.state)?;
+    if current_root_agent_pid(shell).await? != Some(attachment.root_agent_pid) {
+        bail!("Root Agent changed before the task could be submitted; retry")
+    }
     Ok(())
 }
 
@@ -625,11 +645,27 @@ async fn wait_for_stdio_answer(
                                     .is_none_or(|started_at| started_at >= task.submitted_at_ms)
                             {
                                 snapshot.task_started = true;
+                                snapshot.activity_state = Some(UiActivityState::Running);
                                 snapshot.task_error = None;
+                            } else if activity.state == UiActivityState::Paused
+                                && snapshot.activity_state == Some(UiActivityState::Running)
+                            {
+                                snapshot.activity_state = Some(UiActivityState::Paused);
+                            } else if activity.state == UiActivityState::Idle
+                                && matches!(
+                                    snapshot.activity_state,
+                                    Some(UiActivityState::Running | UiActivityState::Paused)
+                                )
+                            {
+                                snapshot.activity_state = Some(UiActivityState::Idle);
                             }
-                            snapshot.activity_state = Some(activity.state)
                         }
-                        UiEvent::Error { message, .. } if snapshot.task_started => {
+                        UiEvent::Error { message, .. }
+                            if matches!(
+                                snapshot.activity_state,
+                                Some(UiActivityState::Running | UiActivityState::Paused)
+                            ) =>
+                        {
                             snapshot.task_error = Some(message)
                         }
                         UiEvent::Error { .. } => {}
@@ -925,6 +961,9 @@ fn activity_line(app: &FileBackedApp, label: &str) -> Line<'static> {
     ])
 }
 
+#[cfg(test)]
+#[path = "file_backed/stdio_idle_tests.rs"]
+mod stdio_idle_tests;
 #[cfg(test)]
 mod stdio_tests;
 #[cfg(test)]

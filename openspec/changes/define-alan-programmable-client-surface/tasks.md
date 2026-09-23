@@ -43,7 +43,10 @@
   `Running`/terminal-error events before tape persistence; prefer terminal
   errors over intermediate assistant content; after `Idle`, reconcile the
   final assistant answer from the pinned tape so a successful tool-call
-  preamble is not returned before a later final tape record; retain one-shot Ctrl-C until
+  preamble is not returned before a later final tape record; read `Idle`
+  before opening fresh tape/UI tails and recheck PID/activity before input;
+  ignore delayed prior `Idle`/error events until this task's correlated
+  `Running`; retain one-shot Ctrl-C until
   `Running` confirms acceptance before sending interruption; defer TTY
   Ctrl-C/Escape until the submitted turn becomes active and discard the
   deferred interrupt if it settles first; serialize TTY and one-shot submission

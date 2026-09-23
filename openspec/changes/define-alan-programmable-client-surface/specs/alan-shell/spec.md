@@ -60,6 +60,17 @@ Runtime or select an Agent Definition as Host startup behavior.
 - **AND** a missing correlated final answer is reported as an unknown outcome
   rather than returning intermediate content
 
+#### Scenario: A prior task settles while one-shot is attaching
+- **WHEN** a prior Root Agent task reaches `Idle` after one-shot startup begins
+- **AND** its tape records or UI `Idle` event arrive after an earlier tail
+  snapshot
+- **THEN** the client confirms `Idle` before opening fresh tape and UI tails,
+  then rechecks the pinned Root Agent PID and activity before submitting
+- **AND** the fresh tape baseline includes the prior task even when its prompt
+  matches the new input
+- **AND** an `Idle` or error event completes the new task only after its own
+  correlated `Running` event
+
 #### Scenario: One-shot task runs longer than expected
 - **WHEN** the redirected task has not reached a terminal outcome
 - **THEN** the client continues waiting without an arbitrary client-side timeout

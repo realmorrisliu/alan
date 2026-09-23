@@ -117,7 +117,8 @@ fn actionless_slash_commands_never_become_agent_tasks() {
     assert!(app.transcript.is_empty());
 }
 
-async fn live_root_agent() -> (alan_shell::Shell, Arc<AgentRootFs>, LiveNamespace, String) {
+pub(super) async fn live_root_agent() -> (alan_shell::Shell, Arc<AgentRootFs>, LiveNamespace, String)
+{
     let proc = Arc::new(ProcFs::new());
     let proc_server: Arc<dyn alan_ap::FileServer> = proc.clone();
     let proc_events: Arc<dyn ProcessEventSource> = proc.clone();
