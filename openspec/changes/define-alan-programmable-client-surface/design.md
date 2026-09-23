@@ -147,6 +147,10 @@ stale errors; local turn correlation then ends while PID polling continues.
 Watcher sends remain cancellable while the bounded event queue is full, so
 stopping old watchers during rebind cannot deadlock the renderer. This is live
 Process rebinding, not durable stream-offset recovery or cross-Host restoration.
+An attachment to `/agent/root` resolves one PID for the request, action, UI,
+tape, and output streams and any UI snapshot reads. It rechecks that PID after
+hydration; a change closes the complete tail set, discards the projection, and
+retries before watchers start.
 
 ### 5. Preserve explicit access grants
 

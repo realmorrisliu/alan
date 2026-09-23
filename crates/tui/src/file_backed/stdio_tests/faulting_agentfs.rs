@@ -3,25 +3,47 @@ use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
 };
-use tokio::sync::watch;
+use tokio::sync::{oneshot, watch};
 
-pub(super) struct CloseTailOnPid {
+struct WalkPause {
+    suffix: String,
+    reached: oneshot::Sender<()>,
+    resume: oneshot::Receiver<()>,
+}
+
+pub(crate) struct CloseTailOnPid {
     inner: Arc<dyn FileServer>,
     paths: Mutex<HashMap<Fid, String>>,
     closed_pid: watch::Sender<Option<u64>>,
+    walk_pause: Mutex<Option<WalkPause>>,
 }
 
 impl CloseTailOnPid {
-    pub(super) fn new(inner: Arc<dyn FileServer>) -> Self {
+    pub(crate) fn new(inner: Arc<dyn FileServer>) -> Self {
         let (closed_pid, _) = watch::channel(None);
         Self {
             inner,
             paths: Mutex::new(HashMap::new()),
             closed_pid,
+            walk_pause: Mutex::new(None),
         }
     }
 
-    pub(super) fn close(&self, pid: u64) {
+    pub(crate) fn pause_next_walk_with_suffix(
+        &self,
+        suffix: &str,
+    ) -> (oneshot::Receiver<()>, oneshot::Sender<()>) {
+        let (reached_tx, reached_rx) = oneshot::channel();
+        let (resume_tx, resume_rx) = oneshot::channel();
+        *self.walk_pause.lock().unwrap() = Some(WalkPause {
+            suffix: suffix.to_string(),
+            reached: reached_tx,
+            resume: resume_rx,
+        });
+        (reached_rx, resume_tx)
+    }
+
+    pub(crate) fn close(&self, pid: u64) {
         self.closed_pid.send_replace(Some(pid));
     }
 
@@ -48,7 +70,22 @@ impl FileServer for CloseTailOnPid {
     async fn walk(&self, fid: Fid, newfid: Fid, names: &[String]) -> Result<Qid, ErrorCode> {
         let qid = self.inner.walk(fid, newfid, names).await?;
         let path = self.path_after(fid, names);
-        self.paths.lock().unwrap().insert(newfid, path);
+        self.paths.lock().unwrap().insert(newfid, path.clone());
+        let pause = {
+            let mut pending = self.walk_pause.lock().unwrap();
+            if pending
+                .as_ref()
+                .is_some_and(|pause| path.ends_with(&pause.suffix))
+            {
+                pending.take()
+            } else {
+                None
+            }
+        };
+        if let Some(pause) = pause {
+            let _ = pause.reached.send(());
+            let _ = pause.resume.await;
+        }
         Ok(qid)
     }
 

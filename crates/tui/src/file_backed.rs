@@ -148,11 +148,6 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
         app.composer = Composer::with_history(history, Some(history_path.clone()));
     }
     let follows_root_agent = config.agent_path == "/agent/root";
-    let root_agent_pid = if follows_root_agent {
-        current_root_agent_pid(&shell).await?
-    } else {
-        None
-    };
     let mut pending_root_agent_turn: Option<PendingRootAgentTurn> = None;
     let mut _active_task_lock = None;
     let watch_tails = hydrate_and_open_tails(&shell, &config.agent_path, &mut app).await?;
@@ -163,7 +158,7 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
     let (tx, mut rx) = tokio::sync::mpsc::channel::<FileBackedEvent>(128);
     let terminal_reader = spawn_terminal_events(tx.clone());
 
-    let mut watchers = AgentWatchers::start(watch_tails, tx.clone(), root_agent_pid);
+    let mut watchers = AgentWatchers::start(watch_tails, tx.clone());
 
     let mut frame_tick = tokio::time::interval(std::time::Duration::from_millis(33));
     frame_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -378,8 +373,8 @@ impl AgentWatchers {
     fn start(
         tails: file_surface::WatchTails,
         tx: tokio::sync::mpsc::Sender<FileBackedEvent>,
-        root_agent_pid: Option<u64>,
     ) -> Self {
+        let root_agent_pid = tails.root_agent_pid;
         let (shutdown, shutdown_rx) = tokio::sync::watch::channel(false);
         let tasks = vec![
             tokio::spawn(spawn_output_tail(
@@ -422,7 +417,7 @@ impl AgentWatchers {
                 match reattach_to_current_agent(shell, agent_path, app, submitted_task).await {
                     Ok((tails, submitted_task_settled)) => {
                         self.pid_refresh_failed = false;
-                        *self = Self::start(tails, tx.clone(), Some(pid));
+                        *self = Self::start(tails, tx.clone());
                         submitted_task_settled
                     }
                     Err(err) => {

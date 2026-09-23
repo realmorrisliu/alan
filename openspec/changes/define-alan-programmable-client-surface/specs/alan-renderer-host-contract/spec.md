@@ -51,9 +51,10 @@ output, status, and Agent UI state.
 #### Scenario: Root Agent identity changes while a tail is opening
 - **WHEN** the Service Manager changes the Root Agent PID between the renderer's
   history snapshot and tail open
-- **THEN** the renderer snapshots and tails one concrete `/agent/<pid>` path
+- **THEN** the renderer opens all history snapshots and watcher tails against
+  one concrete `/agent/<pid>` path
 - **AND** it discards that attachment and retries if the reported PID changed
-  before the tail is ready
+  before hydration is complete
 
 #### Scenario: The replacement Root Agent fails before persisting the user turn
 - **WHEN** a replacement Root Agent emits a post-submission `Running`, an

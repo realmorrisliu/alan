@@ -16,9 +16,9 @@
 - [x] 2.2 Verify incremental AgentFS output, Ctrl-C turn interruption,
   subsequent input, tail rebinding after a Root Agent PID change during both a
   local turn and idle reattachment (including replacement history merge,
-  pruned scrollback, repeated transcript content, and action-cell index
-  preservation when recoverable errors are filtered), and renderer exit without
-  killing the shared Host or Agent.
+  pruned scrollback, repeated transcript content, full-stream single-PID
+  hydration/retry, and action-cell index preservation when recoverable errors
+  are filtered), and renderer exit without killing the shared Host or Agent.
 - [x] 2.3 Verify unavailable Connection behavior: a clear error appears before
   provider dispatch, the renderer accepts another submission, and the Host and
   Root Agent remain available.
