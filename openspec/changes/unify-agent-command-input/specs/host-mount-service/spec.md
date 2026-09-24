@@ -24,7 +24,7 @@ NOT reconstruct sandbox roots from this metadata.
 - **WHEN** a Host adapter authorizes a native directory and returns a writable
   hostfs export for a pending logical request
 - **THEN** Host Mount Service records the grant and mounts its handle into the
-  requesting Process live namespace at the approved Alan OS path
+  requesting Process live namespace at the approved alan9 path
 - **AND** logical Host Mount request, grant, result and service audit records omit
   native backing; only the Host adapter's launch context may carry the scoped native path
 

@@ -7,7 +7,7 @@ backing or retaining engine-owned sandbox roots.
 ## Requirements
 ### Requirement: Explicit read-write Host Mounts derive per-Tool-Process authority
 The Host adapter SHALL derive native writable authority from the same
-service-owned grant when Alan OS starts a native Tool Process with an explicitly
+service-owned grant when alan9 starts a native Tool Process with an explicitly
 delegated read-write Host Mount. Agent Execution Engine
 MUST NOT store the raw Host backing, add native paths to an engine-owned sandbox
 list, or apply sandbox authority from a grant ID alone.
@@ -17,7 +17,7 @@ list, or apply sandbox authority from a grant ID alone.
   handle mounted at `/mnt/project`
 - **THEN** the Host adapter adds the grant's native backing to the OS sandbox
   with writable access
-- **AND** Tool code continues to address the tree through the Alan OS namespace
+- **AND** Tool code continues to address the tree through the alan9 namespace
 
 #### Scenario: Duplicate grant delegation is idempotent
 - **WHEN** the same read-write grant handle is included more than once in one
@@ -46,7 +46,7 @@ records.
 
 #### Scenario: Tool can access an approved writable grant
 - **WHEN** the Tool Process has an explicitly delegated read-write Host Mount
-  and executes below its Alan OS mount
+  and executes below its alan9 mount
 - **THEN** Host containment checks and the OS sandbox permit the corresponding
   native access
 - **AND** a path outside every delegated writable grant remains rejected

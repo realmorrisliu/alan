@@ -6,7 +6,7 @@
 
 ### Requirement: Matter integration is a host-backed file server
 Alan for macOS SHALL isolate `Matter.framework` behind an aP Matter Service that
-posts `/srv/matter` and serves `/mnt/matter`. Alan Kernel, Agent Execution Engine,
+posts `/srv/matter` and serves `/mnt/matter`. alan9 Kernel, Agent Execution Engine,
 portable domain crates, and non-Apple builds SHALL NOT import or model Apple
 Matter types.
 

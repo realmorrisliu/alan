@@ -6,7 +6,7 @@ explicit mounts and descriptors, credentials, normalized namespace cwd, and no
 ambient Host root identity.
 ## Requirements
 ### Requirement: Process launch has no workspace identity
-Alan OS SHALL create every Process from a spawner-authorized namespace manifest
+alan9 SHALL create every Process from a spawner-authorized namespace manifest
 that selects only the mounts and descriptors permitted for that launch, plus
 credentials and a normalized initial namespace cwd. It MUST NOT begin from the
 full parent live namespace, assign a workspace ID or Host root identity, carry
@@ -32,9 +32,9 @@ mounts or descriptors. A Process launch MUST NOT contain an aggregate
 all-Host-Mounts handle, and Host Mount inheritance SHALL default to none unless
 each selected grant handle and target namespace path is listed explicitly.
 Every `/proc/clone` exec document MUST contain an explicit namespace manifest;
-Alan Kernel SHALL reject a missing manifest instead of inheriting the pending
+alan9 Kernel SHALL reject a missing manifest instead of inheriting the pending
 namespace implicitly. The manifest MUST identify the generation of the stable
-namespace snapshot from which its mount list was selected. Alan Kernel SHALL
+namespace snapshot from which its mount list was selected. alan9 Kernel SHALL
 commit it only when that generation matches the spawner namespace snapshot
 captured for the clone slot.
 
@@ -42,7 +42,7 @@ captured for the clone slot.
 - **WHEN** a namespace snapshot contains multiple mount contributors at the
   same path, including contributors with different access rights
 - **THEN** its exec manifest preserves their relative mount order
-- **AND** Alan Kernel accepts a manifest produced from that same stable snapshot
+- **AND** alan9 Kernel accepts a manifest produced from that same stable snapshot
   without mismatching read-only and read-write contributors
 
 #### Scenario: Child lacks an unpassed mount
@@ -74,7 +74,7 @@ captured for the clone slot.
 #### Scenario: Namespace changes between manifest read and clone
 - **WHEN** the live namespace generation changes after a launcher reads its
   manifest but before `/proc/clone` captures the launch snapshot
-- **THEN** Alan Kernel rejects the stale generation and discards the pending
+- **THEN** alan9 Kernel rejects the stale generation and discards the pending
   Process slot
 - **AND** Alan Shell, Agent Execution Engine, and system launchers confirm the
   generation changed, reread one stable snapshot, and retry a bounded number of
@@ -94,12 +94,12 @@ captured for the clone slot.
 
 #### Scenario: Exec document omits its namespace manifest
 - **WHEN** a spawner commits an exec document without a namespace manifest
-- **THEN** Alan Kernel rejects the commit and discards the pending Process slot
+- **THEN** alan9 Kernel rejects the commit and discards the pending Process slot
 - **AND** no child inherits the spawner's namespace implicitly
 
 ### Requirement: Agent Definitions are descriptor-passed
 An Agent Process SHALL receive its Agent Definition explicitly at Process
-creation. Alan OS MUST NOT search Host directories or boot arguments for named
+creation. alan9 MUST NOT search Host directories or boot arguments for named
 or default Agent overlays.
 
 #### Scenario: Ordinary Agent Process starts

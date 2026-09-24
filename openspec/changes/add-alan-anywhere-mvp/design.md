@@ -22,11 +22,11 @@ Anywhere owns the user-facing product above that boundary.
 
 **Non-Goals:**
 
-- defining a new Alan OS entry primitive;
+- defining a new alan9 entry primitive;
 - choosing the final byte-delivery transport;
 - preselecting a workspace, app, or Agent Process before remote entry;
 - moving filesystem, Process, Tool, or policy authority into Alan Cloud;
-- designing the general Alan for macOS-to-Alan OS attachment.
+- designing the general Alan for macOS-to-alan9 attachment.
 
 ## Decisions
 

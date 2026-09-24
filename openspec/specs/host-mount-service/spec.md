@@ -8,7 +8,7 @@ authority for Host-backed file trees.
 Host Mount Service SHALL own logical request records, native authorization
 coordination, user decisions, hostfs exports, grants, namespace projection,
 revocation, audit, and status. The Host adapter SHALL be the only component that
-selects or observes the raw Host OS path. Alan OS-visible records SHALL expose
+selects or observes the raw Host OS path. alan9-visible records SHALL expose
 request and grant identity, label, access, provenance, status, and `/mnt` path
 but MUST NOT expose the raw Host OS path.
 
@@ -16,8 +16,8 @@ but MUST NOT expose the raw Host OS path.
 - **WHEN** a Host adapter authorizes a native directory and returns a writable
   hostfs export for a pending logical request
 - **THEN** Host Mount Service records the grant and mounts its handle into the
-  requesting Process live namespace at the approved Alan OS path
-- **AND** no Alan OS-visible request, result, Machine, or audit record contains
+  requesting Process live namespace at the approved alan9 path
+- **AND** no alan9-visible request, result, Machine, or audit record contains
   the native directory path
 
 #### Scenario: User dismisses native directory authorization
@@ -50,7 +50,7 @@ own namespace and access rights.
 #### Scenario: Child receives selected grant
 - **WHEN** a parent explicitly delegates a Host Mount handle it already holds
   with equal or narrower access
-- **THEN** the child may reach the mounted tree at the specified Alan OS path
+- **THEN** the child may reach the mounted tree at the specified alan9 path
 - **AND** no other parent Host Mount is inherited
 
 ### Requirement: Revocation invalidates projections

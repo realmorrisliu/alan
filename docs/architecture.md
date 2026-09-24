@@ -14,10 +14,10 @@ AgentFS + File-Server Services + Alan Shell
                   |
               aP operations
                   v
-Alan Kernel: namespace, mounts, descriptors, Process table, /proc, /srv
+alan9 Kernel: namespace, mounts, descriptors, Process table, /proc, /srv
 ```
 
-The Agent Execution Engine backs Agent Runtime Service work above Alan Kernel.
+The Agent Execution Engine backs Agent Runtime Service work above alan9 Kernel.
 It owns the AI Turing-machine transition loop, not OS identity or namespace
 semantics.
 
@@ -87,7 +87,7 @@ ephemeral.
 
 ## Boundary rules
 
-- Alan Kernel depends only on aP among Alan crates.
+- alan9 Kernel depends only on aP among Alan crates.
 - provider, sandbox, terminal, app, and platform details stay above Kernel.
 - lifecycle is never inferred from an app snapshot.
 - derived UI state is not a second source of domain truth.

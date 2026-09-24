@@ -1,19 +1,19 @@
 # alan-os-host-lifecycle Specification
 
 ## Purpose
-Defines singleton Alan OS Host ownership, file-proven readiness, per-boot
+Defines singleton alan9 Host ownership, file-proven readiness, per-boot
 identity, and test-only ephemeral hosting.
 
 ## Requirements
 
 ### Requirement: One system Host owns each channel
-Alan SHALL run at most one Alan OS Host per user, device, and install channel.
+Alan SHALL run at most one alan9 Host per user, device, and install channel.
 The dedicated Host SHALL own Kernel and whole-system lifetime; renderer hosts
 MUST attach and MUST NOT boot competing product instances.
 
 #### Scenario: CLI and macOS use stable
 - **WHEN** both stable clients start for the same user
-- **THEN** both target the same stable Alan OS Host
+- **THEN** both target the same stable alan9 Host
 - **AND** neither creates an app-private Kernel
 
 ### Requirement: Host readiness is file-proven

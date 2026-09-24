@@ -55,7 +55,7 @@ status. It SHALL resume from the opaque request reference and return a
 structured `request_mount` result containing request identity, logical
 namespace path,
 access, status, and approved grant reference or concise error. Agent-visible
-results, AgentFS, Machine state, rollout/checkpoint evidence, and Alan OS audit
+results, AgentFS, Machine state, rollout/checkpoint evidence, and alan9 audit
 records MUST NOT contain the raw Host OS path. Projection and revocation truth
 SHALL remain in Host Mount Service rather than an engine-owned audit event.
 

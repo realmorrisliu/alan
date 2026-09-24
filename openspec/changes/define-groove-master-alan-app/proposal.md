@@ -47,7 +47,7 @@ canonical specs and is replaced by this capability.
 - Future code is split into Groove Master domain core, audio backend, aP
   file-server adapter, and Alan for macOS renderer/client.
 - Service Manager starts the adapter, posts its handle, and mounts its tree;
-  Alan Kernel gains no Groove Master types.
+  alan9 Kernel gains no Groove Master types.
 - Earlier host-owned integration plans are discarded.
 - Producer-agent planning/reflection uses normal Agent Process, Tool, Skill,
   Memory Store, request/action, and file semantics.

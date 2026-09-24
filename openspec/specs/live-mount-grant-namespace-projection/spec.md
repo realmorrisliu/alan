@@ -48,14 +48,14 @@ Host OS path and return that opaque export to Host Mount Service. Host Mount
 Service SHALL project only the service-issued handle, namespace path, and access
 into the Process namespace. `alan-agent-engine` MUST NOT construct `HostDirFs`,
 depend on `alan_hostfs`, receive the raw path, or invoke a live mount applicator;
-Alan Kernel MUST NOT store Host path provenance.
+alan9 Kernel MUST NOT store Host path provenance.
 
 #### Scenario: Host composition owns HostDirFs construction
 - **WHEN** a pending request receives native authorization
 - **THEN** the Host adapter constructs the host-backed export and Host Mount
   Service projects its handle
 - **AND** Agent Execution Engine observes only service request status through aP
-- **AND** Alan Kernel records only the mounted file server and access mode
+- **AND** alan9 Kernel records only the mounted file server and access mode
 
 #### Scenario: Host export construction fails
 - **WHEN** the Host adapter cannot construct or authorize the requested export

@@ -7,7 +7,7 @@
 Alan needs evidence that Alan for macOS can safely commission and control one
 low-risk Matter light through Apple's public `Matter.framework`. The previous
 spike pointed toward a typed local RPC/tool provider; under the Plan 9-like
-architecture the platform implementation may remain host-local, but its Alan OS
+architecture the platform implementation may remain host-local, but its alan9
 boundary must be a mountable file tree.
 
 ## What Changes
@@ -43,7 +43,7 @@ None.
 ## Impact
 
 - Alan for macOS hosts the platform adapter and platform credential/storage
-  integration; Alan Kernel and file-unaware agent/domain crates import no Matter
+  integration; alan9 Kernel and file-unaware agent/domain crates import no Matter
   types.
 - Service Manager posts/mounts the Matter tree; fake adapters can test the same
   file contract without physical hardware.

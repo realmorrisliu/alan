@@ -6,7 +6,7 @@ context with deduplication, checkpoint roots, cheap forks, integrity
 verification, and retention-driven garbage collection.
 ## Requirements
 ### Requirement: Agent knowledge is content-addressed and deduplicated
-Alan OS SHALL store agent knowledge blocks (tape, memory, context) under the hash
+alan9 SHALL store agent knowledge blocks (tape, memory, context) under the hash
 of their content, write-once. Writing identical content SHALL be idempotent and
 SHALL store one copy (dedup), including across different agents.
 
@@ -21,7 +21,7 @@ SHALL store one copy (dedup), including across different agents.
 - **AND** existing blocks are never overwritten in place
 
 ### Requirement: Checkpoints are root hashes; forks are cheap
-Alan OS SHALL model agent state (such as `machine/tape` or a memory version) as a
+alan9 SHALL model agent state (such as `machine/tape` or a memory version) as a
 Merkle DAG of content-addressed blocks whose root hash is a checkpoint. Forking an
 agent from any checkpoint SHALL share all unchanged blocks and write only the
 delta.
@@ -39,7 +39,7 @@ delta.
 - **AND** forking does not copy the whole tape
 
 ### Requirement: History is tamper-evident and verifiable
-Alan OS SHALL make agent history verifiable by content hash: a root hash
+alan9 SHALL make agent history verifiable by content hash: a root hash
 integrity-checks the state it names, and altering past content SHALL change the
 hash.
 
@@ -50,7 +50,7 @@ hash.
 - **AND** any silent rewrite is detectable because the hash would differ
 
 ### Requirement: A content hash is not a capability
-Alan OS SHALL NOT let possession of a content hash grant access to content.
+alan9 SHALL NOT let possession of a content hash grant access to content.
 Retrieval SHALL be gated by namespace reachability and access rights (ADR-0024
 D6): a process reads only blocks reachable from roots bound into its namespace,
 subject to access checks. The hash verifies integrity; it does not authorize
@@ -70,7 +70,7 @@ hash.
 - **AND** dedup does not expose one agent's private content to another
 
 ### Requirement: Storage is bounded by reachability GC and retention
-Alan OS SHALL bound knowledge storage by garbage-collecting blocks unreachable
+alan9 SHALL bound knowledge storage by garbage-collecting blocks unreachable
 from any live root past a retention policy. It SHALL NOT keep all content forever
 (no Venti-style immortality). Retention and GC policy SHALL belong to the storing
 file server, not the kernel.
@@ -87,7 +87,7 @@ file server, not the kernel.
 - **AND** pinning is a retention decision, not a kernel concept
 
 ### Requirement: File surfaces are views over the store
-Alan OS SHALL keep agent-facing surfaces as files: `machine/tape`, memory, and
+alan9 SHALL keep agent-facing surfaces as files: `machine/tape`, memory, and
 context are read as files materialized from the content-addressed DAG. Content
 addressing SHALL be the backing model, not a new agent-facing API.
 

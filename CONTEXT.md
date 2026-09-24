@@ -7,14 +7,14 @@ decisions live in `docs/adr/`.
 
 **Alan** — A programmable personal computing environment.
 
-**Alan OS** — The system boundary formed by Alan Kernel, File-Server Services,
+**alan9** — The system boundary formed by alan9 Kernel, File-Server Services,
 Service Manager, Root Agent Process, Agent Runtime Service, hosts, and app
 integration conventions.
 
 **Standard Namespace** — The canonical root layout: `/proc`, `/agent`, `/srv`,
 `/bin`, `/lib`, `/man`, and `/mnt`.
 
-**Alan Kernel** — Namespace and mounts, paths, files, descriptors, access
+**alan9 Kernel** — Namespace and mounts, paths, files, descriptors, access
 rights, credentials, the Process table, and synthetic `/proc` and `/srv`
 devices. It depends only on aP among Alan crates.
 
@@ -23,8 +23,8 @@ operations, directory entries, clone-via-open allocation, and offset-readable
 streams without embedding higher-level domain objects.
 
 **Service Manager** — The system Process that starts, stops, restarts, and
-supervises services and boot units inside one Alan OS instance. It owns system
-Process lifecycle beneath the external Alan OS Host.
+supervises services and boot units inside one alan9 instance. It owns system
+Process lifecycle beneath the external alan9 Host.
 
 **Boot Unit** — A system-package-owned file describing one system Process
 launch, its required descriptors and mounts, dependency ordering, restart
@@ -48,9 +48,9 @@ it is not a Host command plane or a second package authority.
 server posts a mountable handle. Service state belongs in the service's own
 tree, not in `/srv`.
 
-**Alan OS System Store** — Host-provided durable backing storage partitioned by
+**alan9 System Store** — Host-provided durable backing storage partitioned by
 the File-Server Services that own packages, rollouts, Memory Stores, Agent
-Definitions, and service metadata. Its raw Host OS path is not Alan OS identity
+Definitions, and service metadata. Its raw Host OS path is not alan9 identity
 or an automatically mounted user file tree.
 _Avoid_: Alan home, Workspace state directory, global state file
 
@@ -65,9 +65,9 @@ namespace current directory used to create a Process. It carries execution
 context without assigning a workspace identity.
 _Avoid_: Workspace binding, Workspace runtime
 
-**Process Reference** — An Alan OS boot identity plus PID that names one
+**Process Reference** — An alan9 boot identity plus PID that names one
 specific Process without becoming durable Process identity. It becomes invalid
-when the Alan OS Host restarts, preventing PID reuse from attaching to a
+when the alan9 Host restarts, preventing PID reuse from attaching to a
 different Process.
 _Avoid_: Session ID, durable Process ID
 
@@ -88,7 +88,7 @@ Process when spawned.
 
 **Agent Definition** — The file tree that supplies an Agent Process persona,
 Skills, policy, model selection, and other launch knowledge. It is resolved by
-Alan OS and passed at Process creation rather than discovered from a Host OS
+alan9 and passed at Process creation rather than discovered from a Host OS
 workspace overlay.
 _Avoid_: Agent CLI profile, Workspace agent overlay
 
@@ -103,7 +103,7 @@ _Avoid_: Local Session Service, Shell Manager
 
 **Host Mount Service** — The Host-backed File-Server Service that owns Host
 Mount requests, grants, hostfs exports, revocation, and projection into Process
-namespaces. Alan OS records use grant identity and namespace paths while the
+namespaces. alan9 records use grant identity and namespace paths while the
 platform adapter retains raw Host OS paths.
 _Avoid_: Workspace Registry, Path permission manager
 
@@ -201,14 +201,14 @@ used by an Agent Process. Secret material remains in its owning host store.
 
 ## Hosts and apps
 
-**Alan OS Host** — The dedicated per-user, per-device, per-install-channel
-process that owns one Alan OS instance, exposes its namespace attachment
+**alan9 Host** — The dedicated per-user, per-device, per-install-channel
+process that owns one alan9 instance, exposes its namespace attachment
 surface, and shuts down the whole instance. It owns the system's external
 lifecycle, while the Service Manager owns internal service and Process
 lifecycle. Renderer hosts attach instead of booting their own instance.
 _Avoid_: Runtime Manager, Session Host, app-owned runtime, per-window runtime
 
-**Alan OS Attachment** — An aP client view of a ready Alan OS Standard
+**alan9 Attachment** — An aP client view of a ready alan9 Standard
 Namespace. It discovers Processes and services through stable paths such as
 `/agent/root`, `/proc`, and `/srv`, without receiving engine-internal handles or
 runtime event receivers.
@@ -220,11 +220,11 @@ Process lifecycle state and may be recreated or duplicated without creating a
 new Agent Process.
 _Avoid_: Agent Session, Runtime snapshot
 
-**Host Command Plane** — The external command surface for Alan OS instance
+**Host Command Plane** — The external command surface for alan9 instance
 lifecycle, attachment, Host Mount authorization, credentials, and native host
 integration. It does not duplicate namespace commands or service control files.
 
-**Alan OS Command Plane** — Alan Shell file operations, `/bin` executables, and
+**alan9 Command Plane** — Alan Shell file operations, `/bin` executables, and
 service-owned control files used through a Process namespace. Executing a
 command creates a Process through `/proc/clone`.
 _Avoid_: Manager API, typed runtime command API
@@ -233,7 +233,7 @@ _Avoid_: Manager API, typed runtime command API
 files, Processes, Agent Processes, Tools, Skills, Memory Stores, and services.
 Bare `alan` currently opens the file-backed Agent renderer on terminal stdin
 and stdout, attaching to `/agent/root`; redirected stdin submits one Agent
-task. The renderer is a client of the file-native Alan OS, not a separate
+task. The renderer is a client of the file-native alan9, not a separate
 Process or lifecycle owner. `StdioDriver` remains a Shell library surface and
 is not the bare CLI entry path.
 
@@ -242,7 +242,7 @@ and `/proc` files and writes to their control surfaces.
 
 **Alan for macOS** — Retired desktop product whose App, helper and shell-core/FFI
 source has been removed (ADR-0054). Herdr is the preferred
-terminal host, not a replacement owner for Alan OS lifecycle or permissions.
+terminal host, not a replacement owner for alan9 lifecycle or permissions.
 
 **Alan Agent** — An optional Agent Workspace app for inspecting, steering, and
 organizing Agent Processes through files.
@@ -252,14 +252,14 @@ adapter. Its UI, Tools, and Agent Processes read the same authoritative tree.
 
 **Host-backed capability** — A File-Server Service whose adapter may call
 platform frameworks, XPC helpers, device SDKs, or other host-local mechanisms
-while keeping the exported file tree authoritative for Alan OS clients.
+while keeping the exported file tree authoritative for alan9 clients.
 
-**Host Mount** — A host-authorized hostfs file tree mounted at an Alan OS path
+**Host Mount** — A host-authorized hostfs file tree mounted at an alan9 path
 inside a Process namespace. The raw Host OS path belongs to the host adapter and
 authorization evidence, not to Agent Process identity.
 _Avoid_: Workspace root, Project binding
 
-**Host Mount Request** — A Process-scoped request for a Host Mount at an Alan OS
+**Host Mount Request** — A Process-scoped request for a Host Mount at an alan9
 namespace path. It carries intent and access requirements but no raw Host OS
 path, and resolves to one terminal status. The `approved` status additionally
 references a Host Mount Grant.

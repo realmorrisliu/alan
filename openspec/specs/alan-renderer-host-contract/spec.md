@@ -2,25 +2,25 @@
 
 ## Purpose
 Define what an Alan renderer host is in the Plan 9 model: a client that renders
-from Alan OS file surfaces and expresses user input as file writes and `ctl`
+from alan9 file surfaces and expresses user input as file writes and `ctl`
 commands. This replaces the retired "semantic view snapshot" pull model
 (ADR-0024); renderer hosts own presentation, never runtime truth.
 
 ## Requirements
 
-### Requirement: Renderer hosts project mounted Alan OS file state
+### Requirement: Renderer hosts project mounted alan9 file state
 
 Alan renderer hosts SHALL derive durable presentation state from files under `/proc`, `/agent`, and mounted service trees, and SHALL translate user actions into file or `ctl` writes.
 
 #### Scenario: Renderer host boundary is reviewed
 
 - **WHEN** an Alan renderer host is reviewed
-- **THEN** its durable truth source is the mounted Alan OS namespace
+- **THEN** its durable truth source is the mounted alan9 namespace
 - **AND** it owns presentation only, not Process, Agent Machine, or service truth
 
 ### Requirement: A mounted namespace is sufficient for local renderer launch
 
-A local renderer host SHALL start from a mounted Alan OS root plus a concrete Agent Process path.
+A local renderer host SHALL start from a mounted alan9 root plus a concrete Agent Process path.
 
 #### Scenario: Renderer opens a root Agent Process
 
@@ -37,7 +37,7 @@ Process.
 #### Scenario: Second renderer attaches
 - **WHEN** another renderer opens the same Agent Process
 - **THEN** it maintains independent fids and offsets
-- **AND** both observe the same Alan OS file authority
+- **AND** both observe the same alan9 file authority
 
 ### Requirement: Retention gaps are visible
 When a saved stream offset can no longer be served, the renderer SHALL surface
@@ -48,7 +48,7 @@ the gap and MUST NOT silently jump forward or claim complete continuity.
 - **THEN** it reports the missing range before continuing
 
 ### Requirement: The terminal CLI attaches to the existing Root Agent
-A local terminal renderer SHALL receive a mounted Alan OS namespace and the
+A local terminal renderer SHALL receive a mounted alan9 namespace and the
 concrete `/agent/root` Agent Process path. It MUST NOT spawn, restore, or
 supervise an Agent Process. AgentFS remains the authority for input, streamed
 output, status, and Agent UI state.
@@ -189,4 +189,4 @@ usable for subsequent input after a turn is interrupted.
 #### Scenario: Renderer exits
 - **WHEN** the user quits or closes the local renderer
 - **THEN** it closes its own file streams and restores the terminal
-- **AND** it does not stop the shared Alan OS Host or Root Agent Process
+- **AND** it does not stop the shared alan9 Host or Root Agent Process

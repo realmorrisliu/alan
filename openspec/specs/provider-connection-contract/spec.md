@@ -349,7 +349,7 @@ adapters SHALL own only native login and secret storage.
 
 ### Requirement: macOS is a Connection Service native adapter
 Platform Host adapters SHALL own approved native login and secret storage
-at the Alan OS Host and Host Command Plane boundary independently of
+at the alan9 Host and Host Command Plane boundary independently of
 the desktop product. The Rust macOS Host adapter and Host-owned credential
 stores remain the current platform boundary for standalone CLI/Host use;
 removed desktop App surfaces are neither the owner nor a prerequisite for

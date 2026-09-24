@@ -91,7 +91,7 @@ The Host adapter SHALL derive each Tool Process `SandboxSpec` from the explicit
 service-owned Host Mount grants delegated to that launch, together with its
 network policy and executable needs. The spec SHALL be attributable to that
 Tool Process and SHALL contain the complete native inputs needed by the selected
-OS sandbox backend. Agent Execution Engine, Alan Kernel, and composition roots
+OS sandbox backend. Agent Execution Engine, alan9 Kernel, and composition roots
 MUST NOT reconstruct native Host roots from Process namespace paths,
 descriptors, grant IDs, or declaration lists.
 
@@ -101,7 +101,7 @@ descriptors, grant IDs, or declaration lists.
 - **AND** the Host adapter maps only that delegated grant to native confinement
 
 #### Scenario: Virtual namespace mounts grant no native authority
-- **WHEN** a Tool Process receives only virtual Alan OS mounts and no delegated
+- **WHEN** a Tool Process receives only virtual alan9 mounts and no delegated
   Host Mount grant
 - **THEN** no composition root or backend infers a native Host root from those
   namespace paths
@@ -135,7 +135,7 @@ enforcement.
 
 ### Requirement: Linux reified namespace backend provides full read isolation
 The Linux reified namespace backend SHALL run native subprocesses inside a
-reified filesystem view derived from host-backed Alan OS mount declarations when
+reified filesystem view derived from host-backed alan9 mount declarations when
 the host has the required namespace capabilities. In this mode, undeclared host
 paths SHALL be absent from the subprocess view by default, providing full read
 isolation through filesystem reification rather than command parsing or a
@@ -151,8 +151,8 @@ sensitive-read denylist.
 - **THEN** that path is absent or unreachable from the subprocess filesystem view
 - **AND** read isolation does not depend on the command-shape parser
 
-#### Scenario: Virtual Alan OS mounts are not exposed as native paths
-- **WHEN** the Alan OS namespace contains virtual mounts such as `/agent`, `/srv`, `/proc`, or `/mnt/llm`
+#### Scenario: Virtual alan9 mounts are not exposed as native paths
+- **WHEN** the alan9 namespace contains virtual mounts such as `/agent`, `/srv`, `/proc`, or `/mnt/llm`
 - **THEN** the reified native subprocess view does not expose those mounts as host filesystem paths
 - **AND** only host-backed declarations contribute native bind mounts
 

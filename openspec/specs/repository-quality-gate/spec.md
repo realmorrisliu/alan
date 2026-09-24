@@ -16,7 +16,7 @@ clean-code, clean-architecture, or standalone-distribution check fails.
 #### Scenario: Developer runs the quality gate
 - **WHEN** a developer invokes the canonical repository quality command
 - **THEN** it checks formatting without rewriting files
-- **AND** it runs the curated Rust, source-hygiene, dependency, Alan OS absence,
+- **AND** it runs the curated Rust, source-hygiene, dependency, retired-surface absence,
   OpenSpec, and standalone CLI/Host distribution checks
 
 #### Scenario: Gate composition changes
@@ -123,7 +123,7 @@ proof of module depth or as permission for cosmetic file splitting.
 ### Requirement: Accepted dependency laws have one complete test surface
 Alan SHALL enforce accepted normal-dependency laws for Alan crates through one
 repository architecture module over Cargo's graph. The module SHALL cover
-Alan Kernel, File-Server Service crates, clients, adapters, composition owners,
+alan9 Kernel, File-Server Service crates, clients, adapters, composition owners,
 the root `alan` composition crate, and explicitly recorded transitional edges.
 The root composition crate MUST be recognized as an Alan dependency and MUST
 NOT be accepted as a downstream crate dependency.

@@ -1,7 +1,7 @@
 ## MODIFIED Requirements
 
 ### Requirement: Alan Shell is a general namespace client over aP
-Alan OS SHALL provide `alan-shell`, a client that operates the namespace only
+alan9 SHALL provide `alan-shell`, a client that operates the namespace only
 through aP (the `alan-ap` protocol): walk/list, read, write, tail, and spawn. It
 SHALL depend on the protocol alone and SHALL NOT link any file server or backend
 crate. It SHALL hold no application state beyond the namespace.
@@ -83,7 +83,7 @@ owns unified input routing and execution while reusing these command facilities.
 - **AND** Ratatui rendering remains outside `alan-shell`
 
 ### Requirement: Bare Alan attaches to the Root Agent
-Running bare `alan` SHALL start or attach to the matching dedicated Alan OS
+Running bare `alan` SHALL start or attach to the matching dedicated alan9
 Host. When stdin and stdout are terminals it SHALL attach the terminal renderer
 to the Host-managed `/agent/root`. When stdin is redirected it SHALL submit
 all stdin as one input to that Agent using the same prefix/routing contract as
@@ -114,7 +114,7 @@ Runtime or select an Agent Definition as Host startup behavior.
 - **WHEN** stdin is a terminal and stdout is not a terminal
 - **THEN** the CLI reports that interactive mode requires terminal stdout
   instead of reading stdin until EOF
-- **AND** it does not start or attach to the Alan OS Host
+- **AND** it does not start or attach to the alan9 Host
 
 #### Scenario: One-shot task fails before tape persistence
 - **WHEN** accepted work fails before its input is persisted to Tape

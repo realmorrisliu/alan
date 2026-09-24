@@ -34,7 +34,7 @@ update feed from this requirement.
 
 ### Requirement: Terminal category is separate from shell command syntax
 Alan's supported product documentation SHALL describe the terminal-neutral CLI
-and Alan OS Host without presenting a native macOS app category as the current
+and alan9 Host without presenting a native macOS app category as the current
 product. The literal `alan shell ...` command namespace remains a command
 surface, not a product or app name.
 

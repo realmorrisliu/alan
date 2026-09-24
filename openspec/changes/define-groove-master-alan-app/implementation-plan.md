@@ -17,7 +17,7 @@ the same authority.
    metadata contracts with focused tests.
 
 Exit evidence: domain tests, aP walk/read/write/clunk tests, snapshot/event
-fixtures, no dependency from domain core to Alan Kernel or SwiftUI.
+fixtures, no dependency from domain core to alan9 Kernel or SwiftUI.
 
 ## Phase 2: Durable Journal And Service Lifecycle
 

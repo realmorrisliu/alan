@@ -70,7 +70,7 @@ SHALL NOT depend on transport-specific crates or call transport-specific APIs.
   file-server handles
 
 ### Requirement: Local system root is exportable over aP
-The generic aP export/import implementation SHALL carry the Alan OS mounted
+The generic aP export/import implementation SHALL carry the alan9 mounted
 root across a Unix socket while preserving fid, typed failure, blocking stream,
 and commit-on-clunk semantics.
 

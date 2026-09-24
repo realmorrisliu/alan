@@ -8,7 +8,7 @@ Alan Shell Processes.
 
 ### Requirement: Local entry creates a Shell Process
 Local Entry Service SHALL create `/bin/alan-shell` as an ordinary Process with
-Alan OS credentials, Login Namespace Template, descriptors, cwd, PID, and
+alan9 credentials, Login Namespace Template, descriptors, cwd, PID, and
 parentage, then hand its namespace to an authorized local renderer.
 
 #### Scenario: A local client explicitly requests a Shell Process

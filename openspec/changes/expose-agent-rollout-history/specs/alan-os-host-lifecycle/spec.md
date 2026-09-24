@@ -4,8 +4,8 @@
 > draft text below is not implementation authorization; superseded desktop and
 > renderer-launch assumptions must be replaced before reactivation.
 
-### Requirement: Alan OS Host owns fatal storage-integrity transitions
-Alan OS Host SHALL provide Agent Runtime Service an internal fatal-transition
+### Requirement: alan9 Host owns fatal storage-integrity transitions
+alan9 Host SHALL provide Agent Runtime Service an internal fatal-transition
 adapter during boot whose call is synchronously non-returning. On a fatal
 storage-integrity call, the Host owner SHALL atomically close attachment and
 new-work admission, mark the boot no longer ready in memory, request Service
@@ -22,7 +22,7 @@ internal shutdown signal, it SHALL abort the process instead of returning.
 #### Scenario: Published Rollout containment reaches its absolute deadline
 - **WHEN** Agent Runtime Service signals a fatal storage-integrity failure
   because a published Rollout inode could not be quarantined
-- **THEN** the Alan OS Host owner closes attachment and new-work admission
+- **THEN** the alan9 Host owner closes attachment and new-work admission
 - **AND** the adapter requests Service Manager shutdown and enters fail-stop
   termination without awaiting the stuck storage operation
 - **AND** the adapter call never returns to Agent terminal finalization
@@ -31,4 +31,4 @@ internal shutdown signal, it SHALL abort the process instead of returning.
 #### Scenario: Internal shutdown signaling fails
 - **WHEN** the Host-owned adapter cannot deliver its internal shutdown signal
 - **THEN** it aborts the Host process without returning
-- **AND** Alan OS does not continue in a ready state with uncontained storage
+- **AND** alan9 does not continue in a ready state with uncontained storage

@@ -7,7 +7,7 @@
 ### Requirement: Groove Master is a real Alan App
 Groove Master SHALL be a bass-practice product for developing groove, pocket,
 long-form playing, and personal musical feel. It SHALL keep app-domain authority
-outside Alan Kernel and SHALL integrate through an app-owned aP file tree rather
+outside alan9 Kernel and SHALL integrate through an app-owned aP file tree rather
 than a generic environment object framework.
 
 #### Scenario: Product is described
@@ -136,10 +136,10 @@ SHALL mount its app tree at `/mnt/groove-master`. The tree SHALL expose Today,
 sessions, journal, loops, inspiration, Pocket Tracker, producer proposals,
 snapshot files, dynamic events streams, and adjacent lifecycle `ctl` files.
 
-#### Scenario: Alan OS starts Groove Master
+#### Scenario: alan9 starts Groove Master
 - **WHEN** the Groove Master service becomes ready
 - **THEN** its access-filtered handle is posted and its tree is mounted
-- **AND** Alan Kernel gains no Groove Master-specific type or persistence logic
+- **AND** alan9 Kernel gains no Groove Master-specific type or persistence logic
 
 #### Scenario: Session state changes
 - **WHEN** a client starts, marks, ends, or cancels a session

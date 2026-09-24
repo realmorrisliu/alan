@@ -10,26 +10,26 @@ the same descriptor-bounded operations.
 
 ### Requirement: Alan Apps keep domain authority above Kernel
 An Alan App SHALL own its domain model, invariants, persistence rules, and product semantics outside
-Alan Kernel. Its Alan adapter SHALL project that domain through aP without introducing app-specific
+alan9 Kernel. Its Alan adapter SHALL project that domain through aP without introducing app-specific
 Kernel primitives or a generic Object, Buffer, View, Command, Query, Subscription, or Artifact
 ontology into Kernel.
 
 #### Scenario: An app domain is integrated
-- **WHEN** an Alan App exposes its domain to Alan OS
+- **WHEN** an Alan App exposes its domain to alan9
 - **THEN** the app domain core remains the authority for domain meaning
-- **AND** Alan Kernel sees only files, directories, streams, descriptors, namespaces, mounts,
+- **AND** alan9 Kernel sees only files, directories, streams, descriptors, namespaces, mounts,
   credentials, and Processes
 
 ### Requirement: App and host services expose aP file trees
-Every Alan App service or host-backed capability exposed to Alan OS SHALL provide an aP file-server
+Every Alan App service or host-backed capability exposed to alan9 SHALL provide an aP file-server
 adapter. Platform frameworks, XPC helpers, device SDKs, databases, or private implementation calls
 MAY exist behind that adapter, but SHALL NOT be the app-facing, Tool-facing, Agent Process-facing,
-or remote Alan OS contract.
+or remote alan9 contract.
 
 #### Scenario: A host framework backs a service
 - **WHEN** a host integration uses a platform framework to implement speech, device, document, or
   other host behavior
-- **THEN** authorized Alan OS clients operate that behavior through the service's aP file tree
+- **THEN** authorized alan9 clients operate that behavior through the service's aP file tree
 - **AND** no client needs the private host call shape or an opaque capability token
 
 ### Requirement: Services rendezvous under srv and mount under mnt
@@ -99,10 +99,10 @@ NOT embed an agent engine or use a product-facing method API as the app-to-agent
 - **AND** no private result method or globally resolvable app object id is required
 
 ### Requirement: UI, Tools, and Agent Processes share the same authority tree
-Alan OS renderers, Tool Processes, and Agent Processes SHALL derive domain behavior
+alan9 renderers, Tool Processes, and Agent Processes SHALL derive domain behavior
 from the same mounted service tree. Host-local view models, caches, and snapshots MAY optimize
 presentation but SHALL remain projections and MUST NOT become a second source of domain truth. This
-requirement does not choose how any client attaches to Alan OS. An external
+requirement does not choose how any client attaches to alan9. An external
 terminal host such as Herdr need not implement aP to host Alan's terminal renderer.
 
 #### Scenario: A UI invokes an app operation
@@ -114,30 +114,30 @@ terminal host such as Herdr need not implement aP to host Alan's terminal render
 ### Requirement: Service owners define durability and retention
 The file server that owns an app or host tree SHALL define which files are durable, how writes
 commit, how restart reopens the backing tree, and how retention or garbage collection affects
-references. Alan Kernel SHALL NOT persist app state.
+references. alan9 Kernel SHALL NOT persist app state.
 
-#### Scenario: Alan OS restarts
+#### Scenario: alan9 restarts
 - **WHEN** Kernel process, namespace, and fid state is recreated after restart
 - **THEN** a durable app service reopens its own backing state and reposts its handle
 - **AND** Service Manager remounts the tree without Kernel understanding the app storage format
 
 ### Requirement: Client integration waits for the direct file boundary
-Alan OS clients SHALL integrate an app or host service through its authoritative
+alan9 clients SHALL integrate an app or host service through its authoritative
 mounted aP tree and normal Process namespace. A missing attachment, service
 tree, package mount, or binfs implementation SHALL block the dependent client
 feature rather than authorize a temporary client-facing bridge. Retired Alan
 for macOS delivery is not a prerequisite for delivering other clients.
 
 #### Scenario: Retired desktop source is not a delivery consumer
-- **WHEN** a plan for Alan OS service delivery encounters references to the
+- **WHEN** a plan for alan9 service delivery encounters references to the
   former Apple client or shell-core crates
 - **THEN** it does not treat the retired app bundle as a required client for
-  Alan OS service delivery
+  alan9 service delivery
 - **AND** any surviving platform capability uses its authoritative file or
   adapter boundary
 
 #### Scenario: Surviving client requires service state
-- **WHEN** a new Alan App feature selects a supported Alan OS client
+- **WHEN** a new Alan App feature selects a supported alan9 client
 - **THEN** its prerequisites are that client's authorized attachment and service
   tree
 - **AND** Alan for macOS packaging is not a delivery prerequisite

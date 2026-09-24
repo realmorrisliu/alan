@@ -1,14 +1,14 @@
 # local-alan-os-attachment Specification
 
 ## Purpose
-Defines channel-scoped same-user local Alan OS attachment over native aP Unix
+Defines channel-scoped same-user local alan9 attachment over native aP Unix
 sockets, including peer authorization, fid ownership, disconnect, and
 reattachment semantics.
 
 ## Requirements
 
 ### Requirement: Local attachment uses native aP wire
-The Alan OS Host SHALL export its ready namespace through the existing aP wire
+The alan9 Host SHALL export its ready namespace through the existing aP wire
 protocol on a channel-specific Unix domain socket in a platform runtime
 directory. This SHALL remain the sole local attachment transport; Alan MUST NOT
 introduce a separate management transport beside aP.
@@ -20,7 +20,7 @@ introduce a separate management transport beside aP.
 ### Requirement: Host OS peer identity ends at authorization
 The Host SHALL restrict the endpoint to the current Host OS user and validate
 peer identity. It MUST NOT project Host UID, home, cwd, or login identity into
-Alan OS credentials or namespace.
+alan9 credentials or namespace.
 
 #### Scenario: Different Host OS user connects
 - **WHEN** a peer with a different UID connects
@@ -28,7 +28,7 @@ Alan OS credentials or namespace.
 
 ### Requirement: Connections own fids, not execution identity
 Each attachment connection SHALL own independent fid lifecycle. Disconnect
-SHALL clunk those fids and MUST NOT terminate Alan OS Processes; reconnect SHALL
+SHALL clunk those fids and MUST NOT terminate alan9 Processes; reconnect SHALL
 walk stable paths and resume streams from caller-held offsets.
 
 #### Scenario: Renderer disconnects during Agent work

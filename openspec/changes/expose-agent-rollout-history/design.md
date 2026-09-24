@@ -17,10 +17,10 @@ currently contains numeric live Agent Process entries and the `root` alias.
 
 **Goals:**
 
-- Keep retained Rollouts discoverable after Process exit and Alan OS Host
+- Keep retained Rollouts discoverable after Process exit and alan9 Host
   restart.
 - Persist terminal completion in the Rollout that owns the execution evidence.
-- Expose Rollouts through a read-only Alan OS namespace surface.
+- Expose Rollouts through a read-only alan9 namespace surface.
 - Preserve `/proc` as live Process lifecycle truth.
 
 **Non-Goals:**
@@ -193,10 +193,10 @@ The current Kernel control path aborts the runner before Agent Runtime Service
 can perform cleanup, so cleanup ordering alone cannot cover code `130`.
 `ProcessRunner` therefore gains generic terminal-finalizer preparation and
 execution hooks with default no-ops. Before the committed Process becomes
-visible as running or accepts `/proc/<pid>/ctl`, Alan Kernel asks the runner to
+visible as running or accepts `/proc/<pid>/ctl`, alan9 Kernel asks the runner to
 prepare one per-Process finalizer from the committed `ProcessInvocation` and
 retains it with the runner task. For runner completion, `/proc/<pid>/ctl`, and
-Host `record_exit`, Alan Kernel serializes competing terminal paths and invokes
+Host `record_exit`, alan9 Kernel serializes competing terminal paths and invokes
 the prepared finalizer exactly once with the winning claim source and numeric
 exit code. Only a runner-completion winner carries its `ProcessOutcome`;
 control and Host winners carry none. Kernel waits for finalization before
@@ -405,7 +405,7 @@ Only published-Rollout or destination-claimed inode containment can invoke the
 fatal path. If the publication-owner fence, quarantine, or its durable
 directory commit errors or has not returned when the absolute deadline
 expires, Agent Runtime Service reports a fatal storage-integrity failure
-through an injected Alan OS Host lifecycle adapter and does not wait for the
+through an injected alan9 Host lifecycle adapter and does not wait for the
 storage operation. The Host owner
 atomically closes readiness, attachment
 admission, and new-work admission, requests Service Manager shutdown, and

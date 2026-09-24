@@ -1,21 +1,21 @@
 # plan9-kernel-substrate Specification
 
 ## Purpose
-Defines Alan Kernel as the ephemeral namespace, Process-table, `/proc`, and
+Defines alan9 Kernel as the ephemeral namespace, Process-table, `/proc`, and
 `/srv` substrate over aP, including file/stream semantics, Process creation,
 access rights, network transparency, and dependency isolation.
 ## Requirements
 ### Requirement: Kernel owns only namespace, process table, and synthetic devices
-Alan Kernel SHALL consist of exactly the namespace engine, the process table, and
+alan9 Kernel SHALL consist of exactly the namespace engine, the process table, and
 the synthetic devices `/proc` and `/srv`. The aP file-server contract
 (`FileServer` trait, fid, byte/offset stream types) SHALL live in the standalone
-`alan-ap` crate (ADR-0025 D2); Alan Kernel SHALL depend on `alan-ap` and host it,
-not own or duplicate the contract. Alan Kernel SHALL NOT model agents, LLM
+`alan-ap` crate (ADR-0025 D2); alan9 Kernel SHALL depend on `alan-ap` and host it,
+not own or duplicate the contract. alan9 Kernel SHALL NOT model agents, LLM
 providers, tape, memory, tools, skills, policy, or any higher-level product
 concept.
 
 #### Scenario: Kernel surface is reviewed
-- **WHEN** the Alan Kernel surface is reviewed
+- **WHEN** the alan9 Kernel surface is reviewed
 - **THEN** every kernel concept is one of: namespace, mount, bind, union, path,
   file, directory, byte/offset stream, fid, file-server operation, process,
   process-table entry, `/proc`, or `/srv`
@@ -30,7 +30,7 @@ concept.
 - **AND** the kernel contract is not widened to host it
 
 ### Requirement: Kernel models a single process category
-Alan Kernel SHALL model one process category, `Process`. It SHALL NOT define an
+alan9 Kernel SHALL model one process category, `Process`. It SHALL NOT define an
 `Agent Process` category. Whether a process is an agent, a service, a tool, or a
 root agent SHALL be observable only at the file and namespace layer, not as a
 kernel type.
@@ -49,7 +49,7 @@ kernel type.
   convention, not by a kernel flag
 
 ### Requirement: The file-service protocol (aP) is wire-shaped
-Alan OS SHALL define its file-service protocol — aP, the 9P analog, owned by the
+alan9 SHALL define its file-service protocol — aP, the 9P analog, owned by the
 `alan-ap` crate — so that every operation can be carried unchanged across a
 process boundary by a dumb byte transport. Operations SHALL be expressed over
 fids, paths, byte buffers, offsets, and error codes. The protocol SHALL NOT
@@ -127,7 +127,7 @@ rather than redefining framing.
 - **AND** a truncated/malformed document is rejected at commit, not acted on
 
 ### Requirement: Streams are byte/offset file kinds
-Alan Kernel SHALL model streams as named files carrying bytes with offsets.
+alan9 Kernel SHALL model streams as named files carrying bytes with offsets.
 Typed records, such as LLM events, SHALL be a byte-stream record convention
 (for example one JSON record per line) above the kernel, not a kernel type.
 Streams SHALL support read, tail, and resume from an offset, and SHALL retain
@@ -142,7 +142,7 @@ mis-replayed records).
   schema
 
 ### Requirement: Observation is a blocking read with no second event system
-Alan Kernel SHALL provide observation only as a read on a stream file that
+alan9 Kernel SHALL provide observation only as a read on a stream file that
 blocks until new bytes are available. It SHALL NOT introduce a separate
 subscription, notification, or event-bus primitive.
 
@@ -158,7 +158,7 @@ subscription, notification, or event-bus primitive.
   notification system
 
 ### Requirement: The per-process namespace is the sole capability boundary
-Alan Kernel SHALL make the per-process namespace the only capability boundary.
+alan9 Kernel SHALL make the per-process namespace the only capability boundary.
 A resource SHALL be reachable by a process if and only if it is present in that
 process's namespace or dialable through a file server already in that namespace.
 There SHALL be no global ambient addressing that bypasses the namespace.
@@ -182,7 +182,7 @@ There SHALL be no global ambient addressing that bypasses the namespace.
 - **AND** no separate global policy check is required to enforce the denial
 
 ### Requirement: Access rights separate awareness from authority
-Alan Kernel SHALL use access rights as the dimension that separates awareness
+alan9 Kernel SHALL use access rights as the dimension that separates awareness
 from authority, because a namespace tends to couple visibility with reachability.
 A tree bound read-only SHALL grant awareness (walk, read, watch) without granting
 mutation; a tree bound read-write SHALL grant authority. A process SHALL NOT
@@ -199,7 +199,7 @@ escalate a read-only mount to read-write from within its own namespace.
 - **AND** broad read-only visibility never implies write authority
 
 ### Requirement: The namespace is assembled by mount, bind, and union
-Alan Kernel SHALL assemble a namespace from mount, bind, and union operations
+alan9 Kernel SHALL assemble a namespace from mount, bind, and union operations
 over file servers. Union directories SHALL allow several sources to contribute
 entries at a single path. A child SHALL inherit a namespace from its spawner and
 SHALL be able to modify only its own namespace.
@@ -215,7 +215,7 @@ SHALL be able to modify only its own namespace.
 - **AND** other processes' namespaces are unaffected
 
 ### Requirement: The kernel is ephemeral; persistence belongs to file servers
-Alan Kernel SHALL keep the process table, namespaces, and fids as runtime state
+alan9 Kernel SHALL keep the process table, namespaces, and fids as runtime state
 that does not survive restart. Durability SHALL be a property of storage-backed
 file servers, never of the kernel.
 
@@ -231,7 +231,7 @@ file servers, never of the kernel.
 - **AND** it does not rely on a pid, which is ephemeral
 
 ### Requirement: `/proc` renders the process table as files
-Alan Kernel SHALL render the process table as files under `/proc`. Each process
+alan9 Kernel SHALL render the process table as files under `/proc`. Each process
 SHALL appear as `/proc/<pid>` with files for identity, parentage, credentials,
 namespace, status, exit state, its standard IO streams (`io/`), and a `ctl`
 control file (the generic process layout every process exposes, so control writes
@@ -276,7 +276,7 @@ NOT expose `/proc/self`.
 - **AND** subsequent clone snapshots use that same advanced live generation
 
 ### Requirement: Process creation (spawn) is an aP write via clone-via-open
-Alan Kernel SHALL expose process creation through aP, not a side API, so an
+alan9 Kernel SHALL expose process creation through aP, not a side API, so an
 aP-only client (such as Alan Shell) can launch processes with no non-file
 operation. Opening `/proc/clone` SHALL allocate a new process slot and return its
 pid at open time (clone-via-open, like `/net`'s clone returning a connection
@@ -332,7 +332,7 @@ the commit-time error.
   nor is observed by a `/proc` watcher
 
 ### Requirement: `/srv` is the bootstrap rendezvous device, access-filtered
-Alan Kernel SHALL provide `/srv` as a synthetic device where file servers post
+alan9 Kernel SHALL provide `/srv` as a synthetic device where file servers post
 mountable handles. `/srv` SHALL exist before any user-space file server so that
 servers have a rendezvous point to publish to and clients have a place to mount
 from. `/srv` SHALL NOT be an ambient backdoor: a posted handle SHALL carry access
@@ -356,7 +356,7 @@ restricted child MAY be given a filtered or absent `/srv`.
 - **AND** the denial-by-absent-mount guarantee (D6) holds
 
 #### Scenario: Boot assembles the root namespace
-- **WHEN** Alan OS boots
+- **WHEN** alan9 boots
 - **THEN** the kernel comes up with only `/proc`, `/srv`, and the namespace
   engine present
 - **AND** init / Service Manager mounts every other tree (such as `/agent`,
@@ -386,17 +386,17 @@ in-process, but the contract MUST not preclude it.
 
 ### Requirement: The kernel crate is dependency-isolated
 
-The `alan-kernel` crate SHALL depend only on `alan-ap`, the aP protocol contract. Agent execution, LLM providers, tape, memory, policy, sandboxing, renderer concerns, service implementations, and byte transports SHALL live in user-space file-server crates and adapters above Alan Kernel.
+The `alan-kernel` crate SHALL depend only on `alan-ap`, the aP protocol contract. Agent execution, LLM providers, tape, memory, policy, sandboxing, renderer concerns, service implementations, and byte transports SHALL live in user-space file-server crates and adapters above alan9 Kernel.
 
 #### Scenario: Kernel crate dependencies are audited
 
 - **WHEN** `alan-kernel` dependencies are reviewed
 - **THEN** they include `alan-ap` and exclude Agent Execution Engine, AgentFS service, provider, Memory Store, sandbox backend, renderer, and transport implementation crates
-- **AND** agents, providers, memory, and Tools appear to Alan Kernel only through Processes, descriptors, namespaces, mounts, and file-server trees
+- **AND** agents, providers, memory, and Tools appear to alan9 Kernel only through Processes, descriptors, namespaces, mounts, and file-server trees
 
 ### Requirement: Kernel boot creates the Service Manager Process
 Kernel bootstrap SHALL provide the Process and namespace primitives needed for
-Alan OS Host to create Service Manager as the first system Process. Kernel MUST
+alan9 Host to create Service Manager as the first system Process. Kernel MUST
 remain ignorant of Boot Unit, service policy, and renderer transport details.
 
 #### Scenario: Host starts Service Manager

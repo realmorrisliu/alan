@@ -5,7 +5,7 @@ Defines confined host-directory aP file servers and the projection of declared
 host mounts into Process namespaces and Tool sandbox specifications.
 ## Requirements
 ### Requirement: Host directories can be mounted as aP file trees
-Alan OS SHALL provide a host-directory-backed aP file server that exposes a
+alan9 SHALL provide a host-directory-backed aP file server that exposes a
 declared host directory as an ordinary mountable file tree. The server SHALL keep
 all file operations confined below the declared host root and SHALL return aP
 errors rather than leaking host filesystem implementation details.
@@ -29,7 +29,7 @@ errors rather than leaking host filesystem implementation details.
   removed
 
 ### Requirement: Host mount declarations project into the namespace
-Alan OS SHALL assemble host directory mounts from human/config declarations
+alan9 SHALL assemble host directory mounts from human/config declarations
 outside the agent's control. Each declaration SHALL include an aP namespace path,
 a host path, and an access level. Applying the declaration SHALL mount a
 `HostDirFs` at the namespace path with the declared `Access`.
@@ -51,7 +51,7 @@ a host path, and an access level. Applying the declaration SHALL mount a
 ### Requirement: Host files are invisible by default
 A Host directory SHALL enter a Process namespace only after explicit Host
 authorization creates a Host Mount. Kernel and Agent runtime files MUST use its
-Alan OS mount path and MUST NOT expose the raw Host path.
+alan9 mount path and MUST NOT expose the raw Host path.
 
 #### Scenario: Alan starts inside a Host directory
 - **WHEN** the CLI is launched with that directory as Host cwd
@@ -59,7 +59,7 @@ Alan OS mount path and MUST NOT expose the raw Host path.
   mounts it
 
 ### Requirement: Host Mount projection is service-mediated
-Alan OS SHALL route all runtime Host directory authorization, hostfs export,
+alan9 SHALL route all runtime Host directory authorization, hostfs export,
 live namespace projection, revocation, and sandbox derivation through Host Mount
 Service. Host renderers MAY answer native authorization requests but MUST NOT
 maintain a second grant registry.
@@ -67,11 +67,11 @@ maintain a second grant registry.
 #### Scenario: CLI authorizes a path
 - **WHEN** CLI Host Command Plane approves a Host directory
 - **THEN** its adapter returns the export to Host Mount Service
-- **AND** only the service publishes Alan OS-visible grant state
+- **AND** only the service publishes alan9-visible grant state
 
 ### Requirement: macOS is a Host Mount native adapter
 Platform Host adapters SHALL supply native directory authorization and hostfs exports
-at the Alan OS Host and Host Command Plane boundary to Host
+at the alan9 Host and Host Command Plane boundary to Host
 Mount Service independently of the desktop product. The Rust macOS Host
 adapter remains the current native authorization and export boundary for
 standalone CLI/Host use; removed desktop presenters are not the durable grant
@@ -84,7 +84,7 @@ SHALL remain the sole grant registry and projection/revocation owner.
 #### Scenario: Agent requests a read-only directory
 - **WHEN** the user approves it through an authorized macOS platform adapter
 - **THEN** Host Mount Service receives a read-only export result
-- **AND** the Agent sees only its Alan OS mount path and grant metadata
+- **AND** the Agent sees only its alan9 mount path and grant metadata
 
 #### Scenario: CLI uses the native mount adapter
 - **WHEN** the standalone CLI approves a Host Mount on macOS
