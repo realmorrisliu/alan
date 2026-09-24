@@ -335,6 +335,12 @@ wait indefinitely, guess consent or implicitly open a terminal.
 - **WHEN** a redirected command exits with a nonzero status
 - **THEN** Alan reports its correlated output and failure status without generating an explanation
 
+#### Scenario: Redirected command prints its working directory
+- **WHEN** redirected `!pwd` emits the native cwd for an explicitly delegated project
+- **THEN** stdout contains the usable public path relative to the shared cwd (`.`)
+- **AND** stdout does not expose the raw Host backing root or an `/mnt` alias
+- **AND** AgentFS and durable evidence use the same projected result
+
 #### Scenario: Clarification has no response channel
 - **WHEN** redirected execution requires a user answer after stdin ended and no response channel exists
 - **THEN** it fails with a diagnostic on stderr and nonzero exit status

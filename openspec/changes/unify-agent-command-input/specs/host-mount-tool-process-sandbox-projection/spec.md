@@ -31,11 +31,14 @@ and SHALL reject paths outside the Tool Process's delegated writable authority.
 Native sandbox-root construction SHALL remain Host-adapter implementation data.
 Raw native execution cwd/paths SHALL remain private to the Host adapter's launch
 and sandbox context. Agent context, AgentFS and correlated durable evidence SHALL
-use public project paths or opaque grant references under existing redaction and
-retention rules. Such references SHALL NOT replace capability-passed grants,
-reveal unrelated backing, or authorize reconstruction of sandbox policy. Both
-explicit user and Agent shell actions SHALL use this same boundary; `!` SHALL NOT
-imply unrestricted execution.
+use public grant-relative project paths or opaque references under existing
+redaction and retention rules. Output paths within a delegated grant SHALL be
+projected relative to that submission's shared cwd (`.` for the cwd), consistently
+for direct stdout and Agent evidence; they SHALL NOT expose the raw Host root or
+use `/mnt` aliases as a replacement. Such references SHALL NOT replace
+capability-passed grants, reveal unrelated backing, or authorize reconstruction
+of sandbox policy. Both explicit user and Agent shell actions SHALL use this same
+boundary; `!` SHALL NOT imply unrestricted execution.
 
 #### Scenario: Tool can access an approved writable grant
 - **WHEN** the Tool Process has an explicitly delegated read-write Host Mount
@@ -58,6 +61,14 @@ imply unrestricted execution.
 - **THEN** Host authority reconciliation resolves the cwd through that covering
   mount independent of grant iteration order
 - **AND** every other delegated mount remains available with its effective access
+
+#### Scenario: Native output paths remain shell-usable and private
+- **WHEN** native stdout or stderr contains a path under the delegated project
+  grant
+- **THEN** the Host adapter projects it relative to that submission's shared cwd
+- **AND** it does not expose the raw Host backing root or replace the path with an
+  `/mnt` alias
+- **AND** the same projected path is used in user output and Agent evidence
 
 #### Scenario: Process requests overlapping Host Mount projections
 - **WHEN** a Process already holds an active Host Mount projection and another

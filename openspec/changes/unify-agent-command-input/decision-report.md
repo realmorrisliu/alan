@@ -91,11 +91,11 @@ alan9 命令连接内部服务时使用调用者委托的能力，不借用权�
 和“任务已完成”；提交结果未知时不自动重复执行。
 
 Host adapter 仅在 adapter 自身的原生 spawn 与 sandbox 边界解析并使用宿主 cwd/path，
-不将其写入 Alan Process exec manifest。AgentFS、
-Machine state、Agent 可见结果与 durable evidence 延续现有 Host 路径保密和脱敏合同，
-保存公开项目路径或 opaque grant reference，不保存 backing root。逻辑挂载申请、grant
-和服务审计仍保持逻辑记录；不暴露未委托目录或虚拟服务私有存储。Engine 不维护另一份
-sandbox 根清单。
+不将其写入 Alan Process exec manifest。原生命令输出中的已授权路径统一投影为相对本次
+共享 cwd 的公开项目路径（cwd 本身为 `.`），同一投影用于交互显示、重定向 stdout、
+AgentFS 和 durable evidence；不输出 backing root 或不可用于 Host shell 的 `/mnt` 别名。
+逻辑挂载申请、grant 和服务审计仍保持逻辑记录；不暴露未委托目录或虚拟服务私有存储。
+Engine 不维护另一份 sandbox 根清单。
 
 Linux 现有 reified sandbox 要保留命令所需的原生路径身份，无需把脚本翻译到 /mnt。
 macOS/Linux 都保留既有 sandbox 和降级策略；不因透传而绕过审批或扩大权限。

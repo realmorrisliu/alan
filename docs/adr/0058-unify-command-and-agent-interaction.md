@@ -49,8 +49,10 @@ refinement hides protocol operations behind task-oriented alan9 commands. Linux/
   identified as pending rather than presented as saved project changes.
 - The Host adapter privately resolves the Process-owned grant-relative cwd to
   native execution paths. Raw backing paths remain outside AgentFS, Machine state,
-  Agent-visible results and durable evidence; those surfaces retain public project
-  paths or opaque references under existing redaction rules.
+  Agent-visible results and durable evidence. Output paths are projected to a
+  usable grant-relative path from the submission's shared cwd (`.` for that cwd),
+  consistently across user stdout and Agent evidence; raw roots and `/mnt` aliases
+  are not emitted.
 - Prefix parsing remains nonrecursive; slash controls remain explicit. `!` never
   grants additional authority. User and Agent commands share the same execution
   boundary; OS sandboxing and existing degradation rules remain applicable.

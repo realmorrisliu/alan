@@ -107,13 +107,14 @@ Do not overload native `cat`, redirect syntax, or executable names with aP looku
 The Host adapter owns grant-to-native-path resolution and supplies native cwd and
 paths only as ephemeral Host-adapter spawn/sandbox inputs, outside the Alan Process
 exec manifest. AgentFS, Machine state, Agent-visible results and durable evidence
-retain the shared grant-relative project path or opaque reference, never the raw
-backing path. This preserves
-the existing path-secrecy and redaction contracts while allowing Agent tools and
-native commands to address the same authorized files. Path strings confer no
-authority, and the engine must not build sandbox roots from them. Keep command text
-unchanged and output truthful under existing redaction; do not replace public
-project paths with unusable aP aliases.
+retain public grant-relative project paths or opaque references, never the raw
+backing path. Native output paths are projected relative to that submission's
+shared cwd (`.` for the cwd) before reaching user stdout, AgentFS or evidence, so
+the same shell-usable path is visible to the user and Agent without exposing a
+Host root or emitting an unusable `/mnt` alias. This preserves existing path
+secrecy while allowing both surfaces to address the same authorized files. Path
+strings confer no authority, and the engine must not build sandbox roots from them.
+Keep command text unchanged; redact only output paths.
 
 On Linux, an existing reified sandbox can retain isolation using authorized
 paths at their native locations. It must not require namespace-alias rewriting.
