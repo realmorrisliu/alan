@@ -11,7 +11,8 @@
   [retire-macos-client-and-standalone-cli](../archive/2026-09-20-retire-macos-client-and-standalone-cli/)。
   源码删除已由 [remove-retired-desktop-source 归档记录](../archive/2026-09-23-remove-retired-desktop-source/)
   完成，App 和 shell-core/FFI 已移除；平台安全能力继续保留。
-- 首切片已由 PR #929 实施并合并；本轮收口将同步已实现 delta 并归档，后续可靠性/体验缺口留在切片 2。
+- 首切片已由 PR #929 实施并合并，已同步实现的 delta 并归档为
+  [define-alan-programmable-client-surface](../archive/2026-09-24-define-alan-programmable-client-surface/)；后续可靠性/体验缺口留在切片 2。
 - 原路线所列 rustls 风险已由 PR #923 中的依赖修复处理，当前锁定 0.23.45，不再作为待办。
 
 ## 切片 1：一个可用 agent 闭环
