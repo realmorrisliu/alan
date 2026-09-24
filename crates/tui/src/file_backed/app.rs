@@ -18,6 +18,9 @@ use crate::composer::{Composer, ComposerKeyOutcome};
 use crate::form::FormState;
 use crate::history::{HistoryCell, PendingYieldCell, RenderOpts, RunningTool};
 use crate::reconcile::{AssistantDecision, StreamAction, StreamReconciler, UserDecision};
+use crate::transcript_ui::{
+    INLINE_PROMPT_CONTINUATION, INLINE_PROMPT_PREFIX, INLINE_WAITING_PROMPT_PREFIX,
+};
 
 use super::file_surface::{TapeRecordV1, response_text_from_content};
 use super::{MAX_COMPLETION_ROWS, MAX_COMPOSER_LINES};
@@ -893,8 +896,13 @@ impl FileBackedApp {
             .enumerate()
             .map(|(index, line)| {
                 let visual = unicode_width::UnicodeWidthStr::width(line);
-                let prefix = if index == 0 { 7 } else { 6 };
-                ((visual + prefix) / width) + 1
+                let prefix = if index == 0 {
+                    self.input_prompt_prefix()
+                } else {
+                    INLINE_PROMPT_CONTINUATION
+                };
+                let prefix_width = unicode_width::UnicodeWidthStr::width(prefix);
+                ((visual + prefix_width) / width) + 1
             })
             .sum::<usize>()
             .max(1);
@@ -906,13 +914,9 @@ impl FileBackedApp {
         let segments = self.composer.text().split('\n').collect::<Vec<_>>();
         for (idx, segment) in segments.iter().enumerate() {
             let prompt = if idx == 0 {
-                if self.pending_yield.is_some() {
-                    "alan » "
-                } else {
-                    "alan > "
-                }
+                self.input_prompt_prefix()
             } else {
-                "       "
+                INLINE_PROMPT_CONTINUATION
             };
             lines.push(Line::from(vec![
                 Span::styled(prompt, Style::default().fg(Color::Green)),
@@ -921,15 +925,19 @@ impl FileBackedApp {
         }
         if lines.is_empty() {
             lines.push(Line::from(vec![Span::styled(
-                if self.pending_yield.is_some() {
-                    "alan » "
-                } else {
-                    "alan > "
-                },
+                self.input_prompt_prefix(),
                 Style::default().fg(Color::Green),
             )]));
         }
         lines
+    }
+
+    pub(super) fn input_prompt_prefix(&self) -> &'static str {
+        if self.pending_yield.is_some() {
+            INLINE_WAITING_PROMPT_PREFIX
+        } else {
+            INLINE_PROMPT_PREFIX
+        }
     }
 }
 

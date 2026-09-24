@@ -113,6 +113,22 @@ fn inline_viewport_reflows_with_terminal_size_and_stays_screen_bounded() {
 }
 
 #[test]
+fn wrapped_multiline_prompt_keeps_its_cursor_in_the_inline_viewport() {
+    let mut app = FileBackedApp::new("/agent/root".to_string());
+    app.composer.set_text("\nx");
+
+    let height = inline_viewport_height(&app, 8, 24);
+    assert_eq!(height, 3);
+
+    let mut terminal = Terminal::new(TestBackend::new(8, height)).unwrap();
+    terminal.draw(|frame| draw(frame, &app)).unwrap();
+    assert_eq!(
+        terminal.backend().cursor_position(),
+        ratatui::layout::Position::new(0, 2)
+    );
+}
+
+#[test]
 fn multiline_unicode_paste_stays_inline_and_positions_the_cursor_by_display_width() {
     let mut app = FileBackedApp::new("/agent/root".to_string());
     app.dispatch(FileBackedEvent::Terminal(TerminalEvent::Paste(

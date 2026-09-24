@@ -25,8 +25,9 @@
   Ctrl-D detach.
 - [x] 3.2 Run the current build in an ordinary PTY and dedicated Herdr pane;
   verify a successful response, transient candidates, long-output scrollback,
-  exit/reattach, shell restoration and no replay. Error and interrupt semantics
-  remain covered by focused renderer/file-backed tests.
+  input preservation across live resize, exit/reattach, shell restoration and
+  no replay. Error and interrupt semantics remain covered by focused
+  renderer/file-backed tests.
 - [x] 3.3 Run focused tests, `just quality`, and strict OpenSpec validation.
 - [ ] 3.4 Complete current-head CI and Codex review/fix/resolve; merge, sync
   only implemented deltas, archive, and hand off unfinished model-selection

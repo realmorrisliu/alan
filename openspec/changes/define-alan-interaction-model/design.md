@@ -46,9 +46,9 @@ execution layer, or stored UI session is needed.
 - This change does not alter current routing: ordinary and `!` entries
   continue to go to the Agent; slash commands remain local. Command routing and
   intent classification are outside this renderer presentation slice.
-- `Stream` is currently append-only. This change verifies current offsets and
-  visible read failures; it does not invent a retention policy or gap-recovery
-  state that the owner cannot produce.
+- `Stream` is currently append-only. This change preserves the existing offset
+  behavior; it does not invent a retention policy or gap-recovery state that
+  the owner cannot produce.
 - Model discovery/selection is excluded here. ChatGPT's current catalog is a
   static Provider projection; the callable model is fixed by a Connection.
   The next slice must settle how a running Agent selects a different mounted

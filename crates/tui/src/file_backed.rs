@@ -955,7 +955,8 @@ fn composer_cursor_position(app: &FileBackedApp, width: usize, prompt_start: usi
     let segments = before_cursor.split('\n').collect::<Vec<_>>();
     let line_index = segments.len().saturating_sub(1);
     let line = segments.last().copied().unwrap_or_default();
-    let column = 7 + unicode_width::UnicodeWidthStr::width(line);
+    let column = unicode_width::UnicodeWidthStr::width(app.input_prompt_prefix())
+        + unicode_width::UnicodeWidthStr::width(line);
     let width = width.max(1);
     let row = prompt_start + line_index + column / width;
     ((column % width) as u16, row as u16)

@@ -1,8 +1,12 @@
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Line;
 
+pub(crate) const INLINE_PROMPT_PREFIX: &str = "alan > ";
+pub(crate) const INLINE_WAITING_PROMPT_PREFIX: &str = "alan » ";
+pub(crate) const INLINE_PROMPT_CONTINUATION: &str = "       ";
+
 pub(crate) fn style_transcript_line(line: String) -> Line<'static> {
-    let style = if line.starts_with("alan >") {
+    let style = if line.starts_with(INLINE_PROMPT_PREFIX.trim_end()) {
         Style::default()
             .fg(Color::Cyan)
             .add_modifier(Modifier::BOLD)

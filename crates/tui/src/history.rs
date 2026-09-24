@@ -6,6 +6,8 @@ use alan_agent_protocol::{
 };
 use serde_json::{Map, Value};
 
+use crate::transcript_ui::{INLINE_PROMPT_CONTINUATION, INLINE_PROMPT_PREFIX};
+
 /// Options controlling how transcript cells render.
 #[derive(Debug, Clone, Copy)]
 pub struct RenderOpts {
@@ -323,9 +325,9 @@ fn wrap_with_prefix(prefix: &str, body: &str, width: usize) -> Vec<String> {
 }
 
 fn wrap_user_prompt(body: &str, width: usize) -> Vec<String> {
-    let prompt = "alan > ";
-    let continuation = "       ";
-    let body_width = width.saturating_sub(prompt.len()).max(8);
+    let body_width = width
+        .saturating_sub(unicode_width::UnicodeWidthStr::width(INLINE_PROMPT_PREFIX))
+        .max(8);
     body.split('\n')
         .flat_map(|segment| {
             let wrapped = textwrap::wrap(segment, body_width);
@@ -338,9 +340,9 @@ fn wrap_user_prompt(body: &str, width: usize) -> Vec<String> {
         .enumerate()
         .map(|(idx, line)| {
             if idx == 0 {
-                format!("{prompt}{line}")
+                format!("{INLINE_PROMPT_PREFIX}{line}")
             } else {
-                format!("{continuation}{line}")
+                format!("{INLINE_PROMPT_CONTINUATION}{line}")
             }
         })
         .collect()
