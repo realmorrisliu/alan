@@ -8,22 +8,48 @@ use anyhow::{Context, Result};
 pub async fn attach_or_start_host(
     channel: InstallChannel,
 ) -> Result<alan_os_host::AttachedNamespace> {
-    let attachment = alan_os_host::LocalAttachment::detect(channel.descriptor().id)?;
-    if let Ok(attached) = attachment.connect().await {
-        return Ok(attached);
-    }
+    let paths = alan_os_host::HostEndpointPaths::detect(channel.descriptor().id)?;
+    let attachment = alan_os_host::LocalAttachment::new(paths.clone());
+    let mut last_error = match attachment.connect().await {
+        Ok(attached) => return Ok(attached),
+        Err(error) => {
+            if error
+                .downcast_ref::<alan_os_host::UnsupportedProcesslessAttachment>()
+                .is_some()
+            {
+                return Err(error);
+            }
+            Some(error)
+        }
+    };
 
     let executable = dedicated_host_executable(channel)?;
-    let mut start = request_platform_host_start(channel, &executable)?;
+    let mut start = if paths.has_active_host_lock()? {
+        None
+    } else {
+        Some(request_platform_host_start(channel, &executable)?)
+    };
     let mut launcher_status = None;
-    let mut last_error = None;
     let ready = tokio::time::timeout(std::time::Duration::from_secs(10), async {
         loop {
             match attachment.connect().await {
                 Ok(attached) => return Ok(attached),
-                Err(error) => last_error = Some(error),
+                Err(error) => {
+                    if error
+                        .downcast_ref::<alan_os_host::UnsupportedProcesslessAttachment>()
+                        .is_some()
+                    {
+                        return Err(error);
+                    }
+                    last_error = Some(error);
+                }
             }
-            if launcher_status.is_none() {
+            if start.is_none() && !paths.has_active_host_lock()? {
+                start = Some(request_platform_host_start(channel, &executable)?);
+            }
+            if launcher_status.is_none()
+                && let Some(start) = &mut start
+            {
                 launcher_status = start.poll_status()?;
             }
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;

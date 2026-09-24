@@ -120,7 +120,7 @@
 
 - [x] 3.1 Run focused Rust tests, the inline-TUI contract, Repository Quality
   Gate, strict OpenSpec validation, and diff checks.
-- [ ] 3.2 Complete ready/Codex review, root-cause fixes and resolution, and all
+- [x] 3.2 Complete ready/Codex review, root-cause fixes and resolution, and all
   current-head checks; then merge the implementation.
-- [ ] 3.3 Sync only implemented deltas. Before archiving, hand any reliability
+- [x] 3.3 Sync only implemented deltas. Before archiving, hand any reliability
   work revealed by acceptance to an active change and keep the roadmap link live.

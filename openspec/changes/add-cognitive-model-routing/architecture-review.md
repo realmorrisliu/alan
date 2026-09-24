@@ -4,6 +4,13 @@
 
 状态：非规范性审查报告。本文记录证据、用户已明确的产品方向，以及待进入正式 OpenSpec delta / ADR 的建议；不修改现有规范的效力，不授权执行旧 change 的任务。与本目录 `research-jev-and-fx.md` 配套阅读。
 
+更新（2026-09-24）：本文后续分节中的任务计数、入口与旧 delta 发现是
+2026-09-19 的审查快照。桌面源码退役已合并归档，首个终端 Agent
+tracer bullet 已由 PR #929 合并；当前顺序与未完成项以
+[`next-planning.md`](next-planning.md) 和
+[`define-alan-programmable-client-surface` 归档](../archive/2026-09-24-define-alan-programmable-client-surface/)
+为准。
+
 ## 1. 结论
 
 Alan 值得继续的核心是 **file-native、可编程、有明确权限边界的个人计算环境**，而不是一个自有终端 App，也不是两层聊天模型包装器。
@@ -159,7 +166,7 @@ macOS 客户端退役后，更没有理由为其保留专属 launch bypass。
 
 ### F6 · P1：实时 Process IO 与 Local Entry 回收尚不完整
 
-`kernel/src/procfs/file_server.rs:588–591` 等 runner 完成后一次性追加输出，不满足 fx 式实时 shell。`define-alan-programmable-client-surface/design.md:141–174` 已规划 incremental sink，应复用该方向而不是在 TUI 开第二条 stdout 真相通道。
+`kernel/src/procfs/file_server.rs:588–591` 等 runner 完成后一次性追加输出，不满足 fx 式实时 shell。该审查时的旧 programmable-client proposal 已被首个 tracer bullet 取代；PR #929 只交付 AgentFS file-backed 输出路径，不宣称一般 Shell Process 的实时输出与 Local Entry retention 已完成。后续缺口见 `next-planning.md` 的切片 2。
 
 `local_entry.rs:30,99–142,208–218` 使用持续增加的 BTreeMap；drain 标记退出但未回收/限制条目。与 `local-entry-service/spec.md:16–18` 的 bounded state 承诺不符。需在 owning lifecycle slice 补 retention/tombstone 上限。
 
@@ -305,7 +312,7 @@ ADR 应记录历史决策及显式 supersession，不静默重写当年的事实
 | `verify-macos-managed-user-pty` | 0/9 | 客户端 PTY 验证目标取消；若承担安全执行前提，迁入 OS sandbox 验证，不继续为旧 UI 建账户 |
 | `define-updf-product-umbrella` | 0/20 | 暂缓；撤销 Alan for macOS preview 假设，包格式/domain 与具体 viewer 分离，不作为核心认知前置 |
 | `define-groove-master-alan-app` | 0/19 | 暂缓并重定消费者；独立 domain/file-server 思想可保留，但不能再计划 Alan for macOS native client |
-| `define-alan-programmable-client-surface` | 0/33 | 保留 shared grammar、增量 IO 与 package/binfs 边界；拆出可先交付的 IO/evaluator slice，不让整个 Acme 可编程 UI 阻塞 Herdr 首版 |
+| `define-alan-programmable-client-surface` | 0/33（2026-09-19 快照） | 后续重写为最小 TTY/one-shot Agent tracer bullet，PR #929 已合并；归档记录与剩余切片见上方链接和当前 roadmap |
 | `add-macos-shell-component-system` | 1/23 | 取消，不继续为退役客户端建组件系统 |
 | `add-alan-voice-mvp` | 0/18 | 当前 macOS Hold-to-Talk UI 方案停止；仅在真实终端/外部输入需求出现后重提 Voice Service adapter，Jev 不替代 ASR |
 | `spike-macos-matter-controller` | 0/17 | 现有 App-hosted spike 暂停；有具体硬件需求再作为平台 adapter 独立验证，不与此次核心重构绑定 |

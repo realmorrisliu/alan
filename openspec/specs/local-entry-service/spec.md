@@ -11,8 +11,8 @@ Local Entry Service SHALL create `/bin/alan-shell` as an ordinary Process with
 Alan OS credentials, Login Namespace Template, descriptors, cwd, PID, and
 parentage, then hand its namespace to an authorized local renderer.
 
-#### Scenario: macOS requests local entry
-- **WHEN** Host transport has authorized the peer
+#### Scenario: A local client explicitly requests a Shell Process
+- **WHEN** Host transport has authorized the peer and the client requests a Shell Process
 - **THEN** Local Entry Service creates a Shell Process
 - **AND** commands launched by the Shell become child Processes
 

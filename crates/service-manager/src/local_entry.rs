@@ -75,6 +75,22 @@ impl LocalEntryService {
         Ok(())
     }
 
+    /// Returns a local-client namespace without allocating a Shell Process.
+    /// `/proc` is read-only because this client has no Process parent for clones.
+    pub fn namespace_for_local_client(&self) -> Arc<MountFs> {
+        let namespace = LiveNamespace::new(self.login_namespace.snapshot().child());
+        namespace.replace_mount(
+            "/proc",
+            alan_ap::InProcessTransport::new(Arc::new(self.procfs.for_live_spawner(
+                None,
+                namespace.clone(),
+                Credentials::user("alan"),
+            ))),
+            Access::ReadOnly,
+        );
+        Arc::new(MountFs::from_live_namespace(namespace))
+    }
+
     pub async fn handoff(&self, entry_id: &str) -> Option<(Pid, Arc<MountFs>)> {
         let state = self.state.lock().await;
         let entry = state.entries.get(entry_id)?;

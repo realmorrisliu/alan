@@ -7,6 +7,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use alan_ap::{ImportedFileServer, InProcessTransport, export_file_server};
+use alan_kernel::MountFs;
 use anyhow::{Context, Result, bail, ensure};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
@@ -20,6 +21,8 @@ use alan_service_manager::{BOOT_ID_PATH, BOOT_STATE_PATH, ServiceManager};
 use crate::HostBootConfig;
 
 const STATUS_VERSION: u16 = 1;
+const LOCAL_ATTACHMENT_PROTOCOL_VERSION: u16 = 2;
+const LEGACY_LOCAL_ATTACHMENT_PROTOCOL_VERSION: u16 = 1;
 const SOCKET_FILE: &str = "namespace.ap.sock";
 const STATUS_FILE: &str = "host.json";
 const LOCK_FILE: &str = "host.lock";
@@ -29,7 +32,9 @@ const MAX_LOCAL_REQUEST_BYTES: usize = 64 * 1024;
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
 enum LocalRequest {
+    // Keep the original operation's Shell Process behavior for older clients.
     Attach,
+    AttachClient,
     ApproveHostMount {
         request_id: String,
         host_path: PathBuf,
@@ -119,6 +124,36 @@ impl HostEndpointPaths {
         status.validate_for(self)?;
         Ok(status)
     }
+
+    /// Whether another Host currently holds the singleton lock, without creating it.
+    pub fn has_active_host_lock(&self) -> Result<bool> {
+        let file = match OpenOptions::new()
+            .read(true)
+            .write(true)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(&self.lock)
+        {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(error) => {
+                return Err(error)
+                    .with_context(|| format!("open Host singleton lock {}", self.lock.display()));
+            }
+        };
+        verify_owned_private_file(&self.lock, false)?;
+        // SAFETY: file owns a valid descriptor for the lifetime of the lock probe.
+        let result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+        if result == 0 {
+            Ok(false)
+        } else {
+            let error = std::io::Error::last_os_error();
+            if matches!(error.raw_os_error(), Some(libc::EWOULDBLOCK)) {
+                Ok(true)
+            } else {
+                Err(error).context("probe Host singleton lock")
+            }
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -131,6 +166,8 @@ pub enum HostReadiness {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct HostStatus {
     pub version: u16,
+    #[serde(default = "legacy_local_attachment_protocol_version")]
+    pub local_attachment_protocol_version: u16,
     pub channel_id: String,
     pub boot_id: Uuid,
     pub pid: u32,
@@ -139,6 +176,24 @@ pub struct HostStatus {
 }
 
 impl HostStatus {
+    /// Whether this Host supports processless local client attachments.
+    pub fn supports_processless_attachment(&self) -> bool {
+        self.local_attachment_protocol_version >= LOCAL_ATTACHMENT_PROTOCOL_VERSION
+    }
+
+    /// Returns an actionable error when the Host needs an explicit restart.
+    pub fn ensure_processless_attachment_supported(
+        &self,
+    ) -> std::result::Result<(), UnsupportedProcesslessAttachment> {
+        if self.supports_processless_attachment() {
+            Ok(())
+        } else {
+            Err(UnsupportedProcesslessAttachment {
+                version: self.local_attachment_protocol_version,
+            })
+        }
+    }
+
     fn validate_for(&self, paths: &HostEndpointPaths) -> Result<()> {
         ensure!(
             self.version == STATUS_VERSION,
@@ -152,6 +207,28 @@ impl HostStatus {
         ensure!(self.socket == paths.socket, "Host status socket mismatch");
         Ok(())
     }
+}
+
+/// Error returned when a running Host cannot accept a processless attachment.
+#[derive(Debug)]
+pub struct UnsupportedProcesslessAttachment {
+    version: u16,
+}
+
+impl std::fmt::Display for UnsupportedProcesslessAttachment {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "Alan OS Host does not support processless attachment (local protocol {}); run `alan host stop` and retry",
+            self.version
+        )
+    }
+}
+
+impl std::error::Error for UnsupportedProcesslessAttachment {}
+
+fn legacy_local_attachment_protocol_version() -> u16 {
+    LEGACY_LOCAL_ATTACHMENT_PROTOCOL_VERSION
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -197,6 +274,7 @@ impl AlanOsHost {
 
         let status = HostStatus {
             version: STATUS_VERSION,
+            local_attachment_protocol_version: LOCAL_ATTACHMENT_PROTOCOL_VERSION,
             channel_id: paths.channel_id.clone(),
             boot_id: service_manager.boot_id(),
             pid: std::process::id(),
@@ -246,15 +324,17 @@ impl AlanOsHost {
                                     .map_err(|error| anyhow::anyhow!(
                                         "create local Shell entry: {error:?}"
                                     ))?;
-                                let result = export_file_server(
-                                    namespace.clone(),
-                                    BufReader::new(read),
+                                serve_namespace_attachment(
+                                    namespace,
+                                    Some((local_entry, entry_id)),
+                                    read,
                                     write,
                                 )
-                                .await;
-                                namespace.clunk_all().await;
-                                let _ = local_entry.drain_entry(&entry_id).await;
-                                result.map_err(Into::into)
+                                .await
+                            }
+                            LocalRequest::AttachClient => {
+                                let namespace = local_entry.namespace_for_local_client();
+                                serve_namespace_attachment(namespace, None, read, write).await
                             }
                             LocalRequest::ApproveHostMount { request_id, host_path } => {
                                 let result = crate::host_mounts::approve_host_mount(
@@ -346,18 +426,38 @@ impl LocalAttachment {
     }
 
     pub async fn connect(&self) -> Result<AttachedNamespace> {
-        let status = self.paths.read_status()?;
-        ensure!(
-            status.readiness == HostReadiness::Ready,
-            "Alan OS Host is not ready"
-        );
+        self.connect_with_request(LocalRequest::AttachClient, true)
+            .await
+    }
+
+    /// Starts a local Shell Process and attaches to its Login Namespace.
+    pub async fn connect_shell_process(&self) -> Result<AttachedNamespace> {
+        self.connect_with_request(LocalRequest::Attach, false).await
+    }
+
+    async fn connect_with_request(
+        &self,
+        request: LocalRequest,
+        requires_processless_attachment: bool,
+    ) -> Result<AttachedNamespace> {
         tokio::time::timeout(ATTACHMENT_CONNECT_TIMEOUT, async {
             let mut stream = UnixStream::connect(&self.paths.socket)
                 .await
                 .with_context(|| {
                     format!("attach to Alan OS Host at {}", self.paths.socket.display())
                 })?;
-            write_local_request(&mut stream, &LocalRequest::Attach).await?;
+            let status = self.paths.read_status()?;
+            ensure!(
+                status.readiness == HostReadiness::Ready,
+                "Alan OS Host is not ready"
+            );
+            if requires_processless_attachment
+                && !status.supports_processless_attachment()
+                && self.paths.has_active_host_lock()?
+            {
+                status.ensure_processless_attachment_supported()?;
+            }
+            write_local_request(&mut stream, &request).await?;
             let (read, write) = stream.into_split();
             let imported = Arc::new(ImportedFileServer::new(BufReader::new(read), write));
             let root = InProcessTransport::new(imported);
@@ -389,6 +489,24 @@ impl LocalAttachment {
             )
         })?
     }
+}
+
+async fn serve_namespace_attachment<R, W>(
+    namespace: Arc<MountFs>,
+    entry: Option<(Arc<alan_service_manager::LocalEntryService>, String)>,
+    read: R,
+    write: W,
+) -> Result<()>
+where
+    R: tokio::io::AsyncRead + Send + Unpin + 'static,
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    let result = export_file_server(namespace.clone(), BufReader::new(read), write).await;
+    namespace.clunk_all().await;
+    if let Some((local_entry, entry_id)) = entry {
+        let _ = local_entry.drain_entry(&entry_id).await;
+    }
+    result.map_err(Into::into)
 }
 
 /// Same-user native Host commands. Raw Host paths never enter the Alan OS namespace.
@@ -734,7 +852,9 @@ pub async fn run_host_process(channel_id: &str) -> Result<()> {
 /// describe the same live boot.
 pub async fn request_host_stop(paths: &HostEndpointPaths) -> Result<HostStatus> {
     let mut status = paths.read_status()?;
-    let attachment = LocalAttachment::new(paths.clone()).connect().await?;
+    let attachment = LocalAttachment::new(paths.clone())
+        .connect_shell_process()
+        .await?;
     ensure!(
         attachment.boot_id == status.boot_id,
         "refusing to stop a Host whose boot identity changed"
@@ -763,10 +883,23 @@ mod tests {
     use super::*;
 
     #[test]
+    fn local_attach_wire_ops_keep_legacy_and_processless_semantics_distinct() {
+        assert_eq!(
+            serde_json::to_value(LocalRequest::Attach).unwrap(),
+            serde_json::json!({"op": "attach"})
+        );
+        assert_eq!(
+            serde_json::to_value(LocalRequest::AttachClient).unwrap(),
+            serde_json::json!({"op": "attach_client"})
+        );
+    }
+
+    #[test]
     fn host_status_rejects_zero_pid() {
         let paths = HostEndpointPaths::from_runtime_dir(&std::env::temp_dir(), "test").unwrap();
         let status = HostStatus {
             version: STATUS_VERSION,
+            local_attachment_protocol_version: LOCAL_ATTACHMENT_PROTOCOL_VERSION,
             channel_id: paths.channel_id.clone(),
             boot_id: Uuid::new_v4(),
             pid: 0,
@@ -779,4 +912,50 @@ mod tests {
             "Host status pid must be positive"
         );
     }
+
+    #[test]
+    fn legacy_host_status_requires_an_explicit_restart_for_processless_attach() {
+        let paths = HostEndpointPaths::from_runtime_dir(&std::env::temp_dir(), "test").unwrap();
+        let status: HostStatus = serde_json::from_value(serde_json::json!({
+            "version": STATUS_VERSION,
+            "channel_id": paths.channel_id,
+            "boot_id": Uuid::new_v4(),
+            "pid": 1,
+            "readiness": "ready",
+            "socket": paths.socket,
+        }))
+        .unwrap();
+
+        assert_eq!(
+            status.local_attachment_protocol_version,
+            LEGACY_LOCAL_ATTACHMENT_PROTOCOL_VERSION
+        );
+        assert!(!status.supports_processless_attachment());
+        assert_eq!(
+            status
+                .ensure_processless_attachment_supported()
+                .unwrap_err()
+                .to_string(),
+            "Alan OS Host does not support processless attachment (local protocol 1); run `alan host stop` and retry"
+        );
+    }
+
+    #[test]
+    fn host_lock_probe_does_not_create_a_missing_lock_and_detects_a_running_host() {
+        let runtime = tempfile::tempdir().unwrap();
+        let paths = HostEndpointPaths::from_runtime_dir(runtime.path(), "test").unwrap();
+
+        assert!(!paths.has_active_host_lock().unwrap());
+        assert!(!paths.lock.exists());
+
+        std::fs::create_dir_all(&paths.root).unwrap();
+        let lock = SingletonLock::acquire(&paths.lock).unwrap();
+        assert!(paths.has_active_host_lock().unwrap());
+        drop(lock);
+        assert!(!paths.has_active_host_lock().unwrap());
+    }
 }
+
+#[cfg(test)]
+#[path = "local_regression_tests.rs"]
+mod local_regression_tests;
