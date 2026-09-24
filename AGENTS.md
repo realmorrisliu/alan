@@ -9,8 +9,8 @@ Use these names consistently in code, specs, docs, UI copy, and reviews.
 | Name | Meaning |
 | --- | --- |
 | Alan | The product: a programmable personal computing environment. |
-| Alan OS | Alan Kernel, file-server system services, Service Manager, Root Agent Process, Agent Runtime Service, hosts, and app integration conventions. |
-| Alan Kernel / `alan-kernel` | Namespace and mounts, paths, files, descriptors, rights, credentials, Process table, `/proc`, and `/srv`. |
+| alan9 | alan9 Kernel, file-server system services, Service Manager, Root Agent Process, Agent Runtime Service, hosts, and app integration conventions. |
+| alan9 Kernel / `alan-kernel` | Namespace and mounts, paths, files, descriptors, rights, credentials, Process table, `/proc`, and `/srv`. |
 | Standard Namespace | `/proc`, `/agent`, `/srv`, `/bin`, `/lib`, `/man`, and `/mnt`. |
 | Service Manager | The system Process that starts and supervises services and boot units. |
 | File-Server Service | A long-running Process that exports a mountable file tree. |
@@ -22,7 +22,7 @@ Use these names consistently in code, specs, docs, UI copy, and reviews.
 | Agent Process | An ordinary Process recognized by its AgentFS file layout. `/proc/<pid>` is lifecycle truth; `/agent/<pid>` is its agent view. |
 | Root Agent Process | The always-available root of the agent process tree, surfaced through `/agent/root`. |
 | Agent Executable | An executable bound into `/bin` that creates an Agent Process when spawned. |
-| Tool | A reusable executable in the Alan OS command namespace. |
+| Tool | A reusable executable in the alan9 command namespace. |
 | Skill | A manual-like knowledge package passed to Agent Processes by descriptor. |
 | Memory Stores | File trees that own personal, continuity, app, and mounted-domain memory. |
 | Alan Agent | An optional Agent Workspace app that inspects and steers Agent Processes through files. |
@@ -33,10 +33,10 @@ Use these names consistently in code, specs, docs, UI copy, and reviews.
 
 ## Architecture rules
 
-Move touched code toward the accepted Alan OS ownership model recorded in
+Move touched code toward the accepted alan9 ownership model recorded in
 OpenSpec and the ADRs.
 
-- Alan Kernel depends only on aP among Alan crates.
+- alan9 Kernel depends only on aP among Alan crates.
 - Process owns lifecycle and identity.
 - Agent Machine owns tape and transition-local state.
 - AgentFS owns agent IO, requests, actions, and machine files.
@@ -71,7 +71,7 @@ following mixed-capability direction; typed evaluation is not implemented yet:
 The Agent Execution Engine currently implements a generation/Tool loop, not
 the entire target above. Namespace Tape is currently a text projection;
 rollout/checkpoint recovery must not be equated with that projection alone.
-The engine is not Alan Kernel or Alan OS itself.
+The engine is not alan9 Kernel or alan9 itself.
 
 ## Current repository structure
 
@@ -178,7 +178,7 @@ Host-private backing is channel-isolated:
 ```
 
 Agent Definitions and Skills resolve only from explicit descriptors or
-installed Alan OS references. A definition tree may contain `agent.toml`,
+installed alan9 references. A definition tree may contain `agent.toml`,
 `persona/`, `skills/`, and `policy.yaml`; no Host-directory overlay is inferred.
 Generated runtime evidence and Memory Store data belong to their owning System
 Store services, never to a Host project directory.
