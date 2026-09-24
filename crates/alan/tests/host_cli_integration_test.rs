@@ -54,6 +54,11 @@ async fn cli_exit_detaches_without_stopping_the_host_or_root_agent() {
         let _ = shutdown_request.await;
     }));
 
+    let observer = LocalAttachment::new(paths.clone()).connect().await.unwrap();
+    let observer_shell = alan_shell::Shell::new(observer.root.clone());
+    let processes_before = observer_shell.ls("/proc").await.unwrap();
+    assert!(observer_shell.write("/proc/clone", b"").await.is_err());
+
     let temporary_root = runtime.path().to_owned();
     let output = tokio::task::spawn_blocking(move || {
         let mut child = Command::new(env!("CARGO_BIN_EXE_alan"))
@@ -72,11 +77,43 @@ async fn cli_exit_detaches_without_stopping_the_host_or_root_agent() {
     .unwrap();
     assert!(output.status.success(), "{output:?}");
 
-    let attachment = LocalAttachment::new(paths).connect().await.unwrap();
-    let shell = alan_shell::Shell::new(attachment.root);
-    assert!(shell.ls("/agent/root").await.is_ok());
-    assert_eq!(shell.cat("/proc/1/status").await.unwrap(), b"running\n");
+    let processes_after = observer_shell.ls("/proc").await.unwrap();
+    let added_processes = processes_after
+        .iter()
+        .filter(|pid| !processes_before.contains(pid))
+        .collect::<Vec<_>>();
+    let mut added_process_details = Vec::new();
+    for pid in added_processes {
+        let parent = String::from_utf8(
+            observer_shell
+                .cat(&format!("/proc/{pid}/parent"))
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        let credentials = String::from_utf8(
+            observer_shell
+                .cat(&format!("/proc/{pid}/credentials"))
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        added_process_details.push(format!(
+            "pid={pid}, parent={parent}, credentials={credentials}"
+        ));
+    }
+    assert_eq!(
+        processes_after, processes_before,
+        "bare `alan` must not allocate a hidden Shell Process: {added_process_details:?}"
+    );
+    assert!(observer_shell.ls("/agent/root").await.is_ok());
+    assert_eq!(
+        observer_shell.cat("/proc/1/status").await.unwrap(),
+        b"running\n"
+    );
 
+    drop(observer_shell);
+    drop(observer);
     let _ = shutdown.send(());
     server.await.unwrap().unwrap();
 }

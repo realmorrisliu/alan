@@ -410,7 +410,10 @@ async fn shell_client_exit_detaches_without_stopping_host_or_root_agent() {
         tokio::spawn(async move { host.serve_until(shutdown_request.cancelled_owned()).await });
 
     {
-        let attachment = LocalAttachment::new(paths.clone()).connect().await.unwrap();
+        let attachment = LocalAttachment::new(paths.clone())
+            .connect_shell_process()
+            .await
+            .unwrap();
         let driver = alan_shell::StdioDriver::new(alan_shell::Shell::new(attachment.root));
         driver
             .run(tokio::io::BufReader::new(&b"exit\n"[..]), tokio::io::sink())

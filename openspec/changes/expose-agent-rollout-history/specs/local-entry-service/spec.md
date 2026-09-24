@@ -18,8 +18,8 @@ MUST NOT publish the launch capability through `/srv` or include it in any
 child Process namespace template. Ordinary Process handles SHALL NOT consume
 the renderer reserve.
 
-#### Scenario: macOS requests local entry
-- **WHEN** Host transport has authorized the peer
+#### Scenario: A local client explicitly requests a Shell Process
+- **WHEN** Host transport has authorized the peer and the client requests a Shell Process
 - **THEN** Local Entry Service creates a Shell Process
 - **AND** commands launched by the Shell become child Processes
 - **AND** the renderer attachment view can open

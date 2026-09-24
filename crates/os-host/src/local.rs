@@ -7,6 +7,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use alan_ap::{ImportedFileServer, InProcessTransport, export_file_server};
+use alan_kernel::MountFs;
 use anyhow::{Context, Result, bail, ensure};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
@@ -30,6 +31,7 @@ const MAX_LOCAL_REQUEST_BYTES: usize = 64 * 1024;
 #[serde(tag = "op", rename_all = "snake_case")]
 enum LocalRequest {
     Attach,
+    AttachShell,
     ApproveHostMount {
         request_id: String,
         host_path: PathBuf,
@@ -240,21 +242,23 @@ impl AlanOsHost {
                         let (mut read, mut write) = stream.into_split();
                         match read_local_request(&mut read).await? {
                             LocalRequest::Attach => {
+                                let namespace = local_entry.namespace_for_local_client();
+                                serve_namespace_attachment(namespace, None, read, write).await
+                            }
+                            LocalRequest::AttachShell => {
                                 let (entry_id, _, namespace) = local_entry
                                     .create_and_handoff()
                                     .await
                                     .map_err(|error| anyhow::anyhow!(
                                         "create local Shell entry: {error:?}"
                                     ))?;
-                                let result = export_file_server(
-                                    namespace.clone(),
-                                    BufReader::new(read),
+                                serve_namespace_attachment(
+                                    namespace,
+                                    Some((local_entry, entry_id)),
+                                    read,
                                     write,
                                 )
-                                .await;
-                                namespace.clunk_all().await;
-                                let _ = local_entry.drain_entry(&entry_id).await;
-                                result.map_err(Into::into)
+                                .await
                             }
                             LocalRequest::ApproveHostMount { request_id, host_path } => {
                                 let result = crate::host_mounts::approve_host_mount(
@@ -346,6 +350,15 @@ impl LocalAttachment {
     }
 
     pub async fn connect(&self) -> Result<AttachedNamespace> {
+        self.connect_with_request(LocalRequest::Attach).await
+    }
+
+    /// Starts a local Shell Process and attaches to its Login Namespace.
+    pub async fn connect_shell_process(&self) -> Result<AttachedNamespace> {
+        self.connect_with_request(LocalRequest::AttachShell).await
+    }
+
+    async fn connect_with_request(&self, request: LocalRequest) -> Result<AttachedNamespace> {
         let status = self.paths.read_status()?;
         ensure!(
             status.readiness == HostReadiness::Ready,
@@ -357,7 +370,7 @@ impl LocalAttachment {
                 .with_context(|| {
                     format!("attach to Alan OS Host at {}", self.paths.socket.display())
                 })?;
-            write_local_request(&mut stream, &LocalRequest::Attach).await?;
+            write_local_request(&mut stream, &request).await?;
             let (read, write) = stream.into_split();
             let imported = Arc::new(ImportedFileServer::new(BufReader::new(read), write));
             let root = InProcessTransport::new(imported);
@@ -389,6 +402,24 @@ impl LocalAttachment {
             )
         })?
     }
+}
+
+async fn serve_namespace_attachment<R, W>(
+    namespace: Arc<MountFs>,
+    entry: Option<(Arc<alan_service_manager::LocalEntryService>, String)>,
+    read: R,
+    write: W,
+) -> Result<()>
+where
+    R: tokio::io::AsyncRead + Send + Unpin + 'static,
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    let result = export_file_server(namespace.clone(), BufReader::new(read), write).await;
+    namespace.clunk_all().await;
+    if let Some((local_entry, entry_id)) = entry {
+        let _ = local_entry.drain_entry(&entry_id).await;
+    }
+    result.map_err(Into::into)
 }
 
 /// Same-user native Host commands. Raw Host paths never enter the Alan OS namespace.
