@@ -10,10 +10,18 @@ pub async fn attach_or_start_host(
 ) -> Result<alan_os_host::AttachedNamespace> {
     let paths = alan_os_host::HostEndpointPaths::detect(channel.descriptor().id)?;
     let attachment = alan_os_host::LocalAttachment::new(paths.clone());
-    ensure_ready_host_supports_processless_attachment(&paths)?;
-    if let Ok(attached) = attachment.connect().await {
-        return Ok(attached);
-    }
+    let mut last_error = match attachment.connect().await {
+        Ok(attached) => return Ok(attached),
+        Err(error) => {
+            if error
+                .downcast_ref::<alan_os_host::UnsupportedProcesslessAttachment>()
+                .is_some()
+            {
+                return Err(error);
+            }
+            Some(error)
+        }
+    };
 
     let executable = dedicated_host_executable(channel)?;
     let mut start = if paths.has_active_host_lock()? {
@@ -22,13 +30,17 @@ pub async fn attach_or_start_host(
         Some(request_platform_host_start(channel, &executable)?)
     };
     let mut launcher_status = None;
-    let mut last_error = None;
     let ready = tokio::time::timeout(std::time::Duration::from_secs(10), async {
         loop {
             match attachment.connect().await {
                 Ok(attached) => return Ok(attached),
                 Err(error) => {
-                    ensure_ready_host_supports_processless_attachment(&paths)?;
+                    if error
+                        .downcast_ref::<alan_os_host::UnsupportedProcesslessAttachment>()
+                        .is_some()
+                    {
+                        return Err(error);
+                    }
                     last_error = Some(error);
                 }
             }
@@ -53,17 +65,6 @@ pub async fn attach_or_start_host(
             .map(|error| error.to_string())
             .unwrap_or_else(|| "no attachment diagnostic".to_string())
     )
-}
-
-fn ensure_ready_host_supports_processless_attachment(
-    paths: &alan_os_host::HostEndpointPaths,
-) -> Result<()> {
-    if let Ok(status) = paths.read_status()
-        && status.readiness == alan_os_host::HostReadiness::Ready
-    {
-        status.ensure_processless_attachment_supported()?;
-    }
-    Ok(())
 }
 
 struct HostStartAttempt {

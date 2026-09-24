@@ -182,13 +182,16 @@ impl HostStatus {
     }
 
     /// Returns an actionable error when the Host needs an explicit restart.
-    pub fn ensure_processless_attachment_supported(&self) -> Result<()> {
-        ensure!(
-            self.supports_processless_attachment(),
-            "Alan OS Host does not support processless attachment (local protocol {}); run `alan host stop` and retry",
-            self.local_attachment_protocol_version
-        );
-        Ok(())
+    pub fn ensure_processless_attachment_supported(
+        &self,
+    ) -> std::result::Result<(), UnsupportedProcesslessAttachment> {
+        if self.supports_processless_attachment() {
+            Ok(())
+        } else {
+            Err(UnsupportedProcesslessAttachment {
+                version: self.local_attachment_protocol_version,
+            })
+        }
     }
 
     fn validate_for(&self, paths: &HostEndpointPaths) -> Result<()> {
@@ -205,6 +208,24 @@ impl HostStatus {
         Ok(())
     }
 }
+
+/// Error returned when a running Host cannot accept a processless attachment.
+#[derive(Debug)]
+pub struct UnsupportedProcesslessAttachment {
+    version: u16,
+}
+
+impl std::fmt::Display for UnsupportedProcesslessAttachment {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "Alan OS Host does not support processless attachment (local protocol {}); run `alan host stop` and retry",
+            self.version
+        )
+    }
+}
+
+impl std::error::Error for UnsupportedProcesslessAttachment {}
 
 fn legacy_local_attachment_protocol_version() -> u16 {
     LEGACY_LOCAL_ATTACHMENT_PROTOCOL_VERSION
@@ -419,20 +440,23 @@ impl LocalAttachment {
         request: LocalRequest,
         requires_processless_attachment: bool,
     ) -> Result<AttachedNamespace> {
-        let status = self.paths.read_status()?;
-        ensure!(
-            status.readiness == HostReadiness::Ready,
-            "Alan OS Host is not ready"
-        );
-        if requires_processless_attachment {
-            status.ensure_processless_attachment_supported()?;
-        }
         tokio::time::timeout(ATTACHMENT_CONNECT_TIMEOUT, async {
             let mut stream = UnixStream::connect(&self.paths.socket)
                 .await
                 .with_context(|| {
                     format!("attach to Alan OS Host at {}", self.paths.socket.display())
                 })?;
+            let status = self.paths.read_status()?;
+            ensure!(
+                status.readiness == HostReadiness::Ready,
+                "Alan OS Host is not ready"
+            );
+            if requires_processless_attachment
+                && !status.supports_processless_attachment()
+                && self.paths.has_active_host_lock()?
+            {
+                status.ensure_processless_attachment_supported()?;
+            }
             write_local_request(&mut stream, &request).await?;
             let (read, write) = stream.into_split();
             let imported = Arc::new(ImportedFileServer::new(BufReader::new(read), write));
@@ -930,24 +954,8 @@ mod tests {
         drop(lock);
         assert!(!paths.has_active_host_lock().unwrap());
     }
-
-    #[tokio::test]
-    async fn processless_attach_rejects_legacy_status_before_connecting() {
-        let runtime = tempfile::tempdir().unwrap();
-        let paths = HostEndpointPaths::from_runtime_dir(runtime.path(), "test").unwrap();
-        std::fs::create_dir_all(&paths.root).unwrap();
-        let status = serde_json::json!({
-            "version": STATUS_VERSION,
-            "channel_id": paths.channel_id,
-            "boot_id": Uuid::new_v4(),
-            "pid": 1,
-            "readiness": "ready",
-            "socket": paths.socket,
-        });
-        std::fs::write(&paths.status, serde_json::to_vec(&status).unwrap()).unwrap();
-        std::fs::set_permissions(&paths.status, std::fs::Permissions::from_mode(0o600)).unwrap();
-
-        let error = LocalAttachment::new(paths).connect().await.err().unwrap();
-        assert!(error.to_string().contains("run `alan host stop` and retry"));
-    }
 }
+
+#[cfg(test)]
+#[path = "local_regression_tests.rs"]
+mod local_regression_tests;

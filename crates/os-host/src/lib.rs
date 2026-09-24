@@ -17,7 +17,8 @@ pub use legacy_connections::{
 };
 pub use local::{
     AlanOsHost, AttachedNamespace, HostCommandPlane, HostEndpointPaths, HostProcessReference,
-    HostReadiness, HostStatus, LocalAttachment, request_host_stop, run_host_process,
+    HostReadiness, HostStatus, LocalAttachment, UnsupportedProcesslessAttachment,
+    request_host_stop, run_host_process,
 };
 pub use paths::{AgentRuntimeStorePaths, HostStorePaths, SystemStorePaths};
 pub use secret_store::{SecretStore, apply_profile_to_config};
