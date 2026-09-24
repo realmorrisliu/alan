@@ -170,8 +170,9 @@ impl FileBackedApp {
     }
 
     pub(super) fn handle_key(&mut self, key: KeyEvent) -> Option<FileBackedAction> {
+        let pending_input = self.form.is_some() || self.pending_yield.is_some();
         if key.code == KeyCode::Char('d') && key.modifiers.contains(KeyModifiers::CONTROL) {
-            if self.composer.text().trim().is_empty() {
+            if !pending_input && self.composer.text().is_empty() {
                 self.should_quit = true;
                 return Some(FileBackedAction::Quit);
             }
@@ -180,7 +181,6 @@ impl FileBackedApp {
         if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
             return Some(FileBackedAction::Interrupt);
         }
-        let pending_input = self.form.is_some() || self.pending_yield.is_some();
         if pending_input {
             self.completion = None;
         } else if self.completion.is_some() && self.consume_completion_key(key) {

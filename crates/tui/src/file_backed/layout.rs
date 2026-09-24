@@ -6,7 +6,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Widget, Wrap};
 
 use crate::completion::CompletionKind;
-use crate::transcript_ui::style_transcript_line;
+use crate::transcript_ui::{style_transcript_line, wrapped_line_count};
 
 use super::{FileBackedApp, MAX_COMPLETION_ROWS, MAX_COMPOSER_LINES, SPINNER};
 
@@ -104,16 +104,6 @@ fn live_region_lines(app: &FileBackedApp) -> (Vec<Line<'static>>, Option<usize>)
         lines.extend(app.composer_lines());
         (lines, Some(prompt_start))
     }
-}
-
-fn wrapped_line_count(lines: &[Line<'_>], width: usize) -> usize {
-    if lines.is_empty() {
-        return 0;
-    }
-    let width = width.max(1).min(u16::MAX as usize) as u16;
-    Paragraph::new(lines.to_vec())
-        .wrap(Wrap { trim: false })
-        .line_count(width)
 }
 
 pub(super) fn history_prefix_to_drain(

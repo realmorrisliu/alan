@@ -1,12 +1,15 @@
 use anyhow::{Context, Result};
-use crossterm::cursor::MoveTo;
+use crossterm::cursor::{MoveTo, MoveToNextLine};
 use crossterm::event::{DisableBracketedPaste, EnableBracketedPaste};
 use crossterm::terminal::{Clear, ClearType};
 use crossterm::{execute, terminal as crossterm_terminal};
 use ratatui::backend::CrosstermBackend;
+use ratatui::text::Line;
 use ratatui::widgets::{Paragraph, Widget, Wrap};
 use ratatui::{Frame, Terminal, TerminalOptions, Viewport};
-use std::io::{IsTerminal, Stdout, stdout};
+use std::io::{IsTerminal, Stdout, Write, stdout};
+
+use crate::transcript_ui::{style_transcript_line, wrapped_line_count};
 
 pub type AlanTerminal = Terminal<CrosstermBackend<Stdout>>;
 
@@ -84,21 +87,42 @@ impl TerminalSession {
         if lines.is_empty() {
             return Ok(());
         }
-        for chunk in lines.chunks(u16::MAX as usize) {
-            let styled = chunk
-                .iter()
-                .cloned()
-                .map(crate::transcript_ui::style_transcript_line)
-                .collect::<Vec<_>>();
-            self.terminal
-                .insert_before(chunk.len() as u16, |buf| {
-                    Paragraph::new(styled)
-                        .wrap(Wrap { trim: false })
-                        .render(buf.area, buf);
-                })
-                .context("failed to append transcript to terminal scrollback")?;
+        let width = self
+            .terminal
+            .size()
+            .context("failed to read terminal size for scrollback")?
+            .width as usize;
+        let max_height = u16::MAX as usize;
+        let mut chunk = Vec::new();
+        let mut chunk_height = 0usize;
+        for line in lines {
+            let styled = style_transcript_line(line.clone());
+            let line_height = wrapped_line_count(std::slice::from_ref(&styled), width).max(1);
+            anyhow::ensure!(
+                line_height <= max_height,
+                "transcript line exceeds terminal scrollback insertion height"
+            );
+            if !chunk.is_empty() && chunk_height + line_height > max_height {
+                self.insert_scrollback_chunk(std::mem::take(&mut chunk), chunk_height as u16)?;
+                chunk_height = 0;
+            }
+            chunk.push(styled);
+            chunk_height += line_height;
+        }
+        if !chunk.is_empty() {
+            self.insert_scrollback_chunk(chunk, chunk_height as u16)?;
         }
         Ok(())
+    }
+
+    fn insert_scrollback_chunk(&mut self, lines: Vec<Line<'static>>, height: u16) -> Result<()> {
+        self.terminal
+            .insert_before(height, |buf| {
+                Paragraph::new(lines)
+                    .wrap(Wrap { trim: false })
+                    .render(buf.area, buf);
+            })
+            .context("failed to append transcript to terminal scrollback")
     }
 }
 
@@ -141,9 +165,13 @@ impl Drop for TerminalStartupGuard {
 impl Drop for TerminalSession {
     fn drop(&mut self) {
         let _ = crossterm_terminal::disable_raw_mode();
-        let _ = execute!(self.terminal.backend_mut(), DisableBracketedPaste);
+        let _ = restore_terminal_input_and_line(self.terminal.backend_mut());
         let _ = self.terminal.show_cursor();
     }
+}
+
+fn restore_terminal_input_and_line<W: Write>(writer: &mut W) -> std::io::Result<()> {
+    execute!(writer, DisableBracketedPaste, MoveToNextLine(1))
 }
 
 #[cfg(test)]
@@ -154,5 +182,14 @@ mod tests {
     fn terminal_error_names_bare_alan_contract() {
         assert!(terminal_capability_error().contains("bare `alan`"));
         assert!(!terminal_capability_error().contains("alan-tui"));
+    }
+
+    #[test]
+    fn terminal_restoration_ends_the_inline_prompt_line() {
+        let mut output = Vec::new();
+
+        restore_terminal_input_and_line(&mut output).unwrap();
+
+        assert_eq!(output, b"\x1b[?2004l\x1b[1E");
     }
 }

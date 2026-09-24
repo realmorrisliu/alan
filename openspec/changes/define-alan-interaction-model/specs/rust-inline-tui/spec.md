@@ -106,7 +106,12 @@ Quitting or closing the renderer SHALL NOT stop the Agent Process or Host.
 - **AND** it does not kill the Host, stop the Agent, or automatically replay the
   task on a later attach
 
-#### Scenario: Ctrl-D detaches from an empty prompt
-- **WHEN** the user presses Ctrl-D with an empty prompt
+#### Scenario: Ctrl-D detaches from an empty prompt with no pending input
+- **WHEN** the user presses Ctrl-D with an empty prompt and no pending Agent input
 - **THEN** the renderer exits and restores terminal modes
 - **AND** the attached Agent Process and Host continue running
+
+#### Scenario: Ctrl-D preserves pending Agent input
+- **WHEN** the user presses Ctrl-D while a confirmation or structured-input request is pending
+- **THEN** the renderer remains attached
+- **AND** the pending request remains available for a response

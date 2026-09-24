@@ -72,6 +72,41 @@ fn ctrl_d_with_prompt_text_does_not_detach() {
 }
 
 #[test]
+fn ctrl_d_does_not_discard_a_whitespace_only_draft() {
+    let mut app = FileBackedApp::new("/agent/root".to_string());
+    app.composer.set_text("   ");
+
+    let action = press(&mut app, KeyCode::Char('d'), KeyModifiers::CONTROL);
+
+    assert!(action.is_none());
+    assert!(!app.should_quit);
+    assert_eq!(app.composer.text(), "   ");
+}
+
+#[test]
+fn ctrl_d_does_not_detach_while_agent_input_is_pending() {
+    let mut app = FileBackedApp::new("/agent/root".to_string());
+    app.set_pending_yield(PendingYieldCell {
+        request_id: "r1".to_string(),
+        kind: YieldKind::Confirmation,
+        title: "Approve?".to_string(),
+        prompt: None,
+        options: vec!["approve".to_string(), "reject".to_string()],
+        default_option: None,
+        questions: Vec::new(),
+        capability: None,
+        reason: None,
+        presentation: None,
+    });
+
+    let action = press(&mut app, KeyCode::Char('d'), KeyModifiers::CONTROL);
+
+    assert!(action.is_none());
+    assert!(!app.should_quit);
+    assert!(app.pending_yield.is_some());
+}
+
+#[test]
 fn completed_turn_is_followed_by_the_next_inline_alan_prompt() {
     let mut app = FileBackedApp::new("/agent/root".to_string());
     app.transcript = vec![
