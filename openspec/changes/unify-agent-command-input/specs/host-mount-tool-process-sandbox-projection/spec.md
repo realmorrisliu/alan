@@ -35,12 +35,17 @@ A later action can select another already-delegated grant only after standalone
 required to span disjoint grants.
 Native sandbox-root construction SHALL remain Host-adapter implementation data.
 Raw native execution cwd/paths SHALL remain private to the Host adapter's launch
-and sandbox context. Agent context, AgentFS and correlated durable evidence SHALL
-use public grant-relative project paths or opaque references under existing
-redaction and retention rules. Output paths within a delegated grant SHALL be
-projected relative to that submission's shared cwd (`.` for the cwd), consistently
-for direct stdout and Agent evidence; they SHALL NOT expose the raw Host root or
-use `/mnt` aliases as a replacement. Such references SHALL NOT replace
+and sandbox context. Alan-captured output, AgentFS path metadata and correlated
+durable evidence SHALL use public grant-relative project paths or opaque
+references under existing redaction and retention rules. Paths in stdout/stderr
+captured by Alan SHALL be projected relative to that submission's shared cwd (`.`
+for the cwd); they SHALL NOT expose the raw Host root or use `/mnt` aliases as a
+replacement. This projection does not intercept native shell redirection or
+rewrite command-created files. Files written within the active delegated grant
+remain ordinary project data and may contain native path strings. The redirection
+itself does not copy those contents into Alan-generated command output or
+evidence; a later file read is ordinary project data under the same grant, and
+path strings confer no authority. Such references SHALL NOT replace
 capability-passed grants, reveal unrelated backing, or authorize reconstruction
 of sandbox policy. Both explicit user and Agent shell actions SHALL use this same
 boundary; `!` SHALL NOT imply unrestricted execution.

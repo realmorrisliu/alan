@@ -95,9 +95,12 @@ alan9 命令连接内部服务时使用调用者委托的能力，不借用权�
 和“任务已完成”；提交结果未知时不自动重复执行。
 
 Host adapter 仅在 adapter 自身的原生 spawn 与 sandbox 边界解析并使用宿主 cwd/path，
-不将其写入 Alan Process exec manifest。原生命令输出中的已授权路径统一投影为相对本次
-共享 cwd 的公开项目路径（cwd 本身为 `.`），同一投影用于交互显示、重定向 stdout、
-AgentFS 和 durable evidence；不输出 backing root 或不可用于 Host shell 的 `/mnt` 别名。
+不将其写入 Alan Process exec manifest。Alan 捕获的原生命令 stdout/stderr 中已授权路径
+统一投影为相对本次共享 cwd 的公开项目路径（cwd 本身为 `.`），同一投影用于交互显示、
+Alan one-shot/管道 stdout、AgentFS 和 durable evidence；不输出 backing root 或不可用于 Host shell
+的 `/mnt` 别名。原生 shell 的 `> file` 等文件重定向不经过此输出投影，保持原生 shell
+语义；授权目录中的文件属于普通项目数据，可包含原生路径文本，但不会因此成为 Alan
+运行时路径元数据或获得额外权限。
 每条原生命令只使用共享 cwd 所属的 grant；切换到另一已授权 grant 后，再按新的 cwd
 投影输出路径。逻辑挂载申请、grant 和服务审计仍保持逻辑记录；不暴露未委托目录或
 虚拟服务私有存储。

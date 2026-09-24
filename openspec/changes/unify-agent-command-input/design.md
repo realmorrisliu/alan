@@ -110,18 +110,21 @@ Do not overload native `cat`, redirect syntax, or executable names with aP looku
 
 The Host adapter owns grant-to-native-path resolution and supplies native cwd and
 paths only as ephemeral Host-adapter spawn/sandbox inputs, outside the Alan Process
-exec manifest. AgentFS, Machine state, Agent-visible results and durable evidence
-retain public grant-relative project paths or opaque references, never the raw
-backing path. Native output paths are projected relative to that submission's
-shared cwd (`.` for the cwd) before reaching user stdout, AgentFS or evidence, so
-the same shell-usable path is visible to the user and Agent without exposing a
-Host root or emitting an unusable `/mnt` alias. This preserves existing path
-secrecy while allowing both surfaces to address the same files in the active cwd
-grant. Switching shared cwd selects another grant without widening the current
-action's sandbox. Structured Agent file tools may still address any delegated
-grant through their existing access checks. Path strings confer no authority,
-and the engine must not build sandbox roots from them.
-Keep command text unchanged; redact only output paths.
+exec manifest. Alan-generated Host/execution path metadata, AgentFS path fields
+and durable evidence retain public grant-relative project paths or opaque
+references, never the raw backing path. Paths in stdout/stderr captured by Alan
+are projected relative to that submission's shared cwd (`.` for the cwd) before
+reaching the user or Agent. This does not intercept native shell redirection or
+rewrite files: a file written within the active delegated grant remains ordinary
+project data and may contain a native path. The redirection itself does not copy
+those contents into command output or evidence; a later file read returns
+ordinary project data under the same grant. This bounds path privacy to
+Alan-managed metadata and captured output while preserving the selected Host
+shell's file semantics. Switching shared cwd selects another grant without
+widening the current action's sandbox. Structured Agent file tools may still
+address any delegated grant through their existing access checks. Path strings
+confer no authority, and the engine must not build sandbox roots from them.
+Keep command text unchanged; redact only paths in output streams captured by Alan.
 
 On Linux, an existing reified sandbox can retain isolation using authorized
 paths at their native locations. It must not require namespace-alias rewriting.

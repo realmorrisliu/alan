@@ -290,6 +290,12 @@ required to address disjoint grants simultaneously.
 - **THEN** the complete body is supplied as one script to the selected shell
 - **AND** later failures report actual outcomes without claiming earlier effects were rolled back
 
+#### Scenario: Native shell redirection writes project data
+- **WHEN** `!pwd > cwd.txt` runs under an explicitly delegated writable grant
+- **THEN** the selected Host shell writes its native output to `cwd.txt` unchanged
+- **AND** the file remains ordinary project data and may contain the native path
+- **AND** reading it through the same grant does not authorize another path
+
 #### Scenario: Standalone cd updates shared cwd
 - **WHEN** the user submits only `!cd <one literal directory>` or
   `!cd /mnt/<delegated-grant>`
@@ -326,9 +332,12 @@ prompt inclusion or a matching native path. Delegated Host Mount grants SHALL
 supply both HostFS access and native execution authority through their owner.
 Virtual mounts MUST NOT imply native access. Scoped native cwd/path metadata SHALL
 be used only inside the Host adapter's ephemeral spawn/sandbox context; path strings
-SHALL NOT grant access. Agent-visible output and evidence retain public paths or
-opaque references under existing redaction. Shell-facing output MUST NOT be
-rewritten to unusable aP aliases.
+SHALL NOT grant access. Alan-captured command output and evidence retain public
+paths or opaque references under existing redaction. Native shell redirection and
+file writes retain Host-shell semantics: files in the active delegated grant are
+ordinary project data, may contain native path strings, and are not rewritten or
+automatically copied into Alan evidence. Shell-facing output captured by Alan MUST
+NOT be rewritten to unusable aP aliases.
 
 #### Scenario: Agent reads a virtual resource
 - **WHEN** an Agent has a mounted virtual document service

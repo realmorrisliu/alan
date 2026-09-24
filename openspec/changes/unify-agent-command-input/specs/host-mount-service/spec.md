@@ -8,12 +8,16 @@ selects and resolves native Host backing. Logical service records SHALL expose
 request and grant identity, label, access, provenance, status and `/mnt` path,
 without raw Host paths. For an explicitly delegated local grant, the adapter MAY
 use scoped native cwd/path metadata only as ephemeral Host-adapter spawn and
-sandbox inputs, outside the Alan Process exec manifest. AgentFS, Machine state,
-Agent-visible results and durable evidence SHALL
-retain public project paths or opaque grant references, not raw backing paths.
-This SHALL NOT expose undelegated grants or private virtual-service backing and
-SHALL NOT turn path strings into authority. Engine and Kernel SHALL NOT reconstruct
-sandbox roots from this metadata.
+sandbox inputs, outside the Alan Process exec manifest. Alan-generated Host
+Mount and execution path metadata, including AgentFS/Machine path fields,
+service results, captured command output and durable evidence, SHALL retain
+public project paths or opaque grant references, not raw backing paths. This
+does not rewrite arbitrary contents in an explicitly delegated Host file:
+native shell redirection may store a native path there, and that file remains
+ordinary project data which may be read through the same grant. Such content
+does not become Host Mount metadata or confer authority. This SHALL NOT expose
+undelegated grants or private virtual-service backing. Engine and Kernel SHALL
+NOT reconstruct sandbox roots from this metadata.
 
 #### Scenario: User approves a writable directory
 - **WHEN** a Host adapter authorizes a native directory and returns a writable
