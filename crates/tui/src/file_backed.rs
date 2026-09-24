@@ -547,6 +547,28 @@ async fn wait_for_stdio_answer(
     attachment: &mut StdioTailAttachment,
     interrupt: impl std::future::Future<Output = Result<()>>,
 ) -> Result<String> {
+    submit_stdio_task(shell, &task, attachment).await?;
+    wait_for_stdio_answer_after_submit(shell, root_agent_path, task, attachment, interrupt).await
+}
+
+async fn submit_stdio_task(
+    shell: &alan_shell::Shell,
+    task: &StdioTaskWaitContext<'_>,
+    attachment: &StdioTailAttachment,
+) -> Result<()> {
+    if current_root_agent_pid(shell).await? != Some(attachment.root_agent_pid) {
+        bail!("Root Agent changed before the task could be submitted; retry")
+    }
+    write_agent_input(shell, &attachment.agent_process_path, task.input).await
+}
+
+async fn wait_for_stdio_answer_after_submit(
+    shell: &alan_shell::Shell,
+    root_agent_path: &str,
+    task: StdioTaskWaitContext<'_>,
+    attachment: &mut StdioTailAttachment,
+    interrupt: impl std::future::Future<Output = Result<()>>,
+) -> Result<String> {
     tokio::pin!(interrupt);
     let mut tape_pending = Vec::new();
     let mut ui_pending = Vec::new();
@@ -559,11 +581,6 @@ async fn wait_for_stdio_answer(
     };
     let mut root_agent_pid_tick = tokio::time::interval(std::time::Duration::from_millis(250));
     root_agent_pid_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-
-    if current_root_agent_pid(shell).await? != Some(attachment.root_agent_pid) {
-        bail!("Root Agent changed before the task could be submitted; retry")
-    }
-    write_agent_input(shell, &attachment.agent_process_path, task.input).await?;
 
     'wait: loop {
         tokio::select! {
