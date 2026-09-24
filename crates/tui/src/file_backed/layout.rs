@@ -1,7 +1,9 @@
 use ratatui::Frame;
+use ratatui::buffer::Buffer;
+use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Paragraph, Wrap};
+use ratatui::widgets::{Paragraph, Widget, Wrap};
 
 use crate::completion::CompletionKind;
 use crate::transcript_ui::style_transcript_line;
@@ -167,20 +169,91 @@ fn composer_cursor_position(app: &FileBackedApp, width: usize, prompt_start: usi
     let text = app.composer.text();
     let cursor = app.composer.cursor().min(text.len());
     let before_cursor = text.get(..cursor).unwrap_or_default();
-    let segments = before_cursor.split('\n').collect::<Vec<_>>();
-    let line_index = segments.len().saturating_sub(1);
-    let line = segments.last().copied().unwrap_or_default();
-    let preceding_lines = app
-        .composer_lines()
-        .into_iter()
+    let line_index = before_cursor.bytes().filter(|byte| *byte == b'\n').count();
+    let cursor_in_line = before_cursor
+        .rsplit_once('\n')
+        .map_or(before_cursor.len(), |(_, line)| line.len());
+    let composer_lines = app.composer_lines();
+    let preceding_lines = composer_lines
+        .iter()
         .take(line_index)
-        .map(|line| wrapped_line_count(std::slice::from_ref(&line), width))
+        .map(|line| wrapped_line_count(std::slice::from_ref(line), width))
         .sum::<usize>();
-    let column = unicode_width::UnicodeWidthStr::width(app.input_prompt_prefix())
-        + unicode_width::UnicodeWidthStr::width(line);
-    let width = width.max(1);
-    let row = prompt_start + preceding_lines + column / width;
-    ((column % width) as u16, row as u16)
+    let mut line = composer_lines.get(line_index).cloned().unwrap_or_default();
+    let cursor_column = mark_cursor_in_line(&mut line, cursor_in_line).unwrap_or_default();
+    let width = width.max(1).min(u16::MAX as usize) as u16;
+    let height = wrapped_line_count(std::slice::from_ref(&line), width as usize)
+        .max(1)
+        .min(u16::MAX as usize) as u16;
+    let mut buffer = Buffer::empty(Rect::new(0, 0, width, height));
+    Paragraph::new(line)
+        .wrap(Wrap { trim: false })
+        .render(buffer.area, &mut buffer);
+
+    let marker_index = buffer
+        .content()
+        .iter()
+        .position(|cell| cell.bg == Color::Magenta)
+        .unwrap_or_default();
+    let marker_position = (marker_index % width as usize, marker_index / width as usize);
+    let cursor_column = marker_position.0 + cursor_column;
+    let row_offset = cursor_column / width as usize;
+    let x = cursor_column % width as usize;
+    let y = prompt_start + preceding_lines + marker_position.1 + row_offset;
+    (x as u16, y.min(u16::MAX as usize) as u16)
+}
+
+fn mark_cursor_in_line(line: &mut Line<'static>, cursor: usize) -> Option<usize> {
+    let content_index = 1.min(line.spans.len().saturating_sub(1));
+    if let Some((marked, cursor_column)) =
+        mark_cursor_in_span(line.spans.get(content_index)?, cursor)
+    {
+        line.spans.splice(content_index..=content_index, marked);
+        return Some(cursor_column);
+    }
+    let (marked, cursor_column) = mark_cursor_in_span(line.spans.first()?, usize::MAX)?;
+    line.spans.splice(0..=0, marked);
+    Some(cursor_column)
+}
+
+fn mark_cursor_in_span(span: &Span<'static>, cursor: usize) -> Option<(Vec<Span<'static>>, usize)> {
+    let graphemes = span.styled_graphemes(Style::default()).collect::<Vec<_>>();
+    let mut byte_offset = 0;
+    let marker_index = graphemes
+        .iter()
+        .position(|grapheme| {
+            let end = byte_offset + grapheme.symbol.len();
+            let contains_cursor = cursor < end;
+            byte_offset = end;
+            contains_cursor
+        })
+        .or_else(|| graphemes.len().checked_sub(1))?;
+    let marker = &graphemes[marker_index];
+    let marker_start = graphemes[..marker_index]
+        .iter()
+        .map(|grapheme| grapheme.symbol.len())
+        .sum::<usize>();
+    let marker_end = marker_start + marker.symbol.len();
+    let cursor_column = if cursor == usize::MAX || cursor >= span.content.len() {
+        unicode_width::UnicodeWidthStr::width(marker.symbol)
+    } else {
+        let byte_offset = cursor.saturating_sub(marker_start).min(marker.symbol.len());
+        unicode_width::UnicodeWidthStr::width(marker.symbol.get(..byte_offset).unwrap_or_default())
+    };
+    let content = span.content.to_string();
+    let before = content[..marker_start].to_string();
+    let marker_text = content[marker_start..marker_end].to_string();
+    let after = content[marker_end..].to_string();
+    let style = span.style;
+    let mut marked = Vec::new();
+    if !before.is_empty() {
+        marked.push(Span::styled(before, style));
+    }
+    marked.push(Span::styled(marker_text, marker.style.bg(Color::Magenta)));
+    if !after.is_empty() {
+        marked.push(Span::styled(after, style));
+    }
+    Some((marked, cursor_column))
 }
 
 fn activity_line(app: &FileBackedApp, label: &str) -> Line<'static> {

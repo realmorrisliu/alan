@@ -203,6 +203,22 @@ fn preceding_wrapped_prompt_lines_are_included_in_the_cursor_row() {
 }
 
 #[test]
+fn word_wrapped_current_prompt_positions_cursor_after_the_rendered_word() {
+    let mut app = FileBackedApp::new("/agent/root".to_string());
+    app.composer.set_text("hi longword");
+
+    let width = 12;
+    let height = inline_viewport_height(&app, width, 24);
+    let mut terminal = Terminal::new(TestBackend::new(width as u16, height)).unwrap();
+    terminal.draw(|frame| draw(frame, &app)).unwrap();
+
+    assert_eq!(
+        terminal.backend().cursor_position(),
+        ratatui::layout::Position::new(8, 1)
+    );
+}
+
+#[test]
 fn long_composer_scrolls_its_editable_tail_and_cursor_into_view() {
     let mut app = FileBackedApp::new("/agent/root".to_string());
     app.composer.set_text(format!("{}x", "a\n".repeat(10)));
