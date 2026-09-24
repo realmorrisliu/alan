@@ -73,25 +73,35 @@ Choice 最多 255 个候选，Score 使用 2–10 个等级。Noul 没有单独 
 
 官方的 [intent routing](https://docs.typesafe.ai/patterns/intent-routing)、[skill suggestion](https://docs.typesafe.ai/cookbooks/skill_suggestion)、[SDE cascade](https://docs.typesafe.ai/cookbooks/sde_cascade) 都能支持上述组合方向；示例不构成 Alan 效果证明。
 
-## 3. Alan 当前状态：哪些已有，哪些只是设计
+## 3. Alan 在 2026-09-19 的实现快照：哪些已有，哪些只是设计
 
-以下以固定 Alan SHA 的代码为依据；链接相对本文所在目录。
+以下表格仅记录固定 Alan SHA `576fb4752e098e93f076c10f9daba1d200cc3b7a`
+上的 2026-09-19 pre-tracer 实现。裸入口、Shell Process 和 TUI 调用关系是
+该提交的历史描述，不代表当前 main；当前入口另见下节。
 
-| 层 | 当前证据 | 结论 |
+| 层 | 2026-09-19 快照证据 | 该快照可支持的结论 |
 | --- | --- | --- |
 | Cognitive routing | [design](design.md)、[tasks](tasks.md)，任务全部未勾选；engine/AgentFS 未找到 `route next` 实现 | 设计完整，不能声称路由已运行 |
 | Provider | [LlmProvider](../../../crates/llm/src/provider.rs) 提供 generate/chat/generate_stream | 生成型接口不适合直接承载 Jev |
-| llmfs | [request_wire.rs](../../../crates/llmfs/src/request_wire.rs) 的 v2 请求要求非空 messages | 当前文件协议也不是 evaluation 协议 |
+| llmfs | [request_wire.rs](../../../crates/llmfs/src/request_wire.rs) 的 v2 请求要求非空 messages | 当时的文件协议也不是 evaluation 协议 |
 | Namespace generation | [namespace_generation.rs](../../../crates/agent-engine/src/runtime/transition/turn_execution/namespace_generation.rs) | 已有文件调用边界；不可在 coordinator 中绕过它直连 HTTP |
 | Connection/凭据 | [connection_profile.rs](../../../crates/service-manager/src/connection_profile.rs)、[connection CLI](../../../crates/alan/src/cli/connection.rs) | 可复用 profile/Host Store，但需要新增 evaluation 能力声明 |
-| 裸 `alan` | [main.rs](../../../crates/alan/src/main.rs) 的无子命令分支走 `StdioDriver` | 实际入口目前是通用文件 Shell |
-| Shell Process | [local_entry.rs](../../../crates/service-manager/src/local_entry.rs) | attach 创建普通 Shell Process，保留这个生命周期 |
+| 裸 `alan` | [快照中的 main.rs](https://github.com/realmorrisliu/alan/blob/576fb4752e098e93f076c10f9daba1d200cc3b7a/crates/alan/src/main.rs#L637-L646) 的无子命令分支走 `StdioDriver` | 当时的实际入口是通用文件 Shell |
+| Shell Process | [local_entry.rs](../../../crates/service-manager/src/local_entry.rs) | 当时 attach 创建普通 Shell Process，保留这个生命周期 |
 | Shell 语法 | [shell/lib.rs](../../../crates/shell/src/lib.rs) | 支持文件操作和 `/bin` executable；不是完整 POSIX shell |
 | 富 TUI | [file_backed.rs](../../../crates/tui/src/file_backed.rs)、[app.rs](../../../crates/tui/src/file_backed/app.rs) | 已有 AgentFS 观察、composer、历史、action、流输出协调；未看到裸入口调用它 |
 | 滚屏 | [terminal.rs](../../../crates/tui/src/terminal.rs)、`drain_committed_scrollback` | 已有写回滚屏机制，不能把 Alan 描述成完全缺少 inline 基础 |
-| 可编程表面 | [已交付 tracer bullet](../archive/2026-09-24-define-alan-programmable-client-surface/design.md) | 裸 alan 已接入现有 Root Agent/TUI 与 one-shot；后续 rich UX 和重连验收走 interaction change，不恢复旧 parser/executor/editfs 方案 |
 
-AGENTS.md 的概览称当前交互产品路径为 Rust TUI，但当前 `main.rs` 的实际裸入口是 stdio Shell。方案需以调用链为准，避免只修改 TUI 却没有改善用户真正进入的界面。
+### PR #929 合并后的当前入口（2026-09-24）
+
+PR #929 已取代上面的裸入口、Shell Process 和 TUI 历史快照。当前裸 `alan`
+挂接 Host 管理的 `/agent/root`：[main.rs](../../../crates/alan/src/main.rs)
+对终端交互调用 `FileBackedRunConfig`/`run_file_backed`；对重定向 stdin
+调用 `run_stdio_task` 并将结果写到 stdout。该入口不调用 `StdioDriver`，
+也不创建单独的 Shell Process。详见[已归档 tracer bullet](../archive/2026-09-24-define-alan-programmable-client-surface/tasks.md)、
+[`alan-shell` 规范](../../specs/alan-shell/spec.md)和
+[`alan-renderer-host-contract` 规范](../../specs/alan-renderer-host-contract/spec.md)。
+因此，Rust file-backed TUI 已是裸命令的交互入口，而不再只是未接入的 renderer。
 
 另外，`alan-routefs` 当前是确定性类型消息分发，不是模型选路器。不要因名字相似就把 Jev 判断塞进去。[routefs](../../../crates/routefs/src/lib.rs)
 
