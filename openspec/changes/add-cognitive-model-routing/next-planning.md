@@ -1,6 +1,6 @@
 # 下一步规划入口：Tracer bullet
 
-基线：main `6916a9cb`（PR #928，2026-09-23）。
+基线：main `62a99d6d`（PR #929，2026-09-23；包含 PR #928）。
 2026-09-20 用户确认改为纵向 tracer bullet：尽快交付可用 agent，通过真实终端任务反馈推进架构。
 本路线替代原 Step 2 → 3 → 4 的逐层交付顺序；ADR-0054/0055 的所有权边界不变。
 
@@ -11,12 +11,12 @@
   [retire-macos-client-and-standalone-cli](../archive/2026-09-20-retire-macos-client-and-standalone-cli/)。
   源码删除已由 [remove-retired-desktop-source 归档记录](../archive/2026-09-23-remove-retired-desktop-source/)
   完成，App 和 shell-core/FFI 已移除；平台安全能力继续保留。
-- 首切片已按当前真实调用链重切，进入实现；未完成的功能仍不得标为完成。
+- 首切片已由 PR #929 实施并合并；本轮收口将同步已实现 delta 并归档，后续可靠性/体验缺口留在切片 2。
 - 原路线所列 rustls 风险已由 PR #923 中的依赖修复处理，当前锁定 0.23.45，不再作为待办。
 
 ## 切片 1：一个可用 agent 闭环
 
-主负责 change：[define-alan-programmable-client-surface](../define-alan-programmable-client-surface/tasks.md)。
+主负责 change：[已归档的 define-alan-programmable-client-surface](../archive/2026-09-24-define-alan-programmable-client-surface/tasks.md)。
 必要的终端呈现也在此切片交付；interaction change 只承接后续体验，不重复维护同一 delta。
 
 固定验收任务：在普通终端或 Herdr pane 启动 Alan，通过现有 Connection，
@@ -31,7 +31,7 @@
 - [x] 验证工具失败、未授权路径和取消后不继续派发动作；不可用 Connection 的清晰错误已在两种终端中验证。
 - [x] 在普通终端和 Herdr 记录同一构建的成功任务、输入/输出与退出结果，证明连续任务和取消后仍可使用；记录构建 `bef854e3`，该提交是当前分支祖先。
 
-当前状态（2026-09-24）：重启后的 dev Host 正常运行，dev channel 的 `connection list` 显示 `chatgpt-main` credential 已配置。上述固定验收已经在 `bef854e3` 完成并记录；本轮新增的是重连边界与路径翻译回归修复，已用本地测试覆盖，不借用 stable 用户数据。
+当前状态（2026-09-24）：上述固定验收已在构建 `bef854e3` 的普通终端和 Herdr pane 完成并记录；PR #929 合并了重连边界与路径翻译回归修复，并通过当前 HEAD CI。此记录不表示 dev Host 仍在运行，也不宣称后续 detach/reattach 输出 offset 与缺口提示已交付。
 
 复用已有 generation 能力；typed evaluation/Jev 不作为启动条件。
 权限、credentials、sandbox、Process 生命周期和证据写入继续走现有 owner。
@@ -48,10 +48,8 @@ Shell evaluator Process。
 
 ## 切片 2：同一任务的执行可靠性与终端体验
 
-执行与 IO 的剩余责任仍由 programmable-client change 承接；
-[define-alan-interaction-model](../define-alan-interaction-model/tasks.md)
-承接呈现与终端验收。Machine 持久恢复若需要新合同，由 cognition change
-提前交付独立必要子切片，不等待 typed evaluation，也不在客户端复制恢复状态。
+首切片已归档，不再有 programmable-client change 承接后续实现。
+[define-alan-interaction-model](../define-alan-interaction-model/tasks.md) 是排队的后续接收 change：先重写其旧提案，再承接 renderer 可见的 Root Agent 重连、Process identity、输出 offset/保留缺口提示与 pane 非拥有式关闭验收。PR #929 的自动化覆盖 PID 替换，但 attached TUI 在真实 Host/Root Agent replacement 下的普通终端与 Herdr 体验仍需现场验证。该 change 不获得 Agent/Process 启动或恢复 authority；若验收发现执行、持久证据或副作用语义缺口，先由对应服务 owner 的新 change 定权。Machine 持久恢复若需要新合同，由 cognition change 提前交付独立必要子切片，不等待 typed evaluation，也不在客户端复制恢复状态。
 
 - [ ] 验证 detach/reattach 的 Process identity、输出 offset、缺口提示和不重复派发；关闭 pane 不误杀 Host。
 - [ ] 定义 Local Entry 有界保留与回收；明确取消、EOF、Process 退出和 Host 生命周期。

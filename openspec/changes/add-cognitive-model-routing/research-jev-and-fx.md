@@ -89,7 +89,7 @@ Choice 最多 255 个候选，Score 使用 2–10 个等级。Noul 没有单独 
 | Shell 语法 | [shell/lib.rs](../../../crates/shell/src/lib.rs) | 支持文件操作和 `/bin` executable；不是完整 POSIX shell |
 | 富 TUI | [file_backed.rs](../../../crates/tui/src/file_backed.rs)、[app.rs](../../../crates/tui/src/file_backed/app.rs) | 已有 AgentFS 观察、composer、历史、action、流输出协调；未看到裸入口调用它 |
 | 滚屏 | [terminal.rs](../../../crates/tui/src/terminal.rs)、`drain_committed_scrollback` | 已有写回滚屏机制，不能把 Alan 描述成完全缺少 inline 基础 |
-| 可编程表面 | [现有设计](../define-alan-programmable-client-surface/design.md) | 已规划共享 parser/executor、Process 输出与 editfs，应协同复用 |
+| 可编程表面 | [已交付 tracer bullet](../archive/2026-09-24-define-alan-programmable-client-surface/design.md) | 裸 alan 已接入现有 Root Agent/TUI 与 one-shot；后续 rich UX 和重连验收走 interaction change，不恢复旧 parser/executor/editfs 方案 |
 
 AGENTS.md 的概览称当前交互产品路径为 Rust TUI，但当前 `main.rs` 的实际裸入口是 stdio Shell。方案需以调用链为准，避免只修改 TUI 却没有改善用户真正进入的界面。
 
@@ -294,7 +294,7 @@ Agent › █
 
 ### 6.2 实现落点
 
-1. **先接真实入口。** 将现有 stdio Shell 命令解析/执行抽成可复用层，遵循既有 programmable-client-surface change；新增富 renderer 时仍使用同一执行语义。当前 parser 还支持普通 `/bin` executable，抽取时应以当前代码为准，修正旧 proposal 中不完整的语法枚举。
+1. **真实入口已交付。** 裸 alan 现在把 TTY 任务送到现有 Root Agent renderer，重定向 stdin 走 one-shot；`!` 只请求既有受治理的 bash Tool。不要实施旧建议中的 parser/executor 抽取；后续富呈现与可见重连验收按 [interaction change](../define-alan-interaction-model/tasks.md) 重规划。
 2. **复用当前 TUI。** 保留 composer、history、completion、AgentFS watcher 与 `StreamReconciler`。把“已完成内容提交滚屏”和“可变活动区域重绘”分开；不为 fx 风格重写全部 renderer。
 3. **保持唯一事实来源。** Shell command 结果读 Process streams；Agent 回复读 AgentFS，继续按权威记录消除预览重复；Tool 详情引用原有 action/result，显示折叠不删除证据。
 4. **默认紧凑，细节按需。** 主流显示任务、短状态和结果；长输出预览可展开/按范围读取。计划、批准请求与错误仅在相关时出现。提供显式快捷键进入完整详情，再返回同一输入草稿。
