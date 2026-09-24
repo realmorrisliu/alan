@@ -202,13 +202,24 @@ Runtime or select an Agent Definition as Host startup behavior.
   failure after one PID-poll grace interval instead of retrying a broken stream
 
 ### Requirement: Terminal task input is distinct from Shell evaluation
-The interactive bare-`alan` renderer SHALL submit each user entry as one task
-to `/agent/root/io/input`. It SHALL NOT parse arbitrary text as Alan Shell
-builtins or infer execution authority from shell-looking text. A leading `!`
-SHALL explicitly request execution of the exact remainder using the existing
-`bash` Tool. Agent-originated effects MUST continue through the existing Agent
-Runtime, Tool governance, Namespace access, explicit Host Mounts, credentials,
-and sandbox.
+The interactive bare-`alan` renderer SHALL submit each ordinary task entry as
+one task to `/agent/root/io/input`. On the normal composer submission path, it
+SHALL dispatch leading-`/` entries as renderer-local slash commands; recognized
+commands perform their local action and unknown commands report a local error.
+Slash commands are not Agent task entries. Input responding to an active Agent
+yield or form SHALL continue through that interaction's existing flow. The
+renderer SHALL NOT parse arbitrary text as Alan Shell builtins or infer
+execution authority from shell-looking text. A leading `!` SHALL explicitly
+request execution of the exact remainder using the existing `bash` Tool.
+Agent-originated effects MUST continue through the existing Agent Runtime,
+Tool governance, Namespace access, explicit Host Mounts, credentials, and
+sandbox.
+
+#### Scenario: Renderer slash commands stay local
+- **WHEN** the normal composer submission path receives a slash command
+- **THEN** a recognized command performs its renderer-local action
+- **AND** an unknown command reports a local error
+- **AND** neither command is submitted as an Agent task
 
 #### Scenario: Shell-looking text is entered in the terminal renderer
 - **WHEN** a user submits text such as `ls /mnt/project` in the interactive
