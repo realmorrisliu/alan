@@ -25,7 +25,9 @@ an independent design question. Neither their current separation nor a merge
 is mandated by the alan9 name. Model-assisted command routing and Jev remain
 unimplemented and are not approved runtime changes by this ADR.
 
-Normative naming delta and adoption tasks are recorded in the
+The canonical naming contract lives in the
+[product-brand-identity spec](../../openspec/specs/product-brand-identity/spec.md).
+The original delta and adoption evidence are preserved in the
 [archived rename change](../../openspec/changes/archive/2026-09-25-rename-alan-os-to-alan9/).
 The interaction exploration lives in the existing
 [unified-input change](../../openspec/changes/unify-agent-command-input/design-interview.md).
