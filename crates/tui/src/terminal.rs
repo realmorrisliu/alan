@@ -1,5 +1,7 @@
 use anyhow::{Context, Result};
+use crossterm::cursor::MoveTo;
 use crossterm::event::{DisableBracketedPaste, EnableBracketedPaste};
+use crossterm::terminal::{Clear, ClearType};
 use crossterm::{execute, terminal as crossterm_terminal};
 use ratatui::backend::CrosstermBackend;
 use ratatui::widgets::{Paragraph, Widget, Wrap};
@@ -18,6 +20,7 @@ pub fn terminal_capability_error() -> &'static str {
 
 pub struct TerminalSession {
     terminal: AlanTerminal,
+    viewport_height: u16,
 }
 
 impl TerminalSession {
@@ -26,18 +29,13 @@ impl TerminalSession {
         let startup_guard = TerminalStartupGuard::new();
         let mut out = stdout();
         execute!(out, EnableBracketedPaste).context("failed to enable terminal input modes")?;
-        let (_, height) = crossterm_terminal::size().context("failed to read terminal size")?;
-        let backend = CrosstermBackend::new(out);
-        let mut terminal = Terminal::with_options(
-            backend,
-            TerminalOptions {
-                viewport: Viewport::Inline(height),
-            },
-        )
-        .context("failed to initialize terminal")?;
+        let mut terminal = build_inline_terminal(out, 1)?;
         terminal.clear().context("failed to clear terminal")?;
         startup_guard.disarm();
-        Ok(Self { terminal })
+        Ok(Self {
+            terminal,
+            viewport_height: 1,
+        })
     }
 
     pub fn draw_with<F>(&mut self, draw: F) -> Result<()>
@@ -50,18 +48,36 @@ impl TerminalSession {
             .context("failed to draw terminal frame")
     }
 
-    pub fn viewport_height(&self) -> usize {
-        self.terminal
-            .size()
-            .map(|area| area.height as usize)
-            .unwrap_or(24)
-    }
-
     pub fn viewport_size(&self) -> (usize, usize) {
         self.terminal
             .size()
             .map(|area| (area.width as usize, area.height as usize))
             .unwrap_or((80, 24))
+    }
+
+    pub fn set_inline_height(&mut self, height: u16) -> Result<()> {
+        let terminal_size = self
+            .terminal
+            .size()
+            .context("failed to read terminal size")?;
+        let height = height.max(1).min(terminal_size.height.max(1));
+        if height == self.viewport_height {
+            return Ok(());
+        }
+
+        let top = self.terminal.get_frame().area().y;
+        execute!(
+            self.terminal.backend_mut(),
+            MoveTo(0, top),
+            Clear(ClearType::FromCursorDown),
+            MoveTo(0, top)
+        )
+        .context("failed to clear the previous inline viewport")?;
+
+        let terminal = build_inline_terminal(stdout(), height)?;
+        self.terminal = terminal;
+        self.viewport_height = height;
+        Ok(())
     }
 
     pub fn write_scrollback(&mut self, lines: &[String]) -> Result<()> {
@@ -84,6 +100,17 @@ impl TerminalSession {
         }
         Ok(())
     }
+}
+
+fn build_inline_terminal(out: Stdout, height: u16) -> Result<AlanTerminal> {
+    let backend = CrosstermBackend::new(out);
+    Terminal::with_options(
+        backend,
+        TerminalOptions {
+            viewport: Viewport::Inline(height),
+        },
+    )
+    .context("failed to initialize terminal")
 }
 
 struct TerminalStartupGuard {

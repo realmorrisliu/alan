@@ -2,7 +2,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Line;
 
 pub(crate) fn style_transcript_line(line: String) -> Line<'static> {
-    let style = if line.starts_with("you>") {
+    let style = if line.starts_with("alan >") {
         Style::default()
             .fg(Color::Cyan)
             .add_modifier(Modifier::BOLD)

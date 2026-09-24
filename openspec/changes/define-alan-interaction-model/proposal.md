@@ -1,112 +1,58 @@
+# Proposal: shell-like terminal interaction
+
 ## Why
 
-> SUPERSEDED INVENTORY (2026-09-20): current scope and ordering are in
-> [disposition.md](disposition.md), [tasks.md](tasks.md), and the
-> [tracer bullet roadmap](../add-cognitive-model-routing/next-planning.md).
-> Replace this retained draft and its deltas before implementation; do not
-> execute or sync the old plan below. Desktop GUI work is cancelled;
-> editfs and executable packaging are outside the current delivery scope.
+The first usable-agent tracer bullet is merged. Live inspection of that build
+confirmed a concrete UX mismatch: Alan prints committed transcript to terminal
+scrollback, but keeps a full-height Ratatui viewport with a composer pinned at
+the bottom. This looks like a chat panel, not the terminal flow the product
+requires.
 
-Alan's target architecture makes everything a file: namespaces, mounts,
-`/proc`, `/agent`, `/srv`, and the aP protocol are the system substrate. That
-substrate is an excellent API, but it is not a user interaction model. Alan's
-primary audience is advanced personal users, not operators who think in mounts
-and namespaces. If the default experience asks users to understand "enter an
-OS, start a shell, mount things with commands", the file-native architecture
-becomes a barrier instead of a capability.
+## Scope
 
-Today the UX contract is only implied: ADR-0046/0047 fix renderer discipline,
-ADR-0050 defines grant-based host file access, and `rust-inline-tui` defines
-terminal presentation — but no current spec defines how a user relates to Alan
-across interaction modes. The retired desktop client is outside this change's
-scope; the remaining interaction work is queued after the first usable-agent
-tracer bullet.
+Define and deliver one interaction: a shell-like inline REPL over the existing
+Root Agent Process.
 
-## What Changes
+- The prompt is shown as `alan >`; submitted input remains in terminal history.
+- Agent output appears directly after the submitted line; the next `alan >`
+  follows the output.
+- Slash, skill, and file completion remain temporary inline candidate lists,
+  not a persistent input panel.
+- Errors and interruption outcomes are visible in the terminal. Pipe/one-shot
+  behavior remains stdout for results, stderr for diagnostics, and a meaningful
+  exit code. Ctrl-D on an empty prompt detaches the renderer without stopping
+  accepted Agent work.
+- The renderer continues to read and write the mounted AgentFS surfaces. It
+  gains no Agent, Process, Host, launch, retry, or recovery authority.
 
-- Define the Alan Interaction Model as a durable product contract: the file
-  system is the API, never the default UI. Users manipulate intent, agents,
-  work results, folders, grants, and services — never mounts, fids,
-  namespaces, or PIDs.
-- Define three disclosure layers over one shared truth: **Intent** (state a
-  goal, an agent works), **Work** (agent file surfaces rendered as native
-  affordances — conversation, plan cards, approval sheets, result views),
-  and **Files** (the raw namespace as an explicit inspect/program layer for
-  power users). All layers are live views of the same files per ADR-0046;
-  no layer owns copied state.
-- Establish the interaction modes: **conversation** and **background
-  servant** (agents run detached; the user primarily reviews completed work
-  and evidence) are first-class for local renderer hosts; Remote Entry
-  renderers require only conversation until a separate remote-launch contract
-  owns revocable authority. **Event-driven** (agents act on events and
-  proactively report) is recorded as the designated third mode, binding on
-  renderer hosts only once a runtime or service contract owns rule storage and
-  triggers.
-- Require local background dispatch to use Agent Runtime Service-owned
-  `/mnt/agent-runtime/clone`, request strict durability in its existing
-  `AgentExecutableRequest`, and succeed only after `/agent/rollouts` exposes a
-  newly discovered producing Rollout correlated to the returned PID under the
-  same `/proc/host/boot_id`. A pre-spawn listing excludes retained Rollouts
-  whose Process path was reused after Host restart. The launch capability
-  exists only in the authorized renderer attachment view, not the underlying
-  Shell Process namespace. A pre-commit rejection is a definite failure;
-  missing correlation after commit is indeterminate and never automatically
-  retried. Renderers never use internal runtime metadata, scan System Store
-  backing, or persist a private results database.
-- Define strict durability as a launch guarantee that a producing Rollout
-  has crossed its file-sync, atomic-rename, and durable-directory publication
-  barrier before execution side effects or acknowledgment, not an infallible
-  terminal-write guarantee. Cancellation can revoke only before the
-  non-cancellable rename-and-directory-commit critical section; post-rename
-  uncertainty is contained as destination storage, never staging. Terminal
-  containment invalidates a transition-local publication generation and fences
-  the old owner before quarantine or Process exit, so late completion cannot
-  publish. Completed outcomes are reconstructible whenever discovery finds a
-  complete valid `process_exit`, even after an ambiguous append or durable-sync
-  error; only a missing or torn terminal record remains unfinished or
-  incomplete evidence.
-- Make permission the UX of mounting: giving an agent access to a host folder
-  is a grant flow (drag in, file picker, or approval sheet) through Host Mount
-  Service per ADR-0050; mount/bind are side effects, and revocation lives in a
-  single permissions surface. `mount` commands are confined to the Files layer.
-- Define the vocabulary rule: default UI copy names user objects (agent,
-  conversation, folder, permission, service, result); OS vocabulary (mount,
-  namespace, fid, `/proc`, tape) is confined to the Files layer, power-user
-  surfaces, and documentation.
+This change does not implement desktop UI, background agents, a new shell
+language, history browsing, retention-gap recovery, or a model router. It does
+not alter input routing: current code sends ordinary entries and `!` entries to
+the Agent, while slash commands remain local. Command routing and intent
+classification are outside this presentation change.
+Dynamic ChatGPT model discovery and changing the model of an already-running
+Agent are tracked for the next capability slice: the current Provider catalog
+is bundled/static and a model change means binding a different Connection.
+The eventual picker must change the next turn's actual Connection/model, not
+only its label.
 
 ## Capabilities
 
-### New Capabilities
+### New capability
 
-- `alan-interaction-model`: The product-level interaction contract — disclosure
-  layers, interaction modes, grant-as-permission UX, and the vocabulary rule
-  for renderer hosts, with background-servant dispatch required only for Local
-  Entry attachments.
+- `alan-interaction-model`: terminal-first inline REPL behavior for interactive
+  Alan use.
 
-### Modified Capabilities
+### Modified capabilities
 
-- `alan-renderer-host-contract`: Renderer hosts SHALL render agent and service
-  file surfaces as domain-native affordances, provide the three disclosure
-  layers, and keep OS vocabulary out of the default UI.
+- `rust-inline-tui`: replace the full-height bottom-composer baseline with a
+  compact inline transcript and prompt; retain typed transcript, scrollback,
+  input, and terminal restoration behavior.
 
-## Impact
+## Acceptance
 
-- Normative for Alan for macOS (`clients/apple`), the Rust TUI, and future
-  Alan Apps. It requires the Agent Runtime Service-owned Rollout history
-  surface before a durable review surface can be implemented; it does not
-  authorize renderer access to System Store backing.
-- Remote Entry background dispatch and its revocable launch authority remain
-  out of scope; this change neither binds `/mnt/agent-runtime/clone` into a
-  Remote Entry namespace nor requires remote renderers to expose that mode.
-- This change does not define an Alan Home, `workspace_home`, or another
-  universal entry object. It leaves renderer defaults and the current
-  terminal-first macOS presentation unchanged.
-- No system-architecture change: ADR-0039 (shell before agent views),
-  ADR-0045 (aP attachment), and ADR-0050 (Host Mount Service grants) remain
-  the system truth; this change defines the UX layered on top of them.
-- `rust-inline-tui` owns terminal rendering behavior; any broader interaction
-  contract will be rewritten after the first usable-agent tracer bullet and
-  must not duplicate renderer-specific rules.
-- Future event-driven work (triggers, schedules, proactive reports) must
-  express its user-facing surface through this model; this change defines the
-  UX contract only, not the runtime event machinery.
+Automated tests cover inline layout, completion, visible errors, resize,
+Unicode/multiline paste, interruption, detach, and scrollback. The same built
+binary must pass live acceptance in an ordinary terminal and a Herdr pane:
+successful response, transient completion, long-output scrollback, exit, and
+reattach without replaying the request or stopping the Host.

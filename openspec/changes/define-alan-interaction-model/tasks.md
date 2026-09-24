@@ -1,23 +1,33 @@
-## 1. Replan terminal experience
+# Tasks: shell-like terminal interaction
 
-Status: queued behind the delivered first usable-agent slice; retained
-proposal/design/deltas are inventory only. See [disposition.md](disposition.md) and the
-[active roadmap](../add-cognitive-model-routing/next-planning.md).
-The former 18-task desktop/background-dispatch plan is superseded, not completed.
+## 1. Replan the retained change
 
-- [ ] 1.1 Rewrite proposal/design/deltas around the real execution path in the [archived programmable-client change](../archive/2026-09-24-define-alan-programmable-client-surface/); remove native desktop obligations and renderer-owned launch assumptions.
-- [ ] 1.2 Identify remaining presentation gaps after the first task works; do not duplicate the first slice's minimal input/output requirements.
-- [ ] 1.3 Define inline output, progressive disclosure, result inspection and terminal lifecycle acceptance; retain Process/runtime ownership.
+- [x] 1.1 Trace the current `alan` → Root Agent → file-backed renderer flow and
+  inspect the live terminal UX.
+- [x] 1.2 Replace the superseded desktop/background-dispatch proposal, design,
+  and deltas with the inline-REPL scope; do not sync unimplemented behavior.
+- [x] 1.3 Record model discovery/selection as a follow-up to the owning
+  Connection/Machine boundary; a display-only picker is not acceptable.
 
-## 2. Terminal acceptance
+## 2. Implement the inline REPL
 
-- [ ] 2.1 Implement only observed presentation gaps over existing Process/AgentFS files.
-- [ ] 2.2 Verify resize, narrow panes, Unicode, paste and scrollback in an ordinary terminal and Herdr using the current build.
-- [ ] 2.3 Verify Ctrl-C, EOF, live Root Agent PID replacement, detach/reattach Process identity, output-offset continuity and visible retention-gap behavior against the shared lifecycle contract; presentation closure must not kill Host or replay a task.
-- [ ] 2.4 Record visual/interactive evidence separately from execution logs; propose Herdr-specific notification or recognition only if a concrete gap remains.
+- [x] 2.1 Replace the full-height layout with an inline transcript followed by
+  an `alan >` prompt; preserve committed terminal scrollback and recent output.
+- [x] 2.2 Keep slash, `$`, and `@` candidate lists temporary and adjacent to the
+  prompt; preserve keyboard selection and multiline input.
+- [x] 2.3 Ensure task errors and interruption outcomes are visible and terminal
+  state is restored on quit/EOF. Do not alter Process or Host ownership.
 
-## 3. Delivery
+## 3. Verify and deliver
 
-- [ ] 3.1 Run focused renderer tests, applicable quality checks and strict OpenSpec validation.
-- [ ] 3.2 Complete current-head CI and Codex review/fix/resolve; merge and sync implemented deltas only.
-- [ ] 3.3 Hand off any unfinished roadmap items before archive; history UI, background/event-driven modes and full editfs remain separate deferred scope.
+- [x] 3.1 Add focused tests for inline layout, transcript/scrollback behavior,
+  completion, inline viewport reflow/bounds, Unicode/paste, errors, Ctrl-C and
+  Ctrl-D detach.
+- [x] 3.2 Run the current build in an ordinary PTY and dedicated Herdr pane;
+  verify a successful response, transient candidates, long-output scrollback,
+  exit/reattach, shell restoration and no replay. Error and interrupt semantics
+  remain covered by focused renderer/file-backed tests.
+- [x] 3.3 Run focused tests, `just quality`, and strict OpenSpec validation.
+- [ ] 3.4 Complete current-head CI and Codex review/fix/resolve; merge, sync
+  only implemented deltas, archive, and hand off unfinished model-selection
+  ownership to the next active change.

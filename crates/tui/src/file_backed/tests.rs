@@ -302,19 +302,6 @@ fn dollar_skill_completion_uses_local_candidates() {
 }
 
 #[test]
-fn scrollback_drains_by_rendered_lines() {
-    let mut app = FileBackedApp::new("/agent/1".to_string());
-    app.transcript
-        .push(HistoryCell::Assistant("long streamed output ".repeat(40)));
-
-    let drained = app.drain_committed_scrollback(32, 10);
-
-    assert!(!drained.is_empty());
-    assert!(app.rendered_history_lines(32).len() <= 8);
-    assert!(matches!(app.transcript[0], HistoryCell::Assistant(_)));
-}
-
-#[test]
 fn action_snapshots_track_running_and_commit_completed_tool() {
     let mut app = FileBackedApp::new("/agent/1".to_string());
     sync_action_snapshot(
@@ -438,7 +425,11 @@ fn recoverable_error_is_kept_in_the_transcript() {
         app.transcript,
         vec![HistoryCell::Error("provider request failed".to_string())]
     );
-    assert_eq!(app.notice.as_deref(), Some("provider request failed"));
+    assert!(
+        app.notice.is_none(),
+        "the transcript is the single visible error"
+    );
+    assert!(app.rendered_history_lines(80)[0].contains("provider request failed"));
 }
 
 #[test]
@@ -990,3 +981,6 @@ async fn response_missed_at_attach_is_recovered_by_the_tape_watcher() {
         "the tape watcher must recover a response the output tail missed"
     );
 }
+
+#[path = "inline_tests.rs"]
+mod inline_tests;

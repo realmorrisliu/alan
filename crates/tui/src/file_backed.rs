@@ -20,10 +20,9 @@ use anyhow::{Context, Result, bail};
 use crossterm::event::KeyEvent;
 use crossterm::event::{Event as TerminalEvent, KeyCode, KeyModifiers};
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Paragraph, Wrap};
+use ratatui::widgets::{Paragraph, Wrap};
 mod app;
 mod file_surface;
 mod history_merge;
@@ -155,7 +154,6 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
     let watch_tails = hydrate_and_open_tails(&shell, &config.agent_path, &mut app).await?;
 
     let mut terminal = TerminalSession::enter()?;
-    terminal.draw_with(|frame| draw(frame, &app))?;
 
     let (tx, mut rx) = tokio::sync::mpsc::channel::<FileBackedEvent>(128);
     let terminal_reader = spawn_terminal_events(tx.clone());
@@ -351,9 +349,14 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
             }
             _ = frame_tick.tick() => {
                 if dirty {
-                    let (viewport_width, viewport_height) = terminal.viewport_size();
-                    let committed = app.drain_committed_scrollback(viewport_width, viewport_height);
+                    let (viewport_width, terminal_height) = terminal.viewport_size();
+                    let committed = app.drain_committed_scrollback(viewport_width, terminal_height);
                     terminal.write_scrollback(&committed)?;
+                    terminal.set_inline_height(inline_viewport_height(
+                        &app,
+                        viewport_width,
+                        terminal_height,
+                    ))?;
                     terminal.draw_with(|frame| draw(frame, &app))?;
                     dirty = false;
                 }
@@ -865,41 +868,11 @@ fn drain_lines(pending: &mut Vec<u8>) -> Vec<Vec<u8>> {
 fn draw(frame: &mut Frame<'_>, app: &FileBackedApp) {
     let area = frame.area();
     let width = area.width as usize;
-    let live_height = app.live_region_height(width).max(2);
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Min(2), Constraint::Length(live_height)])
-        .split(area);
-
-    draw_transcript(frame, app, chunks[0]);
-    draw_live_region(frame, app, chunks[1]);
-}
-
-fn draw_transcript(frame: &mut Frame<'_>, app: &FileBackedApp, area: Rect) {
-    let rendered = app.rendered_history_lines(area.width as usize);
-    let lines = if rendered.is_empty() {
-        vec![Line::from(vec![
-            Span::styled("alan", Style::default().add_modifier(Modifier::BOLD)),
-            Span::styled(" ready", Style::default().fg(Color::DarkGray)),
-        ])]
-    } else {
-        rendered.into_iter().map(style_transcript_line).collect()
-    };
-
-    frame.render_widget(
-        Paragraph::new(lines)
-            .wrap(Wrap { trim: false })
-            .block(Block::default()),
-        area,
-    );
-}
-
-fn draw_live_region(frame: &mut Frame<'_>, app: &FileBackedApp, area: Rect) {
-    let mut lines = Vec::new();
-    lines.push(Line::styled(
-        format!("local renderer host · {}", app.agent_path),
-        Style::default().fg(Color::DarkGray),
-    ));
+    let mut lines = app
+        .rendered_history_lines(width)
+        .into_iter()
+        .map(style_transcript_line)
+        .collect::<Vec<_>>();
     if let Some(label) = app.activity_label() {
         lines.push(activity_line(app, label));
     }
@@ -916,6 +889,7 @@ fn draw_live_region(frame: &mut Frame<'_>, app: &FileBackedApp, area: Rect) {
         ));
     }
 
+    let mut prompt_start = None;
     if let Some(form) = &app.form {
         for (text, focused) in form.render_lines() {
             let style = if focused {
@@ -952,11 +926,39 @@ fn draw_live_region(frame: &mut Frame<'_>, app: &FileBackedApp, area: Rect) {
                 lines.push(Line::styled(format!("  {label}"), style));
             }
         }
+        prompt_start = Some(lines.len());
         lines.extend(app.composer_lines());
-        lines.push(app.hint_line());
     }
 
     frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);
+    if let Some(prompt_start) = prompt_start {
+        let (x, y) = composer_cursor_position(app, width, prompt_start);
+        if area.height > 0 {
+            frame
+                .set_cursor_position((x.min(area.width.saturating_sub(1)), y.min(area.height - 1)));
+        }
+    }
+}
+
+fn inline_viewport_height(app: &FileBackedApp, width: usize, terminal_height: usize) -> u16 {
+    app.rendered_history_lines(width)
+        .len()
+        .saturating_add(app.live_region_height(width) as usize)
+        .max(1)
+        .min(terminal_height.max(1)) as u16
+}
+
+fn composer_cursor_position(app: &FileBackedApp, width: usize, prompt_start: usize) -> (u16, u16) {
+    let text = app.composer.text();
+    let cursor = app.composer.cursor().min(text.len());
+    let before_cursor = text.get(..cursor).unwrap_or_default();
+    let segments = before_cursor.split('\n').collect::<Vec<_>>();
+    let line_index = segments.len().saturating_sub(1);
+    let line = segments.last().copied().unwrap_or_default();
+    let column = 7 + unicode_width::UnicodeWidthStr::width(line);
+    let width = width.max(1);
+    let row = prompt_start + line_index + column / width;
+    ((column % width) as u16, row as u16)
 }
 
 fn activity_line(app: &FileBackedApp, label: &str) -> Line<'static> {
