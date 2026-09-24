@@ -1,9 +1,11 @@
 # 下一步规划入口：Tracer bullet
 
-基线：main `62a99d6d`（PR #929，2026-09-23；包含 PR #928）。
+基线：main `bda9a82e`（PR #932，2026-09-24；包含 PR #931 的 TUI 交付）。
 2026-09-20 用户确认改为纵向 tracer bullet：尽快交付可用 agent，通过真实终端任务反馈推进架构。
 本路线替代原 Step 2 → 3 → 4 的逐层交付顺序；ADR-0054/0055 的所有权边界不变。
 ADR-0056 记录裸 `alan` 直接附着 Root Agent 的入口决策，并取代旧 Shell-first 指引。
+ADR-0058 后续接受同一 Machine 组合确定性命令与 Agent 推理；命令/输入语义由
+[unify-agent-command-input](../unify-agent-command-input/disposition.md) 接管，当前代码仍未交付该行为。
 
 ## 已完成与当前状态
 
@@ -26,7 +28,7 @@ ADR-0056 记录裸 `alan` 直接附着 Root Agent 的入口决策，并取代旧
 测试目录包含已知内容和不可访问的边界，便于判断回答和授权是否正确。
 
 - [x] 追踪裸 `alan` → LocalAttachment → TTY 分支的 file-backed renderer → 现有 `/agent/root` → generation → 受控 Tool → AgentFS IO；重定向 stdin 提交一次 Agent task。
-- [x] 明确输入边界：TTY composer 永远提交 Agent task，不解析 shell 语法；`!` 显式请求受治理的 `bash` Tool；管道输入只执行一次 Agent task，不用模型猜测执行权限。
+- [x] 明确当时的输入边界：TTY composer 提交 Agent task，不本地解析 shell 语法；当前 `!` 仍作为 Agent 输入，不是已交付的确定性命令路由；管道输入只提交一次 Agent task。
 - [x] 已重写本 change 的 proposal/design/deltas：只改 `alan-shell` 与 `alan-renderer-host-contract`；旧 editfs/run/binfs 前置条件不再属于本切片。
 - [x] 已接通裸 `alan` 的 TTY → 现有 `/agent/root` file-backed renderer 和重定向 stdin 的 one-shot Agent 路径；无 Connection 时给出准确错误，普通 TTY、Herdr pane 与管道输出均已验证。
 - [x] 配置 dev Connection 后，交付只读工具任务、AgentFS 增量输出、完成、Ctrl-C 取消和取消后的成功后续任务；验收记录见主 change 的 tasks.md。
@@ -48,15 +50,16 @@ ADR-0056 记录裸 `alan` 直接附着 Root Agent 的入口决策，并取代旧
 `crates/shell/` 和 `crates/tui/src/file_backed.rs` 追踪；本切片不新增
 Shell evaluator Process。
 
-## 切片 2：同一任务的执行可靠性与终端体验
+## 切片 2：同一任务的执行可靠性与 shell-like 终端体验
 
-首切片已归档，不再有 programmable-client change 承接后续实现。
-[define-alan-interaction-model](../define-alan-interaction-model/tasks.md) 是排队的后续接收 change：先重写其旧提案，再承接 renderer 可见的 Root Agent 重连、Process identity、输出 offset/保留缺口提示与 pane 非拥有式关闭验收。PR #929 的自动化覆盖 PID 替换，但 attached TUI 在真实 Host/Root Agent replacement 下的普通终端与 Herdr 体验仍需现场验证。该 change 不获得 Agent/Process 启动或恢复 authority；若验收发现执行、持久证据或副作用语义缺口，先由对应服务 owner 的新 change 定权。Machine 持久恢复若需要新合同，由 cognition change 提前交付独立必要子切片，不等待 typed evaluation，也不在客户端复制恢复状态。
-
-- [ ] 验证 detach/reattach 的 Process identity、输出 offset、缺口提示和不重复派发；关闭 pane 不误杀 Host。
-- [ ] 定义 Local Entry 有界保留与回收；明确取消、EOF、Process 退出和 Host 生命周期。
-- [ ] 对中断与崩溃区分完成、失败、未完成和 Unknown；Unknown 外部副作用先对账，禁止盲目重放。
-- [ ] 验证 resize、Unicode、paste、scrollback、窄屏、Ctrl-C 和 EOF，保持安静的 inline 输出和渐进式结果检查。
+此切片已完成并归档为
+[define-alan-interaction-model](../archive/2026-09-24-define-alan-interaction-model/)。
+PR #931 实现 inline transcript/prompt、临时 completion、可见错误与安全 detach；
+PR #932 修复该 CI 路径暴露的 AgentFS 测试同步竞态。PR #932 的 macOS/Ubuntu
+测试、覆盖率、质量、安全与 OpenSpec 检查均通过。Codex 对当前提交未发现 major，
+原 PR 的 review threads 已全部 resolve。规范只同步实际交付的 renderer 行为；
+append-only Stream 不承诺 retention-gap recovery，Process/Agent Runtime/证据所有权
+不进入 renderer。输入路由保持既有行为。
 
 参考 ADR-0019/0044/0046/0047/0055，以及
 `evidence-retention-and-projection`、`alan-os-host-lifecycle`、
@@ -64,16 +67,34 @@ Shell evaluator Process。
 fx 体验参考见 [research-jev-and-fx.md](research-jev-and-fx.md)。
 历史浏览 UI、完整 editfs UI、脚本系统、通用 executable packaging 不作为前置。
 
+## 下一个实施顺序
+
+1. 完成 [rename-alan-os-to-alan9](../rename-alan-os-to-alan9/)：只迁移当前
+   README、AGENTS、指南和活动 OpenSpec 的解释性命名；保留 Alan 产品、`alan`
+   CLI、crate/type/protocol/storage 标识、路径和历史决定。
+2. 按 ADR-0058 实施
+   [unify-agent-command-input](../unify-agent-command-input/) 的显式输入阶段：
+   `!` 原样交给受治理宿主 shell，`:` 强制 Agent，无前缀暂走 Agent；共享 cwd、
+   排队/取消、证据关联与恢复不重放复用现有 Process/Machine/Host Mount/sandbox。
+   不引入第二个 executor/router，不改写命令路径文本，也不把 aP 暴露为用户协议。
+3. 自动分类、typed evaluation、模型列表/选择与 Jev 仍是后续独立资格评估；
+   不因当前两个 change 的文档完成而视为已实现或已启用。
+
 ## 切片 3：在已跑通任务上加入混合 Machine
 
 归属：[add-cognitive-model-routing](tasks.md)。
 从切片 1 的真实任务中选一个低风险、可判定的候选选择或评价点，
 保留确定性与仅生成两套基线；具体选择须有调用链证据，不预建全局 router。
+ADR-0058 的后续实现归属
+[unify-agent-command-input](../unify-agent-command-input/tasks.md)：先交付显式
+`!`/`:`，再消费此处提供的 typed evaluation 做 unprefixed shadow qualification；
+自动分类的 side-effecting route 仍须通过 false-execution 门槛并经明确启用，不能由 renderer 或候选 UI 暗中激活。
 
 - [ ] 定案 evaluation/generation 能力、版本化 DTO、操作生命周期、预算和 fallback。
 - [ ] 补齐 llmfs/provider、Agent Machine/AgentFS、执行证据 owning deltas。
 - [ ] 用可控 fixtures 验证 typed success、no-match、格式错误、超时、取消、结构化完成、wait/resume 和 Unknown 处理。
 - [ ] 复用切片 2 已交付的恢复合同；明确 Machine state、Tape 投影、rollout/checkpoint 的写入权威。
+- [ ] 为 TUI model picker 定案 Connection ownership：自动刷新权威 catalog；已选模型覆盖自动选型；无选择时优先选 catalog 中可用的 `gpt-6-luna`，不可用时明确显示提供方默认/失败；model change 必须实际绑定到下一 turn，不能只改 UI。
 
 参考 ADR-0055、0024/0025、0019、0022、0051，以及本 change 的 proposal/design/tasks。
 相关 specs：`llm-file-server`、`provider-connection-contract`、

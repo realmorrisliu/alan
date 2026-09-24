@@ -30,6 +30,7 @@
   no replay. Error and interrupt semantics remain covered by focused
   renderer/file-backed tests.
 - [x] 3.3 Run focused tests, `just quality`, and strict OpenSpec validation.
-- [ ] 3.4 Complete current-head CI and Codex review/fix/resolve; merge, sync
-  only implemented deltas, archive, and hand off unfinished model-selection
-  ownership to the next active change.
+- [x] 3.4 Complete current-head review and CI: resolve all PR #931 Codex
+  threads, merge PR #931, fix the CI synchronization race in PR #932 and
+  verify its full required suite; sync only delivered deltas, archive, and hand
+  off model discovery/selection to the cognition owner.

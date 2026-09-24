@@ -172,5 +172,6 @@ restart even though the execution evidence already exists.
   does not add a Host command or file surface.
 - Does not change Alan Kernel Process lifecycle authority, the aP wire surface,
   or Rollout evidence ownership.
-- Must land before `define-alan-interaction-model` implements its durable
-  review surface.
+- A durable renderer review surface, if later proposed, must follow this
+  owning change; the archived inline-presentation slice did not implement
+  durable rollout browsing or launch authority.

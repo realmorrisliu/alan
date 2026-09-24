@@ -154,11 +154,18 @@ Tool 结果进入内部 Machine 与 rollout：`runtime/tool_execution.rs:266–2
 
 建议复用同一个 evaluator，补齐真实 Shell Process IO 消费及 runner wiring。Herdr 中的 renderer 只负责终端交互，不能成为新的隐藏执行 owner。
 
-同时，`rust-inline-tui/spec.md:136–150` 要求裸 `alan` 进入 file-backed Rust TUI，当前 main 实际走 StdioDriver；README、AGENTS、CONTEXT 的入口描述也需统一。先定入口合同，再改 renderer，不能按旧文档假定当前已走 TUI。
+历史观察（早于 PR #929/#931）：当时 canonical `rust-inline-tui` 已要求裸
+`alan` 进入 file-backed Rust TUI，但 TTY 实际仍走 StdioDriver。该入口差异已由
+PR #929/#931 交付：当前交互 TTY 附着 file-backed renderer，重定向 stdin 仍走
+one-shot StdioDriver。不要把两种入口混为同一条执行路径。
 
 ### F5 · P0：活动交互/历史方案引入了另一条 launch authority
 
-ADR-0038/0048 要求通过命令平面启动普通 Agent，renderer attach IO；但 `expose-agent-rollout-history/specs/local-entry-service/spec.md:7–22` 和 `define-alan-interaction-model/design.md` D7 给 renderer 专属 `/mnt/agent-runtime/clone`，不让普通 Shell/子 Process 继承。
+ADR-0038/0048 要求通过命令平面启动普通 Agent，renderer attach IO；早期
+interaction 提案的 D7 曾给 renderer 专属 `/mnt/agent-runtime/clone`，不让普通
+Shell/子 Process 继承。这是未实施的提案冲突，不是运行时 authority；最终的
+[inline TUI 设计](../archive/2026-09-24-define-alan-interaction-model/design.md)
+明确 renderer 不拥有 launch authority。
 
 这是**活动方案与已接受原则的冲突**，不是已验证运行中的越权漏洞。建议保留普通命令平面启动，让 renderer 输入显式启动请求；将 history quota、观察权限、durability 要求与 launch authority 分开。若要改变原则，必须显式 supersede ADR，不能通过一个历史查看功能隐式改变执行架构。
 
@@ -168,7 +175,7 @@ macOS 客户端退役后，更没有理由为其保留专属 launch bypass。
 
 `kernel/src/procfs/file_server.rs:588–591` 等 runner 完成后一次性追加输出，不满足 fx 式实时 shell。该审查时的旧 programmable-client proposal 已被首个 tracer bullet 取代；PR #929 只交付 AgentFS file-backed 输出路径，不宣称一般 Shell Process 的实时输出与 Local Entry retention 已完成。后续缺口见 `next-planning.md` 的切片 2。
 
-`local_entry.rs:30,99–142,208–218` 使用持续增加的 BTreeMap；drain 标记退出但未回收/限制条目。与 `local-entry-service/spec.md:16–18` 的 bounded state 承诺不符。需在 owning lifecycle slice 补 retention/tombstone 上限。
+`local_entry.rs:30,99–142,208–218` 使用持续增加的 BTreeMap；drain 标记退出但未回收/限制条目。与 `local-entry-service/spec.md:16–18` 的 bounded state 承诺不符。需在 owning lifecycle slice 补 retention/tombstone 上限。PR #929/#931 交付的是 Root Agent 的 file-backed 交互和 renderer，不代表一般 Shell Process 实时 IO 或 Local Entry 回收也已完成。
 
 ### F7 · P1：模型评价不能代替授权，恢复不能重做未知副作用
 
@@ -308,7 +315,7 @@ ADR 应记录历史决策及显式 supersession，不静默重写当年的事实
 | --- | --- | --- |
 | `add-cognitive-model-routing` | 0/20 | 全面重写，承载混合 Machine / evaluation，不再执行原 S1/S2 Process 路由方案 |
 | `expose-agent-rollout-history` | 0/26 | 保留 durable history 价值；拆掉 renderer launch 特权，转向终端可发现/可恢复证据 |
-| `define-alan-interaction-model` | 0/18 | 改为 Herdr 内 Alan 交互；保留渐进披露与结果审阅，删除 native workspace/UI 义务及隐式 launch 例外 |
+| `define-alan-interaction-model` | delivered / archived | PR #931/#932 deliver inline terminal presentation and its CI regression fix; command routing remains with `unify-agent-command-input` |
 | `verify-macos-managed-user-pty` | 0/9 | 客户端 PTY 验证目标取消；若承担安全执行前提，迁入 OS sandbox 验证，不继续为旧 UI 建账户 |
 | `define-updf-product-umbrella` | 0/20 | 暂缓；撤销 Alan for macOS preview 假设，包格式/domain 与具体 viewer 分离，不作为核心认知前置 |
 | `define-groove-master-alan-app` | 0/19 | 暂缓并重定消费者；独立 domain/file-server 思想可保留，但不能再计划 Alan for macOS native client |

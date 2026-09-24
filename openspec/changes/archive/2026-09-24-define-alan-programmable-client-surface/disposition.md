@@ -34,7 +34,7 @@ unverified. Durable output-offset continuity and visible retention-gap
 behavior are also not claimed by this tracer bullet.
 
 Those renderer-facing gaps were handed to the queued
-[`define-alan-interaction-model` tasks](../../define-alan-interaction-model/tasks.md)
+[`define-alan-interaction-model` tasks](../2026-09-24-define-alan-interaction-model/tasks.md)
 and Slice 2 of the roadmap. That change must rewrite its retained proposal,
 design, and deltas before implementation; it owns presentation and terminal
 acceptance, not Agent launch or Process/runtime authority. Any Process lifecycle,
