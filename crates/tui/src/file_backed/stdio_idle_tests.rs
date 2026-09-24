@@ -271,19 +271,21 @@ async fn one_shot_recovers_when_final_tape_read_races_root_agent_restart() {
         .unwrap();
     let mut input_tail = shell.tail("/agent/root/io/input").await.unwrap();
     let (answer, new_pid) = {
-        let wait_for_answer = wait_for_stdio_answer(
+        let task = StdioTaskWaitContext::new("restart after idle", attachment.tape_history.clone());
+        submit_stdio_task(&shell, &task, &attachment).await.unwrap();
+        assert!(!input_tail.read(4096).await.unwrap().is_empty());
+        input_tail.close().await.unwrap();
+
+        // The test starts observing only after commit-on-clunk input publication
+        // has completed, so it cannot suspend submission between stream appends.
+        let wait_for_answer = wait_for_stdio_answer_after_submit(
             &shell,
             "/agent/root",
-            StdioTaskWaitContext::new("restart after idle", attachment.tape_history.clone()),
+            task,
             &mut attachment,
             std::future::pending::<anyhow::Result<()>>(),
         );
         tokio::pin!(wait_for_answer);
-        tokio::select! {
-            result = &mut wait_for_answer => panic!("one-shot completed before input was observed: {result:?}"),
-            input = input_tail.read(4096) => assert!(!input.unwrap().is_empty()),
-        }
-        input_tail.close().await.unwrap();
 
         shell
         .write(
