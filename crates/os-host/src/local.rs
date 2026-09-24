@@ -30,8 +30,9 @@ const MAX_LOCAL_REQUEST_BYTES: usize = 64 * 1024;
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
 enum LocalRequest {
+    // Keep the original operation's Shell Process behavior for older clients.
     Attach,
-    AttachShell,
+    AttachClient,
     ApproveHostMount {
         request_id: String,
         host_path: PathBuf,
@@ -242,10 +243,6 @@ impl AlanOsHost {
                         let (mut read, mut write) = stream.into_split();
                         match read_local_request(&mut read).await? {
                             LocalRequest::Attach => {
-                                let namespace = local_entry.namespace_for_local_client();
-                                serve_namespace_attachment(namespace, None, read, write).await
-                            }
-                            LocalRequest::AttachShell => {
                                 let (entry_id, _, namespace) = local_entry
                                     .create_and_handoff()
                                     .await
@@ -259,6 +256,10 @@ impl AlanOsHost {
                                     write,
                                 )
                                 .await
+                            }
+                            LocalRequest::AttachClient => {
+                                let namespace = local_entry.namespace_for_local_client();
+                                serve_namespace_attachment(namespace, None, read, write).await
                             }
                             LocalRequest::ApproveHostMount { request_id, host_path } => {
                                 let result = crate::host_mounts::approve_host_mount(
@@ -350,12 +351,12 @@ impl LocalAttachment {
     }
 
     pub async fn connect(&self) -> Result<AttachedNamespace> {
-        self.connect_with_request(LocalRequest::Attach).await
+        self.connect_with_request(LocalRequest::AttachClient).await
     }
 
     /// Starts a local Shell Process and attaches to its Login Namespace.
     pub async fn connect_shell_process(&self) -> Result<AttachedNamespace> {
-        self.connect_with_request(LocalRequest::AttachShell).await
+        self.connect_with_request(LocalRequest::Attach).await
     }
 
     async fn connect_with_request(&self, request: LocalRequest) -> Result<AttachedNamespace> {
@@ -792,6 +793,18 @@ async fn shutdown_signal() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn local_attach_wire_ops_keep_legacy_and_processless_semantics_distinct() {
+        assert_eq!(
+            serde_json::to_value(LocalRequest::Attach).unwrap(),
+            serde_json::json!({"op": "attach"})
+        );
+        assert_eq!(
+            serde_json::to_value(LocalRequest::AttachClient).unwrap(),
+            serde_json::json!({"op": "attach_client"})
+        );
+    }
 
     #[test]
     fn host_status_rejects_zero_pid() {
