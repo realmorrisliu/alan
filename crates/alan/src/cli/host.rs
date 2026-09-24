@@ -8,7 +8,13 @@ use anyhow::{Context, Result};
 pub async fn attach_or_start_host(
     channel: InstallChannel,
 ) -> Result<alan_os_host::AttachedNamespace> {
-    let attachment = alan_os_host::LocalAttachment::detect(channel.descriptor().id)?;
+    let paths = alan_os_host::HostEndpointPaths::detect(channel.descriptor().id)?;
+    let attachment = alan_os_host::LocalAttachment::new(paths.clone());
+    if let Ok(status) = paths.read_status()
+        && status.readiness == alan_os_host::HostReadiness::Ready
+    {
+        status.ensure_processless_attachment_supported()?;
+    }
     if let Ok(attached) = attachment.connect().await {
         return Ok(attached);
     }

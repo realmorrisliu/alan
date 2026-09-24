@@ -21,6 +21,8 @@ use alan_service_manager::{BOOT_ID_PATH, BOOT_STATE_PATH, ServiceManager};
 use crate::HostBootConfig;
 
 const STATUS_VERSION: u16 = 1;
+const LOCAL_ATTACHMENT_PROTOCOL_VERSION: u16 = 2;
+const LEGACY_LOCAL_ATTACHMENT_PROTOCOL_VERSION: u16 = 1;
 const SOCKET_FILE: &str = "namespace.ap.sock";
 const STATUS_FILE: &str = "host.json";
 const LOCK_FILE: &str = "host.lock";
@@ -134,6 +136,8 @@ pub enum HostReadiness {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct HostStatus {
     pub version: u16,
+    #[serde(default = "legacy_local_attachment_protocol_version")]
+    pub local_attachment_protocol_version: u16,
     pub channel_id: String,
     pub boot_id: Uuid,
     pub pid: u32,
@@ -142,6 +146,21 @@ pub struct HostStatus {
 }
 
 impl HostStatus {
+    /// Whether this Host supports processless local client attachments.
+    pub fn supports_processless_attachment(&self) -> bool {
+        self.local_attachment_protocol_version >= LOCAL_ATTACHMENT_PROTOCOL_VERSION
+    }
+
+    /// Returns an actionable error when the Host needs an explicit restart.
+    pub fn ensure_processless_attachment_supported(&self) -> Result<()> {
+        ensure!(
+            self.supports_processless_attachment(),
+            "Alan OS Host does not support processless attachment (local protocol {}); run `alan host stop` and retry",
+            self.local_attachment_protocol_version
+        );
+        Ok(())
+    }
+
     fn validate_for(&self, paths: &HostEndpointPaths) -> Result<()> {
         ensure!(
             self.version == STATUS_VERSION,
@@ -155,6 +174,10 @@ impl HostStatus {
         ensure!(self.socket == paths.socket, "Host status socket mismatch");
         Ok(())
     }
+}
+
+fn legacy_local_attachment_protocol_version() -> u16 {
+    LEGACY_LOCAL_ATTACHMENT_PROTOCOL_VERSION
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -200,6 +223,7 @@ impl AlanOsHost {
 
         let status = HostStatus {
             version: STATUS_VERSION,
+            local_attachment_protocol_version: LOCAL_ATTACHMENT_PROTOCOL_VERSION,
             channel_id: paths.channel_id.clone(),
             boot_id: service_manager.boot_id(),
             pid: std::process::id(),
@@ -351,20 +375,28 @@ impl LocalAttachment {
     }
 
     pub async fn connect(&self) -> Result<AttachedNamespace> {
-        self.connect_with_request(LocalRequest::AttachClient).await
+        self.connect_with_request(LocalRequest::AttachClient, true)
+            .await
     }
 
     /// Starts a local Shell Process and attaches to its Login Namespace.
     pub async fn connect_shell_process(&self) -> Result<AttachedNamespace> {
-        self.connect_with_request(LocalRequest::Attach).await
+        self.connect_with_request(LocalRequest::Attach, false).await
     }
 
-    async fn connect_with_request(&self, request: LocalRequest) -> Result<AttachedNamespace> {
+    async fn connect_with_request(
+        &self,
+        request: LocalRequest,
+        requires_processless_attachment: bool,
+    ) -> Result<AttachedNamespace> {
         let status = self.paths.read_status()?;
         ensure!(
             status.readiness == HostReadiness::Ready,
             "Alan OS Host is not ready"
         );
+        if requires_processless_attachment {
+            status.ensure_processless_attachment_supported()?;
+        }
         tokio::time::timeout(ATTACHMENT_CONNECT_TIMEOUT, async {
             let mut stream = UnixStream::connect(&self.paths.socket)
                 .await
@@ -766,7 +798,9 @@ pub async fn run_host_process(channel_id: &str) -> Result<()> {
 /// describe the same live boot.
 pub async fn request_host_stop(paths: &HostEndpointPaths) -> Result<HostStatus> {
     let mut status = paths.read_status()?;
-    let attachment = LocalAttachment::new(paths.clone()).connect().await?;
+    let attachment = LocalAttachment::new(paths.clone())
+        .connect_shell_process()
+        .await?;
     ensure!(
         attachment.boot_id == status.boot_id,
         "refusing to stop a Host whose boot identity changed"
@@ -811,6 +845,7 @@ mod tests {
         let paths = HostEndpointPaths::from_runtime_dir(&std::env::temp_dir(), "test").unwrap();
         let status = HostStatus {
             version: STATUS_VERSION,
+            local_attachment_protocol_version: LOCAL_ATTACHMENT_PROTOCOL_VERSION,
             channel_id: paths.channel_id.clone(),
             boot_id: Uuid::new_v4(),
             pid: 0,
@@ -822,5 +857,52 @@ mod tests {
             status.validate_for(&paths).unwrap_err().to_string(),
             "Host status pid must be positive"
         );
+    }
+
+    #[test]
+    fn legacy_host_status_requires_an_explicit_restart_for_processless_attach() {
+        let paths = HostEndpointPaths::from_runtime_dir(&std::env::temp_dir(), "test").unwrap();
+        let status: HostStatus = serde_json::from_value(serde_json::json!({
+            "version": STATUS_VERSION,
+            "channel_id": paths.channel_id,
+            "boot_id": Uuid::new_v4(),
+            "pid": 1,
+            "readiness": "ready",
+            "socket": paths.socket,
+        }))
+        .unwrap();
+
+        assert_eq!(
+            status.local_attachment_protocol_version,
+            LEGACY_LOCAL_ATTACHMENT_PROTOCOL_VERSION
+        );
+        assert!(!status.supports_processless_attachment());
+        assert_eq!(
+            status
+                .ensure_processless_attachment_supported()
+                .unwrap_err()
+                .to_string(),
+            "Alan OS Host does not support processless attachment (local protocol 1); run `alan host stop` and retry"
+        );
+    }
+
+    #[tokio::test]
+    async fn processless_attach_rejects_legacy_status_before_connecting() {
+        let runtime = tempfile::tempdir().unwrap();
+        let paths = HostEndpointPaths::from_runtime_dir(runtime.path(), "test").unwrap();
+        std::fs::create_dir_all(&paths.root).unwrap();
+        let status = serde_json::json!({
+            "version": STATUS_VERSION,
+            "channel_id": paths.channel_id,
+            "boot_id": Uuid::new_v4(),
+            "pid": 1,
+            "readiness": "ready",
+            "socket": paths.socket,
+        });
+        std::fs::write(&paths.status, serde_json::to_vec(&status).unwrap()).unwrap();
+        std::fs::set_permissions(&paths.status, std::fs::Permissions::from_mode(0o600)).unwrap();
+
+        let error = LocalAttachment::new(paths).connect().await.err().unwrap();
+        assert!(error.to_string().contains("run `alan host stop` and retry"));
     }
 }

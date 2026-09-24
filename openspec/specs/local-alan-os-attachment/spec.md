@@ -35,3 +35,14 @@ walk stable paths and resume streams from caller-held offsets.
 - **WHEN** its Unix socket closes
 - **THEN** the Agent Process continues according to `/proc`
 - **AND** a later client can attach without recreating execution
+
+### Requirement: Local attachment upgrades fail closed
+Adding a local attachment operation MUST preserve the existing `attach`
+operation's Shell Process semantics for older clients. A processless client MUST
+use its distinct advertised operation and MUST NOT fall back to the legacy
+operation when the ready Host does not support it.
+
+#### Scenario: A ready Host lacks processless attachment support
+- **WHEN** a processless client finds a ready Host with an older local attachment protocol
+- **THEN** it reports that the Host must be explicitly restarted before retrying
+- **AND** it neither creates a Shell Process through the legacy operation nor starts a competing Host

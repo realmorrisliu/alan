@@ -126,6 +126,7 @@ fn host_status_reports_stopping_without_attaching() {
     std::fs::create_dir_all(&paths.root).unwrap();
     let status = HostStatus {
         version: 1,
+        local_attachment_protocol_version: 2,
         channel_id: "stable".to_string(),
         boot_id: uuid::Uuid::new_v4(),
         pid: std::process::id(),
