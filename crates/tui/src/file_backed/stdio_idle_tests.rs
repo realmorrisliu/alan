@@ -350,7 +350,11 @@ async fn one_shot_recovers_when_final_tape_read_races_root_agent_restart() {
         .unwrap();
         resume.send(()).unwrap();
 
-        (wait_for_answer.await.unwrap(), new_pid)
+        let answer = tokio::time::timeout(std::time::Duration::from_secs(10), wait_for_answer)
+            .await
+            .expect("one-shot did not recover after the Root Agent restart")
+            .unwrap();
+        (answer, new_pid)
     };
     assert_eq!(answer, "recovered answer");
     assert_eq!(attachment.root_agent_pid, new_pid.parse::<u64>().unwrap());

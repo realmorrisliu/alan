@@ -15,7 +15,7 @@ alan-shell = { path = "../shell" }
 anyhow.workspace = true
 crossterm.workspace = true
 libc.workspace = true
-ratatui.workspace = true
+ratatui = { workspace = true, features = ["unstable-rendered-line-info"] }
 serde.workspace = true
 serde_json.workspace = true
 textwrap.workspace = true

@@ -6,6 +6,8 @@ use alan_agent_protocol::{
 };
 use serde_json::{Map, Value};
 
+use crate::transcript_ui::{INLINE_PROMPT_CONTINUATION, INLINE_PROMPT_PREFIX};
+
 /// Options controlling how transcript cells render.
 #[derive(Debug, Clone, Copy)]
 pub struct RenderOpts {
@@ -127,8 +129,8 @@ impl HistoryCell {
             Self::Rendered(_) | Self::Plan(_) | Self::Thinking { .. } => {
                 unreachable!("handled above")
             }
-            Self::User(text) => ("you", text.clone()),
-            Self::Assistant(text) => ("alan", text.clone()),
+            Self::User(text) => return wrap_user_prompt(text, width),
+            Self::Assistant(text) => return wrap_plain_text(text, width),
             Self::Tool {
                 title,
                 status,
@@ -164,7 +166,7 @@ impl HistoryCell {
         }
 
         if let Self::Assistant(text) = self {
-            *text = trim_wrapped_body("alan", text, opts.width, lines_to_trim);
+            *text = trim_wrapped_body(text, opts.width, lines_to_trim);
             return true;
         }
 
@@ -322,14 +324,49 @@ fn wrap_with_prefix(prefix: &str, body: &str, width: usize) -> Vec<String> {
         .collect()
 }
 
-fn trim_wrapped_body(prefix: &str, text: &str, width: usize, lines_to_trim: usize) -> String {
-    let body_width = width.max(16).saturating_sub(prefix.len() + 3);
-    textwrap::wrap(text, body_width)
+fn wrap_user_prompt(body: &str, width: usize) -> Vec<String> {
+    let body_width = width
+        .saturating_sub(unicode_width::UnicodeWidthStr::width(INLINE_PROMPT_PREFIX))
+        .max(8);
+    body.split('\n')
+        .flat_map(|segment| {
+            let wrapped = textwrap::wrap(segment, body_width);
+            if wrapped.is_empty() {
+                vec![String::new()]
+            } else {
+                wrapped.into_iter().map(Into::into).collect()
+            }
+        })
+        .enumerate()
+        .map(|(idx, line)| {
+            if idx == 0 {
+                format!("{INLINE_PROMPT_PREFIX}{line}")
+            } else {
+                format!("{INLINE_PROMPT_CONTINUATION}{line}")
+            }
+        })
+        .collect()
+}
+
+fn trim_wrapped_body(text: &str, width: usize, lines_to_trim: usize) -> String {
+    wrap_plain_text(text, width.max(16))
         .into_iter()
         .skip(lines_to_trim)
-        .map(|line| line.into_owned())
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+fn wrap_plain_text(text: &str, width: usize) -> Vec<String> {
+    text.split('\n')
+        .flat_map(|segment| {
+            let wrapped = textwrap::wrap(segment, width);
+            if wrapped.is_empty() {
+                vec![String::new()]
+            } else {
+                wrapped.into_iter().map(Into::into).collect()
+            }
+        })
+        .collect()
 }
 
 impl PendingYieldCell {

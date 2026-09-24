@@ -18,10 +18,11 @@ use crate::composer::{Composer, ComposerKeyOutcome};
 use crate::form::FormState;
 use crate::history::{HistoryCell, PendingYieldCell, RenderOpts, RunningTool};
 use crate::reconcile::{AssistantDecision, StreamAction, StreamReconciler, UserDecision};
+use crate::transcript_ui::{
+    INLINE_PROMPT_CONTINUATION, INLINE_PROMPT_PREFIX, INLINE_WAITING_PROMPT_PREFIX,
+};
 
 use super::file_surface::{TapeRecordV1, response_text_from_content};
-use super::{MAX_COMPLETION_ROWS, MAX_COMPOSER_LINES};
-
 fn default_commands() -> Vec<CompletionCandidate> {
     [
         ("compact", "summarize context"),
@@ -99,7 +100,7 @@ pub(super) struct FileBackedApp {
 impl FileBackedApp {
     pub(super) fn new(agent_path: String) -> Self {
         Self {
-            notice: Some(format!("local renderer host attached to {agent_path}")),
+            notice: None,
             agent_path,
             composer: Composer::default(),
             transcript: Vec::new(),
@@ -169,10 +170,17 @@ impl FileBackedApp {
     }
 
     pub(super) fn handle_key(&mut self, key: KeyEvent) -> Option<FileBackedAction> {
+        let pending_input = self.form.is_some() || self.pending_yield.is_some();
+        if key.code == KeyCode::Char('d') && key.modifiers.contains(KeyModifiers::CONTROL) {
+            if !pending_input && self.composer.text().is_empty() {
+                self.should_quit = true;
+                return Some(FileBackedAction::Quit);
+            }
+            return None;
+        }
         if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
             return Some(FileBackedAction::Interrupt);
         }
-        let pending_input = self.form.is_some() || self.pending_yield.is_some();
         if pending_input {
             self.completion = None;
         } else if self.completion.is_some() && self.consume_completion_key(key) {
@@ -610,7 +618,6 @@ impl FileBackedApp {
     }
 
     pub(super) fn push_error(&mut self, message: String) {
-        self.notice = Some(message.clone());
         self.transcript.push(HistoryCell::Error(message));
     }
 
@@ -715,13 +722,13 @@ impl FileBackedApp {
         viewport_height: usize,
     ) -> Vec<String> {
         let opts = self.render_opts(viewport_width);
-        let reserved = self.live_region_height(viewport_width) as usize + 1;
-        let max_lines = viewport_height.saturating_sub(reserved).max(2);
+        let max_lines = viewport_height
+            .saturating_sub(super::live_region_height(self, viewport_width) as usize);
         let lines = self.rendered_history_lines(viewport_width);
-        if lines.len() <= max_lines {
+        let drain_count = super::history_prefix_to_drain(&lines, viewport_width, max_lines);
+        if drain_count == 0 {
             return Vec::new();
         }
-        let drain_count = lines.len() - max_lines;
         let pruned_count = self.prune_rendered_prefix(opts, drain_count);
         lines.into_iter().take(pruned_count).collect()
     }
@@ -859,53 +866,14 @@ impl FileBackedApp {
         RenderOpts::new(width, self.expand_thinking)
     }
 
-    pub(super) fn live_region_height(&self, width: usize) -> u16 {
-        let header_lines = 1usize;
-        let activity_lines = usize::from(self.activity_label().is_some());
-        let notice_lines = usize::from(self.notice.is_some());
-        let tool_lines = self.running_tools.len();
-        let body_lines = if let Some(form) = &self.form {
-            form.render_lines().len()
-        } else {
-            self.composer_height(width) + self.completion_height() as usize + 1
-        };
-        (header_lines + activity_lines + notice_lines + tool_lines + body_lines) as u16
-    }
-
-    pub(super) fn completion_height(&self) -> u16 {
-        self.completion
-            .as_ref()
-            .map(|state| state.matches.len().min(MAX_COMPLETION_ROWS) as u16)
-            .unwrap_or(0)
-    }
-
-    pub(super) fn composer_height(&self, width: usize) -> usize {
-        let width = width.max(1);
-        let lines = self
-            .composer
-            .text()
-            .split('\n')
-            .map(|line| {
-                let visual = unicode_width::UnicodeWidthStr::width(line);
-                (visual / width) + 1
-            })
-            .sum::<usize>()
-            .max(1);
-        lines.min(MAX_COMPOSER_LINES)
-    }
-
     pub(super) fn composer_lines(&self) -> Vec<Line<'static>> {
         let mut lines = Vec::new();
         let segments = self.composer.text().split('\n').collect::<Vec<_>>();
         for (idx, segment) in segments.iter().enumerate() {
             let prompt = if idx == 0 {
-                if self.pending_yield.is_some() {
-                    "» "
-                } else {
-                    "> "
-                }
+                self.input_prompt_prefix()
             } else {
-                "  "
+                INLINE_PROMPT_CONTINUATION
             };
             lines.push(Line::from(vec![
                 Span::styled(prompt, Style::default().fg(Color::Green)),
@@ -914,37 +882,19 @@ impl FileBackedApp {
         }
         if lines.is_empty() {
             lines.push(Line::from(vec![Span::styled(
-                if self.pending_yield.is_some() {
-                    "» "
-                } else {
-                    "> "
-                },
+                self.input_prompt_prefix(),
                 Style::default().fg(Color::Green),
             )]));
         }
         lines
     }
 
-    pub(super) fn hint_line(&self) -> Line<'static> {
-        let hint = match &self.pending_yield {
-            Some(pending)
-                if matches!(pending.kind, YieldKind::Confirmation)
-                    && !pending.options.is_empty() =>
-            {
-                let choices = pending
-                    .options
-                    .iter()
-                    .enumerate()
-                    .map(|(idx, option)| format!("{}={option}", idx + 1))
-                    .collect::<Vec<_>>()
-                    .join(" · ");
-                format!("{choices}  · or type a reply and press Enter")
-            }
-            Some(_) => "reply and press Enter".to_string(),
-            None => "enter send · shift+enter newline · / commands · ctrl+r thinking · ctrl+q quit"
-                .to_string(),
-        };
-        Line::styled(hint, Style::default().fg(Color::DarkGray))
+    pub(super) fn input_prompt_prefix(&self) -> &'static str {
+        if self.pending_yield.is_some() {
+            INLINE_WAITING_PROMPT_PREFIX
+        } else {
+            INLINE_PROMPT_PREFIX
+        }
     }
 }
 

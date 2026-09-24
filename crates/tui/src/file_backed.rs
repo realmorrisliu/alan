@@ -19,15 +19,13 @@ use anyhow::{Context, Result, bail};
 #[cfg(test)]
 use crossterm::event::KeyEvent;
 use crossterm::event::{Event as TerminalEvent, KeyCode, KeyModifiers};
-use ratatui::Frame;
-use ratatui::layout::{Constraint, Direction, Layout, Rect};
-use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Paragraph, Wrap};
+#[cfg(test)]
+use ratatui::style::Color;
 mod app;
 mod file_surface;
 mod history_merge;
 mod interrupt;
+mod layout;
 mod stdio_completion;
 mod submission;
 mod tail;
@@ -50,20 +48,19 @@ use file_surface::{
     spawn_ui_watch, sync_action_from_file, sync_requests_from_files, write_agent_input,
     write_machine_ctl, write_request_response,
 };
+use layout::{draw, history_prefix_to_drain, inline_viewport_height, live_region_height};
 use tail::{
     StdioTailAttachment, close_stdio_tails, current_root_agent_pid,
     open_stdio_tail_attachment_when_idle, root_agent_path_for_pid,
 };
 
-use crate::completion::{self, CompletionCandidate};
+use crate::completion::CompletionCandidate;
 use crate::composer::{Composer, load_history};
 #[cfg(test)]
 use crate::history::HistoryCell;
 #[cfg(test)]
 use crate::history::{PendingYieldCell, RenderOpts, RunningTool, ToolStatus};
 use crate::terminal::{TerminalSession, terminal_capability_error};
-use crate::transcript_ui::style_transcript_line;
-
 const MAX_COMPOSER_LINES: usize = 10;
 const MAX_COMPLETION_ROWS: usize = 6;
 const SPINNER: [&str; 10] = ["|", "/", "-", "\\", "|", "/", "-", "\\", "|", "/"];
@@ -155,7 +152,6 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
     let watch_tails = hydrate_and_open_tails(&shell, &config.agent_path, &mut app).await?;
 
     let mut terminal = TerminalSession::enter()?;
-    terminal.draw_with(|frame| draw(frame, &app))?;
 
     let (tx, mut rx) = tokio::sync::mpsc::channel::<FileBackedEvent>(128);
     let terminal_reader = spawn_terminal_events(tx.clone());
@@ -351,9 +347,14 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
             }
             _ = frame_tick.tick() => {
                 if dirty {
-                    let (viewport_width, viewport_height) = terminal.viewport_size();
-                    let committed = app.drain_committed_scrollback(viewport_width, viewport_height);
+                    let (viewport_width, terminal_height) = terminal.viewport_size();
+                    let committed = app.drain_committed_scrollback(viewport_width, terminal_height);
                     terminal.write_scrollback(&committed)?;
+                    terminal.set_inline_height(inline_viewport_height(
+                        &app,
+                        viewport_width,
+                        terminal_height,
+                    ))?;
                     terminal.draw_with(|frame| draw(frame, &app))?;
                     dirty = false;
                 }
@@ -564,7 +565,7 @@ async fn wait_for_stdio_answer(
     }
     write_agent_input(shell, &attachment.agent_process_path, task.input).await?;
 
-    loop {
+    'wait: loop {
         tokio::select! {
             bytes = attachment.tape_tail.read(4096) => {
                 let bytes = match bytes {
@@ -682,14 +683,31 @@ async fn wait_for_stdio_answer(
                 if snapshot.activity_state == Some(UiActivityState::Paused) {
                     bail!("Agent task needs interactive input; attach with the TTY renderer");
                 }
-                if let Err(error) = stdio_completion::refresh_answer_after_idle(
-                    shell,
-                    &attachment.agent_process_path,
-                    &task,
-                    &mut snapshot,
-                )
-                .await
-                {
+                let refresh_result = {
+                    let refresh = stdio_completion::refresh_answer_after_idle(
+                        shell,
+                        &attachment.agent_process_path,
+                        &task,
+                        &mut snapshot,
+                    );
+                    tokio::pin!(refresh);
+                    loop {
+                        tokio::select! {
+                            result = &mut refresh => break Some(result),
+                            _ = root_agent_pid_tick.tick() => {
+                                if tail::current_root_agent_pid(shell).await? != Some(attachment.root_agent_pid) {
+                                    break None;
+                                }
+                            }
+                        }
+                    }
+                };
+                let Some(refresh_result) = refresh_result else {
+                    tape_pending.clear();
+                    ui_pending.clear();
+                    continue 'wait;
+                };
+                if let Err(error) = refresh_result {
                     match tail::recover_stdio_task_after_tail_close(
                         shell,
                         root_agent_path,
@@ -860,131 +878,6 @@ fn drain_lines(pending: &mut Vec<u8>) -> Vec<Vec<u8>> {
         }
     }
     lines
-}
-
-fn draw(frame: &mut Frame<'_>, app: &FileBackedApp) {
-    let area = frame.area();
-    let width = area.width as usize;
-    let live_height = app.live_region_height(width).max(2);
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Min(2), Constraint::Length(live_height)])
-        .split(area);
-
-    draw_transcript(frame, app, chunks[0]);
-    draw_live_region(frame, app, chunks[1]);
-}
-
-fn draw_transcript(frame: &mut Frame<'_>, app: &FileBackedApp, area: Rect) {
-    let rendered = app.rendered_history_lines(area.width as usize);
-    let lines = if rendered.is_empty() {
-        vec![Line::from(vec![
-            Span::styled("alan", Style::default().add_modifier(Modifier::BOLD)),
-            Span::styled(" ready", Style::default().fg(Color::DarkGray)),
-        ])]
-    } else {
-        rendered.into_iter().map(style_transcript_line).collect()
-    };
-
-    frame.render_widget(
-        Paragraph::new(lines)
-            .wrap(Wrap { trim: false })
-            .block(Block::default()),
-        area,
-    );
-}
-
-fn draw_live_region(frame: &mut Frame<'_>, app: &FileBackedApp, area: Rect) {
-    let mut lines = Vec::new();
-    lines.push(Line::styled(
-        format!("local renderer host · {}", app.agent_path),
-        Style::default().fg(Color::DarkGray),
-    ));
-    if let Some(label) = app.activity_label() {
-        lines.push(activity_line(app, label));
-    }
-    if let Some(notice) = &app.notice {
-        lines.push(Line::styled(
-            format!("· {notice}"),
-            Style::default().fg(Color::Yellow),
-        ));
-    }
-    for tool in &app.running_tools {
-        lines.push(Line::styled(
-            format!("· tool running: {}", tool.title),
-            Style::default().fg(Color::Cyan),
-        ));
-    }
-
-    if let Some(form) = &app.form {
-        for (text, focused) in form.render_lines() {
-            let style = if focused {
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD)
-            } else if text.trim_start().starts_with('!') {
-                Style::default().fg(Color::Red)
-            } else {
-                Style::default()
-            };
-            lines.push(Line::styled(text, style));
-        }
-    } else {
-        if let Some(state) = &app.completion {
-            for (idx, candidate) in state.matches.iter().take(MAX_COMPLETION_ROWS).enumerate() {
-                let trigger = match state.kind {
-                    completion::CompletionKind::Command => "/",
-                    completion::CompletionKind::Skill => "$",
-                    completion::CompletionKind::File => "@",
-                };
-                let mut label = format!("{trigger}{}", candidate.label);
-                if let Some(detail) = &candidate.detail {
-                    label.push_str(&format!("  - {detail}"));
-                }
-                let style = if idx == state.selected {
-                    Style::default()
-                        .fg(Color::Black)
-                        .bg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD)
-                } else {
-                    Style::default().fg(Color::Cyan)
-                };
-                lines.push(Line::styled(format!("  {label}"), style));
-            }
-        }
-        lines.extend(app.composer_lines());
-        lines.push(app.hint_line());
-    }
-
-    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);
-}
-
-fn activity_line(app: &FileBackedApp, label: &str) -> Line<'static> {
-    let elapsed = app
-        .activity_started_at_ms()
-        .and_then(|started_at_ms| {
-            let now_ms = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .ok()?
-                .as_millis() as u64;
-            Some(now_ms.saturating_sub(started_at_ms) / 1_000)
-        })
-        .unwrap_or(0);
-    let frame_idx = (elapsed as usize) % SPINNER.len();
-    Line::from(vec![
-        Span::styled(
-            format!("{} ", SPINNER[frame_idx]),
-            Style::default().fg(Color::Green),
-        ),
-        Span::styled(
-            label.to_string(),
-            Style::default().add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            format!(" · ctrl+c/esc interrupt · {elapsed}s"),
-            Style::default().fg(Color::DarkGray),
-        ),
-    ])
 }
 
 #[cfg(test)]
