@@ -46,3 +46,8 @@ operation when the ready Host does not support it.
 - **WHEN** a processless client finds a ready Host with an older local attachment protocol
 - **THEN** it reports that the Host must be explicitly restarted before retrying
 - **AND** it neither creates a Shell Process through the legacy operation nor starts a competing Host
+
+#### Scenario: An older Host is still starting
+- **WHEN** a processless client encounters an active Host singleton lock before a ready status is published
+- **THEN** it waits for that Host instead of launching another Host
+- **AND** it reports an explicit restart requirement if that Host becomes ready without processless attachment support

@@ -124,6 +124,36 @@ impl HostEndpointPaths {
         status.validate_for(self)?;
         Ok(status)
     }
+
+    /// Whether another Host currently holds the singleton lock, without creating it.
+    pub fn has_active_host_lock(&self) -> Result<bool> {
+        let file = match OpenOptions::new()
+            .read(true)
+            .write(true)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(&self.lock)
+        {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(error) => {
+                return Err(error)
+                    .with_context(|| format!("open Host singleton lock {}", self.lock.display()));
+            }
+        };
+        verify_owned_private_file(&self.lock, false)?;
+        // SAFETY: file owns a valid descriptor for the lifetime of the lock probe.
+        let result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+        if result == 0 {
+            Ok(false)
+        } else {
+            let error = std::io::Error::last_os_error();
+            if matches!(error.raw_os_error(), Some(libc::EWOULDBLOCK)) {
+                Ok(true)
+            } else {
+                Err(error).context("probe Host singleton lock")
+            }
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -884,6 +914,21 @@ mod tests {
                 .to_string(),
             "Alan OS Host does not support processless attachment (local protocol 1); run `alan host stop` and retry"
         );
+    }
+
+    #[test]
+    fn host_lock_probe_does_not_create_a_missing_lock_and_detects_a_running_host() {
+        let runtime = tempfile::tempdir().unwrap();
+        let paths = HostEndpointPaths::from_runtime_dir(runtime.path(), "test").unwrap();
+
+        assert!(!paths.has_active_host_lock().unwrap());
+        assert!(!paths.lock.exists());
+
+        std::fs::create_dir_all(&paths.root).unwrap();
+        let lock = SingletonLock::acquire(&paths.lock).unwrap();
+        assert!(paths.has_active_host_lock().unwrap());
+        drop(lock);
+        assert!(!paths.has_active_host_lock().unwrap());
     }
 
     #[tokio::test]
