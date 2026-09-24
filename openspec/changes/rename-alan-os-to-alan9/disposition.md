@@ -1,8 +1,10 @@
 # Disposition — 2026-09-24
 
-Naming direction accepted by the user and recorded in ADR-0057. This change
-plans documentation adoption; repository-wide alignment has not been performed.
-No runtime or machine-identifier migration is authorized by its tasks.
+Naming direction accepted by the user and recorded in ADR-0057. Active
+explanatory prose adoption was delivered by PR #934, merged as
+`5db591a3b37d20b21ec23862669fe1948555c8b2`; the canonical specification sync
+and archive closeout remain pending. No runtime or machine-identifier migration
+is authorized by its tasks.
 TUI/Shell unification and model-assisted input routing remain a separate
 exploration under the existing interaction and cognition changes.
 

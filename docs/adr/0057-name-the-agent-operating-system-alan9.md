@@ -1,7 +1,8 @@
 # Name the agent operating system alan9
 
-Status: accepted naming direction, 2026-09-24; repository-wide prose alignment
-is pending. Supersedes the `Alan OS` system label, without changing the ownership
+Status: accepted naming direction, 2026-09-24; active prose adoption merged in
+PR #934 on 2026-09-24, with canonical specification sync and change archival in
+progress. Supersedes the `Alan OS` system label, without changing the ownership
 decisions in ADR-0054/0055/0056.
 
 Alan remains the programmable personal computing product. Its agent operating

@@ -14,7 +14,7 @@
 ## 3. Verification and delivery
 
 - [x] 3.1 Run `openspec validate rename-alan-os-to-alan9 --strict` and the repository's `just quality` gate after adoption; record results and review that no runtime, storage or identifier migration entered the diff.
-- [ ] 3.2 Complete PR review and required current-head CI, then merge the documentation implementation; record the reviewed and merged commits.
+- [x] 3.2 Complete PR review and required current-head CI, then merge the documentation implementation; record the reviewed and merged commits.
 - [ ] 3.3 Sync only the delivered delta into canonical product-brand-identity, verify terminology and strict OpenSpec validation, then archive when implementation and sync are merged.
 
 ## Verification Record
@@ -23,3 +23,4 @@
 - `openspec validate --all --strict` — 65/65 items passed; long-requirement notices are informational.
 - `just quality` — passed.
 - The change contains documentation/OpenSpec terminology edits only; no runtime, store-path, or machine-identifier migration was made.
+- PR #934 reviewed commit `cf88b3e3dc540890734d6d14aa5d0030da816667`; all current-head checks passed and Codex reported no major issues. Merged as `5db591a3b37d20b21ec23862669fe1948555c8b2`.
