@@ -565,7 +565,7 @@ async fn wait_for_stdio_answer(
     }
     write_agent_input(shell, &attachment.agent_process_path, task.input).await?;
 
-    loop {
+    'wait: loop {
         tokio::select! {
             bytes = attachment.tape_tail.read(4096) => {
                 let bytes = match bytes {
@@ -683,14 +683,31 @@ async fn wait_for_stdio_answer(
                 if snapshot.activity_state == Some(UiActivityState::Paused) {
                     bail!("Agent task needs interactive input; attach with the TTY renderer");
                 }
-                if let Err(error) = stdio_completion::refresh_answer_after_idle(
-                    shell,
-                    &attachment.agent_process_path,
-                    &task,
-                    &mut snapshot,
-                )
-                .await
-                {
+                let refresh_result = {
+                    let refresh = stdio_completion::refresh_answer_after_idle(
+                        shell,
+                        &attachment.agent_process_path,
+                        &task,
+                        &mut snapshot,
+                    );
+                    tokio::pin!(refresh);
+                    loop {
+                        tokio::select! {
+                            result = &mut refresh => break Some(result),
+                            _ = root_agent_pid_tick.tick() => {
+                                if tail::current_root_agent_pid(shell).await? != Some(attachment.root_agent_pid) {
+                                    break None;
+                                }
+                            }
+                        }
+                    }
+                };
+                let Some(refresh_result) = refresh_result else {
+                    tape_pending.clear();
+                    ui_pending.clear();
+                    continue 'wait;
+                };
+                if let Err(error) = refresh_result {
                     match tail::recover_stdio_task_after_tail_close(
                         shell,
                         root_agent_path,
