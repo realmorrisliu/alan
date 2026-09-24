@@ -19,14 +19,13 @@ use anyhow::{Context, Result, bail};
 #[cfg(test)]
 use crossterm::event::KeyEvent;
 use crossterm::event::{Event as TerminalEvent, KeyCode, KeyModifiers};
-use ratatui::Frame;
-use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::{Line, Span};
-use ratatui::widgets::{Paragraph, Wrap};
+#[cfg(test)]
+use ratatui::style::Color;
 mod app;
 mod file_surface;
 mod history_merge;
 mod interrupt;
+mod layout;
 mod stdio_completion;
 mod submission;
 mod tail;
@@ -49,20 +48,19 @@ use file_surface::{
     spawn_ui_watch, sync_action_from_file, sync_requests_from_files, write_agent_input,
     write_machine_ctl, write_request_response,
 };
+use layout::{draw, inline_viewport_height, live_region_height};
 use tail::{
     StdioTailAttachment, close_stdio_tails, current_root_agent_pid,
     open_stdio_tail_attachment_when_idle, root_agent_path_for_pid,
 };
 
-use crate::completion::{self, CompletionCandidate};
+use crate::completion::CompletionCandidate;
 use crate::composer::{Composer, load_history};
 #[cfg(test)]
 use crate::history::HistoryCell;
 #[cfg(test)]
 use crate::history::{PendingYieldCell, RenderOpts, RunningTool, ToolStatus};
 use crate::terminal::{TerminalSession, terminal_capability_error};
-use crate::transcript_ui::style_transcript_line;
-
 const MAX_COMPOSER_LINES: usize = 10;
 const MAX_COMPLETION_ROWS: usize = 6;
 const SPINNER: [&str; 10] = ["|", "/", "-", "\\", "|", "/", "-", "\\", "|", "/"];
@@ -863,131 +861,6 @@ fn drain_lines(pending: &mut Vec<u8>) -> Vec<Vec<u8>> {
         }
     }
     lines
-}
-
-fn draw(frame: &mut Frame<'_>, app: &FileBackedApp) {
-    let area = frame.area();
-    let width = area.width as usize;
-    let mut lines = app
-        .rendered_history_lines(width)
-        .into_iter()
-        .map(style_transcript_line)
-        .collect::<Vec<_>>();
-    if let Some(label) = app.activity_label() {
-        lines.push(activity_line(app, label));
-    }
-    if let Some(notice) = &app.notice {
-        lines.push(Line::styled(
-            format!("· {notice}"),
-            Style::default().fg(Color::Yellow),
-        ));
-    }
-    for tool in &app.running_tools {
-        lines.push(Line::styled(
-            format!("· tool running: {}", tool.title),
-            Style::default().fg(Color::Cyan),
-        ));
-    }
-
-    let mut prompt_start = None;
-    if let Some(form) = &app.form {
-        for (text, focused) in form.render_lines() {
-            let style = if focused {
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD)
-            } else if text.trim_start().starts_with('!') {
-                Style::default().fg(Color::Red)
-            } else {
-                Style::default()
-            };
-            lines.push(Line::styled(text, style));
-        }
-    } else {
-        if let Some(state) = &app.completion {
-            for (idx, candidate) in state.matches.iter().take(MAX_COMPLETION_ROWS).enumerate() {
-                let trigger = match state.kind {
-                    completion::CompletionKind::Command => "/",
-                    completion::CompletionKind::Skill => "$",
-                    completion::CompletionKind::File => "@",
-                };
-                let mut label = format!("{trigger}{}", candidate.label);
-                if let Some(detail) = &candidate.detail {
-                    label.push_str(&format!("  - {detail}"));
-                }
-                let style = if idx == state.selected {
-                    Style::default()
-                        .fg(Color::Black)
-                        .bg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD)
-                } else {
-                    Style::default().fg(Color::Cyan)
-                };
-                lines.push(Line::styled(format!("  {label}"), style));
-            }
-        }
-        prompt_start = Some(lines.len());
-        lines.extend(app.composer_lines());
-    }
-
-    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);
-    if let Some(prompt_start) = prompt_start {
-        let (x, y) = composer_cursor_position(app, width, prompt_start);
-        if area.height > 0 {
-            frame
-                .set_cursor_position((x.min(area.width.saturating_sub(1)), y.min(area.height - 1)));
-        }
-    }
-}
-
-fn inline_viewport_height(app: &FileBackedApp, width: usize, terminal_height: usize) -> u16 {
-    app.rendered_history_lines(width)
-        .len()
-        .saturating_add(app.live_region_height(width) as usize)
-        .max(1)
-        .min(terminal_height.max(1)) as u16
-}
-
-fn composer_cursor_position(app: &FileBackedApp, width: usize, prompt_start: usize) -> (u16, u16) {
-    let text = app.composer.text();
-    let cursor = app.composer.cursor().min(text.len());
-    let before_cursor = text.get(..cursor).unwrap_or_default();
-    let segments = before_cursor.split('\n').collect::<Vec<_>>();
-    let line_index = segments.len().saturating_sub(1);
-    let line = segments.last().copied().unwrap_or_default();
-    let column = unicode_width::UnicodeWidthStr::width(app.input_prompt_prefix())
-        + unicode_width::UnicodeWidthStr::width(line);
-    let width = width.max(1);
-    let row = prompt_start + line_index + column / width;
-    ((column % width) as u16, row as u16)
-}
-
-fn activity_line(app: &FileBackedApp, label: &str) -> Line<'static> {
-    let elapsed = app
-        .activity_started_at_ms()
-        .and_then(|started_at_ms| {
-            let now_ms = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .ok()?
-                .as_millis() as u64;
-            Some(now_ms.saturating_sub(started_at_ms) / 1_000)
-        })
-        .unwrap_or(0);
-    let frame_idx = (elapsed as usize) % SPINNER.len();
-    Line::from(vec![
-        Span::styled(
-            format!("{} ", SPINNER[frame_idx]),
-            Style::default().fg(Color::Green),
-        ),
-        Span::styled(
-            label.to_string(),
-            Style::default().add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            format!(" · ctrl+c/esc interrupt · {elapsed}s"),
-            Style::default().fg(Color::DarkGray),
-        ),
-    ])
 }
 
 #[cfg(test)]

@@ -23,11 +23,11 @@ in the host terminal's scrollback.
 - **AND** closing the list returns to the compact transcript-and-prompt layout
 
 ### Requirement: Interactive errors are visible in terminal output
-A task, attachment, or input error that prevents or ends an interactive
-operation SHALL be shown in the terminal transcript with an actionable
-user-facing summary. Diagnostic details MAY remain in logs. One-shot execution
-continues to write results only to stdout, diagnostics to stderr, and returns
-a nonzero exit code on failure.
+The interactive renderer SHALL show an actionable terminal summary whenever a
+task, attachment, or input error prevents or ends an interactive operation.
+Diagnostic details MAY remain in logs. For one-shot execution, results SHALL be
+written only to stdout, diagnostics SHALL be written to stderr, and failure
+SHALL return a nonzero exit code.
 
 #### Scenario: An interactive task fails
 - **WHEN** the Agent task or its Connection fails

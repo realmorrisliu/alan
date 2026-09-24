@@ -13,7 +13,7 @@ fn scrollback_drains_by_rendered_lines() {
     assert!(!drained.is_empty());
     assert_eq!(drained, before[..drained.len()]);
     assert_eq!(retained, before[drained.len()..]);
-    assert!(retained.len() + app.live_region_height(32) as usize <= 10);
+    assert!(retained.len() + live_region_height(&app, 32) as usize <= 10);
     assert!(matches!(app.transcript[0], HistoryCell::Assistant(_)));
 }
 
@@ -100,6 +100,34 @@ fn completion_candidates_render_before_the_inline_prompt_without_entering_histor
 }
 
 #[test]
+fn wrapped_completion_candidates_reserve_their_rendered_height_before_the_prompt() {
+    let mut app = FileBackedApp::new("/agent/root".to_string());
+    app.composer.set_text("/");
+    app.refresh_completion();
+    let width = 12;
+    let height = inline_viewport_height(&app, width, 30);
+
+    let mut terminal = Terminal::new(TestBackend::new(width as u16, height)).unwrap();
+    terminal.draw(|frame| draw(frame, &app)).unwrap();
+    let prompt_row = (0..height)
+        .find(|row| {
+            let text = (0..width)
+                .map(|column| {
+                    terminal
+                        .backend()
+                        .buffer()
+                        .cell((column as u16, *row))
+                        .unwrap()
+                        .symbol()
+                })
+                .collect::<String>();
+            text.starts_with("alan > /")
+        })
+        .expect("the editable prompt is visible after the wrapped candidates");
+    assert_eq!(terminal.backend().cursor_position().y, prompt_row);
+}
+
+#[test]
 fn inline_viewport_reflows_with_terminal_size_and_stays_screen_bounded() {
     let mut app = FileBackedApp::new("/agent/root".to_string());
     app.transcript
@@ -126,6 +154,22 @@ fn wrapped_multiline_prompt_keeps_its_cursor_in_the_inline_viewport() {
         terminal.backend().cursor_position(),
         ratatui::layout::Position::new(0, 2)
     );
+}
+
+#[test]
+fn preceding_wrapped_prompt_lines_are_included_in_the_cursor_row() {
+    let mut app = FileBackedApp::new("/agent/root".to_string());
+    app.composer.set_text("abcdefghijk\nx");
+
+    let height = inline_viewport_height(&app, 8, 24);
+    let mut terminal = Terminal::new(TestBackend::new(8, height)).unwrap();
+    terminal.draw(|frame| draw(frame, &app)).unwrap();
+
+    assert_eq!(
+        terminal.backend().cursor_position(),
+        ratatui::layout::Position::new(0, 4)
+    );
+    assert_eq!(height, 5);
 }
 
 #[test]

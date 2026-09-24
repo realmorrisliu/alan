@@ -23,8 +23,6 @@ use crate::transcript_ui::{
 };
 
 use super::file_surface::{TapeRecordV1, response_text_from_content};
-use super::{MAX_COMPLETION_ROWS, MAX_COMPOSER_LINES};
-
 fn default_commands() -> Vec<CompletionCandidate> {
     [
         ("compact", "summarize context"),
@@ -724,8 +722,8 @@ impl FileBackedApp {
         viewport_height: usize,
     ) -> Vec<String> {
         let opts = self.render_opts(viewport_width);
-        let max_lines =
-            viewport_height.saturating_sub(self.live_region_height(viewport_width) as usize);
+        let max_lines = viewport_height
+            .saturating_sub(super::live_region_height(self, viewport_width) as usize);
         let lines = self.rendered_history_lines(viewport_width);
         if lines.len() <= max_lines {
             return Vec::new();
@@ -866,47 +864,6 @@ impl FileBackedApp {
 
     pub(super) fn render_opts(&self, width: usize) -> RenderOpts {
         RenderOpts::new(width, self.expand_thinking)
-    }
-
-    pub(super) fn live_region_height(&self, width: usize) -> u16 {
-        let activity_lines = usize::from(self.activity_label().is_some());
-        let notice_lines = usize::from(self.notice.is_some());
-        let tool_lines = self.running_tools.len();
-        let body_lines = if let Some(form) = &self.form {
-            form.render_lines().len()
-        } else {
-            self.composer_height(width) + self.completion_height() as usize
-        };
-        (activity_lines + notice_lines + tool_lines + body_lines).max(1) as u16
-    }
-
-    pub(super) fn completion_height(&self) -> u16 {
-        self.completion
-            .as_ref()
-            .map(|state| state.matches.len().min(MAX_COMPLETION_ROWS) as u16)
-            .unwrap_or(0)
-    }
-
-    pub(super) fn composer_height(&self, width: usize) -> usize {
-        let width = width.max(1);
-        let lines = self
-            .composer
-            .text()
-            .split('\n')
-            .enumerate()
-            .map(|(index, line)| {
-                let visual = unicode_width::UnicodeWidthStr::width(line);
-                let prefix = if index == 0 {
-                    self.input_prompt_prefix()
-                } else {
-                    INLINE_PROMPT_CONTINUATION
-                };
-                let prefix_width = unicode_width::UnicodeWidthStr::width(prefix);
-                ((visual + prefix_width) / width) + 1
-            })
-            .sum::<usize>()
-            .max(1);
-        lines.min(MAX_COMPOSER_LINES)
     }
 
     pub(super) fn composer_lines(&self) -> Vec<Line<'static>> {
