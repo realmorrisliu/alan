@@ -275,7 +275,10 @@ executable and operand lookup. Shell composition, redirection, expansion and
 multiline scripts SHALL use that shell's semantics. Alan MUST NOT implement
 implicit aP lookup, command path rewriting or fallback shell selection. One script
 SHALL remain one submission. Explicit `!` SHALL bypass generation but MUST NOT
-bypass permissions or sandbox policy.
+bypass permissions or sandbox policy. Each native shell action SHALL be limited
+to the Host Mount grant referenced by shared cwd; a separate standalone `!cd`
+selects another already-delegated grant. A single native action SHALL NOT be
+required to address disjoint grants simultaneously.
 
 #### Scenario: Relative executable is invoked
 - **WHEN** `!./tool arg` executes with an authorized native project cwd
@@ -288,10 +291,24 @@ bypass permissions or sandbox policy.
 - **AND** later failures report actual outcomes without claiming earlier effects were rolled back
 
 #### Scenario: Standalone cd updates shared cwd
-- **WHEN** the user submits only `!cd <one literal directory>`
+- **WHEN** the user submits only `!cd <one literal directory>` or
+  `!cd /mnt/<delegated-grant>`
 - **THEN** the Agent Process updates its grant-relative cwd in submission order
 - **AND** the Host adapter validates and resolves the directory without persisting
   its raw backing path
+
+#### Scenario: Native shell switches between delegated project grants
+- **WHEN** a Process has multiple delegated Host Mounts and the user submits
+  `!cd /mnt/fixtures`
+- **THEN** later shell commands run relative to the selected grant's native cwd
+- **AND** each command's sandbox contains only that selected grant
+- **AND** structured Agent file tools may still use other delegated grants
+
+#### Scenario: One native command cannot span disjoint grants
+- **WHEN** a native shell action under one grant names a file in another delegated
+  grant without first changing the shared cwd
+- **THEN** the other grant is not exposed as a native path for that action
+- **AND** the user may change cwd in a separate accepted `!cd` submission first
 
 #### Scenario: Script-local cd does not update shared cwd
 - **WHEN** the user submits `!cd subdir && make`

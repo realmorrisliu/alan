@@ -18,6 +18,7 @@ ADR-0058 记录决策，当前 change 的 spec deltas 记录目标契约。本�
 | `!rg TODO src \| head` | 管道按选定宿主 shell 的语义执行，权限仍受约束 |
 | `:解释刚才的输出` | Agent 使用同一份命令证据回答，也可按授权调用工具 |
 | `!cd subdir` | 独立 cd 成功后，按队列顺序改变共享 cwd |
+| `!cd /mnt/fixtures` | 显式切换到另一个已授权 Host Mount，后续命令在该 grant 内执行 |
 | `!cd subdir && make` | 整个脚本执行；cd 只影响本次脚本 |
 | 无前缀输入 | 第一阶段继续走 Agent；自动分类通过独立资格验证后启用 |
 
@@ -42,7 +43,10 @@ alan: 解释一下刚才的报错
 
 独立 cd 首版只支持一个可引号/转义的字面目录参数；空参数、`-`、`~`、变量及
 替换表达式明确报错。这是共享目录更新的有限 builtin，不扩展为 shell 解释器。
-export、alias、function 和脚本内部状态不自动延续到下一次命令。
+若 Process 有多个 Host Mount，`!cd /mnt/<grant>` 可切换当前 shell grant；单条
+原生命令只访问共享 cwd 当前 grant，其他 grant 仍可由 Agent 文件工具访问，或在
+显式切换 cwd 后使用。首阶段不承诺单条 shell 命令跨多个不相连的 grant。`export`、
+`alias`、`function` 和脚本内部状态不自动延续到下一次命令。
 
 ## 三、用户不感知 aP：项目文件统一，内部控制封装
 
@@ -94,7 +98,9 @@ Host adapter 仅在 adapter 自身的原生 spawn 与 sandbox 边界解析并使
 不将其写入 Alan Process exec manifest。原生命令输出中的已授权路径统一投影为相对本次
 共享 cwd 的公开项目路径（cwd 本身为 `.`），同一投影用于交互显示、重定向 stdout、
 AgentFS 和 durable evidence；不输出 backing root 或不可用于 Host shell 的 `/mnt` 别名。
-逻辑挂载申请、grant 和服务审计仍保持逻辑记录；不暴露未委托目录或虚拟服务私有存储。
+每条原生命令只使用共享 cwd 所属的 grant；切换到另一已授权 grant 后，再按新的 cwd
+投影输出路径。逻辑挂载申请、grant 和服务审计仍保持逻辑记录；不暴露未委托目录或
+虚拟服务私有存储。
 Engine 不维护另一份 sandbox 根清单。
 
 Linux 现有 reified sandbox 要保留命令所需的原生路径身份，无需把脚本翻译到 /mnt。

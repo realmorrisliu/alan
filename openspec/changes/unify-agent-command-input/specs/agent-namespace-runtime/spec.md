@@ -180,15 +180,24 @@ and request responses SHALL retain their separate handling. The Agent Process
 SHALL own one cwd reference to a delegated Host Mount and normalized relative
 location, resolved by the Host adapter into native execution cwd. Standalone
 explicit user `cd <directory>` SHALL accept one quoted/escaped literal Host or
-relative directory and update it in execution order after access checks. No-arg,
-`-`, expansion and substitution forms SHALL fail explicitly in this initial
-builtin. Composed scripts SHALL retain native shell cd semantics without changing
-shared cwd. Virtual aP directories SHALL NOT serve as native execution cwd. Per-action Agent
-cwd SHALL NOT silently change it. Each submission SHALL have correlated outcomes.
+relative directory, or a public path under an already-delegated Host Mount, and
+update it in execution order after access checks. No-arg, `-`, expansion and
+substitution forms SHALL fail explicitly in this initial builtin. A native shell
+action SHALL be scoped to the one grant referenced by shared cwd; selecting a
+different delegated grant requires a separate standalone `!cd`. Composed scripts
+SHALL retain native shell cd semantics without changing shared cwd. Virtual aP
+directories SHALL NOT serve as native execution cwd. Per-action Agent cwd SHALL
+NOT silently change it. Each submission SHALL have correlated outcomes.
 
 #### Scenario: Command follows a directory change
 - **WHEN** standalone `!cd subdir` succeeds before a queued relative command
 - **THEN** that command uses the updated authorized native cwd at execution time
+
+#### Scenario: Shared cwd switches to another delegated Host Mount
+- **WHEN** standalone `!cd /mnt/fixtures` selects an already-delegated Host Mount
+- **THEN** the Process stores that grant reference and its normalized relative cwd
+- **AND** later native shell actions use only that grant's backing and sandbox scope
+- **AND** the Host backing path remains adapter-private
 
 #### Scenario: Script changes its own directory
 - **WHEN** a user submits `!cd subdir && make` or Agent work changes its action cwd

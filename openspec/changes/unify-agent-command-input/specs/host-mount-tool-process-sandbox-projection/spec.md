@@ -25,9 +25,14 @@ Service and its adapter remain the authority for each launch.
 - **THEN** the Host adapter emits one effective native sandbox authorization
 
 ### Requirement: Host adapters enforce delegated Tool Process sandbox authority
-Host adapter containment checks and OS sandbox profile generation SHALL include
-the native backing of every explicitly delegated read-write Host Mount grant
-and SHALL reject paths outside the Tool Process's delegated writable authority.
+Host adapter checks and OS sandbox profiles for native shell actions SHALL
+include only the native backing of the Host Mount grant
+referenced by the Process shared cwd and SHALL reject paths outside that grant's
+effective authority. Other delegated mounts remain available to structured Agent
+file operations, but SHALL NOT appear as native path aliases in this shell action.
+A later action can select another already-delegated grant only after standalone
+`!cd /mnt/<grant>` updates the shared cwd. A single shell action SHALL NOT be
+required to span disjoint grants.
 Native sandbox-root construction SHALL remain Host-adapter implementation data.
 Raw native execution cwd/paths SHALL remain private to the Host adapter's launch
 and sandbox context. Agent context, AgentFS and correlated durable evidence SHALL
@@ -60,11 +65,26 @@ boundary; `!` SHALL NOT imply unrestricted execution.
   Mounts
 - **THEN** Host authority reconciliation resolves the cwd through that covering
   mount independent of grant iteration order
-- **AND** every other delegated mount remains available with its effective access
+- **AND** the native shell sandbox contains only that selected grant
+- **AND** every other delegated mount remains available to structured Agent file
+  operations with its effective access
+
+#### Scenario: Native shell switches to another delegated grant
+- **WHEN** a Process with multiple delegated Host Mounts accepts standalone
+  `!cd /mnt/fixtures`
+- **THEN** Host authority reconciliation selects that grant as the shared cwd
+- **AND** the next native shell action receives only that grant's native backing
+- **AND** the Process identity and Host backing file remain unchanged
+
+#### Scenario: One native shell action cannot span disjoint grants
+- **WHEN** a shell action runs under one grant and names a path in another
+  delegated grant
+- **THEN** the inactive grant is not exposed as a native path in that action
+- **AND** structured Agent file operations may address it through their own
+  delegated Host Mount checks
 
 #### Scenario: Native output paths remain shell-usable and private
-- **WHEN** native stdout or stderr contains a path under the delegated project
-  grant
+- **WHEN** native stdout or stderr contains a path under the active cwd grant
 - **THEN** the Host adapter projects it relative to that submission's shared cwd
 - **AND** it does not expose the raw Host backing root or replace the path with an
   `/mnt` alias
@@ -90,24 +110,31 @@ boundary; `!` SHALL NOT imply unrestricted execution.
 ## ADDED Requirements
 
 ### Requirement: Project tools and native commands share public paths and backing files
-Project read, edit and search tools SHALL accept public grant-relative or
-shared-cwd-relative project paths consistent with native commands. The Host adapter
-SHALL resolve structured path arguments against explicitly delegated Host Mounts
-to existing file operations. Agent edits and native commands SHALL address the
-same backing files without a shadow project copy, protocol knowledge or
-command-string rewriting. This SHALL NOT materialize virtual services as Host
-files or alter existing authorization, stale-content checks and save/commit
-semantics.
+Project read, edit and search tools SHALL accept public grant-relative paths for
+any delegated Host Mount and shared-cwd-relative paths for the active shell grant.
+The Host adapter SHALL resolve structured path arguments against explicitly
+delegated Host Mounts to existing file operations. Agent edits and native
+commands SHALL address the same backing files without a shadow project copy,
+protocol knowledge or command-string rewriting; to use the same file through the
+native shell, the shared cwd SHALL reference that file's grant. This SHALL NOT
+materialize virtual services as Host files or alter existing authorization,
+stale-content checks and save/commit semantics.
 
 #### Scenario: Committed Agent edit is inspected by a native command
-- **WHEN** an Agent edit to an authorized project file reports committed success
+- **WHEN** an Agent edit to a file in the active shell grant reports committed success
 - **THEN** a subsequent native read or git diff observes the modified backing file
 - **AND** the Agent tool and native command use consistent public project paths
 
 #### Scenario: Native edit is read by the Agent
-- **WHEN** a native command or external editor saves a project file
+- **WHEN** a native command or external editor saves a file in the active shell grant
 - **THEN** a subsequent Agent file read observes that backing file's current contents
 - **AND** a stale expected-content edit fails rather than silently overwriting concurrent work
+
+#### Scenario: A noncurrent grant is selected before shell inspection
+- **WHEN** an Agent file tool edits a file in another delegated grant and the user
+  accepts standalone `!cd /mnt/fixtures`
+- **THEN** a later native shell read observes that same backing file
+- **AND** no single native shell action needs access to both grants
 
 #### Scenario: An edit is pending or cannot be saved
 - **WHEN** a buffer has uncommitted changes or the backing-file save fails

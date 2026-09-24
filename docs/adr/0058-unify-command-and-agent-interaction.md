@@ -47,6 +47,11 @@ refinement hides protocol operations behind task-oriented alan9 commands. Linux/
   Successful committed edits are visible to the next native read or `git diff`;
   external edits likewise appear to subsequent Agent reads. Staged edits must be
   identified as pending rather than presented as saved project changes.
+- The shared cwd selects the one Host Mount visible to each native shell action.
+  Other delegated mounts remain available to structured Agent file tools and can
+  become the shell's active project after an explicit `!cd /mnt/<grant>` updates
+  the shared cwd. The first slice does not promise a single shell action across
+  disjoint mounts or add a cross-platform mount-alias layer.
 - The Host adapter privately resolves the Process-owned grant-relative cwd to
   native execution paths. Raw backing paths remain outside AgentFS, Machine state,
   Agent-visible results and durable evidence. Output paths are projected to a

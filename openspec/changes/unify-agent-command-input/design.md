@@ -98,8 +98,12 @@ execution: a later error can occur after earlier script effects.
 
 `/mnt` organizes reachable aP resources, not automatic prompt inclusion and not a
 promise of identical native paths. Host Mount Service remains the grant owner.
-One explicitly delegated local grant supplies HostFS access and native sandbox
-rights; virtual mounts supply neither native backing nor ambient command rights.
+Each native shell action uses only the one explicitly delegated local grant
+selected by the Process shared cwd. Other grants remain available to structured
+Agent file operations, and a standalone `!cd /mnt/<grant>` can select another
+already-delegated Host Mount for later commands. A shell action cannot address
+two disjoint grants at once; the first slice adds no cross-platform mount-alias
+layer. Virtual mounts supply neither native backing nor ambient command rights.
 Normal commands use native paths or paths relative to their native cwd. Task-oriented
 alan9 commands access virtual resources internally using their protocol and commit contract.
 Do not overload native `cat`, redirect syntax, or executable names with aP lookup.
@@ -112,8 +116,11 @@ backing path. Native output paths are projected relative to that submission's
 shared cwd (`.` for the cwd) before reaching user stdout, AgentFS or evidence, so
 the same shell-usable path is visible to the user and Agent without exposing a
 Host root or emitting an unusable `/mnt` alias. This preserves existing path
-secrecy while allowing both surfaces to address the same authorized files. Path
-strings confer no authority, and the engine must not build sandbox roots from them.
+secrecy while allowing both surfaces to address the same files in the active cwd
+grant. Switching shared cwd selects another grant without widening the current
+action's sandbox. Structured Agent file tools may still address any delegated
+grant through their existing access checks. Path strings confer no authority,
+and the engine must not build sandbox roots from them.
 Keep command text unchanged; redact only output paths.
 
 On Linux, an existing reified sandbox can retain isolation using authorized
@@ -148,11 +155,15 @@ credential and native authorization commands keep their existing owner.
 
 ### One project file identity across editing and commands
 
-Project tools expose grant-relative or shared-cwd-relative paths consistent with
-native commands. At a structured read/edit/search boundary, the Host adapter
-validates and resolves the path against delegated Host Mounts, then supplies the
-existing HostFS/aP or native file operation. This is explicit path-parameter
-resolution, not interpretation or rewriting of arbitrary shell text.
+Project tools expose grant-relative paths for any delegated mount and
+shared-cwd-relative paths for the active shell grant. At a structured
+read/edit/search boundary, the Host adapter validates and resolves the path
+against delegated Host Mounts, then supplies the existing HostFS/aP or native
+file operation. This is explicit path-parameter resolution, not interpretation
+or rewriting of arbitrary shell text. To use another grant from the shell, the
+user explicitly selects it with standalone `!cd /mnt/<grant>`; the Agent tool and
+shell then observe the same backing files. Combining disjoint grants in one
+native shell action is outside this slice.
 
 A committed successful edit changes the same backing file observed by subsequent
 shell reads, `git diff` and external editors. Subsequent Agent reads observe native
@@ -168,10 +179,11 @@ have public Host paths or be materialized as ordinary project files.
 
 Reserve only a standalone explicit user `cd <directory>` for shared cwd updates.
 The initial form accepts one literal relative or Host-absolute directory with
-quotes/escapes; no arguments, `-`, tilde, variables, substitutions or globs fail
-with an explicit diagnostic. This deliberately bounded builtin is not a shell
-interpreter. Resolve it through delegated Host Mounts, validate access and update
-only on success. It cannot change cwd into a purely virtual aP directory.
+quotes/escapes, or a public `/mnt/<grant>` path for an already-delegated
+Host-backed mount; no arguments, `-`, tilde, variables, substitutions or globs
+fail with an explicit diagnostic. This deliberately bounded builtin is not a
+shell interpreter. Resolve it through delegated Host Mounts, validate access and
+update only on success. It cannot change cwd into a purely virtual aP directory.
 
 A composed script such as `cd subdir && make` executes unchanged in the shell;
 its directory changes remain local to that action. Agent-generated `cd`, exports,
