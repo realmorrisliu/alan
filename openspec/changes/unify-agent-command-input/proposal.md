@@ -19,7 +19,7 @@ users from issuing a predictable command while retaining the same context.
 - Make project read/edit/search and native commands use consistent public paths
   and the same authorized backing files, without a shadow project copy.
 - Keep aP resource access and native execution distinct. Reuse Host Mount grants
-  for HostFS and sandbox authority; expose authorized execution paths narrowly.
+  for HostFS and sandbox authority; resolve native paths only inside the Host adapter.
 - Reconcile Linux reified mounts with native path identity; retain confinement
   and existing degraded-backend rules without requiring VM/FUSE deployment.
 - Preserve non-owning terminal attachment; interrupt pauses queued work, detach
@@ -44,9 +44,9 @@ None.
 
 - `host-command-plane`: distinguish thin alan9 command clients from duplicate Host managers.
 
-- `host-mount-service`: narrowly scoped execution-path disclosure, preserving grants.
-- `host-mount-tool-process-sandbox-projection`: shared native launch authority and path metadata.
-- `os-sandbox-enforcement`: preserve native paths in reified sandbox views.
+- `host-mount-service`: private grant-to-native-path resolution, preserving logical grants.
+- `host-mount-tool-process-sandbox-projection`: shared launch authority with private native metadata.
+- `os-sandbox-enforcement`: native project-path identity in reified views with unchanged confinement.
 
 - `alan-shell`: unified entry routing, Host shell execution, aP path boundaries and redirected IO.
 - `alan-renderer-host-contract`: route/cwd presentation, non-owning attachment,

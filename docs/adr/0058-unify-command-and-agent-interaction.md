@@ -41,16 +41,16 @@ refinement hides protocol operations behind task-oriented alan9 commands. Linux/
 - alan9 control commands are ordinary governed executables primarily for Agents,
   also callable explicitly by advanced users. They use existing aP service owners
   and caller-scoped authority, not a privileged manager API or a parallel state store.
-- Project read/edit/search tools and native commands share public Host paths and
-  the same granted backing files. Structured tool adapters resolve these paths
+- Project read/edit/search tools and native commands share public project paths
+  and the same granted backing files. Structured tool adapters resolve these paths
   internally; no shadow project copy or shell-string translation is introduced.
   Successful committed edits are visible to the next native read or `git diff`;
   external edits likewise appear to subsequent Agent reads. Staged edits must be
   identified as pending rather than presented as saved project changes.
-- Native commands use Host paths and a Host-adapter-resolved cwd. The adapter may
-  expose authorized execution paths to the calling Agent and its evidence; this
-  narrowly revises the old blanket Host-path secrecy rule without making path
-  text a capability or moving grant ownership out of Host Mount Service.
+- The Host adapter privately resolves the Process-owned grant-relative cwd to
+  native execution paths. Raw backing paths remain outside AgentFS, Machine state,
+  Agent-visible results and durable evidence; those surfaces retain public project
+  paths or opaque references under existing redaction rules.
 - Prefix parsing remains nonrecursive; slash controls remain explicit. `!` never
   grants additional authority. User and Agent commands share the same execution
   boundary; OS sandboxing and existing degradation rules remain applicable.

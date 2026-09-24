@@ -6,8 +6,10 @@ service-owned grant when Alan OS starts a native Tool Process with an explicitly
 delegated read-write Host Mount. Agent Execution Engine
 MUST NOT own a native backing registry, add native paths to an engine-owned
 sandbox list, or apply sandbox authority from a grant ID or disclosed path alone.
-Authorized execution metadata MAY contain adapter-supplied native cwd/paths;
-Host Mount Service and its adapter remain the authority for each launch.
+The Host adapter MAY use ephemeral native cwd/path metadata as spawn attributes
+outside the Alan Process exec manifest; it SHALL NOT serialize raw backing paths
+into AgentFS, Machine state, Agent-visible results or durable evidence. Host Mount
+Service and its adapter remain the authority for each launch.
 
 #### Scenario: Approved read-write grant is passed to a Tool Process
 - **WHEN** a Tool Process launch explicitly includes a read-write Host Mount
@@ -27,11 +29,13 @@ Host adapter containment checks and OS sandbox profile generation SHALL include
 the native backing of every explicitly delegated read-write Host Mount grant
 and SHALL reject paths outside the Tool Process's delegated writable authority.
 Native sandbox-root construction SHALL remain Host-adapter implementation data.
-Scoped authorized execution cwd/paths MAY appear in Agent context, AgentFS and
-correlated durable evidence under normal redaction/retention rules. Such metadata
-SHALL NOT replace capability-passed grants, reveal unrelated backing, or authorize
-reconstruction of sandbox policy. Both explicit user and Agent shell actions
-SHALL use this same boundary; `!` SHALL NOT imply unrestricted execution.
+Raw native execution cwd/paths SHALL remain private to the Host adapter's launch
+and sandbox context. Agent context, AgentFS and correlated durable evidence SHALL
+use public project paths or opaque grant references under existing redaction and
+retention rules. Such references SHALL NOT replace capability-passed grants,
+reveal unrelated backing, or authorize reconstruction of sandbox policy. Both
+explicit user and Agent shell actions SHALL use this same boundary; `!` SHALL NOT
+imply unrestricted execution.
 
 #### Scenario: Tool can access an approved writable grant
 - **WHEN** the Tool Process has an explicitly delegated read-write Host Mount
@@ -45,8 +49,8 @@ SHALL use this same boundary; `!` SHALL NOT imply unrestricted execution.
   Mount
 - **THEN** the Host adapter resolves the grant internally and permits the native
   cwd
-- **AND** launch records may expose the authorized native cwd as execution metadata,
-  while grant-to-backing resolution and sandbox construction remain adapter-owned
+- **AND** launch and durable records retain only logical cwd/grant references,
+  while native cwd and sandbox construction remain adapter-private
 
 #### Scenario: Bash preserves cwd across multiple delegated mounts
 - **WHEN** a Tool Process cwd is below one of multiple explicitly delegated Host
@@ -75,13 +79,14 @@ SHALL use this same boundary; `!` SHALL NOT imply unrestricted execution.
 ## ADDED Requirements
 
 ### Requirement: Project tools and native commands share public paths and backing files
-Project read, edit and search tools SHALL accept public Host-absolute or
-shared-cwd-relative paths consistent with native commands. The Host adapter SHALL
-resolve structured path arguments against explicitly delegated Host Mounts to
-existing file operations. Agent edits and native commands SHALL address the same
-backing files without a shadow project copy, protocol knowledge or command-string
-rewriting. This SHALL NOT materialize virtual services as Host files or alter
-existing authorization, stale-content checks and save/commit semantics.
+Project read, edit and search tools SHALL accept public grant-relative or
+shared-cwd-relative project paths consistent with native commands. The Host adapter
+SHALL resolve structured path arguments against explicitly delegated Host Mounts
+to existing file operations. Agent edits and native commands SHALL address the
+same backing files without a shadow project copy, protocol knowledge or
+command-string rewriting. This SHALL NOT materialize virtual services as Host
+files or alter existing authorization, stale-content checks and save/commit
+semantics.
 
 #### Scenario: Committed Agent edit is inspected by a native command
 - **WHEN** an Agent edit to an authorized project file reports committed success

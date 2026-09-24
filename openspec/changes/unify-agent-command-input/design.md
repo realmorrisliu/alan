@@ -104,14 +104,16 @@ Normal commands use native paths or paths relative to their native cwd. Task-ori
 alan9 commands access virtual resources internally using their protocol and commit contract.
 Do not overload native `cat`, redirect syntax, or executable names with aP lookup.
 
-The Host adapter owns grant-to-native-path resolution and may supply scoped
-execution cwd/path metadata for delegated local resources to the Agent, renderer
-and correlated evidence. This replaces blanket path secrecy only for authorized
-execution context; service request/grant records remain logical. Never publish
-undelegated mounts or native backing of virtual/private stores. Path strings
-confer no authority, and the engine must not build sandbox roots from them.
-Keep command text and output truthful, subject to existing redaction; do not
-replace Host paths with unusable aP aliases in command-facing context.
+The Host adapter owns grant-to-native-path resolution and supplies native cwd and
+paths only as ephemeral Host-adapter spawn/sandbox inputs, outside the Alan Process
+exec manifest. AgentFS, Machine state, Agent-visible results and durable evidence
+retain the shared grant-relative project path or opaque reference, never the raw
+backing path. This preserves
+the existing path-secrecy and redaction contracts while allowing Agent tools and
+native commands to address the same authorized files. Path strings confer no
+authority, and the engine must not build sandbox roots from them. Keep command text
+unchanged and output truthful under existing redaction; do not replace public
+project paths with unusable aP aliases.
 
 On Linux, an existing reified sandbox can retain isolation using authorized
 paths at their native locations. It must not require namespace-alias rewriting.
@@ -145,7 +147,7 @@ credential and native authorization commands keep their existing owner.
 
 ### One project file identity across editing and commands
 
-Project tools expose Host-absolute or shared-cwd-relative paths consistent with
+Project tools expose grant-relative or shared-cwd-relative paths consistent with
 native commands. At a structured read/edit/search boundary, the Host adapter
 validates and resolves the path against delegated Host Mounts, then supplies the
 existing HostFS/aP or native file operation. This is explicit path-parameter
@@ -235,8 +237,9 @@ semantics. Jev is a candidate, not a delivered capability or required first slic
   shadow qualification and unchanged execution governance.
 - Shared cwd and queued work can surprise another client → file-visible cwd,
   ordered execution and paused queue after interrupt/restart.
-- Native and aP paths differ → expose usable authorized execution paths, retain
-  task-oriented internal control commands, and never silently translate command text.
+- Native and aP paths differ → keep one public project-path identity, resolve native
+  paths inside the Host adapter, retain task-oriented internal control commands,
+  and never silently translate command text.
 - Shell scripts can have partial effects → report actual output/status without
   repair, replay or atomicity claims.
 - Standalone cd has a bounded grammar → document it; script-local cd stays local.

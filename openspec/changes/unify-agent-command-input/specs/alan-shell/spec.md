@@ -268,12 +268,14 @@ responses SHALL be consumed by their request before ordinary routing.
 
 ### Requirement: Unified commands reuse a governed Host shell
 The command route SHALL pass its unchanged body to the selected Host shell through
-one governed native Tool execution boundary shared with Agent commands. Native
-PATH and filesystem rules SHALL determine executable and operand lookup. Shell
-composition, redirection, expansion and multiline scripts SHALL use that shell's
-semantics. Alan MUST NOT implement implicit aP lookup, command path rewriting or
-fallback shell selection. One script SHALL remain one submission. Explicit `!`
-SHALL bypass generation but MUST NOT bypass permissions or sandbox policy.
+one governed native Tool execution boundary shared with Agent commands, except
+that a standalone user `!cd <directory>` SHALL use the bounded shared-cwd control
+defined by Agent Process. Native PATH and filesystem rules SHALL determine
+executable and operand lookup. Shell composition, redirection, expansion and
+multiline scripts SHALL use that shell's semantics. Alan MUST NOT implement
+implicit aP lookup, command path rewriting or fallback shell selection. One script
+SHALL remain one submission. Explicit `!` SHALL bypass generation but MUST NOT
+bypass permissions or sandbox policy.
 
 #### Scenario: Relative executable is invoked
 - **WHEN** `!./tool arg` executes with an authorized native project cwd
@@ -285,6 +287,17 @@ SHALL bypass generation but MUST NOT bypass permissions or sandbox policy.
 - **THEN** the complete body is supplied as one script to the selected shell
 - **AND** later failures report actual outcomes without claiming earlier effects were rolled back
 
+#### Scenario: Standalone cd updates shared cwd
+- **WHEN** the user submits only `!cd <one literal directory>`
+- **THEN** the Agent Process updates its grant-relative cwd in submission order
+- **AND** the Host adapter validates and resolves the directory without persisting
+  its raw backing path
+
+#### Scenario: Script-local cd does not update shared cwd
+- **WHEN** the user submits `!cd subdir && make`
+- **THEN** the complete script is passed unchanged to the selected Host shell
+- **AND** its directory change remains local to that action
+
 #### Scenario: Namespace executable name also exists on the Host
 - **WHEN** a native command names `q` or another name present in Alan `/bin`
 - **THEN** only native shell lookup determines what executes
@@ -295,8 +308,10 @@ Mounted aP resources SHALL determine authorized service reachability, not automa
 prompt inclusion or a matching native path. Delegated Host Mount grants SHALL
 supply both HostFS access and native execution authority through their owner.
 Virtual mounts MUST NOT imply native access. Scoped native cwd/path metadata SHALL
-be supplied by the Host adapter for authorized command context; path strings SHALL
-NOT grant access. Shell-facing output MUST NOT be rewritten to unusable aP aliases.
+be used only inside the Host adapter's ephemeral spawn/sandbox context; path strings
+SHALL NOT grant access. Agent-visible output and evidence retain public paths or
+opaque references under existing redaction. Shell-facing output MUST NOT be
+rewritten to unusable aP aliases.
 
 #### Scenario: Agent reads a virtual resource
 - **WHEN** an Agent has a mounted virtual document service
@@ -305,7 +320,8 @@ NOT grant access. Shell-facing output MUST NOT be rewritten to unusable aP alias
 
 #### Scenario: Native command needs a project path
 - **WHEN** the command Process has a delegated local project grant
-- **THEN** the Host adapter supplies its authorized native execution cwd/path
+- **THEN** the Host adapter resolves the authorized native execution cwd/path
+  privately for spawn and sandbox setup
 - **AND** the same grant constrains native access without exposing unrelated backing paths
 
 ### Requirement: Noninteractive results are correlated and cannot wait for absent input

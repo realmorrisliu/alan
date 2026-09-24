@@ -42,7 +42,8 @@ interview evidence, not competing requirements.
   inclusion nor a universal native path projection. Use explicit aP clients for
   virtual services; native commands use Host paths and native cwd.
 - Host Mount grants feed HostFS and native sandbox authority. The Host adapter
-  may expose authorized execution paths without granting access through strings.
+  resolves native execution paths internally; raw backing paths do not enter
+  AgentFS, Machine state, Agent-visible results or durable evidence.
 - Intercept at launch and enforce with the existing OS sandbox. Do not rewrite
   scripts, translate arbitrary syscalls or add FUSE/VM infrastructure.
 - Standalone user cd changes shared cwd; composed-script and Agent-action cd do

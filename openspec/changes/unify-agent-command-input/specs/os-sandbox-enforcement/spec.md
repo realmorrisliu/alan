@@ -27,6 +27,32 @@ Virtual aP services SHALL NOT be implicitly materialized.
 - **THEN** the reified native subprocess view does not expose those mounts as host filesystem paths
 - **AND** only host-backed declarations contribute native bind mounts
 
+### Requirement: Reification preserves mount access and execution substrate boundaries
+The reified Linux backend SHALL distinguish delegated host mounts from execution
+substrate. It SHALL expose each authorized local tree at the Host adapter-selected
+native execution path without requiring a second namespace alias. Declared
+read-write trees SHALL be writable only within that grant; declared read-only
+trees SHALL be readable but not writable. Execution substrate needed to launch
+commands SHALL be mounted read-only and SHALL NOT grant access to user data outside
+declared mounts.
+
+#### Scenario: Read-write host mount permits mutation at the reified path
+- **WHEN** a delegated host mount has read-write access
+- **THEN** a native subprocess running under the reified backend can write under
+  the adapter-selected native execution path
+- **AND** writes outside declared writable mounts are rejected
+
+#### Scenario: Read-only host mount rejects mutation at the reified path
+- **WHEN** a delegated host mount has read-only access
+- **THEN** a native subprocess running under the reified backend can read under
+  the adapter-selected native execution path
+- **AND** write attempts under that path are rejected
+
+#### Scenario: Execution substrate does not expose user data
+- **WHEN** the reified backend mounts system paths needed to execute `/bin/sh` and common tools
+- **THEN** those system paths are mounted only as execution substrate
+- **AND** user home directories and secret stores are not exposed unless explicitly declared
+
 ### Requirement: Linux reification degrades safely
 The Linux reified namespace backend SHALL be selected only when the host can
 create the required user namespace, mount namespace, bind mounts, read-only
@@ -52,5 +78,6 @@ unavailable.
 #### Scenario: Backend audit names the active path
 - **WHEN** a native subprocess is evaluated or executed
 - **THEN** the decision audit identifies whether the active Linux path is `linux_reified_namespace`, `landlock`, or `host_mount_path_guard`
-- **AND** the audit records the active confinement backend and authorized native execution cwd
+- **AND** the audit records the active confinement backend and logical cwd/grant reference,
+  not the native backing path
 - **AND** changing backends does not silently change command path meaning; an incompatible launch fails explicitly

@@ -90,9 +90,12 @@ alan9 命令连接内部服务时使用调用者委托的能力，不借用权�
 能够启动一个原生程序不意味着有权控制所有内部服务。命令返回需区分“任务已接受”
 和“任务已完成”；提交结果未知时不自动重复执行。
 
-Host adapter 可以向已授权 Agent/执行记录提供必要的宿主 cwd/path，这是对旧版
-“Host 路径永不进入 Agent 记录”的窄幅修订。逻辑挂载申请、grant 和服务审计仍保持
-逻辑记录；不暴露未委托目录或虚拟服务私有存储。Engine 不维护另一份 sandbox 根清单。
+Host adapter 仅在 adapter 自身的原生 spawn 与 sandbox 边界解析并使用宿主 cwd/path，
+不将其写入 Alan Process exec manifest。AgentFS、
+Machine state、Agent 可见结果与 durable evidence 延续现有 Host 路径保密和脱敏合同，
+保存公开项目路径或 opaque grant reference，不保存 backing root。逻辑挂载申请、grant
+和服务审计仍保持逻辑记录；不暴露未委托目录或虚拟服务私有存储。Engine 不维护另一份
+sandbox 根清单。
 
 Linux 现有 reified sandbox 要保留命令所需的原生路径身份，无需把脚本翻译到 /mnt。
 macOS/Linux 都保留既有 sandbox 和降级策略；不因透传而绕过审批或扩大权限。
