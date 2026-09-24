@@ -86,7 +86,24 @@ dependencies.
 - **THEN** a user can list, read, write, tail, and spawn through the namespace
 - **AND** Ratatui rendering remains outside `alan-shell`
 
-### Requirement: Alan enters the system Shell
+### Requirement: An explicitly launched interactive Alan Shell is an ordinary Process
+An explicitly launched interactive Alan Shell SHALL run as an ordinary Alan OS
+Process with Alan OS credentials, a namespace, descriptors, cwd, PID, and
+parentage; executables it invokes SHALL become child Processes. A renderer host
+SHALL attach input and output to that Process rather than acting as a hidden
+execution manager. This requirement applies to Shell Process entry such as
+Local Entry Service and does not apply to the bare `alan` renderer, which
+attaches directly to `/agent/root`.
+
+#### Scenario: A renderer attaches to an explicit Shell Process
+- **WHEN** Local Entry Service creates `/bin/alan-shell` for an interactive
+  renderer
+- **THEN** it creates an ordinary Shell Process with Alan OS credentials,
+  namespace, descriptors, cwd, PID, and parentage
+- **AND** the renderer attaches to that Process instead of creating a hidden
+  Shell Process
+
+### Requirement: Bare Alan attaches to the Root Agent
 Running bare `alan` SHALL start or attach to the matching dedicated Alan OS
 Host. When stdin and stdout are terminals it SHALL attach the terminal renderer
 to the Host-managed `/agent/root`. When stdin is redirected it SHALL submit
