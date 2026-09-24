@@ -2,7 +2,7 @@
 
 Implementation active for the first usable-Agent tracer bullet, selected from
 the vertical route in
-[`next-planning.md`](../add-cognitive-model-routing/next-planning.md).
+[`next-planning.md`](../../add-cognitive-model-routing/next-planning.md).
 The prior 33-task editable-buffer/run/package design is superseded inventory,
 not an implementation contract.
 
