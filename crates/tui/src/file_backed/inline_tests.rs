@@ -18,6 +18,36 @@ fn scrollback_drains_by_rendered_lines() {
 }
 
 #[test]
+fn scrollback_retention_counts_physical_rows_at_narrow_widths() {
+    let mut app = FileBackedApp::new("/agent/1".to_string());
+    app.transcript = ["abcdefghijklmnop", "qrstuvwxyzabcdef", "uvwxyzabcdefghij"]
+        .into_iter()
+        .map(|text| HistoryCell::Assistant(text.to_string()))
+        .collect();
+
+    let drained = app.drain_committed_scrollback(8, 4);
+    let retained = app.rendered_history_lines(8);
+    let height = inline_viewport_height(&app, 8, 4);
+    let mut terminal = Terminal::new(TestBackend::new(8, height)).unwrap();
+    terminal.draw(|frame| draw(frame, &app)).unwrap();
+
+    assert_eq!(drained.len(), 2);
+    assert_eq!(retained.len(), 1);
+    assert_eq!(terminal.backend().cursor_position().y, 2);
+    let prompt = (0..8)
+        .map(|column| {
+            terminal
+                .backend()
+                .buffer()
+                .cell((column, 2))
+                .unwrap()
+                .symbol()
+        })
+        .collect::<String>();
+    assert!(prompt.starts_with("alan >"));
+}
+
+#[test]
 fn ctrl_d_at_an_empty_prompt_detaches_without_interrupting_the_agent() {
     let mut app = FileBackedApp::new("/agent/root".to_string());
     app.apply_ui_activity_snapshot(UiActivitySnapshot::running(1));
@@ -170,6 +200,33 @@ fn preceding_wrapped_prompt_lines_are_included_in_the_cursor_row() {
         ratatui::layout::Position::new(0, 4)
     );
     assert_eq!(height, 5);
+}
+
+#[test]
+fn long_composer_scrolls_its_editable_tail_and_cursor_into_view() {
+    let mut app = FileBackedApp::new("/agent/root".to_string());
+    app.composer.set_text(format!("{}x", "a\n".repeat(10)));
+
+    let height = inline_viewport_height(&app, 10, 24);
+    let mut terminal = Terminal::new(TestBackend::new(10, height)).unwrap();
+    terminal.draw(|frame| draw(frame, &app)).unwrap();
+
+    assert_eq!(height, 10);
+    assert_eq!(
+        terminal.backend().cursor_position(),
+        ratatui::layout::Position::new(8, 9)
+    );
+    let last_row = (0..10)
+        .map(|column| {
+            terminal
+                .backend()
+                .buffer()
+                .cell((column, 9))
+                .unwrap()
+                .symbol()
+        })
+        .collect::<String>();
+    assert_eq!(last_row.trim_end(), "       x");
 }
 
 #[test]

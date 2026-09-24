@@ -21,7 +21,8 @@
 ## 3. Verify and deliver
 
 - [x] 3.1 Add focused tests for inline layout, transcript/scrollback behavior,
-  completion, inline viewport reflow/bounds, Unicode/paste, errors, Ctrl-C and
+  completion, physical-row accounting in narrow panes, long-composer cursor
+  visibility, inline viewport reflow/bounds, Unicode/paste, errors, Ctrl-C and
   Ctrl-D detach.
 - [x] 3.2 Run the current build in an ordinary PTY and dedicated Herdr pane;
   verify a successful response, transient candidates, long-output scrollback,

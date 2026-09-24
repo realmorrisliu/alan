@@ -28,6 +28,11 @@ resize reflow, and frame coalescing SHALL remain supported.
 - **THEN** transcript and prompt reflow without losing input or duplicating or
   dropping rendered content
 
+#### Scenario: Long input keeps its editable tail visible
+- **WHEN** multiline input extends beyond the inline composer viewport
+- **THEN** the inline paragraph scrolls to keep the edit cursor visible
+- **AND** the complete input remains available for editing and submission
+
 ### Requirement: Live region shows agent activity and interrupt affordance
 While a turn is running, the TUI SHALL show concise activity and interrupt
 status adjacent to the inline prompt. This status MAY temporarily expand the

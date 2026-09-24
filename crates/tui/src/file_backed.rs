@@ -48,7 +48,7 @@ use file_surface::{
     spawn_ui_watch, sync_action_from_file, sync_requests_from_files, write_agent_input,
     write_machine_ctl, write_request_response,
 };
-use layout::{draw, inline_viewport_height, live_region_height};
+use layout::{draw, history_prefix_to_drain, inline_viewport_height, live_region_height};
 use tail::{
     StdioTailAttachment, close_stdio_tails, current_root_agent_pid,
     open_stdio_tail_attachment_when_idle, root_agent_path_for_pid,

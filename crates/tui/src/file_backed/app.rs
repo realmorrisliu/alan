@@ -725,10 +725,10 @@ impl FileBackedApp {
         let max_lines = viewport_height
             .saturating_sub(super::live_region_height(self, viewport_width) as usize);
         let lines = self.rendered_history_lines(viewport_width);
-        if lines.len() <= max_lines {
+        let drain_count = super::history_prefix_to_drain(&lines, viewport_width, max_lines);
+        if drain_count == 0 {
             return Vec::new();
         }
-        let drain_count = lines.len() - max_lines;
         let pruned_count = self.prune_rendered_prefix(opts, drain_count);
         lines.into_iter().take(pruned_count).collect()
     }

@@ -25,6 +25,9 @@ compact Ratatui inline viewport at the end of terminal output:
    It grows as recent output or temporary candidates/forms need rows, and
    commits older transcript lines to scrollback at the terminal-height bound.
    When temporary UI closes, shrink back to the transcript and prompt.
+   Measure history and live content using the same Ratatui wrapping at the
+   actual terminal width. If a long composer exceeds its reserved rows, scroll
+   the inline paragraph to keep the edit cursor and input tail visible.
 5. Draw slash, `$`, and `@` candidates adjacent to the prompt using the existing
    completion state and keyboard behavior. Keep only the selected input and
    accepted transcript in terminal history.

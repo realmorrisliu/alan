@@ -11,25 +11,36 @@ use super::{FileBackedApp, MAX_COMPLETION_ROWS, MAX_COMPOSER_LINES, SPINNER};
 pub(super) fn draw(frame: &mut Frame<'_>, app: &FileBackedApp) {
     let area = frame.area();
     let width = area.width as usize;
-    let mut lines = app
-        .rendered_history_lines(width)
-        .into_iter()
-        .map(style_transcript_line)
-        .collect::<Vec<_>>();
-    let history_height = lines.len();
+    let mut lines = history_lines(app, width);
+    let history_height = wrapped_line_count(&lines, width);
     let (live_lines, prompt_start) = live_region_lines(app);
     let prompt_start =
         prompt_start.map(|index| history_height + wrapped_line_count(&live_lines[..index], width));
     lines.extend(live_lines);
 
-    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);
-    if let Some(prompt_start) = prompt_start {
-        let (x, y) = composer_cursor_position(app, width, prompt_start);
-        if area.height > 0 {
-            frame
-                .set_cursor_position((x.min(area.width.saturating_sub(1)), y.min(area.height - 1)));
-        }
+    let cursor_position = prompt_start.map(|start| composer_cursor_position(app, width, start));
+    let scroll_y = cursor_position.map(|(_, y)| y.saturating_add(1).saturating_sub(area.height));
+    let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false });
+    match scroll_y {
+        Some(scroll_y) => frame.render_widget(paragraph.scroll((scroll_y, 0)), area),
+        None => frame.render_widget(paragraph, area),
     }
+    if let Some((x, y)) = cursor_position
+        && area.height > 0
+    {
+        let scroll_y = scroll_y.unwrap_or_default();
+        frame.set_cursor_position((
+            x.min(area.width.saturating_sub(1)),
+            y.saturating_sub(scroll_y).min(area.height - 1),
+        ));
+    }
+}
+
+fn history_lines(app: &FileBackedApp, width: usize) -> Vec<Line<'static>> {
+    app.rendered_history_lines(width)
+        .into_iter()
+        .map(style_transcript_line)
+        .collect()
 }
 
 fn live_region_lines(app: &FileBackedApp) -> (Vec<Line<'static>>, Option<usize>) {
@@ -103,6 +114,25 @@ fn wrapped_line_count(lines: &[Line<'_>], width: usize) -> usize {
         .line_count(width)
 }
 
+pub(super) fn history_prefix_to_drain(
+    lines: &[String],
+    width: usize,
+    max_retained_height: usize,
+) -> usize {
+    let mut retained_count = 0;
+    let mut retained_height = 0;
+    for line in lines.iter().rev() {
+        let rendered = style_transcript_line(line.clone());
+        let height = wrapped_line_count(std::slice::from_ref(&rendered), width);
+        if retained_height + height > max_retained_height {
+            break;
+        }
+        retained_height += height;
+        retained_count += 1;
+    }
+    lines.len() - retained_count
+}
+
 pub(super) fn live_region_height(app: &FileBackedApp, width: usize) -> u16 {
     let (lines, prompt_start) = live_region_lines(app);
     let Some(prompt_start) = prompt_start else {
@@ -127,8 +157,7 @@ pub(super) fn inline_viewport_height(
     width: usize,
     terminal_height: usize,
 ) -> u16 {
-    app.rendered_history_lines(width)
-        .len()
+    wrapped_line_count(&history_lines(app, width), width)
         .saturating_add(live_region_height(app, width) as usize)
         .max(1)
         .min(terminal_height.max(1)) as u16
