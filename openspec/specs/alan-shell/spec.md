@@ -8,7 +8,7 @@ Process interaction, and a line-oriented stdio driver.
 ## Requirements
 
 ### Requirement: Alan Shell is a general namespace client over aP
-Alan OS SHALL provide `alan-shell`, a client that operates the namespace only
+alan9 SHALL provide `alan-shell`, a client that operates the namespace only
 through aP (the `alan-ap` protocol): walk/list, read, write, tail, and spawn. It
 SHALL depend on the protocol alone and SHALL NOT link any file server or backend
 crate. It SHALL hold no application state beyond the namespace.
@@ -87,8 +87,8 @@ dependencies.
 - **AND** Ratatui rendering remains outside `alan-shell`
 
 ### Requirement: An explicitly launched interactive Alan Shell is an ordinary Process
-An explicitly launched interactive Alan Shell SHALL run as an ordinary Alan OS
-Process with Alan OS credentials, a namespace, descriptors, cwd, PID, and
+An explicitly launched interactive Alan Shell SHALL run as an ordinary alan9
+Process with alan9 credentials, a namespace, descriptors, cwd, PID, and
 parentage; executables it invokes SHALL become child Processes. A renderer host
 SHALL attach input and output to that Process rather than acting as a hidden
 execution manager. This requirement applies to Shell Process entry such as
@@ -98,13 +98,13 @@ attaches directly to `/agent/root`.
 #### Scenario: A renderer attaches to an explicit Shell Process
 - **WHEN** Local Entry Service creates `/bin/alan-shell` for an interactive
   renderer
-- **THEN** it creates an ordinary Shell Process with Alan OS credentials,
+- **THEN** it creates an ordinary Shell Process with alan9 credentials,
   namespace, descriptors, cwd, PID, and parentage
 - **AND** the renderer attaches to that Process instead of creating a hidden
   Shell Process
 
 ### Requirement: Bare Alan attaches to the Root Agent
-Running bare `alan` SHALL start or attach to the matching dedicated Alan OS
+Running bare `alan` SHALL start or attach to the matching dedicated alan9
 Host. When stdin and stdout are terminals it SHALL attach the terminal renderer
 to the Host-managed `/agent/root`. When stdin is redirected it SHALL submit
 stdin as one task to that Agent and follow the one-shot standard-stream
@@ -141,7 +141,7 @@ Runtime or select an Agent Definition as Host startup behavior.
 - **WHEN** stdin is a terminal and stdout is not a terminal
 - **THEN** the CLI reports that interactive mode requires terminal stdout
   instead of reading stdin until EOF
-- **AND** it does not start or attach to the Alan OS Host
+- **AND** it does not start or attach to the alan9 Host
 
 #### Scenario: One-shot task fails before tape persistence
 - **WHEN** the Root Agent reports a running task failure before writing the

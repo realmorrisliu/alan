@@ -1,11 +1,11 @@
 # alan-os-system-store Specification
 
 ## Purpose
-Defines channel-isolated durable backing ownership for Alan OS services,
+Defines channel-isolated durable backing ownership for alan9 services,
 ephemeral Process state, and ownership-safe migration from legacy Host paths.
 ## Requirements
 ### Requirement: Durable state uses a channel System Store
-The Host SHALL provide one channel-isolated Alan OS System Store backing root.
+The Host SHALL provide one channel-isolated alan9 System Store backing root.
 Each durable File-Server Service SHALL own its subtree and format; Agent
 Processes MUST NOT receive the raw backing path as identity or an implicit
 mount.
@@ -21,7 +21,7 @@ ephemeral. Rollouts, Checkpoints, Memory Stores, packages, Agent Definitions,
 and necessary service metadata MAY be durable under their owning stores.
 
 #### Scenario: Host restarts
-- **WHEN** an Alan OS Host restarts
+- **WHEN** an alan9 Host restarts
 - **THEN** it creates new Processes and PIDs
 - **AND** prior work is available only through durable owners
 

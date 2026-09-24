@@ -5,16 +5,16 @@
 > renderer-launch assumptions must be replaced before reactivation.
 
 ### Requirement: `/proc` renders the process table as files
-Alan Kernel SHALL render the process table as files under `/proc`. Each process
+alan9 Kernel SHALL render the process table as files under `/proc`. Each process
 SHALL appear as `/proc/<pid>` with files for identity, parentage, credentials,
 namespace, status, exit state, its standard IO streams (`io/`), and a `ctl`
 control file (the generic process layout every process exposes, so control
 writes such as interrupt/cancel route through `/proc/<pid>/ctl`).
 
 Before a committed Process becomes visible as running or accepts
-`/proc/<pid>/ctl` control, Alan Kernel SHALL ask its Process runner to prepare
+`/proc/<pid>/ctl` control, alan9 Kernel SHALL ask its Process runner to prepare
 one per-Process terminal finalizer from the committed `ProcessInvocation`.
-Preparation and finalization SHALL default to a no-op. Alan Kernel SHALL retain
+Preparation and finalization SHALL default to a no-op. alan9 Kernel SHALL retain
 the prepared finalizer and serialize runner completion, `/proc/<pid>/ctl`, and
 Host `record_exit` through one per-Process terminal transition claim. Before
 publishing any terminal transition, it SHALL invoke the claimed finalizer
@@ -23,9 +23,9 @@ a runner-completion winner SHALL carry its `ProcessOutcome`; control and Host
 winners SHALL carry none. It SHALL await finalization
 before publishing exit and, for control- or Host-driven termination, before
 aborting the runner. The preparation and finalizer SHALL NOT change the exit
-code or add executable-specific semantics to Alan Kernel. Claim source SHALL
+code or add executable-specific semantics to alan9 Kernel. Claim source SHALL
 remain transition-local and SHALL NOT become another lifecycle state.
-The finalizer MAY return one opaque post-exit cleanup action. Alan Kernel SHALL
+The finalizer MAY return one opaque post-exit cleanup action. alan9 Kernel SHALL
 publish the winning terminal state before invoking that action, and SHALL NOT
 interpret its executable-specific contents. The action SHALL default to absent
 and SHALL remain transition-local rather than becoming a Process owner or
@@ -41,7 +41,7 @@ lifecycle state.
 
 #### Scenario: Control terminates a Process with a finalizer
 - **WHEN** a consumer writes `cancel` or `interrupt` to `/proc/<pid>/ctl`
-- **THEN** Alan Kernel claims the terminal transition and invokes the runner
+- **THEN** alan9 Kernel claims the terminal transition and invokes the runner
   finalizer prepared before control became reachable with exit code `130`
 - **AND** the runner is aborted and exit `130` is published only after that
   finalizer finishes
@@ -67,6 +67,6 @@ lifecycle state.
 
 #### Scenario: Finalizer returns post-exit cleanup
 - **WHEN** a winning finalizer returns an opaque cleanup action
-- **THEN** Alan Kernel first publishes the terminal `/proc/<pid>` state
+- **THEN** alan9 Kernel first publishes the terminal `/proc/<pid>` state
 - **AND** it then invokes the action without interpreting AgentFS or storage
   semantics

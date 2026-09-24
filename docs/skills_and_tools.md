@@ -1,6 +1,6 @@
 # Skills and Tools
 
-Tools execute actions; Skills provide knowledge. They are separate Alan OS
+Tools execute actions; Skills provide knowledge. They are separate alan9
 concepts even though the current Agent Execution Engine presents both to the
 model.
 

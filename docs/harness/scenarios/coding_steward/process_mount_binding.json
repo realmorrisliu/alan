@@ -7,7 +7,7 @@
   "assertions": [
     "child launch cannot gain a Host Mount that the parent did not pass",
     "approved Host Mount projection updates namespace and native sandbox authority together",
-    "cwd remains an Alan OS namespace path"
+    "cwd remains an alan9 namespace path"
   ],
   "kpi_tags": [
     "process_launch_context",

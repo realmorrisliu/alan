@@ -30,7 +30,7 @@ Agent Runtime Service：Agent Machine
     ├─ generation，例如复杂规划、内容与参数生成
     ├─ 已授权的 Tool / file effects
     └─ wait / resume / complete / fail
-Alan OS：Kernel + Service Manager + File-Server Services
+alan9：Kernel + Service Manager + File-Server Services
     ├─ /proc：Process 生命周期
     ├─ /agent：Agent IO、控制、Machine 视图
     ├─ Memory Stores：跨 Process 的连续性
@@ -44,7 +44,7 @@ Alan OS：Kernel + Service Manager + File-Server Services
 1. **保留 Plan 9 底座，重写生成中心的认知合约。** System 1 / System 2 是能力与工作方式，不应固定对应两个 Agent Process。
 2. **保留 Turing Machine 思考模型，解除“transition = 一次 LLM generation”的限制。** 模型是 Machine 可调用的能力，不是唯一的状态推进方式。
 3. **按用户最新决定退役 Alan for macOS。** 不再建设自己的窗口、tab、pane、终端模拟器、桌面组件系统和 App updater；以 Herdr 为首选终端宿主。
-4. **保留独立 Alan OS Host。** 客户端退役不等于把 Alan OS 的生命周期交给 Herdr，也不等于取消 macOS 平台支持。
+4. **保留独立 alan9 Host。** 客户端退役不等于把 alan9 的生命周期交给 Herdr，也不等于取消 macOS 平台支持。
 5. **q 暂时维持真实的 Skill 分发能力。** 不为 Jev 发明新的包类型；通用 executable / system-package 分发是另一项尚未完成的基础能力。
 6. **先修 Shell 的真实执行路径与状态所有权，再做 fx 风格体验。** 否则只会在新 renderer 中重建第二套执行系统。
 
@@ -66,10 +66,12 @@ Alan OS：Kernel + Service Manager + File-Server Services
 | --- | --- | --- |
 | System 1 / System 2 | 对既有候选快速评价，以及开放式生成/规划，两类能力可组合 | 小模型/大模型就是两种 Process；System 1 必须只读；System 2 天然拥有更大权限 |
 | Agent Machine | 当前状态 + 输入事件 + 能力结果 → 下一状态及受控操作 | 每一步都生成 token；无 Tool call 即停止；最终一定输出自然语言 |
-| Plan 9 式 Alan OS | 文件、descriptor、namespace、普通 Process、mountable service 是组合和权限基础 | Kernel 需要理解认知模式；模型可自行授予权限；renderer 是执行管理器 |
+| Plan 9 式 alan9 | 文件、descriptor、namespace、普通 Process、mountable service 是组合和权限基础 | Kernel 需要理解认知模式；模型可自行授予权限；renderer 是执行管理器 |
 | Quartermaster | 安装内容、版本、引用和生命周期，由 Package Service 持有 | 安装等于授权；Skill 等于 executable；q 升级即可升级当前所有系统服务 |
 
-仓库目前未找到 `alan9` 名称。正式文档宜继续使用 Alan OS / Alan Kernel / aP；“Plan 9-like”描述设计来源，不额外建立一个与 Alan OS 重叠的产品对象。
+截至本文审查日（2026-09-19），仓库尚未采用 `alan9` 名称；因此本报告早期
+分节沿用 `Alan OS` / `Alan Kernel` 作为当时术语。此后 ADR-0057 已接受
+`alan9` 命名；“Plan 9-like”仍只描述设计来源，不另立重叠系统对象。
 
 ### 3.1 System 1 不再是一个便宜的聊天代理
 
@@ -230,7 +232,7 @@ Jev rubric、候选描述可先是 Agent Definition / Skill 的普通文件；�
 | Sparkle、App bundle/cask 分发、Apple UI 测试与截图流水线 | 随客户端退役清理 | 不继续为已放弃的产品支付发布和验证成本 |
 | `alan-shell-core` / `shell-core-ffi` | 倾向退役，删除前核实消费者 | 当前 Rust 外部使用主要是 FFI；其 workspace/tab/pane domain 是自建终端宿主模型，不是 `alan-shell` evaluator |
 | `crates/shell`、`crates/tui`、`crates/alan` | 保留并重新明确分工 | file-native shell、终端 presentation、Host CLI 是不同层 |
-| `os-host`、aP 本地 attachment、Service Manager | 保留 | Herdr pane 关闭不应被等同于整个 Alan OS 退出 |
+| `os-host`、aP 本地 attachment、Service Manager | 保留 | Herdr pane 关闭不应被等同于整个 alan9 退出 |
 | Connection secrets、Host Mount、OS sandbox adapter | 保留所需实现 | GUI 不是凭据与执行隔离的语义 owner |
 | privileged helper、managed terminal accounts | 逐项拆分/评估，不打包删除 | GUI 终端账户功能可退役；仍被安全执行依赖的能力必须有等价边界 |
 | Memory Stores、installed packages、用户 authored content | 保留，显式迁移/备份 | 不能因 UI 退役清空 System Store / Host Store |

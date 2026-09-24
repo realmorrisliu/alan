@@ -307,7 +307,7 @@
 
 ## 4. Verification And Archive Readiness
 
-- [ ] 4.1 Run focused Alan OS Host lifecycle, Agent Runtime Service, AgentFS,
+- [ ] 4.1 Run focused alan9 Host lifecycle, Agent Runtime Service, AgentFS,
   Rollout, and namespace tests, then run `just quality`.
 - [ ] 4.2 PR review confirms there is no new execution identity, persistent
   index, retention policy, notification protocol, Host API, or renderer-owned

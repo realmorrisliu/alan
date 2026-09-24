@@ -1,6 +1,6 @@
 ## MODIFIED Requirements
 
-### Requirement: Host and Alan OS commands remain separate
+### Requirement: Host and alan9 commands remain separate
 The system SHALL use the Host Command Plane for Host lifecycle, attachment,
 Host Mount authorization, credentials and native integration. Internal namespace
 operations and service control SHALL remain owned by existing aP services.
@@ -12,7 +12,7 @@ paths to use supported task operations.
 
 #### Scenario: User starts Alan
 - **WHEN** the user runs `alan`
-- **THEN** the Host Command Plane boots or attaches Alan OS
+- **THEN** the Host Command Plane boots or attaches alan9
 - **AND** control passes to Alan Shell without selecting an Agent profile
 
 #### Scenario: Agent invokes an alan9 control command

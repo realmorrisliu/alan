@@ -80,7 +80,7 @@ Compatibility tiers:
 
 - Tier 1 portable runtime compatibility discovers and runs public skill
   directories centered on `SKILL.md`, including optional `bin/`, `scripts/`,
-  `references/`, and `assets/`, only when the package is installed in Alan OS
+  `references/`, and `assets/`, only when the package is installed in alan9
   or supplied by an explicit Skill or Agent Definition descriptor. Host
   directories are not implicit sources.
 - Tier 2 compatibility metadata may consume public metadata such as
@@ -92,7 +92,7 @@ Compatibility tiers:
   viewers.
 
 #### Scenario: Public skill directory is installed
-- **WHEN** a portable public skill package is installed in Alan OS or supplied
+- **WHEN** a portable public skill package is installed in alan9 or supplied
   by descriptor
 - **THEN** alan discovers and can run the package without alan-specific
   manifests
@@ -183,7 +183,7 @@ not preserved in resolved runtime metadata.
 ### Requirement: Discovery is separate from exposure
 
 alan SHALL discover skill packages only from explicitly referenced installed
-Alan OS packages and explicitly supplied Skill or Agent Definition descriptors,
+alan9 packages and explicitly supplied Skill or Agent Definition descriptors,
 without making discovery itself imply runtime exposure.
 
 Rules:
@@ -713,7 +713,7 @@ availability, delegation, CLI behavior, namespace projection, authoring, and cur
 
 ### Requirement: Skills enter through installed packages or descriptors
 
-Alan SHALL resolve Skills only from explicit installed Alan OS package
+Alan SHALL resolve Skills only from explicit installed alan9 package
 references and explicit Skill/Agent Definition descriptors. It MUST NOT scan
 AgentRoot, workspace, `.agents`, Alan home, System Store backing, or other Host
 directories as implicit providers. Installing a package SHALL NOT expose it to

@@ -7,7 +7,7 @@ unversioned or unsupported request documents, typed event streams, metering,
 and phase-specific errors.
 ## Requirements
 ### Requirement: llmfs posts a handle in `/srv` and serves its tree under `/mnt/llm`
-Alan OS SHALL provide `alan-llmfs`, a file server that speaks aP (the `alan-ap`
+alan9 SHALL provide `alan-llmfs`, a file server that speaks aP (the `alan-ap`
 protocol). It SHALL post a single mountable handle under `/srv` (`/srv/llm`) —
 `/srv` holds rendezvous handles only, never service state — and its file tree
 (providers, connections, generations) SHALL be mounted at a real namespace

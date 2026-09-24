@@ -1,13 +1,13 @@
 # remote-access-service Specification
 
 ## Purpose
-Defines the file-native Alan OS boundary for authenticated cross-host entry:
+Defines the file-native alan9 boundary for authenticated cross-host entry:
 the Remote Bootstrap Tree, one-shot handoff, Remote Entry Processes, attachment
 leases, lineage revocation, remote context, mounted trees, and the single
 semantic boundary that every byte transport must preserve.
 ## Requirements
 ### Requirement: Remote Access Service is a Service-Manager-started file server
-Alan OS SHALL own cross-host entry through a `Remote Access Service`: a file server started by
+alan9 SHALL own cross-host entry through a `Remote Access Service`: a file server started by
 Service Manager that terminates remote transports, authenticates remote principals, manages Remote
 Attachment Leases, and creates or reattaches Remote Entry Processes. Its handle SHALL be posted at
 `/srv/remote-access`; a local inspection mount MAY appear at `/mnt/remote-access`. After handoff,
@@ -82,7 +82,7 @@ or rely on a separately synthesized recovery snapshot as runtime truth.
 - **AND** no execution is re-driven
 
 ### Requirement: Revocation terminates the remote lineage
-Alan OS SHALL terminate the remote-attached process lineage when the remote device authorization is
+alan9 SHALL terminate the remote-attached process lineage when the remote device authorization is
 revoked or the lease expires. Any future exception SHALL require a separate accepted design.
 
 #### Scenario: Device is revoked during an attachment
@@ -91,7 +91,7 @@ revoked or the lease expires. Any future exception SHALL require a separate acce
 - **AND** no survivor retains remote-originated authority
 
 ### Requirement: Remote context is exposed as lineage-local inherited files
-Alan OS SHALL expose remote-only attachment facts as a Remote Context Tree mounted at `/mnt/remote`
+alan9 SHALL expose remote-only attachment facts as a Remote Context Tree mounted at `/mnt/remote`
 inside the attached lineage and inherited through normal namespace mechanics unless policy removes
 it. Service discovery at `/srv/remote-access` and lineage provenance at `/mnt/remote` SHALL remain
 distinct.
@@ -124,7 +124,7 @@ or app projection SHALL require a separate accepted capability and SHALL NOT be 
 - **AND** it does not imply narrower scope exists
 
 ### Requirement: Remote access has one file-native semantic boundary
-Alan OS remote entry SHALL occur only through aP operations on the Remote Bootstrap Tree and the
+alan9 remote entry SHALL occur only through aP operations on the Remote Bootstrap Tree and the
 returned namespace. Authenticated byte transports MAY vary byte delivery, reachability,
 encryption, latency, and ticketing, but SHALL NOT introduce a second semantic entry, control,
 recovery, or application API.

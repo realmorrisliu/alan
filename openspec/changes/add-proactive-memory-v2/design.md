@@ -33,7 +33,7 @@ uses the same namespace-visible transaction and audit surface.
 
 - Add vector search, graph storage, SQLite, or provider-owned memory.
 - Let the model write stable memory directly.
-- Put memory semantics in Alan Kernel.
+- Put memory semantics in alan9 Kernel.
 - Add a second memory control plane outside the mounted store.
 - Define the final Alan for macOS memory-review UI.
 - Finish every Personal/System/App store layout in this slice.

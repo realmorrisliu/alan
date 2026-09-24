@@ -1,7 +1,7 @@
 # Standalone CLI/Host Distribution
 
 The supported Alan delivery boundary is the terminal-neutral Rust CLI plus the
-Alan OS Host executables. The durable contract is
+alan9 Host executables. The durable contract is
 [`standalone-cli-distribution`](../openspec/specs/standalone-cli-distribution/spec.md)
 and its completed distribution migration is recorded in
 [`retire-macos-client-and-standalone-cli`](../openspec/changes/archive/2026-09-20-retire-macos-client-and-standalone-cli/).

@@ -11,7 +11,7 @@ low-risk target that avoids bridge topology and high-risk actuators.
 
 The canonical `alan-app-service-integration` capability permits Apple
 frameworks, XPC, and host storage behind an aP adapter, but files remain the
-Alan OS authority surface.
+alan9 authority surface.
 This spike therefore proves both the platform controller and the host-backed
 file-server boundary.
 
@@ -32,7 +32,7 @@ file-server boundary.
 - Raw cluster/endpoint commands visible to an LLM.
 - Final device naming, home automation, UI, `home.*` Tools, or general
   physical-device governance.
-- Matter types in Alan Kernel, Agent Execution Engine, `alan-tools`, or portable
+- Matter types in alan9 Kernel, Agent Execution Engine, `alan-tools`, or portable
   domain crates.
 - A public XPC/RPC controller API.
 
@@ -40,7 +40,7 @@ file-server boundary.
 
 ### 1. Matter.framework stays behind a host-backed file server
 
-Alan for macOS hosts a Matter adapter that speaks aP at the Alan OS boundary.
+Alan for macOS hosts a Matter adapter that speaks aP at the alan9 boundary.
 Internally it may call `MTRDeviceController` directly or through a signed XPC
 helper, but clients see only files. Non-Apple builds use fake fixtures and never
 link the framework.

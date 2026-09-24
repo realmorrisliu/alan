@@ -11,7 +11,7 @@ SHALL be addressable at
 `/agent/rollouts/<rollout-id>` as one JSONL file, where the path component is
 the Rollout's existing identifier. The file SHALL expose the Rollout's ordered
 records without a directory wrapper or parallel metadata projection. The
-surface SHALL remain reconstructible after Agent Process exit and Alan OS Host
+surface SHALL remain reconstructible after Agent Process exit and alan9 Host
 restart without exposing a raw System Store path.
 
 The Rollout owner and Host backing adapter SHALL enforce append-only published
@@ -141,7 +141,7 @@ publication generation required by terminal containment below. Quota accounts
 SHALL belong to mounted capability handles and SHALL NOT be durable state.
 
 #### Scenario: Consumer lists Rollouts after Host restart
-- **WHEN** an authorized consumer lists `/agent/rollouts` after Alan OS Host
+- **WHEN** an authorized consumer lists `/agent/rollouts` after alan9 Host
   restart
 - **THEN** every valid retained Rollout appears by its existing `rollout_id`
 - **AND** discovery does not depend on a prior Process Reference, renderer
@@ -185,7 +185,7 @@ SHALL belong to mounted capability handles and SHALL NOT be durable state.
   replaces the candidate success/result with the existing nonzero failure
 - **AND** the winning finalizer retains the failure cell through writer fence
   and containment
-- **AND** Alan OS Host is not terminated merely because the borrowed run
+- **AND** alan9 Host is not terminated merely because the borrowed run
   subscription ended
 
 #### Scenario: History opens reach the service limit
@@ -311,7 +311,7 @@ MUST NOT become discovery authority.
 ### Requirement: Process exit is recorded in the existing Rollout
 For an Agent Process with a producing Rollout, Alan SHALL attempt to append and
 durably sync one `process_exit` record through the Process terminal
-finalization hook before Alan Kernel publishes exit and before clean Agent
+finalization hook before alan9 Kernel publishes exit and before clean Agent
 Runtime Service cleanup. On successful persistence, the record SHALL contain
 the authoritative numeric Process exit code, a completion timestamp, and the
 existing `AgentExecutableResult` when one is available. Plain buffered or
@@ -483,7 +483,7 @@ SHALL complete immediately.
 
 Only after the applicable containment branch succeeds SHALL Agent Runtime
 Service complete non-blocking logical-owner release and release terminal
-finalization so Alan Kernel can publish the authoritative Process exit.
+finalization so alan9 Kernel can publish the authoritative Process exit.
 Already-submitted published Rollout I/O SHALL retain only the quarantined inode
 and MUST NOT overwrite or truncate its prior published prefix. Every existing
 history fid SHALL retain its pinned read-only descriptor and SHALL NOT read
@@ -495,7 +495,7 @@ SHALL NOT be exposed as a Rollout, status, or execution identity.
 Only published-Rollout or destination-claimed inode containment SHALL use the
 fatal path. If that containment returns an error or has not returned when the
 absolute deadline expires, Agent Runtime Service SHALL signal the injected
-Alan OS Host lifecycle adapter without awaiting the containment operation.
+alan9 Host lifecycle adapter without awaiting the containment operation.
 That Host-owned call SHALL be synchronously non-returning whether it enters
 normal fail-stop termination or aborts after internal signaling failure. Agent
 terminal finalization SHALL never return to Kernel on this path, so Kernel
@@ -508,7 +508,7 @@ recoverably torn evidence; failure SHALL NOT fabricate terminal evidence.
 Finalization SHALL release the runtime-task owner only after `process_exit` is
 durably synced, clean no-producing-Rollout non-storage completion succeeds, or
 the applicable error-containment branch succeeds.
-It SHALL return the deferred AgentFS cleanup action to Alan Kernel. Kernel
+It SHALL return the deferred AgentFS cleanup action to alan9 Kernel. Kernel
 SHALL publish the terminal `/proc` state before invoking that action; only then
 may Agent Runtime Service unbind
 `/agent/<pid>` and release Process-scoped AgentFS backing. The barrier, action,
@@ -536,7 +536,7 @@ SHALL NOT create a durable identity or terminal status model.
 #### Scenario: Generic Process control stops execution
 - **WHEN** `cancel` or `interrupt` terminates the Process with exit code `130`
 - **THEN** terminal finalization quiesces the Agent Machine and Rollout writer
-- **AND** Alan Kernel waits for finalization before aborting the runner
+- **AND** alan9 Kernel waits for finalization before aborting the runner
 - **AND** `process_exit` preserves the numeric code `130`
 - **AND** it does not invent separate cancelled and interrupted states that
   the Kernel does not distinguish
@@ -578,7 +578,7 @@ SHALL NOT create a durable identity or terminal status model.
   the runtime owner
 - **AND** it completes successful non-storage containment without looking up a
   discovery entry or renaming an inode
-- **AND** Alan Kernel may publish the controlled Process exit without invoking
+- **AND** alan9 Kernel may publish the controlled Process exit without invoking
   the Host-fatal storage path
 
 #### Scenario: Agent executable is rejected before service dispatch
@@ -628,7 +628,7 @@ SHALL NOT create a durable identity or terminal status model.
 - **AND** it uses the reserved interval to quarantine the backing inode
 - **AND** after successful containment, logical runtime ownership is released
   without awaiting stuck Host I/O
-- **AND** Alan Kernel publishes the authoritative exit instead of leaving the
+- **AND** alan9 Kernel publishes the authoritative exit instead of leaving the
   Process running or blocking Host shutdown
 - **AND** AgentFS cleanup begins only after that exit is published
 - **AND** discovery treats a complete valid `process_exit` that reached the
@@ -644,7 +644,7 @@ SHALL NOT create a durable identity or terminal status model.
 - **AND** it atomically quarantines the backing inode before releasing Kernel
 - **AND** stale Host I/O can only append to the quarantined inode and cannot
   overwrite or truncate its prior published prefix
-- **AND** Alan Kernel can publish exit and Host shutdown can progress
+- **AND** alan9 Kernel can publish exit and Host shutdown can progress
 
 #### Scenario: Quarantine blocks in failing storage
 - **WHEN** containment of a published Rollout inode has not returned by the

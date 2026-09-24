@@ -7,7 +7,7 @@ events.
 ## Requirements
 ### Requirement: Editable buffers are file-server surfaces
 
-Alan OS SHALL expose an editable interaction buffer as a file-server directory
+alan9 SHALL expose an editable interaction buffer as a file-server directory
 with `body`, `tag`, `ctl`, `addr`, and `event` files.
 
 #### Scenario: Buffer files are inspectable
@@ -35,7 +35,7 @@ with `body`, `tag`, `ctl`, `addr`, and `event` files.
 
 ### Requirement: Text ranges are addressable
 
-Alan OS SHALL represent the active text range through an `addr` file that can be
+alan9 SHALL represent the active text range through an `addr` file that can be
 read and written by clients with write authority. The visible `addr` value SHALL
 include the selected range, the source `body` revision, and the revision of that
 address selection.
@@ -63,7 +63,7 @@ address selection.
 
 ### Requirement: Executable text uses explicit control operations
 
-Alan OS SHALL execute text from an editable buffer only through explicit
+alan9 SHALL execute text from an editable buffer only through explicit
 complete-document `ctl` operations that commit on `clunk` and resolve to normal
 Alan Shell, process, or routing behavior under the caller's namespace capability
 discipline. Until the ADR-0024 R1 amplification check lands, the mount set is an
@@ -117,7 +117,7 @@ projection remains a permanent second enforcement mechanism for them.
 
 ### Requirement: Buffer activity is observable as events
 
-Alan OS SHALL expose edits, address changes, and explicit executions through the
+alan9 SHALL expose edits, address changes, and explicit executions through the
 buffer `event` stream using blocking-read semantics.
 
 #### Scenario: Edit event is observed
@@ -134,7 +134,7 @@ buffer `event` stream using blocking-read semantics.
 
 ### Requirement: Editable buffers do not replace M0-M2 agent IO
 
-Alan OS SHALL keep editable buffers as an interaction layer above append-only
+alan9 SHALL keep editable buffers as an interaction layer above append-only
 agent `io/` streams; M0-M2 agent operation SHALL continue to work through `io/`
 and `ctl` without requiring editable buffers.
 

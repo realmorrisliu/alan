@@ -4,9 +4,9 @@
 > draft text below is not implementation authorization; superseded desktop and
 > renderer-launch assumptions must be replaced before reactivation.
 
-Durable Rollouts survive Agent Process exit, but authorized Alan OS consumers
+Durable Rollouts survive Agent Process exit, but authorized alan9 consumers
 cannot discover them without scanning Agent Runtime Service System Store
-backing. That prevents reliable review after Process exit or Alan OS Host
+backing. That prevents reliable review after Process exit or alan9 Host
 restart even though the execution evidence already exists.
 
 ## What Changes
@@ -22,7 +22,7 @@ restart even though the execution evidence already exists.
   at the earlier containment cutoff. On error or timeout, cancel logical owners
   without awaiting stuck Host I/O. A published Rollout requires atomic inode
   quarantine in the reserved interval; failure invokes the synchronously
-  non-returning Alan OS Host lifecycle adapter. An explicit no-Rollout outcome
+  non-returning alan9 Host lifecycle adapter. An explicit no-Rollout outcome
   instead force-aborts its runtime owner and completes without a storage
   operation. An unpublished staging creation revokes publication and transfers
   its cleanup lease to a bounded service reaper. Agent Runtime Service does not
@@ -33,7 +33,7 @@ restart even though the execution evidence already exists.
   staging lease to the bounded reaper, and return deferred AgentFS cleanup so
   Kernel can publish exit without fabricating terminal evidence.
 - Extend the generic Process runner bridge with a prepared terminal
-  finalization hook. Alan Kernel asks the runner to prepare the per-Process
+  finalization hook. alan9 Kernel asks the runner to prepare the per-Process
   hook before the committed Process becomes controllable, invokes it exactly
   once with the winning terminal claim before any transition is published, and
   awaits it before aborting the runner. Only runner completion carries its
@@ -50,7 +50,7 @@ restart even though the execution evidence already exists.
   startup or execution, awaits that barrier, quiesces every live Agent Machine,
   and, when a Rollout exists, fences its writers before appending
   `process_exit`. Thus no live runtime leaks, no producing Rollout is missed,
-  and no later record can follow the terminal record. Alan Kernel publishes
+  and no later record can follow the terminal record. alan9 Kernel publishes
   exit before invoking the returned AgentFS cleanup action.
 - Apply the same executable-eligibility check during terminal preparation as
   during System Process dispatch. If any pre-dispatch path returns after a
@@ -134,7 +134,7 @@ restart even though the execution evidence already exists.
   their backing files or blocking valid entries.
 - Keep `/proc` authoritative for live Process lifecycle and each Rollout
   authoritative for its durable execution evidence.
-- Require authorized consumers to use the Alan OS file surface rather than
+- Require authorized consumers to use the alan9 file surface rather than
   System Store paths or a Host-private API.
 - Reuse the existing `/agent` namespace capability: a Process that can read
   `/agent` can read retained Rollouts, while a Process without that mount has
@@ -155,7 +155,7 @@ restart even though the execution evidence already exists.
   namespace and bind them only into its authorized renderer attachment view.
 - `plan9-kernel-substrate`: Serialize terminal Process transitions through a
   generic pre-exit runner finalization hook without adding agent semantics to
-  Alan Kernel.
+  alan9 Kernel.
 - `alan-os-host-lifecycle`: Own fatal storage-integrity admission closure and
   fail-stop Host termination requested through an injected adapter.
 
@@ -170,7 +170,7 @@ restart even though the execution evidence already exists.
 - Adds no Host-private startup API or duplicate runtime-metadata file.
 - Adds one internal Agent Runtime Service-to-Host fatal-transition adapter; it
   does not add a Host command or file surface.
-- Does not change Alan Kernel Process lifecycle authority, the aP wire surface,
+- Does not change alan9 Kernel Process lifecycle authority, the aP wire surface,
   or Rollout evidence ownership.
 - A durable renderer review surface, if later proposed, must follow this
   owning change; the archived inline-presentation slice did not implement

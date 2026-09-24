@@ -2,18 +2,18 @@
 
 ## Purpose
 
-Define Package Service as Alan OS's installed-package authority, including
+Define Package Service as alan9's installed-package authority, including
 explicit namespace source intake, System Store lifecycle, immutable revisions,
 Process-scoped `/lib/pkg` projection, and the Quartermaster `q` command.
 
 ## Requirements
 ### Requirement: Package Service is a supervised system service
 
-Alan OS SHALL run Package Service as a required File-Server Service started and
+alan9 SHALL run Package Service as a required File-Server Service started and
 supervised by Service Manager. Its Process SHALL publish the mountable
 `/srv/package` handle and SHALL report readiness through `/proc` and `/srv`.
 
-#### Scenario: Alan OS boots successfully
+#### Scenario: alan9 boots successfully
 
 - **WHEN** Service Manager completes required Boot Units
 - **THEN** the Package Service Process is running under Service Manager
@@ -24,7 +24,7 @@ supervised by Service Manager. Its Process SHALL publish the mountable
 
 - **WHEN** Package Service repeatedly exits beyond its bounded restart budget
 - **THEN** Service Manager reports the required unit failed
-- **AND** Alan OS does not claim full system readiness
+- **AND** alan9 does not claim full system readiness
 
 ### Requirement: Package Service owns its durable state
 
@@ -42,7 +42,7 @@ backing path SHALL be part of package identity or an Agent-visible record.
 #### Scenario: Agent inspects package metadata
 
 - **WHEN** an Agent reads Package Service catalog data or projected content
-- **THEN** it sees package ids, revisions, exports, and Alan OS paths
+- **THEN** it sees package ids, revisions, exports, and alan9 paths
 - **AND** it does not see the System Store backing path
 
 ### Requirement: Package Service exposes one file-native control surface
@@ -187,7 +187,7 @@ portable root.
 - **WHEN** a materialized Skill references package-local scripts or `bin/`
   content
 - **THEN** the files may remain readable package assets
-- **AND** v0 does not register or execute them as Alan OS Tools
+- **AND** v0 does not register or execute them as alan9 Tools
 
 ### Requirement: Compatibility gaps remain visible
 
@@ -270,7 +270,7 @@ running Process namespace or capability view.
 
 ### Requirement: First-party Skills are preinstalled packages
 
-Alan OS SHALL seed first-party Skill trees as deterministic, ordinary
+alan9 SHALL seed first-party Skill trees as deterministic, ordinary
 preinstalled Package Service packages. The Root Agent Process Boot Unit SHALL
 reference them explicitly. Agent Execution Engine MUST NOT append a separate
 compiled-in built-in package set during capability resolution.
@@ -288,9 +288,9 @@ compiled-in built-in package set during capability resolution.
   reference
 - **AND** no `builtin_capability_packages()` bypass adds another copy
 
-### Requirement: Quartermaster is an Alan OS command
+### Requirement: Quartermaster is an alan9 command
 
-Alan OS SHALL bind `q` at `/bin/q`. Alan Shell SHALL launch it as an ordinary
+alan9 SHALL bind `q` at `/bin/q`. Alan Shell SHALL launch it as an ordinary
 Process through `/proc/clone` and render its output from
 `/proc/<pid>/io/output`.
 Package-specific command semantics SHALL stay out of Alan Shell.
@@ -305,7 +305,7 @@ Package-specific command semantics SHALL stay out of Alan Shell.
 
 - **WHEN** `/bin/q` cannot reach the Package Service handle
 - **THEN** the `q` Process exits non-zero with a bounded diagnostic
-- **AND** Alan Shell remains attached to Alan OS
+- **AND** Alan Shell remains attached to alan9
 
 ### Requirement: Package lifecycle is atomic and exact
 

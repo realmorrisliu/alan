@@ -133,6 +133,7 @@ fixtures 证明合同和恢复行为，不作为真实模型延迟或成本收�
 - `expose-agent-rollout-history`：按需增加历史浏览，不获得启动权。
 - `add-proactive-memory-v2`：等 Machine/Store owner 稳定后再重规划。
 - q：维持 Skill 分发，有实际消费者再规划 executable/binfs。
+- `product-brand-identity` allowlist 校验：规范要求与当前 quality/CI 实际行为不一致；作为独立后续 OpenSpec 项目处理，不纳入 alan9 命名迁移。
 - 通用 executable/binfs/WASM 打包不列入本轮交付或承诺后续建设；需要真实消费者时重新论证。它与已退役的 macOS App 打包不同。
 - 原生桌面 GUI 计划取消，不是延后；旧 change 中的桌面窗口、原生面板和 macOS UI 验收不再恢复。源码删除见上述独立 change；保留 Rust 平台安全 owner 和用户数据。
 - Anywhere、UPDF、Groove、Matter 保持 parked。

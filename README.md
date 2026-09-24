@@ -3,7 +3,7 @@
 Alan is a programmable personal computing environment. The repository is in
 early development. Its retained implementation contains:
 
-- Alan OS substrate crates for namespaces, mounts, files, descriptors,
+- alan9 substrate crates for namespaces, mounts, files, descriptors,
   Processes, `/proc`, `/srv`, and file-server composition;
 - an Agent Execution Engine that runs the AI Turing-machine loop and projects
   Agent Process state through AgentFS;
@@ -43,7 +43,7 @@ Agent Executable
 - Memory Stores own continuity across Agent Processes.
 
 `alan-agent-engine` is the current implementation of the transition loop. It is
-not Alan Kernel or the Alan OS system boundary.
+not alan9 Kernel or the alan9 system boundary.
 
 [ADR-0055](docs/adr/0055-agent-machine-composes-typed-capabilities.md) accepts
 deterministic, typed evaluation and generation operations within one Machine.
@@ -149,8 +149,8 @@ alan shell pane list
 The `alan shell ...` direct commands above are the retained command/control surface;
 they are not Herdr commands or the file-native Shell grammar.
 
-Host files do not enter Alan OS because `alan` was launched from their
-directory. Authorize a Host Mount explicitly, then use its Alan OS path from
+Host files do not enter alan9 because `alan` was launched from their
+directory. Authorize a Host Mount explicitly, then use its alan9 path from
 Alan Shell. The retired `alan init`, `alan workspace`, and boot-time `--agent`
 surfaces have no compatibility aliases.
 
@@ -164,7 +164,7 @@ q uninstall my-skills
 ```
 
 `q` never receives a raw Host path or fetches remote URLs. The Host directory
-must already be authorized and mounted beneath an Alan OS namespace path such
+must already be authorized and mounted beneath an alan9 namespace path such
 as `/mnt/import`.
 
 ## Configuration and state
@@ -185,7 +185,7 @@ Durable state is separated by owner and install channel:
 
 These are Host-private backing roots, never Process identity or implicit
 mounts. Agent Definitions and Skills enter a Process only through descriptors
-or installed Alan OS references. Memory Stores use explicit descriptors such
+or installed alan9 references. Memory Stores use explicit descriptors such
 as `/memory`; raw backing paths never enter prompts or Agent-visible files.
 
 On upgrade, recognized generated legacy state is removed and connection state

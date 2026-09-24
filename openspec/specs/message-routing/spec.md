@@ -6,7 +6,7 @@ message framing, auditable delivery, blocking receiver streams, and its role as
 a composition mechanism rather than a control path.
 ## Requirements
 ### Requirement: Routefs routes typed messages by rule, sender decoupled
-Alan OS SHALL provide `routefs`, a file server where a sender writes a typed
+alan9 SHALL provide `routefs`, a file server where a sender writes a typed
 message to a `send` file and rule files route it by content/type to a destination
 port. The sender SHALL NOT name the receiver; the rules SHALL decide the
 destination. A receiver SHALL consume its port as a stream (blocking read). A
@@ -29,7 +29,7 @@ the llmfs request).
 - **AND** the agent does not hardcode a call to a specific actor
 
 ### Requirement: Routing is auditable and never silently drops
-Alan OS SHALL append every routed message to an observable log stream, and rule
+alan9 SHALL append every routed message to an observable log stream, and rule
 files SHALL be plain inspectable files. Rule matching SHALL be deterministic, and
 a message that matches no rule SHALL go to a default dead-letter port rather than
 being dropped.
@@ -45,7 +45,7 @@ being dropped.
 - **AND** it is recorded in the log, not silently discarded
 
 ### Requirement: Routing is a composition mechanism, not the control path
-Alan OS SHALL treat message routing as a way to compose actors, not as the primary
+alan9 SHALL treat message routing as a way to compose actors, not as the primary
 control path. An agent's own loop and governance SHALL remain explicit; critical
 control SHALL NOT be expressed only through routing rules.
 
@@ -57,7 +57,7 @@ control SHALL NOT be expressed only through routing rules.
   per the agent file-layout contract), not an implicit routing side effect
 
 ### Requirement: Routefs has a canonical namespace path
-Alan OS SHALL implement `routefs` as a user-space file server over the aP
+alan9 SHALL implement `routefs` as a user-space file server over the aP
 protocol with one canonical namespace path (ADR-0025 D3): it posts a handle at
 `/srv/route` and serves its tree (`send`, rules, ports, log) at `/mnt/route`. It
 SHALL NOT be kernel state, and the ownership map SHALL record `/mnt/route` as its

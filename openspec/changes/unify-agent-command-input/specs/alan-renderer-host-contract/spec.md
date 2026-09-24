@@ -1,7 +1,7 @@
 ## MODIFIED Requirements
 
 ### Requirement: The terminal CLI attaches to the existing Root Agent
-A local terminal renderer SHALL receive a mounted Alan OS namespace and the
+A local terminal renderer SHALL receive a mounted alan9 namespace and the
 concrete `/agent/root` Agent Process path. It MUST NOT spawn, restore, or
 supervise an Agent Process. AgentFS remains the authority for input, streamed
 output, status, and Agent UI state.
@@ -141,7 +141,7 @@ for explicit continuation or discard; no next action SHALL start automatically.
 #### Scenario: Renderer exits
 - **WHEN** the user quits or closes the local renderer
 - **THEN** it closes its own file streams and restores the terminal
-- **AND** it does not stop the shared Alan OS Host or Root Agent Process
+- **AND** it does not stop the shared alan9 Host or Root Agent Process
 
 ## ADDED Requirements
 

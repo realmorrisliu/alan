@@ -42,7 +42,7 @@ None.
 
 - The canonical `remote-access-service` capability defines the OS entry
   Process, handoff, lease, revocation, and remote context semantics.
-- Alan for macOS integration with local Alan OS remains a separate design; this
+- Alan for macOS integration with local alan9 remains a separate design; this
   change assumes only the accepted Remote Access Service host boundary.
 
 ## Impact

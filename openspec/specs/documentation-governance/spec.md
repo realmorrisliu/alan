@@ -12,7 +12,7 @@ Current specifications and active plans SHALL distinguish supported product
 surfaces, accepted but unimplemented direction, parked work, and cancelled
 work. Alan for macOS and its desktop implementation are retired; desktop-only
 contracts are historical rather than active maintenance obligations. This does
-not retire macOS platform support, Alan OS Host, credentials, Host Mounts,
+not retire macOS platform support, alan9 Host, credentials, Host Mounts,
 sandboxing, or user stores. The standalone CLI/Host distribution is the
 supported delivery surface.
 

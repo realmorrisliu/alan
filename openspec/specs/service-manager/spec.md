@@ -2,10 +2,10 @@
 
 ## Purpose
 Defines Service Manager as the first system Process and sole owner of bounded
-Alan OS service and Root Agent lifecycle.
+alan9 service and Root Agent lifecycle.
 ## Requirements
 ### Requirement: Service Manager is the first system Process
-Alan OS Host SHALL create Kernel and start one Service Manager Process. Service
+alan9 Host SHALL create Kernel and start one Service Manager Process. Service
 Manager SHALL be the sole owner of later system service and Root Agent Process
 lifecycle; Host MUST NOT retain fallback boot or supervision.
 

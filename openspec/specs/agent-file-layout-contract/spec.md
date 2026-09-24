@@ -7,7 +7,7 @@ routing, machine state, request/action trees, stream authority, access rights,
 and durability ownership.
 ## Requirements
 ### Requirement: An agent is a conforming process, not a kernel type
-Alan OS SHALL treat an agent as a `Process` whose `/agent/<pid>` overlay conforms
+alan9 SHALL treat an agent as a `Process` whose `/agent/<pid>` overlay conforms
 to the agent file-layout convention. Agent-ness SHALL be discoverable by
 inspecting the `/agent` overlay, not by any kernel flag or kernel category, while
 `/proc/<pid>` stays generic.
@@ -26,7 +26,7 @@ inspecting the `/agent` overlay, not by any kernel flag or kernel category, whil
 - **AND** the runtime needs no kernel changes to be operable
 
 ### Requirement: Every process exposes the generic process layout
-Alan OS SHALL define a generic process layout that every process exposes: the
+alan9 SHALL define a generic process layout that every process exposes: the
 full `/proc/<pid>` substrate layout (identity, parentage, credentials, namespace,
 status, and exit state per `define-plan9-kernel-substrate`) plus the common
 IO/control subset — an `io/` directory with `input`, `output`, and `events`
@@ -70,7 +70,7 @@ absent.
 - **AND** the caller must resubmit canonical explicit input
 
 ### Requirement: An agent overlays agent files on the generic process layout
-Alan OS SHALL define the agent layout as the generic process layout plus an agent
+alan9 SHALL define the agent layout as the generic process layout plus an agent
 overlay. The generic layout — the full `/proc/<pid>` substrate layout (identity,
 parentage, credentials, namespace, exit state) plus the `io/`/`status`/`ctl`
 IO/control subset — is kernel-rendered. The agent-specific superset — `requests/`,
@@ -118,7 +118,7 @@ changes, so a watcher can follow the whole agent from one stream.
 - **AND** the same tool code degrades gracefully across process kinds
 
 ### Requirement: Control is expressed by writing to a `ctl`, split by ownership
-Alan OS SHALL express control as text commands written to a `ctl` file, split by
+alan9 SHALL express control as text commands written to a `ctl` file, split by
 who owns the semantics. Generic process control (interrupt, cancel, signal) SHALL
 be the kernel-owned `/proc/<pid>/ctl`. Agent-runtime control whose meaning is the
 Agent Execution Engine's (such as `compact` and `rollback`, which operate on the
@@ -149,7 +149,7 @@ commands on the owning surface, not as new files or APIs.
   and never resumes on a partial write
 
 ### Requirement: `/agent` is an overlay over `/proc`
-Alan OS SHALL present `/agent` as an overlay over `/proc`: for each
+alan9 SHALL present `/agent` as an overlay over `/proc`: for each
 agent-conforming process it unions the kernel's `/proc/<pid>` generic layout with
 the agent runtime's agent surfaces, with stable aliases such as `/agent/root`
 resolving to whichever pid currently embodies the root agent's home. `/proc`
@@ -168,7 +168,7 @@ independent process table.
 - **AND** durable identity remains the root agent's home path, not the pid
 
 ### Requirement: The LLM is a typed stream the process consumes
-Alan OS SHALL model the LLM as a typed stream a process reads. The LLM SHALL have
+alan9 SHALL model the LLM as a typed stream a process reads. The LLM SHALL have
 no inherent authority; tool-call intents in the stream SHALL become real effects
 only when the consuming process spawns them under its own namespace and policy.
 
@@ -184,7 +184,7 @@ only when the consuming process spawns them under its own namespace and policy.
 - **AND** the denial needs no separate policy check beyond the absent mount
 
 ### Requirement: The request is assembled from the namespace
-Alan OS SHALL assemble the logical model request as a view over namespace files:
+alan9 SHALL assemble the logical model request as a view over namespace files:
 `machine/tape`, `context/`, visible Tool packages, and the Agent Runtime
 Service's defined interaction/governance control operations. Tape compaction
 SHALL be a view over `machine/tape` (tape is truth; the context-window view is
@@ -232,7 +232,7 @@ or machine-control surfaces and SHALL NOT grant `/bin` execution authority.
   an arbitrary `/bin` executable
 
 ### Requirement: Referenced capability file servers have explicit mount boundaries
-Alan OS SHALL treat the LLM provider, Memory Store, Tool, and Skill capabilities
+alan9 SHALL treat the LLM provider, Memory Store, Tool, and Skill capabilities
 referenced by this contract as external file-server surfaces, not fields on the
 agent runtime. The referenced surfaces are:
 
@@ -278,7 +278,7 @@ belong to their own OpenSpec capabilities.
   discovered
 
 ### Requirement: Requests and actions are files with events
-Alan OS SHALL represent agent yield, confirmation, approval, credential,
+alan9 SHALL represent agent yield, confirmation, approval, credential,
 selection, and structured-input requests as file trees under `requests/<id>/`,
 and agent-proposed or running effects under `actions/<id>/`. Each dynamic
 container SHALL expose an events stream that consumers watch by blocking read.
@@ -297,7 +297,7 @@ container SHALL expose an events stream that consumers watch by blocking read.
 - **AND** the action references the tool process rather than duplicating it
 
 ### Requirement: Request and action status integrity
-Alan OS SHALL keep request and action status truthful. A response written to a
+alan9 SHALL keep request and action status truthful. A response written to a
 request whose status is already terminal (answered, closed, or cancelled) SHALL
 be rejected. An action's recorded terminal status SHALL accurately reflect the
 underlying effect: a failed effect SHALL be recorded as failed, not partial, and
@@ -323,7 +323,7 @@ an incomplete result SHALL be recorded as partial, not satisfied.
 - **AND** downstream completion logic cannot treat it as fully satisfied
 
 ### Requirement: Root Agent has broad awareness but narrow authority
-Alan OS SHALL keep awareness and authority separate for the Root Agent. Because a
+alan9 SHALL keep awareness and authority separate for the Root Agent. Because a
 namespace tends to couple visibility with reachability, the separating dimension
 SHALL be access rights: awareness is granted by binding trees read-only, and
 authority is granted by binding trees read-write. The Root Agent's default
@@ -346,7 +346,7 @@ read-write mounts.
 - **AND** broad read-only awareness never implies write authority
 
 ### Requirement: Durable agent identity is a home tree
-Alan OS SHALL make an agent's durable identity a home file tree (config, memory,
+alan9 SHALL make an agent's durable identity a home file tree (config, memory,
 `machine/` state) owned by a storage-backed file server and bound into the
 agent's namespace. Running the agent SHALL be an ephemeral process bound to that
 home; restart continuity SHALL be a new process re-binding the same home.
@@ -364,7 +364,7 @@ mounted.
 - **AND** durability differs only by the home's mount, not by an agent type
 
 ### Requirement: Metering lives in the provider file server
-Alan OS SHALL place model cost, metering, and rate-limiting in the LLM provider
+alan9 SHALL place model cost, metering, and rate-limiting in the LLM provider
 file server, which an agent is subject to only when that server is bound into its
 namespace. There SHALL be no global model-quota policy engine outside the
 namespace.
@@ -377,7 +377,7 @@ namespace.
   quota service
 
 ### Requirement: A `ctl` is scoped to one lifecycle-bearing object
-Alan OS SHALL place a `ctl` in the directory that represents a single
+alan9 SHALL place a `ctl` in the directory that represents a single
 lifecycle-bearing object, alongside that object's data/status — the Plan 9 idiom
 (`/proc/<pid>/ctl`, `/net/tcp/<n>/ctl`). The only `ctl` files in an agent's
 overlay SHALL be the kernel-owned `/proc/<pid>/ctl` (aliased into `/agent/<pid>`
@@ -402,7 +402,7 @@ control.
 - **AND** `machine/status` and `requests/<id>/status` remain read-only state
 
 ### Requirement: Tape and event streams are append-only and leased during generation
-Alan OS SHALL keep `machine/tape` and every `events` stream append-only. While an
+alan9 SHALL keep `machine/tape` and every `events` stream append-only. While an
 agent is generating, `machine/tape` SHALL be held under an exclusive-write lease —
 exactly one writer (the generating engine), while readers may still tail it — so
 no second writer can interleave records into the tape mid-stream. The safe window
@@ -428,7 +428,7 @@ yielded/paused state.
 - **AND** on resume the engine continues from the amended state
 
 ### Requirement: Write authority carries an actor dimension; extension is by interpose
-Alan OS SHALL make write authority to an agent's files a function of the acting
+alan9 SHALL make write authority to an agent's files a function of the acting
 actor (the agent's own engine, a parent, a human operator, an interposing file
 server) and that actor's mounted capabilities — not a static property of the node
 alone. The unit of behavior extension SHALL be interposing a file server on the
@@ -449,7 +449,7 @@ isolation.
 - **AND** node-writability is not a single global property independent of actor
 
 ### Requirement: External writers require a protocol-layer tape lease
-Alan OS SHALL NOT permit any actor other than the agent's own engine (a human
+alan9 SHALL NOT permit any actor other than the agent's own engine (a human
 amending `machine/tape`/`context/`, or an interposing file server) to write the
 agent namespace until the `machine/tape` exclusive-write lease is enforced at the
 aP protocol layer rather than solely as a check inside the agent file server.
@@ -471,7 +471,7 @@ gates enabling any external-writer surface.
 - **AND** the interposer cannot grant a write the aP layer forbids
 
 ### Requirement: The agent namespace is self-describing
-Alan OS SHALL let an agent's files describe their own byte contract in-band, so the
+alan9 SHALL let an agent's files describe their own byte contract in-band, so the
 agent — itself a consumer that reads and writes these files to think — can read the
 contract as prose rather than depending only on out-of-band documentation. The
 minimal form SHALL be a documented record vocabulary per stream and a readable

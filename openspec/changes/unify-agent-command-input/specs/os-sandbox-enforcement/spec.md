@@ -22,8 +22,8 @@ Virtual aP services SHALL NOT be implicitly materialized.
 - **THEN** that path is absent or unreachable from the subprocess filesystem view
 - **AND** read isolation does not depend on the command-shape parser
 
-#### Scenario: Virtual Alan OS mounts are not exposed as native paths
-- **WHEN** the Alan OS namespace contains virtual mounts such as `/agent`, `/srv`, `/proc`, or `/mnt/llm`
+#### Scenario: Virtual alan9 mounts are not exposed as native paths
+- **WHEN** the alan9 namespace contains virtual mounts such as `/agent`, `/srv`, `/proc`, or `/mnt/llm`
 - **THEN** the reified native subprocess view does not expose those mounts as host filesystem paths
 - **AND** only host-backed declarations contribute native bind mounts
 

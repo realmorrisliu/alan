@@ -2,7 +2,7 @@
 
 ## Purpose
 Defines the supported terminal-neutral distribution boundary for Alan CLI and
-Alan OS Host binaries after the macOS desktop product is retired.
+alan9 Host binaries after the macOS desktop product is retired.
 
 ## Requirements
 
@@ -54,7 +54,7 @@ installed applications, or launchd registrations.
 
 ### Requirement: Host lifecycle remains a runtime concern
 
-Standalone installation SHALL not register or start an Alan OS Host. The
+Standalone installation SHALL not register or start an alan9 Host. The
 existing CLI Host attachment and start path remains responsible for deciding
 whether to attach to or start a Host when a command needs one.
 

@@ -40,7 +40,7 @@ authority through files.
   complete observable boundary
 
 ### Requirement: Tape and event streams are append-only and leased during generation
-Alan OS SHALL keep `machine/tape` and every `events` stream append-only. While an
+alan9 SHALL keep `machine/tape` and every `events` stream append-only. While an
 agent is generating, `machine/tape` SHALL be held under an exclusive-write lease —
 exactly one writer (the generating engine), while readers may still tail it — so
 no second writer can interleave records into the tape mid-stream. The safe window
