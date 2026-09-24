@@ -53,11 +53,15 @@ refinement hides protocol operations behind task-oriented alan9 commands. Linux/
   the shared cwd. The first slice does not promise a single shell action across
   disjoint mounts or add a cross-platform mount-alias layer.
 - The Host adapter privately resolves the Process-owned grant-relative cwd to
-  native execution paths. Raw backing paths remain outside AgentFS, Machine state,
-  Agent-visible results and durable evidence. Output paths are projected to a
-  usable grant-relative path from the submission's shared cwd (`.` for that cwd),
-  consistently across user stdout and Agent evidence; raw roots and `/mnt` aliases
-  are not emitted.
+  native execution paths. Alan-managed path metadata and execution-path
+  references in durable evidence use public grant-relative paths or opaque references, not
+  native backing paths. Paths in stdout/stderr captured by Alan are projected to
+  usable paths relative to the submission's shared cwd (`.` for that cwd), without
+  raw roots or `/mnt` aliases. This is not general content redaction. Native
+  shell redirection preserves Host-shell semantics, so a file written under an
+  explicitly delegated grant may contain a native path and may later be read as
+  ordinary project data under that same grant. Such path text does not grant
+  authority.
 - Prefix parsing remains nonrecursive; slash controls remain explicit. `!` never
   grants additional authority. User and Agent commands share the same execution
   boundary; OS sandboxing and existing degradation rules remain applicable.

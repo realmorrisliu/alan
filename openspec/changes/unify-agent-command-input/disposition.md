@@ -19,9 +19,11 @@ only delivered and merged deltas may be synced or archived.
 
 The user approved updating ADR/OpenSpec to native Host shell execution on
 2026-09-24. The earlier bounded alan9 command grammar is superseded. This change
-also owns native-path sandbox reconciliation. Raw backing paths remain private
-to the Host adapter under existing Agent-visible and durable-evidence secrecy
-contracts. These are planned contracts, not shipped behavior.
+also owns native-path sandbox reconciliation. Alan-managed path metadata and
+path values projected from captured command output use public project paths or
+opaque references. Ordinary files in explicitly delegated Host mounts preserve
+shell semantics and may contain native path text as project data. These are
+planned contracts, not shipped behavior.
 Linux VM/container migration, FUSE, 9P gateways and custom kernel work are deferred;
 the two research notes are historical alternatives, not implementation tasks.
 See [decision report](decision-report.md) for the consolidated accepted direction.

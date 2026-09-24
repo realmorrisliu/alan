@@ -111,12 +111,13 @@ Do not overload native `cat`, redirect syntax, or executable names with aP looku
 The Host adapter owns grant-to-native-path resolution and supplies native cwd and
 paths only as ephemeral Host-adapter spawn/sandbox inputs, outside the Alan Process
 exec manifest. Alan-generated Host/execution path metadata, AgentFS path fields
-and durable evidence retain public grant-relative project paths or opaque
-references, never the raw backing path. Paths in stdout/stderr captured by Alan
-are projected relative to that submission's shared cwd (`.` for the cwd) before
-reaching the user or Agent. This does not intercept native shell redirection or
-rewrite files: a file written within the active delegated grant remains ordinary
-project data and may contain a native path. The redirection itself does not copy
+and execution-path references persisted as durable evidence use public
+grant-relative project paths or opaque references, never the raw backing path.
+Paths in stdout/stderr
+captured by Alan are projected relative to that submission's shared cwd (`.` for
+the cwd) before reaching the user or Agent. This does not intercept native shell
+redirection or rewrite files: a file written within the active delegated grant
+remains ordinary project data and may contain a native path. The redirection itself does not copy
 those contents into command output or evidence; a later file read returns
 ordinary project data under the same grant. This bounds path privacy to
 Alan-managed metadata and captured output while preserving the selected Host

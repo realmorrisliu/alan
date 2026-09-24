@@ -9,10 +9,11 @@ request and grant identity, label, access, provenance, status and `/mnt` path,
 without raw Host paths. For an explicitly delegated local grant, the adapter MAY
 use scoped native cwd/path metadata only as ephemeral Host-adapter spawn and
 sandbox inputs, outside the Alan Process exec manifest. Alan-generated Host
-Mount and execution path metadata, including AgentFS/Machine path fields,
-service results, captured command output and durable evidence, SHALL retain
-public project paths or opaque grant references, not raw backing paths. This
-does not rewrite arbitrary contents in an explicitly delegated Host file:
+Mount and execution path metadata, including AgentFS/Machine path fields and
+service results, SHALL retain public project paths or opaque grant references,
+not raw backing-path values. Native paths in command output captured by Alan and
+persisted as execution-path evidence SHALL likewise be projected. This does not
+rewrite arbitrary contents in an explicitly delegated Host file:
 native shell redirection may store a native path there, and that file remains
 ordinary project data which may be read through the same grant. Such content
 does not become Host Mount metadata or confer authority. This SHALL NOT expose
