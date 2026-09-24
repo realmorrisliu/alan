@@ -9,7 +9,7 @@
 
 - [x] 2.1 Inventory active `Alan OS` and `Alan Kernel` prose in README, AGENTS.md, current docs and OpenSpec; classify historical quotations and literal identifiers so every remaining old-name occurrence has a reason.
 - [x] 2.2 Apply the naming map to active explanatory prose, preserving existing paths, links, spec IDs, dispositions and historical ADR/archive content; review the diff against the inventory.
-- [ ] 2.3 Inspect existing brand validation and adjust only if necessary to permit lowercase alan9 as system branding; verify its existing checks still reject invalid Alan product branding.
+- [x] 2.3 Inspect existing brand validation. No implementation exists in the repository quality command, scripts, crates, or CI; per user direction, add no checker in this rename and carry the existing product-brand-identity gap as a separate follow-up.
 
 ## 3. Verification and delivery
 
