@@ -205,10 +205,12 @@ must be reconciled with ordered acceptance rather than silently bypassed.
 
 Ctrl-C interrupts current work and pauses remaining queued input for explicit
 continuation/discard through the existing machine control surface. It does not
-roll back effects or start the next command. Detach, quit and empty-input terminal
-Ctrl-D leave accepted work running. Pipe EOF completes a submission. Without a
-response channel, clarification/approval fails with stderr and nonzero exit;
-never read a hidden terminal. Report prior effects accurately.
+roll back effects or start the next command. Detach, quit and empty-input
+terminal Ctrl-D with no pending Agent input leave accepted work running; Ctrl-D
+with a pending confirmation or structured-input request keeps the client
+attached. Pipe EOF completes a submission. Without a response channel,
+clarification/approval fails with stderr and nonzero exit; never read a hidden
+terminal. Report prior effects accurately.
 
 ### Evidence, display and recovery
 

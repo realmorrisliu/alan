@@ -161,13 +161,20 @@ private cwd, execution queue, command executor or durable result database.
 - **THEN** the interface shows its result and status without starting an explanatory model call
 
 ### Requirement: Terminal EOF and redirected EOF have distinct transport meanings
-Interactive Ctrl-D on empty input SHALL detach, as shall an explicit client exit.
-Detach MUST NOT stop accepted work, the Agent Process or the Host. Redirected EOF
-SHALL finish collection of one submission rather than cancel execution.
+Interactive Ctrl-D with empty input and no pending Agent input SHALL detach, as
+shall an explicit client exit. With a confirmation or structured-input request
+pending, Ctrl-D MUST leave the client attached and the request available for a
+response. Detach MUST NOT stop accepted work, the Agent Process or the Host.
+Redirected EOF SHALL finish collection of one submission rather than cancel
+execution.
 
 #### Scenario: Empty terminal input receives Ctrl-D
-- **WHEN** an interactive user presses Ctrl-D with an empty composer
+- **WHEN** Ctrl-D is pressed with an empty composer and no pending Agent input
 - **THEN** the client detaches and already accepted work continues
+
+#### Scenario: Pending Agent input receives Ctrl-D
+- **WHEN** Ctrl-D is pressed while a confirmation or structured-input request is pending
+- **THEN** the client remains attached and the request stays available for a response
 
 #### Scenario: Pipe reaches EOF
 - **WHEN** redirected input reaches EOF
