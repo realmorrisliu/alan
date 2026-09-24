@@ -59,8 +59,9 @@ output, status, and Agent UI state.
 - **THEN** it opens the file-backed renderer on `/agent/root`
 - **AND** it does not create a second Agent or Shell Process
 
-#### Scenario: A user submits a task
-- **WHEN** the user submits text in the renderer
+#### Scenario: A user submits an ordinary Agent task
+- **WHEN** the user submits an ordinary task entry through the composer, not a
+  renderer-local slash command or a response to a pending form or Agent yield
 - **THEN** one complete framed input is written to
   `/agent/root/io/input` and new Agent output is observed from
   `/agent/root/io/output`
@@ -153,7 +154,7 @@ output, status, and Agent UI state.
   or most recent turn outcome
 
 #### Scenario: An explicit shell request is submitted
-- **WHEN** the user submits text beginning with `!`
+- **WHEN** the user submits ordinary Agent task text beginning with `!`
 - **THEN** the input remains a framed AgentFS task and requests the exact
   remainder through the existing `bash` Tool
 - **AND** the renderer does not execute a host command or bypass Agent Tool
