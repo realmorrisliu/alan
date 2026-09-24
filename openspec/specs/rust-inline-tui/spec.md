@@ -3,7 +3,9 @@
 ## Purpose
 Define Alan's Rust terminal UI as a terminal-first renderer host whose local
 contract reads mounted agent files directly.
+
 ## Requirements
+
 ### Requirement: Legacy TUI entrypoints are removed
 alan SHALL remove the TypeScript/Bun/Ink TUI, the `alan-tui` shipped executable,
 the `ALAN_TUI_PATH` override, and the public `alan chat` and `alan ask`
@@ -25,28 +27,37 @@ commands.
 - **AND** they do not include, sign, link, or install an `alan-tui` executable
 
 ### Requirement: Codex-like terminal interaction baseline
-The first Rust TUI SHALL provide a Codex-like terminal interaction baseline:
-explicit terminal mode ownership, ratatui-style frame rendering, a bottom
-composer, inline viewport rendering, terminal scrollback transcript insertion,
-typed transcript cells, resize reflow, and frame coalescing.
+The Rust TUI SHALL be a keyboard-driven inline renderer over mounted AgentFS
+files. It SHALL render recent transcript content followed immediately by an
+editable `alan >` prompt, preserve committed content in terminal scrollback,
+and SHALL NOT reserve a full-screen viewport or pin the prompt to a bottom
+composer. Transient completion candidates, multiline input, and structured
+input MAY temporarily expand the inline viewport and SHALL disappear when the
+interaction ends. Existing typed transcript cells, incremental file updates,
+resize reflow, and frame coalescing SHALL remain supported.
 
 #### Scenario: Streaming assistant output renders incrementally
-- **WHEN** renderer-visible runtime state streams thinking, text, tool, plan,
-  warning, or error updates
-- **THEN** the TUI updates typed transcript cells without rebuilding the entire
-  transcript as plain strings
+- **WHEN** renderer-visible runtime state streams output
+- **THEN** the TUI updates typed transcript cells incrementally
 - **AND** it coalesces redraws so high-frequency deltas do not overwhelm the
   terminal
+- **AND** the editable prompt follows the latest transcript without a fixed
+  bottom panel or a blank screen-sized gap
 
 #### Scenario: Completed content enters terminal scrollback
-- **WHEN** visible transcript content is committed beyond the active viewport
-- **THEN** the TUI inserts committed lines into terminal scrollback
-- **AND** the active inline viewport remains focused on current interaction
+- **WHEN** visible transcript content exceeds the active inline viewport
+- **THEN** committed lines are inserted into terminal scrollback
+- **AND** the inline viewport remains focused on the current interaction
 
 #### Scenario: Resize preserves readable state
 - **WHEN** the terminal is resized during a turn or while editing input
-- **THEN** transcript cells, the active viewport, and the bottom composer reflow
-  without corrupting input or losing streamed content
+- **THEN** transcript and prompt reflow without losing input or duplicating or
+  dropping rendered content
+
+#### Scenario: Long input keeps its editable tail visible
+- **WHEN** multiline input extends beyond the inline composer viewport
+- **THEN** the inline paragraph scrolls to keep the edit cursor visible
+- **AND** the complete input remains available for editing and submission
 
 ### Requirement: Terminal behavior has focused verification
 The Rust TUI SHALL include focused automated verification for terminal behavior,
@@ -70,24 +81,33 @@ noninteractive startup failures.
 - **THEN** focused TUI or packaging contract checks fail
 
 ### Requirement: Live region shows agent activity and interrupt affordance
-The TUI SHALL maintain a persistent bottom live region, redrawn independently of committed scrollback, that surfaces in-progress activity and the interrupt affordance while a turn is running.
+While a turn is running, the TUI SHALL show concise activity and interrupt
+status adjacent to the inline prompt. This status MAY temporarily expand the
+inline viewport but SHALL NOT pin input to a full-height bottom panel or
+displace committed output from terminal scrollback. It SHALL disappear when
+the turn completes. Ctrl-C or Escape during a turn SHALL request interruption
+through the active control plane.
 
 #### Scenario: Activity indicator appears during a running turn
 - **WHEN** a turn is in progress
-- **THEN** the live region shows an animated activity line with the current action, elapsed time, and an `esc to interrupt` affordance
-- **AND** the activity line disappears when the turn completes without leaving a transcript cell
+- **THEN** the inline interaction shows the current action and an interrupt
+  affordance
+- **AND** the activity status disappears when the turn completes
 
 #### Scenario: Interrupt is always available during a turn
 - **WHEN** the user presses Esc while a turn is running
 - **THEN** the TUI issues an interrupt through the active control plane
 
 #### Scenario: Ephemeral status does not enter scrollback
-- **WHEN** a running tool, recoverable warning, compaction notice, or memory-flush notice is surfaced
-- **THEN** it is shown in the live region only and is not committed to terminal scrollback
+- **WHEN** a warning or task failure is also recorded as transcript content
+- **THEN** its user-facing summary appears once in the transcript
+- **AND** transient activity status does not enter terminal scrollback
+- **AND** diagnostic details remain available through existing logs
 
 #### Scenario: Streaming text commits at line boundaries
-- **WHEN** assistant text streams into the live region
-- **THEN** completed lines are committed to terminal scrollback without duplicating or dropping content across the live-region boundary
+- **WHEN** assistant text streams into the inline viewport
+- **THEN** completed lines are committed to terminal scrollback without
+  duplicating or dropping content across the prompt boundary
 
 ### Requirement: Thinking is collapsed by default with a toggle
 The TUI SHALL render assistant thinking collapsed by default and SHALL provide a keybinding to expand it.
@@ -103,35 +123,58 @@ The TUI SHALL render assistant thinking collapsed by default and SHALL provide a
 - **AND** activating the keybinding again collapses it
 
 ### Requirement: Command and reference completion surface
-The TUI SHALL provide a completion popup driven by trigger characters that distinguishes client commands from agent-bound references.
+The TUI SHALL provide keyboard-driven completion for slash commands, skill
+references, and file references using the current completion sources.
+Selecting a slash command runs the local command and does not send it to the
+Agent; selecting a skill or file inserts a reference into Agent-bound input.
+Candidate UI SHALL be temporary and adjacent to the active inline prompt.
 
 #### Scenario: Slash opens client commands
-- **WHEN** the user types `/` at the start of the composer
-- **THEN** a completion popup lists data-driven client commands (such as compact, rollback, clear, help, quit, toggle-thinking)
-- **AND** selecting one runs a local action that is not sent to the agent
+- **WHEN** the user types `/` at the start of input
+- **THEN** a completion popup lists data-driven client commands
+- **AND** selecting one runs a local action that is not sent to the Agent
 
 #### Scenario: Dollar references a skill inline
 - **WHEN** the user types `$` anywhere in the composer
-- **THEN** a completion popup lists skills sourced from the active skill catalog
-- **AND** selecting one inserts a skill-reference token into the message, which is submitted as part of a normal turn
+- **THEN** a completion popup lists active skills
+- **AND** selecting one inserts a skill-reference token into Agent-bound input
 
 #### Scenario: At references a file inline
 - **WHEN** the user types `@` anywhere in the composer
-- **THEN** a completion popup lists file paths visible in the Process namespace
-- **AND** selecting one inserts the path into the message
+- **THEN** a completion popup lists available files
+- **AND** selecting one inserts a file-reference token into Agent-bound input
 
 #### Scenario: Skill catalog unavailable degrades gracefully
 - **WHEN** the active skill catalog cannot be resolved
-- **THEN** the `$` popup shows no candidates and the user may continue typing freely
+- **THEN** the `$` popup shows no candidates and the user may continue typing
 - **AND** the TUI does not crash or block input
 
 ### Requirement: TUI is keyboard-only and preserves terminal-native selection
-The TUI SHALL NOT capture mouse input and SHALL leave text selection and copy to the host terminal.
+The TUI SHALL NOT capture mouse input and SHALL leave text selection and copy to
+the host terminal. It SHALL restore terminal modes on normal exit, EOF, and
+error, and leave the latest prompt/output in terminal order when it exits.
+Quitting or closing the renderer SHALL NOT stop the Agent Process or Host.
 
 #### Scenario: Mouse capture is disabled
 - **WHEN** the TUI is running
 - **THEN** the terminal's native mouse selection and copy behavior is available
 - **AND** the TUI does not enable mouse capture
+
+#### Scenario: Renderer exits while a task is active
+- **WHEN** the user quits or the terminal input ends during a running task
+- **THEN** only the renderer exits
+- **AND** it does not kill the Host, stop the Agent, or automatically replay the
+  task on a later attach
+
+#### Scenario: Ctrl-D detaches from an empty prompt with no pending input
+- **WHEN** the user presses Ctrl-D with an empty prompt and no pending Agent input
+- **THEN** the renderer exits and restores terminal modes
+- **AND** the attached Agent Process and Host continue running
+
+#### Scenario: Ctrl-D preserves pending Agent input
+- **WHEN** the user presses Ctrl-D while a confirmation or structured-input request is pending
+- **THEN** the renderer remains attached
+- **AND** the pending request remains available for a response
 
 ### Requirement: Bare alan launches the file-backed Rust terminal UI
 
@@ -170,20 +213,21 @@ The Rust terminal UI SHALL provide pending input, completion, live activity, col
 - **AND** display classification does not depend on a client transport event taxonomy
 
 ### Requirement: AgentFS yields and recovery states are first-class
-
-The Rust terminal UI SHALL render confirmation requests, structured input, recoverable Process errors, and recoverable file-surface gaps as focused user-facing states.
+The Rust terminal UI SHALL render confirmation requests, structured input, and
+recoverable Process errors as focused user-facing states. It SHALL NOT promise
+recovery from gaps in retained file streams; stream retention and any future gap
+recovery contract belong to the owning stream service.
 
 #### Scenario: Confirmation request is rendered
-
 - **WHEN** AgentFS exposes a pending confirmation request
 - **THEN** the TUI presents the action, choices, and default keyboard behavior
 - **AND** the answer is written through the request's file control surface
 
 #### Scenario: File stream cannot resume completely
-
 - **WHEN** an offset-readable renderer stream reports that retained data cannot satisfy the last cursor
-- **THEN** the TUI shows a concise recoverable state and available recovery actions
-- **AND** diagnostic details remain behind an explicit debug surface
+- **THEN** the TUI surfaces the underlying read failure as an actionable error
+- **AND** it does not invent a new offset, reconstruct missing output, or replay accepted input
+- **AND** diagnostic details remain available through existing logs
 
 ### Requirement: Renderer file updates are classified into display tiers
 

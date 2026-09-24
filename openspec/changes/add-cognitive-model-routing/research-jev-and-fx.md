@@ -209,7 +209,10 @@ TypeSafe HTTP 投影放在 adapter，Connection 管凭据与可用能力，Machi
 
 ### 4.7 不只面对聊天输入
 
-已有 interaction proposal 已提出 conversation、background servant、event-driven 三种模式，但事件触发 runtime 尚无完整 owner。[interaction design](../define-alan-interaction-model/design.md)
+早期 interaction proposal 曾讨论 conversation、background servant、event-driven
+三种模式；该方案已被 shell-like inline TUI 切片取代，并未交付后台或事件触发
+runtime。事件触发仍没有完整 owner。参见已归档的
+[interaction design](../archive/2026-09-24-define-alan-interaction-model/design.md)。
 
 因此统一的 Machine 输入可以包括用户输入、Tool/Process 完成、审批结果和显式订阅的服务事件。它们是类型化输入，不需要服务先写成一句“用户说……”来启动生成模型。
 
@@ -309,7 +312,12 @@ Agent › █
 
 ### 6.2 实现落点
 
-1. **真实入口已交付。** 裸 alan 现在把 TTY 任务送到现有 Root Agent renderer，重定向 stdin 走 one-shot；`!` 只请求既有受治理的 bash Tool。不要实施旧建议中的 parser/executor 抽取；后续富呈现与可见重连验收按 [interaction change](../define-alan-interaction-model/tasks.md) 重规划。
+1. **真实入口与 inline 呈现已交付。** 裸 alan 的交互 TTY 附着现有 Root Agent
+   renderer，重定向 stdin 走 one-shot；`!` 仍只是 Agent 输入并请求既有受治理
+   bash Tool。不要实施旧建议中的 parser/executor 抽取。后续命令路由归
+   [unify-agent-command-input](../unify-agent-command-input/)，一般 Shell Process
+   IO/Local Entry 回收仍按其 owning lifecycle change 规划。inline TUI 交付记录见
+   [归档 change](../archive/2026-09-24-define-alan-interaction-model/tasks.md)。
 2. **复用当前 TUI。** 保留 composer、history、completion、AgentFS watcher 与 `StreamReconciler`。把“已完成内容提交滚屏”和“可变活动区域重绘”分开；不为 fx 风格重写全部 renderer。
 3. **保持唯一事实来源。** Shell command 结果读 Process streams；Agent 回复读 AgentFS，继续按权威记录消除预览重复；Tool 详情引用原有 action/result，显示折叠不删除证据。
 4. **默认紧凑，细节按需。** 主流显示任务、短状态和结果；长输出预览可展开/按范围读取。计划、批准请求与错误仅在相关时出现。提供显式快捷键进入完整详情，再返回同一输入草稿。

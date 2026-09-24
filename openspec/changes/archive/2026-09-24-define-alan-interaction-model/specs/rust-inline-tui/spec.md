@@ -115,3 +115,20 @@ Quitting or closing the renderer SHALL NOT stop the Agent Process or Host.
 - **WHEN** the user presses Ctrl-D while a confirmation or structured-input request is pending
 - **THEN** the renderer remains attached
 - **AND** the pending request remains available for a response
+
+### Requirement: AgentFS yields and recovery states are first-class
+The Rust terminal UI SHALL render confirmation requests, structured input, and
+recoverable Process errors as focused user-facing states. It SHALL NOT promise
+recovery from gaps in retained file streams; stream retention and any future gap
+recovery contract belong to the owning stream service.
+
+#### Scenario: Confirmation request is rendered
+- **WHEN** AgentFS exposes a pending confirmation request
+- **THEN** the TUI presents the action, choices, and default keyboard behavior
+- **AND** the answer is written through the request's file control surface
+
+#### Scenario: File stream cannot resume completely
+- **WHEN** an offset-readable renderer stream reports that retained data cannot satisfy the last cursor
+- **THEN** the TUI surfaces the underlying read failure as an actionable error
+- **AND** it does not invent a new offset, reconstruct missing output, or replay accepted input
+- **AND** diagnostic details remain available through existing logs

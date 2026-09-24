@@ -136,8 +136,47 @@ child Agent Process launch. Live lifecycle remains authoritative in `/proc`.
 
 ## Files, commands, and knowledge
 
+Entries marked accepted target follow ADR-0058; runtime implementation remains pending.
+
+**Direct Command Execution (accepted target)** — An execution path for a submitted
+Host shell script that does not require model generation. Its command
+and result share Agent context and remain subject to execution permissions
+and governance.
+_Avoid_: Unrestricted execution, Host bypass
+
+**Command Override (accepted target)** — The `!` prefix selecting direct command
+handling for one submission. It does not establish a persistent input mode.
+_Avoid_: Shell session switch, Permission override
+
+**Agent Override (accepted target)** — The `:` prefix selecting Agent interpretation
+for one submission. It permits governed actions requested by the user and does
+not mean explanation-only or a persistent mode.
+_Avoid_: Read-only mode, Conversation session switch
+
+**Interaction Working Directory (accepted target)** — The Agent Process-owned
+Host Mount reference and relative location, resolved by the Host adapter to a
+native execution directory shared by attached clients and command actions,
+changed by a standalone explicit user `cd` in execution order. An individual Agent action's
+working directory and script-local `cd` do not implicitly change it.
+_Avoid_: Host launch directory, Workspace identity
+
+**Input Routing (accepted target)** — Selection of how a user submission is handled,
+using explicit intent or an inferred classification. Selection does not itself
+authorize the resulting action.
+_Avoid_: Execution authorization, Permission inference
+
 **AgentFS** — The file server mounted at `/agent`. It exposes agent IO,
 requests, actions, children, machine state, plans, notices, and streams.
+
+**alan9 Control Command (accepted target)** — A task-oriented executable, primarily
+for Agents, that encapsulates internal aP operations under caller-scoped authority.
+It reuses service owners and ordinary execution evidence; users need not learn aP.
+_Avoid_: Privileged manager API, Protocol operation catalog
+
+**Project File Access (accepted target)** — Agent read/edit/search and native shell
+commands use consistent public project paths and the same authorized Host backing
+files. Structured adapters resolve paths internally; committed edits are visible
+across tools. Virtual services need not be materialized as project files.
 
 **Tool** — A reusable executable installed in the command namespace.
 Permissions come from descriptors, access rights, policy, and the selected
