@@ -3,6 +3,7 @@
 基线：main `62a99d6d`（PR #929，2026-09-23；包含 PR #928）。
 2026-09-20 用户确认改为纵向 tracer bullet：尽快交付可用 agent，通过真实终端任务反馈推进架构。
 本路线替代原 Step 2 → 3 → 4 的逐层交付顺序；ADR-0054/0055 的所有权边界不变。
+ADR-0056 记录裸 `alan` 直接附着 Root Agent 的入口决策，并取代旧 Shell-first 指引。
 
 ## 已完成与当前状态
 
@@ -38,7 +39,7 @@
 权限、credentials、sandbox、Process 生命周期和证据写入继续走现有 owner。
 首切片不承诺跨 Host 重启恢复，但不得新增重连自动重发、权限绕过或重复执行路径。
 
-参考：ADR-0036/0038/0039/0045/0048/0049/0054，
+参考：ADR-0036/0038/0045/0049/0054/0056，
 `alan-shell`、`local-alan-os-attachment`、`alan-renderer-host-contract`、
 `agent-file-layout-contract`、`provider-connection-contract`、
 `host-directory-mounts` 与 `host-mount-escalation`。真实入口从

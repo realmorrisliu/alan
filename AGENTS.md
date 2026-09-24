@@ -44,6 +44,8 @@ OpenSpec and the ADRs.
 - Memory Stores and handoff files own continuity across Agent Processes.
 - provider, sandbox, terminal, macOS, and app details stay behind adapters.
 - agent-ness is a file-layout convention, never a second Kernel Process type.
+- bare `alan` attaches its terminal renderer to the existing `/agent/root`; it
+  does not create a Shell Process or own Root Agent lifecycle (ADR-0056).
 - avoid introducing globally addressable Thread, Conversation, or execution
   manager objects.
 - prefer existing terminal hosts, especially Herdr; do not rebuild desktop topology (ADR-0054).

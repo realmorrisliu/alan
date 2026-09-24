@@ -276,6 +276,11 @@ fx 使用 Apache-2.0，复制代码时需遵守相应许可证和第三方声明
 
 ## 6. Alan 的 Shell 交互方案
 
+> **状态（2026-09-24）：** 本节的 Shell-first 与 Shell/Agent 目标切换草案
+> 形成于 tracer bullet 前，已被 PR #929 和 ADR-0056 取代，不是当前入口
+> 或已接受实现要求。fx 的交互观察仍可参考；剩余终端体验由路线文档的
+> interaction change 基于当前 Root Agent renderer 重写后再实施。
+
 ### 6.1 产品行为
 
 默认启动仍进入 Shell，Agent 是用户选择的执行与交互对象。视觉上统一成一个顺序工作流，输入区明确显示当前目标：Shell 或某个 Agent。目标选择属于 renderer 的文件投影，不给 `alan-shell` 核心加入 Agent 特殊模式。

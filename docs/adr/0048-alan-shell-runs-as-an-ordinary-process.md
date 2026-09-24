@@ -1,6 +1,8 @@
 # Alan Shell runs as an ordinary Process
 
-Status: accepted
+Status: accepted for an actual interactive Alan Shell Process. ADR-0056 narrows
+this decision for the bare terminal Agent renderer, which is not a Shell
+Process.
 
 Every interactive Alan Shell runs as a Shell Process with Alan OS credentials,
 a namespace, descriptors, cwd, PID, and parentage; executables invoked through

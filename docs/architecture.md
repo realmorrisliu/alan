@@ -43,7 +43,8 @@ system Host and runs the file-backed Agent renderer against the existing
 `/agent/root`. With redirected stdin it submits one Agent task and writes the
 final answer to stdout, diagnostics to stderr, and the result through its exit
 status. Interactive `!` requests a command through the governed `bash` Tool.
-The renderer does not create or own the Root Agent Process or Host lifecycle.
+The renderer does not create or own the Root Agent Process or Host lifecycle;
+this entry decision is recorded in [ADR-0056](adr/0056-bare-alan-attaches-to-root-agent.md).
 
 Alan for macOS is retired; its App, helper and shell-core/FFI source has been
 removed. Rust Host platform adapters remain. Herdr supplies terminal topology,

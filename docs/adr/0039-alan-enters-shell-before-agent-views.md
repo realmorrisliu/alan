@@ -1,6 +1,7 @@
 # Alan enters Shell before Agent views
 
-Status: accepted
+Status: superseded for the bare `alan` entry by ADR-0056 (2026-09-24); retained
+as historical rationale.
 
 Running `alan` boots or attaches the system-level Alan OS and enters Alan Shell
 without creating or selecting an ordinary Agent Process. Agent Processes are
