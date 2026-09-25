@@ -37,6 +37,45 @@ async fn test_os_backend_still_blocks_out_of_host_mount_reads() {
 }
 
 #[tokio::test]
+async fn seatbelt_rejects_makefile_commands_with_uninspectable_path_input() {
+    let mount = TempDir::new().unwrap();
+    let outside = TempDir::new().unwrap();
+    let outside_file = outside.path().join("host-only-marker.txt");
+    std::fs::write(&outside_file, "host-only-marker\n").unwrap();
+    let makefile = format!("all:\n\tcat {}\n", outside_file.display());
+    std::fs::write(mount.path().join("Makefile"), &makefile).unwrap();
+    std::fs::write(mount.path().join("custom.mk"), makefile).unwrap();
+
+    let sandbox = Sandbox::with_backend(
+        mount.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::Seatbelt,
+    );
+    for command in [
+        "make",
+        "make -f custom.mk",
+        "gmake -f custom.mk",
+        "bmake -f custom.mk",
+    ] {
+        let error = sandbox
+            .exec_with_timeout_and_capability(
+                command,
+                mount.path(),
+                None,
+                Some(alan_agent_protocol::ToolCapability::Unknown),
+            )
+            .await
+            .expect_err("makefile recipes can read paths hidden from ProtectedOnly validation");
+
+        assert!(
+            error
+                .to_string()
+                .contains("uninspectable path-bearing input"),
+            "{command}: {error}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn absolute_path_executable_on_host_path_is_not_a_project_file_operand() {
     use std::os::unix::fs::PermissionsExt;
 

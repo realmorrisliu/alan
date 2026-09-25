@@ -46,6 +46,42 @@ async fn project_text_projects_paths_from_every_delegated_mount() {
 }
 
 #[tokio::test]
+async fn project_text_projects_percent_encoded_file_uri_roots_without_matching_siblings() {
+    let project = tempfile::Builder::new()
+        .prefix("alan project with spaces ")
+        .tempdir()
+        .unwrap();
+
+    let service = service();
+    service.register_process(Pid(7), LiveNamespace::new(Namespace::new()));
+    approve(
+        &service,
+        7,
+        "/mnt/project",
+        HostMountAccess::ReadWrite,
+        project.path(),
+    )
+    .await;
+    let adapter = service
+        .reconcile(7, binding("/mnt/project"))
+        .unwrap()
+        .adapter()
+        .unwrap();
+    let root = dunce::canonicalize(project.path()).unwrap();
+    let uri = url::Url::from_file_path(root.join("notes.txt")).unwrap();
+    assert!(uri.as_str().contains("%20"));
+    assert_eq!(adapter.project_text(uri.as_str()), "file://./notes.txt");
+
+    let sibling_name = format!("{}-backup", root.file_name().unwrap().to_string_lossy());
+    let sibling_uri =
+        url::Url::from_file_path(root.with_file_name(sibling_name).join("notes.txt")).unwrap();
+    assert_eq!(
+        adapter.project_text(sibling_uri.as_str()),
+        sibling_uri.as_str()
+    );
+}
+
+#[tokio::test]
 async fn shell_sandbox_contains_only_the_mount_selected_by_shared_cwd() {
     let project = tempfile::tempdir().unwrap();
     let docs = tempfile::tempdir().unwrap();

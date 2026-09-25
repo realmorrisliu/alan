@@ -92,6 +92,8 @@ fn validate_nested_command_evaluators_inner(
 
 fn has_uninspectable_path_input(command: &str, args: &[String]) -> bool {
     match command {
+        // Makefiles (including the implicit default Makefile) can run arbitrary recipes.
+        "make" | "gmake" | "bmake" => true,
         "tar" | "gtar" | "bsdtar" => args
             .iter()
             .any(|arg| exact_or_inline_option_with_value(arg, &["-T"], &["--files-from"])),
