@@ -33,8 +33,8 @@ pub use host_auth::{
 };
 pub use memory::{MemoryFlushAttemptSnapshot, MemoryFlushResult, MemoryFlushSkipReason};
 pub use op::{
-    GovernanceConfig, GovernanceProfile, InputMode, Op, PlanItem, PlanItemStatus, Submission,
-    ToolCapability, TurnContext,
+    GovernanceConfig, GovernanceProfile, InputIntent, InputMode, Op, PlanItem, PlanItemStatus,
+    Submission, ToolCapability, TurnContext, UserInputRecord, parse_input_prefix,
 };
 pub use process::{
     AGENT_DEFINITION_DESCRIPTOR, AGENT_EXECUTABLE_RESULT_VERSION, AgentExecutablePause,

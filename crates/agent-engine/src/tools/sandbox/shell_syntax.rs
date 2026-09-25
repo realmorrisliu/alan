@@ -1,4 +1,5 @@
 use anyhow::{Result, anyhow};
+use std::path::PathBuf;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct ShellWordToken {
@@ -810,4 +811,97 @@ pub(super) fn shell_commands(command: &str) -> Result<Vec<Vec<String>>> {
     }
 
     Ok(commands)
+}
+
+pub(crate) fn parse_standalone_cd(command: &str) -> Result<Option<PathBuf>> {
+    let normalized = normalize_shell_line_continuations(command);
+    let words = shell_word_tokens(&normalized)?;
+    if words.first().map(String::as_str) != Some("cd") {
+        return Ok(None);
+    }
+    if contains_shell_control_operator(&normalized) {
+        return Ok(None);
+    }
+    if words.len() != 2 {
+        return Err(anyhow!(
+            "standalone cd requires exactly one directory argument"
+        ));
+    }
+
+    let directory = &words[1];
+    if directory == "-" {
+        return Err(anyhow!("standalone cd does not support `-`"));
+    }
+    if directory.starts_with('~') {
+        return Err(anyhow!(
+            "standalone cd does not support home-directory expansion"
+        ));
+    }
+    if directory
+        .chars()
+        .any(|ch| matches!(ch, '$' | '`' | '*' | '?' | '[' | ']' | '{' | '}'))
+    {
+        return Err(anyhow!(
+            "standalone cd accepts a literal path; variables, substitutions, and globs are unsupported"
+        ));
+    }
+
+    Ok(Some(PathBuf::from(directory)))
+}
+
+pub(super) fn contains_shell_control_operator(command: &str) -> bool {
+    let mut in_single = false;
+    let mut in_double = false;
+    let mut in_comment = false;
+    let mut escaped = false;
+    let mut word_started = false;
+
+    for ch in command.chars() {
+        if in_comment {
+            if matches!(ch, '\n' | '\r') {
+                in_comment = false;
+                word_started = false;
+            }
+            continue;
+        }
+        if escaped {
+            escaped = false;
+            word_started = true;
+            continue;
+        }
+        if in_single {
+            if ch == '\'' {
+                in_single = false;
+            }
+            word_started = true;
+            continue;
+        }
+        if in_double {
+            match ch {
+                '\\' => escaped = true,
+                '"' => in_double = false,
+                _ => {}
+            }
+            word_started = true;
+            continue;
+        }
+
+        match ch {
+            '\\' => escaped = true,
+            '\'' => {
+                in_single = true;
+                word_started = true;
+            }
+            '"' => {
+                in_double = true;
+                word_started = true;
+            }
+            '#' if !word_started => in_comment = true,
+            ch if ch.is_whitespace() => word_started = false,
+            ';' | '|' | '&' | '(' | ')' | '{' | '}' | '<' | '>' => return true,
+            _ => word_started = true,
+        }
+    }
+
+    false
 }

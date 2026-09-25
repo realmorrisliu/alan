@@ -373,8 +373,9 @@ fn is_retired_workspace_invocation(args: &[std::ffi::OsString]) -> bool {
 }
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() -> Result<std::process::ExitCode> {
     let cli = parse_cli();
+    let mut exit_code = std::process::ExitCode::SUCCESS;
 
     match cli.command {
         Some(Commands::Host { action }) => match action {
@@ -676,13 +677,15 @@ async fn main() -> Result<()> {
                     let input =
                         String::from_utf8(input).context("stdin task is not valid UTF-8")?;
                     let _task_lock = alan_tui::acquire_task_submission_lock(&task_lock_path)?;
-                    alan_tui::run_stdio_task(attachment.root, "/agent/root", &input).await?;
+                    let status =
+                        alan_tui::run_stdio_task(attachment.root, "/agent/root", &input).await?;
+                    exit_code = std::process::ExitCode::from(u8::try_from(status).unwrap_or(1));
                 }
             }
         }
     }
 
-    Ok(())
+    Ok(exit_code)
 }
 
 #[cfg(target_os = "macos")]

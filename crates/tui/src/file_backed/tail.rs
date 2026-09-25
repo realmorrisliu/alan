@@ -1,5 +1,5 @@
 use super::{
-    StdioTaskSnapshot, StdioTaskWaitContext, finish_stdio_task_if_ready,
+    StdioTaskCompletion, StdioTaskSnapshot, StdioTaskWaitContext, finish_stdio_task_if_ready,
     interrupt_stdio_task_if_active, stdio_task_snapshot,
 };
 use alan_agent_protocol::UiActivitySnapshot;
@@ -328,13 +328,13 @@ pub(super) enum StdioTaskRecovery {
     Unchanged,
     Unavailable,
     Reattached,
-    Complete(String),
+    Complete(StdioTaskCompletion),
 }
 
 pub(super) async fn recover_stdio_task_after_tail_close(
     shell: &alan_shell::Shell,
     root_agent_path: &str,
-    task: &StdioTaskWaitContext<'_>,
+    task: &StdioTaskWaitContext,
     attachment: &mut StdioTailAttachment,
     snapshot: &mut StdioTaskSnapshot,
     interrupt_requested: bool,
@@ -368,7 +368,7 @@ pub(super) async fn recover_stdio_task_after_tail_close(
 pub(super) async fn recover_stdio_task_after_root_change(
     shell: &alan_shell::Shell,
     root_agent_path: &str,
-    task: &StdioTaskWaitContext<'_>,
+    task: &StdioTaskWaitContext,
     attachment: &mut StdioTailAttachment,
     snapshot: &mut StdioTaskSnapshot,
     interrupt_requested: bool,
@@ -414,8 +414,8 @@ pub(super) async fn recover_stdio_task_after_root_change(
     if snapshot.activity_state == Some(super::UiActivityState::Paused) {
         bail!("Agent task needs interactive input; attach with the TTY renderer");
     }
-    if let Some(answer) = finish_stdio_task_if_ready(snapshot)? {
-        return Ok(StdioTaskRecovery::Complete(answer));
+    if let Some(completion) = finish_stdio_task_if_ready(snapshot, task.record.intent)? {
+        return Ok(StdioTaskRecovery::Complete(completion));
     }
     if snapshot.activity_state == Some(super::UiActivityState::Idle) {
         bail!(

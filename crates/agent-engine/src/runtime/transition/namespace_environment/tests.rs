@@ -4,7 +4,8 @@ use std::sync::{
 };
 
 use alan_agent_protocol::{
-    ContentPart, InputMode, Op, ProcessNamespaceAccess, ProcessNamespaceMount,
+    ContentPart, InputIntent, InputMode, Op, ProcessNamespaceAccess, ProcessNamespaceMount,
+    UserInputRecord,
 };
 use alan_agentfs::{AgentConformanceChecker, AgentFs, AgentRootFs};
 use alan_ap::{

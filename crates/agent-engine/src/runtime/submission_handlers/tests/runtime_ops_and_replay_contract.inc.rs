@@ -674,6 +674,7 @@
                 name: "write_file".to_string(),
                 arguments: json!({"path":"notes.txt","payload":"hello"}),
             }],
+            true,
         );
 
         let cancel = CancellationToken::new();
@@ -729,6 +730,7 @@
                 name: "write_file".to_string(),
                 arguments: json!({"path":"notes.txt","payload":"hello"}),
             }],
+            true,
         );
 
         let cancel = CancellationToken::new();

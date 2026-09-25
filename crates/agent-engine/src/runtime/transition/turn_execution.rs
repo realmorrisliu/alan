@@ -579,12 +579,17 @@ where
 
         if assistant_message_persisted && !response.content.is_empty() {
             let namespace_input_text = namespace_user_input_for_tape.take();
+            let submission_id = state.machine.current_submission_id().map(str::to_owned);
             agent_files
                 .write_assistant_output(&response.content)
                 .await
                 .context("write namespace assistant output")?;
             agent_files
-                .write_turn_tape_state(namespace_input_text.as_deref(), &response.content)
+                .write_turn_tape_state(
+                    submission_id.as_deref(),
+                    namespace_input_text.as_deref(),
+                    &response.content,
+                )
                 .await
                 .context("write namespace turn tape state")?;
         }
@@ -656,12 +661,17 @@ where
                 &response.redacted_thinking,
             );
             let namespace_input_text = namespace_user_input_for_tape.take();
+            let submission_id = state.machine.current_submission_id().map(str::to_owned);
             agent_files
                 .write_assistant_output(fallback_text)
                 .await
                 .context("write namespace fallback assistant output")?;
             agent_files
-                .write_turn_tape_state(namespace_input_text.as_deref(), fallback_text)
+                .write_turn_tape_state(
+                    submission_id.as_deref(),
+                    namespace_input_text.as_deref(),
+                    fallback_text,
+                )
                 .await
                 .context("write namespace fallback turn tape state")?;
             let memory_runtime = turn_memory_runtime(state);

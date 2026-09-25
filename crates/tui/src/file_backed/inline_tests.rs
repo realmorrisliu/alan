@@ -44,7 +44,7 @@ fn scrollback_retention_counts_physical_rows_at_narrow_widths() {
                 .symbol()
         })
         .collect::<String>();
-    assert!(prompt.starts_with("alan >"));
+    assert!(prompt.starts_with("alan:"));
 }
 
 #[test]
@@ -129,13 +129,44 @@ fn completed_turn_is_followed_by_the_next_inline_alan_prompt() {
             .to_string()
     };
 
-    assert_eq!(line(0), "alan > pwd");
+    assert_eq!(line(0), "alan: pwd");
     assert_eq!(line(1), "/workspace/alan");
-    assert_eq!(line(2), "alan >");
+    assert_eq!(line(2), "alan:");
     assert_eq!(
         backend.cursor_position(),
-        ratatui::layout::Position::new(7, 2)
+        ratatui::layout::Position::new(6, 2)
     );
+}
+
+#[test]
+fn pasted_prefix_is_folded_into_the_prompt_once() {
+    let mut app = FileBackedApp::new("/agent/root".to_string());
+    app.dispatch(FileBackedEvent::Terminal(TerminalEvent::Paste(
+        "!git status".to_string(),
+    )));
+
+    let backend = render(&app);
+    let line = (0..80)
+        .map(|column| backend.buffer().cell((column, 0)).unwrap().symbol())
+        .collect::<String>()
+        .trim_end()
+        .to_string();
+    assert_eq!(line, "alan! git status");
+    assert_eq!(
+        backend.cursor_position(),
+        ratatui::layout::Position::new(16, 0)
+    );
+
+    while !app.composer.text().is_empty() {
+        app.dispatch(FileBackedEvent::Terminal(TerminalEvent::Key(
+            KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE),
+        )));
+    }
+    app.dispatch(FileBackedEvent::Terminal(TerminalEvent::Key(
+        KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE),
+    )));
+    assert_eq!(app.input_prompt_prefix(), "alan: ");
+    assert_eq!(app.composer.text(), "");
 }
 
 #[test]
@@ -159,7 +190,7 @@ fn completion_candidates_render_before_the_inline_prompt_without_entering_histor
 
     assert!(line(2).contains("/compact"));
     assert!(line(4).contains("/clear"));
-    assert_eq!(line(7), "alan > /");
+    assert_eq!(line(7), "alan: /");
     assert_eq!(app.transcript.len(), 2, "candidates are transient UI state");
     assert_eq!(inline_viewport_height(&app, 80, 12), 8);
 }
@@ -186,7 +217,7 @@ fn wrapped_completion_candidates_reserve_their_rendered_height_before_the_prompt
                         .symbol()
                 })
                 .collect::<String>();
-            text.starts_with("alan > /")
+            text.starts_with("alan: /")
         })
         .expect("the editable prompt is visible after the wrapped candidates");
     assert_eq!(terminal.backend().cursor_position().y, prompt_row);
@@ -211,13 +242,13 @@ fn wrapped_multiline_prompt_keeps_its_cursor_in_the_inline_viewport() {
     app.composer.set_text("\nx");
 
     let height = inline_viewport_height(&app, 8, 24);
-    assert_eq!(height, 3);
+    assert_eq!(height, 2);
 
     let mut terminal = Terminal::new(TestBackend::new(8, height)).unwrap();
     terminal.draw(|frame| draw(frame, &app)).unwrap();
     assert_eq!(
         terminal.backend().cursor_position(),
-        ratatui::layout::Position::new(0, 2)
+        ratatui::layout::Position::new(7, 1)
     );
 }
 
@@ -232,9 +263,9 @@ fn preceding_wrapped_prompt_lines_are_included_in_the_cursor_row() {
 
     assert_eq!(
         terminal.backend().cursor_position(),
-        ratatui::layout::Position::new(0, 4)
+        ratatui::layout::Position::new(7, 3)
     );
-    assert_eq!(height, 5);
+    assert_eq!(height, 4);
 }
 
 #[test]
@@ -265,7 +296,7 @@ fn long_composer_scrolls_its_editable_tail_and_cursor_into_view() {
     assert_eq!(height, 10);
     assert_eq!(
         terminal.backend().cursor_position(),
-        ratatui::layout::Position::new(8, 9)
+        ratatui::layout::Position::new(7, 9)
     );
     let last_row = (0..10)
         .map(|column| {
@@ -277,7 +308,7 @@ fn long_composer_scrolls_its_editable_tail_and_cursor_into_view() {
                 .symbol()
         })
         .collect::<String>();
-    assert_eq!(last_row.trim_end(), "       x");
+    assert_eq!(last_row.trim_end(), "      x");
 }
 
 #[test]
@@ -297,9 +328,9 @@ fn multiline_unicode_paste_stays_inline_and_positions_the_cursor_by_display_widt
     };
 
     assert!(line(0).contains("你") && line(0).contains("好"));
-    assert_eq!(line(1), "       x");
+    assert_eq!(line(1), "      x");
     assert_eq!(
         backend.cursor_position(),
-        ratatui::layout::Position::new(8, 1)
+        ratatui::layout::Position::new(7, 1)
     );
 }

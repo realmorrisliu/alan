@@ -1,6 +1,118 @@
 
-    use alan_agent_protocol::{InputMode, Op};
+    use alan_agent_protocol::{ContentPart, InputIntent, InputMode, Op, Submission};
     use crate::runtime::turn_input::MAX_BUFFERED_INBAND_USER_INPUTS;
+
+    #[tokio::test]
+    async fn explicit_command_runs_governed_tool_process_without_generation() {
+        let executions = Arc::new(AtomicUsize::new(0));
+        let mut tools = ToolRegistry::new();
+        tools.register(CountingEffectTool {
+            name: "bash",
+            capability: ToolCapability::Read,
+            counter: Arc::clone(&executions),
+        });
+        let provider = MockLlmProvider::new();
+        let provider_probe = provider.clone();
+        let mut state = create_test_state_with_machine_tools_and_provider(
+            AgentMachine::new(),
+            tools,
+            provider,
+        )
+        .await;
+        let command = "printf '%s\\n' '!literal'";
+        let submission = Submission::with_id_and_intent(
+            "d6d22d91-5791-4d88-8642-e01d40ba58e8",
+            Op::Input {
+                parts: vec![ContentPart::text(command)],
+                mode: InputMode::FollowUp,
+            },
+            InputIntent::Command,
+        );
+        let cancel = CancellationToken::new();
+        let mut emit = |_event: Event| async {};
+
+        handle_submission_with_cancel(&mut state, submission, &mut emit, &cancel)
+            .await
+            .unwrap();
+
+        assert_eq!(executions.load(Ordering::SeqCst), 1);
+        assert!(provider_probe.recorded_requests().is_empty());
+        let output = state
+            .machine
+            .tool_payload_by_call_id("d6d22d91-5791-4d88-8642-e01d40ba58e8")
+            .expect("command result should be recorded against its submission ID");
+        assert_eq!(
+            output["payload"]["command"],
+            json!("printf '%s\\n' '!literal'")
+        );
+    }
+
+    #[tokio::test]
+    async fn approved_explicit_command_does_not_resume_model_generation() {
+        let executions = Arc::new(AtomicUsize::new(0));
+        let mut tools = ToolRegistry::new();
+        tools.register(CountingEffectTool {
+            name: "bash",
+            capability: ToolCapability::Unknown,
+            counter: Arc::clone(&executions),
+        });
+        let provider = MockLlmProvider::new();
+        let provider_probe = provider.clone();
+        let mut state = create_test_state_with_machine_tools_and_provider(
+            AgentMachine::new(),
+            tools,
+            provider,
+        )
+        .await;
+        let submission_id = "d6d22d91-5791-4d88-8642-e01d40ba58e8";
+        let cancel = CancellationToken::new();
+        let mut emit = |_event: Event| async {};
+        state.machine.accept_submission(submission_id);
+
+        handle_submission_with_cancel(
+            &mut state,
+            Submission::with_id_and_intent(
+                submission_id,
+                Op::Input {
+                    parts: vec![ContentPart::text("sudo ls")],
+                    mode: InputMode::FollowUp,
+                },
+                InputIntent::Command,
+            ),
+            &mut emit,
+            &cancel,
+        )
+        .await
+        .unwrap();
+        let pending = state
+            .machine
+            .pending_confirmation()
+            .expect("sudo must wait for explicit approval");
+        let request_id = state
+            .machine
+            .pending_request_ids()
+            .into_iter()
+            .next()
+            .expect("confirmation request id");
+        state.machine.finish_submission();
+
+        handle_submission_with_cancel(
+            &mut state,
+            Submission::new(Op::Resume {
+                request_id,
+                content: vec![ContentPart::structured(json!({"choice": "approve"}))],
+            }),
+            &mut emit,
+            &cancel,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(executions.load(Ordering::SeqCst), 1);
+        assert!(provider_probe.recorded_requests().is_empty());
+        assert_eq!(state.machine.turn_activity(), crate::agent_machine::TurnActivityState::Idle);
+        assert!(pending.checkpoint_type.contains("tool_escalation"));
+    }
 
     #[tokio::test]
     async fn namespace_tool_call_spawns_bin_executable_and_records_action() {
@@ -54,7 +166,7 @@
         );
         assert_eq!(
             String::from_utf8(shell.cat("/agent/1/actions/a0/result").await.unwrap()).unwrap(),
-            r#"{"exit_code":0}"#
+            r#"{"call_id":"call-read","exit_code":0}"#
         );
     }
 
@@ -303,6 +415,7 @@
             let payload = execute_tool_effect(
                 tools.clone(),
                 tool_name,
+                &format!("call-{idx}"),
                 json!({ "tool": tool_name, "call_index": idx }),
                 &cancel,
                 30,

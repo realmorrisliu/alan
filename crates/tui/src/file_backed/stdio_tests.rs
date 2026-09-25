@@ -12,6 +12,27 @@ pub(super) const EXEC_SPEC: &str =
     r#"{"executable":"/bin/alan-agent","args":[],"namespace":{"generation":0,"mounts":[]}}"#;
 
 #[test]
+fn redirected_input_parses_one_prefix_and_keeps_multiline_command_body() {
+    let command = StdioTaskWaitContext::new("!printf one\nprintf two\n");
+    assert_eq!(
+        command.record.intent,
+        alan_agent_protocol::InputIntent::Command
+    );
+    assert_eq!(
+        command.record.mode,
+        alan_agent_protocol::InputMode::FollowUp
+    );
+    assert_eq!(command.record.body, "printf one\nprintf two");
+
+    let forced_agent = StdioTaskWaitContext::new(":!literal\n");
+    assert_eq!(
+        forced_agent.record.intent,
+        alan_agent_protocol::InputIntent::ForceAgent
+    );
+    assert_eq!(forced_agent.record.body, "!literal");
+}
+
+#[test]
 fn interactive_task_lock_is_shared_and_released_after_the_turn() {
     let runtime = tempfile::tempdir().unwrap();
     let path = runtime.path().join("task.lock");
@@ -192,17 +213,18 @@ fn line_drain_keeps_partial_records_until_newline() {
 
 #[test]
 fn snapshot_restores_the_latest_matching_turn_after_root_process_change() {
+    let mut record = UserInputRecord::new(InputIntent::Agent, InputMode::FollowUp, "same task");
+    record.submission_id = "submission-current".to_string();
     let snapshot = stdio_task_snapshot_from_history(
         &StdioTaskWaitContext {
-            input: "same task",
-            baseline_tape_history: Vec::new(),
+            record,
             submitted_at_ms: 2,
         },
-        br#"{"version":1,"kind":"message","role":"user","content":"same task"}
-{"version":1,"kind":"message","role":"assistant","content":"old answer"}
-{"version":1,"kind":"message","role":"user","content":"same task"}
-{"version":1,"kind":"message","role":"assistant","content":"intermediate response"}
-{"version":1,"kind":"message","role":"assistant","content":"current answer"}
+        br#"{"version":1,"kind":"message","role":"user","content":"same task","submission_id":"submission-old"}
+{"version":1,"kind":"message","role":"assistant","content":"old answer","submission_id":"submission-old"}
+{"version":1,"kind":"message","role":"user","content":"same task","submission_id":"submission-current"}
+{"version":1,"kind":"message","role":"assistant","content":"intermediate response","submission_id":"submission-current"}
+{"version":1,"kind":"message","role":"assistant","content":"current answer","submission_id":"submission-current"}
 "#,
         br#"{"type":"activity","snapshot":{"version":1,"state":"running","started_at_ms":1}}
 {"type":"error","message":"previous provider failure","recoverable":true}
@@ -223,8 +245,11 @@ fn snapshot_restores_the_latest_matching_turn_after_root_process_change() {
 fn one_shot_reports_failure_before_the_user_record_reaches_tape() {
     let mut snapshot = stdio_task_snapshot_from_history(
         &StdioTaskWaitContext {
-            input: "task with no tape record",
-            baseline_tape_history: Vec::new(),
+            record: UserInputRecord::new(
+                InputIntent::Agent,
+                InputMode::FollowUp,
+                "task with no tape record",
+            ),
             submitted_at_ms: 0,
         },
         b"",
@@ -240,7 +265,7 @@ fn one_shot_reports_failure_before_the_user_record_reaches_tape() {
         "Running establishes this submitted task"
     );
     assert_eq!(
-        finish_stdio_task_if_ready(&mut snapshot)
+        finish_stdio_task_if_ready(&mut snapshot, InputIntent::Agent)
             .unwrap_err()
             .to_string(),
         "Agent task failed: provider unavailable"
@@ -258,8 +283,7 @@ fn recovery_does_not_reuse_an_identical_prompt_from_the_baseline_tape() {
 "#;
     let snapshot = stdio_task_snapshot_from_history(
         &StdioTaskWaitContext {
-            input: "same task",
-            baseline_tape_history: baseline_tape.to_vec(),
+            record: UserInputRecord::new(InputIntent::Agent, InputMode::FollowUp, "same task"),
             submitted_at_ms: 20,
         },
         baseline_tape,
@@ -274,16 +298,12 @@ fn recovery_does_not_reuse_an_identical_prompt_from_the_baseline_tape() {
 
 #[test]
 fn recovery_rejects_a_reset_tape_with_only_an_old_identical_prompt() {
-    let baseline_tape = br#"{"version":1,"kind":"message","role":"user","content":"earlier task"}
-{"version":1,"kind":"message","role":"assistant","content":"earlier answer"}
-"#;
     let replacement_tape = br#"{"version":1,"kind":"message","role":"user","content":"same task"}
 {"version":1,"kind":"message","role":"assistant","content":"old answer"}
 "#;
     let snapshot = stdio_task_snapshot_from_history(
         &StdioTaskWaitContext {
-            input: "same task",
-            baseline_tape_history: baseline_tape.to_vec(),
+            record: UserInputRecord::new(InputIntent::Agent, InputMode::FollowUp, "same task"),
             submitted_at_ms: 20,
         },
         replacement_tape,
@@ -666,27 +686,35 @@ fn one_shot_result_waits_for_seen_task_and_idle_activity() {
     let mut task = StdioTaskSnapshot {
         task_started: false,
         assistant_answer: Some("answer".to_string()),
+        command_result: None,
         activity_state: Some(UiActivityState::Idle),
         task_error: None,
     };
 
-    assert_eq!(finish_stdio_task_if_ready(&mut task).unwrap(), None);
+    assert_eq!(
+        finish_stdio_task_if_ready(&mut task, InputIntent::Agent).unwrap(),
+        None
+    );
     task.task_started = true;
     task.activity_state = Some(UiActivityState::Running);
-    assert_eq!(finish_stdio_task_if_ready(&mut task).unwrap(), None);
+    assert_eq!(
+        finish_stdio_task_if_ready(&mut task, InputIntent::Agent).unwrap(),
+        None
+    );
     task.activity_state = Some(UiActivityState::Idle);
     assert_eq!(
-        finish_stdio_task_if_ready(&mut task).unwrap().as_deref(),
-        Some("answer")
+        finish_stdio_task_if_ready(&mut task, InputIntent::Agent).unwrap(),
+        Some(StdioTaskCompletion::AgentAnswer("answer".to_string()))
     );
 
     let mut failed_task = StdioTaskSnapshot {
         task_started: true,
         assistant_answer: Some("intermediate response".to_string()),
+        command_result: None,
         activity_state: Some(UiActivityState::Idle),
         task_error: Some("provider failed".to_string()),
     };
-    let result = finish_stdio_task_if_ready(&mut failed_task);
+    let result = finish_stdio_task_if_ready(&mut failed_task, InputIntent::Agent);
     assert_eq!(
         result.unwrap_err().to_string(),
         "Agent task failed: provider failed"
@@ -721,6 +749,9 @@ async fn one_shot_waits_without_timeout_and_rebinds_when_a_tail_closes_before_pi
     let controller_namespace = live_namespace.clone();
     let controller_tail_closer = tail_closer.clone();
     let old_agent_pid = old_pid.parse::<u64>().unwrap();
+    let mut task = StdioTaskWaitContext::new("rebind me");
+    task.record.submission_id = "rebind-submission".to_string();
+    let submission_id = task.record.submission_id.clone();
     let controller = tokio::spawn(async move {
         assert!(!input_tail.read(4096).await.unwrap().is_empty());
         input_seen_tx.send(()).unwrap();
@@ -752,11 +783,28 @@ async fn one_shot_waits_without_timeout_and_rebinds_when_a_tail_closes_before_pi
             ))),
             Access::ReadOnly,
         );
+        let tape = [
+            serde_json::json!({
+                "version": 1,
+                "kind": "message",
+                "role": "user",
+                "content": "rebind me",
+                "submission_id": submission_id,
+            })
+            .to_string(),
+            serde_json::json!({
+                "version": 1,
+                "kind": "message",
+                "role": "assistant",
+                "content": "one answer",
+                "submission_id": submission_id,
+            })
+            .to_string(),
+        ]
+        .join("\n")
+            + "\n";
         controller_shell
-            .write(
-                "/agent/root/machine/tape",
-                b"{\"version\":1,\"kind\":\"message\",\"role\":\"user\",\"content\":\"rebind me\"}\n{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"one answer\"}\n",
-            )
+            .write("/agent/root/machine/tape", tape.as_bytes())
             .await
             .unwrap();
         controller_shell
@@ -773,7 +821,7 @@ async fn one_shot_waits_without_timeout_and_rebinds_when_a_tail_closes_before_pi
         let wait_for_answer = wait_for_stdio_answer(
             &shell,
             "/agent/root",
-            StdioTaskWaitContext::new("rebind me", std::mem::take(&mut attachment.tape_history)),
+            task,
             &mut attachment,
             std::future::pending::<anyhow::Result<()>>(),
         );
@@ -806,7 +854,10 @@ async fn one_shot_waits_without_timeout_and_rebinds_when_a_tail_closes_before_pi
     };
     controller.await.unwrap();
 
-    assert_eq!(answer, "one answer");
+    assert_eq!(
+        answer,
+        StdioTaskCompletion::AgentAnswer("one answer".to_string())
+    );
     let current_pid = current_root_agent_pid(&shell).await.unwrap().unwrap();
     assert_eq!(attachment.root_agent_pid, current_pid);
     assert_eq!(
@@ -834,10 +885,7 @@ async fn one_shot_returns_runtime_failure_without_a_tape_user_record() {
         let wait_for_answer = wait_for_stdio_answer(
             &shell,
             "/agent/root",
-            StdioTaskWaitContext::new(
-                "fail before tape persistence",
-                std::mem::take(&mut attachment.tape_history),
-            ),
+            StdioTaskWaitContext::new("fail before tape persistence"),
             &mut attachment,
             std::future::pending::<anyhow::Result<()>>(),
         );
@@ -894,10 +942,7 @@ async fn one_shot_cancellation_interrupts_before_running_is_observed() {
         let wait_for_answer = wait_for_stdio_answer(
             &shell,
             "/agent/root",
-            StdioTaskWaitContext::new(
-                "cancel this turn",
-                std::mem::take(&mut attachment.tape_history),
-            ),
+            StdioTaskWaitContext::new("cancel this turn"),
             &mut attachment,
             async move { cancel_rx.await.map_err(anyhow::Error::from) },
         );

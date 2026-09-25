@@ -34,6 +34,7 @@ pub(super) enum RuntimeOpAction {
     },
     ReplayApprovedToolBatch {
         tool_calls: Vec<NormalizedToolCall>,
+        resume_with_generation: bool,
         approved_unknown_effect_call_id: Option<String>,
         approved_tool_escalation_call_id: Option<String>,
     },
@@ -414,20 +415,21 @@ async fn handle_confirmation_resolution(
 
     if replays_tool_calls(&pending.checkpoint_type)
         && choice_str == "approve"
-        && let Some(tool_calls) = replay_tool_batch
+        && let Some(replay_batch) = replay_tool_batch
     {
         return Ok(RuntimeOpAction::ReplayApprovedToolBatch {
             approved_unknown_effect_call_id: if allow_unknown_effect_replay {
-                tool_calls.first().map(|call| call.id.clone())
+                replay_batch.tool_calls.first().map(|call| call.id.clone())
             } else {
                 None
             },
             approved_tool_escalation_call_id: if allow_tool_escalation_replay {
-                tool_calls.first().map(|call| call.id.clone())
+                replay_batch.tool_calls.first().map(|call| call.id.clone())
             } else {
                 None
             },
-            tool_calls,
+            tool_calls: replay_batch.tool_calls,
+            resume_with_generation: replay_batch.resume_with_generation,
         });
     }
     if replays_tool_calls(&pending.checkpoint_type)

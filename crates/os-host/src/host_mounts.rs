@@ -60,6 +60,34 @@ struct NativeToolExecutionAdapter {
     sandbox: Sandbox,
 }
 
+impl NativeToolExecutionAdapter {
+    fn resolve_namespace_directory(
+        &self,
+        mount: &NativeToolMount,
+        namespace_path: &Path,
+    ) -> Result<PathBuf> {
+        let suffix = namespace_path
+            .strip_prefix(&mount.namespace_path)
+            .expect("selected Host Mount is a namespace prefix");
+        let host_path = dunce::canonicalize(mount.host_path.join(suffix))
+            .with_context(|| format!("cannot resolve directory {}", namespace_path.display()))?;
+        anyhow::ensure!(
+            host_path.is_dir(),
+            "{} is not a directory",
+            namespace_path.display()
+        );
+        anyhow::ensure!(
+            host_path.starts_with(&mount.host_path),
+            "directory resolves outside delegated Host Mount {}",
+            mount.namespace_path.display()
+        );
+        let suffix = host_path
+            .strip_prefix(&mount.host_path)
+            .expect("checked Host Mount containment");
+        Ok(mount.namespace_path.join(suffix))
+    }
+}
+
 impl ToolExecutionAdapter for NativeToolExecutionAdapter {
     fn namespace_cwd(&self) -> PathBuf {
         self.namespace_cwd.clone()
@@ -85,6 +113,39 @@ impl ToolExecutionAdapter for NativeToolExecutionAdapter {
             .strip_prefix(&mount.namespace_path)
             .expect("selected Host Mount is a namespace prefix");
         Ok(mount.host_path.join(suffix))
+    }
+
+    fn resolve_directory(&self, namespace_cwd: &Path, path: &Path) -> Result<PathBuf> {
+        if !path.is_absolute() {
+            let current = normalize_tool_namespace_path(namespace_cwd.to_path_buf())?;
+            let current_mount = longest_namespace_mount(&self.mounts, &current)
+                .context("current directory is outside delegated Host Mounts")?;
+            let namespace_path = normalize_tool_namespace_path(current.join(path))?;
+            let mount = longest_namespace_mount(&self.mounts, &namespace_path)
+                .context("directory is outside delegated Host Mounts")?;
+            anyhow::ensure!(
+                mount.namespace_path == current_mount.namespace_path,
+                "relative cd cannot switch Host Mounts; use an explicit /mnt/<grant> path"
+            );
+            return self.resolve_namespace_directory(mount, &namespace_path);
+        }
+
+        if path.starts_with("/mnt") {
+            let namespace_path = normalize_tool_namespace_path(path.to_path_buf())?;
+            let mount = longest_namespace_mount(&self.mounts, &namespace_path)
+                .context("directory is not backed by a delegated Host Mount")?;
+            return self.resolve_namespace_directory(mount, &namespace_path);
+        }
+
+        let host_path =
+            dunce::canonicalize(path).context("cannot resolve selected Host directory")?;
+        anyhow::ensure!(host_path.is_dir(), "selected Host path is not a directory");
+        let mount = longest_host_mount(&self.mounts, &host_path)
+            .context("directory is outside delegated Host Mounts")?;
+        let suffix = host_path
+            .strip_prefix(&mount.host_path)
+            .expect("selected Host Mount contains canonical directory");
+        Ok(mount.namespace_path.join(suffix))
     }
 
     fn visible_path(&self, host_path: &Path) -> PathBuf {
@@ -266,6 +327,16 @@ fn longest_namespace_mount<'a>(
         .max_by_key(|mount| mount.namespace_path.components().count())
 }
 
+fn longest_host_mount<'a>(
+    mounts: &'a [NativeToolMount],
+    path: &Path,
+) -> Option<&'a NativeToolMount> {
+    mounts
+        .iter()
+        .filter(|mount| path.starts_with(&mount.host_path))
+        .max_by_key(|mount| mount.host_path.components().count())
+}
+
 fn validate_native_tool_mounts(mounts: &[NativeToolMount]) -> Result<()> {
     for (index, left) in mounts.iter().enumerate() {
         for right in mounts.iter().skip(index + 1) {
@@ -392,6 +463,77 @@ mod tests {
             PathBuf::from(namespace_cwd),
             PathBuf::from("/tmp/alan-native-host-mount-test-scratch"),
         )
+    }
+
+    #[tokio::test]
+    async fn native_tool_directory_changes_resolve_only_delegated_grants() {
+        let project = tempfile::tempdir().unwrap();
+        let source = project.path().join("src");
+        std::fs::create_dir(&source).unwrap();
+        let other = tempfile::tempdir().unwrap();
+        let nested = other.path().join("nested");
+        std::fs::create_dir(&nested).unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let service = service();
+        let namespace = LiveNamespace::new(Namespace::new());
+        service.register_process(Pid(7), namespace);
+        approve(
+            &service,
+            7,
+            "/mnt/project",
+            HostMountAccess::ReadWrite,
+            project.path(),
+        )
+        .await;
+        approve(
+            &service,
+            7,
+            "/mnt/other",
+            HostMountAccess::ReadOnly,
+            other.path(),
+        )
+        .await;
+        let binding = service.reconcile(7, binding("/mnt/project")).unwrap();
+        let adapter = binding.adapter().unwrap();
+
+        assert_eq!(
+            adapter
+                .resolve_directory(Path::new("/mnt/project"), Path::new("src"))
+                .unwrap(),
+            Path::new("/mnt/project/src")
+        );
+        assert_eq!(
+            adapter
+                .resolve_directory(Path::new("/mnt/project"), Path::new("/mnt/other/nested"))
+                .unwrap(),
+            Path::new("/mnt/other/nested")
+        );
+        assert_eq!(
+            adapter
+                .resolve_directory(Path::new("/mnt/project"), other.path())
+                .unwrap(),
+            Path::new("/mnt/other")
+        );
+        assert!(
+            adapter
+                .resolve_directory(Path::new("/mnt/project"), Path::new("../other"))
+                .is_err()
+        );
+        assert!(
+            adapter
+                .resolve_directory(Path::new("/mnt/project"), Path::new("/mnt/missing"))
+                .is_err()
+        );
+        assert!(
+            adapter
+                .resolve_directory(Path::new("/mnt/project"), outside.path())
+                .is_err()
+        );
+        assert!(
+            adapter
+                .resolve_directory(Path::new("/mnt/project"), &project.path().join("src/file"))
+                .is_err()
+        );
     }
 
     #[tokio::test]

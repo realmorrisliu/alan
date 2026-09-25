@@ -445,37 +445,6 @@ fn compact_command_routes_to_machine_ctl() {
     }
 }
 
-#[test]
-fn confirmation_digit_builds_resume_response() {
-    let mut app = FileBackedApp::new("/agent/1".to_string());
-    app.set_pending_yield(PendingYieldCell {
-        request_id: "r1".to_string(),
-        kind: YieldKind::Confirmation,
-        title: "Approve?".to_string(),
-        prompt: None,
-        options: vec!["approve".to_string(), "reject".to_string()],
-        default_option: None,
-        questions: Vec::new(),
-        capability: None,
-        reason: None,
-        presentation: None,
-    });
-
-    let action = app.dispatch(FileBackedEvent::Terminal(TerminalEvent::Key(
-        KeyEvent::new(KeyCode::Char('1'), KeyModifiers::NONE),
-    )));
-    match action {
-        Some(FileBackedAction::Resume {
-            request_id,
-            response,
-        }) => {
-            assert_eq!(request_id, "r1");
-            assert_eq!(response, r#"{"choice":"approve"}"#);
-        }
-        other => panic!("expected resume action, got {other:?}"),
-    }
-}
-
 #[tokio::test]
 async fn write_agent_input_targets_agent_surface() {
     let proc = Arc::new(ProcFs::new());
@@ -578,6 +547,7 @@ fn post_yield_cells_do_not_arm_remote_boundary_insertion() {
         kind: "message".to_string(),
         role: "user".to_string(),
         content: "run this".to_string(),
+        submission_id: None,
     });
     app.set_pending_yield(PendingYieldCell {
         request_id: "r1".to_string(),
@@ -607,6 +577,7 @@ fn post_yield_cells_do_not_arm_remote_boundary_insertion() {
         kind: "message".to_string(),
         role: "user".to_string(),
         content: "next remote turn".to_string(),
+        submission_id: None,
     });
 
     assert!(matches!(app.transcript[0], HistoryCell::User(ref text) if text == "run this"));
@@ -697,6 +668,7 @@ fn app_wiring_streams_then_confirms_via_tape_record() {
         kind: "message".to_string(),
         role: "assistant".to_string(),
         content: "hello".to_string(),
+        submission_id: None,
     });
     app.push_output("lo".to_string());
     let assistant_cells: Vec<_> = app
@@ -718,12 +690,14 @@ fn raced_turn_preview_cells_move_behind_their_user_boundary() {
         kind: "message".to_string(),
         role: "user".to_string(),
         content: "first".to_string(),
+        submission_id: None,
     });
     app.apply_tape_record(TapeRecordV1 {
         version: 1,
         kind: "message".to_string(),
         role: "assistant".to_string(),
         content: "done".to_string(),
+        submission_id: None,
     });
 
     // UI/action cells for the next turn can beat that turn's user tape
@@ -755,12 +729,14 @@ fn raced_turn_preview_cells_move_behind_their_user_boundary() {
         kind: "message".to_string(),
         role: "user".to_string(),
         content: "second".to_string(),
+        submission_id: None,
     });
     app.apply_tape_record(TapeRecordV1 {
         version: 1,
         kind: "message".to_string(),
         role: "assistant".to_string(),
         content: "world".to_string(),
+        submission_id: None,
     });
 
     assert!(matches!(app.transcript[0], HistoryCell::User(ref text) if text == "first"));
@@ -782,12 +758,14 @@ fn remote_first_stream_preview_moves_behind_user_boundary() {
         kind: "message".to_string(),
         role: "user".to_string(),
         content: "remote".to_string(),
+        submission_id: None,
     });
     app.apply_tape_record(TapeRecordV1 {
         version: 1,
         kind: "message".to_string(),
         role: "assistant".to_string(),
         content: "hello".to_string(),
+        submission_id: None,
     });
 
     assert_eq!(app.transcript.len(), 2);
@@ -803,6 +781,7 @@ fn stream_append_finds_open_preview_before_interposed_cells() {
         kind: "message".to_string(),
         role: "user".to_string(),
         content: "remote".to_string(),
+        submission_id: None,
     });
 
     app.push_output("hel".to_string());
@@ -822,6 +801,7 @@ fn stream_append_finds_open_preview_before_interposed_cells() {
         kind: "message".to_string(),
         role: "assistant".to_string(),
         content: "hello".to_string(),
+        submission_id: None,
     });
 
     let assistant_cells: Vec<_> = app
@@ -861,6 +841,7 @@ fn hydrated_assistant_seeds_pending_boundary_state() {
         kind: "message".to_string(),
         role: "user".to_string(),
         content: "second".to_string(),
+        submission_id: None,
     });
 
     assert!(matches!(app.transcript[0], HistoryCell::User(ref text) if text == "first"));
@@ -880,6 +861,7 @@ fn pending_remote_turn_start_shifts_with_scrollback_prune() {
         kind: "message".to_string(),
         role: "assistant".to_string(),
         content: "done".to_string(),
+        submission_id: None,
     });
     sync_action_snapshot(
         &mut app,
@@ -898,6 +880,7 @@ fn pending_remote_turn_start_shifts_with_scrollback_prune() {
         kind: "message".to_string(),
         role: "user".to_string(),
         content: "second".to_string(),
+        submission_id: None,
     });
 
     assert!(matches!(app.transcript[0], HistoryCell::Assistant(ref text) if text == "done"));
@@ -984,3 +967,6 @@ async fn response_missed_at_attach_is_recovered_by_the_tape_watcher() {
 
 #[path = "inline_tests.rs"]
 mod inline_tests;
+
+#[path = "explicit_input_tests.rs"]
+mod explicit_input_tests;

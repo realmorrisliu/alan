@@ -68,6 +68,12 @@ pub(crate) struct NormalizedToolCall {
     pub(crate) arguments: serde_json::Value,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct PendingToolReplayBatch {
+    pub(crate) tool_calls: Vec<NormalizedToolCall>,
+    pub(crate) resume_with_generation: bool,
+}
+
 /// Best-effort work retained by Machine until the outer Process loop can run it.
 #[derive(Debug, Clone)]
 pub(crate) enum DeferredRuntimeAction {
@@ -79,7 +85,7 @@ pub(super) struct MachineTransitionState {
     /// Identifier of the submission currently accepted by this Machine.
     current_submission_id: Option<String>,
     pending: HashMap<String, PendingYield>,
-    pending_tool_replay_batches: HashMap<String, Vec<NormalizedToolCall>>,
+    pending_tool_replay_batches: HashMap<String, PendingToolReplayBatch>,
     /// Insertion order tracking for all pending items
     pending_order: Vec<String>,
     turn_activity: TurnActivityState,
@@ -488,16 +494,21 @@ impl AgentMachine {
         &mut self,
         checkpoint_id: impl Into<String>,
         tool_calls: Vec<NormalizedToolCall>,
+        resume_with_generation: bool,
     ) {
-        self.transition_state
-            .pending_tool_replay_batches
-            .insert(checkpoint_id.into(), tool_calls);
+        self.transition_state.pending_tool_replay_batches.insert(
+            checkpoint_id.into(),
+            PendingToolReplayBatch {
+                tool_calls,
+                resume_with_generation,
+            },
+        );
     }
 
     pub(crate) fn take_tool_replay_batch(
         &mut self,
         checkpoint_id: &str,
-    ) -> Option<Vec<NormalizedToolCall>> {
+    ) -> Option<PendingToolReplayBatch> {
         self.transition_state
             .pending_tool_replay_batches
             .remove(checkpoint_id)
@@ -572,6 +583,14 @@ mod tests {
 
         machine.accept_submission("sub-1");
         assert_eq!(machine.current_submission_id(), Some("sub-1"));
+        machine.add_user_message("request");
+        machine.add_assistant_message("response", None);
+        assert_eq!(machine.messages()[0].submission_id(), Some("sub-1"));
+        assert_eq!(machine.messages()[1].submission_id(), Some("sub-1"));
+        assert_eq!(
+            serde_json::to_value(&machine.messages()[0]).unwrap()["submission_id"],
+            "sub-1"
+        );
 
         machine.finish_submission();
         assert_eq!(machine.current_submission_id(), None);
@@ -824,6 +843,7 @@ mod tests {
         let mut state = AgentMachine::new();
         state.push_buffered_inband_submission(Submission {
             id: "s1".to_string(),
+            intent: alan_agent_protocol::InputIntent::Agent,
             op: alan_agent_protocol::Op::Input {
                 parts: vec![alan_agent_protocol::ContentPart::text("one")],
                 mode: alan_agent_protocol::InputMode::Steer,
@@ -831,6 +851,7 @@ mod tests {
         });
         state.push_buffered_inband_submission(Submission {
             id: "s2".to_string(),
+            intent: alan_agent_protocol::InputIntent::Agent,
             op: alan_agent_protocol::Op::Resume {
                 request_id: "latest".to_string(),
                 content: vec![alan_agent_protocol::ContentPart::structured(
@@ -862,6 +883,7 @@ mod tests {
         let mut state = AgentMachine::new();
         state.push_buffered_inband_submission(Submission {
             id: "s1".to_string(),
+            intent: alan_agent_protocol::InputIntent::Agent,
             op: alan_agent_protocol::Op::Input {
                 parts: vec![alan_agent_protocol::ContentPart::text("one")],
                 mode: alan_agent_protocol::InputMode::Steer,
@@ -869,6 +891,7 @@ mod tests {
         });
         state.push_buffered_inband_submission(Submission {
             id: "s2".to_string(),
+            intent: alan_agent_protocol::InputIntent::Agent,
             op: alan_agent_protocol::Op::Resume {
                 request_id: "latest".to_string(),
                 content: vec![alan_agent_protocol::ContentPart::structured(
@@ -889,6 +912,7 @@ mod tests {
         let mut state = AgentMachine::new();
         state.push_buffered_inband_submission(Submission {
             id: "s1".to_string(),
+            intent: alan_agent_protocol::InputIntent::Agent,
             op: alan_agent_protocol::Op::Input {
                 parts: vec![alan_agent_protocol::ContentPart::text("one")],
                 mode: alan_agent_protocol::InputMode::Steer,
@@ -896,6 +920,7 @@ mod tests {
         });
         state.push_buffered_inband_submission(Submission {
             id: "s2".to_string(),
+            intent: alan_agent_protocol::InputIntent::Agent,
             op: alan_agent_protocol::Op::Input {
                 parts: vec![alan_agent_protocol::ContentPart::text("two")],
                 mode: alan_agent_protocol::InputMode::Steer,
@@ -960,12 +985,13 @@ mod tests {
             },
         ];
 
-        state.set_tool_replay_batch("cp-1", tool_calls);
+        state.set_tool_replay_batch("cp-1", tool_calls, true);
 
         let retrieved = state.take_tool_replay_batch("cp-1").unwrap();
-        assert_eq!(retrieved.len(), 2);
-        assert_eq!(retrieved[0].id, "call-1");
-        assert_eq!(retrieved[1].id, "call-2");
+        assert!(retrieved.resume_with_generation);
+        assert_eq!(retrieved.tool_calls.len(), 2);
+        assert_eq!(retrieved.tool_calls[0].id, "call-1");
+        assert_eq!(retrieved.tool_calls[1].id, "call-2");
 
         // Should be removed after take
         assert!(state.take_tool_replay_batch("cp-1").is_none());

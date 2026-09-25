@@ -266,12 +266,17 @@ namespace_setpriv="$1"; shift
 "$mount_bin" --bind "$root" "$root" || fail "bind root"
 "$mount_bin" -o remount,bind,ro "$root" || fail "remount root read-only"
 
+scratch_tmp="$1"; shift
+scratch_destination="${root}${scratch_tmp}"
+"$mount_bin" -t tmpfs tmpfs "$scratch_destination" || fail "mount scratch tmp"
+
 mount_count="$1"; shift
 while [ "$mount_count" -gt 0 ]; do
   namespace_path="$1"; shift
   host_path="$1"; shift
   access="$1"; shift
   destination="${root}${namespace_path}"
+  mkdir -p "$destination" || fail "prepare mount ${namespace_path}"
   "$mount_bin" --bind "$host_path" "$destination" || fail "bind mount ${namespace_path}"
   if [ "$access" = "read_only" ]; then
     "$mount_bin" -o remount,bind,ro "$destination" || fail "remount ${namespace_path} read-only"
@@ -293,10 +298,6 @@ done
 "$mount_bin" --bind /proc/self/fd/0 "${root}/dev/stdin" || fail "bind /dev/stdin"
 "$mount_bin" --bind /proc/self/fd/1 "${root}/dev/stdout" || fail "bind /dev/stdout"
 "$mount_bin" --bind /proc/self/fd/2 "${root}/dev/stderr" || fail "bind /dev/stderr"
-
-scratch_tmp="$1"; shift
-scratch_destination="${root}${scratch_tmp}"
-"$mount_bin" -t tmpfs tmpfs "$scratch_destination" || fail "mount scratch tmp"
 
 cwd="$1"; shift
 "$chroot_bin" "$root" "$namespace_shell" -c 'cd "$1" || exit 126; shift; setpriv_bin="$1"; shift; shell_bin="$1"; shift; exec "$setpriv_bin" --no-new-privs --bounding-set=-all --inh-caps=-all --ambient-caps=-all "$shell_bin" -c '"'"'printf "%s\n" ok >&3 || exit 125; exec 3>&-; exec "$@"'"'"' alan-reified-command "$@"' alan-reified-command "$cwd" "$namespace_setpriv" "$namespace_shell" "$@" 3>"$setup_marker"
@@ -761,6 +762,7 @@ fn build_linux_reified_namespace_command_with_helpers(
         helpers.chroot.display().to_string(),
         helpers.namespace_shell.display().to_string(),
         helpers.namespace_setpriv.display().to_string(),
+        plan.scratch_tmp.namespace_path.display().to_string(),
         plan.declared_host_mounts.len().to_string(),
     ]);
     for mount in &plan.declared_host_mounts {
@@ -776,7 +778,6 @@ fn build_linux_reified_namespace_command_with_helpers(
         args.push(mount.host_path.display().to_string());
     }
 
-    args.push(plan.scratch_tmp.namespace_path.display().to_string());
     args.push(plan.cwd.display().to_string());
     args.extend(plan.argv.iter().cloned());
 

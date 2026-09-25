@@ -18,6 +18,12 @@ mod interpreter_wrapper_tests;
 #[path = "sandbox/awk_projection_tests.rs"]
 mod awk_projection_tests;
 
+#[path = "sandbox/native_shell_tests.rs"]
+mod native_shell_tests;
+
+#[path = "sandbox/standalone_cd_tests.rs"]
+mod standalone_cd_tests;
+
 #[tokio::test]
 async fn test_sandbox_exec() {
     let temp = TempDir::new().unwrap();
@@ -28,92 +34,28 @@ async fn test_sandbox_exec() {
     assert_eq!(result.exit_code, 0);
 }
 
-#[test]
-fn namespace_path_translation_preserves_data_and_maps_file_paths() {
-    let mounts = vec![SandboxHostMount {
-        namespace_path: PathBuf::from("/mnt/project"),
-        host_path: PathBuf::from("/Users/alice/project"),
-        access: ReifiedMountAccess::ReadWrite,
-    }];
-    let translate = |command: &str| {
-        Sandbox::translate_command_path_literals(command, |token| {
-            translate_namespace_shell_token(token, &mounts)
-        })
-    };
-
-    assert_eq!(
-        translate("printf '%s' /mnt/project > /mnt/project/path.txt"),
-        "printf '%s' /mnt/project > /Users/alice/project/path.txt"
-    );
-    assert_eq!(
-        translate("cat /mnt/project/probe.txt"),
-        "cat /Users/alice/project/probe.txt"
-    );
-    assert_eq!(
-        translate("awk -v root=/mnt/project 'BEGIN { print root }' > /mnt/project/out.txt"),
-        "awk -v root=/mnt/project 'BEGIN { print root }' > /Users/alice/project/out.txt"
-    );
-    assert_eq!(
-        translate(
-            "env -u HOME awk -v root=/mnt/project 'BEGIN { print root }' > /mnt/project/out.txt"
-        ),
-        "env -u HOME awk -v root=/mnt/project 'BEGIN { print root }' > /Users/alice/project/out.txt"
-    );
-    assert_eq!(
-        translate("awk 'BEGIN { print \"/mnt/project\" }' > /mnt/project/out.txt"),
-        "awk 'BEGIN { print \"/mnt/project\" }' > /Users/alice/project/out.txt"
-    );
-    assert_eq!(
-        translate("awk -f /mnt/project/script.awk"),
-        "awk -f /Users/alice/project/script.awk"
-    );
-    assert_eq!(
-        translate("awk -v root=/mnt/project 'BEGIN { print root }' /mnt/project/input.tsv"),
-        "awk -v root=/mnt/project 'BEGIN { print root }' /Users/alice/project/input.tsv"
-    );
-    assert_eq!(
-        translate("awk 'BEGIN { print \"/mnt/project\" }' -- /mnt/project/input.tsv"),
-        "awk 'BEGIN { print \"/mnt/project\" }' -- /Users/alice/project/input.tsv"
-    );
-    assert_eq!(
-        translate("awk -- 'BEGIN { print \"/mnt/project\" }' /mnt/project/input.tsv"),
-        "awk -- 'BEGIN { print \"/mnt/project\" }' /Users/alice/project/input.tsv"
-    );
-    assert_eq!(
-        translate("awk -f /mnt/project/script.awk /mnt/project/input.tsv"),
-        "awk -f /Users/alice/project/script.awk /Users/alice/project/input.tsv"
-    );
-    assert_eq!(
-        translate("git commit -m /mnt/project"),
-        "git commit -m /mnt/project"
-    );
-    assert_eq!(
-        translate("git commit --message='Keep /mnt/project literal'"),
-        "git commit --message='Keep /mnt/project literal'"
-    );
-    let nested = translate("bash -lc \"printf '%s' /mnt/project > /mnt/project/path.txt\"");
-    assert!(nested.contains("/mnt/project > /Users/alice/project/path.txt"));
-    let nested_git = translate("bash -lc \"git commit -m /mnt/project\"");
-    assert!(
-        nested_git.contains("git commit -m /mnt/project"),
-        "nested command changed data: {nested_git}"
-    );
-}
-
-#[cfg(target_os = "macos")]
 #[tokio::test]
-async fn sandbox_preserves_a_namespace_path_written_as_printf_data() {
+async fn sandbox_preserves_shell_text_and_uses_native_host_paths() {
     let mount = TempDir::new().unwrap();
+    let probe = mount.path().join("probe.txt");
+    tokio::fs::write(&probe, "native path\n").await.unwrap();
     let spec = SandboxSpec::from_host_mounts(&[SandboxHostMount {
         namespace_path: PathBuf::from("/mnt/project"),
         host_path: mount.path().to_path_buf(),
         access: ReifiedMountAccess::ReadWrite,
     }]);
-    let sandbox = Sandbox::from_spec_with_backend(spec, crate::tools::SandboxBackendKind::Seatbelt);
+    let sandbox =
+        Sandbox::from_spec_with_backend(spec, crate::tools::SandboxBackendKind::HostMountPathGuard);
+    let stored = mount.path().join("path.txt");
+    let command = format!(
+        "printf '%s' '/mnt/project' > '{}' && cat '{}'",
+        stored.display(),
+        probe.display()
+    );
 
     sandbox
         .exec_with_timeout_and_capability(
-            "printf '%s' /mnt/project > /mnt/project/path.txt",
+            &command,
             mount.path(),
             None,
             Some(alan_agent_protocol::ToolCapability::Write),
@@ -121,9 +63,51 @@ async fn sandbox_preserves_a_namespace_path_written_as_printf_data() {
         .await
         .unwrap();
 
+    assert_eq!(std::fs::read_to_string(stored).unwrap(), "/mnt/project");
+    let native = sandbox
+        .exec_with_timeout_and_capability(
+            &format!("cat '{}'", probe.display()),
+            mount.path(),
+            None,
+            Some(alan_agent_protocol::ToolCapability::Read),
+        )
+        .await
+        .unwrap();
+    assert_eq!(native.stdout, "native path\n");
+
+    let alias = sandbox
+        .exec_with_timeout_and_capability(
+            "cat /mnt/project/probe.txt",
+            mount.path(),
+            None,
+            Some(alan_agent_protocol::ToolCapability::Read),
+        )
+        .await
+        .unwrap_err();
+    assert!(alias.to_string().contains("outside host_mount"));
+}
+
+#[test]
+fn reified_plan_preserves_native_cwd_paths_and_script_body() {
+    let mount = TempDir::new().unwrap();
+    let native_path = mount.path().join("file with spaces.txt");
+    let spec = SandboxSpec::from_host_mounts(&[SandboxHostMount {
+        namespace_path: PathBuf::from("/mnt/project"),
+        host_path: mount.path().to_path_buf(),
+        access: ReifiedMountAccess::ReadWrite,
+    }]);
+    let sandbox = Sandbox::from_spec(spec);
+    let script = format!("test -e '{}'", native_path.display());
+
+    let plan = sandbox
+        .reified_namespace_plan_for_command(&script, mount.path(), false)
+        .unwrap();
+
+    assert_eq!(plan.cwd, dunce::canonicalize(mount.path()).unwrap());
+    assert_eq!(plan.argv, ["sh", "-f", "-c", script.as_str()]);
     assert_eq!(
-        std::fs::read_to_string(mount.path().join("path.txt")).unwrap(),
-        "/mnt/project"
+        plan.declared_host_mounts[0].namespace_path,
+        plan.declared_host_mounts[0].host_path
     );
 }
 
@@ -136,7 +120,10 @@ async fn test_sandbox_exec_blocks_outside_host_mount_path_reference() {
     );
 
     let result = sandbox.exec("cat /etc/passwd", temp.path()).await;
-    assert!(result.is_err());
+    assert!(
+        result.is_err(),
+        "expected outside-host denial, got {result:?}"
+    );
 }
 
 #[tokio::test]
@@ -283,22 +270,39 @@ async fn test_sandbox_exec_blocks_parent_dir_bypass_into_protected_subpath() {
     tokio::fs::create_dir_all(temp.path().join(".alan/agents/default"))
         .await
         .unwrap();
+    let protected = temp
+        .path()
+        .join(".alan/agents/default/persona/../policy.yaml");
+    let scoped = sandbox.command_scope_for_cwd(temp.path()).unwrap();
+    assert_eq!(
+        scoped.protected_subpath_component(&protected),
+        Some(".alan")
+    );
 
     let result = sandbox
         .exec_with_timeout_and_capability(
-            "touch .alan/agents/default/persona/../policy.yaml",
+            "mkdir -p .alan/agents/default/persona && touch .alan/agents/default/persona/../policy.yaml",
             temp.path(),
             None,
             Some(alan_agent_protocol::ToolCapability::Write),
         )
         .await;
 
-    assert!(result.is_err());
+    assert!(
+        result.is_err(),
+        "expected protected-path denial, got {result:?}"
+    );
     assert!(
         result
             .unwrap_err()
             .to_string()
             .contains("protected subpath .alan")
+    );
+    assert!(
+        !temp
+            .path()
+            .join(".alan/agents/default/policy.yaml")
+            .exists()
     );
 }
 

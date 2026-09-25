@@ -14,7 +14,12 @@ pub(super) fn merge_reconnected_history(
         .iter()
         .enumerate()
         .filter_map(|(index, cell)| {
-            matches!(cell, HistoryCell::User(text) if text == submitted_input).then_some(index)
+            matches!(
+                cell,
+                HistoryCell::User(text) | HistoryCell::Command(text)
+                    if text == submitted_input
+            )
+            .then_some(index)
         })
         .nth(prior_matching_turns)
     else {
@@ -22,20 +27,22 @@ pub(super) fn merge_reconnected_history(
     };
 
     let mut omitted_current_cell = None;
-    if let Some(previous_boundary) = app
+    if let Some(previous_boundary) = app.transcript.iter().rposition(|cell| {
+        matches!(
+            cell,
+            HistoryCell::User(text) | HistoryCell::Command(text)
+                if text == submitted_input
+        )
+    }) && let Some((previous_answer_index, previous_answer)) = app
         .transcript
         .iter()
-        .rposition(|cell| matches!(cell, HistoryCell::User(text) if text == submitted_input))
-        && let Some((previous_answer_index, previous_answer)) = app
-            .transcript
-            .iter()
-            .enumerate()
-            .skip(previous_boundary + 1)
-            .rev()
-            .find_map(|(index, cell)| match cell {
-                HistoryCell::Assistant(text) => Some((index, text.as_str())),
-                _ => None,
-            })
+        .enumerate()
+        .skip(previous_boundary + 1)
+        .rev()
+        .find_map(|(index, cell)| match cell {
+            HistoryCell::Assistant(text) => Some((index, text.as_str())),
+            _ => None,
+        })
         && let Some((current_answer_index, current_answer)) = current
             .iter()
             .enumerate()
@@ -160,7 +167,7 @@ fn rendered_history_tokens(cell: &HistoryCell) -> Vec<String> {
     let mut lines = cell.render_lines(RenderOpts::new(16_384, false));
     if let Some(first) = lines.first_mut() {
         for prefix in [
-            "alan > ",
+            "alan: ",
             "you> ",
             "alan> ",
             "tool> ",

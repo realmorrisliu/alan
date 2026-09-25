@@ -437,7 +437,7 @@ fn host_mount_cannot_overlap_execution_substrate_namespace_path() {
 }
 
 #[test]
-fn host_mount_cannot_overlap_scratch_tmp_namespace_path() {
+fn host_mount_nested_under_scratch_tmp_retains_its_native_path() {
     let input = ReifiedNamespacePlanInput::new(
         vec![ReifiedMountDeclaration::host(
             "/tmp/project",
@@ -449,12 +449,11 @@ fn host_mount_cannot_overlap_scratch_tmp_namespace_path() {
         NetworkPosture::Deny,
     );
 
+    let plan = ReifiedNamespacePlan::derive(input).unwrap();
+    assert_eq!(plan.cwd, PathBuf::from("/tmp/project"));
     assert_eq!(
-        ReifiedNamespacePlan::derive(input),
-        Err(ReifiedNamespacePlanError::NamespaceMountOverlap {
-            parent: PathBuf::from("/tmp"),
-            child: PathBuf::from("/tmp/project"),
-        })
+        plan.declared_host_mounts[0].namespace_path,
+        PathBuf::from("/tmp/project")
     );
 }
 

@@ -388,6 +388,16 @@ fn linux_runner_command_uses_unshare_mount_chroot_and_network_namespace() {
     assert!(script.contains("\"$mount_bin\" --bind /proc/self/fd/1 \"${root}/dev/stdout\""));
     assert!(script.contains("\"$mount_bin\" --bind /proc/self/fd/2 \"${root}/dev/stderr\""));
     assert!(script.contains("\"$mount_bin\" --bind \"$host_path\" \"$destination\""));
+    assert!(
+        script.contains("mkdir -p \"$destination\" || fail \"prepare mount ${namespace_path}\"")
+    );
+    assert!(
+        script.find("mount scratch tmp").unwrap()
+            < script
+                .find("--bind \"$host_path\" \"$destination\"")
+                .unwrap(),
+        "private tmpfs must be mounted before delegated paths nested below /tmp"
+    );
     assert!(script.contains("\"$chroot_bin\" \"$root\" \"$namespace_shell\""));
     assert!(!script.contains("chroot \"$root\""));
     assert!(!script.contains("exec setpriv --no-new-privs"));

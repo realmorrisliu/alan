@@ -178,6 +178,7 @@ pub(super) async fn namespace_pending_resume_submission(
             {
                 return Ok(Some(Submission {
                     id: format!("host-mount:{request_id}"),
+                    intent: alan_agent_protocol::InputIntent::Agent,
                     op: Op::Resume {
                         request_id,
                         content: Vec::new(),
@@ -276,6 +277,7 @@ mod tests {
             broker
                 .push(Submission {
                     id: "sub-1".to_string(),
+                    intent: alan_agent_protocol::InputIntent::Agent,
                     op: Op::Resume {
                         request_id: "latest".to_string(),
                         content: vec![alan_agent_protocol::ContentPart::structured(
@@ -294,6 +296,7 @@ mod tests {
             broker
                 .push(Submission {
                     id: "sub-2".to_string(),
+                    intent: alan_agent_protocol::InputIntent::Agent,
                     op: Op::Input {
                         parts: vec![alan_agent_protocol::ContentPart::text("follow up")],
                         mode: InputMode::Steer,
@@ -308,6 +311,7 @@ mod tests {
             broker
                 .push(Submission {
                     id: "sub-3".to_string(),
+                    intent: alan_agent_protocol::InputIntent::Agent,
                     op: Op::Resume {
                         request_id: "r1".to_string(),
                         content: vec![alan_agent_protocol::ContentPart::structured(
@@ -330,6 +334,7 @@ mod tests {
                 broker
                     .push(Submission {
                         id: format!("u-{idx}"),
+                        intent: alan_agent_protocol::InputIntent::Agent,
                         op: Op::Input {
                             parts: vec![alan_agent_protocol::ContentPart::text(format!(
                                 "msg {idx}"
@@ -345,6 +350,7 @@ mod tests {
             !broker
                 .push(Submission {
                     id: "u-overflow".to_string(),
+                    intent: alan_agent_protocol::InputIntent::Agent,
                     op: Op::Input {
                         parts: vec![alan_agent_protocol::ContentPart::text("overflow")],
                         mode: InputMode::Steer,
@@ -356,6 +362,7 @@ mod tests {
             broker
                 .push(Submission {
                     id: "resume-1".to_string(),
+                    intent: alan_agent_protocol::InputIntent::Agent,
                     op: Op::Resume {
                         request_id: "latest".to_string(),
                         content: vec![alan_agent_protocol::ContentPart::structured(
@@ -373,6 +380,7 @@ mod tests {
         let mut machine = AgentMachine::new();
         machine.push_buffered_inband_submission(Submission {
             id: "u-1".to_string(),
+            intent: alan_agent_protocol::InputIntent::Agent,
             op: Op::Input {
                 parts: vec![alan_agent_protocol::ContentPart::text("queued")],
                 mode: InputMode::Steer,
@@ -382,6 +390,7 @@ mod tests {
             broker
                 .push(Submission {
                     id: "c-1".to_string(),
+                    intent: alan_agent_protocol::InputIntent::Agent,
                     op: Op::Resume {
                         request_id: "latest".to_string(),
                         content: vec![alan_agent_protocol::ContentPart::structured(

@@ -162,8 +162,13 @@ impl ReifiedNamespacePlan {
                 .iter()
                 .map(|mount| mount.namespace_path.as_path()),
         );
-        namespace_paths.push(input.scratch_tmp_namespace_path.as_path());
         validate_no_overlapping_namespace_paths(&namespace_paths)?;
+        validate_scratch_tmp_overlap(
+            &input.scratch_tmp_namespace_path,
+            &declared_host_mounts,
+            &virtual_namespace_paths,
+            &execution_substrate,
+        )?;
         validate_no_mixed_access_host_mount_overlap(&declared_host_mounts)?;
         validate_no_writable_mount_over_execution_substrate(
             &declared_host_mounts,
@@ -366,6 +371,60 @@ fn validate_no_overlapping_namespace_paths(
             }
         }
     }
+    Ok(())
+}
+
+fn validate_scratch_tmp_overlap(
+    scratch_tmp: &Path,
+    host_mounts: &[ReifiedHostMount],
+    virtual_mounts: &[PathBuf],
+    substrate: &[ReifiedExecutionSubstrateMount],
+) -> Result<(), ReifiedNamespacePlanError> {
+    for mount in host_mounts {
+        let namespace_path = mount.namespace_path.as_path();
+        if namespace_path.starts_with(scratch_tmp) && namespace_path != scratch_tmp {
+            // A delegated native path nested in private /tmp is mounted after tmpfs.
+            continue;
+        }
+        if paths_overlap(namespace_path, scratch_tmp) {
+            // ponytail: reject a grant rooted at /tmp rather than shadowing it with
+            // scratch; revisit only if whole-/tmp grants become a real use case.
+            return Err(ReifiedNamespacePlanError::NamespaceMountOverlap {
+                parent: if namespace_path.starts_with(scratch_tmp) {
+                    scratch_tmp.to_path_buf()
+                } else {
+                    namespace_path.to_path_buf()
+                },
+                child: if namespace_path.starts_with(scratch_tmp) {
+                    namespace_path.to_path_buf()
+                } else {
+                    scratch_tmp.to_path_buf()
+                },
+            });
+        }
+    }
+
+    for path in virtual_mounts
+        .iter()
+        .map(PathBuf::as_path)
+        .chain(substrate.iter().map(|mount| mount.namespace_path.as_path()))
+    {
+        if paths_overlap(path, scratch_tmp) {
+            return Err(ReifiedNamespacePlanError::NamespaceMountOverlap {
+                parent: if path.starts_with(scratch_tmp) {
+                    scratch_tmp.to_path_buf()
+                } else {
+                    path.to_path_buf()
+                },
+                child: if path.starts_with(scratch_tmp) {
+                    path.to_path_buf()
+                } else {
+                    scratch_tmp.to_path_buf()
+                },
+            });
+        }
+    }
+
     Ok(())
 }
 

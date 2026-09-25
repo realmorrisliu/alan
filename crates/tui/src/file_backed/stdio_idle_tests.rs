@@ -200,10 +200,12 @@ async fn one_shot_rebases_tails_after_the_previous_turn_reaches_idle() {
 
     let mut input_tail = shell.tail("/agent/root/io/input").await.unwrap();
     let answer = {
+        let mut task = StdioTaskWaitContext::new("repeat me");
+        task.record.submission_id = "repeat-submission".to_string();
         let wait_for_answer = wait_for_stdio_answer(
             &shell,
             "/agent/root",
-            StdioTaskWaitContext::new("repeat me", attachment.tape_history.clone()),
+            task,
             &mut attachment,
             std::future::pending::<anyhow::Result<()>>(),
         );
@@ -216,7 +218,7 @@ async fn one_shot_rebases_tails_after_the_previous_turn_reaches_idle() {
         shell
             .write(
                 &format!("{agent_path}/machine/tape"),
-                b"{\"version\":1,\"kind\":\"message\",\"role\":\"user\",\"content\":\"repeat me\"}\n{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"preamble\"}\n",
+                b"{\"version\":1,\"kind\":\"message\",\"role\":\"user\",\"content\":\"repeat me\",\"submission_id\":\"repeat-submission\"}\n{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"preamble\",\"submission_id\":\"repeat-submission\"}\n",
             )
             .await
             .unwrap();
@@ -236,7 +238,7 @@ async fn one_shot_rebases_tails_after_the_previous_turn_reaches_idle() {
         shell
             .write(
                 &format!("{agent_path}/machine/tape"),
-                b"{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"new answer\"}\n",
+                b"{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"new answer\",\"submission_id\":\"repeat-submission\"}\n",
             )
             .await
             .unwrap();
@@ -250,7 +252,10 @@ async fn one_shot_rebases_tails_after_the_previous_turn_reaches_idle() {
         wait_for_answer.await.unwrap()
     };
 
-    assert_eq!(answer, "new answer");
+    assert_eq!(
+        answer,
+        StdioTaskCompletion::AgentAnswer("new answer".to_string())
+    );
     close_stdio_tails(attachment.tape_tail, attachment.ui_tail)
         .await
         .unwrap();
@@ -271,7 +276,8 @@ async fn one_shot_recovers_when_final_tape_read_races_root_agent_restart() {
         .unwrap();
     let mut input_tail = shell.tail("/agent/root/io/input").await.unwrap();
     let (answer, new_pid) = {
-        let task = StdioTaskWaitContext::new("restart after idle", attachment.tape_history.clone());
+        let mut task = StdioTaskWaitContext::new("restart after idle");
+        task.record.submission_id = "restart-submission".to_string();
         submit_stdio_task(&shell, &task, &attachment).await.unwrap();
         assert!(!input_tail.read(4096).await.unwrap().is_empty());
         input_tail.close().await.unwrap();
@@ -290,7 +296,7 @@ async fn one_shot_recovers_when_final_tape_read_races_root_agent_restart() {
         shell
         .write(
             "/agent/root/machine/tape",
-            b"{\"version\":1,\"kind\":\"message\",\"role\":\"user\",\"content\":\"restart after idle\"}\n{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"old answer\"}\n",
+            b"{\"version\":1,\"kind\":\"message\",\"role\":\"user\",\"content\":\"restart after idle\",\"submission_id\":\"restart-submission\"}\n{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"old answer\",\"submission_id\":\"restart-submission\"}\n",
         )
         .await
         .unwrap();
@@ -339,7 +345,7 @@ async fn one_shot_recovers_when_final_tape_read_races_root_agent_restart() {
         shell
         .write(
             "/agent/root/machine/tape",
-            b"{\"version\":1,\"kind\":\"message\",\"role\":\"user\",\"content\":\"restart after idle\"}\n{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"recovered answer\"}\n",
+            b"{\"version\":1,\"kind\":\"message\",\"role\":\"user\",\"content\":\"restart after idle\",\"submission_id\":\"restart-submission\"}\n{\"version\":1,\"kind\":\"message\",\"role\":\"assistant\",\"content\":\"recovered answer\",\"submission_id\":\"restart-submission\"}\n",
         )
         .await
         .unwrap();
@@ -358,7 +364,10 @@ async fn one_shot_recovers_when_final_tape_read_races_root_agent_restart() {
             .unwrap();
         (answer, new_pid)
     };
-    assert_eq!(answer, "recovered answer");
+    assert_eq!(
+        answer,
+        StdioTaskCompletion::AgentAnswer("recovered answer".to_string())
+    );
     assert_eq!(attachment.root_agent_pid, new_pid.parse::<u64>().unwrap());
     close_stdio_tails(attachment.tape_tail, attachment.ui_tail)
         .await

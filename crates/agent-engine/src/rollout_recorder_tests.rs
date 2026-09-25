@@ -135,7 +135,9 @@ async fn test_record_tape_message_persists_rich_message() {
             crate::tape::ContentPart::text("final answer"),
         ],
         tool_requests: vec![],
-    };
+        submission_id: None,
+    }
+    .with_submission_id(Some("submission-1".to_string()));
     recorder.record_tape_message(&message).await.unwrap();
 
     let items = RolloutRecorder::load_history(recorder.path())
@@ -148,6 +150,7 @@ async fn test_record_tape_message_persists_rich_message() {
 
     let restored = restored.expect("expected rich message payload");
     assert_eq!(restored.non_thinking_text_content(), "final answer");
+    assert_eq!(restored.submission_id(), Some("submission-1"));
     assert_eq!(
         restored.thinking_content().as_deref(),
         Some("internal reasoning")

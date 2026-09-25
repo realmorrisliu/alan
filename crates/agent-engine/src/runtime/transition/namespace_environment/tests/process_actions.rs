@@ -359,6 +359,7 @@ async fn run_tool_action_cancels_spawned_process_on_wait_timeout() {
                 .tool_execution()
                 .run_action_with_cancel_and_timeout(
                     "blocked",
+                    None,
                     "/bin/blocked",
                     Vec::<String>::new(),
                     &cancel,

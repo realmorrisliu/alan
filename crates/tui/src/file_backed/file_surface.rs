@@ -1,8 +1,8 @@
 //! AgentFS file observation, command writes, and snapshot projection.
 
 use alan_agent_protocol::{
-    ContentPart, StructuredInputQuestion, ToolResultPresentation, UiActivitySnapshot,
-    UiActivityState, UiEvent, YieldKind,
+    ContentPart, InputIntent, InputMode, StructuredInputQuestion, ToolResultPresentation,
+    UiActivitySnapshot, UiActivityState, UiEvent, UserInputRecord, YieldKind,
 };
 use anyhow::{Context, Result, anyhow};
 use crossterm::event::{Event as TerminalEvent, KeyCode, KeyEvent, KeyModifiers};
@@ -495,6 +495,7 @@ fn request_response_path(agent_path: &str, request_id: &str) -> String {
     format!("{agent_path}/requests/{request_id}/response")
 }
 
+#[cfg(test)]
 pub(super) async fn write_agent_input(
     shell: &alan_shell::Shell,
     agent_path: &str,
@@ -504,6 +505,22 @@ pub(super) async fn write_agent_input(
         .write(&agent_input_path(agent_path), text.as_bytes())
         .await
         .map_err(|err| anyhow!("write agent input failed: {err:?}"))
+}
+
+pub(super) async fn write_agent_submission(
+    shell: &alan_shell::Shell,
+    agent_path: &str,
+    intent: InputIntent,
+    body: &str,
+) -> Result<String> {
+    let record = UserInputRecord::new(intent, InputMode::FollowUp, body);
+    let submission_id = record.submission_id.clone();
+    let payload = record.encode_payload()?;
+    shell
+        .write(&agent_input_path(agent_path), &payload)
+        .await
+        .map_err(|err| anyhow!("write agent submission failed: {err:?}"))?;
+    Ok(submission_id)
 }
 
 pub(super) async fn write_request_response(
@@ -582,7 +599,7 @@ async fn read_request_snapshot(
     })
 }
 
-async fn read_action_snapshots(
+pub(super) async fn read_action_snapshots(
     shell: &alan_shell::Shell,
     agent_path: &str,
 ) -> Result<Vec<ActionSnapshot>> {
@@ -775,7 +792,25 @@ pub(super) fn sync_action_snapshot(app: &mut FileBackedApp, snapshot: ActionSnap
     if let Some(tool) = running_tool(&snapshot) {
         app.running_tools.push(tool);
     }
-    if let Some(cell) = action_snapshot_to_history_cell(&snapshot) {
+    let explicit_command = serde_json::from_str::<Value>(&snapshot.result)
+        .ok()
+        .and_then(|result| {
+            result
+                .get("call_id")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        })
+        .is_some_and(|call_id| app.is_command_submission(&call_id));
+    let cell = if explicit_command {
+        command_action_history_cell(&snapshot).or_else(|| {
+            Some(HistoryCell::Error(
+                "command result is unavailable".to_string(),
+            ))
+        })
+    } else {
+        action_snapshot_to_history_cell(&snapshot)
+    };
+    if let Some(cell) = cell {
         app.upsert_action_cell(snapshot.id, cell);
     }
 }
@@ -846,6 +881,38 @@ fn action_snapshot_to_history_cell(snapshot: &ActionSnapshot) -> Option<HistoryC
     })
 }
 
+fn command_action_history_cell(snapshot: &ActionSnapshot) -> Option<HistoryCell> {
+    if !matches!(snapshot.status.trim(), "completed" | "failed") {
+        return None;
+    }
+    let output: Value = serde_json::from_str(&snapshot.output).ok()?;
+    let result: Value = serde_json::from_str(&snapshot.result).ok()?;
+    let stdout = output.get("stdout")?.as_str()?;
+    let stderr = output.get("stderr")?.as_str()?;
+    let exit_code = result
+        .get("exit_code")
+        .and_then(Value::as_i64)
+        .and_then(|code| i32::try_from(code).ok())?;
+
+    let mut lines = command_stream_lines(stdout, "");
+    lines.extend(command_stream_lines(stderr, "stderr> "));
+    if exit_code != 0 {
+        lines.push(format!("error> command exited with status {exit_code}"));
+    }
+    Some(HistoryCell::Rendered(lines))
+}
+
+fn command_stream_lines(stream: &str, prefix: &str) -> Vec<String> {
+    let stream = stream.strip_suffix('\n').unwrap_or(stream);
+    if stream.is_empty() {
+        return Vec::new();
+    }
+    stream
+        .split('\n')
+        .map(|line| format!("{prefix}{line}"))
+        .collect()
+}
+
 fn action_title(snapshot: &ActionSnapshot) -> String {
     let trimmed = snapshot.name.trim();
     if !trimmed.is_empty() {
@@ -883,4 +950,6 @@ pub(super) struct TapeRecordV1 {
     pub(super) kind: String,
     pub(super) role: String,
     pub(super) content: String,
+    #[serde(default)]
+    pub(super) submission_id: Option<String>,
 }

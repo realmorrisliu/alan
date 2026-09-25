@@ -5,6 +5,7 @@
 //! loop needs.
 
 mod accepted_submission;
+mod explicit_command;
 mod namespace_environment;
 mod turn_execution;
 
@@ -24,7 +25,7 @@ pub use namespace_environment::{
 
 use std::collections::VecDeque;
 
-use alan_agent_protocol::{Event, Op, Submission};
+use alan_agent_protocol::{Event, InputIntent, InputMode, Op, Submission};
 use anyhow::Result;
 use tokio_util::sync::CancellationToken;
 use tracing::warn;
@@ -605,9 +606,14 @@ where
                 if let Some(pending) = state.machine.pending_confirmation()
                     && replays_tool_calls(&pending.checkpoint_type)
                 {
-                    state
-                        .machine
-                        .set_tool_replay_batch(pending.checkpoint_id, tool_calls[idx..].to_vec());
+                    let resume_with_generation = !tool_calls.get(idx).is_some_and(|call| {
+                        state.machine.current_submission_id() == Some(&call.id)
+                    });
+                    state.machine.set_tool_replay_batch(
+                        pending.checkpoint_id,
+                        tool_calls[idx..].to_vec(),
+                        resume_with_generation,
+                    );
                 }
                 return Ok(ToolBatchOrchestratorOutcome::PauseTurn);
             }
@@ -715,7 +721,19 @@ where
     E: FnMut(Event) -> F,
     F: std::future::Future<Output = ()>,
 {
-    let op = submission.op;
+    let Submission { id, intent, op } = submission;
+
+    if intent == InputIntent::Command {
+        return explicit_command::handle_explicit_command(
+            state,
+            id,
+            op,
+            emit,
+            cancel,
+            steering_broker,
+        )
+        .await;
+    }
 
     match handle_runtime_op(state, op, emit).await? {
         RuntimeOpAction::NoTurn => Ok(()),
@@ -821,6 +839,7 @@ where
         }
         RuntimeOpAction::ReplayApprovedToolBatch {
             tool_calls,
+            resume_with_generation,
             approved_unknown_effect_call_id,
             approved_tool_escalation_call_id,
         } => {
@@ -840,29 +859,33 @@ where
             {
                 Ok(outcome) => match outcome {
                     ToolBatchOrchestratorOutcome::ContinueTurnLoop { .. } => {
-                        let turn_outcome = match run_turn_with_cancel(
-                            state,
-                            TurnRunKind::ResumeTurn,
-                            None,
-                            emit,
-                            cancel,
-                            steering_broker,
-                        )
-                        .await
-                        {
-                            Ok(outcome) => outcome,
-                            Err(err) => {
-                                state.machine.set_turn_activity(TurnActivityState::Idle);
-                                return Err(err);
-                            }
-                        };
-                        state.machine.set_turn_activity(
-                            if matches!(turn_outcome, TurnExecutionOutcome::Paused) {
-                                TurnActivityState::Paused
-                            } else {
-                                TurnActivityState::Idle
-                            },
-                        );
+                        if resume_with_generation {
+                            let turn_outcome = match run_turn_with_cancel(
+                                state,
+                                TurnRunKind::ResumeTurn,
+                                None,
+                                emit,
+                                cancel,
+                                steering_broker,
+                            )
+                            .await
+                            {
+                                Ok(outcome) => outcome,
+                                Err(err) => {
+                                    state.machine.set_turn_activity(TurnActivityState::Idle);
+                                    return Err(err);
+                                }
+                            };
+                            state.machine.set_turn_activity(
+                                if matches!(turn_outcome, TurnExecutionOutcome::Paused) {
+                                    TurnActivityState::Paused
+                                } else {
+                                    TurnActivityState::Idle
+                                },
+                            );
+                        } else {
+                            state.machine.set_turn_activity(TurnActivityState::Idle);
+                        }
                     }
                     ToolBatchOrchestratorOutcome::PauseTurn => {
                         state.machine.set_turn_activity(TurnActivityState::Paused);

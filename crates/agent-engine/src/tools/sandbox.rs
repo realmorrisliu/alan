@@ -28,9 +28,8 @@ use command_wrappers::{
 use path_literals::{
     absolute_path_literal_candidates, is_allowed_absolute_command_path,
     is_file_redirection_operator, lexically_normalize_path,
-    looks_like_bare_protected_subpath_token, looks_like_path_token, namespace_path_to_host,
-    path_like_subtokens, token_is_data_argument, translate_namespace_shell_token,
-    translate_reified_shell_token,
+    looks_like_bare_protected_subpath_token, looks_like_path_token, path_like_subtokens,
+    token_is_data_argument,
 };
 use path_safety::{existing_regular_file_has_multiple_links, is_path_guard_reason};
 use shell_syntax::{
@@ -42,6 +41,8 @@ use anyhow::{Result, anyhow};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
+
+pub(crate) use shell_syntax::parse_standalone_cd;
 
 const SANDBOX_BACKEND_PATH_GUARD: &str = "host_mount_path_guard";
 
@@ -135,6 +136,27 @@ impl Sandbox {
             .unwrap_or_else(super::sandbox_backend::detect_backend)
     }
 
+    fn command_scope_for_cwd(&self, cwd: &Path) -> Result<Self> {
+        if self.spec.host_mounts.is_empty() {
+            return Ok(self.clone());
+        }
+
+        let mount = self
+            .spec
+            .host_mounts
+            .iter()
+            .filter(|mount| self.is_path_in_root(cwd, &mount.host_path))
+            .max_by_key(|mount| mount.host_path.components().count())
+            .ok_or_else(|| anyhow!("Working directory is outside delegated Host Mounts"))?;
+        let mut spec = SandboxSpec::from_host_mounts(std::slice::from_ref(mount));
+        spec.network = self.spec.network;
+        spec.read_denylist
+            .extend(self.spec.read_denylist.iter().cloned());
+        let mut scoped = Self::from_spec(spec);
+        scoped.backend_override = self.backend_override;
+        Ok(scoped)
+    }
+
     /// Name of the active sandbox backend.
     pub fn backend_name(&self) -> &'static str {
         Self::backend_name_static()
@@ -156,15 +178,19 @@ impl Sandbox {
     /// Return a stable routing reason when a bash command targets local paths
     /// outside the current host_mount.
     pub fn bash_path_guard_reason(&self, cmd: &str, cwd: &Path) -> Option<String> {
-        if !self.is_writable(cwd) {
+        let scoped = match self.command_scope_for_cwd(cwd) {
+            Ok(scoped) => scoped,
+            Err(error) => return Some(error.to_string()),
+        };
+        if !scoped.is_writable(cwd) {
             return Some(format!(
                 "Working directory outside host_mount roots: {} (allowed roots: {})",
                 cwd.display(),
-                self.allowed_roots_label()
+                scoped.allowed_roots_label()
             ));
         }
 
-        match self.validate_command_paths(cmd, cwd, PathCheckMode::Full, None) {
+        match scoped.validate_command_paths(cmd, cwd, PathCheckMode::Full, None) {
             Ok(()) => None,
             Err(err) => {
                 let reason = err.to_string();
@@ -306,67 +332,66 @@ impl Sandbox {
         timeout: Option<Duration>,
         capability: Option<alan_agent_protocol::ToolCapability>,
     ) -> Result<ExecResult> {
+        let scoped = self.command_scope_for_cwd(cwd)?;
+        let sandbox = &scoped;
         let read_only_command =
             matches!(capability, Some(alan_agent_protocol::ToolCapability::Read));
         let cwd_is_authorized = if read_only_command {
-            self.is_readable(cwd)
+            sandbox.is_readable(cwd)
         } else {
-            self.is_writable(cwd)
+            sandbox.is_writable(cwd)
         };
         if !cwd_is_authorized {
             return Err(anyhow!(
                 "Working directory outside host_mount roots: {} (allowed roots: {})",
                 cwd.display(),
-                self.allowed_roots_label()
+                sandbox.allowed_roots_label()
             ));
         }
-        self.ensure_path_not_protected(cwd, "process cwd")?;
+        sandbox.ensure_path_not_protected(cwd, "process cwd")?;
 
         // Reject shell expansion ($VAR, $(...), backticks, globs, braces) in EVERY
         // mode. Expansion defeats the static path-containment check — the parser
         // sees a literal, in-host_mount-looking token (`$HOME/.ssh/id_rsa`) but
         // `/bin/sh -c` then expands it to escape the host_mount. Seatbelt permits
         // reads, so an auto-approved read must not be able to exfiltrate this way.
-        self.validate_shell_features(cmd)?;
+        sandbox.validate_shell_features(cmd)?;
 
-        if self.active_backend().permits_autonomous_bash() {
+        if sandbox.active_backend().permits_autonomous_bash() {
             // Seatbelt kernel-confines the host_mount fs + network, so the syntactic
             // *shape* checks are dropped — they would reject commands the sandbox
             // safely contains (`bash -lc ...`, `python -c ...`). Path containment
             // and the protected-subpath check (incl. shell-wrapper-nested) still
             // run in ProtectedOnly mode.
-            self.validate_command_paths(cmd, cwd, PathCheckMode::ProtectedOnly, capability)?;
+            sandbox.validate_command_paths(cmd, cwd, PathCheckMode::ProtectedOnly, capability)?;
         } else {
             // No kernel protected-subpath enforcement (Landlock cannot carve a
             // protected subdir out of the writable tree, or the path-guard
             // fallback): keep the full shape parser so opaque writers — which could
             // hide a protected write the kernel won't deny — are rejected.
-            self.validate_command_paths(cmd, cwd, PathCheckMode::Full, capability)?;
+            sandbox.validate_command_paths(cmd, cwd, PathCheckMode::Full, capability)?;
         }
 
         // A command only reaches execution after policy/reviewer/human clearance.
         // If it is classified as a network capability, run it with the sandbox's
         // network restriction lifted (still filesystem-confined) so an approved
         // network call actually runs instead of failing under a deny-all profile.
-        let allow_network = self.spec.network.allows_network()
+        let allow_network = sandbox.spec.network.allows_network()
             || matches!(
                 capability,
                 Some(alan_agent_protocol::ToolCapability::Network)
             );
-        let backend = self.active_backend();
+        let backend = sandbox.active_backend();
         if matches!(
             backend,
             super::sandbox_backend::SandboxBackendKind::LinuxReifiedNamespace
         ) {
-            return self
+            return sandbox
                 .exec_reified_namespace(cmd, cwd, timeout, allow_network)
                 .await;
         }
 
-        let command = Self::translate_command_path_literals(cmd, |token| {
-            translate_namespace_shell_token(token, &self.spec.host_mounts)
-        });
-        let mut command = self.build_confined_command(&command, allow_network, backend)?;
+        let mut command = sandbox.build_confined_command(cmd, allow_network, backend)?;
         command.current_dir(cwd);
         let output = if let Some(limit) = timeout {
             match tokio::time::timeout(limit, command.output()).await {
@@ -491,7 +516,7 @@ impl Sandbox {
         } else {
             NetworkPosture::Deny
         };
-        let mut plan = super::reified_namespace::ReifiedNamespacePlan::derive(
+        let plan = super::reified_namespace::ReifiedNamespacePlan::derive(
             super::reified_namespace::ReifiedNamespacePlanInput::new(
                 self.reified_mount_declarations(),
                 cwd,
@@ -505,12 +530,6 @@ impl Sandbox {
             ),
         )
         .map_err(|err| anyhow!("failed to build reified namespace plan: {err}"))?;
-        plan.argv = vec![
-            "sh".to_string(),
-            "-f".to_string(),
-            "-c".to_string(),
-            Self::translate_reified_command_host_paths(cmd, &plan),
-        ];
         Ok(plan)
     }
 
@@ -520,7 +539,7 @@ impl Sandbox {
             .iter()
             .map(|grant| {
                 super::reified_namespace::ReifiedMountDeclaration::host(
-                    &grant.namespace_path,
+                    &grant.host_path,
                     grant.host_path.clone(),
                     match grant.access {
                         super::reified_namespace::ReifiedMountAccess::ReadOnly => {
@@ -615,24 +634,32 @@ impl Sandbox {
         }
 
         let mut expects_redirection_target = false;
-        for token in tokens {
+        let mut span_index = 0;
+        for token in &tokens {
             if expects_redirection_target {
-                self.validate_redirection_target(&token, cwd)?;
+                self.validate_redirection_target(token, cwd)?;
+                span_index += 1;
                 expects_redirection_target = false;
                 continue;
             }
 
-            if is_file_redirection_operator(&token) {
+            if is_file_redirection_operator(token) {
                 expects_redirection_target = true;
                 continue;
             }
 
-            for candidate in path_like_subtokens(&token) {
+            let span_token = &span_tokens[span_index];
+            span_index += 1;
+            if token_is_data_argument(trimmed, span_token) {
+                continue;
+            }
+
+            for candidate in path_like_subtokens(token) {
                 self.validate_command_path_candidate(candidate, cwd, capability)?;
             }
         }
 
-        self.validate_absolute_path_literals(&span_tokens, capability)?;
+        self.validate_absolute_path_literals(trimmed, &span_tokens, capability)?;
 
         Ok(())
     }
@@ -748,7 +775,12 @@ impl Sandbox {
         let mut suffix = Vec::<OsString>::new();
         while !current.exists() {
             let Some(name) = current.file_name() else {
-                return lexically_normalize_path(&absolute_path);
+                let normalized = lexically_normalize_path(&absolute_path);
+                return if normalized != absolute_path {
+                    self.resolved_path_with_existing_parents(&normalized)
+                } else {
+                    normalized
+                };
             };
             suffix.push(name.to_os_string());
             let Some(parent) = current.parent() else {
@@ -800,14 +832,12 @@ impl Sandbox {
             if candidate.is_absolute() && is_allowed_absolute_command_path(&candidate) {
                 return Ok(());
             }
-            let validation_path =
-                namespace_path_to_host(&candidate, &self.spec.host_mounts).unwrap_or(candidate);
             let read_only_command =
                 matches!(capability, Some(alan_agent_protocol::ToolCapability::Read));
             let path_is_authorized = if read_only_command {
-                self.is_readable(&validation_path)
+                self.is_readable(&candidate)
             } else {
-                self.is_writable(&validation_path)
+                self.is_writable(&candidate)
             };
             if !path_is_authorized {
                 return Err(anyhow!(
@@ -815,11 +845,11 @@ impl Sandbox {
                     token
                 ));
             }
-            self.ensure_path_not_protected(&validation_path, "process path reference")?;
+            self.ensure_path_not_protected(&candidate, "process path reference")?;
             if read_only_command {
-                self.ensure_path_not_read_denied(&validation_path, "process path reference")?;
+                self.ensure_path_not_read_denied(&candidate, "process path reference")?;
             } else {
-                self.ensure_path_not_multiply_linked(&validation_path, "process path reference")?;
+                self.ensure_path_not_multiply_linked(&candidate, "process path reference")?;
             }
         }
 
@@ -846,25 +876,27 @@ impl Sandbox {
         if candidate.is_absolute() && is_allowed_absolute_command_path(&candidate) {
             return Ok(());
         }
-        let validation_path =
-            namespace_path_to_host(&candidate, &self.spec.host_mounts).unwrap_or(candidate);
-        if !self.is_writable(&validation_path) {
+        if !self.is_writable(&candidate) {
             return Err(anyhow!(
                 "Command references path outside host_mount: {}",
                 token
             ));
         }
-        self.ensure_path_not_protected(&validation_path, "process path reference")?;
-        self.ensure_path_not_multiply_linked(&validation_path, "process path reference")?;
+        self.ensure_path_not_protected(&candidate, "process path reference")?;
+        self.ensure_path_not_multiply_linked(&candidate, "process path reference")?;
         Ok(())
     }
 
     fn validate_absolute_path_literals(
         &self,
+        command: &str,
         tokens: &[ShellWordToken],
         capability: Option<alan_agent_protocol::ToolCapability>,
     ) -> Result<()> {
         for token in tokens {
+            if token_is_data_argument(command, token) {
+                continue;
+            }
             for candidates in absolute_path_literal_candidates(&token.decoded) {
                 let literal = candidates
                     .iter()
@@ -889,12 +921,10 @@ impl Sandbox {
         if is_allowed_absolute_command_path(literal_path) {
             return true;
         }
-        let validation_path = namespace_path_to_host(literal_path, &self.spec.host_mounts)
-            .unwrap_or_else(|| literal_path.to_path_buf());
         if matches!(capability, Some(alan_agent_protocol::ToolCapability::Read)) {
-            self.is_readable(&validation_path)
+            self.is_readable(literal_path)
         } else {
-            self.is_writable(&validation_path)
+            self.is_writable(literal_path)
         }
     }
 
@@ -907,17 +937,15 @@ impl Sandbox {
         if !literal_path.is_absolute() || is_allowed_absolute_command_path(literal_path) {
             return Ok(());
         }
-        let validation_path = namespace_path_to_host(literal_path, &self.spec.host_mounts)
-            .unwrap_or_else(|| literal_path.to_path_buf());
         // Containment applies in every mode: the OS sandbox does not confine
         // reads, so an out-of-host_mount absolute path (e.g. a read of a secret)
         // must still be rejected by the parser.
         let read_only_command =
             matches!(capability, Some(alan_agent_protocol::ToolCapability::Read));
         let path_is_authorized = if read_only_command {
-            self.is_readable(&validation_path)
+            self.is_readable(literal_path)
         } else {
-            self.is_writable(&validation_path)
+            self.is_writable(literal_path)
         };
         if !path_is_authorized {
             return Err(anyhow!(
@@ -925,44 +953,11 @@ impl Sandbox {
                 literal
             ));
         }
-        self.ensure_path_not_protected(&validation_path, "process path reference")?;
+        self.ensure_path_not_protected(literal_path, "process path reference")?;
         if read_only_command {
-            self.ensure_path_not_read_denied(&validation_path, "process path reference")?;
+            self.ensure_path_not_read_denied(literal_path, "process path reference")?;
         }
         Ok(())
-    }
-
-    fn translate_reified_command_host_paths(
-        cmd: &str,
-        plan: &super::reified_namespace::ReifiedNamespacePlan,
-    ) -> String {
-        Self::translate_command_path_literals(cmd, |token| {
-            translate_reified_shell_token(token, plan)
-        })
-    }
-
-    fn translate_command_path_literals(
-        cmd: &str,
-        mut translate_token: impl FnMut(&str) -> Option<String>,
-    ) -> String {
-        let Ok(tokens) = shell_word_tokens_with_spans(cmd) else {
-            return cmd.to_string();
-        };
-        let mut translated = String::with_capacity(cmd.len());
-        let mut last = 0;
-        for token in tokens {
-            if token_is_data_argument(cmd, &token) {
-                continue;
-            }
-            let Some(rewritten) = translate_token(&token.decoded) else {
-                continue;
-            };
-            translated.push_str(&cmd[last..token.raw_start]);
-            translated.push_str(&rewritten);
-            last = token.raw_end;
-        }
-        translated.push_str(&cmd[last..]);
-        translated
     }
 }
 

@@ -154,6 +154,7 @@ fn test_load_from_rollout_prefers_rich_message_payload_when_available() {
                         name: "web_search".to_string(),
                         arguments: serde_json::json!({"query":"alan"}),
                     }],
+                    submission_id: None,
                 }),
                 timestamp: "2026-01-29T14:30:56Z".to_string(),
             }),
@@ -256,6 +257,7 @@ fn test_load_from_rollout_does_not_count_runtime_confirmation_control_messages_a
                 tool_name: None,
                 message: Some(Message::User {
                     parts: vec![ContentPart::text("run task")],
+                    submission_id: None,
                 }),
                 timestamp: "2026-01-29T14:30:53Z".to_string(),
             }),
@@ -276,6 +278,7 @@ fn test_load_from_rollout_does_not_count_runtime_confirmation_control_messages_a
                             "source": "runtime/submission_handlers"
                         }
                     }))],
+                    submission_id: None,
                 }),
                 timestamp: "2026-01-29T14:30:54Z".to_string(),
             }),
@@ -394,6 +397,7 @@ fn test_load_from_rollout_excludes_current_runtime_control_from_turn_ordinal() {
                             "source": "runtime/submission_handlers"
                         }
                     }))],
+                    submission_id: None,
                 }),
                 timestamp: "2026-01-29T14:30:53Z".to_string(),
             }),
@@ -451,6 +455,7 @@ fn test_load_from_rollout_counts_user_payloads_without_internal_control_marker()
                         "checkpoint_type": "tool_escalation",
                         "choice": "approve",
                     }))],
+                    submission_id: None,
                 }),
                 timestamp: "2026-01-29T14:30:53Z".to_string(),
             }),

@@ -207,6 +207,48 @@ Process-local submission identity correlates output and cancellation, without
 introducing a global Conversation/Session object. Existing client task leases
 must be reconciled with ordered acceptance rather than silently bypassed.
 
+### Submission records and result correlation
+
+The input envelope and result IDs below are implemented in this slice. The
+activity projection, queue-control verbs, and pre-Tape failure correlation are
+the target contract for tasks 2.5–2.8; they are not current runtime guarantees.
+
+The canonical write to /agent/<pid>/io/input is AgentFS's existing outer
+length-framed document containing the UTF-8 payload `alan-input-v1\n` followed
+by one strict JSON object: `version` (1), `submission_id` (UUID), `intent`
+(`agent`, `force_agent`, or `command`), `mode` (`steer`, `follow_up`, or
+`next_turn`), and exact `body`. The prefix is removed by the client and retained
+as intent; body whitespace and internal newlines are not rewritten. Empty bodies,
+unknown fields, unsupported versions, and invalid IDs are rejected. The record's
+mode maps only to protocol scheduling; intent never supplies or changes it.
+Unframed payloads remain the legacy plain-text path.
+
+The Agent Machine owns accepted order and queue state. Its existing
+machine/ui/activity snapshot becomes version 2, retaining activity state and
+start time and adding `active_submission` (optional `{submission_id, intent}`),
+`pending_submissions` (ordered `{submission_id, intent}` entries), and
+`queue_paused` (boolean). machine/ui/events appends the same snapshots; neither
+surface owns another copy of the queue. The current activity state remains run
+state, not a completion signal. Runtime queue controls continue to use
+machine/ctl, one UTF-8 command per write. The versioned queue-control vocabulary
+is `queue-v1 interrupt <submission_id>`, `queue-v1 continue`, and
+`queue-v1 discard`: interrupt targets one accepted submission and pauses later
+ordinary inputs, while continue/discard apply to the paused queue in order. An
+unknown or already-settled interrupt target is rejected without affecting later
+work. Existing compact, rollback, and legacy interrupt commands retain their
+current semantics.
+
+Completion is correlated through existing evidence, not prompt text, time, or
+Tape position. The append-only machine/tape projection adds submission_id to
+user and assistant message records; a direct command's Action result uses the
+same ID as call_id and carries its exit status, while Action output carries
+stdout/stderr. A pre-Tape failure is reported in a UI error event carrying that
+same ID. The TUI's current shared task lease remains a compatibility guard while
+this aggregate activity surface is used, not the result-matching mechanism.
+Readers accept a result only when its ID matches their submission; missing
+evidence is unknown, never successful completion. Rollout/checkpoint records
+remain the recovery authority; Tape is only a projection.
+
 Ctrl-C interrupts current work and pauses remaining queued input for explicit
 continuation/discard through the existing machine control surface. It does not
 roll back effects or start the next command. Detach, quit and empty-input
