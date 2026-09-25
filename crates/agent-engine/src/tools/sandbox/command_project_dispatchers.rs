@@ -10,6 +10,10 @@ pub(super) fn is_project_code_dispatcher(command: &str, args: &[String]) -> bool
     if let Some(queries) = build_system_queries {
         return !matches!(args, [argument] if one_of(argument, queries));
     }
+    if command == "mix" {
+        // Even `mix help` loads project code; only the standalone version query is inert.
+        return !matches!(args, [argument] if argument == "--version");
+    }
     if matches!(command, "python" | "python3")
         && args.windows(2).any(|pair| {
             matches!(pair[0].as_str(), "-m" | "--module") && one_of(&pair[1], "pytest unittest")
