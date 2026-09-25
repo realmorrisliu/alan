@@ -93,7 +93,7 @@ fn replace_path_prefixes(text: &str, prefix: &str, replacement: &str) -> String 
     let mut copied_through = 0;
     for (start, _) in text.match_indices(prefix) {
         let end = start + prefix.len();
-        let suffix = strip_leading_terminal_csi_sequences(&text[end..]);
+        let suffix = strip_leading_terminal_sequences(&text[end..]);
         let after = suffix.chars().next();
         let boundary_before = is_path_start(text, start);
         let boundary_after = after.is_none_or(|ch| {
@@ -143,7 +143,7 @@ fn replace_rooted_path_starts(text: &str, replacement: &str) -> String {
 }
 
 fn is_path_start(text: &str, start: usize) -> bool {
-    let prefix = strip_trailing_terminal_csi_sequences(&text[..start]);
+    let prefix = strip_trailing_terminal_sequences(&text[..start]);
     let before = prefix.chars().next_back();
     let file_uri_delimiter = prefix
         .get(prefix.len().saturating_sub("file://".len())..)
@@ -158,32 +158,44 @@ fn is_path_start(text: &str, start: usize) -> bool {
         })
 }
 
-fn strip_trailing_terminal_csi_sequences(mut prefix: &str) -> &str {
-    while let Some(start) = prefix.rfind("\x1b[") {
-        if terminal_csi_sequence_end(&prefix[start..]) != Some(prefix.len() - start) {
-            break;
-        }
+fn strip_trailing_terminal_sequences(mut prefix: &str) -> &str {
+    while let Some(start) = [prefix.rfind("\x1b["), prefix.rfind("\x1b]")]
+        .into_iter()
+        .flatten()
+        .filter(|start| terminal_sequence_end(&prefix[*start..]) == Some(prefix.len() - start))
+        .max()
+    {
         prefix = &prefix[..start];
     }
     prefix
 }
 
-fn strip_leading_terminal_csi_sequences(mut suffix: &str) -> &str {
-    while let Some(end) = terminal_csi_sequence_end(suffix) {
+fn strip_leading_terminal_sequences(mut suffix: &str) -> &str {
+    while let Some(end) = terminal_sequence_end(suffix)
+        .or_else(|| suffix.strip_prefix("\x1b\\").map(|_| 2))
+        .or_else(|| suffix.strip_prefix('\x07').map(|_| 1))
+    {
         suffix = &suffix[end..];
     }
     suffix
 }
 
-fn terminal_csi_sequence_end(text: &str) -> Option<usize> {
-    let body = text.strip_prefix("\x1b[")?;
-    let final_byte = body
-        .bytes()
-        .position(|byte| (0x40..=0x7e).contains(&byte))?;
-    body.as_bytes()[..final_byte]
-        .iter()
-        .all(|byte| (0x20..=0x3f).contains(byte))
-        .then_some(final_byte + 3)
+fn terminal_sequence_end(text: &str) -> Option<usize> {
+    if let Some(body) = text.strip_prefix("\x1b[") {
+        let final_byte = body
+            .bytes()
+            .position(|byte| (0x40..=0x7e).contains(&byte))?;
+        return body.as_bytes()[..final_byte]
+            .iter()
+            .all(|byte| (0x20..=0x3f).contains(byte))
+            .then_some(final_byte + 3);
+    }
+    let body = text.strip_prefix("\x1b]")?;
+    body.find('\x07')
+        .map(|index| index + 3)
+        .into_iter()
+        .chain(body.find("\x1b\\").map(|index| index + 4))
+        .min()
 }
 
 impl ToolExecutionAdapter for NativeToolExecutionAdapter {
@@ -714,6 +726,17 @@ mod tests {
         assert_eq!(projected, "failed at ./notes.txt");
         let ansi_path = format!("\x1b[31m{}\x1b[0m\n", host_root.display());
         assert_eq!(adapter.project_text(&ansi_path), "\x1b[31m.\x1b[0m\n");
+        for terminator in ["\x1b\\", "\x07"] {
+            let osc8_path = format!(
+                "\x1b]8;;file://{0}{1}{0}\x1b]8;;{1}\n",
+                host_root.display(),
+                terminator
+            );
+            assert_eq!(
+                adapter.project_text(&osc8_path),
+                format!("\x1b]8;;file://.{0}.\x1b]8;;{0}\n", terminator)
+            );
+        }
         let sibling_path = format!("{}-backup/notes.txt", host.path().display());
         assert_eq!(adapter.project_text(&sibling_path), sibling_path);
         let dotted_sibling_path = format!("{}.backup/notes.txt", host_root.display());
