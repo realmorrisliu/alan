@@ -15,6 +15,8 @@ use super::app::{FileBackedApp, FileBackedEvent};
 use super::tail::tail_with_history;
 mod attachment;
 
+#[cfg(test)]
+pub(super) use attachment::hydrate_tape_history;
 pub(super) use attachment::{hydrate_and_open_tails, reattach_to_current_agent};
 
 pub(super) async fn sync_requests_from_files(
@@ -27,16 +29,6 @@ pub(super) async fn sync_requests_from_files(
         Some(snapshot) => app.set_pending_yield(request_snapshot_to_pending_yield(snapshot)?),
         None => app.clear_pending_yield(),
     }
-    Ok(())
-}
-
-pub(super) async fn hydrate_actions_from_files(
-    shell: &alan_shell::Shell,
-    agent_path: &str,
-    app: &mut FileBackedApp,
-) -> Result<()> {
-    let snapshots = read_action_snapshots(shell, agent_path).await?;
-    hydrate_actions_from_snapshots(app, snapshots);
     Ok(())
 }
 
@@ -663,6 +655,7 @@ fn request_sort_key(request_id: &str) -> u64 {
         .unwrap_or(0)
 }
 
+#[cfg(test)]
 pub(super) fn parse_tape_history(raw: &str) -> Vec<HistoryCell> {
     let mut cells = Vec::new();
     for line in raw.lines() {

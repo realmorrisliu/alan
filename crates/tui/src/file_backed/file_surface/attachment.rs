@@ -1,13 +1,79 @@
 use super::super::tail::{current_root_agent_pid, root_agent_path_for_pid, tail_with_history};
 use super::{
-    FileBackedApp, WatchTails, action_events_path, agent_output_path, correlated_ui_task,
-    hydrate_actions_from_files, parse_tape_history, read_activity_snapshot, read_json_file,
-    request_events_path, sync_requests_from_files, tail_from_live_edge, ui_events_path,
-    ui_notice_path, ui_plan_path, ui_thinking_path,
+    ActionSnapshot, FileBackedApp, TapeRecordV1, WatchTails, action_events_path, agent_output_path,
+    command_action_history_cell, correlated_ui_task, hydrate_actions_from_snapshots,
+    read_action_snapshots, read_activity_snapshot, read_json_file, request_events_path,
+    sync_requests_from_files, tail_from_live_edge, ui_events_path, ui_notice_path, ui_plan_path,
+    ui_thinking_path,
 };
 use crate::history::HistoryCell;
 use alan_agent_protocol::{UiActivityState, UiEvent};
 use anyhow::{Context, Result, anyhow, bail};
+use serde_json::Value;
+
+pub(in crate::file_backed) fn hydrate_tape_history(
+    app: &mut FileBackedApp,
+    raw: &str,
+    actions: &[ActionSnapshot],
+) {
+    let mut actions_by_submission = std::collections::HashMap::new();
+    for action in actions.iter().rev() {
+        if !matches!(action.name.as_str(), "bash" | "cd") {
+            continue;
+        }
+        let Ok(result) = serde_json::from_str::<Value>(&action.result) else {
+            continue;
+        };
+        if let Some(submission_id) = result.get("call_id").and_then(Value::as_str) {
+            actions_by_submission
+                .entry(submission_id.to_string())
+                .or_insert(action);
+        }
+    }
+
+    let mut cells = Vec::new();
+    let mut action_cells = std::collections::BTreeMap::new();
+    let mut command_submission_ids = Vec::new();
+    for line in raw.lines() {
+        let Ok(record) = serde_json::from_str::<TapeRecordV1>(line) else {
+            continue;
+        };
+        if record.kind != "message" {
+            continue;
+        }
+        match record.role.as_str() {
+            "user" => {
+                let action = record
+                    .submission_id
+                    .as_deref()
+                    .and_then(|submission_id| actions_by_submission.get(submission_id));
+                if let (Some(submission_id), Some(action)) = (record.submission_id, action) {
+                    command_submission_ids.push(submission_id);
+                    cells.push(HistoryCell::Command(record.content));
+                    if matches!(action.status.trim(), "completed" | "failed") {
+                        let cell = command_action_history_cell(action).unwrap_or_else(|| {
+                            HistoryCell::Error("command result is unavailable".to_string())
+                        });
+                        action_cells.insert(action.id.clone(), cells.len());
+                        cells.push(cell);
+                    }
+                } else {
+                    cells.push(HistoryCell::User(record.content));
+                }
+            }
+            "assistant" => match cells.last_mut() {
+                Some(HistoryCell::Assistant(text)) => text.push_str(&record.content),
+                _ => cells.push(HistoryCell::Assistant(record.content)),
+            },
+            _ => {}
+        }
+    }
+    app.transcript = cells;
+    app.action_cells = action_cells;
+    for submission_id in command_submission_ids {
+        app.mark_command_submission(submission_id);
+    }
+}
 
 /// Pin every renderer stream and snapshot read to one Root Agent Process.
 /// If the supervisor replaces it during hydration, discard the whole set and
@@ -118,7 +184,8 @@ async fn hydrate_pinned_agent(
 
     let hydrate = async {
         let tape_history = String::from_utf8(tape_history).context("machine/tape is not utf8")?;
-        app.transcript = parse_tape_history(&tape_history);
+        let action_snapshots = read_action_snapshots(shell, agent_path).await?;
+        hydrate_tape_history(app, &tape_history, &action_snapshots);
         app.seed_reconciler_from_tape_history(&tape_history);
 
         let ui_history_text = std::str::from_utf8(&ui_history).context("ui events are not utf8")?;
@@ -154,7 +221,7 @@ async fn hydrate_pinned_agent(
             }
         }
 
-        hydrate_actions_from_files(shell, agent_path, app).await?;
+        hydrate_actions_from_snapshots(app, action_snapshots);
         sync_requests_from_files(shell, agent_path, app).await
     }
     .await;

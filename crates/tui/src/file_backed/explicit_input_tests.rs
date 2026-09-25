@@ -28,6 +28,53 @@ fn explicit_command_action_renders_its_program_output() {
 }
 
 #[test]
+fn reattached_command_restores_intent_and_output_from_tape_action_correlation() {
+    let mut app = FileBackedApp::new("/agent/1".to_string());
+    let tape = r#"{"version":1,"kind":"message","role":"user","content":"git status","submission_id":"submission-1"}
+"#;
+    let action = ActionSnapshot {
+        id: "a0".to_string(),
+        name: "bash".to_string(),
+        status: "failed".to_string(),
+        output: r#"{"stdout":"working tree dirty\n","stderr":"warning line\n","exit_code":3}"#
+            .to_string(),
+        result: r#"{"call_id":"submission-1","exit_code":3}"#.to_string(),
+    };
+
+    hydrate_tape_history(&mut app, tape, std::slice::from_ref(&action));
+
+    assert_eq!(
+        app.transcript,
+        vec![
+            HistoryCell::Command("git status".to_string()),
+            HistoryCell::Rendered(vec![
+                "working tree dirty".to_string(),
+                "stderr> warning line".to_string(),
+                "error> command exited with status 3".to_string(),
+            ]),
+        ]
+    );
+    assert!(app.is_command_submission("submission-1"));
+    assert_eq!(app.action_cells.get("a0"), Some(&1));
+
+    let updated_action = ActionSnapshot {
+        output: r#"{"stdout":"updated output\n","stderr":"","exit_code":0}"#.to_string(),
+        result: r#"{"call_id":"submission-1","exit_code":0}"#.to_string(),
+        status: "completed".to_string(),
+        ..action
+    };
+    sync_action_snapshot(&mut app, updated_action);
+
+    assert_eq!(
+        app.transcript,
+        vec![
+            HistoryCell::Command("git status".to_string()),
+            HistoryCell::Rendered(vec!["updated output".to_string()]),
+        ]
+    );
+}
+
+#[test]
 fn standalone_cd_action_is_a_successful_silent_command_result() {
     let mut app = FileBackedApp::new("/agent/1".to_string());
     app.mark_command_submission("submission-cd");

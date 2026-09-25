@@ -868,6 +868,7 @@ impl FileBackedApp {
 
     pub(super) fn reset_for_root_process_change(&mut self) {
         self.action_cells.clear();
+        self.command_submission_ids.clear();
         self.activity = UiActivitySnapshot::idle();
         self.plan = UiPlanSnapshot::empty();
         self.thinking = UiThinkingSnapshot::idle();

@@ -44,7 +44,7 @@ use submission::{prepare_root_agent_submission, require_root_agent_idle};
 use file_surface::write_agent_input;
 #[cfg(test)]
 use file_surface::{
-    ActionSnapshot, RequestSnapshot, agent_output_path, parse_tape_history,
+    ActionSnapshot, RequestSnapshot, agent_output_path, hydrate_tape_history, parse_tape_history,
     request_snapshot_to_pending_yield, sync_action_snapshot,
 };
 use file_surface::{
