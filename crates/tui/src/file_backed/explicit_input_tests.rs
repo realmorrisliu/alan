@@ -89,6 +89,25 @@ fn submitted_command_keeps_its_prompt_intent_in_transcript() {
 }
 
 #[test]
+fn keyboard_slash_after_explicit_prefix_preserves_input_intent() {
+    for (prefix, body, intent) in [
+        ("!", "/usr/bin/git status", InputIntent::Command),
+        (":", "/help", InputIntent::ForceAgent),
+    ] {
+        let mut app = FileBackedApp::new("/agent/1".to_string());
+        for character in format!("{prefix}{body}").chars() {
+            press(&mut app, KeyCode::Char(character), KeyModifiers::NONE);
+        }
+
+        assert!(matches!(
+            app.handle_submit(),
+            Some(FileBackedAction::Submit(input))
+                if input.intent == intent && input.body == body
+        ));
+    }
+}
+
+#[test]
 fn file_completion_preserves_explicit_input_intent() {
     for (prefix, intent) in [("!", InputIntent::Command), (":", InputIntent::ForceAgent)] {
         let mut app = FileBackedApp::new("/agent/1".to_string());

@@ -230,7 +230,10 @@ impl FileBackedApp {
                 code: KeyCode::Char('/'),
                 modifiers,
                 ..
-            } if modifiers.is_empty() && self.composer.text().is_empty() => {
+            } if modifiers.is_empty()
+                && self.composer.text().is_empty()
+                && self.composer.intent() == InputIntent::Agent =>
+            {
                 self.composer.set_text("/");
                 self.refresh_completion();
                 None
