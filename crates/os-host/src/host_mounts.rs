@@ -95,9 +95,13 @@ fn replace_path_prefixes(text: &str, prefix: &str, replacement: &str) -> String 
         let end = start + prefix.len();
         let before = text[..start].chars().next_back();
         let after = text[end..].chars().next();
-        let boundary_before = before.is_none_or(|ch| {
-            ch.is_whitespace() || matches!(ch, '=' | ':' | '\'' | '"' | '(' | '[' | '{' | ',')
-        });
+        let file_uri_delimiter = text[..start]
+            .get(start.saturating_sub("file://".len())..start)
+            .is_some_and(|scheme| scheme.eq_ignore_ascii_case("file://"));
+        let boundary_before = file_uri_delimiter
+            || before.is_none_or(|ch| {
+                ch.is_whitespace() || matches!(ch, '=' | ':' | '\'' | '"' | '(' | '[' | '{' | ',')
+            });
         let boundary_after = after.is_none_or(|ch| {
             ch.is_whitespace()
                 || ch == std::path::MAIN_SEPARATOR
@@ -651,6 +655,8 @@ mod tests {
         );
         let punctuated_path = format!("failed at {}.", host_root.display());
         assert_eq!(adapter.project_text(&punctuated_path), "failed at ..");
+        let file_uri = format!("file://{}/notes.txt", host_root.display());
+        assert_eq!(adapter.project_text(&file_uri), "file://./notes.txt");
 
         let nested = service
             .reconcile(7, binding("/mnt/project/src"))
