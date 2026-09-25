@@ -245,6 +245,30 @@ async fn seatbelt_rejects_git_commit_hooks_with_uninspectable_reads() {
 
 #[cfg(target_os = "macos")]
 #[tokio::test]
+async fn seatbelt_rejects_git_config_reads_outside_the_mount() {
+    let mount = TempDir::new().unwrap();
+    let sandbox = Sandbox::with_backend(
+        mount.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::Seatbelt,
+    );
+    let error = sandbox
+        .exec_with_timeout_and_capability(
+            "git config --global --list",
+            mount.path(),
+            None,
+            Some(alan_agent_protocol::ToolCapability::Unknown),
+        )
+        .await
+        .expect_err("Git global configuration is outside the active Host Mount");
+
+    assert!(
+        error.to_string().contains("opaque command dispatcher"),
+        "{error}"
+    );
+}
+
+#[cfg(target_os = "macos")]
+#[tokio::test]
 async fn seatbelt_rejects_rake_project_tasks_with_uninspectable_reads() {
     let mount = TempDir::new().unwrap();
     let outside = TempDir::new().unwrap();
@@ -359,6 +383,9 @@ async fn seatbelt_rejects_swift_project_runner_with_uninspectable_reads() {
 #[test]
 fn project_code_dispatchers_are_rejected_as_opaque() {
     for command in [
+        "git config --global --list",
+        "git config --system --list",
+        "git config --list",
         "git add file.txt",
         "git am change.patch",
         "git checkout branch",

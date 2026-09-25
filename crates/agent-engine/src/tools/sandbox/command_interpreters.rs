@@ -25,7 +25,7 @@ pub(super) fn opaque_command_dispatcher_display(
 fn has_uninspectable_git_dispatch(args: &[String]) -> bool {
     // ponytail: only common built-ins are allowed; add names only for a real shell workflow need.
     const BUILTINS: &str = concat!(
-        "add archive blame branch cat-file checkout cherry-pick clean clone commit config ",
+        "add archive blame branch cat-file checkout cherry-pick clean clone commit ",
         "describe diff diff-files diff-index diff-tree fetch format-patch grep help init log ",
         "ls-files ls-tree merge merge-base mv notes pull push rebase remote reset restore ",
         "revert rev-list rev-parse rm shortlog show show-ref stash status switch tag worktree"
