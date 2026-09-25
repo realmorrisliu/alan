@@ -207,14 +207,24 @@ fn project_script_dispatchers_are_rejected_as_opaque() {
         "yarn workspaces foreach run test",
         "bun run leak",
         "deno task leak",
+        "cargo run",
+        "cargo test -p app",
+        "cargo --manifest-path app/Cargo.toml build",
+        "cargo xtask release",
+        "pytest -s",
+        "python3 -m pytest -s",
+        "python3 -m unittest test_module",
     ] {
         let words = command
             .split_whitespace()
             .map(str::to_string)
             .collect::<Vec<_>>();
-        let error =
-            super::super::command_wrappers::validate_opaque_command_dispatchers(&[words], "test")
-                .expect_err(command);
+        let error = super::super::command_wrappers::validate_opaque_command_dispatchers(
+            &[words],
+            "test",
+            true,
+        )
+        .expect_err(command);
         assert!(
             error.to_string().contains("opaque command dispatcher"),
             "{error}"
@@ -228,13 +238,36 @@ fn project_script_dispatchers_are_rejected_as_opaque() {
         "npm view alan",
         "pnpm root",
         "yarn info alan",
+        "cargo metadata --no-deps",
+        "cargo fmt",
+        "cargo new app",
+        "cargo add serde",
+        "pytest --version",
     ] {
         let words = command
             .split_whitespace()
             .map(str::to_string)
             .collect::<Vec<_>>();
-        super::super::command_wrappers::validate_opaque_command_dispatchers(&[words], "test")
+        super::super::command_wrappers::validate_opaque_command_dispatchers(&[words], "test", true)
             .expect(command);
+    }
+
+    for command in [
+        "cargo test",
+        "pytest -q",
+        "python3 -m pytest -s",
+        "python3 -m unittest test_module",
+    ] {
+        let words = command
+            .split_whitespace()
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        super::super::command_wrappers::validate_opaque_command_dispatchers(
+            &[words],
+            "test",
+            false,
+        )
+        .expect(command);
     }
 }
 

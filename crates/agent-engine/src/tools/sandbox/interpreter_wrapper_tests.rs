@@ -55,8 +55,16 @@ async fn test_sandbox_exec_blocks_python_module_interpreter() {
 }
 
 #[test]
-fn test_bash_preflight_allows_python_module_pytest() {
-    assert!(Sandbox::bash_preflight_reason("python3 -m pytest -q test_requests.py").is_none());
+fn test_bash_preflight_allows_human_reviewed_python_test_modules() {
+    for command in [
+        "python3 -m pytest -q test_requests.py",
+        "python3 -m unittest test_module",
+    ] {
+        assert!(
+            Sandbox::bash_preflight_reason(command).is_none(),
+            "{command}"
+        );
+    }
 }
 
 #[tokio::test]

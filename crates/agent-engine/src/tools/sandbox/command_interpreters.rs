@@ -4,14 +4,15 @@ pub(super) fn opaque_command_dispatcher_display(
     display: &str,
     command: &str,
     args: &[String],
+    reject_project_code_dispatchers: bool,
 ) -> Option<String> {
     if command == "xargs" {
         return Some(display.to_string());
     }
-    if command == "git" && has_uninspectable_git_dispatch(args) {
+    if reject_project_code_dispatchers && command == "git" && has_uninspectable_git_dispatch(args) {
         return Some(format!("{display} extension"));
     }
-    if is_package_script_dispatcher(command, args) {
+    if reject_project_code_dispatchers && is_project_code_dispatcher(command, args) {
         return Some(display.to_string());
     }
     (command == "find")
@@ -74,19 +75,28 @@ fn has_uninspectable_git_dispatch(args: &[String]) -> bool {
     false
 }
 
-fn is_package_script_dispatcher(command: &str, args: &[String]) -> bool {
+fn is_project_code_dispatcher(command: &str, args: &[String]) -> bool {
+    if matches!(command, "python" | "python3")
+        && args.windows(2).any(|pair| {
+            matches!(pair[0].as_str(), "-m" | "--module") && one_of(&pair[1], "pytest unittest")
+        })
+    {
+        return true;
+    }
+    if command == "pytest" {
+        return !args.iter().any(|arg| one_of(arg, "--help -h --version"));
+    }
     let Some(subcommand) = package_manager_subcommand(command, args) else {
         return false;
     };
 
-    // ponytail: common managers only; kernel read confinement is the upgrade path.
+    // ponytail: known project-code runners only; kernel read confinement is the upgrade path.
     match command {
         "npm" => one_of(
             subcommand,
             "run run-script rum urn exec x explore install i ci add update up rebuild restart start stop test tst install-test install-ci-test init create pack publish version",
         ),
         "npx" | "pnpx" | "bunx" => true,
-        // pnpm and Yarn also treat otherwise-unknown commands as package scripts.
         "pnpm" => {
             one_of(
                 subcommand,
@@ -110,14 +120,21 @@ fn is_package_script_dispatcher(command: &str, args: &[String]) -> bool {
                 || !one_of(subcommand, "--version -v --help help pm")
         }
         "deno" => one_of(subcommand, "run task test"),
+        "cargo" => {
+            one_of(
+                subcommand,
+                "build check run test bench clippy doc install package publish rustc",
+            ) || !one_of(
+                subcommand,
+                "--version -V --help help clean fmt metadata tree search info update fetch vendor generate-lockfile locate-project read-manifest verify-project new init add remove rm",
+            )
+        }
         _ => false,
     }
 }
 
 fn one_of(value: &str, choices: &str) -> bool {
-    choices
-        .split_ascii_whitespace()
-        .any(|choice| choice == value)
+    choices.split_whitespace().any(|v| v == value)
 }
 
 fn package_manager_subcommand<'a>(command: &str, args: &'a [String]) -> Option<&'a str> {
@@ -129,6 +146,9 @@ fn package_manager_subcommand<'a>(command: &str, args: &'a [String]) -> Option<&
         "yarn" => "--cwd --cache-folder --modules-folder",
         "bun" => "--cwd --config",
         "deno" => "--config --import-map --lock --cert",
+        "cargo" => {
+            "--color --config --manifest-path --target --target-dir --message-format --explain"
+        }
         _ => "",
     };
 
@@ -139,11 +159,13 @@ fn package_manager_subcommand<'a>(command: &str, args: &'a [String]) -> Option<&
         }
         if one_of(argument, value_options) {
             index += 2;
-        } else if argument.starts_with('-') {
-            index += 1;
-        } else {
-            return Some(argument);
+            continue;
         }
+        if argument.starts_with('-') {
+            index += 1;
+            continue;
+        }
+        return Some(argument);
     }
     None
 }
@@ -157,13 +179,11 @@ fn find_dispatch_clause(args: &[String]) -> Option<&'static str> {
             .copied()
             .find(|flag| *flag == arg)?;
         let tail = &args[index + 1..];
-        let first_child_arg = tail.first()?;
-        if first_child_arg.starts_with('-') {
-            return None;
-        }
-        tail.iter()
-            .any(|candidate| candidate == ";" || candidate == "+")
-            .then_some(flag)
+        (!tail.first()?.starts_with('-')
+            && tail
+                .iter()
+                .any(|candidate| candidate == ";" || candidate == "+"))
+        .then_some(flag)
     })
 }
 
@@ -220,8 +240,10 @@ fn python_script_interpreter_display(display: &str, args: &[String]) -> Option<S
                 .map(|script| format!("{display} {}", script));
         }
         if matches!(arg, "-m" | "--module") {
-            let module = args.get(index + 1).map(|value| value.as_str());
-            if module.is_some_and(is_safe_python_module_runner) {
+            if args
+                .get(index + 1)
+                .is_some_and(|module| is_safe_python_module_runner(module))
+            {
                 return None;
             }
             return Some(format!("{display} {arg}"));

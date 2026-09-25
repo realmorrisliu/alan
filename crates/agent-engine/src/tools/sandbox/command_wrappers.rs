@@ -117,7 +117,7 @@ fn validate_nested_command_evaluators_inner(
     backend_name: &str,
     allow_inspectable_shell_and_awk: bool,
 ) -> Result<()> {
-    validate_opaque_command_dispatchers(commands, backend_name)?;
+    validate_opaque_command_dispatchers(commands, backend_name, allow_inspectable_shell_and_awk)?;
     for words in commands {
         let Some(view) = nested_evaluator_view(words) else {
             continue;
@@ -267,14 +267,18 @@ fn pax_reads_file_list_from_stdin(args: &[String]) -> bool {
 pub(super) fn validate_opaque_command_dispatchers(
     commands: &[Vec<String>],
     backend_name: &str,
+    reject_project_code_dispatchers: bool,
 ) -> Result<()> {
     for words in commands {
         let Some(view) = nested_evaluator_view(words) else {
             continue;
         };
-        if let Some(dispatcher) =
-            opaque_command_dispatcher_display(&view.display, view.command, view.args)
-        {
+        if let Some(dispatcher) = opaque_command_dispatcher_display(
+            &view.display,
+            view.command,
+            view.args,
+            reject_project_code_dispatchers,
+        ) {
             return Err(anyhow!(
                 "Sandbox backend {} rejects opaque command dispatchers like {} because child command paths cannot be validated safely",
                 backend_name,
