@@ -103,7 +103,7 @@ fn replace_path_prefixes(text: &str, prefix: &str, replacement: &str) -> String 
                 || ch == std::path::MAIN_SEPARATOR
                 || matches!(
                     ch,
-                    ':' | ',' | ';' | ')' | ']' | '}' | '\'' | '"' | '>' | '`'
+                    ':' | ',' | ';' | ')' | ']' | '}' | '\'' | '"' | '>' | '`' | '*'
                 )
         }) || is_terminal_sentence_punctuation(suffix, 0);
         if boundary_before && boundary_after {
@@ -155,7 +155,7 @@ fn is_path_start(text: &str, start: usize) -> bool {
             ch.is_whitespace()
                 || matches!(
                     ch,
-                    '=' | ':' | '\'' | '"' | '(' | '[' | '{' | ',' | '<' | '`'
+                    '=' | ':' | '\'' | '"' | '(' | '[' | '{' | ',' | '<' | '`' | '*'
                 )
         })
 }
@@ -718,6 +718,8 @@ mod tests {
         assert_eq!(adapter.project_text(&file_uri), "file://./notes.txt");
         let markdown_path = format!("failed at `{}`", host_root.display());
         assert_eq!(adapter.project_text(&markdown_path), "failed at `.`");
+        let emphasized_path = format!("failed at **{}**", host_root.display());
+        assert_eq!(adapter.project_text(&emphasized_path), "failed at **.**");
         let bracketed_path = format!("failed at <{}>", host_root.display());
         assert_eq!(adapter.project_text(&bracketed_path), "failed at <.>");
 

@@ -300,6 +300,10 @@ async fn sandbox_rejects_file_lists_from_stdin_under_seatbelt() {
         ),
         format!("printf '{}\\n' | cpio -o | strings", outside_file.display()),
         format!("printf '{}\\n' | cpio -pd .", outside_file.display()),
+        format!(
+            "printf '{}\\n' | pax -w -f host-files.pax",
+            outside_file.display()
+        ),
     ];
     for command in commands {
         let error = sandbox
@@ -314,6 +318,31 @@ async fn sandbox_rejects_file_lists_from_stdin_under_seatbelt() {
 
         assert!(error.to_string().contains("file-list consumers"), "{error}");
     }
+}
+
+#[tokio::test]
+async fn sandbox_allows_pax_write_with_explicit_file_operands_under_seatbelt() {
+    let mount = TempDir::new().unwrap();
+    std::fs::write(mount.path().join("input.txt"), "payload\n").unwrap();
+    let spec = SandboxSpec::from_host_mounts(&[SandboxHostMount {
+        namespace_path: PathBuf::from("/mnt/project"),
+        host_path: mount.path().to_path_buf(),
+        access: ReifiedMountAccess::ReadWrite,
+    }]);
+    let sandbox = Sandbox::from_spec_with_backend(spec, SandboxBackendKind::Seatbelt);
+
+    let result = sandbox
+        .exec_with_timeout_and_capability(
+            "pax -w -f host-files.pax input.txt",
+            mount.path(),
+            None,
+            Some(alan_agent_protocol::ToolCapability::Write),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(result.exit_code, 0, "{}", result.stderr);
+    assert!(mount.path().join("host-files.pax").is_file());
 }
 
 #[tokio::test]

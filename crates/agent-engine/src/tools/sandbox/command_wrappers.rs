@@ -106,8 +106,50 @@ fn has_uninspectable_file_list_input(command: &str, args: &[String]) -> bool {
                     && !arg.starts_with("--")
                     && arg[1..].chars().any(|option| matches!(option, 'o' | 'p')))
         }),
+        "pax" => pax_reads_file_list_from_stdin(args),
         _ => false,
     }
+}
+
+fn pax_reads_file_list_from_stdin(args: &[String]) -> bool {
+    let mut args = args.iter().peekable();
+    let mut write_mode = false;
+    let mut has_path_operand = false;
+
+    while let Some(arg) = args.next() {
+        if arg == "--" {
+            return write_mode && !has_path_operand && args.next().is_none();
+        }
+        let Some(options) = arg.strip_prefix('-') else {
+            has_path_operand = true;
+            continue;
+        };
+        if options.is_empty() {
+            has_path_operand = true;
+            continue;
+        }
+
+        for (index, option) in options.char_indices() {
+            if option == 'w' {
+                write_mode = true;
+            }
+            if matches!(
+                option,
+                'b' | 'f' | 'o' | 'p' | 's' | 'x' | 'B' | 'E' | 'G' | 'U' | 'T'
+            ) {
+                let has_attached_value = index + option.len_utf8() < options.len();
+                let optional_value = option == 'T';
+                if !has_attached_value
+                    && (!optional_value || args.peek().is_some_and(|next| !next.starts_with('-')))
+                {
+                    args.next();
+                }
+                break;
+            }
+        }
+    }
+
+    write_mode && !has_path_operand
 }
 
 pub(super) fn validate_opaque_command_dispatchers(
