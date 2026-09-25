@@ -22,7 +22,9 @@ use crate::transcript_ui::{
     INLINE_COMMAND_PROMPT_PREFIX, INLINE_PROMPT_PREFIX, INLINE_WAITING_PROMPT_PREFIX,
 };
 
-use super::file_surface::{TapeRecordV1, response_text_from_content};
+use super::file_surface::{
+    ActionSnapshot, TapeRecordV1, response_text_from_content, sync_action_snapshot,
+};
 fn default_commands() -> Vec<CompletionCandidate> {
     [
         ("compact", "summarize context"),
@@ -71,7 +73,9 @@ pub(super) struct FileBackedApp {
     pub(super) composer: Composer,
     pub(super) transcript: Vec<HistoryCell>,
     pub(super) action_cells: BTreeMap<String, usize>,
-    command_submission_ids: HashSet<String>,
+    pub(super) command_submission_ids: HashSet<String>,
+    pub(super) tape_user_cells: HashMap<String, usize>,
+    pub(super) pending_command_actions: HashMap<String, ActionSnapshot>,
     pub(super) activity: UiActivitySnapshot,
     pub(super) plan: UiPlanSnapshot,
     pub(super) thinking: UiThinkingSnapshot,
@@ -107,6 +111,8 @@ impl FileBackedApp {
             transcript: Vec::new(),
             action_cells: BTreeMap::new(),
             command_submission_ids: HashSet::new(),
+            tape_user_cells: HashMap::new(),
+            pending_command_actions: HashMap::new(),
             activity: UiActivitySnapshot::idle(),
             plan: UiPlanSnapshot::empty(),
             thinking: UiThinkingSnapshot::idle(),
@@ -137,10 +143,6 @@ impl FileBackedApp {
 
     pub(super) fn mark_command_submission(&mut self, submission_id: impl Into<String>) {
         self.command_submission_ids.insert(submission_id.into());
-    }
-
-    pub(super) fn is_command_submission(&self, submission_id: &str) -> bool {
-        self.command_submission_ids.contains(submission_id)
     }
 
     pub(super) fn dispatch(&mut self, event: FileBackedEvent) -> Option<FileBackedAction> {
@@ -464,6 +466,8 @@ impl FileBackedApp {
             "clear" => {
                 self.transcript.clear();
                 self.action_cells.clear();
+                self.tape_user_cells.clear();
+                self.pending_command_actions.clear();
                 self.pending_remote_turn_start = None;
                 self.scrollback_front_is_partial = false;
                 None
@@ -551,14 +555,15 @@ impl FileBackedApp {
         self.transcript.push(cell);
     }
 
-    pub(super) fn insert_user_boundary(&mut self, content: String) {
+    pub(super) fn insert_user_boundary(&mut self, cell: HistoryCell) -> usize {
         let index = self
             .pending_remote_turn_start
             .take()
             .unwrap_or(self.transcript.len())
             .min(self.transcript.len());
-        self.transcript.insert(index, HistoryCell::User(content));
+        self.transcript.insert(index, cell);
         self.shift_action_cells_for_insert(index);
+        index
     }
 
     pub(super) fn flush_held_stream_after_boundary(&mut self) {
@@ -621,14 +626,39 @@ impl FileBackedApp {
         if record.kind != "message" {
             return;
         }
+        let mut matched_command_action = None;
         match record.role.as_str() {
             "user" => {
                 self.count_tape_user_prompt(&record.content);
+                let pending_action = record
+                    .submission_id
+                    .as_ref()
+                    .and_then(|id| self.pending_command_actions.remove(id));
+                let is_command = pending_action.is_some()
+                    || record
+                        .submission_id
+                        .as_deref()
+                        .is_some_and(|id| self.command_submission_ids.contains(id));
                 match self.reconciler.on_user_record(&record.content) {
                     UserDecision::Drop => {}
-                    UserDecision::Push(content) => self.insert_user_boundary(content),
+                    UserDecision::Push(content) => {
+                        let cell = if is_command {
+                            HistoryCell::Command(content)
+                        } else {
+                            HistoryCell::User(content)
+                        };
+                        let index = self.insert_user_boundary(cell);
+                        if let Some(submission_id) = &record.submission_id {
+                            self.tape_user_cells.insert(submission_id.clone(), index);
+                        }
+                    }
                 }
                 self.flush_held_stream_after_boundary();
+                if let (Some(submission_id), Some(action)) = (&record.submission_id, pending_action)
+                {
+                    self.mark_command_submission(submission_id.clone());
+                    matched_command_action = Some(action);
+                }
             }
             "assistant" => {
                 let idx = self.current_assistant_cell();
@@ -654,6 +684,9 @@ impl FileBackedApp {
                 }
             }
             _ => {}
+        }
+        if let Some(snapshot) = matched_command_action {
+            sync_action_snapshot(self, snapshot);
         }
     }
 
@@ -795,6 +828,11 @@ impl FileBackedApp {
         if cells_to_remove > 0 {
             self.transcript.drain(0..cells_to_remove);
             self.shift_action_cells(cells_to_remove);
+            self.tape_user_cells
+                .retain(|_, index| *index >= cells_to_remove);
+            for index in self.tape_user_cells.values_mut() {
+                *index -= cells_to_remove;
+            }
             self.shift_pending_remote_turn_start(cells_to_remove);
             self.scrollback_front_is_partial = false;
         }
@@ -826,6 +864,11 @@ impl FileBackedApp {
 
     pub(super) fn shift_action_cells_for_insert(&mut self, inserted_at: usize) {
         for index in self.action_cells.values_mut() {
+            if *index >= inserted_at {
+                *index += 1;
+            }
+        }
+        for index in self.tape_user_cells.values_mut() {
             if *index >= inserted_at {
                 *index += 1;
             }
@@ -870,6 +913,8 @@ impl FileBackedApp {
     pub(super) fn reset_for_root_process_change(&mut self) {
         self.action_cells.clear();
         self.command_submission_ids.clear();
+        self.tape_user_cells.clear();
+        self.pending_command_actions.clear();
         self.activity = UiActivitySnapshot::idle();
         self.plan = UiPlanSnapshot::empty();
         self.thinking = UiThinkingSnapshot::idle();

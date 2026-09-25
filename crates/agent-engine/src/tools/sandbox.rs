@@ -26,6 +26,7 @@ pub use sandbox_spec::{NetworkPosture, SandboxHostMount, SandboxSpec};
 use command_wrappers::{
     shell_wrapper_inline_script, validate_direct_command_shapes,
     validate_nested_command_evaluators, validate_opaque_awk_script_files,
+    validate_protected_only_command_evaluators,
 };
 use path_literals::{
     TokenPathRole, absolute_executable_token_starts, is_allowed_absolute_command_path,
@@ -360,11 +361,11 @@ impl Sandbox {
         sandbox.validate_shell_features(cmd)?;
 
         if sandbox.active_backend().permits_autonomous_bash() {
-            // Seatbelt kernel-confines the host_mount fs + network, so the syntactic
-            // *shape* checks are dropped — they would reject commands the sandbox
-            // safely contains (`bash -lc ...`, `python -c ...`). Path containment
-            // and the protected-subpath check (incl. shell-wrapper-nested) still
-            // run in ProtectedOnly mode.
+            // Seatbelt kernel-confines Host Mount writes + network, so direct-command
+            // shape checks are relaxed to allow inspectable shell wrappers. Path
+            // containment and protected-subpath checks still run in ProtectedOnly
+            // mode; reads are not kernel-confined, so known opaque evaluators remain
+            // rejected.
             sandbox.validate_command_paths(cmd, cwd, PathCheckMode::ProtectedOnly, capability)?;
         } else {
             // No kernel protected-subpath enforcement (Landlock cannot carve a
@@ -598,9 +599,9 @@ impl Sandbox {
             };
         }
 
-        // In ProtectedOnly mode an unparseable shape is tolerated (the OS sandbox
-        // confines writes + network), but parseable path operands are still
-        // containment-checked below — only the syntactic shape checks are dropped.
+        // In ProtectedOnly mode an unparseable shape is tolerated, but the OS
+        // sandbox does not confine reads. Known opaque evaluators and dispatchers
+        // are rejected while parseable path operands remain containment-checked.
         let tokens = match shell_tokens_with_spans(trimmed) {
             Ok(tokens) => tokens,
             Err(err) => return if protected_only { Ok(()) } else { Err(err) },
@@ -615,6 +616,7 @@ impl Sandbox {
             self.validate_nested_command_evaluators(&commands)?;
         } else {
             validate_opaque_awk_script_files(&commands, self.backend_name())?;
+            validate_protected_only_command_evaluators(&commands, self.backend_name())?;
         }
 
         // Wrapper forms (`bash -lc 'echo x > .git/config'`) hide their operands

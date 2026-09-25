@@ -16,6 +16,8 @@ pub(in crate::file_backed) fn hydrate_tape_history(
     raw: &str,
     actions: &[ActionSnapshot],
 ) {
+    app.tape_user_cells.clear();
+    app.pending_command_actions.clear();
     let mut actions_by_submission = std::collections::HashMap::new();
     for action in actions.iter().rev() {
         if !matches!(action.name.as_str(), "bash" | "cd") {

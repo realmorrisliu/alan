@@ -340,6 +340,61 @@ pub(super) fn awk_next_argument_role(args: &[String], candidate: &str) -> AwkArg
     }
 }
 
+pub(super) fn awk_program_has_uninspectable_io(program: &str) -> bool {
+    // ponytail: fail closed on AWK's opaque I/O hooks; single-pipe bitwise-OR is
+    // also rejected unless a supported command demonstrates that it matters.
+    let tokens = awk_tokens(program);
+    if tokens.iter().enumerate().any(|(index, token)| match token {
+        AwkToken::Identifier("system" | "ARGV" | "ARGC") => true,
+        AwkToken::Symbol('|') => {
+            !matches!(
+                tokens.get(index.wrapping_sub(1)),
+                Some(AwkToken::Symbol('|'))
+            ) && !matches!(tokens.get(index + 1), Some(AwkToken::Symbol('|')))
+        }
+        _ => false,
+    }) {
+        return true;
+    }
+
+    awk_prints_to_file(&tokens)
+}
+
+fn awk_prints_to_file(tokens: &[AwkToken<'_>]) -> bool {
+    for (index, token) in tokens.iter().enumerate() {
+        if !matches!(token, AwkToken::Identifier("print" | "printf")) {
+            continue;
+        }
+        let mut parentheses = 0usize;
+        let mut brackets = 0usize;
+        for (candidate_index, candidate) in tokens.iter().enumerate().skip(index + 1) {
+            match candidate {
+                AwkToken::Symbol('(') => parentheses += 1,
+                AwkToken::Symbol(')') => parentheses = parentheses.saturating_sub(1),
+                AwkToken::Symbol('[') => brackets += 1,
+                AwkToken::Symbol(']') => brackets = brackets.saturating_sub(1),
+                AwkToken::Symbol(';' | '}') | AwkToken::Newline
+                    if parentheses == 0 && brackets == 0 =>
+                {
+                    break;
+                }
+                AwkToken::Symbol('>')
+                    if parentheses == 0
+                        && brackets == 0
+                        && !matches!(
+                            tokens.get(candidate_index + 1),
+                            Some(AwkToken::Symbol('='))
+                        ) =>
+                {
+                    return true;
+                }
+                _ => {}
+            }
+        }
+    }
+    false
+}
+
 // ponytail: inspect only getline file operands; regex text may be conservatively rejected.
 // Use a real AWK parser only if that false positive affects supported commands.
 pub(super) fn awk_getline_file_paths(program: &str) -> Option<Vec<String>> {

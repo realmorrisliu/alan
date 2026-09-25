@@ -54,7 +54,7 @@ fn reattached_command_restores_intent_and_output_from_tape_action_correlation() 
             ]),
         ]
     );
-    assert!(app.is_command_submission("submission-1"));
+    assert!(app.classify_command_submission("submission-1"));
     assert_eq!(app.action_cells.get("a0"), Some(&1));
 
     let updated_action = ActionSnapshot {
@@ -70,6 +70,82 @@ fn reattached_command_restores_intent_and_output_from_tape_action_correlation() 
         vec![
             HistoryCell::Command("git status".to_string()),
             HistoryCell::Rendered(vec!["updated output".to_string()]),
+        ]
+    );
+}
+
+#[test]
+fn live_remote_command_uses_tape_and_action_submission_correlation() {
+    let mut app = FileBackedApp::new("/agent/1".to_string());
+    app.apply_tape_record(TapeRecordV1 {
+        version: 1,
+        kind: "message".to_string(),
+        role: "user".to_string(),
+        content: "git status".to_string(),
+        submission_id: Some("8ed8a9bb-a344-4a39-8225-325b22c92756".to_string()),
+    });
+
+    sync_action_snapshot(
+        &mut app,
+        ActionSnapshot {
+            id: "a-remote".to_string(),
+            name: "bash".to_string(),
+            status: "completed".to_string(),
+            output: r#"{"stdout":"working tree clean\n","stderr":"","exit_code":0}"#.to_string(),
+            result: r#"{"call_id":"8ed8a9bb-a344-4a39-8225-325b22c92756","exit_code":0}"#
+                .to_string(),
+        },
+    );
+
+    assert_eq!(
+        app.transcript,
+        vec![
+            HistoryCell::Command("git status".to_string()),
+            HistoryCell::Rendered(vec!["working tree clean".to_string()]),
+        ]
+    );
+}
+
+#[test]
+fn live_remote_command_correlates_when_the_action_event_arrives_first() {
+    let mut app = FileBackedApp::new("/agent/1".to_string());
+    let running_action = ActionSnapshot {
+        id: "a-remote".to_string(),
+        name: "bash".to_string(),
+        status: "running".to_string(),
+        output: String::new(),
+        result: r#"{"call_id":"8ed8a9bb-a344-4a39-8225-325b22c92756","exit_code":0}"#.to_string(),
+    };
+    sync_action_snapshot(&mut app, running_action);
+    app.apply_tape_record(TapeRecordV1 {
+        version: 1,
+        kind: "message".to_string(),
+        role: "user".to_string(),
+        content: "git status".to_string(),
+        submission_id: Some("8ed8a9bb-a344-4a39-8225-325b22c92756".to_string()),
+    });
+    assert_eq!(
+        app.transcript,
+        vec![HistoryCell::Command("git status".to_string())]
+    );
+
+    sync_action_snapshot(
+        &mut app,
+        ActionSnapshot {
+            id: "a-remote".to_string(),
+            name: "bash".to_string(),
+            status: "completed".to_string(),
+            output: r#"{"stdout":"working tree clean\n","stderr":"","exit_code":0}"#.to_string(),
+            result: r#"{"call_id":"8ed8a9bb-a344-4a39-8225-325b22c92756","exit_code":0}"#
+                .to_string(),
+        },
+    );
+
+    assert_eq!(
+        app.transcript,
+        vec![
+            HistoryCell::Command("git status".to_string()),
+            HistoryCell::Rendered(vec!["working tree clean".to_string()]),
         ]
     );
 }

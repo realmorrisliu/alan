@@ -785,27 +785,73 @@ pub(super) fn sync_action_snapshot(app: &mut FileBackedApp, snapshot: ActionSnap
     if let Some(tool) = running_tool(&snapshot) {
         app.running_tools.push(tool);
     }
-    let explicit_command = serde_json::from_str::<Value>(&snapshot.result)
-        .ok()
+    let command_call_id = matches!(snapshot.name.as_str(), "bash" | "cd")
+        .then(|| serde_json::from_str::<Value>(&snapshot.result).ok())
+        .flatten()
         .and_then(|result| {
             result
                 .get("call_id")
                 .and_then(Value::as_str)
                 .map(str::to_owned)
-        })
-        .is_some_and(|call_id| app.is_command_submission(&call_id));
+        });
+    let explicit_command = command_call_id
+        .as_deref()
+        .is_some_and(|call_id| app.classify_command_submission(call_id));
+    if !explicit_command && command_call_id.is_some() {
+        app.mark_pending_remote_turn_start_if_unbounded();
+    }
     let cell = if explicit_command {
         command_action_history_cell(&snapshot).or_else(|| {
-            Some(HistoryCell::Error(
-                "command result is unavailable".to_string(),
-            ))
+            (!action_status_is_running(&snapshot.status))
+                .then(|| HistoryCell::Error("command result is unavailable".to_string()))
         })
     } else {
         action_snapshot_to_history_cell(&snapshot)
     };
     if let Some(cell) = cell {
-        app.upsert_action_cell(snapshot.id, cell);
+        app.upsert_action_cell(snapshot.id.clone(), cell);
     }
+    if !explicit_command
+        && app.pending_remote_turn_start.is_some()
+        && let Some(call_id) = command_call_id
+        && is_submission_id(&call_id)
+    {
+        app.pending_command_actions.insert(call_id, snapshot);
+    }
+}
+
+impl FileBackedApp {
+    pub(super) fn classify_command_submission(&mut self, submission_id: &str) -> bool {
+        if self.command_submission_ids.contains(submission_id) {
+            self.tape_user_cells.remove(submission_id);
+            return true;
+        }
+        let Some(index) = self.tape_user_cells.remove(submission_id) else {
+            return false;
+        };
+        let Some(cell) = self.transcript.get_mut(index) else {
+            return false;
+        };
+        match cell {
+            HistoryCell::User(text) => *cell = HistoryCell::Command(text.clone()),
+            HistoryCell::Command(_) => {}
+            _ => return false,
+        }
+        self.command_submission_ids
+            .insert(submission_id.to_string());
+        true
+    }
+}
+
+fn is_submission_id(value: &str) -> bool {
+    // UserInputRecord requires UUID submission IDs; provider tool IDs are not
+    // candidates for delayed tape correlation.
+    let bytes = value.as_bytes();
+    bytes.len() == 36
+        && bytes.iter().enumerate().all(|(index, byte)| match index {
+            8 | 13 | 18 | 23 => *byte == b'-',
+            _ => byte.is_ascii_hexdigit(),
+        })
 }
 
 fn running_tool(snapshot: &ActionSnapshot) -> Option<RunningTool> {
