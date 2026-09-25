@@ -18,6 +18,8 @@ use alan_service_manager::{
 };
 use anyhow::{Context, Result};
 
+mod path_projection;
+
 /// Native Host adapter. This is the only component that turns a raw Host path
 /// into a hostfs tree and native Tool sandbox authority.
 #[derive(Debug, Default)]
@@ -276,43 +278,7 @@ impl ToolExecutionAdapter for NativeToolExecutionAdapter {
     }
 
     fn project_text(&self, text: &str) -> String {
-        let Some(mount) = longest_namespace_mount(&self.mounts, &self.namespace_cwd) else {
-            return text.to_string();
-        };
-        let cwd = self.cwd.to_string_lossy();
-        let cwd = cwd.trim_end_matches(std::path::MAIN_SEPARATOR);
-        let mut projected = if cwd.is_empty() {
-            text.to_string()
-        } else {
-            replace_path_prefixes(text, cwd, ".")
-        };
-        let cwd_from_mount = self
-            .namespace_cwd
-            .strip_prefix(&mount.namespace_path)
-            .expect("selected Host Mount owns the namespace cwd");
-        let mut mount_from_cwd = PathBuf::new();
-        for _ in cwd_from_mount.components() {
-            mount_from_cwd.push("..");
-        }
-        if mount_from_cwd.as_os_str().is_empty() {
-            mount_from_cwd.push(".");
-        }
-        if mount.host_path != Path::new("/") {
-            projected = replace_path_prefixes(
-                &projected,
-                mount.host_path.to_string_lossy().as_ref(),
-                mount_from_cwd.to_string_lossy().as_ref(),
-            );
-        } else {
-            let replacement = mount_from_cwd.to_string_lossy();
-            let replacement = if replacement == "." {
-                "./".to_string()
-            } else {
-                format!("{replacement}/")
-            };
-            projected = replace_rooted_path_starts(&projected, &replacement);
-        }
-        projected
+        path_projection::project_text(self, text)
     }
 
     fn sandbox(&self) -> Result<Sandbox> {
@@ -517,6 +483,8 @@ mod tests {
     use alan_agent_engine::tools::{ToolExecutionAuthority, ToolExecutionBinding};
     use alan_ap::{ErrorCode, Fid, OpenMode, Request, Response};
     use alan_kernel::{LiveNamespace, MountFs, Namespace, Pid};
+
+    mod projection;
 
     fn service() -> Arc<HostMountService> {
         HostMountService::new(Arc::new(NativeHostMountExportAdapter))

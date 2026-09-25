@@ -99,6 +99,13 @@ fn has_uninspectable_file_list_input(command: &str, args: &[String]) -> bool {
         "zip" => args
             .iter()
             .any(|arg| arg.starts_with('-') && !arg.starts_with("--") && arg[1..].contains('@')),
+        "cpio" => args.first().is_some_and(|arg| {
+            arg == "--create"
+                || arg == "--pass-through"
+                || (arg.starts_with('-')
+                    && !arg.starts_with("--")
+                    && arg[1..].chars().any(|option| matches!(option, 'o' | 'p')))
+        }),
         _ => false,
     }
 }
