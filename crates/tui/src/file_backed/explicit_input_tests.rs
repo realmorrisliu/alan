@@ -28,6 +28,50 @@ fn explicit_command_action_renders_its_program_output() {
 }
 
 #[test]
+fn standalone_cd_action_is_a_successful_silent_command_result() {
+    let mut app = FileBackedApp::new("/agent/1".to_string());
+    app.mark_command_submission("submission-cd");
+
+    sync_action_snapshot(
+        &mut app,
+        ActionSnapshot {
+            id: "a0".to_string(),
+            name: "cd".to_string(),
+            status: "completed".to_string(),
+            output: r#"{"stdout":"","stderr":""}"#.to_string(),
+            result: r#"{"call_id":"submission-cd","exit_code":0,"outcome":{"success":true,"cwd":"/mnt/project/src"}}"#.to_string(),
+        },
+    );
+
+    assert_eq!(app.transcript, vec![HistoryCell::Rendered(Vec::new())]);
+}
+
+#[test]
+fn failed_standalone_cd_renders_its_diagnostic_and_exit_status() {
+    let mut app = FileBackedApp::new("/agent/1".to_string());
+    app.mark_command_submission("submission-cd");
+
+    sync_action_snapshot(
+        &mut app,
+        ActionSnapshot {
+            id: "a0".to_string(),
+            name: "cd".to_string(),
+            status: "failed".to_string(),
+            output: r#"{"stdout":"","stderr":"directory is not authorized"}"#.to_string(),
+            result: r#"{"call_id":"submission-cd","exit_code":1,"outcome":{"success":false,"error":"directory is not authorized"}}"#.to_string(),
+        },
+    );
+
+    assert_eq!(
+        app.transcript,
+        vec![HistoryCell::Rendered(vec![
+            "stderr> directory is not authorized".to_string(),
+            "error> command exited with status 1".to_string(),
+        ])]
+    );
+}
+
+#[test]
 fn submitted_command_keeps_its_prompt_intent_in_transcript() {
     let mut app = FileBackedApp::new("/agent/1".to_string());
     app.composer.insert_text("!git status");

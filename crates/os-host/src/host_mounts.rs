@@ -88,6 +88,31 @@ impl NativeToolExecutionAdapter {
     }
 }
 
+fn replace_path_prefixes(text: &str, prefix: &str, replacement: &str) -> String {
+    let mut projected = String::with_capacity(text.len());
+    let mut copied_through = 0;
+    for (start, _) in text.match_indices(prefix) {
+        let end = start + prefix.len();
+        let before = text[..start].chars().next_back();
+        let after = text[end..].chars().next();
+        let boundary_before = before.is_none_or(|ch| {
+            ch.is_whitespace() || matches!(ch, '=' | ':' | '\'' | '"' | '(' | '[' | '{' | ',')
+        });
+        let boundary_after = after.is_none_or(|ch| {
+            ch.is_whitespace()
+                || ch == std::path::MAIN_SEPARATOR
+                || matches!(ch, ':' | ',' | ';' | ')' | ']' | '}' | '\'' | '"')
+        });
+        if boundary_before && boundary_after {
+            projected.push_str(&text[copied_through..start]);
+            projected.push_str(replacement);
+            copied_through = end;
+        }
+    }
+    projected.push_str(&text[copied_through..]);
+    projected
+}
+
 impl ToolExecutionAdapter for NativeToolExecutionAdapter {
     fn namespace_cwd(&self) -> PathBuf {
         self.namespace_cwd.clone()
@@ -166,14 +191,36 @@ impl ToolExecutionAdapter for NativeToolExecutionAdapter {
     }
 
     fn project_text(&self, text: &str) -> String {
-        let mut projected = text.to_string();
-        let mut mounts = self.mounts.iter().collect::<Vec<_>>();
-        mounts.sort_by_key(|mount| std::cmp::Reverse(mount.host_path.as_os_str().len()));
-        for mount in mounts {
-            projected = projected.replace(
+        let Some(mount) = longest_namespace_mount(&self.mounts, &self.namespace_cwd) else {
+            return text.to_string();
+        };
+        let cwd = self.cwd.to_string_lossy();
+        let cwd = cwd.trim_end_matches(std::path::MAIN_SEPARATOR);
+        let mut projected = if cwd.is_empty() {
+            text.to_string()
+        } else {
+            replace_path_prefixes(text, cwd, ".")
+        };
+        if mount.host_path != Path::new("/") {
+            let cwd_from_mount = self
+                .namespace_cwd
+                .strip_prefix(&mount.namespace_path)
+                .expect("selected Host Mount owns the namespace cwd");
+            let mut mount_from_cwd = PathBuf::new();
+            for _ in cwd_from_mount.components() {
+                mount_from_cwd.push("..");
+            }
+            if mount_from_cwd.as_os_str().is_empty() {
+                mount_from_cwd.push(".");
+            }
+            projected = replace_path_prefixes(
+                &projected,
                 mount.host_path.to_string_lossy().as_ref(),
-                mount.namespace_path.to_string_lossy().as_ref(),
+                mount_from_cwd.to_string_lossy().as_ref(),
             );
+        } else {
+            // ponytail: root grants project the active cwd only; tokenizing arbitrary absolute
+            // output paths is deferred until root-level Host Mount output is a real workflow.
         }
         projected
     }
@@ -540,6 +587,8 @@ mod tests {
     async fn native_approval_projects_one_handle_into_namespace_and_tool_execution() {
         let host = tempfile::tempdir().unwrap();
         std::fs::write(host.path().join("notes.txt"), "hello").unwrap();
+        let source = host.path().join("src");
+        std::fs::create_dir(&source).unwrap();
         let service = service();
         let namespace = LiveNamespace::new(Namespace::new());
         service.register_process(Pid(7), namespace.clone());
@@ -591,7 +640,28 @@ mod tests {
                 .join("notes.txt")
                 .display()
         ));
-        assert_eq!(projected, "failed at /mnt/project/notes.txt");
+        assert_eq!(projected, "failed at ./notes.txt");
+        let sibling_path = format!("{}-backup/notes.txt", host.path().display());
+        assert_eq!(adapter.project_text(&sibling_path), sibling_path);
+
+        let nested = service
+            .reconcile(7, binding("/mnt/project/src"))
+            .unwrap()
+            .adapter()
+            .unwrap();
+        assert_eq!(
+            nested.project_text(&std::fs::canonicalize(source).unwrap().display().to_string()),
+            "."
+        );
+        assert_eq!(
+            nested.project_text(
+                &std::fs::canonicalize(host.path().join("notes.txt"))
+                    .unwrap()
+                    .display()
+                    .to_string()
+            ),
+            "../notes.txt"
+        );
         assert!(adapter.sandbox().unwrap().is_writable(host.path()));
     }
 

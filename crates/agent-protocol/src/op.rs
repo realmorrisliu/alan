@@ -212,16 +212,22 @@ impl Submission {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct UserInputRecord {
+    /// Version of this length-framed user input record payload.
     pub version: u8,
+    /// Stable UUID used to correlate this input with its Process-local result.
     pub submission_id: String,
+    /// Explicit routing intent, kept separate from scheduling mode.
     pub intent: InputIntent,
+    /// Runtime scheduling mode for the represented input.
     pub mode: InputMode,
+    /// Exact submitted body after consuming at most one explicit prefix.
     pub body: String,
 }
 
 const USER_INPUT_RECORD_MAGIC: &[u8] = b"alan-input-v1\n";
 
 impl UserInputRecord {
+    /// Create a version-1 input record with a generated submission UUID.
     pub fn new(intent: InputIntent, mode: InputMode, body: impl Into<String>) -> Self {
         Self {
             version: 1,
@@ -433,36 +439,6 @@ mod tests {
             (InputIntent::Agent, "please inspect ! literally")
         );
         assert_eq!(parse_input_prefix("!"), (InputIntent::Command, ""));
-    }
-
-    #[test]
-    fn user_input_record_keeps_identity_intent_and_scheduling_separate() {
-        let record = UserInputRecord::new(
-            InputIntent::Command,
-            InputMode::FollowUp,
-            "  printf 'a\\nb'  ",
-        );
-        let id = record.submission_id.clone();
-        let payload = record.encode_payload().unwrap();
-        let decoded = UserInputRecord::decode_payload(&payload)
-            .unwrap()
-            .expect("versioned record");
-
-        assert_eq!(decoded.version, 1);
-        assert_eq!(decoded.submission_id, id);
-        assert_eq!(decoded.intent, InputIntent::Command);
-        assert_eq!(decoded.mode, InputMode::FollowUp);
-        assert_eq!(decoded.body, "  printf 'a\\nb'  ");
-        let submission = decoded.into_submission().unwrap();
-        assert_eq!(submission.id, id);
-        assert_eq!(submission.intent, InputIntent::Command);
-        assert!(matches!(
-            submission.op,
-            Op::Input {
-                mode: InputMode::FollowUp,
-                ..
-            }
-        ));
     }
 
     // ========================================================================

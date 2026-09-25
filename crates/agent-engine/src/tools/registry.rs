@@ -682,15 +682,10 @@ impl ToolProcessRunner {
                     );
                 }
             };
-            if binding.namespace_cwd != requested_namespace_cwd {
-                return process_json_outcome(
-                    1,
-                    serde_json::json!({
-                        "success": false,
-                        "error": "Process cwd is no longer authorized; choose an explicit directory",
-                    }),
-                );
-            }
+            // Keep the Process-owned cwd even when reconciliation selects a
+            // fallback adapter. Explicit paths may still address other grants;
+            // cwd-dependent tools validate that their cwd remains authorized.
+            binding.namespace_cwd = requested_namespace_cwd;
         }
         let context = ToolContext::from_binding(binding, Arc::clone(&self.inner.config));
         let timeout_secs = if self.inner.config.tool_timeout_secs != 30 {

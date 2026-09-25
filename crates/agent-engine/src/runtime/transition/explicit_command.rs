@@ -112,6 +112,13 @@ where
             "failed",
         ),
     };
+    let exit_code = if success { 0 } else { 1 };
+    let stderr = if success {
+        ""
+    } else {
+        payload["error"].as_str().unwrap_or("standalone cd failed")
+    };
+    let output = serde_json::json!({"stdout": "", "stderr": stderr});
     let arguments = serde_json::json!({"operation": "cd"});
     state
         .machine
@@ -124,9 +131,11 @@ where
         .agent_files()
         .write_action(
             NamespaceActionRecord::new("cd", action_status)
+                .with_output(output.to_string())
                 .with_result(
                     serde_json::json!({
                         "call_id": submission_id,
+                        "exit_code": exit_code,
                         "outcome": payload,
                     })
                     .to_string(),
@@ -145,16 +154,6 @@ where
         audit: None,
     })
     .await;
-    if !success {
-        emit(Event::Error {
-            message: payload["error"]
-                .as_str()
-                .unwrap_or("standalone cd failed")
-                .to_string(),
-            recoverable: true,
-        })
-        .await;
-    }
     state.machine.set_turn_activity(TurnActivityState::Idle);
     Ok(())
 }
@@ -209,8 +208,14 @@ mod tests {
         let result: serde_json::Value =
             serde_json::from_slice(&shell.cat(&format!("{action_path}/result")).await.unwrap())
                 .unwrap();
+        let output: serde_json::Value =
+            serde_json::from_slice(&shell.cat(&format!("{action_path}/output")).await.unwrap())
+                .unwrap();
         assert_eq!(result["call_id"], submission_id);
+        assert_eq!(result["exit_code"], 0);
         assert_eq!(result["outcome"]["cwd"], "/mnt/project/src");
+        assert_eq!(output["stdout"], "");
+        assert_eq!(output["stderr"], "");
         assert_eq!(
             state
                 .machine

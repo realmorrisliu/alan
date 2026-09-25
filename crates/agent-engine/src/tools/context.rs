@@ -29,7 +29,7 @@ pub trait ToolExecutionAdapter: std::fmt::Debug + Send + Sync {
     /// Translate one native adapter path back into the Process namespace.
     fn visible_path(&self, host_path: &Path) -> PathBuf;
 
-    /// Redact native backing paths from text crossing back into Alan OS.
+    /// Project captured Host-native paths to Agent-visible paths.
     fn project_text(&self, text: &str) -> String;
 
     /// Return the Host-derived native sandbox for this Tool Process.
@@ -142,7 +142,12 @@ impl ToolContext {
 
     /// Return the Host-selected native cwd without retaining it in engine state.
     pub fn cwd(&self) -> Result<PathBuf> {
-        self.execution_adapter()?.cwd()
+        let adapter = self.execution_adapter()?;
+        anyhow::ensure!(
+            adapter.namespace_cwd() == self.namespace_cwd,
+            "Process cwd is no longer authorized; choose an explicit directory"
+        );
+        adapter.cwd()
     }
 
     pub fn execution_adapter(&self) -> Result<Arc<dyn ToolExecutionAdapter>> {
@@ -165,7 +170,7 @@ impl ToolContext {
         )
     }
 
-    /// Redact Host backing roots from native subprocess output.
+    /// Project captured Host-native paths to Agent-visible paths.
     pub fn project_text(&self, text: &str) -> String {
         self.adapter
             .as_ref()

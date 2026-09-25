@@ -45,7 +45,7 @@ impl Composer {
         self.cursor
     }
 
-    pub fn intent(&self) -> InputIntent {
+    pub(crate) fn intent(&self) -> InputIntent {
         self.intent
     }
 
@@ -73,7 +73,7 @@ impl Composer {
         }
     }
 
-    pub fn insert_text_literal(&mut self, text: &str) {
+    pub(crate) fn insert_text_literal(&mut self, text: &str) {
         self.buffer.insert_str(self.cursor, text);
         self.cursor += text.len();
         self.reset_recall();
@@ -132,7 +132,7 @@ impl Composer {
         self.handle_key_with_prefix(event, true)
     }
 
-    pub fn handle_key_literal(&mut self, event: KeyEvent) -> ComposerKeyOutcome {
+    pub(crate) fn handle_key_literal(&mut self, event: KeyEvent) -> ComposerKeyOutcome {
         self.handle_key_with_prefix(event, false)
     }
 
