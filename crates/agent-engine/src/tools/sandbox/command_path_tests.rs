@@ -148,6 +148,97 @@ async fn seatbelt_rejects_mount_local_executables_with_uninspectable_reads() {
 }
 
 #[tokio::test]
+async fn seatbelt_rejects_git_extension_aliases_with_uninspectable_reads() {
+    let mount = TempDir::new().unwrap();
+    let outside = TempDir::new().unwrap();
+    let secret = outside.path().join("host-only-marker.txt");
+    std::fs::write(&secret, "host-only-marker\n").unwrap();
+    let initialized = std::process::Command::new("git")
+        .args(["init", "--quiet"])
+        .current_dir(mount.path())
+        .status()
+        .unwrap();
+    assert!(initialized.success(), "git init failed: {initialized}");
+    let config_path = mount.path().join(".git/config");
+    let config = std::fs::read_to_string(&config_path).unwrap();
+    std::fs::write(
+        &config_path,
+        format!(
+            "{config}\n[alias]\n\tleak = !/bin/cat '{}'\n",
+            secret.display()
+        ),
+    )
+    .unwrap();
+
+    let sandbox = Sandbox::with_backend(
+        mount.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::Seatbelt,
+    );
+    let error = sandbox
+        .exec_with_timeout_and_capability(
+            "git leak",
+            mount.path(),
+            None,
+            Some(alan_agent_protocol::ToolCapability::Unknown),
+        )
+        .await
+        .expect_err("Git shell aliases can execute reads hidden from ProtectedOnly validation");
+
+    assert!(
+        error.to_string().contains("opaque command dispatcher"),
+        "{error}"
+    );
+}
+
+#[test]
+fn project_script_dispatchers_are_rejected_as_opaque() {
+    for command in [
+        "npm run leak",
+        "npm --prefix . run leak",
+        "npm rum leak",
+        "npm urn leak",
+        "npm x eslint .",
+        "npm explore app -- cat /etc/passwd",
+        "npm pack",
+        "npx eslint .",
+        "pnpm build",
+        "yarn build",
+        "yarn workspace app run leak",
+        "yarn workspaces foreach run test",
+        "bun run leak",
+        "deno task leak",
+    ] {
+        let words = command
+            .split_whitespace()
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        let error =
+            super::super::command_wrappers::validate_opaque_command_dispatchers(&[words], "test")
+                .expect_err(command);
+        assert!(
+            error.to_string().contains("opaque command dispatcher"),
+            "{error}"
+        );
+    }
+
+    for command in [
+        "git status",
+        "git -C . diff",
+        "git --no-pager log",
+        "npm view alan",
+        "pnpm root",
+        "yarn info alan",
+    ] {
+        let words = command
+            .split_whitespace()
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        super::super::command_wrappers::validate_opaque_command_dispatchers(&[words], "test")
+            .expect(command);
+    }
+}
+
+#[tokio::test]
 async fn absolute_path_executable_on_host_path_is_not_a_project_file_operand() {
     use std::os::unix::fs::PermissionsExt;
 

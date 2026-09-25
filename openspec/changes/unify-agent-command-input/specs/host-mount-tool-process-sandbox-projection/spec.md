@@ -94,6 +94,13 @@ boundary; `!` SHALL NOT imply unrestricted execution.
 - **THEN** native Tool execution rejects the command before launch because the
   executable could read paths that command-text validation cannot inspect
 
+#### Scenario: Config-driven command dispatch is rejected when reads are not kernel-confined
+- **WHEN** the native-command boundary relies on static path validation and a
+  Git alias or package script can dispatch code from project configuration
+- **THEN** native Tool execution rejects the opaque dispatcher before launch
+- **AND** a configured script cannot read outside the active Host Mount through
+  a path hidden from the submitted command text
+
 #### Scenario: Native output paths remain shell-usable and private
 - **WHEN** native stdout or stderr contains a path under the active cwd grant
 - **THEN** the Host adapter projects it relative to that submission's shared cwd

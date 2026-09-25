@@ -8,10 +8,144 @@ pub(super) fn opaque_command_dispatcher_display(
     if command == "xargs" {
         return Some(display.to_string());
     }
+    if command == "git" && has_uninspectable_git_dispatch(args) {
+        return Some(format!("{display} extension"));
+    }
+    if is_package_script_dispatcher(command, args) {
+        return Some(display.to_string());
+    }
     (command == "find")
         .then_some(())
         .and_then(|()| find_dispatch_clause(args))
         .map(|clause| format!("{display} {clause}"))
+}
+
+fn has_uninspectable_git_dispatch(args: &[String]) -> bool {
+    // ponytail: only common built-ins are allowed; add names only for a real shell workflow need.
+    const BUILTINS: &str = concat!(
+        "add archive blame branch cat-file checkout cherry-pick clean clone commit config ",
+        "describe diff diff-files diff-index diff-tree fetch format-patch grep help init log ",
+        "ls-files ls-tree merge merge-base mv notes pull push rebase remote reset restore ",
+        "revert rev-list rev-parse rm shortlog show show-ref stash status switch tag worktree"
+    );
+
+    let mut index = 0;
+    while let Some(argument) = args.get(index).map(String::as_str) {
+        match argument {
+            "-C" | "-c" | "--git-dir" | "--work-tree" | "--namespace" | "--super-prefix"
+            | "--config-env" => {
+                index += 2;
+                if index > args.len() {
+                    return true;
+                }
+            }
+            "-p"
+            | "--paginate"
+            | "--no-pager"
+            | "--bare"
+            | "--no-replace-objects"
+            | "--no-optional-locks"
+            | "--literal-pathspecs"
+            | "--glob-pathspecs"
+            | "--noglob-pathspecs"
+            | "--icase-pathspecs"
+            | "--exec-path" => index += 1,
+            "--version" | "-v" | "--help" | "-h" => return false,
+            argument
+                if argument.starts_with("-C")
+                    || argument.starts_with("-c")
+                    || argument.starts_with("--git-dir=")
+                    || argument.starts_with("--work-tree=")
+                    || argument.starts_with("--namespace=")
+                    || argument.starts_with("--super-prefix=")
+                    || argument.starts_with("--config-env=")
+                    || argument.starts_with("--exec-path=") =>
+            {
+                index += 1;
+            }
+            argument if argument.starts_with('-') => return true,
+            command => {
+                return !BUILTINS
+                    .split_ascii_whitespace()
+                    .any(|builtin| builtin == command);
+            }
+        }
+    }
+    false
+}
+
+fn is_package_script_dispatcher(command: &str, args: &[String]) -> bool {
+    let Some(subcommand) = package_manager_subcommand(command, args) else {
+        return false;
+    };
+
+    // ponytail: common managers only; kernel read confinement is the upgrade path.
+    match command {
+        "npm" => one_of(
+            subcommand,
+            "run run-script rum urn exec x explore install i ci add update up rebuild restart start stop test tst install-test install-ci-test init create pack publish version",
+        ),
+        "npx" | "pnpx" | "bunx" => true,
+        // pnpm and Yarn also treat otherwise-unknown commands as package scripts.
+        "pnpm" => {
+            one_of(
+                subcommand,
+                "run exec dlx test t start install i add update up rebuild create",
+            ) || !one_of(
+                subcommand,
+                "--version -v --help help root store list ls view info why config audit licenses server",
+            )
+        }
+        "yarn" => {
+            one_of(
+                subcommand,
+                "run exec dlx test start install add upgrade upgrade-interactive create node version workspace",
+            ) || !one_of(
+                subcommand,
+                "--version -v --help help info why list cache config licenses",
+            )
+        }
+        "bun" => {
+            one_of(subcommand, "run x test install i add update upgrade")
+                || !one_of(subcommand, "--version -v --help help pm")
+        }
+        "deno" => one_of(subcommand, "run task test"),
+        _ => false,
+    }
+}
+
+fn one_of(value: &str, choices: &str) -> bool {
+    choices
+        .split_ascii_whitespace()
+        .any(|choice| choice == value)
+}
+
+fn package_manager_subcommand<'a>(command: &str, args: &'a [String]) -> Option<&'a str> {
+    let value_options = match command {
+        "npm" => {
+            "--prefix --workspace -w --userconfig --registry --cache --loglevel --otp --script-shell --location"
+        }
+        "pnpm" => "--dir -C --filter -F --config --registry --store-dir",
+        "yarn" => "--cwd --cache-folder --modules-folder",
+        "bun" => "--cwd --config",
+        "deno" => "--config --import-map --lock --cert",
+        _ => "",
+    };
+
+    let mut index = 0;
+    while let Some(argument) = args.get(index).map(String::as_str) {
+        if argument == "--" {
+            return args.get(index + 1).map(String::as_str);
+        }
+        if one_of(argument, value_options) {
+            index += 2;
+        } else if argument.starts_with('-') {
+            index += 1;
+        } else {
+            return Some(argument);
+        }
+    }
+    None
 }
 
 fn find_dispatch_clause(args: &[String]) -> Option<&'static str> {
