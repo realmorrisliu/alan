@@ -423,6 +423,10 @@ impl FileBackedApp {
         if input.intent == InputIntent::Agent && input.body.starts_with('/') {
             return self.handle_command(&input.body);
         }
+        Some(FileBackedAction::Submit(input))
+    }
+
+    pub(super) fn accept_submission(&mut self, input: &ComposerInput) {
         self.transcript
             .push(if input.intent == InputIntent::Command {
                 HistoryCell::Command(input.body.clone())
@@ -431,7 +435,6 @@ impl FileBackedApp {
             });
         self.reconciler.on_local_submit(&input.body);
         self.pending_remote_turn_start = None;
-        Some(FileBackedAction::Submit(input))
     }
 
     pub(super) fn restore_rejected_submission(&mut self, input: &ComposerInput) {

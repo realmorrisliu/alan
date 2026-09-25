@@ -238,9 +238,10 @@ pub async fn run(config: FileBackedRunConfig) -> Result<()> {
                                         input.intent,
                                         &text,
                                     )
-                                    .await
+                                        .await
                                     {
                                         Ok(submission_id) => {
+                                            app.accept_submission(&input);
                                             if input.intent == InputIntent::Command {
                                                 app.mark_command_submission(submission_id);
                                             }

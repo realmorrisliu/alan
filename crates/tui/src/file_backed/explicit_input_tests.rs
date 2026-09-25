@@ -247,11 +247,12 @@ fn submitted_command_keeps_its_prompt_intent_in_transcript() {
     let mut app = FileBackedApp::new("/agent/1".to_string());
     app.composer.insert_text("!git status");
 
-    assert!(matches!(
-        app.handle_submit(),
-        Some(FileBackedAction::Submit(input))
-            if input.intent == InputIntent::Command && input.body == "git status"
-    ));
+    let Some(FileBackedAction::Submit(input)) = app.handle_submit() else {
+        panic!("submission was not dispatched");
+    };
+    assert_eq!(input.intent, InputIntent::Command);
+    assert_eq!(input.body, "git status");
+    app.accept_submission(&input);
     assert_eq!(
         app.transcript,
         vec![HistoryCell::Command("git status".to_string())]
@@ -260,16 +261,40 @@ fn submitted_command_keeps_its_prompt_intent_in_transcript() {
 }
 
 #[test]
+fn rejected_submission_does_not_leave_optimistic_history_or_echo_state() {
+    let mut app = FileBackedApp::new("/agent/1".to_string());
+    app.transcript
+        .push(HistoryCell::User("previous task".to_string()));
+    app.reconciler.on_local_submit("previous task");
+    app.composer.insert_text("rejected task");
+
+    let Some(FileBackedAction::Submit(input)) = app.handle_submit() else {
+        panic!("submission was not dispatched");
+    };
+    app.restore_rejected_submission(&input);
+
+    assert_eq!(
+        app.transcript,
+        vec![HistoryCell::User("previous task".to_string())]
+    );
+    assert!(matches!(
+        app.reconciler.on_user_record("previous task"),
+        crate::reconcile::UserDecision::Drop
+    ));
+}
+
+#[test]
 fn agent_body_with_leading_space_before_slash_is_submitted_as_agent_work() {
     let mut app = FileBackedApp::new("/agent/1".to_string());
     app.composer.insert_text(" /help");
 
     assert!(app.enter_submits_agent_task());
-    assert!(matches!(
-        app.handle_submit(),
-        Some(FileBackedAction::Submit(input))
-            if input.intent == InputIntent::Agent && input.body == " /help"
-    ));
+    let Some(FileBackedAction::Submit(input)) = app.handle_submit() else {
+        panic!("submission was not dispatched");
+    };
+    assert_eq!(input.intent, InputIntent::Agent);
+    assert_eq!(input.body, " /help");
+    app.accept_submission(&input);
     assert_eq!(
         app.transcript,
         vec![HistoryCell::User(" /help".to_string())]

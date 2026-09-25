@@ -190,6 +190,59 @@ async fn seatbelt_rejects_git_extension_aliases_with_uninspectable_reads() {
     );
 }
 
+#[cfg(target_os = "macos")]
+#[tokio::test]
+async fn seatbelt_rejects_git_commit_hooks_with_uninspectable_reads() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let mount = TempDir::new().unwrap();
+    let outside = TempDir::new().unwrap();
+    let secret = outside.path().join("host-only-marker.txt");
+    std::fs::write(&secret, "host-only-marker\n").unwrap();
+    let initialized = std::process::Command::new("git")
+        .args(["init", "--quiet"])
+        .current_dir(mount.path())
+        .status()
+        .unwrap();
+    assert!(initialized.success(), "git init failed: {initialized}");
+    std::fs::write(mount.path().join("tracked.txt"), "tracked\n").unwrap();
+    let staged = std::process::Command::new("git")
+        .args(["add", "tracked.txt"])
+        .current_dir(mount.path())
+        .status()
+        .unwrap();
+    assert!(staged.success(), "git add failed: {staged}");
+
+    let hooks = mount.path().join(".git/hooks");
+    let pre_commit = hooks.join("pre-commit");
+    std::fs::write(
+        &pre_commit,
+        format!("#!/bin/sh\ncat '{}'\n", secret.display()),
+    )
+    .unwrap();
+    std::fs::set_permissions(&pre_commit, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let sandbox = Sandbox::with_backend(
+        mount.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::Seatbelt,
+    );
+    let command = "git -c user.name=Test -c user.email=test@example.invalid -c commit.gpgsign=false commit -m trigger-hook";
+    let error = sandbox
+        .exec_with_timeout_and_capability(
+            command,
+            mount.path(),
+            None,
+            Some(alan_agent_protocol::ToolCapability::Unknown),
+        )
+        .await
+        .expect_err("Git commit hooks can read paths hidden from ProtectedOnly validation");
+
+    assert!(
+        error.to_string().contains("opaque command dispatcher"),
+        "{error}"
+    );
+}
+
 #[tokio::test]
 async fn seatbelt_rejects_go_project_runner_with_uninspectable_reads() {
     let mount = TempDir::new().unwrap();
@@ -270,6 +323,18 @@ async fn seatbelt_rejects_swift_project_runner_with_uninspectable_reads() {
 #[test]
 fn project_code_dispatchers_are_rejected_as_opaque() {
     for command in [
+        "git add file.txt",
+        "git am change.patch",
+        "git checkout branch",
+        "git commit -m message",
+        "git merge topic",
+        "git push origin branch",
+        "git rebase main",
+        "git reset --hard HEAD",
+        "git stash",
+        "git stash push",
+        "git tag v1",
+        "git notes add -m note",
         "npm run leak",
         "npm --prefix . run leak",
         "npm rum leak",
@@ -324,6 +389,12 @@ fn project_code_dispatchers_are_rejected_as_opaque() {
         "git status",
         "git -C . diff",
         "git --no-pager log",
+        "git branch --list",
+        "git tag --list",
+        "git stash list",
+        "git notes list",
+        "git worktree list",
+        "git remote -v",
         "npm view alan",
         "pnpm root",
         "yarn info alan",

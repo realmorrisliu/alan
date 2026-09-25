@@ -67,13 +67,75 @@ fn has_uninspectable_git_dispatch(args: &[String]) -> bool {
             }
             argument if argument.starts_with('-') => return true,
             command => {
-                return !BUILTINS
+                let known_builtin = BUILTINS
                     .split_ascii_whitespace()
                     .any(|builtin| builtin == command);
+                return !known_builtin
+                    || git_subcommand_can_invoke_hooks(command, &args[index + 1..]);
             }
         }
     }
     false
+}
+
+fn git_subcommand_can_invoke_hooks(command: &str, args: &[String]) -> bool {
+    const HOOK_DISPATCHERS: &str = concat!(
+        "add am checkout cherry-pick clone commit fetch gc merge mv pull push rebase reset ",
+        "restore revert rm switch"
+    );
+
+    if HOOK_DISPATCHERS
+        .split_ascii_whitespace()
+        .any(|dispatcher| dispatcher == command)
+    {
+        return true;
+    }
+
+    match command {
+        "branch" => {
+            !args.is_empty()
+                && !args.iter().any(|arg| {
+                    matches!(
+                        arg.as_str(),
+                        "-a" | "--all"
+                            | "-l"
+                            | "--list"
+                            | "-r"
+                            | "--remotes"
+                            | "--show-current"
+                            | "--contains"
+                            | "--merged"
+                            | "--no-merged"
+                    )
+                })
+        }
+        "tag" => {
+            !args.is_empty()
+                && !args
+                    .iter()
+                    .any(|arg| matches!(arg.as_str(), "-l" | "--list" | "--contains" | "--merged"))
+        }
+        "notes" => args.first().is_some_and(|subcommand| {
+            matches!(
+                subcommand.as_str(),
+                "add" | "append" | "copy" | "edit" | "merge" | "prune" | "remove"
+            )
+        }),
+        "stash" => !matches!(
+            args.first().map(String::as_str),
+            Some("list" | "show" | "help" | "--help")
+        ),
+        "worktree" => args.first().is_some_and(|subcommand| {
+            matches!(subcommand.as_str(), "add" | "move" | "remove" | "prune")
+        }),
+        "remote" => args.first().is_some_and(|subcommand| {
+            matches!(
+                subcommand.as_str(),
+                "update" | "prune" | "set-head" | "remove" | "rename"
+            )
+        }),
+        _ => false,
+    }
 }
 
 fn find_dispatch_clause(args: &[String]) -> Option<&'static str> {
