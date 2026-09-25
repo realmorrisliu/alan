@@ -269,7 +269,7 @@ async fn sandbox_rejects_nested_dispatcher_reads_outside_the_host_mount_under_se
 }
 
 #[tokio::test]
-async fn sandbox_rejects_tar_file_lists_from_stdin_under_seatbelt() {
+async fn sandbox_rejects_file_lists_from_stdin_under_seatbelt() {
     let mount = TempDir::new().unwrap();
     let outside = TempDir::new().unwrap();
     let outside_file = outside.path().join("host-only-marker.txt");
@@ -281,11 +281,21 @@ async fn sandbox_rejects_tar_file_lists_from_stdin_under_seatbelt() {
     }]);
     let sandbox = Sandbox::from_spec_with_backend(spec, SandboxBackendKind::Seatbelt);
 
-    for file_list_args in ["-T -", "--files-from -"] {
-        let command = format!(
-            "printf '{}\\n' | tar -cf - {file_list_args} | tar -xOf -",
+    let commands = [
+        format!(
+            "printf '{}\\n' | tar -cf - -T - | tar -xOf -",
             outside_file.display()
-        );
+        ),
+        format!(
+            "printf '{}\\n' | tar -cf - --files-from - | tar -xOf -",
+            outside_file.display()
+        ),
+        format!(
+            "printf '{}\\n' | zip -q -@ host-files.zip && unzip -p host-files.zip",
+            outside_file.display()
+        ),
+    ];
+    for command in commands {
         let error = sandbox
             .exec_with_timeout_and_capability(
                 &command,
@@ -294,7 +304,7 @@ async fn sandbox_rejects_tar_file_lists_from_stdin_under_seatbelt() {
                 Some(alan_agent_protocol::ToolCapability::Unknown),
             )
             .await
-            .expect_err("tar file lists from stdin must not bypass Host Mount read checks");
+            .expect_err("file lists from stdin must not bypass Host Mount read checks");
 
         assert!(error.to_string().contains("file-list consumers"), "{error}");
     }

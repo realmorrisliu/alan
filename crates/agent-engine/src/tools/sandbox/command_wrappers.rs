@@ -45,14 +45,10 @@ fn validate_nested_command_evaluators_inner(
             ));
         }
         if allow_inspectable_shell_and_awk
-            && matches!(view.command, "tar" | "gtar" | "bsdtar")
-            && view
-                .args
-                .iter()
-                .any(|arg| exact_or_inline_option_with_value(arg, &["-T"], &["--files-from"]))
+            && has_uninspectable_file_list_input(view.command, view.args)
         {
             return Err(anyhow!(
-                "Sandbox backend {} rejects tar file-list consumers because listed paths cannot be validated against Host Mounts",
+                "Sandbox backend {} rejects file-list consumers because listed paths cannot be validated against Host Mounts",
                 backend_name
             ));
         }
@@ -93,6 +89,16 @@ fn validate_nested_command_evaluators_inner(
         }
     }
     Ok(())
+}
+
+fn has_uninspectable_file_list_input(command: &str, args: &[String]) -> bool {
+    match command {
+        "tar" | "gtar" | "bsdtar" => args
+            .iter()
+            .any(|arg| exact_or_inline_option_with_value(arg, &["-T"], &["--files-from"])),
+        "zip" => args.iter().any(|arg| arg == "-@"),
+        _ => false,
+    }
 }
 
 pub(super) fn validate_opaque_command_dispatchers(
