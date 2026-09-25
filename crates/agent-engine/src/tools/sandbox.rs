@@ -13,6 +13,7 @@
 
 mod command_interpreters;
 mod command_options;
+mod command_project_dispatchers;
 mod command_wrappers;
 mod path_literals;
 mod path_safety;

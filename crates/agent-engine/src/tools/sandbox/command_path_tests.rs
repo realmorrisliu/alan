@@ -190,8 +190,43 @@ async fn seatbelt_rejects_git_extension_aliases_with_uninspectable_reads() {
     );
 }
 
+#[tokio::test]
+async fn seatbelt_rejects_go_project_runner_with_uninspectable_reads() {
+    let mount = TempDir::new().unwrap();
+    let outside = TempDir::new().unwrap();
+    let secret = outside.path().join("host-only-marker.txt");
+    std::fs::write(&secret, "host-only-marker\n").unwrap();
+    std::fs::write(
+        mount.path().join("main.go"),
+        format!(
+            "package main\nimport (\"fmt\"; \"os\")\nfunc main() {{ data, err := os.ReadFile({:?}); if err != nil {{ panic(err) }}; fmt.Print(string(data)) }}\n",
+            secret.to_string_lossy()
+        ),
+    )
+    .unwrap();
+
+    let sandbox = Sandbox::with_backend(
+        mount.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::Seatbelt,
+    );
+    let error = sandbox
+        .exec_with_timeout_and_capability(
+            "GOCACHE=.cache go run .",
+            mount.path(),
+            None,
+            Some(alan_agent_protocol::ToolCapability::Unknown),
+        )
+        .await
+        .expect_err("Go project code can read paths hidden from ProtectedOnly validation");
+
+    assert!(
+        error.to_string().contains("opaque command dispatcher"),
+        "{error}"
+    );
+}
+
 #[test]
-fn project_script_dispatchers_are_rejected_as_opaque() {
+fn project_code_dispatchers_are_rejected_as_opaque() {
     for command in [
         "npm run leak",
         "npm --prefix . run leak",
@@ -211,6 +246,11 @@ fn project_script_dispatchers_are_rejected_as_opaque() {
         "cargo test -p app",
         "cargo --manifest-path app/Cargo.toml build",
         "cargo xtask release",
+        "go run .",
+        "GOCACHE=.cache go run .",
+        "go -C . test ./...",
+        "go generate ./...",
+        "go build ./...",
         "pytest -s",
         "python3 -m pytest -s",
         "python3 -m unittest test_module",
@@ -242,6 +282,12 @@ fn project_script_dispatchers_are_rejected_as_opaque() {
         "cargo fmt",
         "cargo new app",
         "cargo add serde",
+        "go version",
+        "go -C . version",
+        "go env GOCACHE",
+        "go doc fmt",
+        "go list ./...",
+        "go fmt ./...",
         "pytest --version",
     ] {
         let words = command
@@ -257,6 +303,7 @@ fn project_script_dispatchers_are_rejected_as_opaque() {
         "pytest -q",
         "python3 -m pytest -s",
         "python3 -m unittest test_module",
+        "GOCACHE=.cache go run .",
     ] {
         let words = command
             .split_whitespace()

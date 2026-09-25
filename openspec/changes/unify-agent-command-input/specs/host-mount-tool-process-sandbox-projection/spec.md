@@ -96,7 +96,7 @@ boundary; `!` SHALL NOT imply unrestricted execution.
 
 #### Scenario: ProtectedOnly rejects opaque project-code dispatch
 - **WHEN** a read-unconfined backend uses ProtectedOnly checks and a Git alias,
-  package script, or project build/test runner dispatches code
+  package script, or project build/test/run/generation command dispatches code
 - **THEN** native Tool execution rejects the opaque dispatcher before launch
 - **AND** dispatched project code cannot read outside the active Host Mount
   through a path hidden from the submitted command text
