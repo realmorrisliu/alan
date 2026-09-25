@@ -317,7 +317,7 @@ pub(super) fn validate_opaque_command_dispatchers(
             && (view.command == "git" || shell_wrapper_inline_script(words).is_some())
         {
             return Err(anyhow!(
-                "Sandbox backend {} rejects environment wrappers that can clear Git config environment overrides in ProtectedOnly mode",
+                "Sandbox backend {} rejects command wrappers that can clear Git config environment overrides in ProtectedOnly mode",
                 backend_name
             ));
         }
@@ -460,16 +460,14 @@ fn nested_evaluator_view(words: &[String]) -> Option<NestedEvaluatorView<'_>> {
                     clears_git_config,
                 });
             }
-            let (offset, clears) = env_command_offset(args)?;
-            clears_git_config |= clears;
-            Some(offset)
+            env_command_offset(args)
         } else if is_transparent_command_wrapper(command) {
             transparent_wrapper_offset(command, args)
         } else {
             None
         };
 
-        let Some(next_relative_offset) = next_offset else {
+        let Some((next_relative_offset, clears)) = next_offset else {
             return Some(NestedEvaluatorView {
                 display,
                 command,
@@ -480,6 +478,7 @@ fn nested_evaluator_view(words: &[String]) -> Option<NestedEvaluatorView<'_>> {
             });
         };
 
+        clears_git_config |= clears;
         command_index += 1 + next_relative_offset;
         display.push(' ');
         display.push_str(command_basename(&words[command_index]));
@@ -573,16 +572,16 @@ fn env_option_clears_git_config(arg: &str, next_arg: Option<&str>) -> bool {
     false
 }
 
-fn transparent_wrapper_offset(command: &str, args: &[String]) -> Option<usize> {
+fn transparent_wrapper_offset(command: &str, args: &[String]) -> Option<(usize, bool)> {
     match command {
-        "command" => command_wrapper_offset(args),
+        "command" => command_wrapper_offset(args).map(|offset| (offset, false)),
         "exec" => exec_wrapper_offset(args),
-        "builtin" => builtin_wrapper_offset(args),
-        "nice" => nice_wrapper_offset(args),
-        "nohup" => nohup_wrapper_offset(args),
-        "timeout" => timeout_wrapper_offset(args),
-        "stdbuf" => stdbuf_wrapper_offset(args),
-        "setsid" => setsid_wrapper_offset(args),
+        "builtin" => builtin_wrapper_offset(args).map(|offset| (offset, false)),
+        "nice" => nice_wrapper_offset(args).map(|offset| (offset, false)),
+        "nohup" => nohup_wrapper_offset(args).map(|offset| (offset, false)),
+        "timeout" => timeout_wrapper_offset(args).map(|offset| (offset, false)),
+        "stdbuf" => stdbuf_wrapper_offset(args).map(|offset| (offset, false)),
+        "setsid" => setsid_wrapper_offset(args).map(|offset| (offset, false)),
         _ => None,
     }
 }
@@ -622,8 +621,9 @@ fn builtin_wrapper_offset(args: &[String]) -> Option<usize> {
     Some(index)
 }
 
-fn exec_wrapper_offset(args: &[String]) -> Option<usize> {
+fn exec_wrapper_offset(args: &[String]) -> Option<(usize, bool)> {
     let mut index = 0;
+    let mut clears_environment = false;
     while let Some(arg) = args.get(index).map(|arg| arg.as_str()) {
         if arg == "--" {
             index += 1;
@@ -634,6 +634,9 @@ fn exec_wrapper_offset(args: &[String]) -> Option<usize> {
             continue;
         }
         if has_inline_exec_argv0(arg) || is_exec_wrapper_flag(arg) {
+            clears_environment |= arg
+                .strip_prefix('-')
+                .is_some_and(|flags| flags.contains('c'));
             index += 1;
             continue;
         }
@@ -641,7 +644,7 @@ fn exec_wrapper_offset(args: &[String]) -> Option<usize> {
     }
 
     args.get(index)?;
-    Some(index)
+    Some((index, clears_environment))
 }
 
 fn nice_wrapper_offset(args: &[String]) -> Option<usize> {

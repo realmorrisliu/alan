@@ -289,6 +289,7 @@ async fn seatbelt_does_not_allow_git_configured_helpers_to_read_outside_the_host
             false,
         ),
         ("env -i git status --short".to_string(), false),
+        ("exec -c git status --short".to_string(), false),
         (
             "env -u GIT_CONFIG_COUNT git status --short".to_string(),
             false,
@@ -776,6 +777,7 @@ fn project_code_dispatchers_are_rejected_as_opaque() {
 
     for command in [
         "git status",
+        "exec -l git status",
         "git -C . diff --no-ext-diff --no-textconv",
         "git diff-tree --no-ext-diff --no-textconv HEAD~1 HEAD",
         "git rev-list --no-ext-diff --no-textconv -p HEAD",
@@ -840,6 +842,8 @@ fn project_code_dispatchers_are_rejected_as_opaque() {
         "env --unset GIT_CONFIG_COUNT git status",
         "env --unset=GIT_CONFIG_KEY_0 git status",
         "command env -i git status",
+        "exec -c git status",
+        "exec -cl git status",
     ] {
         let words = command
             .split_whitespace()
@@ -866,6 +870,20 @@ fn project_code_dispatchers_are_rejected_as_opaque() {
         true,
     )
     .expect_err("environment-clearing shell wrappers can remove Git config safeguards");
+    assert!(
+        error
+            .to_string()
+            .contains("Git config environment override"),
+        "{error}"
+    );
+
+    let exec_shell_command = super::super::shell_commands("exec -c sh -c 'git status'").unwrap();
+    let error = super::super::command_wrappers::validate_opaque_command_dispatchers(
+        &exec_shell_command,
+        "test",
+        true,
+    )
+    .expect_err("exec -c can clear Git config safeguards around shell-dispatched Git");
     assert!(
         error
             .to_string()
