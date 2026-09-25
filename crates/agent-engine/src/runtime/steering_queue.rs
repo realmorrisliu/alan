@@ -1,4 +1,4 @@
-use alan_agent_protocol::{Event, InputMode, Op};
+use alan_agent_protocol::{Event, InputIntent, InputMode, Op};
 use anyhow::Result;
 use serde_json::json;
 
@@ -23,10 +23,11 @@ where
 
     let mut steering_inputs: Vec<Vec<crate::tape::ContentPart>> = Vec::new();
     while let Some(submission) = broker.try_recv().await {
-        if let Op::Input {
-            parts,
-            mode: InputMode::Steer,
-        } = &submission.op
+        if submission.intent != InputIntent::Command
+            && let Op::Input {
+                parts,
+                mode: InputMode::Steer,
+            } = &submission.op
         {
             steering_inputs.push(parts.clone());
             continue;

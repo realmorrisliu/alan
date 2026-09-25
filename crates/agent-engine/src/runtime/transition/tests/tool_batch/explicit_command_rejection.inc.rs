@@ -143,3 +143,53 @@
                 if responses.len() == 1 && responses[0].id == submission_id
         ));
     }
+
+    #[tokio::test]
+    async fn queued_explicit_command_is_preserved_for_command_dispatch() {
+        let mut state = create_test_state();
+        let broker = TurnInputBroker::default();
+        assert!(
+            broker
+                .push(Submission::with_id_and_intent(
+                    "queued-command-id",
+                    Op::Input {
+                        parts: vec![ContentPart::text("git status")],
+                        mode: InputMode::Steer,
+                    },
+                    InputIntent::Command,
+                ))
+                .await
+        );
+        let mut events = Vec::new();
+        let mut emit = |event| {
+            events.push(event);
+            async {}
+        };
+
+        let handled = handle_queued_steering_inputs(
+            &mut state.machine,
+            &[],
+            0,
+            Some(&broker),
+            &mut emit,
+        )
+        .await
+        .unwrap();
+
+        assert!(!handled, "an explicit command is not Agent steering input");
+        assert!(state.machine.messages().is_empty());
+        assert!(events.is_empty());
+        let queued = state
+            .machine
+            .pop_buffered_inband_submission()
+            .expect("command intent must reach the explicit-command handler");
+        assert_eq!(queued.id, "queued-command-id");
+        assert_eq!(queued.intent, InputIntent::Command);
+        assert!(matches!(
+            queued.op,
+            Op::Input {
+                mode: InputMode::Steer,
+                ..
+            }
+        ));
+    }
