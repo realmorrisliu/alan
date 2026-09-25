@@ -263,6 +263,77 @@ pub(super) fn is_allowed_absolute_command_path(path: &Path) -> bool {
     )
 }
 
+pub(super) fn is_allowed_absolute_executable_path(path: &Path) -> bool {
+    if !path.is_absolute() {
+        return false;
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let path = lexically_normalize_path(path);
+        let Ok(metadata) = std::fs::metadata(&path) else {
+            return false;
+        };
+        if !metadata.is_file() || metadata.permissions().mode() & 0o111 == 0 {
+            return false;
+        }
+        let Some(parent) = path.parent() else {
+            return false;
+        };
+        let Some(search_path) = std::env::var_os("PATH") else {
+            return false;
+        };
+
+        std::env::split_paths(&search_path).any(|directory| {
+            directory.is_absolute() && lexically_normalize_path(&directory) == parent
+        })
+    }
+
+    #[cfg(not(unix))]
+    {
+        false
+    }
+}
+
+pub(super) fn absolute_executable_token_starts(command: &str, tokens: &[ShellToken]) -> Vec<usize> {
+    let mut starts = Vec::new();
+    let mut command_expected = true;
+    let mut expects_redirection_target = false;
+    let mut previous_token_end = 0;
+
+    for token in tokens {
+        let gap = &command[previous_token_end..token.raw_start];
+        if gap
+            .chars()
+            .any(|ch| matches!(ch, ';' | '|' | '&' | '(' | ')' | '{' | '}' | '\n' | '\r'))
+        {
+            command_expected = true;
+        }
+        previous_token_end = token.raw_end;
+
+        if expects_redirection_target {
+            expects_redirection_target = false;
+            continue;
+        }
+        if is_file_redirection_operator(&token.decoded) {
+            expects_redirection_target = true;
+            continue;
+        }
+        if !command_expected || super::command_wrappers::is_env_assignment(&token.decoded) {
+            continue;
+        }
+
+        command_expected = false;
+        if is_allowed_absolute_executable_path(Path::new(&token.decoded)) {
+            starts.push(token.raw_start);
+        }
+    }
+
+    starts
+}
+
 pub(super) fn lexically_normalize_path(path: &Path) -> PathBuf {
     let mut normalized = PathBuf::new();
     for component in path.components() {

@@ -24,6 +24,9 @@ mod native_shell_tests;
 #[path = "sandbox/standalone_cd_tests.rs"]
 mod standalone_cd_tests;
 
+#[path = "sandbox/command_path_tests.rs"]
+mod command_path_tests;
+
 #[tokio::test]
 async fn test_sandbox_exec() {
     let temp = TempDir::new().unwrap();
@@ -884,41 +887,6 @@ async fn test_landlock_keeps_shape_parser_for_opaque_writers() {
         )
         .await;
     assert!(result.is_err(), "opaque writer not rejected under Landlock");
-}
-
-#[tokio::test]
-async fn test_os_backend_still_blocks_out_of_host_mount_reads() {
-    // Seatbelt denies writes/network but permits reads, so the parser must still
-    // contain reads: an auto-approved `cat ~/.ssh/id_rsa` / `cat /etc/passwd` must
-    // not exfiltrate secrets into tool output. ProtectedOnly drops only the shape
-    // checks, never path containment.
-    let temp = TempDir::new().unwrap();
-    let sandbox = Sandbox::with_backend(
-        temp.path().to_path_buf(),
-        crate::tools::SandboxBackendKind::Seatbelt,
-    );
-    for cmd in [
-        "cat ~/.ssh/id_rsa",
-        "cat /etc/passwd",
-        "bash -lc 'cat /etc/passwd'",
-    ] {
-        let result = sandbox
-            .exec_with_timeout_and_capability(
-                cmd,
-                temp.path(),
-                None,
-                Some(alan_agent_protocol::ToolCapability::Read),
-            )
-            .await;
-        assert!(result.is_err(), "out-of-host_mount read not blocked: {cmd}");
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("outside host_mount"),
-            "wrong rejection for: {cmd}"
-        );
-    }
 }
 
 #[tokio::test]

@@ -26,8 +26,8 @@ use command_wrappers::{
     shell_wrapper_inline_script, validate_direct_command_shapes, validate_nested_command_evaluators,
 };
 use path_literals::{
-    absolute_path_literal_candidates, is_allowed_absolute_command_path,
-    is_file_redirection_operator, lexically_normalize_path,
+    absolute_executable_token_starts, absolute_path_literal_candidates,
+    is_allowed_absolute_command_path, is_file_redirection_operator, lexically_normalize_path,
     looks_like_bare_protected_subpath_token, looks_like_path_token, path_like_subtokens,
     token_is_data_argument,
 };
@@ -607,6 +607,7 @@ impl Sandbox {
             Ok(commands) => commands,
             Err(err) => return if protected_only { Ok(()) } else { Err(err) },
         };
+        let executable_token_starts = absolute_executable_token_starts(trimmed, &tokens);
         if !protected_only {
             self.validate_direct_command_shapes(&commands)?;
             self.validate_nested_command_evaluators(&commands)?;
@@ -642,6 +643,10 @@ impl Sandbox {
                 continue;
             }
 
+            if executable_token_starts.contains(&token.raw_start) {
+                continue;
+            }
+
             if token_is_data_argument(trimmed, token) {
                 continue;
             }
@@ -651,7 +656,12 @@ impl Sandbox {
             }
         }
 
-        self.validate_absolute_path_literals(trimmed, &tokens, capability)?;
+        self.validate_absolute_path_literals(
+            trimmed,
+            &tokens,
+            &executable_token_starts,
+            capability,
+        )?;
 
         Ok(())
     }
@@ -883,10 +893,13 @@ impl Sandbox {
         &self,
         command: &str,
         tokens: &[ShellToken],
+        absolute_executable_token_starts: &[usize],
         capability: Option<alan_agent_protocol::ToolCapability>,
     ) -> Result<()> {
         for token in tokens {
-            if token_is_data_argument(command, token) {
+            if absolute_executable_token_starts.contains(&token.raw_start)
+                || token_is_data_argument(command, token)
+            {
                 continue;
             }
             for candidates in absolute_path_literal_candidates(&token.decoded) {
