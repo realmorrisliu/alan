@@ -733,6 +733,9 @@ fn project_code_dispatchers_are_rejected_as_opaque() {
         "ninja -C build",
         "mvn test",
         "mvn -f app/pom.xml verify",
+        "pytest --help",
+        "pytest -h",
+        "pytest test_module --version",
     ] {
         let words = command
             .split_whitespace()

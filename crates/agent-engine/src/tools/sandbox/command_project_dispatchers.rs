@@ -22,7 +22,8 @@ pub(super) fn is_project_code_dispatcher(command: &str, args: &[String]) -> bool
         return true;
     }
     if command == "pytest" {
-        return !args.iter().any(|arg| one_of(arg, "--help -h --version"));
+        // Pytest help loads project conftest.py; only an exact version query is inert.
+        return !matches!(args, [argument] if argument == "--version");
     }
     if command == "rake" {
         return !args
