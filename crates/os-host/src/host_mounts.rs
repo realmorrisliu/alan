@@ -100,12 +100,19 @@ fn replace_path_prefixes(text: &str, prefix: &str, replacement: &str) -> String 
             .is_some_and(|scheme| scheme.eq_ignore_ascii_case("file://"));
         let boundary_before = file_uri_delimiter
             || before.is_none_or(|ch| {
-                ch.is_whitespace() || matches!(ch, '=' | ':' | '\'' | '"' | '(' | '[' | '{' | ',')
+                ch.is_whitespace()
+                    || matches!(
+                        ch,
+                        '=' | ':' | '\'' | '"' | '(' | '[' | '{' | ',' | '<' | '`'
+                    )
             });
         let boundary_after = after.is_none_or(|ch| {
             ch.is_whitespace()
                 || ch == std::path::MAIN_SEPARATOR
-                || matches!(ch, ':' | ',' | ';' | ')' | ']' | '}' | '\'' | '"')
+                || matches!(
+                    ch,
+                    ':' | ',' | ';' | ')' | ']' | '}' | '\'' | '"' | '>' | '`'
+                )
         }) || is_terminal_sentence_punctuation(text, end);
         if boundary_before && boundary_after {
             projected.push_str(&text[copied_through..start]);
@@ -657,6 +664,10 @@ mod tests {
         assert_eq!(adapter.project_text(&punctuated_path), "failed at ..");
         let file_uri = format!("file://{}/notes.txt", host_root.display());
         assert_eq!(adapter.project_text(&file_uri), "file://./notes.txt");
+        let markdown_path = format!("failed at `{}`", host_root.display());
+        assert_eq!(adapter.project_text(&markdown_path), "failed at `.`");
+        let bracketed_path = format!("failed at <{}>", host_root.display());
+        assert_eq!(adapter.project_text(&bracketed_path), "failed at <.>");
 
         let nested = service
             .reconcile(7, binding("/mnt/project/src"))
