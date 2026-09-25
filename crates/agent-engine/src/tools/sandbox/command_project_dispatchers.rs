@@ -2,6 +2,7 @@ pub(super) fn is_project_code_dispatcher(command: &str, args: &[String]) -> bool
     // Build systems load project-controlled scripts except for standalone CLI queries.
     let build_system_queries = match command {
         "cmake" => Some("--help -h --version"),
+        "ctest" => Some("--help -h --version"),
         "gradle" => Some("--help -h --version -v"),
         "ninja" => Some("--help --version"),
         "mvn" => Some("--help -h --version -v"),

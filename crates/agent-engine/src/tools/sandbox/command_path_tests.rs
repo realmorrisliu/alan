@@ -289,6 +289,7 @@ async fn seatbelt_does_not_allow_git_configured_helpers_to_read_outside_the_host
             false,
         ),
         ("env -i git status --short".to_string(), false),
+        ("env - git status --short".to_string(), false),
         ("exec -c git status --short".to_string(), false),
         (
             "env -u GIT_CONFIG_COUNT git status --short".to_string(),
@@ -734,6 +735,9 @@ fn project_code_dispatchers_are_rejected_as_opaque() {
         "ninja -C build",
         "mvn test",
         "mvn -f app/pom.xml verify",
+        "ctest",
+        "ctest -N",
+        "ctest --test-dir build",
         "pytest --help",
         "pytest -h",
         "pytest test_module --version",
@@ -820,6 +824,9 @@ fn project_code_dispatchers_are_rejected_as_opaque() {
         "mvn --help",
         "mvn --version",
         "mvn -v",
+        "ctest --help",
+        "ctest -h",
+        "ctest --version",
         "rake --version",
         "rake -V",
         "rake --help",
@@ -836,6 +843,7 @@ fn project_code_dispatchers_are_rejected_as_opaque() {
 
     for command in [
         "env -i git status",
+        "env - git status",
         "env --ignore-environment git status",
         "env -u GIT_CONFIG_COUNT git status",
         "env -uGIT_CONFIG_COUNT git status",
@@ -870,6 +878,20 @@ fn project_code_dispatchers_are_rejected_as_opaque() {
         true,
     )
     .expect_err("environment-clearing shell wrappers can remove Git config safeguards");
+    assert!(
+        error
+            .to_string()
+            .contains("Git config environment override"),
+        "{error}"
+    );
+
+    let shell_command = super::super::shell_commands("env - sh -c 'git status'").unwrap();
+    let error = super::super::command_wrappers::validate_opaque_command_dispatchers(
+        &shell_command,
+        "test",
+        true,
+    )
+    .expect_err("bare env dash can clear Git config safeguards around shell-dispatched Git");
     assert!(
         error
             .to_string()

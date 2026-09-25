@@ -539,7 +539,7 @@ fn env_command_offset(args: &[String]) -> Option<(usize, bool)> {
 }
 
 fn env_option_clears_git_config(arg: &str, next_arg: Option<&str>) -> bool {
-    if arg == "--ignore-environment" {
+    if matches!(arg, "--ignore-environment" | "-") {
         return true;
     }
     if arg == "--unset" {
@@ -892,6 +892,9 @@ fn env_option_behavior(arg: &str) -> Option<EnvOptionBehavior> {
 fn env_short_option_behavior(arg: &str) -> Option<EnvOptionBehavior> {
     if arg.starts_with("--") {
         return None;
+    }
+    if arg == "-" {
+        return Some(EnvOptionBehavior::Passthrough);
     }
     let rest = arg.strip_prefix('-')?;
     if rest.is_empty() {
