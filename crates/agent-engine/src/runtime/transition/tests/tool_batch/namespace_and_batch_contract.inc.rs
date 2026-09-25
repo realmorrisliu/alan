@@ -45,6 +45,107 @@
             output["payload"]["command"],
             json!("printf '%s\\n' '!literal'")
         );
+        assert!(matches!(
+            state.machine.messages().get(1),
+            Some(crate::tape::Message::Assistant { tool_requests, .. })
+                if tool_requests.len() == 1
+                    && tool_requests[0].id == "d6d22d91-5791-4d88-8642-e01d40ba58e8"
+        ));
+        assert!(matches!(
+            state.machine.messages().get(2),
+            Some(crate::tape::Message::Tool { responses })
+                if responses.len() == 1
+                    && responses[0].id == "d6d22d91-5791-4d88-8642-e01d40ba58e8"
+        ));
+    }
+
+    #[tokio::test]
+    async fn explicit_command_publishes_start_and_pre_execution_failure() {
+        let (mut state, shell) = create_namespace_test_state_and_shell_with_package(false, false).await;
+        let submission_id = "9f8da57b-0f53-4524-9254-12f9256b7fc7";
+        let mut emit = |_event: Event| async {};
+        let cancel = CancellationToken::new();
+
+        handle_submission_with_cancel(
+            &mut state,
+            Submission::with_id_and_intent(
+                submission_id,
+                Op::Input {
+                    parts: vec![ContentPart::text("git status")],
+                    mode: InputMode::FollowUp,
+                },
+                InputIntent::Command,
+            ),
+            &mut emit,
+            &cancel,
+        )
+        .await
+        .unwrap();
+
+        let tape = String::from_utf8(shell.cat("/agent/1/machine/tape").await.unwrap()).unwrap();
+        let user_record: serde_json::Value =
+            serde_json::from_str(tape.lines().next().unwrap()).unwrap();
+        assert_eq!(user_record["role"], "user");
+        assert_eq!(user_record["content"], "git status");
+        assert_eq!(user_record["submission_id"], submission_id);
+
+        let activity: alan_agent_protocol::UiActivitySnapshot = serde_json::from_slice(
+            &shell
+                .cat("/agent/1/machine/ui/activity")
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(activity.state, alan_agent_protocol::UiActivityState::Running);
+
+        let action_path = "/agent/1/actions/a0";
+        assert_eq!(
+            String::from_utf8(shell.cat(&format!("{action_path}/status")).await.unwrap())
+                .unwrap(),
+            "failed"
+        );
+        let result: serde_json::Value =
+            serde_json::from_slice(&shell.cat(&format!("{action_path}/result")).await.unwrap())
+                .unwrap();
+        let output: serde_json::Value =
+            serde_json::from_slice(&shell.cat(&format!("{action_path}/output")).await.unwrap())
+                .unwrap();
+        assert_eq!(result["call_id"], submission_id);
+        assert_eq!(result["exit_code"], 1);
+        assert!(output["stderr"]
+            .as_str()
+            .unwrap()
+            .contains("Tool 'bash' is unavailable"));
+        assert!(matches!(
+            state.machine.messages().get(1),
+            Some(crate::tape::Message::Assistant { tool_requests, .. })
+                if tool_requests.len() == 1 && tool_requests[0].id == submission_id
+        ));
+        assert!(matches!(
+            state.machine.messages().get(2),
+            Some(crate::tape::Message::Tool { responses })
+                if responses.len() == 1 && responses[0].id == submission_id
+        ));
+    }
+
+    #[tokio::test]
+    async fn command_intent_does_not_redirect_non_input_control_operations() {
+        let (mut state, _shell) = create_namespace_test_state_and_shell_with_package(false, false).await;
+        let mut emit = |_event: Event| async {};
+        let cancel = CancellationToken::new();
+
+        handle_submission_with_cancel(
+            &mut state,
+            Submission::with_id_and_intent(
+                "interrupt-with-command-metadata",
+                Op::Interrupt,
+                InputIntent::Command,
+            ),
+            &mut emit,
+            &cancel,
+        )
+        .await
+        .unwrap();
     }
 
     #[tokio::test]

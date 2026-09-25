@@ -142,6 +142,15 @@ impl NamespaceAgentFiles {
         write_agent_output(&client, &self.agent_path, response).await
     }
 
+    pub async fn write_submission_start(&self, submission_id: &str, input: &str) -> Result<()> {
+        let client = NamespaceClient::new(self.root.clone());
+        let mut writer = NamespaceTapeWriter::open(client, &self.agent_path).await?;
+        writer
+            .append_submission_record("user", input, Some(submission_id))
+            .await?;
+        writer.finish().await
+    }
+
     #[cfg(test)]
     pub async fn write_user_state(&self, input: &str) -> Result<()> {
         let client = NamespaceClient::new(self.root.clone());

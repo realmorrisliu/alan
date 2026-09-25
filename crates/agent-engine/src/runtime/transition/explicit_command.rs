@@ -1,4 +1,5 @@
 use super::*;
+use anyhow::Context;
 
 pub(super) async fn handle_explicit_command<E, F>(
     state: &mut RuntimeLoopState,
@@ -34,6 +35,15 @@ where
     }
 
     state.machine.add_user_message_parts(parts);
+    let agent_files = state.agent_files();
+    agent_files
+        .write_submission_start(&submission_id, &command)
+        .await
+        .context("write explicit command submission to Agent tape")?;
+    crate::runtime::ui_surfaces::turn_started(&agent_files)
+        .await
+        .context("write explicit command start UI state")?;
+
     let standalone_cd = crate::tools::parse_standalone_cd(&command);
     if !matches!(&standalone_cd, Ok(None)) {
         emit(Event::ToolCallStarted {
@@ -52,7 +62,7 @@ where
             Err(error) => Err(error),
             Ok(None) => unreachable!("standalone cd match excludes no-op inputs"),
         };
-        return finish_standalone_cd(state, &submission_id, outcome, emit).await;
+        return finish_standalone_cd(state, &submission_id, &command, outcome, emit).await;
     }
 
     let tool_call = NormalizedToolCall {
@@ -60,22 +70,45 @@ where
         name: "bash".to_string(),
         arguments: serde_json::json!({"command": command}),
     };
+    state
+        .machine
+        .add_assistant_message_with_tool_calls_and_reasoning(
+            "",
+            vec![crate::tape::ToolRequest {
+                id: tool_call.id.clone(),
+                name: tool_call.name.clone(),
+                arguments: tool_call.arguments.clone(),
+            }],
+            None,
+            None,
+            &[],
+        );
     let mut loop_guard = ToolLoopGuard::new(None, state.runtime_config.tool_repeat_limit);
     state.machine.set_turn_activity(TurnActivityState::Running);
-    let outcome = super::orchestrate_tool_batch(
-        &mut loop_guard,
-        state,
-        std::slice::from_ref(&tool_call),
-        ToolOrchestratorInputs {
-            cancel,
-            steering_broker,
-        },
-        emit,
-    )
-    .await;
+    let mut command_error = None;
+    let outcome = {
+        let mut command_emit = |event: Event| {
+            if let Event::Error { message, .. } = &event {
+                command_error.get_or_insert_with(|| message.clone());
+            }
+            emit(event)
+        };
+        super::orchestrate_tool_batch(
+            &mut loop_guard,
+            state,
+            std::slice::from_ref(&tool_call),
+            ToolOrchestratorInputs {
+                cancel,
+                steering_broker,
+            },
+            &mut command_emit,
+        )
+        .await
+    };
     match outcome {
         Ok(ToolBatchOrchestratorOutcome::ContinueTurnLoop { .. })
         | Ok(ToolBatchOrchestratorOutcome::EndTurn { .. }) => {
+            record_missing_command_action(state, &tool_call, command_error.as_deref()).await?;
             state.machine.set_turn_activity(TurnActivityState::Idle);
             Ok(())
         }
@@ -90,9 +123,64 @@ where
     }
 }
 
+async fn record_missing_command_action(
+    state: &mut RuntimeLoopState,
+    tool_call: &NormalizedToolCall,
+    emitted_error: Option<&str>,
+) -> Result<()> {
+    let payload = state.machine.tool_payload_by_call_id(&tool_call.id);
+    if payload
+        .as_ref()
+        .and_then(|payload| payload.get("action_id"))
+        .and_then(serde_json::Value::as_str)
+        .is_some()
+    {
+        return Ok(());
+    }
+
+    let message = payload
+        .as_ref()
+        .and_then(|payload| payload.get("error"))
+        .and_then(serde_json::Value::as_str)
+        .or(emitted_error)
+        .unwrap_or("command did not produce a correlated Action result")
+        .to_string();
+    let missing_tool_response = payload.is_none();
+    let outcome = payload.unwrap_or_else(|| {
+        serde_json::json!({
+            "success": false,
+            "error": message.clone(),
+        })
+    });
+    if missing_tool_response {
+        state
+            .machine
+            .add_tool_message(&tool_call.id, &tool_call.name, outcome.clone());
+    }
+    let process_path = state.environment.process_files().process_path()?;
+    state
+        .agent_files()
+        .write_action(
+            NamespaceActionRecord::new(&tool_call.name, "failed")
+                .with_output(serde_json::json!({"stdout": "", "stderr": message}).to_string())
+                .with_result(
+                    serde_json::json!({
+                        "call_id": tool_call.id,
+                        "exit_code": 1,
+                        "outcome": outcome,
+                    })
+                    .to_string(),
+                )
+                .with_process(process_path),
+        )
+        .await?;
+    Ok(())
+}
+
 async fn finish_standalone_cd<E, F>(
     state: &mut RuntimeLoopState,
     submission_id: &str,
+    command: &str,
     outcome: Result<std::path::PathBuf>,
     emit: &mut E,
 ) -> Result<()>
@@ -120,6 +208,19 @@ where
     };
     let output = serde_json::json!({"stdout": "", "stderr": stderr});
     let arguments = serde_json::json!({"operation": "cd"});
+    state
+        .machine
+        .add_assistant_message_with_tool_calls_and_reasoning(
+            "",
+            vec![crate::tape::ToolRequest {
+                id: submission_id.to_string(),
+                name: "bash".to_string(),
+                arguments: serde_json::json!({"command": command}),
+            }],
+            None,
+            None,
+            &[],
+        );
     state
         .machine
         .record_tool_call("cd", arguments.clone(), payload.clone(), success);
@@ -190,6 +291,7 @@ mod tests {
         finish_standalone_cd(
             &mut state,
             submission_id,
+            "cd src",
             Ok(PathBuf::from("/mnt/project/src")),
             &mut emit,
         )
@@ -223,5 +325,18 @@ mod tests {
                 .unwrap()["cwd"],
             "/mnt/project/src"
         );
+        assert!(matches!(
+            state.machine.messages().first(),
+            Some(crate::tape::Message::Assistant { tool_requests, .. })
+                if tool_requests.len() == 1
+                    && tool_requests[0].id == submission_id
+                    && tool_requests[0].name == "bash"
+                    && tool_requests[0].arguments["command"] == "cd src"
+        ));
+        assert!(matches!(
+            state.machine.messages().get(1),
+            Some(crate::tape::Message::Tool { responses })
+                if responses.len() == 1 && responses[0].id == submission_id
+        ));
     }
 }
