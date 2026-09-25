@@ -1,4 +1,7 @@
 pub(super) fn is_project_code_dispatcher(command: &str, args: &[String]) -> bool {
+    if command == "cmake" {
+        return !matches!(args, [argument] if one_of(argument, "--help -h --version"));
+    }
     if matches!(command, "python" | "python3")
         && args.windows(2).any(|pair| {
             matches!(pair[0].as_str(), "-m" | "--module") && one_of(&pair[1], "pytest unittest")
@@ -114,6 +117,8 @@ fn package_manager_subcommand<'a>(command: &str, args: &'a [String]) -> Option<&
 
 pub(super) fn git_subcommand_can_invoke_configured_helpers(command: &str, args: &[String]) -> bool {
     match command {
+        // Git help can execute a configured man viewer from repository config.
+        "help" => true,
         // These commands can execute configured external diff or textconv helpers.
         "diff" | "diff-files" | "diff-index" | "diff-tree" | "format-patch" | "log" | "show" => {
             !git_option_disabled(args, "--ext-diff", "--no-ext-diff")

@@ -339,6 +339,124 @@ async fn seatbelt_does_not_allow_git_configured_helpers_to_read_outside_the_host
 
 #[cfg(target_os = "macos")]
 #[tokio::test]
+async fn seatbelt_rejects_git_help_configured_man_viewers() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let mount = TempDir::new().unwrap();
+    let outside = TempDir::new().unwrap();
+    let marker = outside.path().join("host-only-marker.txt");
+    std::fs::write(&marker, "host-only-marker\n").unwrap();
+    let initialized = std::process::Command::new("git")
+        .args(["init", "--quiet"])
+        .current_dir(mount.path())
+        .status()
+        .unwrap();
+    assert!(initialized.success(), "git init failed: {initialized}");
+
+    let viewer = mount.path().join("viewer");
+    std::fs::write(
+        &viewer,
+        format!("#!/bin/sh\n/bin/cat '{}' >&2\n", marker.display()),
+    )
+    .unwrap();
+    std::fs::set_permissions(&viewer, std::fs::Permissions::from_mode(0o755)).unwrap();
+    for (key, value) in [
+        ("man.viewer", "leak"),
+        ("man.leak.cmd", viewer.to_str().unwrap()),
+    ] {
+        let configured = std::process::Command::new("git")
+            .args(["config", key, value])
+            .current_dir(mount.path())
+            .status()
+            .unwrap();
+        assert!(
+            configured.success(),
+            "git config {key} failed: {configured}"
+        );
+    }
+
+    let control = std::process::Command::new("git")
+        .args(["help", "status"])
+        .current_dir(mount.path())
+        .output()
+        .unwrap();
+    assert!(
+        String::from_utf8_lossy(&control.stderr).contains("host-only-marker"),
+        "fixture Git did not invoke the configured man viewer: {control:?}"
+    );
+
+    let sandbox = Sandbox::with_backend(
+        mount.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::Seatbelt,
+    );
+    let error = sandbox
+        .exec_with_timeout_and_capability(
+            "git help status",
+            mount.path(),
+            None,
+            Some(alan_agent_protocol::ToolCapability::Unknown),
+        )
+        .await
+        .expect_err("Git help can execute a configured man viewer outside the mount");
+    assert!(
+        error.to_string().contains("opaque command dispatcher"),
+        "{error}"
+    );
+}
+
+#[cfg(target_os = "macos")]
+#[tokio::test]
+async fn seatbelt_rejects_cmake_project_code_with_uninspectable_reads() {
+    let cmake = std::process::Command::new("cmake")
+        .arg("--version")
+        .output()
+        .expect("macOS test runner provides CMake");
+    assert!(cmake.status.success(), "cmake --version failed: {cmake:?}");
+
+    let mount = TempDir::new().unwrap();
+    let outside = TempDir::new().unwrap();
+    let marker = outside.path().join("host-only-marker.txt");
+    std::fs::write(&marker, "host-only-marker\n").unwrap();
+    std::fs::write(
+        mount.path().join("CMakeLists.txt"),
+        format!(
+            "cmake_minimum_required(VERSION 3.20)\nproject(leak NONE)\nexecute_process(COMMAND /bin/cat \"{}\" OUTPUT_VARIABLE secret)\nmessage(STATUS \"${{secret}}\")\n",
+            marker.display()
+        ),
+    )
+    .unwrap();
+
+    let control = std::process::Command::new("cmake")
+        .args(["-S", ".", "-B", "build"])
+        .current_dir(mount.path())
+        .output()
+        .unwrap();
+    assert!(
+        String::from_utf8_lossy(&control.stdout).contains("host-only-marker"),
+        "fixture CMake did not execute the project command: {control:?}"
+    );
+
+    let sandbox = Sandbox::with_backend(
+        mount.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::Seatbelt,
+    );
+    let error = sandbox
+        .exec_with_timeout_and_capability(
+            "cmake -S . -B build",
+            mount.path(),
+            None,
+            Some(alan_agent_protocol::ToolCapability::Unknown),
+        )
+        .await
+        .expect_err("CMake project code can read paths hidden from ProtectedOnly validation");
+    assert!(
+        error.to_string().contains("opaque command dispatcher"),
+        "{error}"
+    );
+}
+
+#[cfg(target_os = "macos")]
+#[tokio::test]
 async fn seatbelt_rejects_git_commit_hooks_with_uninspectable_reads() {
     use std::os::unix::fs::PermissionsExt;
 
@@ -548,6 +666,7 @@ fn project_code_dispatchers_are_rejected_as_opaque() {
         "git cat-file --filters HEAD:path",
         "git grep --textconv needle",
         "git blame --textconv HEAD -- file.txt",
+        "git help status",
         "git add file.txt",
         "git am change.patch",
         "git checkout branch",
@@ -597,6 +716,9 @@ fn project_code_dispatchers_are_rejected_as_opaque() {
         "pytest -s",
         "python3 -m pytest -s",
         "python3 -m unittest test_module",
+        "cmake .",
+        "cmake --build .",
+        "cmake -P project.cmake",
     ] {
         let words = command
             .split_whitespace()
@@ -666,6 +788,10 @@ fn project_code_dispatchers_are_rejected_as_opaque() {
         "go fmt ./...",
         "swift --version",
         "swift --help",
+        "git --help",
+        "git -h",
+        "cmake --help",
+        "cmake --version",
         "rake --version",
         "rake -V",
         "rake --help",
