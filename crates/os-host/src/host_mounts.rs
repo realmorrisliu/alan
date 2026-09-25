@@ -117,7 +117,7 @@ fn replace_path_prefixes(text: &str, prefix: &str, replacement: &str) -> String 
                 || ch == std::path::MAIN_SEPARATOR
                 || matches!(
                     ch,
-                    ':' | ',' | ';' | ')' | ']' | '}' | '\'' | '"' | '>' | '`' | '*'
+                    ':' | ',' | ';' | ')' | ']' | '}' | '\'' | '"' | '>' | '`' | '*' | '?' | '#'
                 )
         }) || is_terminal_sentence_punctuation(suffix, 0);
         if boundary_before && boundary_after {
@@ -731,6 +731,10 @@ mod tests {
         assert_eq!(adapter.project_text(&punctuated_path), "failed at ..");
         let file_uri = format!("file://{}/notes.txt", host_root.display());
         assert_eq!(adapter.project_text(&file_uri), "file://./notes.txt");
+        let file_uri_query = format!("file://{}?line=20", host_root.display());
+        assert_eq!(adapter.project_text(&file_uri_query), "file://.?line=20");
+        let file_uri_fragment = format!("file://{}#L20", host_root.display());
+        assert_eq!(adapter.project_text(&file_uri_fragment), "file://.#L20");
         let markdown_path = format!("failed at `{}`", host_root.display());
         assert_eq!(adapter.project_text(&markdown_path), "failed at `.`");
         let emphasized_path = format!("failed at **{}**", host_root.display());
