@@ -88,6 +88,12 @@ boundary; `!` SHALL NOT imply unrestricted execution.
 - **AND** structured Agent file operations may address it through their own
   delegated Host Mount checks
 
+#### Scenario: Opaque mount-local executables are rejected when reads are not kernel-confined
+- **WHEN** the active OS sandbox backend does not confine reads and a command's
+  executable resolves from the active Host Mount
+- **THEN** native Tool execution rejects the command before launch because the
+  executable could read paths that command-text validation cannot inspect
+
 #### Scenario: Native output paths remain shell-usable and private
 - **WHEN** native stdout or stderr contains a path under the active cwd grant
 - **THEN** the Host adapter projects it relative to that submission's shared cwd

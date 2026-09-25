@@ -110,16 +110,9 @@ fn replace_path_prefixes(text: &str, prefix: &str, replacement: &str) -> String 
     for (start, _) in text.match_indices(prefix) {
         let end = start + prefix.len();
         let suffix = strip_leading_terminal_sequences(&text[end..]);
-        let after = suffix.chars().next();
-        let boundary_before = is_path_start(text, start);
-        let boundary_after = after.is_none_or(|ch| {
-            ch.is_whitespace()
-                || ch == std::path::MAIN_SEPARATOR
-                || matches!(
-                    ch,
-                    ':' | ',' | ';' | ')' | ']' | '}' | '\'' | '"' | '>' | '`' | '*' | '?' | '#'
-                )
-        }) || is_terminal_sentence_punctuation(suffix, 0);
+        let emphasized = path_projection::is_underscore_emphasis_path(text, start, end);
+        let boundary_before = is_path_start(text, start) || emphasized;
+        let boundary_after = is_path_end(suffix) || emphasized;
         if boundary_before && boundary_after {
             projected.push_str(&text[copied_through..start]);
             projected.push_str(replacement);
@@ -128,6 +121,18 @@ fn replace_path_prefixes(text: &str, prefix: &str, replacement: &str) -> String 
     }
     projected.push_str(&text[copied_through..]);
     projected
+}
+
+fn is_path_end(suffix: &str) -> bool {
+    let after = suffix.chars().next();
+    after.is_none_or(|ch| {
+        ch.is_whitespace()
+            || ch == std::path::MAIN_SEPARATOR
+            || matches!(
+                ch,
+                ':' | ',' | ';' | ')' | ']' | '}' | '\'' | '"' | '>' | '`' | '*' | '?' | '#'
+            )
+    }) || is_terminal_sentence_punctuation(suffix, 0)
 }
 
 fn is_terminal_sentence_punctuation(text: &str, start: usize) -> bool {

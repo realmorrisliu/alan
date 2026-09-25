@@ -4,7 +4,10 @@ use super::command_interpreters::{
 };
 use super::command_options::{exact_or_inline_option_with_value, has_attached_option_value};
 use anyhow::{Result, anyhow};
-use std::path::Path;
+use std::{ffi::OsString, path::Path};
+
+use super::path_literals::lexically_normalize_path;
+use super::sandbox_spec::SandboxHostMount;
 
 pub(super) fn validate_nested_command_evaluators(
     commands: &[Vec<String>],
@@ -16,8 +19,97 @@ pub(super) fn validate_nested_command_evaluators(
 pub(super) fn validate_protected_only_command_evaluators(
     commands: &[Vec<String>],
     backend_name: &str,
+    cwd: &Path,
+    host_mounts: &[SandboxHostMount],
 ) -> Result<()> {
+    validate_mount_local_executables(commands, backend_name, cwd, host_mounts)?;
     validate_nested_command_evaluators_inner(commands, backend_name, true)
+}
+
+fn validate_mount_local_executables(
+    commands: &[Vec<String>],
+    backend_name: &str,
+    cwd: &Path,
+    host_mounts: &[SandboxHostMount],
+) -> Result<()> {
+    // ponytail: catches direct project programs; indirect code runners require kernel read
+    // confinement.
+    let mut search_paths = std::env::var_os("PATH").into_iter().collect::<Vec<_>>();
+    // Sequential shell assignments and exports persist, but this path parser does not evaluate
+    // that shell state; conservatively consider every literal PATH assignment in this submission.
+    search_paths.extend(
+        commands
+            .iter()
+            .flatten()
+            .filter_map(|word| word.strip_prefix("PATH=").map(OsString::from)),
+    );
+    for words in commands {
+        let Some(view) = nested_evaluator_view(words) else {
+            continue;
+        };
+        let executable = Path::new(view.program);
+        let executes_from_mount = if view.program.contains(std::path::MAIN_SEPARATOR) {
+            executable_path_is_in_mount(executable, cwd, host_mounts)
+        } else {
+            search_paths.iter().any(|search_path| {
+                std::env::split_paths(search_path).any(|directory| {
+                    let directory = if directory.is_absolute() {
+                        directory
+                    } else {
+                        cwd.join(directory)
+                    };
+                    executable_path_is_in_mount(&directory.join(executable), cwd, host_mounts)
+                })
+            })
+        };
+        if executes_from_mount {
+            return Err(anyhow!(
+                "Sandbox backend {} rejects mount-local executables in ProtectedOnly mode because their file reads cannot be validated against Host Mounts",
+                backend_name
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn executable_path_is_in_mount(
+    executable: &Path,
+    cwd: &Path,
+    host_mounts: &[SandboxHostMount],
+) -> bool {
+    let candidate = if executable.is_absolute() {
+        executable.to_path_buf()
+    } else {
+        cwd.join(executable)
+    };
+    if !is_executable_file(&candidate) {
+        return false;
+    }
+    let lexical_candidate = lexically_normalize_path(&candidate);
+    host_mounts.iter().any(|mount| {
+        let lexical_root = lexically_normalize_path(&mount.host_path);
+        lexical_candidate.starts_with(&lexical_root)
+            || std::fs::canonicalize(&candidate)
+                .is_ok_and(|canonical| canonical.starts_with(&mount.host_path))
+    })
+}
+
+fn is_executable_file(path: &Path) -> bool {
+    let Ok(metadata) = std::fs::metadata(path) else {
+        return false;
+    };
+    if !metadata.is_file() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        metadata.permissions().mode() & 0o111 != 0
+    }
+    #[cfg(not(unix))]
+    {
+        true
+    }
 }
 
 fn validate_nested_command_evaluators_inner(
@@ -291,6 +383,7 @@ fn command_basename(command: &str) -> &str {
 struct NestedEvaluatorView<'a> {
     display: String,
     command: &'a str,
+    program: &'a str,
     args: &'a [String],
     opaque_wrapper_display: Option<String>,
 }
@@ -307,6 +400,7 @@ fn nested_evaluator_view(words: &[String]) -> Option<NestedEvaluatorView<'_>> {
                 return Some(NestedEvaluatorView {
                     display: display.clone(),
                     command,
+                    program: &words[command_index],
                     args,
                     opaque_wrapper_display: Some(format!("{display} {flag}")),
                 });
@@ -322,6 +416,7 @@ fn nested_evaluator_view(words: &[String]) -> Option<NestedEvaluatorView<'_>> {
             return Some(NestedEvaluatorView {
                 display,
                 command,
+                program: &words[command_index],
                 args,
                 opaque_wrapper_display: None,
             });

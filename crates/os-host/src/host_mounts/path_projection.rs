@@ -61,3 +61,20 @@ pub(super) fn project_text(adapter: &NativeToolExecutionAdapter, text: &str) -> 
     }
     projected
 }
+
+pub(super) fn is_underscore_emphasis_path(text: &str, start: usize, end: usize) -> bool {
+    let prefix = super::strip_trailing_terminal_sequences(&text[..start]);
+    let opening_length = prefix.chars().rev().take_while(|ch| *ch == '_').count();
+    if opening_length == 0 {
+        return false;
+    }
+    let before_opening = &prefix[..prefix.len() - opening_length];
+    if !super::is_path_start(before_opening, before_opening.len()) {
+        return false;
+    }
+
+    let suffix = super::strip_leading_terminal_sequences(&text[end..]);
+    let closing_length = suffix.chars().take_while(|ch| *ch == '_').count();
+    let after_closing = super::strip_leading_terminal_sequences(&suffix[closing_length..]);
+    closing_length == opening_length && super::is_path_end(after_closing)
+}

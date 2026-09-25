@@ -76,6 +76,65 @@ async fn seatbelt_rejects_makefile_commands_with_uninspectable_path_input() {
 }
 
 #[tokio::test]
+async fn seatbelt_rejects_mount_local_executables_with_uninspectable_reads() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let mount = TempDir::new().unwrap();
+    let outside = TempDir::new().unwrap();
+    let secret = outside.path().join("host-only-marker.txt");
+    std::fs::write(&secret, "host-only-marker\n").unwrap();
+    std::fs::create_dir(mount.path().join("bin")).unwrap();
+    let executable = mount.path().join("bin/leak");
+    std::fs::write(
+        &executable,
+        format!("#!/bin/sh\n/bin/cat '{}'\n", secret.display()),
+    )
+    .unwrap();
+    std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let sandbox = Sandbox::with_backend(
+        mount.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::Seatbelt,
+    );
+    for command in [
+        "./bin/leak",
+        "PATH=bin leak",
+        "env PATH=bin leak",
+        "PATH=bin; leak",
+        "export PATH=bin; leak",
+    ] {
+        let error = sandbox
+            .exec_with_timeout_and_capability(
+                command,
+                mount.path(),
+                None,
+                Some(alan_agent_protocol::ToolCapability::Unknown),
+            )
+            .await
+            .expect_err("mount-local code can read paths hidden from ProtectedOnly validation");
+
+        assert!(
+            error.to_string().contains("mount-local executable"),
+            "{command}: {error}"
+        );
+    }
+
+    let non_executable = mount.path().join("bin/uname");
+    std::fs::write(&non_executable, "not an executable\n").unwrap();
+    std::fs::set_permissions(&non_executable, std::fs::Permissions::from_mode(0o644)).unwrap();
+    let result = sandbox
+        .exec_with_timeout_and_capability(
+            "PATH=bin uname",
+            mount.path(),
+            None,
+            Some(alan_agent_protocol::ToolCapability::Unknown),
+        )
+        .await
+        .expect("a non-executable same-name file is not treated as the mount-local executable");
+    assert_eq!(result.exit_code, 126);
+}
+
+#[tokio::test]
 async fn absolute_path_executable_on_host_path_is_not_a_project_file_operand() {
     use std::os::unix::fs::PermissionsExt;
 

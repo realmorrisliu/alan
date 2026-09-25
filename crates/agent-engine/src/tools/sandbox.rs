@@ -616,7 +616,12 @@ impl Sandbox {
             self.validate_nested_command_evaluators(&commands)?;
         } else {
             validate_opaque_awk_script_files(&commands, self.backend_name())?;
-            validate_protected_only_command_evaluators(&commands, self.backend_name())?;
+            validate_protected_only_command_evaluators(
+                &commands,
+                self.backend_name(),
+                cwd,
+                &self.spec.host_mounts,
+            )?;
         }
 
         // Wrapper forms (`bash -lc 'echo x > .git/config'`) hide their operands

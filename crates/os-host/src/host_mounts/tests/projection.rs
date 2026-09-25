@@ -79,6 +79,24 @@ async fn project_text_projects_percent_encoded_file_uri_roots_without_matching_s
         adapter.project_text(sibling_uri.as_str()),
         sibling_uri.as_str()
     );
+
+    let emphasized_root = format!("__{}__", root.display());
+    assert_eq!(adapter.project_text(&emphasized_root), "__.__");
+    let ansi_emphasized_root = format!("__{}__\x1b[0m", root.display());
+    assert_eq!(adapter.project_text(&ansi_emphasized_root), "__.__\x1b[0m");
+    let single_emphasized_root = format!("_{}_", root.display());
+    assert_eq!(adapter.project_text(&single_emphasized_root), "_._");
+
+    let emphasized_sibling = format!("__{}_backup__", root.display());
+    assert_eq!(
+        adapter.project_text(&emphasized_sibling),
+        emphasized_sibling
+    );
+    let single_emphasized_sibling = format!("_{}_backup_", root.display());
+    assert_eq!(
+        adapter.project_text(&single_emphasized_sibling),
+        single_emphasized_sibling
+    );
 }
 
 #[tokio::test]
