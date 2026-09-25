@@ -723,7 +723,7 @@ where
 {
     let Submission { id, intent, op } = submission;
 
-    if intent == InputIntent::Command {
+    if intent == InputIntent::Command && matches!(&op, Op::Input { .. }) {
         return explicit_command::handle_explicit_command(
             state,
             id,

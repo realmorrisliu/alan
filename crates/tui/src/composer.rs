@@ -59,7 +59,6 @@ impl Composer {
     pub fn set_text_with_cursor(&mut self, text: impl Into<String>, cursor: usize) {
         self.buffer = text.into();
         self.cursor = cursor.min(self.buffer.len());
-        self.intent = InputIntent::Agent;
         self.reset_recall();
     }
 

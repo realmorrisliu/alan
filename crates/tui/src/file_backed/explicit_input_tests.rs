@@ -89,6 +89,25 @@ fn submitted_command_keeps_its_prompt_intent_in_transcript() {
 }
 
 #[test]
+fn file_completion_preserves_explicit_input_intent() {
+    for (prefix, intent) in [("!", InputIntent::Command), (":", InputIntent::ForceAgent)] {
+        let mut app = FileBackedApp::new("/agent/1".to_string());
+        app.set_file_candidates(vec![CompletionCandidate::new("src/main.rs", None)]);
+        app.composer.insert_text(&format!("{prefix}inspect @src"));
+        app.refresh_completion();
+
+        assert!(app.completion.is_some());
+        app.accept_completion();
+
+        assert!(matches!(
+            app.handle_submit(),
+            Some(FileBackedAction::Submit(input))
+                if input.intent == intent && input.body == "inspect @src/main.rs "
+        ));
+    }
+}
+
+#[test]
 fn confirmation_digit_builds_resume_response() {
     let mut app = FileBackedApp::new("/agent/1".to_string());
     app.set_pending_yield(PendingYieldCell {
