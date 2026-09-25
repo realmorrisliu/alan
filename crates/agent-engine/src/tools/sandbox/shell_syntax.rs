@@ -692,6 +692,11 @@ pub(crate) fn parse_standalone_cd(command: &str) -> Result<Option<PathBuf>> {
     }
 
     let directory = &words[1].decoded;
+    if directory.is_empty() {
+        return Err(anyhow!(
+            "standalone cd requires a non-empty directory argument"
+        ));
+    }
     if directory == "-" {
         return Err(anyhow!("standalone cd does not support `-`"));
     }

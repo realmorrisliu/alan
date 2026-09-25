@@ -102,7 +102,7 @@ fn replace_path_prefixes(text: &str, prefix: &str, replacement: &str) -> String 
             ch.is_whitespace()
                 || ch == std::path::MAIN_SEPARATOR
                 || matches!(ch, ':' | ',' | ';' | ')' | ']' | '}' | '\'' | '"')
-        });
+        }) || is_terminal_sentence_punctuation(text, end);
         if boundary_before && boundary_after {
             projected.push_str(&text[copied_through..start]);
             projected.push_str(replacement);
@@ -111,6 +111,14 @@ fn replace_path_prefixes(text: &str, prefix: &str, replacement: &str) -> String 
     }
     projected.push_str(&text[copied_through..]);
     projected
+}
+
+fn is_terminal_sentence_punctuation(text: &str, start: usize) -> bool {
+    let mut suffix = text[start..].chars();
+    matches!(suffix.next(), Some('.' | '!' | '?'))
+        && suffix.next().is_none_or(|ch| {
+            ch.is_whitespace() || matches!(ch, ',' | ':' | ';' | ')' | ']' | '}' | '\'' | '"')
+        })
 }
 
 impl ToolExecutionAdapter for NativeToolExecutionAdapter {
@@ -617,17 +625,13 @@ mod tests {
 
         let execution = service.reconcile(7, binding("/mnt/project")).unwrap();
         let adapter = execution.adapter().unwrap();
-        assert_eq!(
-            adapter.cwd().unwrap(),
-            std::fs::canonicalize(host.path()).unwrap()
-        );
+        let host_root = std::fs::canonicalize(host.path()).unwrap();
+        assert_eq!(adapter.cwd().unwrap(), host_root);
         assert_eq!(
             adapter
                 .resolve_path(Path::new("/mnt/project"), Path::new("notes.txt"))
                 .unwrap(),
-            std::fs::canonicalize(host.path())
-                .unwrap()
-                .join("notes.txt")
+            host_root.join("notes.txt")
         );
         assert_eq!(
             adapter.visible_path(&host.path().join("notes.txt")),
@@ -635,14 +639,18 @@ mod tests {
         );
         let projected = adapter.project_text(&format!(
             "failed at {}",
-            std::fs::canonicalize(host.path())
-                .unwrap()
-                .join("notes.txt")
-                .display()
+            host_root.join("notes.txt").display()
         ));
         assert_eq!(projected, "failed at ./notes.txt");
         let sibling_path = format!("{}-backup/notes.txt", host.path().display());
         assert_eq!(adapter.project_text(&sibling_path), sibling_path);
+        let dotted_sibling_path = format!("{}.backup/notes.txt", host_root.display());
+        assert_eq!(
+            adapter.project_text(&dotted_sibling_path),
+            dotted_sibling_path
+        );
+        let punctuated_path = format!("failed at {}.", host_root.display());
+        assert_eq!(adapter.project_text(&punctuated_path), "failed at ..");
 
         let nested = service
             .reconcile(7, binding("/mnt/project/src"))

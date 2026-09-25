@@ -44,6 +44,8 @@ fn standalone_cd_parser_accepts_one_literal_path_and_leaves_scripts_alone() {
 fn standalone_cd_parser_rejects_unsupported_forms_explicitly() {
     for command in [
         "cd",
+        "cd ''",
+        "cd \"\"",
         "cd one two",
         "cd -",
         "cd ~/project",
