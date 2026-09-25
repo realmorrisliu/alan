@@ -723,6 +723,8 @@ fn project_code_dispatchers_are_rejected_as_opaque() {
         "gradle -p app test",
         "ninja leak",
         "ninja -C build",
+        "mvn test",
+        "mvn -f app/pom.xml verify",
     ] {
         let words = command
             .split_whitespace()
@@ -801,6 +803,9 @@ fn project_code_dispatchers_are_rejected_as_opaque() {
         "gradle -v",
         "ninja --help",
         "ninja --version",
+        "mvn --help",
+        "mvn --version",
+        "mvn -v",
         "rake --version",
         "rake -V",
         "rake --help",

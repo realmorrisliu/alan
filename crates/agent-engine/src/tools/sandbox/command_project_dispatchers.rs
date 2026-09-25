@@ -4,6 +4,7 @@ pub(super) fn is_project_code_dispatcher(command: &str, args: &[String]) -> bool
         "cmake" => Some("--help -h --version"),
         "gradle" => Some("--help -h --version -v"),
         "ninja" => Some("--help --version"),
+        "mvn" => Some("--help -h --version -v"),
         _ => None,
     };
     if let Some(queries) = build_system_queries {
