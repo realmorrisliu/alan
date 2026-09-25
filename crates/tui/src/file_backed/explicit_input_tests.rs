@@ -75,6 +75,54 @@ fn reattached_command_restores_intent_and_output_from_tape_action_correlation() 
 }
 
 #[test]
+fn reattached_pending_command_keeps_tape_correlation_for_a_later_action() {
+    let mut app = FileBackedApp::new("/agent/1".to_string());
+    let submission_id = "8ed8a9bb-a344-4a39-8225-325b22c92756";
+    let tape = format!(
+        "{{\"version\":1,\"kind\":\"message\",\"role\":\"user\",\"content\":\"git status\",\"submission_id\":\"{submission_id}\"}}\n"
+    );
+
+    hydrate_tape_history(&mut app, &tape, &[]);
+    assert_eq!(
+        app.transcript,
+        vec![HistoryCell::User("git status".to_string())]
+    );
+
+    sync_action_snapshot(
+        &mut app,
+        ActionSnapshot {
+            id: "a0".to_string(),
+            name: "bash".to_string(),
+            status: "running".to_string(),
+            output: String::new(),
+            result: format!(r#"{{"call_id":"{submission_id}"}}"#),
+        },
+    );
+    assert_eq!(
+        app.transcript,
+        vec![HistoryCell::Command("git status".to_string())]
+    );
+
+    sync_action_snapshot(
+        &mut app,
+        ActionSnapshot {
+            id: "a0".to_string(),
+            name: "bash".to_string(),
+            status: "completed".to_string(),
+            output: r#"{"stdout":"working tree clean\n","stderr":"","exit_code":0}"#.to_string(),
+            result: format!(r#"{{"call_id":"{submission_id}","exit_code":0}}"#),
+        },
+    );
+    assert_eq!(
+        app.transcript,
+        vec![
+            HistoryCell::Command("git status".to_string()),
+            HistoryCell::Rendered(vec!["working tree clean".to_string()]),
+        ]
+    );
+}
+
+#[test]
 fn live_remote_command_uses_tape_and_action_submission_correlation() {
     let mut app = FileBackedApp::new("/agent/1".to_string());
     app.apply_tape_record(TapeRecordV1 {

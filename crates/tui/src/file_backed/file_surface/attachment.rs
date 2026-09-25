@@ -45,19 +45,20 @@ pub(in crate::file_backed) fn hydrate_tape_history(
         }
         match record.role.as_str() {
             "user" => {
-                let action = record
-                    .submission_id
-                    .as_deref()
-                    .and_then(|submission_id| actions_by_submission.get(submission_id));
-                if let (Some(submission_id), Some(action)) = (record.submission_id, action) {
-                    command_submission_ids.push(submission_id);
-                    cells.push(HistoryCell::Command(record.content));
-                    if matches!(action.status.trim(), "completed" | "failed") {
-                        let cell = command_action_history_cell(action).unwrap_or_else(|| {
-                            HistoryCell::Error("command result is unavailable".to_string())
-                        });
-                        action_cells.insert(action.id.clone(), cells.len());
-                        cells.push(cell);
+                if let Some(submission_id) = record.submission_id {
+                    if let Some(action) = actions_by_submission.get(&submission_id).copied() {
+                        command_submission_ids.push(submission_id);
+                        cells.push(HistoryCell::Command(record.content));
+                        if matches!(action.status.trim(), "completed" | "failed") {
+                            let cell = command_action_history_cell(action).unwrap_or_else(|| {
+                                HistoryCell::Error("command result is unavailable".to_string())
+                            });
+                            action_cells.insert(action.id.clone(), cells.len());
+                            cells.push(cell);
+                        }
+                    } else {
+                        app.tape_user_cells.insert(submission_id, cells.len());
+                        cells.push(HistoryCell::User(record.content));
                     }
                 } else {
                     cells.push(HistoryCell::User(record.content));
