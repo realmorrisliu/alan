@@ -61,7 +61,8 @@ pub(super) fn is_project_code_dispatcher(command: &str, args: &[String]) -> bool
             one_of(subcommand, "run x test install i add update upgrade")
                 || !one_of(subcommand, "--version -v --help help pm")
         }
-        "deno" => one_of(subcommand, "run task test"),
+        // Deno's execution subcommands load or evaluate project-controlled code.
+        "deno" => one_of(subcommand, "run task test bench serve repl eval"),
         "cargo" => {
             one_of(
                 subcommand,
