@@ -93,19 +93,8 @@ fn replace_path_prefixes(text: &str, prefix: &str, replacement: &str) -> String 
     let mut copied_through = 0;
     for (start, _) in text.match_indices(prefix) {
         let end = start + prefix.len();
-        let before = text[..start].chars().next_back();
         let after = text[end..].chars().next();
-        let file_uri_delimiter = text[..start]
-            .get(start.saturating_sub("file://".len())..start)
-            .is_some_and(|scheme| scheme.eq_ignore_ascii_case("file://"));
-        let boundary_before = file_uri_delimiter
-            || before.is_none_or(|ch| {
-                ch.is_whitespace()
-                    || matches!(
-                        ch,
-                        '=' | ':' | '\'' | '"' | '(' | '[' | '{' | ',' | '<' | '`'
-                    )
-            });
+        let boundary_before = is_path_start(text, start);
         let boundary_after = after.is_none_or(|ch| {
             ch.is_whitespace()
                 || ch == std::path::MAIN_SEPARATOR
@@ -129,6 +118,41 @@ fn is_terminal_sentence_punctuation(text: &str, start: usize) -> bool {
     matches!(suffix.next(), Some('.' | '!' | '?'))
         && suffix.next().is_none_or(|ch| {
             ch.is_whitespace() || matches!(ch, ',' | ':' | ';' | ')' | ']' | '}' | '\'' | '"')
+        })
+}
+
+fn replace_rooted_path_starts(text: &str, replacement: &str) -> String {
+    let mut projected = String::with_capacity(text.len());
+    let mut copied_through = 0;
+    for (start, _) in text.match_indices('/') {
+        let after = text[start + 1..].chars().next();
+        let uri_authority_delimiter =
+            text[..start].ends_with(':') && text[start..].starts_with("//");
+        if is_path_start(text, start)
+            && !uri_authority_delimiter
+            && after.is_some_and(|ch| !ch.is_whitespace() && ch != '/')
+        {
+            projected.push_str(&text[copied_through..start]);
+            projected.push_str(replacement);
+            copied_through = start + 1;
+        }
+    }
+    projected.push_str(&text[copied_through..]);
+    projected
+}
+
+fn is_path_start(text: &str, start: usize) -> bool {
+    let before = text[..start].chars().next_back();
+    let file_uri_delimiter = text[..start]
+        .get(start.saturating_sub("file://".len())..start)
+        .is_some_and(|scheme| scheme.eq_ignore_ascii_case("file://"));
+    file_uri_delimiter
+        || before.is_none_or(|ch| {
+            ch.is_whitespace()
+                || matches!(
+                    ch,
+                    '=' | ':' | '\'' | '"' | '(' | '[' | '{' | ',' | '<' | '`'
+                )
         })
 }
 
@@ -220,26 +244,31 @@ impl ToolExecutionAdapter for NativeToolExecutionAdapter {
         } else {
             replace_path_prefixes(text, cwd, ".")
         };
+        let cwd_from_mount = self
+            .namespace_cwd
+            .strip_prefix(&mount.namespace_path)
+            .expect("selected Host Mount owns the namespace cwd");
+        let mut mount_from_cwd = PathBuf::new();
+        for _ in cwd_from_mount.components() {
+            mount_from_cwd.push("..");
+        }
+        if mount_from_cwd.as_os_str().is_empty() {
+            mount_from_cwd.push(".");
+        }
         if mount.host_path != Path::new("/") {
-            let cwd_from_mount = self
-                .namespace_cwd
-                .strip_prefix(&mount.namespace_path)
-                .expect("selected Host Mount owns the namespace cwd");
-            let mut mount_from_cwd = PathBuf::new();
-            for _ in cwd_from_mount.components() {
-                mount_from_cwd.push("..");
-            }
-            if mount_from_cwd.as_os_str().is_empty() {
-                mount_from_cwd.push(".");
-            }
             projected = replace_path_prefixes(
                 &projected,
                 mount.host_path.to_string_lossy().as_ref(),
                 mount_from_cwd.to_string_lossy().as_ref(),
             );
         } else {
-            // ponytail: root grants project the active cwd only; tokenizing arbitrary absolute
-            // output paths is deferred until root-level Host Mount output is a real workflow.
+            let replacement = mount_from_cwd.to_string_lossy();
+            let replacement = if replacement == "." {
+                "./".to_string()
+            } else {
+                format!("{replacement}/")
+            };
+            projected = replace_rooted_path_starts(&projected, &replacement);
         }
         projected
     }
@@ -688,6 +717,40 @@ mod tests {
             "../notes.txt"
         );
         assert!(adapter.sandbox().unwrap().is_writable(host.path()));
+    }
+
+    #[tokio::test]
+    async fn root_host_mount_projects_absolute_paths_from_the_active_cwd() {
+        let service = service();
+        service.register_process(Pid(7), LiveNamespace::new(Namespace::new()));
+        approve(
+            &service,
+            7,
+            "/mnt/root",
+            HostMountAccess::ReadOnly,
+            Path::new("/"),
+        )
+        .await;
+        let adapter = service
+            .reconcile(7, binding("/mnt/root/home/user"))
+            .unwrap()
+            .adapter()
+            .unwrap();
+
+        assert_eq!(
+            adapter.project_text("realpath /etc/hosts"),
+            "realpath ../../etc/hosts"
+        );
+        assert_eq!(
+            adapter.project_text("file:///etc/hosts"),
+            "file://../../etc/hosts"
+        );
+        assert_eq!(
+            adapter.project_text("https://example.com/etc/hosts"),
+            "https://example.com/etc/hosts"
+        );
+        assert_eq!(adapter.project_text("ratio = 1 / 2"), "ratio = 1 / 2");
+        assert_eq!(adapter.project_text("/home/user/src"), "./src");
     }
 
     #[tokio::test]
