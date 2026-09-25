@@ -269,11 +269,16 @@ async fn sandbox_rejects_nested_dispatcher_reads_outside_the_host_mount_under_se
 }
 
 #[tokio::test]
-async fn sandbox_rejects_file_lists_from_stdin_under_seatbelt() {
+async fn sandbox_rejects_uninspectable_path_inputs_under_seatbelt() {
     let mount = TempDir::new().unwrap();
     let outside = TempDir::new().unwrap();
     let outside_file = outside.path().join("host-only-marker.txt");
     std::fs::write(&outside_file, "host-only-marker\n").unwrap();
+    std::fs::write(
+        mount.path().join("curl.conf"),
+        format!("url = \"file://{}\"\n", outside_file.display()),
+    )
+    .unwrap();
     let spec = SandboxSpec::from_host_mounts(&[SandboxHostMount {
         namespace_path: PathBuf::from("/mnt/project"),
         host_path: mount.path().to_path_buf(),
@@ -304,6 +309,11 @@ async fn sandbox_rejects_file_lists_from_stdin_under_seatbelt() {
             "printf '{}\\n' | pax -w -f host-files.pax",
             outside_file.display()
         ),
+        format!(
+            "printf 'url = \"file://{}\"\\n' | curl -q --config -",
+            outside_file.display()
+        ),
+        "curl -q -K curl.conf".to_string(),
     ];
     for command in commands {
         let error = sandbox
@@ -314,9 +324,14 @@ async fn sandbox_rejects_file_lists_from_stdin_under_seatbelt() {
                 Some(alan_agent_protocol::ToolCapability::Unknown),
             )
             .await
-            .expect_err("file lists from stdin must not bypass Host Mount read checks");
+            .expect_err("uninspectable path inputs must not bypass Host Mount read checks");
 
-        assert!(error.to_string().contains("file-list consumers"), "{error}");
+        assert!(
+            error
+                .to_string()
+                .contains("uninspectable path-bearing input"),
+            "{error}"
+        );
     }
 }
 

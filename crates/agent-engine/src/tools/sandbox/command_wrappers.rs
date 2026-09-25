@@ -44,11 +44,10 @@ fn validate_nested_command_evaluators_inner(
                 view.display
             ));
         }
-        if allow_inspectable_shell_and_awk
-            && has_uninspectable_file_list_input(view.command, view.args)
+        if allow_inspectable_shell_and_awk && has_uninspectable_path_input(view.command, view.args)
         {
             return Err(anyhow!(
-                "Sandbox backend {} rejects file-list consumers because listed paths cannot be validated against Host Mounts",
+                "Sandbox backend {} rejects commands with uninspectable path-bearing input because those paths cannot be validated against Host Mounts",
                 backend_name
             ));
         }
@@ -91,7 +90,7 @@ fn validate_nested_command_evaluators_inner(
     Ok(())
 }
 
-fn has_uninspectable_file_list_input(command: &str, args: &[String]) -> bool {
+fn has_uninspectable_path_input(command: &str, args: &[String]) -> bool {
     match command {
         "tar" | "gtar" | "bsdtar" => args
             .iter()
@@ -107,6 +106,10 @@ fn has_uninspectable_file_list_input(command: &str, args: &[String]) -> bool {
                     && arg[1..].chars().any(|option| matches!(option, 'o' | 'p')))
         }),
         "pax" => pax_reads_file_list_from_stdin(args),
+        // Curl configs can encode file:// URLs, so their source path alone is not sufficient.
+        "curl" => args
+            .iter()
+            .any(|arg| exact_or_inline_option_with_value(arg, &["-K"], &["--config"])),
         _ => false,
     }
 }
