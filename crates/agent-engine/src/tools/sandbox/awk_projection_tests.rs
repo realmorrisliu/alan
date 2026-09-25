@@ -323,6 +323,7 @@ async fn sandbox_rejects_uninspectable_path_inputs_under_seatbelt() {
             "printf 'url = \"file://{}\"\\n' | curl -q --config -",
             outside_file.display()
         ),
+        format!("curl -q file://{}", outside_file.display()),
         "curl -q -K curl.conf".to_string(),
         "printf 'x\\n' | sed -n -f sed.rules".to_string(),
     ];

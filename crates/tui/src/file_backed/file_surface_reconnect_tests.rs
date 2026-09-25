@@ -181,17 +181,39 @@ fn reattached_action_indices_follow_removed_error_cells() {
             preview: Some("first result".to_string()),
             presentation: None,
         },
+        HistoryCell::User("later task".to_string()),
         HistoryCell::Assistant("current answer".to_string()),
     ];
     reattached.action_cells.insert("action-1".to_string(), 2);
+    reattached
+        .tape_user_cells
+        .insert("current-submission".to_string(), 0);
+    reattached
+        .tape_user_cells
+        .insert("later-submission".to_string(), 3);
 
     let current_transcript = std::mem::take(&mut reattached.transcript);
     reattached.transcript = previous_transcript;
     let current_transcript =
-        remove_error_cells_and_remap_actions(current_transcript, &mut reattached.action_cells);
+        remove_error_cells_and_remap_indices(current_transcript, &mut reattached);
 
     assert!(reattached.merge_reconnected_history(current_transcript, "current task", 0));
     assert_eq!(reattached.action_cells.get("action-1"), Some(&3));
+    assert_eq!(
+        reattached.tape_user_cells.get("current-submission"),
+        Some(&2)
+    );
+    assert_eq!(reattached.tape_user_cells.get("later-submission"), Some(&4));
+    assert!(reattached.classify_command_submission("current-submission"));
+    assert!(reattached.classify_command_submission("later-submission"));
+    assert!(matches!(
+        reattached.transcript.get(2),
+        Some(HistoryCell::Command(text)) if text == "current task"
+    ));
+    assert!(matches!(
+        reattached.transcript.get(4),
+        Some(HistoryCell::Command(text)) if text == "later task"
+    ));
 
     reattached.upsert_action_cell(
         "action-1".to_string(),
@@ -213,6 +235,64 @@ fn reattached_action_indices_follow_removed_error_cells() {
         reattached.transcript.last(),
         Some(&HistoryCell::Assistant("current answer".to_string()))
     );
+}
+
+#[test]
+fn reattached_pending_tape_indices_follow_both_idle_merge_strategies() {
+    let tool = || HistoryCell::Tool {
+        title: "old tool".to_string(),
+        status: ToolStatus::Complete,
+        preview: None,
+        presentation: None,
+    };
+    let cases = [
+        (
+            vec![
+                HistoryCell::User("before".to_string()),
+                HistoryCell::Assistant("before answer".to_string()),
+                tool(),
+                HistoryCell::User("pending".to_string()),
+            ],
+            vec![tool(), HistoryCell::User("pending".to_string())],
+            1,
+            3,
+        ),
+        (
+            vec![
+                HistoryCell::User("prefix".to_string()),
+                HistoryCell::Assistant("old answer".to_string()),
+                tool(),
+            ],
+            vec![
+                HistoryCell::User("prefix".to_string()),
+                HistoryCell::User("pending".to_string()),
+            ],
+            1,
+            3,
+        ),
+    ];
+
+    let outcomes = cases
+        .into_iter()
+        .map(|(previous, current, source_index, expected_index)| {
+            let mut app = FileBackedApp::new("/agent/root".to_string());
+            app.transcript = previous;
+            app.tape_user_cells
+                .insert("submission".to_string(), source_index);
+
+            app.merge_reconnected_idle_history(current);
+
+            let mapped_index = app.tape_user_cells.get("submission").copied();
+            let classified = app.classify_command_submission("submission");
+            let command_cell = matches!(
+                app.transcript.get(expected_index),
+                Some(HistoryCell::Command(text)) if text == "pending"
+            );
+            (mapped_index, classified, command_cell)
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(outcomes, [(Some(3), true, true), (Some(3), true, true)]);
 }
 
 #[tokio::test]

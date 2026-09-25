@@ -1,3 +1,4 @@
+use super::super::history_merge::remap_transcript_indices;
 use super::super::tail::{current_root_agent_pid, root_agent_path_for_pid, tail_with_history};
 use super::{
     ActionSnapshot, FileBackedApp, TapeRecordV1, WatchTails, action_events_path, agent_output_path,
@@ -260,7 +261,7 @@ pub(in crate::file_backed) async fn reattach_to_current_agent(
             reattached.notice = None;
         }
         let current_transcript =
-            remove_error_cells_and_remap_actions(current_transcript, &mut reattached.action_cells);
+            remove_error_cells_and_remap_indices(current_transcript, &mut reattached);
         let recovered_current_turn = ui_task.started
             && reattached.merge_reconnected_history(
                 current_transcript,
@@ -291,35 +292,27 @@ pub(in crate::file_backed) async fn reattach_to_current_agent(
     Ok((tails, submitted_task_settled))
 }
 
-fn remove_error_cells_and_remap_actions(
+fn remove_error_cells_and_remap_indices(
     current: Vec<HistoryCell>,
-    action_cells: &mut std::collections::BTreeMap<String, usize>,
+    app: &mut FileBackedApp,
 ) -> Vec<HistoryCell> {
-    let mut action_indices = Vec::with_capacity(current.len());
+    let mut index_mapping = Vec::with_capacity(current.len());
     let mut next_index = 0;
     let current = current
         .into_iter()
         .filter_map(|cell| {
             if matches!(cell, HistoryCell::Error(_)) {
-                action_indices.push(None);
+                index_mapping.push(None);
                 None
             } else {
-                action_indices.push(Some(next_index));
+                index_mapping.push(Some(next_index));
                 next_index += 1;
                 Some(cell)
             }
         })
         .collect();
-    *action_cells = std::mem::take(action_cells)
-        .into_iter()
-        .filter_map(|(id, index)| {
-            action_indices
-                .get(index)
-                .copied()
-                .flatten()
-                .map(|index| (id, index))
-        })
-        .collect();
+    remap_transcript_indices(&mut app.action_cells, &index_mapping);
+    remap_transcript_indices(&mut app.tape_user_cells, &index_mapping);
     current
 }
 

@@ -1,8 +1,22 @@
-use std::mem;
-
 use crate::history::{HistoryCell, RenderOpts};
 
 use super::app::FileBackedApp;
+
+pub(super) fn remap_transcript_indices<K, M>(indices: &mut M, mapping: &[Option<usize>])
+where
+    M: Default + IntoIterator<Item = (K, usize)> + FromIterator<(K, usize)>,
+{
+    *indices = std::mem::take(indices)
+        .into_iter()
+        .filter_map(|(key, index)| {
+            mapping
+                .get(index)
+                .copied()
+                .flatten()
+                .map(|mapped| (key, mapped))
+        })
+        .collect();
+}
 
 pub(super) fn merge_reconnected_history(
     app: &mut FileBackedApp,
@@ -26,23 +40,25 @@ pub(super) fn merge_reconnected_history(
         return false;
     };
 
-    let mut omitted_current_cell = None;
-    if let Some(previous_boundary) = app.transcript.iter().rposition(|cell| {
+    let previous_boundary = app.transcript.iter().rposition(|cell| {
         matches!(
             cell,
             HistoryCell::User(text) | HistoryCell::Command(text)
                 if text == submitted_input
         )
-    }) && let Some((previous_answer_index, previous_answer)) = app
-        .transcript
-        .iter()
-        .enumerate()
-        .skip(previous_boundary + 1)
-        .rev()
-        .find_map(|(index, cell)| match cell {
-            HistoryCell::Assistant(text) => Some((index, text.as_str())),
-            _ => None,
-        })
+    });
+    let mut omitted_current_cell = None;
+    if let Some(previous_boundary) = previous_boundary
+        && let Some((previous_answer_index, previous_answer)) = app
+            .transcript
+            .iter()
+            .enumerate()
+            .skip(previous_boundary + 1)
+            .rev()
+            .find_map(|(index, cell)| match cell {
+                HistoryCell::Assistant(text) => Some((index, text.as_str())),
+                _ => None,
+            })
         && let Some((current_answer_index, current_answer)) = current
             .iter()
             .enumerate()
@@ -64,20 +80,23 @@ pub(super) fn merge_reconnected_history(
     }
 
     let previous_len = app.transcript.len();
-    app.action_cells = std::mem::take(&mut app.action_cells)
-        .into_iter()
-        .filter_map(|(action_id, index)| {
-            if index <= boundary {
-                return None;
-            }
-            let omitted_before_action =
-                usize::from(omitted_current_cell.is_some_and(|omitted| omitted < index));
-            Some((
-                action_id,
-                previous_len + index - boundary - 1 - omitted_before_action,
-            ))
-        })
-        .collect();
+    let mut action_indices = vec![None; current.len()];
+    let mut submission_indices = vec![None; current.len()];
+    if let Some(previous_boundary) = previous_boundary {
+        submission_indices[boundary] = Some(previous_boundary);
+    }
+    for index in boundary + 1..current.len() {
+        if Some(index) == omitted_current_cell {
+            continue;
+        }
+        let omitted_before_action =
+            usize::from(omitted_current_cell.is_some_and(|omitted| omitted < index));
+        let merged_index = previous_len + index - boundary - 1 - omitted_before_action;
+        action_indices[index] = Some(merged_index);
+        submission_indices[index] = Some(merged_index);
+    }
+    remap_transcript_indices(&mut app.action_cells, &action_indices);
+    remap_transcript_indices(&mut app.tape_user_cells, &submission_indices);
     app.transcript
         .extend(current.into_iter().enumerate().filter_map(|(index, cell)| {
             (index > boundary && Some(index) != omitted_current_cell).then_some(cell)
@@ -100,19 +119,20 @@ pub(super) fn merge_idle_history(app: &mut FileBackedApp, current: Vec<HistoryCe
     if let Some((offset, overlap_len)) = retained_suffix {
         let suffix_start = app.transcript.len() - overlap_len;
         let append_from = offset + overlap_len;
-        app.action_cells = mem::take(&mut app.action_cells)
-            .into_iter()
-            .filter_map(|(action_id, index)| {
-                let merged_index = if index >= offset && index < append_from {
-                    suffix_start + index - offset
+        let previous_len = app.transcript.len();
+        let index_mapping = (0..current.len())
+            .map(|index| {
+                if index >= offset && index < append_from {
+                    Some(suffix_start + index - offset)
                 } else if index >= append_from {
-                    app.transcript.len() + index - append_from
+                    Some(previous_len + index - append_from)
                 } else {
-                    return None;
-                };
-                Some((action_id, merged_index))
+                    None
+                }
             })
-            .collect();
+            .collect::<Vec<_>>();
+        remap_transcript_indices(&mut app.action_cells, &index_mapping);
+        remap_transcript_indices(&mut app.tape_user_cells, &index_mapping);
         app.transcript.extend(current.into_iter().skip(append_from));
         return;
     }
@@ -124,17 +144,17 @@ pub(super) fn merge_idle_history(app: &mut FileBackedApp, current: Vec<HistoryCe
         .take_while(|(previous, replacement)| previous == replacement)
         .count();
     let previous_len = app.transcript.len();
-    app.action_cells = mem::take(&mut app.action_cells)
-        .into_iter()
-        .map(|(action_id, index)| {
-            let merged_index = if index < shared_prefix_len {
+    let index_mapping = (0..current.len())
+        .map(|index| {
+            Some(if index < shared_prefix_len {
                 index
             } else {
                 previous_len + index.saturating_sub(shared_prefix_len)
-            };
-            (action_id, merged_index)
+            })
         })
-        .collect();
+        .collect::<Vec<_>>();
+    remap_transcript_indices(&mut app.action_cells, &index_mapping);
+    remap_transcript_indices(&mut app.tape_user_cells, &index_mapping);
     app.transcript
         .extend(current.into_iter().skip(shared_prefix_len));
 }

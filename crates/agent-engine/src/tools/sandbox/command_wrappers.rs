@@ -200,15 +200,42 @@ fn has_uninspectable_path_input(command: &str, args: &[String]) -> bool {
                     && arg[1..].chars().any(|option| matches!(option, 'o' | 'p')))
         }),
         "pax" => pax_reads_file_list_from_stdin(args),
-        // Curl configs can encode file:// URLs, so their source path alone is not sufficient.
-        "curl" => args
-            .iter()
-            .any(|arg| exact_or_inline_option_with_value(arg, &["-K"], &["--config"])),
+        // Curl URLs and configs can dispatch local reads the path validator cannot see.
+        "curl" => args.iter().any(|arg| {
+            exact_or_inline_option_with_value(arg, &["-K"], &["--config"])
+                || curl_file_url_argument(arg)
+        }),
         // Sed scripts can hide path reads in the r command.
         "sed" => args
             .iter()
             .any(|arg| exact_or_inline_option_with_value(arg, &["-f"], &["--file"])),
         _ => false,
+    }
+}
+
+fn curl_file_url_argument(argument: &str) -> bool {
+    let value = argument.strip_prefix("--url=").unwrap_or(argument);
+    value
+        .get(..5)
+        .is_some_and(|scheme| scheme.eq_ignore_ascii_case("file:"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::has_uninspectable_path_input;
+
+    #[test]
+    fn curl_local_file_urls_are_rejected_without_blocking_network_urls() {
+        for argument in ["file:///etc/passwd", "--url=FILE:///etc/passwd"] {
+            assert!(has_uninspectable_path_input(
+                "curl",
+                &[argument.to_string()]
+            ));
+        }
+        assert!(!has_uninspectable_path_input(
+            "curl",
+            &["https://example.test".to_string()]
+        ));
     }
 }
 
