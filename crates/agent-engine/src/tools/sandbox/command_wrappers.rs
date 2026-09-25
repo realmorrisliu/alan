@@ -57,6 +57,37 @@ pub(super) fn validate_nested_command_evaluators(
     Ok(())
 }
 
+pub(super) fn validate_opaque_awk_script_files(
+    commands: &[Vec<String>],
+    backend_name: &str,
+) -> Result<()> {
+    for words in commands {
+        let Some(view) = nested_evaluator_view(words) else {
+            continue;
+        };
+        if !matches!(view.command, "awk" | "gawk" | "mawk" | "nawk") {
+            continue;
+        }
+        if let Some(script) =
+            opaque_script_interpreter_display(&view.display, view.command, view.args).filter(
+                |script| {
+                    script.ends_with(" -f")
+                        || script.ends_with(" --file")
+                        || script.ends_with(" -i")
+                        || script.ends_with(" --include")
+                },
+            )
+        {
+            return Err(anyhow!(
+                "Sandbox backend {} rejects opaque AWK script files like {} because their file reads cannot be validated against host_mount",
+                backend_name,
+                script
+            ));
+        }
+    }
+    Ok(())
+}
+
 pub(super) fn validate_direct_command_shapes(
     commands: &[Vec<String>],
     backend_name: &str,

@@ -136,6 +136,23 @@ fn submitted_command_keeps_its_prompt_intent_in_transcript() {
 }
 
 #[test]
+fn agent_body_with_leading_space_before_slash_is_submitted_as_agent_work() {
+    let mut app = FileBackedApp::new("/agent/1".to_string());
+    app.composer.insert_text(" /help");
+
+    assert!(app.enter_submits_agent_task());
+    assert!(matches!(
+        app.handle_submit(),
+        Some(FileBackedAction::Submit(input))
+            if input.intent == InputIntent::Agent && input.body == " /help"
+    ));
+    assert_eq!(
+        app.transcript,
+        vec![HistoryCell::User(" /help".to_string())]
+    );
+}
+
+#[test]
 fn keyboard_slash_after_explicit_prefix_preserves_input_intent() {
     for (prefix, body, intent) in [
         ("!", "/usr/bin/git status", InputIntent::Command),

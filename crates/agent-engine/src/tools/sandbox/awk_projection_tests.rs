@@ -8,10 +8,8 @@ use tempfile::TempDir;
 #[tokio::test]
 async fn sandbox_runs_awk_with_native_paths_and_preserves_path_data() {
     let mount = TempDir::new().unwrap();
-    let script_path = mount.path().join("script.awk");
     let input_path = mount.path().join("input.tsv");
     let output_path = mount.path().join("output.tsv");
-    std::fs::write(&script_path, "{ print $0 }\n").unwrap();
     std::fs::write(&input_path, "payload\n").unwrap();
     let spec = SandboxSpec::from_host_mounts(&[SandboxHostMount {
         namespace_path: PathBuf::from("/mnt/project"),
@@ -23,8 +21,7 @@ async fn sandbox_runs_awk_with_native_paths_and_preserves_path_data() {
     let result = sandbox
         .exec_with_timeout_and_capability(
             &format!(
-                "awk -f '{}' '{}' > '{}'",
-                script_path.display(),
+                "awk '{{ print $0 }}' '{}' > '{}'",
                 input_path.display(),
                 output_path.display()
             ),
@@ -72,4 +69,173 @@ async fn sandbox_runs_awk_with_native_paths_and_preserves_path_data() {
 
     assert_eq!(result.exit_code, 0, "{}", result.stderr);
     assert_eq!(result.stdout, "/mnt/project\n");
+
+    let result = sandbox
+        .exec_with_timeout_and_capability(
+            &format!("awk '/payload/ {{ print $0 }}' '{}'", input_path.display()),
+            mount.path(),
+            None,
+            Some(alan_agent_protocol::ToolCapability::Read),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(result.exit_code, 0, "{}", result.stderr);
+    assert_eq!(result.stdout, "payload\n");
+
+    let result = sandbox
+        .exec_with_timeout_and_capability(
+            &format!(
+                "awk '$0 ~ /getline < p/ {{ print }}' '{}'",
+                input_path.display()
+            ),
+            mount.path(),
+            None,
+            Some(alan_agent_protocol::ToolCapability::Read),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(result.exit_code, 0, "{}", result.stderr);
+    assert!(result.stdout.is_empty());
+
+    let result = sandbox
+        .exec_with_timeout_and_capability(
+            &format!(
+                "awk 'BEGIN {{ if (getline && NR < 3) print NR }}' < '{}'",
+                input_path.display()
+            ),
+            mount.path(),
+            None,
+            Some(alan_agent_protocol::ToolCapability::Read),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(result.exit_code, 0, "{}", result.stderr);
+    assert_eq!(result.stdout, "1\n");
+
+    let result = sandbox
+        .exec_with_timeout_and_capability(
+            "awk 'BEGIN { while ((getline line < \"input.tsv\") > 0) print line }'",
+            mount.path(),
+            None,
+            Some(alan_agent_protocol::ToolCapability::Read),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(result.exit_code, 0, "{}", result.stderr);
+    assert_eq!(result.stdout, "payload\n");
+}
+
+#[tokio::test]
+async fn sandbox_rejects_awk_program_reads_outside_the_host_mount() {
+    let mount = TempDir::new().unwrap();
+    let spec = SandboxSpec::from_host_mounts(&[SandboxHostMount {
+        namespace_path: PathBuf::from("/mnt/project"),
+        host_path: mount.path().to_path_buf(),
+        access: ReifiedMountAccess::ReadWrite,
+    }]);
+    let sandbox = Sandbox::from_spec_with_backend(spec, SandboxBackendKind::Seatbelt);
+
+    for command in [
+        "awk 'BEGIN { while ((getline x < \"/etc/passwd\") > 0) print x }'",
+        "env -u HOME gawk 'BEGIN { while ((getline x < \"/etc/hosts\") > 0) print x }'",
+    ] {
+        let error = sandbox
+            .exec_with_timeout_and_capability(
+                command,
+                mount.path(),
+                None,
+                Some(alan_agent_protocol::ToolCapability::Unknown),
+            )
+            .await
+            .expect_err("AWK program paths outside the grant must be rejected before execution");
+        assert!(error.to_string().contains("outside host_mount"), "{error}");
+    }
+}
+
+#[tokio::test]
+async fn sandbox_rejects_dynamic_awk_getline_paths() {
+    let mount = TempDir::new().unwrap();
+    let spec = SandboxSpec::from_host_mounts(&[SandboxHostMount {
+        namespace_path: PathBuf::from("/mnt/project"),
+        host_path: mount.path().to_path_buf(),
+        access: ReifiedMountAccess::ReadWrite,
+    }]);
+    let sandbox = Sandbox::from_spec_with_backend(spec, SandboxBackendKind::Seatbelt);
+
+    for command in [
+        "awk -v p=/etc/passwd 'BEGIN { getline x < p; print x }'",
+        "awk -v p=/etc/passwd 'BEGIN { getline $10 < p; print $10 }'",
+        "awk 'BEGIN { getline x < \"\\057etc/passwd\"; print x }'",
+    ] {
+        let error = sandbox
+            .exec_with_timeout_and_capability(
+                command,
+                mount.path(),
+                None,
+                Some(alan_agent_protocol::ToolCapability::Unknown),
+            )
+            .await
+            .expect_err("dynamic or escaped AWK file paths must fail closed");
+
+        assert!(
+            error
+                .to_string()
+                .contains("AWK getline file paths unless they are simple"),
+            "{error}"
+        );
+    }
+
+    let error = sandbox
+        .exec_with_timeout_and_capability(
+            "awk 'BEGIN { getline x < \"../../../../../../etc/passwd\"; print x }'",
+            mount.path(),
+            None,
+            Some(alan_agent_protocol::ToolCapability::Unknown),
+        )
+        .await
+        .expect_err("relative AWK file paths outside the Host Mount must be rejected");
+    assert!(error.to_string().contains("outside host_mount"), "{error}");
+}
+
+#[tokio::test]
+async fn sandbox_rejects_opaque_awk_program_files_under_seatbelt() {
+    let mount = TempDir::new().unwrap();
+    let script_path = mount.path().join("script.awk");
+    std::fs::write(
+        &script_path,
+        "BEGIN { getline x < \"/etc/passwd\"; print x }\n",
+    )
+    .unwrap();
+    let spec = SandboxSpec::from_host_mounts(&[SandboxHostMount {
+        namespace_path: PathBuf::from("/mnt/project"),
+        host_path: mount.path().to_path_buf(),
+        access: ReifiedMountAccess::ReadWrite,
+    }]);
+    let sandbox = Sandbox::from_spec_with_backend(spec, SandboxBackendKind::Seatbelt);
+
+    for command in [
+        "awk -f script.awk",
+        "gawk -i script.awk",
+        "gawk --include=script.awk",
+        "gawk -i /etc/evil.awk 'BEGIN {}'",
+    ] {
+        let error = sandbox
+            .exec_with_timeout_and_capability(
+                command,
+                mount.path(),
+                None,
+                Some(alan_agent_protocol::ToolCapability::Unknown),
+            )
+            .await
+            .expect_err("opaque AWK script files cannot be checked against the Host Mount");
+
+        assert!(
+            error.to_string().contains("opaque AWK script files"),
+            "{error}"
+        );
+    }
 }

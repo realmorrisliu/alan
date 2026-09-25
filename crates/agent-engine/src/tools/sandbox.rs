@@ -16,6 +16,7 @@ mod command_options;
 mod command_wrappers;
 mod path_literals;
 mod path_safety;
+mod path_validation;
 mod sandbox_spec;
 mod shell_syntax;
 
@@ -23,17 +24,18 @@ pub(crate) use path_safety::protected_path_component;
 pub use sandbox_spec::{NetworkPosture, SandboxHostMount, SandboxSpec};
 
 use command_wrappers::{
-    shell_wrapper_inline_script, validate_direct_command_shapes, validate_nested_command_evaluators,
+    shell_wrapper_inline_script, validate_direct_command_shapes,
+    validate_nested_command_evaluators, validate_opaque_awk_script_files,
 };
 use path_literals::{
-    absolute_executable_token_starts, absolute_path_literal_candidates,
-    is_allowed_absolute_command_path, is_file_redirection_operator, lexically_normalize_path,
+    TokenPathRole, absolute_executable_token_starts, is_allowed_absolute_command_path,
+    is_file_redirection_operator, lexically_normalize_path,
     looks_like_bare_protected_subpath_token, looks_like_path_token, path_like_subtokens,
-    token_is_data_argument,
+    token_path_role,
 };
 use path_safety::{existing_regular_file_has_multiple_links, is_path_guard_reason};
 use shell_syntax::{
-    ShellToken, normalize_shell_line_continuations, shell_commands, shell_tokens_with_spans,
+    normalize_shell_line_continuations, shell_commands, shell_tokens_with_spans,
     validate_shell_features,
 };
 
@@ -611,6 +613,8 @@ impl Sandbox {
         if !protected_only {
             self.validate_direct_command_shapes(&commands)?;
             self.validate_nested_command_evaluators(&commands)?;
+        } else {
+            validate_opaque_awk_script_files(&commands, self.backend_name())?;
         }
 
         // Wrapper forms (`bash -lc 'echo x > .git/config'`) hide their operands
@@ -647,7 +651,7 @@ impl Sandbox {
                 continue;
             }
 
-            if token_is_data_argument(trimmed, token) {
+            if token_path_role(trimmed, token) != TokenPathRole::Check {
                 continue;
             }
 
@@ -660,6 +664,7 @@ impl Sandbox {
             trimmed,
             &tokens,
             &executable_token_starts,
+            cwd,
             capability,
         )?;
 
@@ -886,82 +891,6 @@ impl Sandbox {
         }
         self.ensure_path_not_protected(&candidate, "process path reference")?;
         self.ensure_path_not_multiply_linked(&candidate, "process path reference")?;
-        Ok(())
-    }
-
-    fn validate_absolute_path_literals(
-        &self,
-        command: &str,
-        tokens: &[ShellToken],
-        absolute_executable_token_starts: &[usize],
-        capability: Option<alan_agent_protocol::ToolCapability>,
-    ) -> Result<()> {
-        for token in tokens {
-            if absolute_executable_token_starts.contains(&token.raw_start)
-                || token_is_data_argument(command, token)
-            {
-                continue;
-            }
-            for candidates in absolute_path_literal_candidates(&token.decoded) {
-                let literal = candidates
-                    .iter()
-                    .find(|candidate| {
-                        self.absolute_path_literal_is_allowed_or_in_host_mount(
-                            candidate, capability,
-                        )
-                    })
-                    .unwrap_or_else(|| &candidates[0]);
-                self.validate_absolute_path_literal(literal, capability)?;
-            }
-        }
-        Ok(())
-    }
-
-    fn absolute_path_literal_is_allowed_or_in_host_mount(
-        &self,
-        literal: &str,
-        capability: Option<alan_agent_protocol::ToolCapability>,
-    ) -> bool {
-        let literal_path = Path::new(literal);
-        if is_allowed_absolute_command_path(literal_path) {
-            return true;
-        }
-        if matches!(capability, Some(alan_agent_protocol::ToolCapability::Read)) {
-            self.is_readable(literal_path)
-        } else {
-            self.is_writable(literal_path)
-        }
-    }
-
-    fn validate_absolute_path_literal(
-        &self,
-        literal: &str,
-        capability: Option<alan_agent_protocol::ToolCapability>,
-    ) -> Result<()> {
-        let literal_path = Path::new(literal);
-        if !literal_path.is_absolute() || is_allowed_absolute_command_path(literal_path) {
-            return Ok(());
-        }
-        // Containment applies in every mode: the OS sandbox does not confine
-        // reads, so an out-of-host_mount absolute path (e.g. a read of a secret)
-        // must still be rejected by the parser.
-        let read_only_command =
-            matches!(capability, Some(alan_agent_protocol::ToolCapability::Read));
-        let path_is_authorized = if read_only_command {
-            self.is_readable(literal_path)
-        } else {
-            self.is_writable(literal_path)
-        };
-        if !path_is_authorized {
-            return Err(anyhow!(
-                "Command contains absolute path outside host_mount: {}",
-                literal
-            ));
-        }
-        self.ensure_path_not_protected(literal_path, "process path reference")?;
-        if read_only_command {
-            self.ensure_path_not_read_denied(literal_path, "process path reference")?;
-        }
         Ok(())
     }
 }

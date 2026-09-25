@@ -3,43 +3,57 @@ use super::shell_syntax::{ShellToken, shell_commands};
 use std::ops::Range;
 use std::path::{Component, Path, PathBuf};
 
-pub(super) fn token_is_data_argument(command: &str, token: &ShellToken) -> bool {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum TokenPathRole {
+    Check,
+    Data,
+    ExecutableData,
+}
+
+pub(super) fn token_path_role(command: &str, token: &ShellToken) -> TokenPathRole {
     let prefix = command[..token.raw_start].trim_end();
     if prefix.ends_with('>') || prefix.ends_with('<') {
-        return false;
+        return TokenPathRole::Check;
     }
 
     let Ok(commands) = shell_commands(&command[..token.raw_start]) else {
-        return false;
+        return TokenPathRole::Check;
     };
     let Some(words) = commands.last() else {
-        return false;
+        return TokenPathRole::Check;
     };
     let Some((command_name, args)) = super::command_wrappers::command_and_args(words) else {
-        return false;
+        return TokenPathRole::Check;
     };
     let command_name = Path::new(command_name)
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or(command_name);
 
-    if matches!(command_name, "awk" | "gawk" | "mawk" | "nawk")
-        && super::command_interpreters::awk_next_argument_is_data(args, &token.decoded)
-    {
-        return true;
+    if matches!(command_name, "awk" | "gawk" | "mawk" | "nawk") {
+        return match super::command_interpreters::awk_next_argument_role(args, &token.decoded) {
+            super::command_interpreters::AwkArgumentRole::Program => TokenPathRole::ExecutableData,
+            super::command_interpreters::AwkArgumentRole::Data => TokenPathRole::Data,
+            super::command_interpreters::AwkArgumentRole::Operand => TokenPathRole::Check,
+        };
     }
 
     if matches!(command_name, "echo" | "printf") {
-        return true;
+        return TokenPathRole::Data;
     }
 
     // ponytail: recognize only known literal-data operands; add broader shell
     // argument semantics only if real commands are blocked by this ceiling.
     let git_commit = command_name == "git" && args.iter().any(|word| word == "commit");
-    git_commit
+    let git_commit_message = git_commit
         && (matches!(args.last().map(String::as_str), Some("-m" | "--message"))
             || token.decoded.starts_with("--message=")
-            || token.decoded.starts_with("-m"))
+            || token.decoded.starts_with("-m"));
+    if git_commit_message {
+        TokenPathRole::Data
+    } else {
+        TokenPathRole::Check
+    }
 }
 
 fn push_unique_range(ranges: &mut Vec<Range<usize>>, range: Range<usize>) {
@@ -124,6 +138,27 @@ pub(super) fn absolute_path_literal_candidates(token: &str) -> Vec<Vec<String>> 
         push_absolute_path_literal_candidates(token, range, &mut literals);
     }
 
+    literals
+}
+
+pub(super) fn quoted_absolute_path_literal_candidates(token: &str) -> Vec<Vec<String>> {
+    let mut literals = Vec::new();
+    let mut string_start = None;
+    let mut escaped = false;
+    for (index, ch) in token.char_indices() {
+        if let Some(start) = string_start {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                literals.extend(absolute_path_literal_candidates(&token[start..index]));
+                string_start = None;
+            }
+        } else if ch == '"' {
+            string_start = Some(index + ch.len_utf8());
+        }
+    }
     literals
 }
 

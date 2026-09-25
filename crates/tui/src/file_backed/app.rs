@@ -440,8 +440,9 @@ impl FileBackedApp {
         if self.form.is_some() || self.pending_yield.is_some() || self.completion.is_some() {
             return false;
         }
-        let text = self.composer.text().trim();
-        !text.is_empty() && (self.composer.intent() != InputIntent::Agent || !text.starts_with('/'))
+        let text = self.composer.text();
+        !text.trim().is_empty()
+            && (self.composer.intent() != InputIntent::Agent || !text.starts_with('/'))
     }
 
     pub(super) fn handle_command(&mut self, text: &str) -> Option<FileBackedAction> {

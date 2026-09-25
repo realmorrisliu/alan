@@ -909,7 +909,14 @@ where
             Ok(())
         }
         RuntimeOpAction::FinishRejectedExplicitCommand { tool_call } => {
-            explicit_command::finish_rejected_explicit_command(state, &tool_call, emit).await
+            explicit_command::finish_failed_explicit_command(
+                state,
+                &tool_call,
+                "command was rejected by the user",
+                Some("rejected"),
+                emit,
+            )
+            .await
         }
     }
 }

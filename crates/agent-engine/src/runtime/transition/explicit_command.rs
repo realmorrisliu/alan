@@ -16,14 +16,6 @@ where
     let Op::Input { parts, mode } = op else {
         anyhow::bail!("command intent requires an input operation");
     };
-    if mode != InputMode::FollowUp {
-        emit(Event::Error {
-            message: "command intent requires follow_up scheduling".to_string(),
-            recoverable: true,
-        })
-        .await;
-        return Ok(());
-    }
     let command = alan_agent_protocol::parts_to_text(&parts);
     if command.trim().is_empty() {
         emit(Event::Error {
@@ -43,6 +35,43 @@ where
     crate::runtime::ui_surfaces::turn_started(&agent_files)
         .await
         .context("write explicit command start UI state")?;
+
+    let tool_call = NormalizedToolCall {
+        id: submission_id.clone(),
+        name: "bash".to_string(),
+        arguments: serde_json::json!({"command": command.clone()}),
+    };
+    if mode != InputMode::FollowUp {
+        state
+            .machine
+            .add_assistant_message_with_tool_calls_and_reasoning(
+                "",
+                vec![crate::tape::ToolRequest {
+                    id: tool_call.id.clone(),
+                    name: tool_call.name.clone(),
+                    arguments: tool_call.arguments.clone(),
+                }],
+                None,
+                None,
+                &[],
+            );
+        state.machine.set_turn_activity(TurnActivityState::Running);
+        emit(Event::ToolCallStarted {
+            title: Some("bash".to_string()),
+            id: tool_call.id.clone(),
+            name: tool_call.name.clone(),
+            audit: None,
+        })
+        .await;
+        return finish_failed_explicit_command(
+            state,
+            &tool_call,
+            "command intent requires follow_up scheduling",
+            None,
+            emit,
+        )
+        .await;
+    }
 
     let standalone_cd = crate::tools::parse_standalone_cd(&command);
     if !matches!(&standalone_cd, Ok(None)) {
@@ -65,11 +94,6 @@ where
         return finish_standalone_cd(state, &submission_id, &command, outcome, emit).await;
     }
 
-    let tool_call = NormalizedToolCall {
-        id: submission_id,
-        name: "bash".to_string(),
-        arguments: serde_json::json!({"command": command}),
-    };
     state
         .machine
         .add_assistant_message_with_tool_calls_and_reasoning(
@@ -178,17 +202,18 @@ async fn record_missing_command_action(
     Ok(())
 }
 
-pub(super) async fn finish_rejected_explicit_command<E, F>(
+pub(super) async fn finish_failed_explicit_command<E, F>(
     state: &mut RuntimeLoopState,
     tool_call: &NormalizedToolCall,
+    error: &str,
+    approval: Option<&str>,
     emit: &mut E,
 ) -> Result<()>
 where
     E: FnMut(Event) -> F,
     F: std::future::Future<Output = ()>,
 {
-    let error = "command was rejected by the user";
-    record_missing_command_action(state, tool_call, Some(error), Some("rejected")).await?;
+    record_missing_command_action(state, tool_call, Some(error), approval).await?;
     let result = serde_json::json!({"success": false, "error": error});
     emit(Event::ToolCallCompleted {
         presentation: None,
