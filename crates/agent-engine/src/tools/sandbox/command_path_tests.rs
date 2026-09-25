@@ -288,6 +288,11 @@ async fn seatbelt_does_not_allow_git_configured_helpers_to_read_outside_the_host
             ),
             false,
         ),
+        ("env -i git status --short".to_string(), false),
+        (
+            "env -u GIT_CONFIG_COUNT git status --short".to_string(),
+            false,
+        ),
     ];
     for (command, should_run) in commands {
         let result = sandbox
@@ -667,6 +672,56 @@ fn project_code_dispatchers_are_rejected_as_opaque() {
         "rake -H",
         "pytest --version",
     ] {
+        let words = command
+            .split_whitespace()
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        super::super::command_wrappers::validate_opaque_command_dispatchers(&[words], "test", true)
+            .expect(command);
+    }
+
+    for command in [
+        "env -i git status",
+        "env --ignore-environment git status",
+        "env -u GIT_CONFIG_COUNT git status",
+        "env -uGIT_CONFIG_COUNT git status",
+        "env --unset GIT_CONFIG_COUNT git status",
+        "env --unset=GIT_CONFIG_KEY_0 git status",
+        "command env -i git status",
+    ] {
+        let words = command
+            .split_whitespace()
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        let error = super::super::command_wrappers::validate_opaque_command_dispatchers(
+            &[words],
+            "test",
+            true,
+        )
+        .expect_err(command);
+        assert!(
+            error
+                .to_string()
+                .contains("Git config environment override"),
+            "{command}: {error}"
+        );
+    }
+
+    let shell_command = super::super::shell_commands("env -i sh -c 'git status'").unwrap();
+    let error = super::super::command_wrappers::validate_opaque_command_dispatchers(
+        &shell_command,
+        "test",
+        true,
+    )
+    .expect_err("environment-clearing shell wrappers can remove Git config safeguards");
+    assert!(
+        error
+            .to_string()
+            .contains("Git config environment override"),
+        "{error}"
+    );
+
+    for command in ["env LANG=C git status", "env -u HOME git status"] {
         let words = command
             .split_whitespace()
             .map(str::to_string)

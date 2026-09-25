@@ -312,6 +312,15 @@ pub(super) fn validate_opaque_command_dispatchers(
         let Some(view) = nested_evaluator_view(words) else {
             continue;
         };
+        if reject_project_code_dispatchers
+            && view.clears_git_config
+            && (view.command == "git" || shell_wrapper_inline_script(words).is_some())
+        {
+            return Err(anyhow!(
+                "Sandbox backend {} rejects environment wrappers that can clear Git config environment overrides in ProtectedOnly mode",
+                backend_name
+            ));
+        }
         if let Some(dispatcher) = opaque_command_dispatcher_display(
             &view.display,
             view.command,
@@ -429,11 +438,13 @@ struct NestedEvaluatorView<'a> {
     program: &'a str,
     args: &'a [String],
     opaque_wrapper_display: Option<String>,
+    clears_git_config: bool,
 }
 
 fn nested_evaluator_view(words: &[String]) -> Option<NestedEvaluatorView<'_>> {
     let mut command_index = next_command_offset(words)?;
     let mut display = command_basename(&words[command_index]).to_string();
+    let mut clears_git_config = false;
 
     loop {
         let command = command_basename(&words[command_index]);
@@ -446,9 +457,12 @@ fn nested_evaluator_view(words: &[String]) -> Option<NestedEvaluatorView<'_>> {
                     program: &words[command_index],
                     args,
                     opaque_wrapper_display: Some(format!("{display} {flag}")),
+                    clears_git_config,
                 });
             }
-            env_command_offset(args)
+            let (offset, clears) = env_command_offset(args)?;
+            clears_git_config |= clears;
+            Some(offset)
         } else if is_transparent_command_wrapper(command) {
             transparent_wrapper_offset(command, args)
         } else {
@@ -462,6 +476,7 @@ fn nested_evaluator_view(words: &[String]) -> Option<NestedEvaluatorView<'_>> {
                 program: &words[command_index],
                 args,
                 opaque_wrapper_display: None,
+                clears_git_config,
             });
         };
 
@@ -488,8 +503,9 @@ fn next_command_offset(words: &[String]) -> Option<usize> {
     None
 }
 
-fn env_command_offset(args: &[String]) -> Option<usize> {
+fn env_command_offset(args: &[String]) -> Option<(usize, bool)> {
     let mut index = 0;
+    let mut clears_git_config = false;
     while let Some(arg) = args.get(index).map(|arg| arg.as_str()) {
         if arg == "--" {
             index += 1;
@@ -499,6 +515,8 @@ fn env_command_offset(args: &[String]) -> Option<usize> {
             index += 1;
             continue;
         }
+        clears_git_config |=
+            env_option_clears_git_config(arg, args.get(index + 1).map(String::as_str));
         match env_option_behavior(arg) {
             Some(
                 EnvOptionBehavior::Passthrough
@@ -518,7 +536,41 @@ fn env_command_offset(args: &[String]) -> Option<usize> {
     }
 
     args.get(index)?;
-    Some(index)
+    Some((index, clears_git_config))
+}
+
+fn env_option_clears_git_config(arg: &str, next_arg: Option<&str>) -> bool {
+    if arg == "--ignore-environment" {
+        return true;
+    }
+    if arg == "--unset" {
+        return next_arg.is_some_and(|name| name.starts_with("GIT_CONFIG_"));
+    }
+    if let Some(name) = arg.strip_prefix("--unset=") {
+        return name.starts_with("GIT_CONFIG_");
+    }
+
+    let Some(options) = arg.strip_prefix('-').filter(|_| !arg.starts_with("--")) else {
+        return false;
+    };
+    for (index, option) in options.char_indices() {
+        match option {
+            'i' => return true,
+            'u' => {
+                let attached_name = &options[index + option.len_utf8()..];
+                return if attached_name.is_empty() {
+                    next_arg.is_some_and(|name| name.starts_with("GIT_CONFIG_"))
+                } else {
+                    attached_name.starts_with("GIT_CONFIG_")
+                };
+            }
+            // These options consume the remainder of this token or the next one;
+            // it is an operand, not another environment option.
+            'C' | 'S' => return false,
+            _ => {}
+        }
+    }
+    false
 }
 
 fn transparent_wrapper_offset(command: &str, args: &[String]) -> Option<usize> {
