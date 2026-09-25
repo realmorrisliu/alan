@@ -93,7 +93,8 @@ fn replace_path_prefixes(text: &str, prefix: &str, replacement: &str) -> String 
     let mut copied_through = 0;
     for (start, _) in text.match_indices(prefix) {
         let end = start + prefix.len();
-        let after = text[end..].chars().next();
+        let suffix = strip_leading_terminal_csi_sequences(&text[end..]);
+        let after = suffix.chars().next();
         let boundary_before = is_path_start(text, start);
         let boundary_after = after.is_none_or(|ch| {
             ch.is_whitespace()
@@ -102,7 +103,7 @@ fn replace_path_prefixes(text: &str, prefix: &str, replacement: &str) -> String 
                     ch,
                     ':' | ',' | ';' | ')' | ']' | '}' | '\'' | '"' | '>' | '`'
                 )
-        }) || is_terminal_sentence_punctuation(text, end);
+        }) || is_terminal_sentence_punctuation(suffix, 0);
         if boundary_before && boundary_after {
             projected.push_str(&text[copied_through..start]);
             projected.push_str(replacement);
@@ -159,16 +160,30 @@ fn is_path_start(text: &str, start: usize) -> bool {
 
 fn strip_trailing_terminal_csi_sequences(mut prefix: &str) -> &str {
     while let Some(start) = prefix.rfind("\x1b[") {
-        let mut sequence = prefix[start + 2..].bytes();
-        let has_final_byte = sequence
-            .next_back()
-            .is_some_and(|byte| (0x40..=0x7e).contains(&byte));
-        if !has_final_byte || !sequence.all(|byte| (0x20..=0x3f).contains(&byte)) {
+        if terminal_csi_sequence_end(&prefix[start..]) != Some(prefix.len() - start) {
             break;
         }
         prefix = &prefix[..start];
     }
     prefix
+}
+
+fn strip_leading_terminal_csi_sequences(mut suffix: &str) -> &str {
+    while let Some(end) = terminal_csi_sequence_end(suffix) {
+        suffix = &suffix[end..];
+    }
+    suffix
+}
+
+fn terminal_csi_sequence_end(text: &str) -> Option<usize> {
+    let body = text.strip_prefix("\x1b[")?;
+    let final_byte = body
+        .bytes()
+        .position(|byte| (0x40..=0x7e).contains(&byte))?;
+    body.as_bytes()[..final_byte]
+        .iter()
+        .all(|byte| (0x20..=0x3f).contains(byte))
+        .then_some(final_byte + 3)
 }
 
 impl ToolExecutionAdapter for NativeToolExecutionAdapter {
@@ -697,8 +712,8 @@ mod tests {
             host_root.join("notes.txt").display()
         ));
         assert_eq!(projected, "failed at ./notes.txt");
-        let ansi_path = format!("\x1b[31m{}\n", host_root.display());
-        assert_eq!(adapter.project_text(&ansi_path), "\x1b[31m.\n");
+        let ansi_path = format!("\x1b[31m{}\x1b[0m\n", host_root.display());
+        assert_eq!(adapter.project_text(&ansi_path), "\x1b[31m.\x1b[0m\n");
         let sibling_path = format!("{}-backup/notes.txt", host.path().display());
         assert_eq!(adapter.project_text(&sibling_path), sibling_path);
         let dotted_sibling_path = format!("{}.backup/notes.txt", host_root.display());

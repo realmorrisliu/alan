@@ -294,6 +294,10 @@ async fn sandbox_rejects_file_lists_from_stdin_under_seatbelt() {
             "printf '{}\\n' | zip -q -@ host-files.zip && unzip -p host-files.zip",
             outside_file.display()
         ),
+        format!(
+            "printf '{}\\n' | zip -q@ host-files.zip && unzip -p host-files.zip",
+            outside_file.display()
+        ),
     ];
     for command in commands {
         let error = sandbox

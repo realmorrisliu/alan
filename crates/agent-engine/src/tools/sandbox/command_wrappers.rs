@@ -96,7 +96,9 @@ fn has_uninspectable_file_list_input(command: &str, args: &[String]) -> bool {
         "tar" | "gtar" | "bsdtar" => args
             .iter()
             .any(|arg| exact_or_inline_option_with_value(arg, &["-T"], &["--files-from"])),
-        "zip" => args.iter().any(|arg| arg == "-@"),
+        "zip" => args
+            .iter()
+            .any(|arg| arg.starts_with('-') && !arg.starts_with("--") && arg[1..].contains('@')),
         _ => false,
     }
 }
