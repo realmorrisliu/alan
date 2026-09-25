@@ -56,6 +56,8 @@ pub(super) fn is_project_code_dispatcher(command: &str, args: &[String]) -> bool
             subcommand,
             "--version -V --help help version env doc fmt list",
         ),
+        // SwiftPM runs manifests/plugins, and callers can disable its subprocess sandbox.
+        "swift" => subcommand != "help",
         _ => false,
     }
 }
@@ -77,6 +79,9 @@ fn package_manager_subcommand<'a>(command: &str, args: &'a [String]) -> Option<&
             "--color --config --manifest-path --target --target-dir --message-format --explain"
         }
         "go" => "-C",
+        "swift" => {
+            "--package-path --cache-path --config-path --security-path --scratch-path --swift-sdks-path --toolset --pkg-config-path"
+        }
         _ => "",
     };
 

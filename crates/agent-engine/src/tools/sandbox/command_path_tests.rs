@@ -225,6 +225,48 @@ async fn seatbelt_rejects_go_project_runner_with_uninspectable_reads() {
     );
 }
 
+#[cfg(target_os = "macos")]
+#[tokio::test]
+async fn seatbelt_rejects_swift_project_runner_with_uninspectable_reads() {
+    let mount = TempDir::new().unwrap();
+    let outside = TempDir::new().unwrap();
+    let secret = outside.path().join("host-only-marker.txt");
+    std::fs::write(&secret, "host-only-marker\n").unwrap();
+    std::fs::create_dir_all(mount.path().join("Sources/leak")).unwrap();
+    std::fs::write(
+        mount.path().join("Package.swift"),
+        "// swift-tools-version: 5.9\nimport PackageDescription\nlet package = Package(name: \"LeakFixture\", products: [.executable(name: \"leak\", targets: [\"leak\"])], targets: [.executableTarget(name: \"leak\")])\n",
+    )
+    .unwrap();
+    std::fs::write(
+        mount.path().join("Sources/leak/main.swift"),
+        format!(
+            "import Foundation\nlet data = try Data(contentsOf: URL(fileURLWithPath: {:?}))\nFileHandle.standardOutput.write(data)\n",
+            secret.to_string_lossy()
+        ),
+    )
+    .unwrap();
+
+    let sandbox = Sandbox::with_backend(
+        mount.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::Seatbelt,
+    );
+    let error = sandbox
+        .exec_with_timeout_and_capability(
+            "swift run --disable-sandbox --quiet",
+            mount.path(),
+            None,
+            Some(alan_agent_protocol::ToolCapability::Unknown),
+        )
+        .await
+        .expect_err("Swift project code can read paths hidden from ProtectedOnly validation");
+
+    assert!(
+        error.to_string().contains("opaque command dispatcher"),
+        "{error}"
+    );
+}
+
 #[test]
 fn project_code_dispatchers_are_rejected_as_opaque() {
     for command in [
@@ -251,6 +293,13 @@ fn project_code_dispatchers_are_rejected_as_opaque() {
         "go -C . test ./...",
         "go generate ./...",
         "go build ./...",
+        "swift build",
+        "swift run",
+        "swift run --disable-sandbox",
+        "swift test",
+        "swift --package-path . run",
+        "swift package describe",
+        "swift -e print(1)",
         "pytest -s",
         "python3 -m pytest -s",
         "python3 -m unittest test_module",
@@ -288,6 +337,8 @@ fn project_code_dispatchers_are_rejected_as_opaque() {
         "go doc fmt",
         "go list ./...",
         "go fmt ./...",
+        "swift --version",
+        "swift --help",
         "pytest --version",
     ] {
         let words = command
