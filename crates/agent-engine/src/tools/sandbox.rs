@@ -33,8 +33,8 @@ use path_literals::{
 };
 use path_safety::{existing_regular_file_has_multiple_links, is_path_guard_reason};
 use shell_syntax::{
-    ShellWordToken, normalize_shell_line_continuations, shell_commands, shell_word_tokens,
-    shell_word_tokens_with_spans, validate_shell_features,
+    ShellToken, normalize_shell_line_continuations, shell_commands, shell_tokens_with_spans,
+    validate_shell_features,
 };
 
 use anyhow::{Result, anyhow};
@@ -599,11 +599,7 @@ impl Sandbox {
         // In ProtectedOnly mode an unparseable shape is tolerated (the OS sandbox
         // confines writes + network), but parseable path operands are still
         // containment-checked below — only the syntactic shape checks are dropped.
-        let tokens = match shell_word_tokens(trimmed) {
-            Ok(tokens) => tokens,
-            Err(err) => return if protected_only { Ok(()) } else { Err(err) },
-        };
-        let span_tokens = match shell_word_tokens_with_spans(trimmed) {
+        let tokens = match shell_tokens_with_spans(trimmed) {
             Ok(tokens) => tokens,
             Err(err) => return if protected_only { Ok(()) } else { Err(err) },
         };
@@ -634,32 +630,28 @@ impl Sandbox {
         }
 
         let mut expects_redirection_target = false;
-        let mut span_index = 0;
         for token in &tokens {
             if expects_redirection_target {
-                self.validate_redirection_target(token, cwd)?;
-                span_index += 1;
+                self.validate_redirection_target(&token.decoded, cwd)?;
                 expects_redirection_target = false;
                 continue;
             }
 
-            if is_file_redirection_operator(token) {
+            if is_file_redirection_operator(&token.decoded) {
                 expects_redirection_target = true;
                 continue;
             }
 
-            let span_token = &span_tokens[span_index];
-            span_index += 1;
-            if token_is_data_argument(trimmed, span_token) {
+            if token_is_data_argument(trimmed, token) {
                 continue;
             }
 
-            for candidate in path_like_subtokens(token) {
+            for candidate in path_like_subtokens(&token.decoded) {
                 self.validate_command_path_candidate(candidate, cwd, capability)?;
             }
         }
 
-        self.validate_absolute_path_literals(trimmed, &span_tokens, capability)?;
+        self.validate_absolute_path_literals(trimmed, &tokens, capability)?;
 
         Ok(())
     }
@@ -890,7 +882,7 @@ impl Sandbox {
     fn validate_absolute_path_literals(
         &self,
         command: &str,
-        tokens: &[ShellWordToken],
+        tokens: &[ShellToken],
         capability: Option<alan_agent_protocol::ToolCapability>,
     ) -> Result<()> {
         for token in tokens {

@@ -1,9 +1,9 @@
 use super::path_safety::PROTECTED_SUBPATHS;
-use super::shell_syntax::{ShellWordToken, shell_commands};
+use super::shell_syntax::{ShellToken, shell_commands};
 use std::ops::Range;
 use std::path::{Component, Path, PathBuf};
 
-pub(super) fn token_is_data_argument(command: &str, token: &ShellWordToken) -> bool {
+pub(super) fn token_is_data_argument(command: &str, token: &ShellToken) -> bool {
     let prefix = command[..token.raw_start].trim_end();
     if prefix.ends_with('>') || prefix.ends_with('<') {
         return false;

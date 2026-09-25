@@ -2,7 +2,7 @@ use anyhow::{Result, anyhow};
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct ShellWordToken {
+pub(super) struct ShellToken {
     pub(super) decoded: String,
     pub(super) raw_start: usize,
     pub(super) raw_end: usize,
@@ -376,7 +376,7 @@ where
     }
 }
 
-pub(super) fn shell_word_tokens_with_spans(command: &str) -> Result<Vec<ShellWordToken>> {
+pub(super) fn shell_tokens_with_spans(command: &str) -> Result<Vec<ShellToken>> {
     let mut tokens = Vec::new();
     let mut current = String::new();
     let mut chars = command.char_indices().peekable();
@@ -474,16 +474,29 @@ pub(super) fn shell_word_tokens_with_spans(command: &str) -> Result<Vec<ShellWor
             }
             '<' | '>' => {
                 push_shell_word_token(&mut tokens, &mut current, &mut raw_start, index);
-
+                let mut operator = String::from(ch);
+                let mut operator_end = index + ch.len_utf8();
                 match (ch, chars.peek().copied()) {
                     ('<', Some((_, '<' | '>' | '&'))) | ('>', Some((_, '>' | '&' | '|'))) => {
-                        chars.next();
-                        if ch == '<' && matches!(chars.peek(), Some((_, '-'))) {
-                            chars.next();
+                        if let Some((operator_index, operator_char)) = chars.next() {
+                            operator.push(operator_char);
+                            operator_end = operator_index + operator_char.len_utf8();
+                        }
+                        if ch == '<'
+                            && matches!(chars.peek(), Some((_, '-')))
+                            && let Some((operator_index, operator_char)) = chars.next()
+                        {
+                            operator.push(operator_char);
+                            operator_end = operator_index + operator_char.len_utf8();
                         }
                     }
                     _ => {}
                 }
+                tokens.push(ShellToken {
+                    decoded: operator,
+                    raw_start: index,
+                    raw_end: operator_end,
+                });
                 word_started = false;
             }
             _ => {
@@ -506,7 +519,7 @@ pub(super) fn shell_word_tokens_with_spans(command: &str) -> Result<Vec<ShellWor
 }
 
 fn push_shell_word_token(
-    tokens: &mut Vec<ShellWordToken>,
+    tokens: &mut Vec<ShellToken>,
     current: &mut String,
     raw_start: &mut Option<usize>,
     raw_end: usize,
@@ -514,170 +527,11 @@ fn push_shell_word_token(
     let Some(start) = raw_start.take() else {
         return;
     };
-    tokens.push(ShellWordToken {
+    tokens.push(ShellToken {
         decoded: std::mem::take(current),
         raw_start: start,
         raw_end,
     });
-}
-
-pub(super) fn shell_word_tokens(command: &str) -> Result<Vec<String>> {
-    let mut tokens = Vec::new();
-    let mut current = String::new();
-    let mut chars = command.chars().peekable();
-    let mut in_single = false;
-    let mut in_double = false;
-    let mut in_comment = false;
-    let mut escaped = false;
-    let mut word_started = false;
-
-    while let Some(ch) = chars.next() {
-        if in_comment {
-            if matches!(ch, '\n' | '\r') {
-                in_comment = false;
-                word_started = false;
-            }
-            continue;
-        }
-
-        if escaped {
-            current.push(ch);
-            escaped = false;
-            word_started = true;
-            continue;
-        }
-
-        if in_single {
-            if ch == '\'' {
-                in_single = false;
-            } else {
-                current.push(ch);
-            }
-            word_started = true;
-            continue;
-        }
-
-        if in_double {
-            match ch {
-                '\\' => {
-                    if let Some(next) = chars.next() {
-                        current.push(next);
-                        word_started = true;
-                    } else {
-                        return Err(anyhow!("Command ends with an incomplete escape sequence"));
-                    }
-                }
-                '"' => {
-                    in_double = false;
-                    word_started = true;
-                }
-                _ => {
-                    current.push(ch);
-                    word_started = true;
-                }
-            }
-            continue;
-        }
-
-        match ch {
-            '\\' => {
-                if let Some(next) = chars.next() {
-                    current.push(next);
-                    word_started = true;
-                } else {
-                    return Err(anyhow!("Command ends with an incomplete escape sequence"));
-                }
-            }
-            '\'' => {
-                in_single = true;
-                word_started = true;
-            }
-            '"' => {
-                in_double = true;
-                word_started = true;
-            }
-            '#' if !word_started => in_comment = true,
-            c if c.is_whitespace() => {
-                if !current.is_empty() {
-                    tokens.push(std::mem::take(&mut current));
-                }
-                word_started = false;
-            }
-            ';' | '(' | ')' | '{' | '}' => {
-                if !current.is_empty() {
-                    tokens.push(std::mem::take(&mut current));
-                }
-                word_started = false;
-            }
-            '&' | '|' => {
-                if !current.is_empty() {
-                    tokens.push(std::mem::take(&mut current));
-                }
-
-                if matches!(chars.peek(), Some(next) if *next == ch) {
-                    chars.next();
-                }
-                word_started = false;
-            }
-            '<' | '>' => {
-                if !current.is_empty() {
-                    tokens.push(std::mem::take(&mut current));
-                }
-
-                let mut operator = String::new();
-                operator.push(ch);
-                match (ch, chars.peek().copied()) {
-                    ('<', Some('<')) => {
-                        operator.push('<');
-                        chars.next();
-                        if matches!(chars.peek(), Some('-')) {
-                            operator.push('-');
-                            chars.next();
-                        }
-                    }
-                    ('<', Some('>')) => {
-                        operator.push('>');
-                        chars.next();
-                    }
-                    ('<', Some('&')) => {
-                        operator.push('&');
-                        chars.next();
-                    }
-                    ('>', Some('>')) => {
-                        operator.push('>');
-                        chars.next();
-                    }
-                    ('>', Some('&')) => {
-                        operator.push('&');
-                        chars.next();
-                    }
-                    ('>', Some('|')) => {
-                        operator.push('|');
-                        chars.next();
-                    }
-                    _ => {}
-                }
-                tokens.push(operator);
-                word_started = false;
-            }
-            _ => {
-                current.push(ch);
-                word_started = true;
-            }
-        }
-    }
-
-    if escaped {
-        return Err(anyhow!("Command ends with an incomplete escape sequence"));
-    }
-    if in_single || in_double {
-        return Err(anyhow!("Command contains an unterminated quoted string"));
-    }
-    if !current.is_empty() {
-        tokens.push(current);
-    }
-
-    Ok(tokens)
 }
 
 pub(super) fn shell_commands(command: &str) -> Result<Vec<Vec<String>>> {
@@ -815,7 +669,7 @@ pub(super) fn shell_commands(command: &str) -> Result<Vec<Vec<String>>> {
 
 pub(crate) fn parse_standalone_cd(command: &str) -> Result<Option<PathBuf>> {
     let normalized = normalize_shell_line_continuations(command);
-    let words = shell_word_tokens_with_spans(&normalized)?;
+    let words = shell_tokens_with_spans(&normalized)?;
     if words.first().map(|word| word.decoded.as_str()) != Some("cd") {
         return Ok(None);
     }
