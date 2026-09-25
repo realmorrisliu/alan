@@ -1,9 +1,13 @@
 pub(super) fn is_project_code_dispatcher(command: &str, args: &[String]) -> bool {
-    if command == "cmake" {
-        return !matches!(args, [argument] if one_of(argument, "--help -h --version"));
-    }
-    if command == "gradle" {
-        return !matches!(args, [argument] if one_of(argument, "--help -h --version -v"));
+    // Build systems load project-controlled scripts except for standalone CLI queries.
+    let build_system_queries = match command {
+        "cmake" => Some("--help -h --version"),
+        "gradle" => Some("--help -h --version -v"),
+        "ninja" => Some("--help --version"),
+        _ => None,
+    };
+    if let Some(queries) = build_system_queries {
+        return !matches!(args, [argument] if one_of(argument, queries));
     }
     if matches!(command, "python" | "python3")
         && args.windows(2).any(|pair| {
