@@ -2,6 +2,9 @@ pub(super) fn is_project_code_dispatcher(command: &str, args: &[String]) -> bool
     if command == "cmake" {
         return !matches!(args, [argument] if one_of(argument, "--help -h --version"));
     }
+    if command == "gradle" {
+        return !matches!(args, [argument] if one_of(argument, "--help -h --version -v"));
+    }
     if matches!(command, "python" | "python3")
         && args.windows(2).any(|pair| {
             matches!(pair[0].as_str(), "-m" | "--module") && one_of(&pair[1], "pytest unittest")

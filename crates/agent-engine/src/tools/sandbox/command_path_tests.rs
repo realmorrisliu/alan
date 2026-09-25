@@ -719,6 +719,8 @@ fn project_code_dispatchers_are_rejected_as_opaque() {
         "cmake .",
         "cmake --build .",
         "cmake -P project.cmake",
+        "gradle build",
+        "gradle -p app test",
     ] {
         let words = command
             .split_whitespace()
@@ -792,6 +794,9 @@ fn project_code_dispatchers_are_rejected_as_opaque() {
         "git -h",
         "cmake --help",
         "cmake --version",
+        "gradle --help",
+        "gradle --version",
+        "gradle -v",
         "rake --version",
         "rake -V",
         "rake --help",
