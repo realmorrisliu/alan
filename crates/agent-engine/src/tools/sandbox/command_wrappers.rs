@@ -44,6 +44,18 @@ fn validate_nested_command_evaluators_inner(
                 view.display
             ));
         }
+        if allow_inspectable_shell_and_awk
+            && matches!(view.command, "tar" | "gtar" | "bsdtar")
+            && view
+                .args
+                .iter()
+                .any(|arg| exact_or_inline_option_with_value(arg, &["-T"], &["--files-from"]))
+        {
+            return Err(anyhow!(
+                "Sandbox backend {} rejects tar file-list consumers because listed paths cannot be validated against Host Mounts",
+                backend_name
+            ));
+        }
         if allow_inspectable_shell_and_awk && shell_wrapper_inline_script(words).is_some() {
             continue;
         }

@@ -142,9 +142,10 @@ fn replace_rooted_path_starts(text: &str, replacement: &str) -> String {
 }
 
 fn is_path_start(text: &str, start: usize) -> bool {
-    let before = text[..start].chars().next_back();
-    let file_uri_delimiter = text[..start]
-        .get(start.saturating_sub("file://".len())..start)
+    let prefix = strip_trailing_terminal_csi_sequences(&text[..start]);
+    let before = prefix.chars().next_back();
+    let file_uri_delimiter = prefix
+        .get(prefix.len().saturating_sub("file://".len())..)
         .is_some_and(|scheme| scheme.eq_ignore_ascii_case("file://"));
     file_uri_delimiter
         || before.is_none_or(|ch| {
@@ -154,6 +155,20 @@ fn is_path_start(text: &str, start: usize) -> bool {
                     '=' | ':' | '\'' | '"' | '(' | '[' | '{' | ',' | '<' | '`'
                 )
         })
+}
+
+fn strip_trailing_terminal_csi_sequences(mut prefix: &str) -> &str {
+    while let Some(start) = prefix.rfind("\x1b[") {
+        let mut sequence = prefix[start + 2..].bytes();
+        let has_final_byte = sequence
+            .next_back()
+            .is_some_and(|byte| (0x40..=0x7e).contains(&byte));
+        if !has_final_byte || !sequence.all(|byte| (0x20..=0x3f).contains(&byte)) {
+            break;
+        }
+        prefix = &prefix[..start];
+    }
+    prefix
 }
 
 impl ToolExecutionAdapter for NativeToolExecutionAdapter {
@@ -682,6 +697,8 @@ mod tests {
             host_root.join("notes.txt").display()
         ));
         assert_eq!(projected, "failed at ./notes.txt");
+        let ansi_path = format!("\x1b[31m{}\n", host_root.display());
+        assert_eq!(adapter.project_text(&ansi_path), "\x1b[31m.\n");
         let sibling_path = format!("{}-backup/notes.txt", host.path().display());
         assert_eq!(adapter.project_text(&sibling_path), sibling_path);
         let dotted_sibling_path = format!("{}.backup/notes.txt", host_root.display());

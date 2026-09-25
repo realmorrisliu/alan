@@ -269,6 +269,38 @@ async fn sandbox_rejects_nested_dispatcher_reads_outside_the_host_mount_under_se
 }
 
 #[tokio::test]
+async fn sandbox_rejects_tar_file_lists_from_stdin_under_seatbelt() {
+    let mount = TempDir::new().unwrap();
+    let outside = TempDir::new().unwrap();
+    let outside_file = outside.path().join("host-only-marker.txt");
+    std::fs::write(&outside_file, "host-only-marker\n").unwrap();
+    let spec = SandboxSpec::from_host_mounts(&[SandboxHostMount {
+        namespace_path: PathBuf::from("/mnt/project"),
+        host_path: mount.path().to_path_buf(),
+        access: ReifiedMountAccess::ReadWrite,
+    }]);
+    let sandbox = Sandbox::from_spec_with_backend(spec, SandboxBackendKind::Seatbelt);
+
+    for file_list_args in ["-T -", "--files-from -"] {
+        let command = format!(
+            "printf '{}\\n' | tar -cf - {file_list_args} | tar -xOf -",
+            outside_file.display()
+        );
+        let error = sandbox
+            .exec_with_timeout_and_capability(
+                &command,
+                mount.path(),
+                None,
+                Some(alan_agent_protocol::ToolCapability::Unknown),
+            )
+            .await
+            .expect_err("tar file lists from stdin must not bypass Host Mount read checks");
+
+        assert!(error.to_string().contains("file-list consumers"), "{error}");
+    }
+}
+
+#[tokio::test]
 async fn sandbox_rejects_opaque_python_reads_outside_the_host_mount_under_seatbelt() {
     let mount = TempDir::new().unwrap();
     let spec = SandboxSpec::from_host_mounts(&[SandboxHostMount {
