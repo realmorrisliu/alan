@@ -243,6 +243,42 @@ async fn seatbelt_rejects_git_commit_hooks_with_uninspectable_reads() {
     );
 }
 
+#[cfg(target_os = "macos")]
+#[tokio::test]
+async fn seatbelt_rejects_rake_project_tasks_with_uninspectable_reads() {
+    let mount = TempDir::new().unwrap();
+    let outside = TempDir::new().unwrap();
+    let secret = outside.path().join("host-only-marker.txt");
+    std::fs::write(&secret, "host-only-marker\n").unwrap();
+    std::fs::write(
+        mount.path().join("Rakefile"),
+        format!(
+            "task :leak do\n  puts File.read('{}')\nend\n",
+            secret.display()
+        ),
+    )
+    .unwrap();
+
+    let sandbox = Sandbox::with_backend(
+        mount.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::Seatbelt,
+    );
+    let error = sandbox
+        .exec_with_timeout_and_capability(
+            "rake leak",
+            mount.path(),
+            None,
+            Some(alan_agent_protocol::ToolCapability::Unknown),
+        )
+        .await
+        .expect_err("Rake project tasks can read paths hidden from ProtectedOnly validation");
+
+    assert!(
+        error.to_string().contains("opaque command dispatcher"),
+        "{error}"
+    );
+}
+
 #[tokio::test]
 async fn seatbelt_rejects_go_project_runner_with_uninspectable_reads() {
     let mount = TempDir::new().unwrap();
@@ -365,6 +401,10 @@ fn project_code_dispatchers_are_rejected_as_opaque() {
         "swift --package-path . run",
         "swift package describe",
         "swift -e print(1)",
+        "rake leak",
+        "rake -f custom.rake leak",
+        "bundle exec rake leak",
+        "bundle --gemfile Gemfile exec rake leak",
         "pytest -s",
         "python3 -m pytest -s",
         "python3 -m unittest test_module",
@@ -410,6 +450,10 @@ fn project_code_dispatchers_are_rejected_as_opaque() {
         "go fmt ./...",
         "swift --version",
         "swift --help",
+        "rake --version",
+        "rake -V",
+        "rake --help",
+        "rake -H",
         "pytest --version",
     ] {
         let words = command

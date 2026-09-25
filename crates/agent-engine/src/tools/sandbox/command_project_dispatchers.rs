@@ -9,6 +9,14 @@ pub(super) fn is_project_code_dispatcher(command: &str, args: &[String]) -> bool
     if command == "pytest" {
         return !args.iter().any(|arg| one_of(arg, "--help -h --version"));
     }
+    if command == "rake" {
+        return !args
+            .iter()
+            .any(|arg| one_of(arg, "--help -h -H --version -V"));
+    }
+    if command == "bundle" && package_manager_subcommand(command, args) == Some("exec") {
+        return true;
+    }
     let Some(subcommand) = package_manager_subcommand(command, args) else {
         return false;
     };
@@ -78,6 +86,7 @@ fn package_manager_subcommand<'a>(command: &str, args: &'a [String]) -> Option<&
         "cargo" => {
             "--color --config --manifest-path --target --target-dir --message-format --explain"
         }
+        "bundle" => "--gemfile --bundler",
         "go" => "-C",
         "swift" => {
             "--package-path --cache-path --config-path --security-path --scratch-path --swift-sdks-path --toolset --pkg-config-path"
