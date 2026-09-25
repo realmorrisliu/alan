@@ -110,6 +110,10 @@ fn has_uninspectable_path_input(command: &str, args: &[String]) -> bool {
         "curl" => args
             .iter()
             .any(|arg| exact_or_inline_option_with_value(arg, &["-K"], &["--config"])),
+        // Sed scripts can hide path reads in the r command.
+        "sed" => args
+            .iter()
+            .any(|arg| exact_or_inline_option_with_value(arg, &["-f"], &["--file"])),
         _ => false,
     }
 }

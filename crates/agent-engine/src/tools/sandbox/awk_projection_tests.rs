@@ -280,6 +280,11 @@ async fn sandbox_rejects_uninspectable_path_inputs_under_seatbelt() {
         format!("url = \"file://{}\"\n", outside_file.display()),
     )
     .unwrap();
+    std::fs::write(
+        mount.path().join("sed.rules"),
+        format!("r {}\n", outside_file.display()),
+    )
+    .unwrap();
     let spec = SandboxSpec::from_host_mounts(&[SandboxHostMount {
         namespace_path: PathBuf::from("/mnt/project"),
         host_path: mount.path().to_path_buf(),
@@ -319,6 +324,7 @@ async fn sandbox_rejects_uninspectable_path_inputs_under_seatbelt() {
             outside_file.display()
         ),
         "curl -q -K curl.conf".to_string(),
+        "printf 'x\\n' | sed -n -f sed.rules".to_string(),
     ];
     for command in commands {
         let error = sandbox
