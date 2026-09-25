@@ -117,22 +117,27 @@ fn has_uninspectable_path_input(command: &str, args: &[String]) -> bool {
 fn pax_reads_file_list_from_stdin(args: &[String]) -> bool {
     let mut args = args.iter().peekable();
     let mut write_mode = false;
-    let mut has_path_operand = false;
+    let mut read_mode = false;
+    let mut path_operands = 0;
 
     while let Some(arg) = args.next() {
         if arg == "--" {
-            return write_mode && !has_path_operand && args.next().is_none();
+            path_operands += args.count();
+            break;
         }
         let Some(options) = arg.strip_prefix('-') else {
-            has_path_operand = true;
+            path_operands += 1;
             continue;
         };
         if options.is_empty() {
-            has_path_operand = true;
+            path_operands += 1;
             continue;
         }
 
         for (index, option) in options.char_indices() {
+            if option == 'r' {
+                read_mode = true;
+            }
             if option == 'w' {
                 write_mode = true;
             }
@@ -152,7 +157,13 @@ fn pax_reads_file_list_from_stdin(args: &[String]) -> bool {
         }
     }
 
-    write_mode && !has_path_operand
+    write_mode
+        && if read_mode {
+            // Copy mode reserves the final operand for its destination directory.
+            path_operands <= 1
+        } else {
+            path_operands == 0
+        }
 }
 
 pub(super) fn validate_opaque_command_dispatchers(

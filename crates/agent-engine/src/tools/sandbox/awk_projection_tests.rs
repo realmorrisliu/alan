@@ -274,6 +274,7 @@ async fn sandbox_rejects_uninspectable_path_inputs_under_seatbelt() {
     let outside = TempDir::new().unwrap();
     let outside_file = outside.path().join("host-only-marker.txt");
     std::fs::write(&outside_file, "host-only-marker\n").unwrap();
+    std::fs::create_dir(mount.path().join("pax-copy-destination")).unwrap();
     std::fs::write(
         mount.path().join("curl.conf"),
         format!("url = \"file://{}\"\n", outside_file.display()),
@@ -310,6 +311,10 @@ async fn sandbox_rejects_uninspectable_path_inputs_under_seatbelt() {
             outside_file.display()
         ),
         format!(
+            "printf '{}\\n' | pax -rw pax-copy-destination",
+            outside_file.display()
+        ),
+        format!(
             "printf 'url = \"file://{}\"\\n' | curl -q --config -",
             outside_file.display()
         ),
@@ -339,6 +344,7 @@ async fn sandbox_rejects_uninspectable_path_inputs_under_seatbelt() {
 async fn sandbox_allows_pax_write_with_explicit_file_operands_under_seatbelt() {
     let mount = TempDir::new().unwrap();
     std::fs::write(mount.path().join("input.txt"), "payload\n").unwrap();
+    std::fs::create_dir(mount.path().join("copy-destination")).unwrap();
     let spec = SandboxSpec::from_host_mounts(&[SandboxHostMount {
         namespace_path: PathBuf::from("/mnt/project"),
         host_path: mount.path().to_path_buf(),
@@ -358,6 +364,19 @@ async fn sandbox_allows_pax_write_with_explicit_file_operands_under_seatbelt() {
 
     assert_eq!(result.exit_code, 0, "{}", result.stderr);
     assert!(mount.path().join("host-files.pax").is_file());
+
+    let result = sandbox
+        .exec_with_timeout_and_capability(
+            "pax -rw input.txt copy-destination",
+            mount.path(),
+            None,
+            Some(alan_agent_protocol::ToolCapability::Write),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(result.exit_code, 0, "{}", result.stderr);
+    assert!(mount.path().join("copy-destination/input.txt").is_file());
 }
 
 #[tokio::test]

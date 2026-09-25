@@ -54,12 +54,26 @@ struct NativeToolMount {
     access: HostMountAccess,
 }
 
+impl NativeToolMount {
+    fn sandbox_host_mount(&self) -> SandboxHostMount {
+        SandboxHostMount {
+            namespace_path: self.namespace_path.clone(),
+            host_path: self.host_path.clone(),
+            access: match self.access {
+                HostMountAccess::ReadOnly => ReifiedMountAccess::ReadOnly,
+                HostMountAccess::ReadWrite => ReifiedMountAccess::ReadWrite,
+            },
+        }
+    }
+}
+
 #[derive(Debug)]
 struct NativeToolExecutionAdapter {
     mounts: Vec<NativeToolMount>,
     namespace_cwd: PathBuf,
     cwd: PathBuf,
     sandbox: Sandbox,
+    shell_sandbox: Sandbox,
 }
 
 impl NativeToolExecutionAdapter {
@@ -284,6 +298,10 @@ impl ToolExecutionAdapter for NativeToolExecutionAdapter {
     fn sandbox(&self) -> Result<Sandbox> {
         Ok(self.sandbox.clone())
     }
+
+    fn shell_sandbox(&self) -> Result<Sandbox> {
+        Ok(self.shell_sandbox.clone())
+    }
 }
 
 impl HostMountExportAdapter for NativeHostMountExportAdapter {
@@ -335,20 +353,17 @@ impl HostMountExportAdapter for NativeHostMountExportAdapter {
         );
         let sandbox_mounts = mounts
             .iter()
-            .map(|mount| SandboxHostMount {
-                namespace_path: mount.namespace_path.clone(),
-                host_path: mount.host_path.clone(),
-                access: match mount.access {
-                    HostMountAccess::ReadOnly => ReifiedMountAccess::ReadOnly,
-                    HostMountAccess::ReadWrite => ReifiedMountAccess::ReadWrite,
-                },
-            })
+            .map(NativeToolMount::sandbox_host_mount)
             .collect::<Vec<_>>();
+        let shell_sandbox_mount = selected.sandbox_host_mount();
         Ok(Arc::new(NativeToolExecutionAdapter {
             mounts,
             namespace_cwd,
             cwd,
             sandbox: Sandbox::from_spec(SandboxSpec::from_host_mounts(&sandbox_mounts)),
+            shell_sandbox: Sandbox::from_spec(SandboxSpec::from_host_mounts(&[
+                shell_sandbox_mount,
+            ])),
         }))
     }
 }
