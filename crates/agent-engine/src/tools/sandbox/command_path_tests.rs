@@ -129,9 +129,22 @@ async fn seatbelt_rejects_mount_local_executables_with_uninspectable_reads() {
             None,
             Some(alan_agent_protocol::ToolCapability::Unknown),
         )
-        .await
-        .expect("a non-executable same-name file is not treated as the mount-local executable");
-    assert_eq!(result.exit_code, 126);
+        .await;
+    #[cfg(target_os = "macos")]
+    assert_eq!(
+        result
+            .expect("a non-executable same-name file is not treated as the mount-local executable")
+            .exit_code,
+        126
+    );
+    #[cfg(not(target_os = "macos"))]
+    assert!(
+        result
+            .expect_err("only macOS provides sandbox-exec for this forced backend")
+            .to_string()
+            .contains("Failed to execute command"),
+        "a non-executable same-name file must not be rejected as a mount-local executable"
+    );
 }
 
 #[tokio::test]
