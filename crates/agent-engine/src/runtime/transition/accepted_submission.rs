@@ -29,7 +29,7 @@ pub(crate) async fn advance_accepted_submission(
     cancel: &CancellationToken,
 ) -> AcceptedSubmissionOutcome {
     let requeue_inband_submissions = accepts_inband_submissions(&submission.op);
-    state.machine.accept_submission(submission.id.clone());
+    track_active_task_submission(&mut state.machine, &submission);
     let mut emit = |_event: Event| async {};
 
     let result = if requeue_inband_submissions {
@@ -100,7 +100,7 @@ where
         let Some(next_submission) = next_submission else {
             break;
         };
-        state.machine.accept_submission(next_submission.id.clone());
+        track_active_task_submission(&mut state.machine, &next_submission);
         handle_submission_with_cancel_and_steering(
             state,
             next_submission,
@@ -112,4 +112,51 @@ where
     }
 
     Ok(())
+}
+
+fn track_active_task_submission(
+    machine: &mut crate::agent_machine::AgentMachine,
+    submission: &Submission,
+) {
+    if accepts_inband_submissions(&submission.op) {
+        machine.accept_submission(submission.id.clone());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::agent_machine::AgentMachine;
+    use alan_agent_protocol::{ContentPart, InputIntent};
+
+    #[test]
+    fn resume_control_keeps_assistant_output_correlated_to_original_turn() {
+        let mut machine = AgentMachine::new();
+        let turn = Submission {
+            id: "turn-id".into(),
+            intent: InputIntent::Agent,
+            op: Op::Turn {
+                parts: vec![ContentPart::text("request")],
+                context: None,
+            },
+        };
+        track_active_task_submission(&mut machine, &turn);
+        machine.add_user_message("request");
+
+        let resume = Submission {
+            id: "resume-id".into(),
+            intent: InputIntent::Agent,
+            op: Op::Resume {
+                request_id: "confirmation".into(),
+                content: Vec::new(),
+            },
+        };
+        track_active_task_submission(&mut machine, &resume);
+        machine.add_assistant_message("answer", None);
+
+        assert_eq!(
+            machine.messages().last().unwrap().submission_id(),
+            Some("turn-id")
+        );
+    }
 }

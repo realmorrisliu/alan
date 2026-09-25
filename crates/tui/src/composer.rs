@@ -92,11 +92,7 @@ impl Composer {
         }
         let input = ComposerInput {
             intent: self.intent,
-            body: if self.intent == InputIntent::Command {
-                self.buffer.clone()
-            } else {
-                self.buffer.trim().to_string()
-            },
+            body: self.buffer.clone(),
         };
         self.buffer.clear();
         self.cursor = 0;
@@ -422,6 +418,31 @@ mod tests {
             })
         );
         assert_eq!(composer.text(), "");
+    }
+
+    #[test]
+    fn composer_preserves_agent_body_whitespace() {
+        let body = "  indented\ncode  ";
+        let mut composer = Composer::default();
+        composer.insert_text(body);
+
+        assert_eq!(
+            composer.take_submit(),
+            Some(ComposerInput {
+                intent: InputIntent::Agent,
+                body: body.into(),
+            })
+        );
+
+        let mut composer = Composer::default();
+        composer.insert_text(&format!(":{body}"));
+        assert_eq!(
+            composer.take_submit(),
+            Some(ComposerInput {
+                intent: InputIntent::ForceAgent,
+                body: body.into(),
+            })
+        );
     }
 
     #[test]
