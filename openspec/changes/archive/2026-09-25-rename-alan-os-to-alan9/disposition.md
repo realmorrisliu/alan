@@ -1,10 +1,11 @@
-# Disposition — 2026-09-24
+# Disposition — accepted 2026-09-24; closed 2026-09-25
 
 Naming direction accepted by the user and recorded in ADR-0057. Active
 explanatory prose adoption was delivered by PR #934, merged as
 `5db591a3b37d20b21ec23862669fe1948555c8b2`; the canonical specification sync
-and archive closeout remain pending. No runtime or machine-identifier migration
-is authorized by its tasks.
+was delivered by PR #935, merged as
+`53b862b06a0cdb98d37f3110a8d6d8a6aae64ce0`. This change is complete and
+archived. No runtime or machine-identifier migration was authorized or made.
 TUI/Shell unification and model-assisted input routing remain a separate
 exploration under the existing interaction and cognition changes.
 

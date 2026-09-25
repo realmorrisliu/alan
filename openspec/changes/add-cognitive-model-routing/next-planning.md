@@ -1,6 +1,6 @@
 # 下一步规划入口：Tracer bullet
 
-基线：main `5db591a3`（PR #934，2026-09-24；包含 TUI 交付、可靠性修复和 alan9 命名迁移）。
+基线：main `53b862b0`（PR #935，2026-09-24；包含 TUI 交付、可靠性修复、alan9 命名迁移及规范同步）。
 2026-09-20 用户确认改为纵向 tracer bullet：尽快交付可用 agent，通过真实终端任务反馈推进架构。
 本路线替代原 Step 2 → 3 → 4 的逐层交付顺序；ADR-0054/0055 的所有权边界不变。
 ADR-0056 记录裸 `alan` 直接附着 Root Agent 的入口决策，并取代旧 Shell-first 指引。
@@ -69,9 +69,9 @@ fx 体验参考见 [research-jev-and-fx.md](research-jev-and-fx.md)。
 
 ## 下一个实施顺序
 
-1. 收尾 [rename-alan-os-to-alan9](../rename-alan-os-to-alan9/)：PR #934 已迁移
-   README、AGENTS、指南和活动 OpenSpec 的解释性命名；保留 Alan 产品、`alan`
-   CLI、crate/type/protocol/storage 标识、路径和历史决定。当前只剩规范同步与归档。
+1. 已完成 [rename-alan-os-to-alan9](../archive/2026-09-25-rename-alan-os-to-alan9/)：PR #934 迁移
+   README、AGENTS、指南和活动 OpenSpec 的解释性命名，PR #935 同步 canonical
+   spec；保留 Alan 产品、`alan` CLI、crate/type/protocol/storage 标识、路径和历史决定。
 2. 按 ADR-0058 实施
    [unify-agent-command-input](../unify-agent-command-input/) 的显式输入阶段：
    `!` 原样交给受治理宿主 shell，`:` 强制 Agent，无前缀暂走 Agent；共享 cwd、

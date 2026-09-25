@@ -1,9 +1,9 @@
 # Name the agent operating system alan9
 
 Status: accepted naming direction, 2026-09-24; active prose adoption merged in
-PR #934 on 2026-09-24, with canonical specification sync and change archival in
-progress. Supersedes the `Alan OS` system label, without changing the ownership
-decisions in ADR-0054/0055/0056.
+PR #934 and canonical specification sync merged in PR #935 on 2026-09-24. The
+adoption change was archived on 2026-09-25. Supersedes the `Alan OS` system
+label, without changing the ownership decisions in ADR-0054/0055/0056.
 
 Alan remains the programmable personal computing product. Its agent operating
 system is named **alan9**, always lowercase. The existing Kernel and system
@@ -25,7 +25,9 @@ an independent design question. Neither their current separation nor a merge
 is mandated by the alan9 name. Model-assisted command routing and Jev remain
 unimplemented and are not approved runtime changes by this ADR.
 
-Normative naming delta and adoption tasks live in
-[rename-alan-os-to-alan9](../../openspec/changes/rename-alan-os-to-alan9/).
+The canonical naming contract lives in the
+[product-brand-identity spec](../../openspec/specs/product-brand-identity/spec.md).
+The original delta and adoption evidence are preserved in the
+[archived rename change](../../openspec/changes/archive/2026-09-25-rename-alan-os-to-alan9/).
 The interaction exploration lives in the existing
 [unified-input change](../../openspec/changes/unify-agent-command-input/design-interview.md).
