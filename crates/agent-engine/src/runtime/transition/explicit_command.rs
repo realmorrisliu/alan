@@ -108,7 +108,8 @@ where
     match outcome {
         Ok(ToolBatchOrchestratorOutcome::ContinueTurnLoop { .. })
         | Ok(ToolBatchOrchestratorOutcome::EndTurn { .. }) => {
-            record_missing_command_action(state, &tool_call, command_error.as_deref()).await?;
+            record_missing_command_action(state, &tool_call, command_error.as_deref(), None)
+                .await?;
             state.machine.set_turn_activity(TurnActivityState::Idle);
             Ok(())
         }
@@ -127,6 +128,7 @@ async fn record_missing_command_action(
     state: &mut RuntimeLoopState,
     tool_call: &NormalizedToolCall,
     emitted_error: Option<&str>,
+    approval: Option<&str>,
 ) -> Result<()> {
     let payload = state.machine.tool_payload_by_call_id(&tool_call.id);
     if payload
@@ -158,22 +160,46 @@ async fn record_missing_command_action(
             .add_tool_message(&tool_call.id, &tool_call.name, outcome.clone());
     }
     let process_path = state.environment.process_files().process_path()?;
-    state
-        .agent_files()
-        .write_action(
-            NamespaceActionRecord::new(&tool_call.name, "failed")
-                .with_output(serde_json::json!({"stdout": "", "stderr": message}).to_string())
-                .with_result(
-                    serde_json::json!({
-                        "call_id": tool_call.id,
-                        "exit_code": 1,
-                        "outcome": outcome,
-                    })
-                    .to_string(),
-                )
-                .with_process(process_path),
+    let mut action = NamespaceActionRecord::new(&tool_call.name, "failed")
+        .with_output(serde_json::json!({"stdout": "", "stderr": message}).to_string())
+        .with_result(
+            serde_json::json!({
+                "call_id": tool_call.id,
+                "exit_code": 1,
+                "outcome": outcome,
+            })
+            .to_string(),
         )
-        .await?;
+        .with_process(process_path);
+    if let Some(approval) = approval {
+        action = action.with_approval(approval);
+    }
+    state.agent_files().write_action(action).await?;
+    Ok(())
+}
+
+pub(super) async fn finish_rejected_explicit_command<E, F>(
+    state: &mut RuntimeLoopState,
+    tool_call: &NormalizedToolCall,
+    emit: &mut E,
+) -> Result<()>
+where
+    E: FnMut(Event) -> F,
+    F: std::future::Future<Output = ()>,
+{
+    let error = "command was rejected by the user";
+    record_missing_command_action(state, tool_call, Some(error), Some("rejected")).await?;
+    let result = serde_json::json!({"success": false, "error": error});
+    emit(Event::ToolCallCompleted {
+        presentation: None,
+        id: tool_call.id.clone(),
+        name: Some(tool_call.name.clone()),
+        success: Some(false),
+        result_preview: crate::runtime::turn_support::tool_result_preview(&result),
+        audit: None,
+    })
+    .await;
+    state.machine.set_turn_activity(TurnActivityState::Idle);
     Ok(())
 }
 

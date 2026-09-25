@@ -38,6 +38,9 @@ pub(super) enum RuntimeOpAction {
         approved_unknown_effect_call_id: Option<String>,
         approved_tool_escalation_call_id: Option<String>,
     },
+    FinishRejectedExplicitCommand {
+        tool_call: NormalizedToolCall,
+    },
 }
 
 pub(super) async fn handle_non_compaction_runtime_op<E, F>(
@@ -412,6 +415,18 @@ async fn handle_confirmation_resolution(
         && is_unknown_effect_confirmation(&pending);
     let allow_tool_escalation_replay =
         pending.checkpoint_type == crate::approval::TOOL_ESCALATION_CHECKPOINT_TYPE;
+
+    if replays_tool_calls(&pending.checkpoint_type)
+        && choice_str == "reject"
+        && let Some(replay_batch) = replay_tool_batch.as_ref()
+        && !replay_batch.resume_with_generation
+    {
+        let tool_call =
+            replay_batch.tool_calls.first().cloned().ok_or_else(|| {
+                anyhow::anyhow!("rejected explicit command has no pending Tool call")
+            })?;
+        return Ok(RuntimeOpAction::FinishRejectedExplicitCommand { tool_call });
+    }
 
     if replays_tool_calls(&pending.checkpoint_type)
         && choice_str == "approve"

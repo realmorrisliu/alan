@@ -908,6 +908,9 @@ where
             };
             Ok(())
         }
+        RuntimeOpAction::FinishRejectedExplicitCommand { tool_call } => {
+            explicit_command::finish_rejected_explicit_command(state, &tool_call, emit).await
+        }
     }
 }
 
