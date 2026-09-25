@@ -111,3 +111,53 @@ fn package_manager_subcommand<'a>(command: &str, args: &'a [String]) -> Option<&
     }
     None
 }
+
+pub(super) fn git_subcommand_can_invoke_configured_helpers(command: &str, args: &[String]) -> bool {
+    match command {
+        // These commands can execute configured external diff or textconv helpers.
+        "diff" | "diff-files" | "diff-index" | "diff-tree" | "format-patch" | "log" | "show" => {
+            !git_option_disabled(args, "--ext-diff", "--no-ext-diff")
+                || !git_option_disabled(args, "--textconv", "--no-textconv")
+        }
+        "rev-list"
+            if git_has_option(
+                args,
+                &[
+                    "-p",
+                    "-u",
+                    "--patch",
+                    "--patch-with-raw",
+                    "--patch-with-stat",
+                ],
+            ) =>
+        {
+            !git_option_disabled(args, "--ext-diff", "--no-ext-diff")
+                || !git_option_disabled(args, "--textconv", "--no-textconv")
+        }
+        "stash" if args.first().is_some_and(|arg| arg == "show") => {
+            !git_option_disabled(args, "--ext-diff", "--no-ext-diff")
+                || !git_option_disabled(args, "--textconv", "--no-textconv")
+        }
+        "cat-file" => git_has_option(args, &["--filters", "--textconv"]),
+        "blame" | "grep" => git_has_option(args, &["--textconv"]),
+        _ => false,
+    }
+}
+
+fn git_option_disabled(args: &[String], enabled: &str, disabled: &str) -> bool {
+    args.iter()
+        .take_while(|arg| arg.as_str() != "--")
+        .filter_map(|arg| match arg.as_str() {
+            value if value == enabled => Some(false),
+            value if value == disabled => Some(true),
+            _ => None,
+        })
+        .last()
+        .unwrap_or(false)
+}
+
+fn git_has_option(args: &[String], options: &[&str]) -> bool {
+    args.iter()
+        .take_while(|arg| arg.as_str() != "--")
+        .any(|arg| options.contains(&arg.as_str()))
+}

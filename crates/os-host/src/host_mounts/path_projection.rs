@@ -51,6 +51,14 @@ pub(super) fn project_text(adapter: &NativeToolExecutionAdapter, text: &str) -> 
             let host_path = mount.host_path.to_string_lossy();
             let replacement = mount_from_cwd.to_string_lossy();
             projected = replace_path_prefixes(&projected, host_path.as_ref(), replacement.as_ref());
+            let shell_escaped_host_path = host_path.replace(' ', "\\ ");
+            if shell_escaped_host_path != host_path {
+                projected = replace_path_prefixes(
+                    &projected,
+                    &shell_escaped_host_path,
+                    replacement.as_ref(),
+                );
+            }
             if let Ok(file_url) = url::Url::from_file_path(&mount.host_path) {
                 let uri_path = file_url.path();
                 if uri_path != host_path.as_ref() {

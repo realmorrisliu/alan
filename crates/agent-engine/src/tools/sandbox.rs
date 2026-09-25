@@ -447,6 +447,13 @@ impl Sandbox {
                     .arg("-f")
                     .arg("-c")
                     .arg(cmd);
+                // Repository config can make otherwise read-only Git commands
+                // execute a project-provided fsmonitor hook.
+                command
+                    .env("GIT_CONFIG_COUNT", "1")
+                    .env("GIT_CONFIG_KEY_0", "core.fsmonitor")
+                    .env("GIT_CONFIG_VALUE_0", "false")
+                    .env_remove("GIT_CONFIG_PARAMETERS");
                 command
             }
             super::sandbox_backend::SandboxBackendKind::LinuxReifiedNamespace => {

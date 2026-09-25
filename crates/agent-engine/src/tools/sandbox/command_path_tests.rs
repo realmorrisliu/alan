@@ -192,6 +192,148 @@ async fn seatbelt_rejects_git_extension_aliases_with_uninspectable_reads() {
 
 #[cfg(target_os = "macos")]
 #[tokio::test]
+async fn seatbelt_does_not_allow_git_configured_helpers_to_read_outside_the_host_mount() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let mount = TempDir::new().unwrap();
+    let outside = TempDir::new().unwrap();
+    let marker = outside.path().join("host-only-marker.txt");
+    std::fs::write(&marker, "host-only-marker\n").unwrap();
+    let initialized = std::process::Command::new("git")
+        .args(["init", "--quiet"])
+        .current_dir(mount.path())
+        .status()
+        .unwrap();
+    assert!(initialized.success(), "git init failed: {initialized}");
+
+    let tracked = mount.path().join("tracked.txt");
+    std::fs::write(&tracked, "before\n").unwrap();
+    let staged = std::process::Command::new("git")
+        .args(["add", "tracked.txt"])
+        .current_dir(mount.path())
+        .status()
+        .unwrap();
+    assert!(staged.success(), "git add failed: {staged}");
+    std::fs::write(&tracked, "after\n").unwrap();
+
+    let fsmonitor = mount.path().join("fsmonitor");
+    std::fs::write(
+        &fsmonitor,
+        format!(
+            "#!/bin/sh\n/bin/cat '{}' >&2\nprintf '1\\n\\0'\n",
+            marker.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&fsmonitor, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let configured = std::process::Command::new("git")
+        .args(["config", "core.fsmonitor"])
+        .arg(&fsmonitor)
+        .current_dir(mount.path())
+        .status()
+        .unwrap();
+    assert!(configured.success(), "git config failed: {configured}");
+    let diff_configured = std::process::Command::new("git")
+        .args(["config", "diff.external"])
+        .arg(&fsmonitor)
+        .current_dir(mount.path())
+        .status()
+        .unwrap();
+    assert!(
+        diff_configured.success(),
+        "git diff config failed: {diff_configured}"
+    );
+
+    let control = std::process::Command::new("git")
+        .args(["status", "--short"])
+        .current_dir(mount.path())
+        .output()
+        .unwrap();
+    assert!(
+        String::from_utf8_lossy(&control.stderr).contains("host-only-marker"),
+        "fixture Git did not invoke fsmonitor: {control:?}"
+    );
+    let diff_control = std::process::Command::new("git")
+        .args(["diff", "--", "tracked.txt"])
+        .current_dir(mount.path())
+        .output()
+        .unwrap();
+    assert!(
+        String::from_utf8_lossy(&diff_control.stderr).contains("host-only-marker"),
+        "fixture Git did not invoke diff.external: {diff_control:?}"
+    );
+
+    let sandbox = Sandbox::with_backend(
+        mount.path().to_path_buf(),
+        crate::tools::SandboxBackendKind::Seatbelt,
+    );
+    let commands = [
+        ("git status --short".to_string(), true),
+        ("git diff -- tracked.txt".to_string(), false),
+        (
+            "git diff --no-ext-diff --no-textconv -- tracked.txt".to_string(),
+            true,
+        ),
+        (
+            format!(
+                "git -c core.fsmonitor={} status --short",
+                fsmonitor.display()
+            ),
+            false,
+        ),
+        (
+            format!(
+                "GIT_CONFIG_COUNT=0 GIT_CONFIG_KEY_0=core.fsmonitor GIT_CONFIG_VALUE_0='{}' git status --short",
+                fsmonitor.display()
+            ),
+            false,
+        ),
+    ];
+    for (command, should_run) in commands {
+        let result = sandbox
+            .exec_with_timeout_and_capability(
+                &command,
+                mount.path(),
+                None,
+                Some(alan_agent_protocol::ToolCapability::Unknown),
+            )
+            .await;
+
+        match result {
+            Ok(output) => {
+                assert!(should_run, "unsafe Git command was allowed: {command}");
+                assert!(
+                    !output.stderr.contains("host-only-marker"),
+                    "Git configured helper read outside the active Host Mount for {command}: {output:?}"
+                );
+                if command == "git status --short" {
+                    assert_eq!(output.exit_code, 0, "Git status failed: {output:?}");
+                } else {
+                    assert!(
+                        output.stdout.contains("-before") && output.stdout.contains("+after"),
+                        "disabling external helpers must retain Git's built-in diff: {output:?}"
+                    );
+                }
+            }
+            Err(error) => {
+                assert!(
+                    !should_run,
+                    "safe Git command was rejected for {command}: {error}"
+                );
+                assert!(
+                    error.to_string().contains("opaque command dispatcher")
+                        || error
+                            .to_string()
+                            .contains("Git config environment override"),
+                    "unexpected sandbox rejection for {command}: {error}"
+                );
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[tokio::test]
 async fn seatbelt_rejects_git_commit_hooks_with_uninspectable_reads() {
     use std::os::unix::fs::PermissionsExt;
 
@@ -386,6 +528,21 @@ fn project_code_dispatchers_are_rejected_as_opaque() {
         "git config --global --list",
         "git config --system --list",
         "git config --list",
+        "git -c core.fsmonitor=./leak status",
+        "git --config-env=core.fsmonitor=GIT_CONFIG_VALUE status",
+        "git diff -- tracked.txt",
+        "git diff-tree HEAD~1 HEAD",
+        "git rev-list -p HEAD",
+        "git format-patch HEAD~1",
+        "git diff --no-ext-diff --no-textconv --textconv tracked.txt",
+        "git diff --no-ext-diff --no-textconv --ext-diff tracked.txt",
+        "git log -p",
+        "git show HEAD",
+        "git stash show",
+        "git archive --format=tar HEAD",
+        "git cat-file --filters HEAD:path",
+        "git grep --textconv needle",
+        "git blame --textconv HEAD -- file.txt",
         "git add file.txt",
         "git am change.patch",
         "git checkout branch",
@@ -452,10 +609,37 @@ fn project_code_dispatchers_are_rejected_as_opaque() {
         );
     }
 
+    let words = [
+        "GIT_CONFIG_COUNT=0",
+        "GIT_CONFIG_KEY_0=core.fsmonitor",
+        "GIT_CONFIG_VALUE_0=./leak",
+        "git",
+        "status",
+    ]
+    .map(str::to_string);
+    let error = super::super::command_wrappers::validate_opaque_command_dispatchers(
+        &[words.to_vec()],
+        "test",
+        true,
+    )
+    .expect_err("Git environment config must not bypass the fsmonitor override");
+    assert!(
+        error
+            .to_string()
+            .contains("Git config environment override"),
+        "{error}"
+    );
+
     for command in [
         "git status",
-        "git -C . diff",
-        "git --no-pager log",
+        "git -C . diff --no-ext-diff --no-textconv",
+        "git diff-tree --no-ext-diff --no-textconv HEAD~1 HEAD",
+        "git rev-list --no-ext-diff --no-textconv -p HEAD",
+        "git format-patch --no-ext-diff --no-textconv HEAD~1",
+        "git diff --no-ext-diff --no-textconv -- --ext-diff",
+        "git --no-pager log --no-ext-diff --no-textconv -p",
+        "git show --no-ext-diff --no-textconv HEAD",
+        "git stash show --no-ext-diff --no-textconv",
         "git branch --list",
         "git tag --list",
         "git stash list",

@@ -297,6 +297,18 @@ pub(super) fn validate_opaque_command_dispatchers(
     reject_project_code_dispatchers: bool,
 ) -> Result<()> {
     for words in commands {
+        if reject_project_code_dispatchers
+            && words.iter().any(|word| {
+                word.split_once('=')
+                    .map_or(word.as_str(), |(name, _)| name)
+                    .starts_with("GIT_CONFIG_")
+            })
+        {
+            return Err(anyhow!(
+                "Sandbox backend {} rejects Git config environment overrides in ProtectedOnly mode",
+                backend_name
+            ));
+        }
         let Some(view) = nested_evaluator_view(words) else {
             continue;
         };

@@ -97,6 +97,17 @@ async fn project_text_projects_percent_encoded_file_uri_roots_without_matching_s
         adapter.project_text(&single_emphasized_sibling),
         single_emphasized_sibling
     );
+
+    let shell_escaped_root = root.to_string_lossy().replace(' ', "\\ ");
+    assert_eq!(
+        adapter.project_text(&format!("working directory: {shell_escaped_root}")),
+        "working directory: ."
+    );
+    let shell_escaped_sibling = format!("{shell_escaped_root}-backup/notes.txt");
+    assert_eq!(
+        adapter.project_text(&shell_escaped_sibling),
+        shell_escaped_sibling
+    );
 }
 
 #[tokio::test]

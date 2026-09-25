@@ -1,5 +1,7 @@
 use super::command_options::{exact_or_inline_option_with_value, has_attached_option_value};
-use super::command_project_dispatchers::is_project_code_dispatcher;
+use super::command_project_dispatchers::{
+    git_subcommand_can_invoke_configured_helpers, is_project_code_dispatcher,
+};
 
 pub(super) fn opaque_command_dispatcher_display(
     display: &str,
@@ -23,9 +25,9 @@ pub(super) fn opaque_command_dispatcher_display(
 }
 
 fn has_uninspectable_git_dispatch(args: &[String]) -> bool {
-    // ponytail: only common built-ins are allowed; add names only for a real shell workflow need.
+    // ponytail: known built-ins stay narrow; unknown subcommands remain opaque.
     const BUILTINS: &str = concat!(
-        "add archive blame branch cat-file checkout cherry-pick clean clone commit ",
+        "add blame branch cat-file checkout cherry-pick clean clone commit ",
         "describe diff diff-files diff-index diff-tree fetch format-patch grep help init log ",
         "ls-files ls-tree merge merge-base mv notes pull push rebase remote reset restore ",
         "revert rev-list rev-parse rm shortlog show show-ref stash status switch tag worktree"
@@ -34,8 +36,8 @@ fn has_uninspectable_git_dispatch(args: &[String]) -> bool {
     let mut index = 0;
     while let Some(argument) = args.get(index).map(String::as_str) {
         match argument {
-            "-C" | "-c" | "--git-dir" | "--work-tree" | "--namespace" | "--super-prefix"
-            | "--config-env" => {
+            "-c" | "--config-env" => return true,
+            "-C" | "--git-dir" | "--work-tree" | "--namespace" | "--super-prefix" => {
                 index += 2;
                 if index > args.len() {
                     return true;
@@ -55,15 +57,15 @@ fn has_uninspectable_git_dispatch(args: &[String]) -> bool {
             "--version" | "-v" | "--help" | "-h" => return false,
             argument
                 if argument.starts_with("-C")
-                    || argument.starts_with("-c")
                     || argument.starts_with("--git-dir=")
                     || argument.starts_with("--work-tree=")
                     || argument.starts_with("--namespace=")
-                    || argument.starts_with("--super-prefix=")
-                    || argument.starts_with("--config-env=")
                     || argument.starts_with("--exec-path=") =>
             {
                 index += 1;
+            }
+            argument if argument.starts_with("-c") || argument.starts_with("--config-env=") => {
+                return true;
             }
             argument if argument.starts_with('-') => return true,
             command => {
@@ -71,7 +73,8 @@ fn has_uninspectable_git_dispatch(args: &[String]) -> bool {
                     .split_ascii_whitespace()
                     .any(|builtin| builtin == command);
                 return !known_builtin
-                    || git_subcommand_can_invoke_hooks(command, &args[index + 1..]);
+                    || git_subcommand_can_invoke_hooks(command, &args[index + 1..])
+                    || git_subcommand_can_invoke_configured_helpers(command, &args[index + 1..]);
             }
         }
     }
