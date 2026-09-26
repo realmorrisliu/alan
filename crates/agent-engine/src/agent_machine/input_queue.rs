@@ -10,6 +10,8 @@ use alan_agent_protocol::{
 use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 
+mod persistence;
+
 const MAX_BROKERED_INBAND_USER_INPUTS: usize = 16;
 
 #[derive(Debug, Clone)]
@@ -22,6 +24,8 @@ struct TurnInputBrokerInner {
     state: Mutex<MachineInputQueues>,
     notify: Notify,
     activity_notify: Notify,
+    recorder: Mutex<Option<crate::rollout::RolloutRecorder>>,
+    persisted: Mutex<(u64, Option<serde_json::Value>)>,
 }
 
 impl Default for TurnInputBroker {
@@ -31,6 +35,8 @@ impl Default for TurnInputBroker {
                 state: Mutex::new(MachineInputQueues::default()),
                 notify: Notify::new(),
                 activity_notify: Notify::new(),
+                recorder: Mutex::new(None),
+                persisted: Mutex::new((0, None)),
             }),
         }
     }
@@ -46,6 +52,9 @@ pub(super) struct MachineInputQueues {
     pub(super) next_turn: VecDeque<Submission>,
     outer: VecDeque<QueuedRuntimeItem>,
     pub(super) paused: bool,
+    unknown_inputs: Vec<UiSubmission>,
+    checkpoint_cwd: Option<std::path::PathBuf>,
+    recovery_warning: Option<String>,
 }
 
 #[derive(Debug)]
@@ -207,6 +216,8 @@ impl TurnInputBroker {
             "active input has not settled yet"
         );
         state.paused = false;
+        state.unknown_inputs.clear();
+        state.recovery_warning = None;
         Ok(())
     }
 
@@ -229,6 +240,8 @@ impl TurnInputBroker {
         discarded.extend(state.inband.drain(..));
         discarded.extend(state.next_turn.drain(..));
         state.paused = false;
+        state.unknown_inputs.clear();
+        state.recovery_warning = None;
         Ok(discarded)
     }
 

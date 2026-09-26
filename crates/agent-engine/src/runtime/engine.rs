@@ -229,7 +229,11 @@ async fn initialize_agent_machine(
                     path = %path.display(),
                     "Failed to load machine from rollout; creating fresh persistent machine"
                 );
-                match create_persistent_machine(
+                warnings.push(
+                    "Rollout recovery failed; previous pending inputs and effects are unknown."
+                        .into(),
+                );
+                let machine = match create_persistent_machine(
                     launch.process_path,
                     launch.model,
                     rollouts_dir,
@@ -247,7 +251,10 @@ async fn initialize_agent_machine(
                         warnings.push(best_effort_durability_warning(&create_err));
                         AgentMachine::new()
                     }
-                }
+                };
+                machine.input_broker().restore_from_events(&[])?;
+                machine.input_broker().persist().await?;
+                machine
             }
         }
     } else {
@@ -432,6 +439,32 @@ fn spawn_with_prepared_runtime_environment(
             }
         };
 
+        let queue = state.machine.input_broker();
+        if let Some(cwd) = queue.recovered_cwd() {
+            if let Err(error) = state.environment.restore_process_directory(&cwd) {
+                let _ = super::ui_surfaces::warning(&state.agent_files(), format!(
+                    "Recovered cwd {} is unavailable: {error:#}. Choose an explicit directory before cwd-dependent work.", cwd.display()
+                )).await;
+            }
+        } else {
+            queue.checkpoint_cwd(
+                state
+                    .environment
+                    .tool_execution()
+                    .default_cwd()
+                    .unwrap_or(rollout_cwd),
+            );
+        }
+        if let Some(warning) = queue.recovery_warning() {
+            let _ = super::ui_surfaces::warning(&state.agent_files(), warning).await;
+        }
+        for input in queue.unknown_inputs() {
+            let _ = super::ui_surfaces::error_notice(
+                &state.agent_files(),
+                "Input was active when execution stopped; outcome is unknown and it will not be replayed",
+                Some(&input.submission_id),
+            ).await;
+        }
         info!(
             process_path = %state.process_path(),
             agent_path = %state.agent_path(),

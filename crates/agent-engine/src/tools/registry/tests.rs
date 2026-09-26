@@ -544,6 +544,15 @@ async fn tool_process_rejects_a_revoked_cwd_instead_of_using_another_grant() {
         ),
     );
     runner.register_process_authority(7, Arc::new(FallbackGrant));
+    assert!(
+        runner
+            .restore_process_directory(7, std::path::Path::new("/mnt/recovered"))
+            .is_err()
+    );
+    assert_eq!(
+        runner.process_binding(7).unwrap().namespace_cwd,
+        PathBuf::from("/mnt/recovered")
+    );
 
     let outcome = runner
         .run(ToolProcessInvocation {
@@ -623,6 +632,7 @@ fn standalone_cd_updates_process_binding_and_reconciles_host_projection() {
         .unwrap();
 
     assert_eq!(namespace_cwd, PathBuf::from("/mnt/source/src"));
+    runner.restore_process_directory(7, &namespace_cwd).unwrap();
     let binding = runner.process_binding(7).unwrap();
     assert_eq!(binding.namespace_cwd, namespace_cwd);
     assert_eq!(

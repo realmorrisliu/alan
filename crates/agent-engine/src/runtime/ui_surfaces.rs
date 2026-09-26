@@ -13,6 +13,7 @@ pub(crate) async fn flush_activity(
     namespace: &NamespaceAgentFiles,
     queue: &TurnInputBroker,
 ) -> Result<()> {
+    queue.persist().await?;
     let mut last = namespace.read_ui_activity_snapshot().await?;
     for activity in queue
         .drain_activity_events()

@@ -734,3 +734,107 @@ async fn runtime_file_controls_keep_accepted_inputs_paused_until_continue_or_dis
         controller.shutdown().await.unwrap();
     }
 }
+
+#[tokio::test]
+async fn recovered_runtime_waits_for_explicit_continue_and_does_not_replay_unknown_work() {
+    use alan_agent_protocol::{InputIntent, UiActivityState};
+    let store = TempDir::new().unwrap();
+    let stores = crate::AgentRuntimeStoreBindings {
+        rollouts: store.path().join("rollouts"),
+        checkpoints: store.path().join("checkpoints"),
+        cache: store.path().join("cache"),
+        tmp: store.path().join("tmp"),
+        metadata: store.path().join("metadata"),
+    };
+    for path in [
+        &stores.rollouts,
+        &stores.checkpoints,
+        &stores.cache,
+        &stores.tmp,
+        &stores.metadata,
+    ] {
+        std::fs::create_dir_all(path).unwrap();
+    }
+    let mut previous = AgentMachine::new_with_recorder_options(
+        "/proc/old",
+        "model",
+        Some(&stores.rollouts),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let unknown_id = uuid::Uuid::new_v4().to_string();
+    previous.accept_submission(&unknown_id);
+    let pending = Submission::with_intent(
+        Op::Input {
+            parts: vec![ContentPart::text("recovered input")],
+            mode: InputMode::FollowUp,
+        },
+        InputIntent::Agent,
+    );
+    let pending_id = pending.id.clone();
+    previous.input_broker().checkpoint_cwd("/".into());
+    previous.input_broker().push_outer_submission(pending);
+    previous.input_broker().persist().await.unwrap();
+    let source = previous.rollout_path().unwrap().clone();
+    let provider = MockLlmProvider::new();
+    let probe = provider.clone();
+    let llmfs = Arc::new(alan_llmfs::LlmFs::new());
+    llmfs.register_connection("default", Box::new(provider));
+    let mut ns = alan_kernel::Namespace::new();
+    ns.mount(
+        "/agent/1",
+        InProcessTransport::new(Arc::new(alan_agentfs::AgentFs::new())),
+        alan_kernel::Access::ReadWrite,
+    );
+    ns.mount(
+        "/mnt/llm",
+        InProcessTransport::new(llmfs),
+        alan_kernel::Access::ReadWrite,
+    );
+    let root = InProcessTransport::new(Arc::new(alan_kernel::MountFs::new(ns)));
+    let shell = alan_shell::Shell::new(root.clone());
+    let mut core = crate::Config::default();
+    core.memory.enabled = false;
+    let capabilities = crate::provider_capabilities_for_config(&core);
+    let config = AgentProcessConfig {
+        agent_config: crate::AgentConfig::from(core),
+        store_bindings: Some(stores),
+        recovery_rollout_path: Some(source),
+        ..AgentProcessConfig::default()
+    };
+    let mut controller = spawn_with_namespace_environment(
+        config,
+        NamespaceRuntimeEnvironment::new(root, "/agent/1", "default"),
+        crate::skills::SkillHostCapabilities::default(),
+        capabilities,
+    )
+    .unwrap();
+    controller.wait_until_ready().await.unwrap();
+    let paused = wait_for_queue_activity(&shell, |a| {
+        a.queue_paused && a.pending_submissions.len() == 1
+    })
+    .await;
+    assert_eq!(paused.pending_submissions[0].submission_id, pending_id);
+    assert!(paused.active_submission.is_none());
+    assert!(probe.recorded_requests().is_empty());
+    let events = String::from_utf8(shell.cat("/agent/1/machine/ui/events").await.unwrap()).unwrap();
+    assert!(events.contains(&unknown_id) && events.contains("outcome is unknown"));
+    shell
+        .write("/agent/1/machine/ctl", b"queue-v1 continue")
+        .await
+        .unwrap();
+    wait_for_queue_activity(&shell, |a| {
+        !a.queue_paused
+            && a.active_submission.is_none()
+            && a.pending_submissions.is_empty()
+            && a.state == UiActivityState::Idle
+    })
+    .await;
+    assert_eq!(probe.recorded_requests().len(), 1);
+    let tape = String::from_utf8(shell.cat("/agent/1/machine/tape").await.unwrap()).unwrap();
+    assert!(tape.contains(&pending_id));
+    assert!(!tape.contains(&unknown_id));
+    controller.shutdown().await.unwrap();
+}

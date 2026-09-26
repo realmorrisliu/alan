@@ -724,6 +724,7 @@ where
     E: FnMut(Event) -> F,
     F: std::future::Future<Output = ()>,
 {
+    state.machine.input_broker().persist().await?;
     let Submission { id, intent, op } = submission;
 
     if intent == InputIntent::Command && matches!(&op, Op::Input { .. }) {

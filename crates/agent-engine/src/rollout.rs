@@ -242,7 +242,7 @@ enum RolloutCmd {
 }
 
 /// Persistent recorder for machine history
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct RolloutRecorder {
     tx: mpsc::UnboundedSender<RolloutCmd>,
     rollout_id: String,
@@ -430,24 +430,33 @@ impl RolloutRecorder {
         self.record_nowait(item)
     }
 
-    /// Persist a batch of items atomically with a single flush acknowledgement.
+    /// Persist a batch with a single writer flush acknowledgement.
     pub async fn persist_batch(&self, items: Vec<RolloutItem>) -> Result<()> {
-        if items.is_empty() {
-            return Ok(());
+        self.enqueue_persist_batch(items).await
+    }
+
+    /// Enqueue immediately without holding the caller's state lock across IO.
+    pub(crate) fn enqueue_persist_batch(
+        &self,
+        items: Vec<RolloutItem>,
+    ) -> impl std::future::Future<Output = Result<()>> + Send + 'static {
+        let receipt = if items.is_empty() {
+            Ok(None)
+        } else {
+            let (ack_tx, ack_rx) = oneshot::channel();
+            self.tx
+                .send(RolloutCmd::PersistBatch { items, ack: ack_tx })
+                .map(|()| Some(ack_rx))
+                .map_err(|_| anyhow!("Rollout channel closed, cannot persist batch"))
+        };
+        async move {
+            match receipt? {
+                None => Ok(()),
+                Some(ack) => ack
+                    .await
+                    .map_err(|_| anyhow!("Rollout writer dropped before batch persistence ack"))?,
+            }
         }
-        let (ack_tx, ack_rx) = oneshot::channel();
-        if self
-            .tx
-            .send(RolloutCmd::PersistBatch { items, ack: ack_tx })
-            .is_err()
-        {
-            warn!("Rollout channel closed, cannot persist batch");
-            return Err(anyhow!("Rollout channel closed, cannot persist batch"));
-        }
-        ack_rx.await.map_err(|_| {
-            warn!("Rollout writer dropped before batch persistence ack");
-            anyhow!("Rollout writer dropped before batch persistence ack")
-        })?
     }
 
     /// Enqueue a flush request without waiting for the writer to drain.
@@ -977,19 +986,6 @@ impl RolloutRecorder {
     async fn flush_writer<W: AsyncWrite + Unpin>(writer: &mut W) -> anyhow::Result<()> {
         writer.flush().await?;
         Ok(())
-    }
-}
-
-impl Clone for RolloutRecorder {
-    fn clone(&self) -> Self {
-        // Create a new channel for the cloned recorder
-        // This is a limitation - cloned recorders share the same file but have separate channels
-        // In practice, only one recorder should be used per machine
-        Self {
-            tx: self.tx.clone(),
-            rollout_id: self.rollout_id.clone(),
-            rollout_path: self.rollout_path.clone(),
-        }
     }
 }
 

@@ -136,3 +136,24 @@
   idle admission not being terminal and live delegated Processes not completing
   merely because UI history contains Idle. Current-head remote CI and real
   terminal acceptance remain required before merge.
+
+- Queue recovery now uses acknowledged, versioned records in the existing rollout
+  writer before input acceptance and execution. Pending IDs, intent, payload and
+  order recover paused; formerly active IDs report unknown outcomes without
+  replay. Continue/discard are persisted before publishing their results. Missing
+  records remain visible across repeated recovery; malformed records cannot
+  silently resume pending work.
+- The checkpoint includes the logical Process cwd. Successful standalone cd waits
+  for that checkpoint before completing. Recovery revalidates the logical path
+  against live Host Mount authority and retains an invalid path on failure, so
+  cwd-dependent effects cannot fall back to the launch directory or another grant.
+  Pending work without cwd evidence is rejected. Process bindings remain the live
+  cwd owner; checkpoint fields are durable snapshots, not another mutable owner.
+- Durability verification includes disk-backed repeated Machine recovery, a running
+  Process that waits for explicit continuation before generating, and denied cwd
+  recovery through the Tool Process authority boundary. Full engine regression
+  passed (1,202 tests plus 20 architecture checks, one ignored); final recovery
+  checks include the additional missing-cwd regression. Task 2.8 remains open for
+  combined native-command restart acceptance and the remaining interruption edges.
+- Remote checks for `9a742b17` all passed, including macOS Test Suite. This evidence
+  predates the queue/cwd recovery commit; fresh current-head CI remains required.

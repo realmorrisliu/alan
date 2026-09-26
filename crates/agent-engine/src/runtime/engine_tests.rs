@@ -251,10 +251,10 @@ async fn wait_for_ui_turn_completion(
     tail: &mut alan_shell::Tail,
     timeout: Duration,
 ) -> Vec<alan_agent_protocol::UiEvent> {
+    let mut pending = String::new();
+    let mut events = Vec::new();
+    let mut saw_running = false;
     tokio::time::timeout(timeout, async {
-        let mut pending = String::new();
-        let mut events = Vec::new();
-        let mut saw_running = false;
         loop {
             pending.push_str(&String::from_utf8(tail.read(4096).await.unwrap()).unwrap());
             while let Some(newline) = pending.find('\n') {
@@ -270,7 +270,7 @@ async fn wait_for_ui_turn_completion(
                         && matches!(snapshot.state, alan_agent_protocol::UiActivityState::Idle)
                     {
                         events.push(event);
-                        return events;
+                        return std::mem::take(&mut events);
                     }
                 }
                 events.push(event);
@@ -278,7 +278,9 @@ async fn wait_for_ui_turn_completion(
         }
     })
     .await
-    .expect("turn UI stream did not reach idle")
+    .unwrap_or_else(|_| {
+        panic!("turn UI stream did not reach idle: {events:?}; pending={pending:?}")
+    })
 }
 
 fn response_stream(response: GenerationResponse) -> tokio::sync::mpsc::Receiver<StreamChunk> {

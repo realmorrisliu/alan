@@ -505,6 +505,17 @@ impl ToolProcessRunner {
             .insert(pid, binding);
     }
 
+    pub(crate) fn restore_process_directory(&self, pid: u64, path: &Path) -> Result<()> {
+        anyhow::ensure!(path.is_absolute(), "recovered Process cwd must be absolute");
+        let mut binding = self
+            .process_binding(pid)
+            .context("Process has no Tool execution binding")?;
+        // Preserve the recovered path on failure: effects must not use a fallback grant.
+        binding.namespace_cwd = path.to_path_buf();
+        self.register_process_binding(pid, binding);
+        self.change_process_directory(pid, path).map(|_| ())
+    }
+
     pub(crate) fn change_process_directory(&self, pid: u64, path: &Path) -> Result<PathBuf> {
         let mut binding = self
             .inner

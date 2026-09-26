@@ -13,6 +13,7 @@ where
     E: FnMut(Event) -> F,
     F: std::future::Future<Output = ()>,
 {
+    state.machine.input_broker().persist().await?;
     let Op::Input { parts, mode } = op else {
         anyhow::bail!("command intent requires an input operation");
     };
@@ -114,6 +115,14 @@ where
             Err(error) => Err(error),
             Ok(None) => unreachable!("standalone cd match excludes no-op inputs"),
         };
+        if let Ok(cwd) = &outcome {
+            let queue = state.machine.input_broker();
+            queue.checkpoint_cwd(cwd.clone());
+            queue
+                .persist()
+                .await
+                .context("persist changed Process cwd")?;
+        }
         return finish_standalone_cd(state, &submission_id, &command, outcome, emit).await;
     }
 

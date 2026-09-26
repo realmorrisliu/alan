@@ -202,13 +202,17 @@ impl AgentMachine {
         )
         .await?;
         let memory_record_id = recorder.rollout_id().to_string();
+        let transition_state = MachineTransitionState::default();
+        transition_state
+            .input_broker
+            .attach_recorder(recorder.clone());
 
         Ok(Self {
             tape: Tape::new(),
             recorder: Some(recorder),
             memory_record_id,
             has_active_task: false,
-            transition_state: MachineTransitionState::default(),
+            transition_state,
             effect_index: HashMap::new(),
             last_turn_context_snapshot_fingerprint: None,
             user_turn_ordinal: 0,

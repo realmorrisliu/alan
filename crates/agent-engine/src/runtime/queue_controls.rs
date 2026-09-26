@@ -10,7 +10,8 @@ pub(super) async fn handle(
     files: &NamespaceAgentFiles,
     cancel: Option<&CancellationToken>,
 ) -> bool {
-    let result = match &submission.op {
+    let mut failed_inputs = Vec::new();
+    let mut result = match &submission.op {
         Op::InterruptSubmission { submission_id } => match queue.interrupt(submission_id) {
             Ok(true) => {
                 if let Some(cancel) = cancel {
@@ -19,35 +20,38 @@ pub(super) async fn handle(
                 Ok(())
             }
             Ok(false) => {
-                super::ui_surfaces::error_notice(
-                    files,
+                failed_inputs.push((
+                    submission_id.clone(),
                     "Queued input cancelled before execution",
-                    Some(submission_id),
-                )
-                .await
+                ));
+                Ok(())
             }
             Err(error) => Err(error),
         },
         Op::ContinueQueue => queue.continue_queue(),
         Op::DiscardQueue => match queue.discard_queue() {
             Ok(discarded) => {
-                for input in discarded {
-                    if let Err(error) = super::ui_surfaces::error_notice(
-                        files,
-                        "Queued input discarded without execution",
-                        Some(&input.id),
-                    )
-                    .await
-                    {
-                        tracing::warn!(%error, "failed to publish discarded input result");
-                    }
-                }
+                failed_inputs.extend(
+                    discarded
+                        .into_iter()
+                        .map(|input| (input.id, "Queued input discarded without execution")),
+                );
                 Ok(())
             }
             Err(error) => Err(error),
         },
         _ => return false,
     };
+    if result.is_ok() {
+        result = queue.persist().await;
+    }
+    if result.is_ok() {
+        for (id, message) in failed_inputs {
+            if let Err(error) = super::ui_surfaces::error_notice(files, message, Some(&id)).await {
+                tracing::warn!(%error, "failed to publish cancelled input result");
+            }
+        }
+    }
     queue.record_activity();
     let notice = match result {
         Ok(()) if queue.is_paused() => {
