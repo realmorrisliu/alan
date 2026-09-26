@@ -263,8 +263,9 @@ impl NamespaceAgentFiles {
             if let crate::rollout::RolloutItem::Event(event) = item
                 && event.event_type == "agent_action_v1"
             {
-                let record: NamespaceActionRecord = serde_json::from_value(event.payload)
-                    .context("decode recovered Action evidence")?;
+                let record: NamespaceActionRecord =
+                    serde_json::from_value(event.payload["record"].clone())
+                        .context("decode recovered Action evidence")?;
                 // This is an IO projection into a fresh Process, never a Tool replay.
                 write_action_record(&client, &self.agent_path, record, None).await?;
             }
@@ -691,7 +692,12 @@ async fn write_action_record(
     }
     if let Some(recorder) = recorder {
         recorder
-            .record_event("agent_action_v1", payload)
+            .record_event(
+                "agent_action_v1",
+                serde_json::json!({
+                    "agent_path":agent_path, "action_id":id, "record":payload
+                }),
+            )
             .await
             .context("persist Action evidence before publishing completion")?;
     }

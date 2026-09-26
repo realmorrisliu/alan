@@ -1,3 +1,5 @@
+mod action_evidence;
+
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
@@ -241,10 +243,12 @@ impl AgentMachine {
         rollout_cwd: Option<&Path>,
         reasoning_effort: Option<alan_agent_protocol::ReasoningEffort>,
     ) -> anyhow::Result<Self> {
-        let items = RolloutRecorder::load_history(path).await?;
+        let mut items = RolloutRecorder::load_history(path).await?;
         if !matches!(items.first(), Some(RolloutItem::AgentMachineMeta(_))) {
             anyhow::bail!("rollout does not begin with current Agent Machine metadata");
         }
+
+        action_evidence::rebase(&mut items, process_path)?;
 
         // Recovery is explicitly scoped to the newly launched Agent Process. The
         // source rollout is evidence, not a globally addressable execution identity.

@@ -269,7 +269,7 @@ async fn action_evidence_survives_rollout_recovery_without_tool_replay() {
     );
     let root = InProcessTransport::new(Arc::new(MountFs::new(namespace)));
     let original = NamespaceRuntimeEnvironment::new(root, "/agent/1", "default")
-        .with_action_recorder(Some(recorder));
+        .with_action_recorder(Some(recorder.clone()));
     assert!(
         original
             .agent_files()
@@ -281,7 +281,7 @@ async fn action_evidence_survives_rollout_recovery_without_tool_replay() {
             .is_err()
     );
     let input_id = uuid::Uuid::new_v4().to_string();
-    original
+    let action_id = original
         .agent_files()
         .write_action(
             NamespaceActionRecord::new("bash", "failed")
@@ -291,6 +291,31 @@ async fn action_evidence_survives_rollout_recovery_without_tool_replay() {
         )
         .await
         .unwrap();
+    assert_eq!(
+        action_id, "a1",
+        "failed projection left an Action number gap"
+    );
+    let old_path = format!("/agent/1/actions/{action_id}/output");
+    for message in [
+        crate::tape::Message::tool_structured(
+            "projection",
+            serde_json::json!({
+                "type":"evidence_projection", "reference":{"path":old_path,"offset":0,"length":10},
+                "preview":old_path,
+            }),
+        ),
+        crate::tape::Message::tool_text(
+            "delegated",
+            serde_json::json!({
+                "result":{"output_ref":{"path":old_path,"offset":0,"length":10}},
+                "plain_path":old_path,
+            })
+            .to_string(),
+        ),
+        crate::tape::Message::tool_text("ordinary", old_path.clone()),
+    ] {
+        recorder.record_tape_message(&message).await.unwrap();
+    }
     drop(original);
     for pid in [2, 3] {
         let machine = crate::agent_machine::AgentMachine::load_from_rollout_in_dir(
@@ -318,6 +343,40 @@ async fn action_evidence_survives_rollout_recovery_without_tool_replay() {
             .restore_actions(&previous)
             .await
             .unwrap();
+        for message in machine.messages() {
+            for response in message.tool_responses() {
+                let text = response.text_content();
+                if response.id == "ordinary" {
+                    assert_eq!(text, old_path);
+                    continue;
+                }
+                let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+                let pointer = if response.id == "projection" {
+                    "/reference"
+                } else {
+                    "/result/output_ref"
+                };
+                let reference = value.pointer(pointer).unwrap();
+                assert_eq!(reference["path"], format!("{path}/actions/a0/output"));
+                assert_eq!(reference["offset"], 0);
+                assert_eq!(reference["length"], 10);
+                assert_eq!(
+                    value[if response.id == "projection" {
+                        "preview"
+                    } else {
+                        "plain_path"
+                    }],
+                    old_path
+                );
+                assert!(
+                    !shell
+                        .cat(reference["path"].as_str().unwrap())
+                        .await
+                        .unwrap()
+                        .is_empty()
+                );
+            }
+        }
         // No /proc mount or Tool runner exists: recovery can only project evidence.
         let result: serde_json::Value = serde_json::from_slice(
             &shell
