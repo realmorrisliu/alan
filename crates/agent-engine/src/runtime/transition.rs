@@ -766,22 +766,35 @@ where
     }
     let op = submission.op;
 
-    let action = match handle_runtime_op(state, op, emit).await? {
-        RuntimeOpAction::NoTurn => return Ok(()),
-        RuntimeOpAction::ReplayApprovedToolCall {
-            tool_call,
-            approved_unknown_effect_call_id,
-            approved_tool_escalation_call_id,
-        } => RuntimeOpAction::ReplayApprovedToolBatch {
-            tool_calls: vec![tool_call],
-            resume_with_generation: true,
-            approved_unknown_effect_call_id,
-            approved_tool_escalation_call_id,
-        },
-        action => action,
-    };
+    if !matches!(
+        &op,
+        Op::Turn { .. }
+            | Op::Resume { .. }
+            | Op::Input {
+                mode: alan_agent_protocol::InputMode::FollowUp
+                    | alan_agent_protocol::InputMode::Steer,
+                ..
+            }
+    ) {
+        handle_runtime_op(state, op, emit).await?;
+        return Ok(());
+    }
     let writer = state.agent_files().begin_tape_generation().await?;
     let result = async {
+        let action = match handle_runtime_op(state, op, emit).await? {
+            RuntimeOpAction::NoTurn => return Ok(()),
+            RuntimeOpAction::ReplayApprovedToolCall {
+                tool_call,
+                approved_unknown_effect_call_id,
+                approved_tool_escalation_call_id,
+            } => RuntimeOpAction::ReplayApprovedToolBatch {
+                tool_calls: vec![tool_call],
+                resume_with_generation: true,
+                approved_unknown_effect_call_id,
+                approved_tool_escalation_call_id,
+            },
+            action => action,
+        };
         match action {
             RuntimeOpAction::NoTurn => Ok(()),
             RuntimeOpAction::RunTurn {
