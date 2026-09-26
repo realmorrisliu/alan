@@ -270,6 +270,16 @@ async fn action_evidence_survives_rollout_recovery_without_tool_replay() {
     let root = InProcessTransport::new(Arc::new(MountFs::new(namespace)));
     let original = NamespaceRuntimeEnvironment::new(root, "/agent/1", "default")
         .with_action_recorder(Some(recorder));
+    assert!(
+        original
+            .agent_files()
+            .write_action(
+                NamespaceActionRecord::new("oversized", "failed")
+                    .with_output("x".repeat((16 << 20) + 1)),
+            )
+            .await
+            .is_err()
+    );
     let input_id = uuid::Uuid::new_v4().to_string();
     original
         .agent_files()

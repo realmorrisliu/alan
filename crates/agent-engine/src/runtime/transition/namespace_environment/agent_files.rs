@@ -246,14 +246,14 @@ impl NamespaceAgentFiles {
         if let Some(result) = record.result.as_mut() {
             *result = crate::evidence::redact_durable_evidence_text(result).text;
         }
-        if let Some(recorder) = &self.action_recorder {
-            recorder
-                .record_event("agent_action_v1", serde_json::to_value(&record)?)
-                .await
-                .context("persist Action evidence before publishing completion")?;
-        }
         let client = NamespaceClient::new(self.root.clone());
-        write_action_record(&client, &self.agent_path, record).await
+        write_action_record(
+            &client,
+            &self.agent_path,
+            record,
+            self.action_recorder.as_ref(),
+        )
+        .await
     }
 
     pub(crate) async fn restore_actions(&self, path: &std::path::PathBuf) -> Result<()> {
@@ -266,7 +266,7 @@ impl NamespaceAgentFiles {
                 let record: NamespaceActionRecord = serde_json::from_value(event.payload)
                     .context("decode recovered Action evidence")?;
                 // This is an IO projection into a fresh Process, never a Tool replay.
-                write_action_record(&client, &self.agent_path, record).await?;
+                write_action_record(&client, &self.agent_path, record, None).await?;
             }
         }
         Ok(())
@@ -651,7 +651,15 @@ async fn write_action_record(
     client: &NamespaceClient,
     agent_path: &str,
     record: NamespaceActionRecord,
+    recorder: Option<&crate::rollout::RolloutRecorder>,
 ) -> Result<String> {
+    // AgentFS document fields accept at most 1 MiB. Status is the only field
+    // not written before the durability barrier, because it publishes completion.
+    anyhow::ensure!(
+        record.status.len() <= 1 << 20,
+        "Action status exceeds document limit"
+    );
+    let payload = serde_json::to_value(&record)?;
     let clone_path = format!("{agent_path}/actions/clone");
     let id = client
         .clone_via_open(&clone_path)
@@ -680,6 +688,12 @@ async fn write_action_record(
         client
             .write_document(&format!("{action_path}/process"), process.as_bytes())
             .await?;
+    }
+    if let Some(recorder) = recorder {
+        recorder
+            .record_event("agent_action_v1", payload)
+            .await
+            .context("persist Action evidence before publishing completion")?;
     }
     // The terminal status event publishes a complete Action snapshot to watchers.
     client
