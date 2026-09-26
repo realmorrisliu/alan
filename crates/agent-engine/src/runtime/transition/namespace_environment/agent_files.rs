@@ -234,6 +234,21 @@ impl NamespaceAgentFiles {
         .await
     }
 
+    pub(crate) async fn write_rejected_command(&self, id: &str, message: &str) -> Result<()> {
+        self.write_action(
+            NamespaceActionRecord::new("bash", "failed")
+                .with_approval("not_required")
+                .with_output(serde_json::json!({"stdout":"", "stderr":message}).to_string())
+                .with_result(
+                    serde_json::json!({"call_id":id,"exit_code":1,
+                    "outcome":{"success":false,"error":message}})
+                    .to_string(),
+                ),
+        )
+        .await?;
+        Ok(())
+    }
+
     pub async fn write_action(&self, record: NamespaceActionRecord) -> Result<String> {
         let client = NamespaceClient::new(self.root.clone());
         write_action_record(&client, &self.agent_path, record).await

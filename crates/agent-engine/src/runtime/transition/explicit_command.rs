@@ -35,16 +35,7 @@ where
             let message = error.to_string();
             state
                 .agent_files()
-                .write_action(
-                    NamespaceActionRecord::new("bash", "failed")
-                        .with_approval("not_required")
-                        .with_output(serde_json::json!({"stdout":"", "stderr":message}).to_string())
-                        .with_result(
-                            serde_json::json!({"call_id":submission_id,"exit_code":1,
-                        "outcome":{"success":false,"error":message}})
-                            .to_string(),
-                        ),
-                )
+                .write_rejected_command(&submission_id, &message)
                 .await?;
             emit(Event::Error {
                 message,
