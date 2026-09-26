@@ -485,11 +485,11 @@ impl FileServer for AgentFs {
         };
         // A clone fid reads back the allocated id.
         if let Some(id) = clone_id {
-            return Ok(slice(id.into_bytes(), offset, count));
+            return Ok(slice(id.as_bytes(), offset, count));
         }
         if let Some(bytes) = tape_snapshot {
             if (offset as usize) < bytes.len() {
-                return Ok(slice(bytes, offset, count));
+                return Ok(slice(&bytes, offset, count));
             }
             if let Some(stream) = stream {
                 return Ok(stream.read(offset, count).await);
@@ -500,7 +500,7 @@ impl FileServer for AgentFs {
         }
         let mut state = self.state.lock().await;
         if fid == Fid::ROOT {
-            return Ok(slice(state.computed_bytes(&node)?, offset, count));
+            return Ok(slice(&state.computed_bytes(&node)?, offset, count));
         }
         let refresh = offset == 0
             || state
@@ -522,7 +522,7 @@ impl FileServer for AgentFs {
             .read_snapshot
             .as_ref()
             .expect("finite read snapshot initialized");
-        Ok(slice(bytes.clone(), offset, count))
+        Ok(slice(bytes, offset, count))
     }
 
     async fn write(&self, fid: Fid, offset: Offset, data: &[u8]) -> Result<u32, ErrorCode> {
@@ -910,7 +910,7 @@ fn map_knowledge_error(error: KnowledgeError) -> ErrorCode {
     }
 }
 
-fn slice(bytes: Vec<u8>, offset: Offset, count: u32) -> Vec<u8> {
+fn slice(bytes: &[u8], offset: Offset, count: u32) -> Vec<u8> {
     let start = (offset as usize).min(bytes.len());
     let end = bytes.len().min(start + count as usize);
     bytes[start..end].to_vec()
