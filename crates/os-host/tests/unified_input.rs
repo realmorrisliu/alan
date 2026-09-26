@@ -381,8 +381,61 @@ async fn two_clients_share_native_command_cwd_and_preserve_shell_script_semantic
         4,
         "explicit commands must not invoke generation"
     );
+    let captured = command(
+        &first,
+        "pwd > cwd.txt; pwd; printf 'diagnostic: ' >&2; pwd >&2; exit 7",
+    )
+    .await;
+    wait_idle(&first, &captured).await;
+    let captured_output = action_output(&second, &captured).await;
+    assert_eq!(captured_output["stdout"], ".\n", "{captured_output}");
+    assert_eq!(captured_output["stderr"], "diagnostic: .\n");
+    assert_eq!(captured_output["exit_code"], 7);
+    assert_eq!(captured_output["success"], false);
+    let native_cwd = std::fs::canonicalize(project.path().join("src")).unwrap();
+    assert_eq!(
+        std::fs::read_to_string(project.path().join("src/cwd.txt")).unwrap(),
+        format!("{}\n", native_cwd.display()),
+        "redirected project data must retain native shell output"
+    );
+    assert_eq!(probe.recorded_requests().len(), 4);
+    let long = command(&second, "printf '%040000d' 0").await;
+    wait_idle(&second, &long).await;
+    assert_eq!(
+        action_output(&first, &long).await["stdout"]
+            .as_str()
+            .unwrap()
+            .len(),
+        40_000
+    );
+    assert_eq!(probe.recorded_requests().len(), 4);
     let edit = input(&first, "agent", "write and edit the project file").await;
     wait_idle(&first, &edit).await;
+    let requests = probe.recorded_requests();
+    let prior_result = requests[4]
+        .messages
+        .iter()
+        .find(|message| message.tool_call_id.as_deref() == Some(captured.as_str()))
+        .expect("later Agent generation must receive the command result");
+    let prior_result: Value = serde_json::from_str(&prior_result.content).unwrap();
+    assert_eq!(prior_result["stdout"], ".\n");
+    assert_eq!(prior_result["stderr"], "diagnostic: .\n");
+    assert_eq!(prior_result["exit_code"], 7);
+    let long_result = requests[4]
+        .messages
+        .iter()
+        .find(|message| message.tool_call_id.as_deref() == Some(long.as_str()))
+        .expect("long command result must remain available to later Agent input");
+    let projection: Value = serde_json::from_str(&long_result.content).unwrap();
+    assert_eq!(projection["type"], "evidence_projection");
+    assert_eq!(projection["truncation"]["full_content_recoverable"], true);
+    assert!(long_result.content.len() < 30_000);
+    let reference = projection["reference"]["path"].as_str().unwrap();
+    let full: Value = serde_json::from_slice(&second.cat(reference).await.unwrap()).unwrap();
+    assert_eq!(full["stdout"], "0".repeat(40_000));
+    assert_eq!(full["exit_code"], 0);
+    let model_messages = serde_json::to_string(&requests[4].messages).unwrap();
+    assert!(!model_messages.contains(native_cwd.to_str().unwrap()));
     let native = command(&second, "cat agent.txt > observed.txt; git diff --no-index --no-ext-diff --no-textconv -- /dev/null agent.txt > diff.txt; printf native > agent.txt").await;
     wait_idle(&second, &native).await;
     assert_eq!(

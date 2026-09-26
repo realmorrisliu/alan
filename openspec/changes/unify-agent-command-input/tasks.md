@@ -19,7 +19,7 @@
 
 - [x] 2.5 Implement Process-owned cwd and ordered ordinary input admission; verify explicit `cd` ordering across two clients and across delegated grants, failed/unsupported standalone `cd`, script-local `cd`, per-action cwd isolation and replacement of the old busy-client rejection without weakening correlation.
 - [x] 2.6 Implement interrupt and paused-queue continuation/discard through runtime controls; verify pre-start cancellation, active cancellation, no dispatch after cancellation, pending request precedence and preserved completed effects.
-- [ ] 2.7 Project Alan-captured command results into shared evidence and bounded model input; verify shared-cwd-relative path projection for `pwd`, diagnostics and captured stdout/stderr within the active grant, including Markdown emphasis without matching underscore siblings, no raw Host root or `/mnt` alias in those outputs, truncation, readable references, retention gaps, exit status and a later Agent question without an automatic summary call. Also verify native `!pwd > cwd.txt` preserves shell redirection as ordinary project data, is not output-sanitized or copied into evidence, and grants no authority through the stored path string.
+- [x] 2.7 Project Alan-captured command results into shared evidence and bounded model input; verify shared-cwd-relative path projection for `pwd`, diagnostics and captured stdout/stderr within the active grant, including Markdown emphasis without matching underscore siblings, no raw Host root or `/mnt` alias in those outputs, truncation, readable references, retention gaps, exit status and a later Agent question without an automatic summary call. Also verify native `!pwd > cwd.txt` preserves shell redirection as ordinary project data, is not output-sanitized or copied into evidence, and grants no authority through the stored path string.
 - [x] 2.8 Persist recoverable queue/cwd state through existing rollout/checkpoint owners; verify reliable pending work restores paused, unknown effects are not replayed, invalid cwd requires explicit replacement and missing records are reported.
 - [ ] 2.9 Present route/cwd and truthful outcomes; verify empty-input Ctrl-D detaches only with no pending Agent input and preserves accepted work, pending confirmation/structured input remains attached and available on Ctrl-D, redirected output is clean, and missing response channels fail without hidden terminal input or fabricated rollback.
 - [ ] 2.10 Run focused boundary checks, ordinary-terminal and Herdr acceptance, and `just quality`; record explicit-prefix slice evidence while documenting that unprefixed input remains Agent-routed.
@@ -394,3 +394,26 @@
 - Validation: `cargo test -p alan-os-host --test unified_input` and
   `cargo test -p alan-agent-engine standalone_cd`. This does not close the remaining
   terminal/Herdr, output projection or platform qualification tasks.
+
+### Captured command evidence acceptance (2026-09-26)
+
+- Task 2.7 is complete. The real Host test executes native `pwd > cwd.txt`,
+  captured `pwd`, stderr diagnostics and exit 7. Captured outputs contain `.`
+  rather than a backing root or mount alias, while `cwd.txt` retains the native
+  absolute directory. A later Agent request receives the same stdout, stderr
+  and exit code, with no intervening generation or automatic summary call.
+- A native 40,000-byte output remains fully readable from its correlated Action.
+  The later model input contains a bounded evidence projection with a resolvable
+  reference; a second client reads that reference and obtains the complete output
+  and exit status. Raw cwd file contents are not implicitly ingested into model
+  evidence. The existing restart/revocation test still rejects a command using
+  the prior cwd when its grants are absent; retaining a path string grants nothing.
+- Shared projection tests cover Markdown/ANSI emphasis, underscore siblings and
+  encoded file URIs. Shared evidence tests cover readable long-output references,
+  unresolvable-reference fallback, missing records and explicit retention expiry.
+  AgentFS retention tests verify that actual expiry replaces output with the
+  structured expiry record rather than silently presenting empty success.
+- Validation: OS Host `unified_input` integration; OS Host `project_text_projects`
+  (2 tests); engine `long_tool_output` (3 tests) and
+  `evidence_resolution_distinguishes_missing_and_retention_expired` (1 test);
+  AgentFS `expired_action_output_returns_structured_retention_record` (1 test).
