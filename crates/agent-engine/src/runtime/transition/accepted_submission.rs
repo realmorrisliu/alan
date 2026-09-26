@@ -100,7 +100,11 @@ where
         let Some(next_submission) = next_submission else {
             break;
         };
-        state.machine.accept_submission(next_submission.id.clone());
+        // A request response continues the accepted input; its control ID is
+        // not the identity of the Agent answer produced after approval.
+        if !matches!(next_submission.op, Op::Resume { .. }) {
+            state.machine.accept_submission(next_submission.id.clone());
+        }
         handle_submission_with_cancel_and_steering(
             state,
             next_submission,

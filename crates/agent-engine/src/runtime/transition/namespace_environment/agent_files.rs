@@ -177,17 +177,22 @@ impl NamespaceAgentFiles {
     #[cfg(test)]
     pub async fn write_user_state(&self, input: &str) -> Result<()> {
         let client = NamespaceClient::new(self.root.clone());
-        write_tape_records(&client, &self.agent_path, [("user", input)]).await
+        write_tape_records(&client, &self.agent_path, [("user", input)], None).await
     }
 
-    pub async fn write_turn_tape_state(&self, input: Option<&str>, response: &str) -> Result<()> {
+    pub async fn write_turn_tape_state(
+        &self,
+        submission_id: Option<&str>,
+        input: Option<&str>,
+        response: &str,
+    ) -> Result<()> {
         let client = NamespaceClient::new(self.root.clone());
         let mut records = Vec::new();
         if let Some(input) = input.filter(|value| !value.trim().is_empty()) {
             records.push(("user", input));
         }
         records.push(("assistant", response));
-        write_tape_records(&client, &self.agent_path, records).await
+        write_tape_records(&client, &self.agent_path, records, submission_id).await
     }
 
     #[cfg(test)]
@@ -454,6 +459,8 @@ struct TapeRecordV1<'a> {
     kind: &'static str,
     role: &'a str,
     content: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    submission_id: Option<&'a str>,
 }
 
 /// A held GENERATING lease for `machine/tape`.
@@ -478,8 +485,13 @@ impl NamespaceTapeWriter {
         })
     }
 
-    pub async fn append_record(&mut self, role: &str, content: &str) -> Result<()> {
-        let bytes = tape_record_bytes(role, content)?;
+    pub async fn append_record(
+        &mut self,
+        role: &str,
+        content: &str,
+        submission_id: Option<&str>,
+    ) -> Result<()> {
+        let bytes = tape_record_bytes(role, content, submission_id)?;
         self.client
             .write_at(self.fid, 0, &bytes)
             .await
@@ -517,10 +529,11 @@ pub(super) async fn write_tape_records<'a>(
     client: &NamespaceClient,
     agent_path: &str,
     records: impl IntoIterator<Item = (&'a str, &'a str)>,
+    submission_id: Option<&str>,
 ) -> Result<()> {
     let mut writer = NamespaceTapeWriter::open(client.clone(), agent_path).await?;
     for (role, content) in records {
-        writer.append_record(role, content).await?;
+        writer.append_record(role, content, submission_id).await?;
     }
     writer.finish().await
 }
@@ -538,12 +551,17 @@ async fn read_current_tape_checkpoint(
     Ok(checkpoint.trim().to_string())
 }
 
-pub(super) fn tape_record_bytes(role: &str, content: &str) -> Result<Vec<u8>> {
+pub(super) fn tape_record_bytes(
+    role: &str,
+    content: &str,
+    submission_id: Option<&str>,
+) -> Result<Vec<u8>> {
     let record = TapeRecordV1 {
         version: 1,
         kind: "message",
         role,
         content,
+        submission_id,
     };
     let mut bytes = serde_json::to_vec(&record).context("serialize tape record")?;
     bytes.push(b'\n');

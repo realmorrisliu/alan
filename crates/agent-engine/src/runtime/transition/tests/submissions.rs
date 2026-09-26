@@ -164,3 +164,36 @@ async fn command_intent_cannot_enter_agent_transition_or_inband_steering() {
         assert!(state.machine.messages().is_empty());
     }
 }
+
+#[tokio::test]
+async fn identical_inputs_publish_distinct_submission_ids_on_tape() {
+    let mut state = runtime_state_with_environment(
+        namespace_environment_with_live_process(DelayedMockProvider::new(
+            tokio::time::Duration::ZERO,
+            "answer",
+        )).await,
+    );
+    let broker = TurnInputBroker::default();
+    let cancel = CancellationToken::new();
+    for id in ["client-one", "client-two"] {
+        let mut submission = Submission::new(Op::Input {
+            parts: vec![alan_agent_protocol::ContentPart::text("identical question")],
+            mode: InputMode::FollowUp,
+        });
+        submission.id = id.into();
+        advance_accepted_submission(&mut state, submission, &broker, &cancel)
+            .await.result.unwrap();
+    }
+    let shell = Shell::new(state.environment.root_transport());
+    let tape = shell.cat(&format!("{}/machine/tape", state.environment.agent_path())).await.unwrap();
+    let records: Vec<serde_json::Value> = std::str::from_utf8(&tape).unwrap().lines()
+        .map(|line| serde_json::from_str(line).unwrap()).collect();
+    for id in ["client-one", "client-two"] {
+        let matching: Vec<_> = records.iter().filter(|record| record["submission_id"] == id).collect();
+        assert_eq!(matching.len(), 2, "one user and one assistant record per input: {records:?}");
+        assert_eq!(matching[0]["role"], "user");
+        assert_eq!(matching[0]["content"], "identical question");
+        assert_eq!(matching[1]["role"], "assistant");
+        assert_eq!(matching[1]["content"], "answer");
+    }
+}
