@@ -183,6 +183,60 @@ async fn shell_sandbox_contains_only_the_mount_selected_by_shared_cwd() {
         "inactive grant marker"
     );
 
+    // Relative structured paths use the same native file as the selected shell cwd.
+    std::fs::create_dir(project.path().join("src")).unwrap();
+    let nested = ToolContext::from_binding(
+        service.reconcile(7, binding("/mnt/project/src")).unwrap(),
+        Arc::new(Config::default()),
+    );
+    let ordinary_content = format!(
+        "project data: {}",
+        dunce::canonicalize(project.path()).unwrap().display()
+    );
+    alan_tools::WriteFileTool::new()
+        .execute(
+            json!({"path":"shared.txt", "content":ordinary_content}),
+            &nested,
+        )
+        .await
+        .unwrap();
+    for path in ["shared.txt", "/mnt/project/src/shared.txt"] {
+        let read = alan_tools::ReadFileTool::new()
+            .execute(json!({"path":path}), &nested)
+            .await
+            .unwrap();
+        assert_eq!(read["content"], ordinary_content);
+        assert_eq!(read["path"], "/mnt/project/src/shared.txt");
+        let found = alan_tools::GrepTool::new()
+            .execute(json!({"path":path, "pattern":"project data"}), &nested)
+            .await
+            .unwrap();
+        assert_eq!(found["total"], 1);
+        assert_eq!(found["matches"][0]["path"], "/mnt/project/src/shared.txt");
+        assert_eq!(found["matches"][0]["content"], ordinary_content);
+    }
+    let found = alan_tools::GrepTool::new()
+        .execute(
+            json!({"path":"/mnt/docs", "pattern":"inactive grant"}),
+            &nested,
+        )
+        .await
+        .unwrap();
+    assert_eq!(found["matches"][0]["path"], "/mnt/docs/secret.txt");
+    assert_eq!(
+        std::fs::read_to_string(project.path().join("src/shared.txt")).unwrap(),
+        ordinary_content
+    );
+    let native_read = alan_tools::BashTool::new()
+        .execute(json!({"command":"cat shared.txt"}), &nested)
+        .await
+        .unwrap();
+    assert_eq!(native_read["stdout"], "project data: ..");
+    assert_eq!(
+        std::fs::read_to_string(project.path().join("src/shared.txt")).unwrap(),
+        ordinary_content
+    );
+
     let outside = tempfile::tempdir().unwrap();
     std::fs::write(outside.path().join("private.txt"), "not delegated").unwrap();
     std::os::unix::fs::symlink(

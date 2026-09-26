@@ -24,10 +24,10 @@
 - [x] 2.9 Present route/cwd and truthful outcomes; verify empty-input Ctrl-D detaches only with no pending Agent input and preserves accepted work, pending confirmation/structured input remains attached and available on Ctrl-D, redirected output is clean, and missing response channels fail without hidden terminal input or fabricated rollback.
 - [ ] 2.10 Run focused boundary checks, ordinary-terminal and Herdr acceptance, and `just quality`; record explicit-prefix slice evidence while documenting that unprefixed input remains Agent-routed.
 
-- [ ] 2.11 Keep grant-to-native cwd/path resolution within ephemeral Host-adapter spawn/sandbox context while preserving logical service records; verify grant IDs/path strings cannot authorize access, raw backing-path metadata stays out of Alan-owned path fields and execution-path references in evidence, ordinary content in an explicitly delegated Host file remains user data, undelegated/private backing stays hidden and shell/model context is not rewritten to aP aliases.
+- [x] 2.11 Keep grant-to-native cwd/path resolution within ephemeral Host-adapter spawn/sandbox context while preserving logical service records; verify grant IDs/path strings cannot authorize access, raw backing-path metadata stays out of Alan-owned path fields and execution-path references in evidence, ordinary content in an explicitly delegated Host file remains user data, undelegated/private backing stays hidden and shell/model context is not rewritten to aP aliases.
 - [ ] 2.12 Reconcile existing Linux reification with native path identity and macOS sandbox projection; verify read-only grants, outside-grant writes, symlink escape, rejection of mount-local executables and opaque project-code dispatchers (Git aliases, package scripts, build/test/run/generation commands) on ProtectedOnly, human escalation on weaker fallback backends, virtual-only mounts, revocation before launch and truthful degraded-backend behavior without bypassing policy.
 - [x] 2.13 Inventory existing internal control operations and executable packaging; select the smallest task-oriented alan9 commands needed for real Agent workflows, specify exact invocation/help and result schemas, and implement thin aP clients with caller-scoped authority. Verify explicit discovery/invocation, no ambient broader connection, no duplicate state owner, commit errors, asynchronous acceptance versus completion and no replay of unknown effects; native `cat`/`q` lookup must not silently switch meaning.
-- [ ] 2.14 Align structured project read/edit/search path parameters with Host shell cwd and paths through existing Host adapters. Verify Agent edit → native read/git diff and native edit → Agent read for the active grant; verify other grants remain available to Agent file tools and become shell-visible only after explicit cwd switching, while one shell action cannot span disjoint grants. Cover grant-relative and shared-cwd-relative Agent paths plus native cwd-relative shell paths, pending-buffer/save failure, stale-content conflict, read-only grants, symlink containment and revocation; no mirror copies or shell-text rewriting.
+- [x] 2.14 Align structured project read/edit/search path parameters with Host shell cwd and paths through existing Host adapters. Verify Agent edit → native read/git diff and native edit → Agent read for the active grant; verify other grants remain available to Agent file tools and become shell-visible only after explicit cwd switching, while one shell action cannot span disjoint grants. Cover grant-relative and shared-cwd-relative Agent paths plus native cwd-relative shell paths, pending-buffer/save failure, stale-content conflict, read-only grants, symlink containment and revocation; no mirror copies or shell-text rewriting.
 - [ ] 2.15 Review normal user flows and Agent command help: ordinary work requires neither aP terminology nor internal mount/descriptor/commit knowledge, while explicit developer inspection remains available.
 
 - [x] 2.16 Implement `alan: ` / `alan! ` as presentation of canonical one-shot intent; verify empty-entry typing/paste, literal embedded prefixes, explicit `:`, empty-body Backspace, accepted/reset versus rejected/preserved drafts, history recall, pending responses, multiline/resize cursor geometry and prompt-free redirected IO.
@@ -437,3 +437,30 @@
 - Validation: complete terminal UI and protocol suites; real Host `unified_input`;
   engine suite. Ordinary terminal/Herdr acceptance remains separately tracked by
   task 2.10 and is not inferred from these renderer tests.
+
+### Project path and authority audit (2026-09-26)
+
+- Tasks 2.11 and 2.14 are complete. Host Mount service records retain logical paths,
+  access and opaque exports; only the native adapter resolves backing paths.
+  `ToolExecutionBinding` debug output omits its adapter, and native exports do not
+  expose backing paths through Debug. Grant-ID theft, child authority amplification,
+  ambient projection, raw `host_path` request injection and revocation have explicit
+  service-boundary regressions. The Tool Process runner reconciles authority before
+  launch and projects adapter errors into public paths.
+- The native adapter test now reads and searches the same file using both a
+  cwd-relative path and its logical grant path, and searches a separate read-only
+  grant without exposing it to the active shell. Search/read path fields remain
+  logical. Ordinary file content containing the canonical backing directory remains
+  byte-identical in the file and structured read/search content; captured shell
+  stdout is projected separately. Existing real Host acceptance covers Agent edit
+  to native cat/git diff and native edit to Agent read, including stale edits.
+- Failed writes, read-only data, symlink containment and revoked cwd are covered by
+  the adapter and Tool Process tests. File Tools read/write the native backing
+  directly. EditFs owns an independent in-memory buffer and has no project-file
+  save binding: there is no pending project buffer to flush or silently claim saved,
+  and no mirror copy has been introduced.
+- The stale-edit audit exposed a UTF-8 panic in error-preview byte slicing. A Chinese
+  old-text regression reproduced it; character-based truncation now returns the
+  normal mismatch error and the test verifies that the original file is unchanged.
+- Validation: complete `alan-tools` suite, OS Host `host_mounts` tests and Service
+  Manager `host_mount` tests. Platform backend qualification remains task 2.12.
