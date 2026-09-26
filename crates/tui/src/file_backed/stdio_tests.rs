@@ -248,7 +248,8 @@ fn recovery_does_not_reuse_an_identical_prompt_from_the_baseline_tape() {
 
     assert!(!snapshot.task_started);
     assert!(snapshot.assistant_answer.is_none());
-    assert_eq!(snapshot.activity_state, None);
+    assert_eq!(snapshot.activity_state, Some(UiActivityState::Idle));
+    assert!(!snapshot.waiting_for_response);
 }
 
 #[test]
@@ -662,6 +663,7 @@ async fn renderer_reattach_keeps_a_tape_less_terminal_error() {
 fn one_shot_result_waits_for_correlated_settlement() {
     let mut task = StdioTaskSnapshot {
         task_started: false,
+        waiting_for_response: false,
         assistant_answer: Some("answer".to_string()),
         activity_state: Some(UiActivityState::Idle),
         task_error: None,
@@ -682,6 +684,7 @@ fn one_shot_result_waits_for_correlated_settlement() {
 
     let mut failed_task = StdioTaskSnapshot {
         task_started: true,
+        waiting_for_response: false,
         assistant_answer: Some("intermediate response".to_string()),
         activity_state: Some(UiActivityState::Idle),
         task_error: Some("provider failed".to_string()),

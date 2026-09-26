@@ -424,9 +424,7 @@ pub(super) async fn recover_stdio_task_after_root_change(
     {
         bail!("Agent input cancellation requested");
     }
-    if snapshot.completion.is_none()
-        && snapshot.activity_state == Some(super::UiActivityState::Paused)
-    {
+    if snapshot.completion.is_none() && snapshot.waiting_for_response {
         bail!("Agent task needs interactive input; attach with the TTY renderer");
     }
     if let Some(answer) = finish_stdio_task_if_ready(snapshot)? {

@@ -597,6 +597,7 @@ async fn wait_for_stdio_answer_after_submit(
     let mut interrupt_requested = false;
     let mut snapshot = StdioTaskSnapshot {
         task_started: false,
+        waiting_for_response: false,
         assistant_answer: None,
         activity_state: None,
         task_error: None,
@@ -681,29 +682,11 @@ async fn wait_for_stdio_answer_after_submit(
                     let event = serde_json::from_slice::<UiEvent>(&line)
                         .map_err(|err| anyhow::anyhow!("parse Agent UI event failed: {err}"))?;
                     match event {
-                        UiEvent::Activity { snapshot: activity } => {
-                            if activity.state == UiActivityState::Running
-                                && activity
-                                    .started_at_ms
-                                    .is_none_or(|started_at| started_at >= task.submitted_at_ms)
-                            {
-                                snapshot.task_started = true;
-                                snapshot.activity_state = Some(UiActivityState::Running);
-                            } else if activity.state == UiActivityState::Paused
-                                && snapshot.activity_state == Some(UiActivityState::Running)
-                            {
-                                snapshot.activity_state = Some(UiActivityState::Paused);
-                            } else if activity.state == UiActivityState::Idle
-                                && matches!(
-                                    snapshot.activity_state,
-                                    Some(UiActivityState::Running | UiActivityState::Paused)
-                                )
-                            {
-                                snapshot.activity_state = Some(UiActivityState::Idle);
-                            }
+                        event @ UiEvent::Activity { .. } => {
+                            stdio_completion::observe_event(&task.record.submission_id, &mut snapshot, event);
                         }
                         event @ UiEvent::InputCompleted { .. } => {
-                            stdio_completion::observe_completion(&task.record.submission_id, &mut snapshot, event);
+                            stdio_completion::observe_event(&task.record.submission_id, &mut snapshot, event);
                         }
                         UiEvent::Error { .. } | UiEvent::Plan { .. } | UiEvent::Thinking { .. } | UiEvent::Notice { .. } => {}
                     }
@@ -713,7 +696,7 @@ async fn wait_for_stdio_answer_after_submit(
                 {
                     bail!("Agent input cancellation requested");
                 }
-                if snapshot.completion.is_none() && snapshot.activity_state == Some(UiActivityState::Paused) {
+                if snapshot.completion.is_none() && snapshot.waiting_for_response {
                     bail!("Agent task needs interactive input; attach with the TTY renderer");
                 }
                 let refresh_result = {
@@ -825,6 +808,7 @@ fn finish_stdio_task_if_ready(snapshot: &mut StdioTaskSnapshot) -> Result<Option
 
 struct StdioTaskSnapshot {
     task_started: bool,
+    waiting_for_response: bool,
     assistant_answer: Option<String>,
     activity_state: Option<UiActivityState>,
     task_error: Option<String>,
@@ -864,16 +848,11 @@ async fn stdio_task_snapshot(
             .map_err(|err| anyhow::anyhow!("read Agent activity failed: {err:?}"))?;
         let activity =
             serde_json::from_slice::<UiActivitySnapshot>(&raw).context("parse Agent activity")?;
-        if matches!(
-            activity.state,
-            UiActivityState::Running | UiActivityState::Paused
-        ) && activity
-            .started_at_ms
-            .is_some_and(|started_at| started_at >= task.submitted_at_ms)
-        {
-            snapshot.task_started = true;
-        }
-        snapshot.activity_state = Some(activity.state);
+        stdio_completion::observe_event(
+            &task.record.submission_id,
+            &mut snapshot,
+            UiEvent::Activity { snapshot: activity },
+        );
     }
     stdio_completion::refresh_answer_after_completion(shell, agent_path, task, &mut snapshot)
         .await?;
@@ -890,6 +869,7 @@ fn stdio_task_snapshot_from_history(
     let ui_task = file_surface::correlated_ui_task(ui_history, task.submitted_at_ms)?;
     let mut snapshot = StdioTaskSnapshot {
         task_started: tape_task_started,
+        waiting_for_response: false,
         assistant_answer,
         activity_state: ui_task.state,
         task_error: None,
@@ -900,7 +880,7 @@ fn stdio_task_snapshot_from_history(
         .lines()
     {
         let event = serde_json::from_str::<UiEvent>(line).context("parse Agent UI history")?;
-        stdio_completion::observe_completion(&task.record.submission_id, &mut snapshot, event);
+        stdio_completion::observe_event(&task.record.submission_id, &mut snapshot, event);
     }
     Ok(snapshot)
 }

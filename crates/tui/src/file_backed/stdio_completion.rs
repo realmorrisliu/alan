@@ -26,7 +26,16 @@ pub(super) fn tape_outcome(
     Ok((started, answer))
 }
 
-pub(super) fn observe_completion(id: &str, snapshot: &mut StdioTaskSnapshot, event: UiEvent) {
+pub(super) fn observe_event(id: &str, snapshot: &mut StdioTaskSnapshot, event: UiEvent) {
+    if let UiEvent::Activity { snapshot: activity } = &event {
+        snapshot.activity_state = Some(activity.state);
+        snapshot.waiting_for_response = activity.state
+            == alan_agent_protocol::UiActivityState::Paused
+            && activity
+                .waiting_submission_ids
+                .iter()
+                .any(|candidate| candidate == id);
+    }
     if let UiEvent::InputCompleted {
         submission_ids,
         status,
@@ -36,6 +45,7 @@ pub(super) fn observe_completion(id: &str, snapshot: &mut StdioTaskSnapshot, eve
     {
         snapshot.task_started = true;
         snapshot.completion = Some(status);
+        snapshot.waiting_for_response = false;
         snapshot.task_error = match status {
             UiInputStatus::Completed => None,
             UiInputStatus::Failed => Some(error.unwrap_or_else(|| "input failed".into())),
@@ -71,6 +81,45 @@ mod tests {
     use alan_ap::{InProcessTransport, reference::MemFs};
     use alan_kernel::{Access, MountFs, Namespace};
     use std::sync::Arc;
+
+    #[test]
+    fn response_wait_only_belongs_to_the_identified_input() {
+        let task = task("queued input");
+        let mut snapshot = super::super::stdio_task_snapshot_from_history(&task, b"", b"").unwrap();
+        let mut activity = alan_agent_protocol::UiActivitySnapshot::paused(None);
+        activity.waiting_submission_ids = vec!["another-input".into()];
+        observe_event(
+            &task.record.submission_id,
+            &mut snapshot,
+            UiEvent::Activity {
+                snapshot: activity.clone(),
+            },
+        );
+        assert!(!snapshot.waiting_for_response);
+        assert!(!snapshot.task_started);
+        activity
+            .waiting_submission_ids
+            .push(task.record.submission_id.clone());
+        let event = UiEvent::Activity { snapshot: activity };
+        let recovered = super::super::stdio_task_snapshot_from_history(
+            &task,
+            b"",
+            &serde_json::to_vec(&event).unwrap(),
+        )
+        .unwrap();
+        assert!(recovered.waiting_for_response);
+        observe_event(&task.record.submission_id, &mut snapshot, event);
+        assert!(snapshot.waiting_for_response);
+        observe_event(
+            &task.record.submission_id,
+            &mut snapshot,
+            UiEvent::Activity {
+                snapshot: alan_agent_protocol::UiActivitySnapshot::running(0),
+            },
+        );
+        assert!(!snapshot.waiting_for_response);
+        assert!(!snapshot.task_started);
+    }
 
     #[tokio::test]
     async fn completion_reloads_final_tape_record_instead_of_streamed_preamble() {
@@ -173,7 +222,7 @@ mod tests {
         );
         let (_, answer) = tape_outcome(&mine.record.submission_id, shared.as_bytes()).unwrap();
         assert_eq!(answer.as_deref(), Some("shared answer"));
-        observe_completion(
+        observe_event(
             &mine.record.submission_id,
             &mut snapshot,
             UiEvent::InputCompleted {
