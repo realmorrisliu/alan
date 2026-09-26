@@ -756,6 +756,14 @@ pub(super) fn contains_shell_control_operator(command: &str) -> bool {
 
         if let Some(closer) = expansion_closers.last().copied() {
             match ch {
+                '`' if closer == '`' => {
+                    expansion_closers.pop();
+                    word_started = true;
+                }
+                '`' => {
+                    expansion_closers.push('`');
+                    word_started = true;
+                }
                 '$' if matches!(chars.peek(), Some('(' | '{')) => {
                     let opener = chars.next().expect("peeked shell expansion opener");
                     expansion_closers.push(if opener == '(' { ')' } else { '}' });
@@ -798,6 +806,11 @@ pub(super) fn contains_shell_control_operator(command: &str) -> bool {
             '"' => {
                 in_double = true;
                 word_started = true;
+            }
+            '`' => {
+                expansion_closers.push('`');
+                word_started = true;
+                command_started = true;
             }
             '$' if matches!(chars.peek(), Some('(' | '{')) => {
                 let opener = chars.next().expect("peeked shell expansion opener");

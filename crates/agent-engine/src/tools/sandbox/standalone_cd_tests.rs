@@ -36,6 +36,14 @@ fn standalone_cd_parser_accepts_one_literal_path_and_leaves_scripts_alone() {
     assert_eq!(parse_standalone_cd("cd src\nmake").unwrap(), None);
     assert_eq!(parse_standalone_cd("cd src\n$EDITOR").unwrap(), None);
     assert_eq!(parse_standalone_cd("cd $(pwd) && make").unwrap(), None);
+    assert_eq!(
+        parse_standalone_cd("cd `printf src; printf x >&2` && make").unwrap(),
+        None
+    );
+    assert_eq!(
+        parse_standalone_cd("cd '`literal;name`'").unwrap(),
+        Some(PathBuf::from("`literal;name`"))
+    );
     assert_eq!(parse_standalone_cd("cd {src,test} && make").unwrap(), None);
     assert_eq!(parse_standalone_cd("printf 'cd src'").unwrap(), None);
     assert_eq!(parse_standalone_cd("printf '").unwrap(), None);
@@ -57,6 +65,10 @@ fn standalone_cd_parser_rejects_unsupported_forms_explicitly() {
         "cd $(pwd)",
         "cd {src,test}",
         "cd `pwd`",
+        "cd `printf /mnt/project; printf x >&2`",
+        "cd `printf src\nprintf x >&2`",
+        "cd `printf src | cat`",
+        "cd $(printf `printf src; printf x >&2`)",
         "cd *.rs",
     ] {
         assert!(
