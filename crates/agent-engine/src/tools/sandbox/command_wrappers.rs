@@ -93,11 +93,31 @@ pub(super) fn validate_direct_command_shapes(
 /// for non-wrapper commands or wrappers without an inline script argument.
 pub(super) fn shell_wrapper_inline_script(words: &[String]) -> Result<Option<String>> {
     let view = nested_evaluator_view(words);
-    let prefix_end = view.as_ref().map_or(words.len(), |view| {
-        if matches!(
+    if let Some(view) = &view {
+        let options = view
+            .args
+            .iter()
+            .take_while(|arg| arg.starts_with('-') && *arg != "--");
+        let indirect_assignment = match view.command {
+            "printf" => options.clone().any(|arg| arg.starts_with("-v")),
+            "declare" | "typeset" | "local" => options.clone().any(|arg| arg[1..].contains('n')),
+            "let" => true,
+            _ => false,
+        };
+        if indirect_assignment {
+            return Err(anyhow!(
+                "Shell startup files cannot be validated through indirect assignment"
+            ));
+        }
+    }
+    let assignment_operands = view.as_ref().is_some_and(|view| {
+        matches!(
             view.command,
-            "export" | "readonly" | "declare" | "typeset" | "local" | "read"
-        ) {
+            "export" | "readonly" | "declare" | "typeset" | "local" | "read" | "getopts"
+        )
+    });
+    let prefix_end = view.as_ref().map_or(words.len(), |view| {
+        if assignment_operands {
             words.len()
         } else {
             words.len() - view.args.len()
@@ -105,6 +125,13 @@ pub(super) fn shell_wrapper_inline_script(words: &[String]) -> Result<Option<Str
     });
     for word in &words[..prefix_end] {
         let name = word.split_once('=').map_or(word.as_str(), |(name, _)| name);
+        // Subscript expressions can assign other variables while selecting a target.
+        if name.contains('[') && (assignment_operands || word.contains('=')) {
+            return Err(anyhow!(
+                "Shell startup files cannot be validated through subscript assignment"
+            ));
+        }
+        let name = name.trim_end_matches('+');
         if is_shell_startup_variable(name) {
             return Err(anyhow!(
                 "Shell startup files cannot be enabled by command-local variable {name}"
