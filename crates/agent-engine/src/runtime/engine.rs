@@ -683,31 +683,36 @@ fn spawn_with_prepared_runtime_environment(
                                 }
                             }
                             _ = tokio::time::sleep(NAMESPACE_PENDING_RESPONSE_POLL_INTERVAL) => {
-                                match read_pending_namespace_submission(&namespace_control).await {
-                                    Some(Ok(incoming)) => {
-                                        // A machine/ctl interrupt must cancel the
-                                        // running generation/tool immediately, like
-                                        // an Op::Interrupt arriving on sub_rx.
-                                        if queues.handle_control(&incoming, &namespace_control, Some(&cancel)).await {
-                                            continue;
-                                        }
-                                        if accepts_inband && is_turn_inband_submission(&incoming) {
-                                            if !queues.active_turn_broker.push(incoming.clone()).await {
+                                let ready = match namespace_control.read_ready_runtime_submissions().await {
+                                    Ok(ready) => ready,
+                                    Err(error) => vec![Err(error)],
+                                };
+                                for event in ready {
+                                    match event {
+                                        Ok(incoming) => {
+                                            // A machine/ctl interrupt must cancel the
+                                            // running generation/tool immediately, like
+                                            // an Op::Interrupt arriving on sub_rx.
+                                            if queues.handle_control(&incoming, &namespace_control, Some(&cancel)).await {
+                                                continue;
+                                            }
+                                            if accepts_inband && is_turn_inband_submission(&incoming) {
+                                                if !queues.active_turn_broker.push(incoming.clone()).await {
+                                                    queues.push_outer_submission(incoming);
+                                                }
+                                            } else {
                                                 queues.push_outer_submission(incoming);
                                             }
-                                        } else {
-                                            queues.push_outer_submission(incoming);
+                                        }
+                                        Err(err) => {
+                                            let error_msg = format!("Failed to read namespace input/control event: {err:#}");
+                                            error!(error = %error_msg);
+                                            let _ = super::ui_surfaces::warning(
+                                                &namespace_heartbeat,
+                                                error_msg,
+                                            ).await;
                                         }
                                     }
-                                    Some(Err(err)) => {
-                                        let error_msg = format!("Failed to read namespace input/control event: {err:#}");
-                                        error!(error = %error_msg);
-                                        let _ = super::ui_surfaces::warning(
-                                            &namespace_heartbeat,
-                                            error_msg,
-                                        ).await;
-                                    }
-                                    None => {}
                                 }
                             }
                             _ = heartbeat_interval.tick() => {
@@ -762,27 +767,32 @@ fn spawn_with_prepared_runtime_environment(
                                 }
                             }
                             _ = tokio::time::sleep(NAMESPACE_PENDING_RESPONSE_POLL_INTERVAL) => {
-                                match read_pending_namespace_submission(&namespace_control).await {
-                                    Some(Ok(incoming)) => {
-                                        // Mirror the sub_rx arm: a machine/ctl
-                                        // interrupt just cancels the deferred
-                                        // action; other control ops preempt and
-                                        // requeue it.
-                                        if queues.handle_control(&incoming, &namespace_control, Some(&cancel)).await {
-                                            continue;
-                                        } else {
-                                            requeue_if_cancelled = true;
-                                            cancel.cancel();
-                                            queues.push_outer_submission(incoming);
+                                let ready = match namespace_control.read_ready_runtime_submissions().await {
+                                    Ok(ready) => ready,
+                                    Err(error) => vec![Err(error)],
+                                };
+                                for event in ready {
+                                    match event {
+                                        Ok(incoming) => {
+                                            // Mirror the sub_rx arm: a machine/ctl
+                                            // interrupt just cancels the deferred
+                                            // action; other control ops preempt and
+                                            // requeue it.
+                                            if queues.handle_control(&incoming, &namespace_control, Some(&cancel)).await {
+                                                continue;
+                                            } else {
+                                                requeue_if_cancelled = true;
+                                                cancel.cancel();
+                                                queues.push_outer_submission(incoming);
+                                            }
+                                        }
+                                        Err(err) => {
+                                            error!(
+                                                error = %format!("{err:#}"),
+                                                "Failed to read namespace input/control event during deferred action"
+                                            );
                                         }
                                     }
-                                    Some(Err(err)) => {
-                                        error!(
-                                            error = %format!("{err:#}"),
-                                            "Failed to read namespace input/control event during deferred action"
-                                        );
-                                    }
-                                    None => {}
                                 }
                             }
                             _ = shutdown_rx.recv() => {
